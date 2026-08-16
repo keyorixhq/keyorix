@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -46,6 +47,13 @@ var identifierRegex = regexp.MustCompile(`^[a-zA-Z0-9 _-]+$`)
 func validateIdentifier(name string) error {
 	if !identifierRegex.MatchString(name) {
 		return fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil))
+	}
+	// Mirrors server/validation/validator.go's validateIdentifier: reject
+	// whitespace variants that pass the charset check above but defeat the
+	// anti-spoofing intent — all-whitespace, leading/trailing whitespace, or
+	// repeated internal whitespace (e.g. "Support Team" vs "Support  Team").
+	if trimmed := strings.TrimSpace(name); trimmed == "" || trimmed != name || strings.Contains(trimmed, "  ") {
+		return fmt.Errorf("%s: must not be all whitespace or have leading, trailing, or repeated internal whitespace", i18n.T("ErrorValidation", nil))
 	}
 	return nil
 }
