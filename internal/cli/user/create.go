@@ -112,6 +112,9 @@ func runCreate(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 			if createdBy, err = resolveAdminID(ctx, service, createBy); err != nil {
 				return err
 			}
+			if err := requireUserAuthority(ctx, service, createdBy, permUsersWrite); err != nil {
+				return err
+			}
 		}
 		u, prov, err := service.CreateUserWithSetupLink(ctx, req, createdBy)
 		if err != nil {
@@ -126,6 +129,9 @@ func runCreate(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 		var createdBy uint
 		if createBy != "" {
 			if createdBy, err = resolveAdminID(ctx, service, createBy); err != nil {
+				return err
+			}
+			if err := requireUserAuthority(ctx, service, createdBy, permUsersWrite); err != nil {
 				return err
 			}
 		}

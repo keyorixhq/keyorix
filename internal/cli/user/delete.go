@@ -50,6 +50,9 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := requireUserAuthority(ctx, service, adminID, permUsersDelete); err != nil {
+		return err
+	}
 
 	// Deleting a user is irreversible, so require an explicit confirmation unless
 	// the caller opted out with --force (e.g. for scripted/CI use).

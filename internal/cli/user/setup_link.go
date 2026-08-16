@@ -42,6 +42,9 @@ var resendSetupLinkCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := requireUserAuthority(ctx, service, adminID, permUsersWrite); err != nil {
+			return err
+		}
 		prov, err := service.ResendAccountSetupLink(ctx, resendSetupLinkUserID, adminID)
 		if err != nil {
 			return fmt.Errorf("failed to resend setup link: %w", err)
