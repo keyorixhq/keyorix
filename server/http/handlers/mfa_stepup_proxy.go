@@ -29,10 +29,15 @@ type mfaStepUpGrantProxyBody struct {
 }
 
 // mfaStepUpGrantActiveProxyBody is the wire body for
-// GetActiveMFAStepUpGrantProxy.
+// GetActiveMFAStepUpGrantProxy. It used to also carry a caller-supplied
+// `now` forwarded straight into the expiry comparison — removed (G-wave6,
+// same class as users_crud.go's mfaChallengeLookupBody and
+// webauthn_proxy.go's webAuthnSessionConsumeProxyBody): a remote caller
+// could manipulate the effective "current time" used to decide whether a
+// step-up grant is still active, defeating the step-up TTL. This server now
+// always uses its own clock for that comparison.
 type mfaStepUpGrantActiveProxyBody struct {
-	UserID uint      `json:"user_id"`
-	Now    time.Time `json:"now"`
+	UserID uint `json:"user_id"`
 }
 
 // CreateMFAStepUpGrantProxy handles POST /api/v1/system/mfa/stepup-grants.
@@ -73,7 +78,12 @@ func (h *AuthHandler) GetActiveMFAStepUpGrantProxy(w http.ResponseWriter, r *htt
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
 		return
 	}
-	grant, err := h.coreService.Storage().GetActiveMFAStepUpGrant(r.Context(), body.UserID, body.Now)
+	// This server's own clock, never a caller-supplied value — see
+	// mfaStepUpGrantActiveProxyBody's doc comment. LocalStorage's
+	// GetActiveMFAStepUpGrant already normalizes this to .UTC() itself
+	// (local_mfa_stepup_grant.go), matching models.MFAStepUpGrant's
+	// BeforeSave UTC-normalization hook, so a plain time.Now() here is fine.
+	grant, err := h.coreService.Storage().GetActiveMFAStepUpGrant(r.Context(), body.UserID, time.Now())
 	if err != nil {
 		log.Printf("mfa stepup proxy: get active grant failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

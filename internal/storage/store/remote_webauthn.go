@@ -381,9 +381,12 @@ func (rs *RemoteStorage) CreateWebAuthnSession(ctx context.Context, s *models.We
 }
 
 // webAuthnSessionConsumeWire is the wire body for ConsumeWebAuthnSessionProxy.
+// It no longer carries `now` on the wire (G-wave6, same fix as
+// remote_mfa.go's mfaChallengeLookupWire): the upstream server always uses
+// its own clock for the expiry comparison instead of trusting a
+// caller-supplied value.
 type webAuthnSessionConsumeWire struct {
-	TokenHash string    `json:"token_hash"`
-	Now       time.Time `json:"now"`
+	TokenHash string `json:"token_hash"`
 }
 
 // ConsumeWebAuthnSession atomically marks a valid (unused, unexpired) ceremony
@@ -398,10 +401,12 @@ type webAuthnSessionConsumeWire struct {
 // the caller (internal/core.FinishWebAuthnRegistration/FinishWebAuthnLogin) already
 // treats any error here as "invalid or expired registration/login session"
 // regardless of cause.
-func (rs *RemoteStorage) ConsumeWebAuthnSession(ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error) {
+// now is accepted only for interface parity with LocalStorage — the
+// upstream server ignores any caller-supplied "current time" and always
+// uses its own clock (see webAuthnSessionConsumeWire's doc comment).
+func (rs *RemoteStorage) ConsumeWebAuthnSession(ctx context.Context, tokenHash string, _ time.Time) (*models.WebAuthnSession, error) {
 	resp, err := rs.client.Post(ctx, "/api/v1/system/webauthn/sessions/consume", webAuthnSessionConsumeWire{
 		TokenHash: tokenHash,
-		Now:       now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired webauthn session")
