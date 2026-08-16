@@ -1721,7 +1721,7 @@ func TestRunExport_EnvNotFound_S8(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[]}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -1749,7 +1749,7 @@ func TestRunExport_NoSecrets_S8(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"development"}]}}`))
 		default:
 			_, _ = w.Write([]byte(`{"data":{"secrets":[]}}`))
@@ -1778,7 +1778,7 @@ func TestRunExport_UnknownFormat_S8(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"development"}]}}`))
 		default:
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":1,"name":"k"}],"id":1}}`))
@@ -1830,7 +1830,7 @@ func TestRunImport_SkipExisting_S8(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"development"}]}}`))
 		case "/api/v1/secrets":
 			// Simulate "already exists" → 409

@@ -272,7 +272,7 @@ func runAssignRoleToGroupRemote(ctx context.Context, rc *common.RemoteClient, gr
 		}
 		body["project_id"] = projectID
 		if env != "" {
-			envID, err := resolveEnvironmentIDByName(ctx, rc, env)
+			envID, err := resolveEnvironmentIDByName(ctx, rc, projectID, env)
 			if err != nil {
 				return err
 			}
@@ -313,7 +313,7 @@ func runRemoveRoleFromGroupRemote(ctx context.Context, rc *common.RemoteClient, 
 		}
 		params = append(params, fmt.Sprintf("project_id=%d", projectID))
 		if env != "" {
-			envID, err := resolveEnvironmentIDByName(ctx, rc, env)
+			envID, err := resolveEnvironmentIDByName(ctx, rc, projectID, env)
 			if err != nil {
 				return err
 			}

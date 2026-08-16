@@ -148,7 +148,7 @@ func TestFetchSecretsRemote_EnvironmentsFetchError(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)

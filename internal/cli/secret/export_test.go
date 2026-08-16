@@ -28,7 +28,7 @@ func TestRunExport_OutputFilePermissions(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case r.URL.Path == "/api/v1/environments":
+		case r.URL.Path == "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"development"}]}}`))
 		case strings.HasPrefix(r.URL.Path, "/api/v1/secrets") && r.URL.Query().Get("project_id") != "":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":9,"name":"DB_PASSWORD"}]}}`))

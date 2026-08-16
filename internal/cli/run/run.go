@@ -270,10 +270,17 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 	}
 
 	// ── 2. Resolve environment name → ID ──────────────────────────────────────
+	// Scoped to the just-resolved project (nsID), not the deployment-wide
+	// listing: picking the first case-insensitive name match across every
+	// project's environments could resolve --environment to a different
+	// project's same-named environment than the one --project just resolved,
+	// silently fetching/injecting the wrong project's secrets (G78 sibling —
+	// see internal/cli/rbac/remote.go's resolveEnvironmentIDByName for the
+	// original finding).
 	var envBody struct {
 		Environments []*models.Environment `json:"environments"`
 	}
-	if err := api.get(ctx, "/api/v1/environments", &envBody); err != nil {
+	if err := api.get(ctx, fmt.Sprintf("/api/v1/projects/%d/environments", nsID), &envBody); err != nil {
 		return nil, fmt.Errorf("list environments: %w", err)
 	}
 	var envID uint

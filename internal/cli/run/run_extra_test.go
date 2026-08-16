@@ -16,7 +16,7 @@ func TestFetchSecretsRemote_EnvNotFound(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[]}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -36,7 +36,7 @@ func TestFetchSecretsRemote_SkipsFailedSecretValue(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":9,"name":"good"},{"id":10,"name":"bad"}]}}`))
@@ -65,7 +65,7 @@ func TestFetchSecretsRemote_MultiPage(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 		case "/api/v1/secrets":
 			page++

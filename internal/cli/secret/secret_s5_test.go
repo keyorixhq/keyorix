@@ -344,7 +344,7 @@ func TestRunExportS5_NoSecrets(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"dev"}]}}`))
 		default:
 			// secrets list returns empty
@@ -375,7 +375,7 @@ func TestRunExportS5_JSONFormat(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":2,"name":"myproj"}]}}`))
-		case r.URL.Path == "/api/v1/environments":
+		case r.URL.Path == "/api/v1/projects/2/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"staging"}]}}`))
 		case strings.HasPrefix(r.URL.Path, "/api/v1/secrets") && r.URL.Query().Get("project_id") != "":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":10,"name":"DB_URL"}]}}`))
@@ -409,7 +409,7 @@ func TestRunExportS5_VaultFormat(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":3,"name":"vault-proj"}]}}`))
-		case r.URL.Path == "/api/v1/environments":
+		case r.URL.Path == "/api/v1/projects/3/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":3,"name":"prod"}]}}`))
 		case strings.HasPrefix(r.URL.Path, "/api/v1/secrets") && r.URL.Query().Get("project_id") != "":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":11,"name":"SECRET"}]}}`))
@@ -443,7 +443,7 @@ func TestRunExportS5_UnknownFormat(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"p"}]}}`))
-		case r.URL.Path == "/api/v1/environments":
+		case r.URL.Path == "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"e"}]}}`))
 		case strings.HasPrefix(r.URL.Path, "/api/v1/secrets"):
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":1,"name":"S"}]}}`))

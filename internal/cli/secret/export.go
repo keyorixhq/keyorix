@@ -94,7 +94,7 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 		return err
 	}
 
-	envID, err := resolveEnvironmentID(ctx, rc, exportEnv)
+	envID, err := resolveEnvironmentID(ctx, rc, nsID, exportEnv)
 	if err != nil {
 		return err
 	}

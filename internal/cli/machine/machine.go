@@ -17,6 +17,7 @@ package machine
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -102,13 +103,31 @@ func fetchMachineIdentities(ctx context.Context, projectID uint) ([]*models.Mach
 }
 
 // findMachineByRef finds a machine identity in a project by numeric ID or name.
+//
+// A ref that parses as a valid numeric ID is ALWAYS resolved as an ID lookup —
+// it never falls through to a Name match, even if no identity has that ID. The
+// server enforces no uniqueness between the Name and ID spaces (a purely
+// numeric Name like "5" is accepted), so an attacker-planted decoy identity
+// named after a real target's numeric ID could otherwise shadow the intended
+// machine and get resolved instead — silently redirecting destructive
+// operations (revoke/suspend) and defeating their typed-name confirmation
+// step, since the confirmation prompt echoes back the (decoy) match's own
+// Name, which trivially equals what the operator already typed (G78).
 func findMachineByRef(ctx context.Context, projectID uint, ref string) (*models.MachineIdentity, error) {
 	identities, err := fetchMachineIdentities(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list machine identities: %w", err)
 	}
+	if id, err := strconv.ParseUint(ref, 10, 64); err == nil {
+		for _, m := range identities {
+			if uint64(m.ID) == id {
+				return m, nil
+			}
+		}
+		return nil, fmt.Errorf("machine identity %q not found in project", ref)
+	}
 	for _, m := range identities {
-		if m.Name == ref || fmt.Sprintf("%d", m.ID) == ref {
+		if m.Name == ref {
 			return m, nil
 		}
 	}

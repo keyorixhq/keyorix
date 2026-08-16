@@ -42,15 +42,26 @@ func resolveProjectIDByName(ctx context.Context, rc *common.RemoteClient, name s
 	return 0, fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", name)
 }
 
-// resolveEnvironmentIDByName finds an environment's ID by name via GET /api/v1/environments.
-func resolveEnvironmentIDByName(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
+// resolveEnvironmentIDByName finds an environment's ID by name WITHIN a
+// specific project, via the project-scoped GET /api/v1/projects/{id}/environments.
+//
+// This must NOT fall back to the deployment-wide GET /api/v1/environments
+// listing: that endpoint returns every environment across every project, and
+// picking the first case-insensitive name match against it resolves cross-
+// project — e.g. an "assign-role --project A --environment prod" grant could
+// silently resolve to project B's "prod" environment if it happened to sort
+// first, granting/removing access in the wrong project's scope (G78). A name
+// that doesn't exist within the target project's scope is refused, never
+// silently widened to a deployment-wide match.
+func resolveEnvironmentIDByName(ctx context.Context, rc *common.RemoteClient, projectID uint, name string) (uint, error) {
 	var resp struct {
 		Environments []struct {
 			ID   uint   `json:"id"`
 			Name string `json:"name"`
 		} `json:"environments"`
 	}
-	if err := rc.Get(ctx, "/api/v1/environments", &resp); err != nil {
+	path := fmt.Sprintf("/api/v1/projects/%d/environments", projectID)
+	if err := rc.Get(ctx, path, &resp); err != nil {
 		return 0, fmt.Errorf("failed to list environments: %w", err)
 	}
 	for _, e := range resp.Environments {
@@ -58,7 +69,7 @@ func resolveEnvironmentIDByName(ctx context.Context, rc *common.RemoteClient, na
 			return e.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("environment %q not found", name)
+	return 0, fmt.Errorf("environment %q not found in project", name)
 }
 
 // resolveUserIDByEmail finds a user's ID by email via GET /api/v1/users.
@@ -254,7 +265,7 @@ func runAssignRoleRemote(ctx context.Context, rc *common.RemoteClient, email, ro
 		}
 		body["project_id"] = projectID
 		if env != "" {
-			envID, err := resolveEnvironmentIDByName(ctx, rc, env)
+			envID, err := resolveEnvironmentIDByName(ctx, rc, projectID, env)
 			if err != nil {
 				return err
 			}
@@ -291,7 +302,7 @@ func runRemoveRoleRemote(ctx context.Context, rc *common.RemoteClient, email, ro
 		}
 		body["project_id"] = projectID
 		if env != "" {
-			envID, err := resolveEnvironmentIDByName(ctx, rc, env)
+			envID, err := resolveEnvironmentIDByName(ctx, rc, projectID, env)
 			if err != nil {
 				return err
 			}
