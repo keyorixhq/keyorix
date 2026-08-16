@@ -362,8 +362,12 @@ func TestEndImpersonation_LogsDurationAndActionCount(t *testing.T) {
 	})).Return(nil)
 	store.On("DeleteSession", ctx, uint(99)).Return(nil)
 
-	if err := c.EndImpersonation(ctx, "tok"); err != nil {
+	gotAdminID, err := c.EndImpersonation(ctx, "tok")
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAdminID != admin {
+		t.Fatalf("expected returned adminID %d, got %d", admin, gotAdminID)
 	}
 	store.AssertExpectations(t)
 }
@@ -374,7 +378,7 @@ func TestEndImpersonation_RejectsNonImpersonationSession(t *testing.T) {
 	ctx := context.Background()
 	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 1, UserID: 2}, nil)
 
-	if err := c.EndImpersonation(ctx, "tok"); err == nil {
+	if _, err := c.EndImpersonation(ctx, "tok"); err == nil {
 		t.Fatal("expected an error for a non-impersonation session")
 	}
 }
@@ -398,7 +402,7 @@ func TestEndImpersonation_DeleteSessionFails_NoMisleadingAuditEvent(t *testing.T
 	store.On("CountImpersonatedActions", uint(2), uint(1), started).Return(int64(1), nil)
 	store.On("DeleteSession", ctx, uint(99)).Return(fmt.Errorf("db unavailable"))
 
-	err := c.EndImpersonation(ctx, "tok")
+	_, err := c.EndImpersonation(ctx, "tok")
 	if err == nil {
 		t.Fatal("expected an error when the session delete fails")
 	}
