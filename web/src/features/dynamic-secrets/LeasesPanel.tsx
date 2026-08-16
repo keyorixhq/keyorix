@@ -72,6 +72,14 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
 
     const [credential, setCredential] = useState<IssuedCredential | null>(null);
     const [error, setError] = useState('');
+    // Surfaces the outcome of a "Revoke all" call — distinct from `error`, which
+    // is for the mutation itself failing outright (network/authz). A revoke-all
+    // call can succeed at the HTTP layer while some individual leases still fail
+    // to revoke upstream (see revokeAll's {revoked, failed} response below); that
+    // partial failure must not look identical to a full success.
+    const [revokeAllNotice, setRevokeAllNotice] = useState<{ type: 'success' | 'warning'; message: string } | null>(
+        null
+    );
 
     // G28: the credential (often a plaintext password) otherwise stays rendered
     // in the modal indefinitely until the user explicitly clicks Done/Close —
@@ -83,6 +91,7 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
 
     const handleIssue = () => {
         setError('');
+        setRevokeAllNotice(null);
         issue.mutate(undefined, {
             onSuccess: (cred) => setCredential(cred),
             onError: (err) => surface(err, 'Failed to issue credential.'),
@@ -114,25 +123,37 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                                 · expires {new Date(l.expiresAt).toLocaleString()}
                             </span>
                         )}
-                        {canManage && l.status === 'active' && (
+                        {/* A failed revoke means the credential is STILL LIVE upstream (see
+                            CountActiveLeases/ListExpiredActiveLeases treating revoke_failed as
+                            active) — surface why it failed so the operator isn't left guessing. */}
+                        {l.status === 'revoke_failed' && l.revokeError && (
+                            <span
+                                className="truncate"
+                                style={{ color: 'var(--error)' }}
+                                title={l.revokeError}
+                            >
+                                {l.revokeError}
+                            </span>
+                        )}
+                        {canManage && (l.status === 'active' || l.status === 'revoke_failed') && (
                             <button
                                 type="button"
                                 onClick={() => {
-                                    if (
-                                        !window.confirm(
-                                            'Revoke this lease? The credential will stop working immediately.'
-                                        )
-                                    )
-                                        return;
+                                    const confirmMessage =
+                                        l.status === 'revoke_failed'
+                                            ? 'Retry revoking this lease? The credential is still live upstream until this succeeds.'
+                                            : 'Revoke this lease? The credential will stop working immediately.';
+                                    if (!window.confirm(confirmMessage)) return;
                                     setError('');
+                                    setRevokeAllNotice(null);
                                     revoke.mutate(l.leaseId, {
                                         onError: (err) => surface(err, 'Failed to revoke lease.'),
                                     });
                                 }}
                                 disabled={revoke.isPending}
-                                className="ml-auto p-1 rounded-sm disabled:opacity-50"
+                                className="ml-auto p-1 rounded-sm disabled:opacity-50 shrink-0"
                                 style={{ color: 'var(--error)' }}
-                                title="Revoke lease"
+                                title={l.status === 'revoke_failed' ? 'Retry revoke' : 'Revoke lease'}
                             >
                                 <NoSymbolIcon className="h-4 w-4" />
                             </button>
@@ -145,6 +166,15 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
     return (
         <div className="px-4 py-3" style={{ backgroundColor: 'var(--bg-app)' }}>
             {error && <Alert type="error" message={error} className="mb-2" />}
+            {revokeAllNotice && (
+                <Alert
+                    type={revokeAllNotice.type}
+                    message={revokeAllNotice.message}
+                    dismissible
+                    onDismiss={() => setRevokeAllNotice(null)}
+                    className="mb-2"
+                />
+            )}
 
             {canManage && (
                 <div className="flex items-center gap-2 mb-3">
@@ -164,7 +194,18 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                                 )
                                     return;
                                 setError('');
+                                setRevokeAllNotice(null);
                                 revokeAll.mutate(undefined, {
+                                    onSuccess: ({ revoked, failed }) => {
+                                        if (failed > 0) {
+                                            setRevokeAllNotice({
+                                                type: 'warning',
+                                                message: `Revoked ${revoked} of ${revoked + failed} lease(s) — ${failed} failed. Check the lease list below and retry the failed one(s).`,
+                                            });
+                                        } else {
+                                            setRevokeAllNotice({ type: 'success', message: `Revoked ${revoked} lease(s).` });
+                                        }
+                                    },
                                     onError: (err) => surface(err, 'Failed to revoke leases.'),
                                 });
                             }}
