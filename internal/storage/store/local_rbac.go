@@ -322,7 +322,13 @@ func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectI
 	}
 
 	var groupRows []models.GroupRole
-	if err := ls.db.WithContext(ctx).
+	if err := ls.db.WithContext(ctx).Table("group_roles").
+		Select("group_roles.*").
+		// A soft-deleted group confers no roles/authority — exclude its grant rows,
+		// matching GetUserGroupRoleIDsAt's authorization resolution. Without this a
+		// deleted group's still-present group_roles row kept showing up as a "live"
+		// project-admin assignment to callers like guardLastProjectAdmin.
+		Joins(sqlJoinGroups).
 		Where(sqlWhereProjectID, projectID).
 		Where(sqlWhereGRNotExpired, now).
 		Find(&groupRows).Error; err != nil {

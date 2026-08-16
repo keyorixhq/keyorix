@@ -384,3 +384,176 @@ func TestRemoveProjectMember_NonAdminAlwaysRemovable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, members)
 }
+
+// #G05: guardLastProjectAdmin previously treated ANY project-level group grant
+// carrying roles.assign as a surviving admin, without expanding the group to its
+// LIVE members — so a project-admin-granting group with zero live members (empty,
+// all members deactivated, or the group itself soft-deleted) incorrectly "covered"
+// the project, letting the actual last human admin be removed/demoted and leaving
+// the project with zero functional admins. These mirror last_admin_guard_wiring_test.go's
+// guardLastAdminDeactivation/resolveGlobalAdminHolders coverage, at project scope.
+
+// Negative case 1: the admin-granting group exists and has the right role, but has
+// NO members at all.
+func TestRemoveProjectMember_RefusesLastAdmin_EmptyAdminGroup(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "ivan", Email: "ivan@example.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	group, err := st.CreateGroup(ctx, &models.Group{Name: "empty-admins"})
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
+	// No members ever added to the group.
+
+	err = c.RemoveProjectMember(ctx, actor, proj, u.ID)
+	require.Error(t, err, "an admin group with zero live members must not count as a surviving admin")
+	assert.Contains(t, err.Error(), "last administrator")
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, members, 1, "the membership must not have been removed when the guard refuses")
+}
+
+// Negative case 2: the admin-granting group has a member, but that member is
+// deactivated (IsActive=false) — not usable as a fallback admin.
+func TestRemoveProjectMember_RefusesLastAdmin_AllGroupMembersDeactivated(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "judy", Email: "judy@example.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+
+	// Created active, then explicitly deactivated via UpdateUser: models.User.IsActive
+	// has a `gorm:"default:true"` tag, so GORM treats an explicit IsActive:false on
+	// Create as the field's zero value and lets the DB default (true) win — the only
+	// reliable way to persist IsActive:false is a subsequent update.
+	inactive, err := st.CreateUser(ctx, &models.User{Username: "mallory", Email: "mallory@example.com", IsActive: true})
+	require.NoError(t, err)
+	no := false
+	_, err = c.UpdateUser(ctx, &UpdateUserRequest{ID: inactive.ID, IsActive: &no})
+	require.NoError(t, err)
+
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	group, err := st.CreateGroup(ctx, &models.Group{Name: "deactivated-admins"})
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
+	require.NoError(t, st.AddUserToGroup(ctx, inactive.ID, group.ID, 0))
+
+	err = c.RemoveProjectMember(ctx, actor, proj, u.ID)
+	require.Error(t, err, "an admin group whose only member is deactivated must not count as a surviving admin")
+	assert.Contains(t, err.Error(), "last administrator")
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, members, 1, "the membership must not have been removed when the guard refuses")
+}
+
+// Negative case 3: the admin-granting group has a live member, but the group
+// itself has been soft-deleted — its GroupRole assignment row survives the
+// soft-delete (DeleteGroup only marks the group deleted, it doesn't remove the
+// grant/membership rows), but a soft-deleted group confers no authority.
+func TestRemoveProjectMember_RefusesLastAdmin_SoftDeletedAdminGroup(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "karl", Email: "karl@example.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+
+	member, err := st.CreateUser(ctx, &models.User{Username: "leo", Email: "leo@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	group, err := st.CreateGroup(ctx, &models.Group{Name: "soon-deleted-admins"})
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
+	require.NoError(t, st.AddUserToGroup(ctx, member.ID, group.ID, 0))
+	require.NoError(t, st.DeleteGroup(ctx, group.ID)) // soft-delete; grant/membership rows survive
+
+	err = c.RemoveProjectMember(ctx, actor, proj, u.ID)
+	require.Error(t, err, "a soft-deleted admin group must not count as a surviving admin even with a live member")
+	assert.Contains(t, err.Error(), "last administrator")
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, members, 1, "the membership must not have been removed when the guard refuses")
+}
+
+// Positive case: an admin-granting group WITH a live member correctly counts as
+// a surviving admin, so removing the human admin is allowed — the guard must not
+// over-block once the group actually has someone who can administer the project.
+func TestRemoveProjectMember_AllowsRemoval_WhenAdminGroupHasLiveMember(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "mike", Email: "mike@example.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+
+	member, err := st.CreateUser(ctx, &models.User{Username: "nancy", Email: "nancy@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	group, err := st.CreateGroup(ctx, &models.Group{Name: "live-admins"})
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
+	require.NoError(t, st.AddUserToGroup(ctx, member.ID, group.ID, 0))
+
+	require.NoError(t, c.RemoveProjectMember(ctx, actor, proj, u.ID),
+		"a group with a live member covers the project, so removing the human admin must succeed")
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	assert.Empty(t, members, "the human admin's own project-level membership row is gone")
+}
+
+// Same empty-admin-group negative case, but through SetProjectMemberRole's
+// demotion path — a second entry point into the same guardLastProjectAdmin call
+// that must not be bypassable either (mirrors TestSetProjectMemberRole_RefusesLastAdminDemotion).
+func TestSetProjectMemberRole_RefusesLastAdminDemotion_EmptyAdminGroup(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "oscar", Email: "oscar@example.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	group, err := st.CreateGroup(ctx, &models.Group{Name: "empty-admins-2"})
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
+
+	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer")
+	require.Error(t, err, "an admin group with zero live members must not count as a surviving admin")
+	assert.Contains(t, err.Error(), "last administrator")
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "project_admin", members[0].RoleName, "role must be unchanged after a refused demotion")
+}
