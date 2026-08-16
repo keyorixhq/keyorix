@@ -138,6 +138,25 @@ func runEnvDelete(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 
+	// `env delete` has always accepted --project (registered in init() above,
+	// same as list/create) but never actually checked it: an operator who
+	// named the wrong project for a given bare environment ID would silently
+	// delete an environment belonging to a DIFFERENT project than the one
+	// they believed they were targeting. When --project is explicitly given,
+	// verify the id actually belongs to that project before deleting it. When
+	// it's omitted we keep prior (pre-existing) delete-by-bare-id behavior
+	// rather than newly forcing every invocation to resolve an active project
+	// that wasn't previously required for this command.
+	if envProjectFlag != "" {
+		_, projectID, err := resolveProjectContext(envProjectFlag)
+		if err != nil {
+			return err
+		}
+		if err := verifyEnvironmentBelongsToProject(ctx, projectID, uint(id)); err != nil {
+			return err
+		}
+	}
+
 	if rc, ok := common.NewRemoteClient(); ok {
 		path := fmt.Sprintf("/api/v1/environments/%d", id)
 		if err := rc.Delete(ctx, path); err != nil {
@@ -159,6 +178,39 @@ func runEnvDelete(cmd *cobra.Command, args []string) error {
 }
 
 // --- helpers ---
+
+// verifyEnvironmentBelongsToProject confirms environment id actually belongs
+// to projectID before a project-scoped operation (currently: `env delete
+// --project ...`) proceeds — the CLI-side counterpart to
+// core.KeyorixCore.GetEnvironmentInProject, so an operator who names a
+// project for a bare environment ID gets that belief cross-checked instead
+// of silently mutating a different project's environment.
+func verifyEnvironmentBelongsToProject(ctx context.Context, projectID, id uint) error {
+	if rc, ok := common.NewRemoteClient(); ok {
+		var resp struct {
+			Environments []*models.Environment `json:"environments"`
+		}
+		path := fmt.Sprintf("/api/v1/projects/%d/environments", projectID)
+		if err := rc.Get(ctx, path, &resp); err != nil {
+			return fmt.Errorf("failed to verify environment %d belongs to project %d: %w", id, projectID, err)
+		}
+		for _, e := range resp.Environments {
+			if e.ID == id {
+				return nil
+			}
+		}
+		return fmt.Errorf("environment %d does not belong to project %d", id, projectID)
+	}
+
+	svc, err := common.InitializeCoreService()
+	if err != nil {
+		return fmt.Errorf("failed to initialize service: %w", err)
+	}
+	if _, err := svc.GetEnvironmentInProject(ctx, projectID, id); err != nil {
+		return fmt.Errorf("environment %d does not belong to project %d", id, projectID)
+	}
+	return nil
+}
 
 // resolveProjectContext looks up the project by name (from flag or active context)
 // and returns the name and numeric ID.

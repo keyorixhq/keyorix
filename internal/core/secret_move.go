@@ -8,8 +8,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -62,6 +64,25 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		// apply that other project's grants to it.
 		if parent.ProjectID != secret.ProjectID || parent.EnvironmentID != secret.EnvironmentID {
 			return nil, fmt.Errorf("%s: target parent %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *newParentID)
+		}
+		// Reject moves that would introduce a cycle: the direct self-parent
+		// check above only catches *newParentID == secretID, but a folder can
+		// also be moved underneath one of its OWN descendants (e.g. A -> B ->
+		// C, then move A under C), which corrupts the tree just as badly and
+		// would send any parent-chain walk (breadcrumbs, ACL inheritance in
+		// HasSecretACL) into an infinite loop. Walk the proposed new parent's
+		// ancestor chain — reusing the same bounded, cycle-safe walk
+		// GetSecretAncestors already provides for ACL folder inheritance — and
+		// refuse the move if secretID appears in it, meaning newParentID is a
+		// descendant of the node being moved.
+		ancestors, err := c.storage.GetSecretAncestors(ctx, *newParentID)
+		if err != nil && !errors.Is(err, storage.ErrUnsupportedByBackend) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		for _, ancestorID := range ancestors {
+			if ancestorID == secretID {
+				return nil, fmt.Errorf("%s: cannot move a node into its own descendant", i18n.T("ErrorValidation", nil))
+			}
 		}
 		secret.ParentID = newParentID
 	} else {

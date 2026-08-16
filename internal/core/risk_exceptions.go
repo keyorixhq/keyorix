@@ -53,6 +53,36 @@ func exceptionStatus(e *models.RiskException, now time.Time) string {
 // exception must sunset and be re-reviewed, not become a permanent waiver.
 const maxRiskExceptionDuration = 365 * 24 * time.Hour
 
+// validateSoDReferenceIsLiveViolation enforces that a "sod"-category risk
+// exception's reference actually names a CURRENTLY-DETECTED SoD violation
+// (Wave 6 core-sod finding #3, ISO 27001 A.5.8/A.5.3): without this, two
+// system.write holders could create-and-approve an exception for a
+// (policy, principal) pair that has never violated anything yet — or no
+// longer does — pre-emptively suppressing a violation before it's ever real
+// (or rubber-stamping one that was resolved between creation and approval).
+// That defeats dual control's whole point, which is governed acceptance of a
+// KNOWN, currently-real gap, not a blanket bypass for a future one. Applies
+// only to category "sod"; every other category's reference is free text (a
+// user, a secret, ...) with no live report to check it against. Fails closed:
+// a reference that doesn't appear in DetectSoDViolations' current output —
+// including because the scan couldn't fully evaluate the referenced
+// principal (report.Degraded) — is refused, not assumed valid.
+func (c *KeyorixCore) validateSoDReferenceIsLiveViolation(ctx context.Context, category, reference string) error {
+	if category != "sod" {
+		return nil
+	}
+	report, err := c.DetectSoDViolations(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to validate SoD violation reference: %w", err)
+	}
+	for _, v := range report.Violations {
+		if v.Reference == reference {
+			return nil
+		}
+	}
+	return fmt.Errorf("reference %q does not match any currently-detected SoD violation (see GET /sod/violations for a valid reference)", reference)
+}
+
 // CreateRiskException records a governed, time-bound acceptance of a control gap.
 // actorID is the accepting owner; expiresAt must be in the future. The exception
 // does NOT suppress anything yet: it must be separately approved by a DIFFERENT
@@ -75,6 +105,9 @@ func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, tit
 	// forever (e.g. year 9999), defeating the "accepted with a sunset" governance intent.
 	if expiresAt.After(c.now().Add(maxRiskExceptionDuration)) {
 		return nil, fmt.Errorf("expires_at must be within %d days (exceptions must sunset and be re-reviewed)", int(maxRiskExceptionDuration/(24*time.Hour)))
+	}
+	if err := c.validateSoDReferenceIsLiveViolation(ctx, category, reference); err != nil {
+		return nil, err
 	}
 	created, err := c.storage.CreateRiskException(ctx, &models.RiskException{
 		Title: title, Category: category, Reference: reference, Justification: justification,
@@ -202,6 +235,16 @@ func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID, id uint
 		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), "",
 			fmt.Sprintf("risk exception %d approval DENIED: creator %d cannot self-approve", id, actorID))
 		return fmt.Errorf("the exception's creator cannot approve it (dual control); a different system.write holder must approve")
+	}
+	// Re-validate against a FRESH DetectSoDViolations scan, not just at creation
+	// time: the referenced violation may have been resolved (or, if creation-time
+	// validation were ever bypassed, may never have existed) by the time a
+	// different approver reviews it — a stale or bogus reference must not be
+	// rubber-stamped either.
+	if err := c.validateSoDReferenceIsLiveViolation(ctx, e.Category, e.Reference); err != nil {
+		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), "",
+			fmt.Sprintf("risk exception %d approval DENIED: %v", id, err))
+		return err
 	}
 	now := c.now()
 	e.Approved = true

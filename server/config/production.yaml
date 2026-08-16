@@ -19,6 +19,15 @@ server:
     allowed_origins:
       - "https://${KEYORIX_DOMAIN:-localhost}"
       - "https://www.${KEYORIX_DOMAIN:-localhost}"
+    # trusted_proxies MUST be set to your actual reverse proxy's address (or its
+    # CIDR, e.g. the LB/ingress subnet) before deploying — the example CIDR below is
+    # the loopback-only default and will NOT match a real proxy on another host.
+    # This is required for the "TLS handled by reverse proxy" topology assumed by
+    # tls.enabled=false below: without it, X-Forwarded-For/X-Real-IP are ignored and
+    # every request's client IP resolves to the PROXY's address, not the real
+    # client's — silently breaking per-client rate limiting and audit logging.
+    trusted_proxies:
+      - "127.0.0.1/32"
     tls:
       enabled: false  # TLS handled by reverse proxy
       auto_cert: false

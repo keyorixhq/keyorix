@@ -15,12 +15,17 @@ func riskCore(store *MockStorage, now time.Time) *KeyorixCore {
 	return &KeyorixCore{storage: store, now: func() time.Time { return now }}
 }
 
+// Category "mfa" (unlike "sod") has no live-violation report to validate
+// reference against, so this exercises plain create+audit behavior without
+// needing to stand up a DetectSoDViolations fixture. See
+// risk_exceptions_external_test.go for the "sod" category's live-reference
+// enforcement (Wave 6 core-sod finding #3).
 func TestCreateRiskException_ValidatesAndAudits(t *testing.T) {
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	store.On("CreateRiskException", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
-		return e.Title == "accept SoD for migration" && e.Category == "sod" && e.CreatedBy == 9
-	})).Return(&models.RiskException{ID: 1, Title: "accept SoD for migration"}, nil)
+		return e.Title == "accept dormant access for migration" && e.Category == "mfa" && e.CreatedBy == 9
+	})).Return(&models.RiskException{ID: 1, Title: "accept dormant access for migration"}, nil)
 	var audited string
 	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
 		if ev.EventType == EventRiskExceptionCreated {
@@ -31,7 +36,7 @@ func TestCreateRiskException_ValidatesAndAudits(t *testing.T) {
 	})).Return(nil)
 
 	c := riskCore(store, now)
-	_, err := c.CreateRiskException(context.Background(), 9, "accept SoD for migration", "sod", "alice+roles.assign/secrets.delete", "temporary during cutover", now.AddDate(0, 0, 30))
+	_, err := c.CreateRiskException(context.Background(), 9, "accept dormant access for migration", "mfa", "alice@example.com", "temporary during cutover", now.AddDate(0, 0, 30))
 	require.NoError(t, err)
 	assert.Equal(t, EventRiskExceptionCreated, audited)
 }
