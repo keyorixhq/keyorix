@@ -426,5 +426,35 @@ describe('features/sharing/api', () => {
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.sharing.all });
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.secrets.all });
         });
+
+        // Regression test for the id-pinning fix: the recipient id captured at
+        // dropdown-selection time must be used as-is, never re-derived from a
+        // fresh username search at submit time. Without the fix, if the
+        // username-to-id mapping changed between selection and submit (a
+        // rename, or a different account claiming the same username), the
+        // share would silently land on whoever the re-search happens to
+        // match instead of the account the sharer actually picked.
+        it('uses the recipientId captured at selection time and never re-resolves by username, even if a fresh search would return a different account', async () => {
+            // If the (buggy) re-search path ran, it would resolve to id 99 —
+            // a different account than the one originally selected (id 7).
+            searchMock.mockResolvedValue([{ id: 99, name: 'bob', type: 'user' as const, email: 'impostor@test.com' }]);
+            createMock.mockResolvedValue(share);
+
+            const { result } = renderHook(() => useShareSecret(42), { wrapper: createWrapper() });
+
+            // Selecting 'bob' (id=7) from the autocomplete dropdown, then submitting.
+            result.current.mutate({ username: 'bob', recipientId: 7, permission: 'read' });
+
+            await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+            expect(createMock).toHaveBeenCalledWith({
+                secretId: 42,
+                recipientType: 'user',
+                recipientId: 7,
+                permission: 'read',
+            });
+            // The id was supplied, so no re-resolution by username should ever occur.
+            expect(searchMock).not.toHaveBeenCalled();
+        });
     });
 });

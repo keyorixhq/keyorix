@@ -127,7 +127,12 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
         if (!selected) return;
         const expiresAt = expiresAtFromPreset(expiry);
         shareSecret.mutate(
-            { username: selected.username, permission, ...(expiresAt ? { expiresAt } : {}) },
+            {
+                username: selected.username,
+                recipientId: selected.id,
+                permission,
+                ...(expiresAt ? { expiresAt } : {}),
+            },
             {
                 onSuccess: () => {
                     setSuccess(true);

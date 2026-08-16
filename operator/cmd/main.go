@@ -3,16 +3,20 @@
 package main
 
 import (
+	"crypto/subtle"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -150,11 +154,84 @@ func secretCacheOptions(s namespaceScope) (cache.Options, client.Options) {
 	}
 }
 
+// metricsFilterProvider builds a controller-runtime metrics FilterProvider (the framework's
+// own extension point for gating its metrics server, wired in via ctrl.Options.Metrics.
+// FilterProvider below) that requires a matching "Authorization: Bearer <token>" header when
+// token is non-empty, and mirrors server/http/router.go's own MetricsToken gate on the main
+// Keyorix server's /metrics endpoint (constant-time comparison, same header shape) so both
+// binaries in this repo authenticate their metrics endpoints the same way.
+//
+// controller-runtime also ships its own kube-rbac-proxy-style filter,
+// metrics/filters.WithAuthenticationAndAuthorization, which authenticates via the
+// apiserver's TokenReview/SubjectAccessReview APIs instead of a static token. It was
+// deliberately NOT used here: it requires a new k8s.io/apiserver dependency, and --
+// more importantly -- TokenReview/SubjectAccessReview are cluster-scoped, non-namespaced
+// resources, so granting them needs a ClusterRoleBinding specifically. That conflicts with
+// ADR-076 (see resolveScope/secretCacheOptions above and deploy/helm/keyorix-operator's own
+// rbac.yaml comment): this operator's default, and most common, deployment shape binds its
+// ClusterRole via a namespace-scoped RoleBinding, which cannot grant a cluster-scoped
+// permission at all -- every metrics scrape would 403 out of the box for that default
+// shape. A static bearer token has no such conflict and matches this repo's own existing
+// convention for the identical problem on the main server.
+//
+// When token is empty the endpoint is left unauthenticated -- matching the main server's own
+// documented default (see router.go: "When unset, the endpoint is unauthenticated ... keep
+// it inside your perimeter") -- so this is opt-in, not a breaking change for existing
+// deployments that don't set one. TLS (SecureServing, wired in main below) is unconditional
+// regardless of whether a token is configured: controller-runtime auto-generates a
+// self-signed certificate for it when no CertDir/TLSOpts are supplied (matching
+// kube-controller-manager's own documented use of self-signed certs for this exact purpose),
+// so it costs nothing and needs no operator-supplied config to close the "no TLS" half of
+// this finding.
+// newMetricsOptions builds the metricsserver.Options passed to ctrl.Options.Metrics in main
+// below. Split out (mirroring secretCacheOptions above) so a test can pin that
+// SecureServing/FilterProvider are actually wired in, not just that metricsFilterProvider
+// behaves correctly in isolation.
+func newMetricsOptions(metricsAddr, bearerToken string) metricsserver.Options {
+	return metricsserver.Options{
+		BindAddress: metricsAddr,
+		// SecureServing serves metrics over TLS unconditionally: with no CertDir/TLSOpts
+		// configured, controller-runtime auto-generates a self-signed certificate (see its
+		// own doc comment on Options.SecureServing) -- no operator-supplied cert, key, or new
+		// dependency needed, so there's no reason not to always have it on.
+		SecureServing: true,
+		// FilterProvider gates access behind an optional static bearer token -- see
+		// metricsFilterProvider's own doc comment for why this, and not controller-runtime's
+		// built-in TokenReview/SubjectAccessReview filter
+		// (metrics/filters.WithAuthenticationAndAuthorization), was chosen.
+		FilterProvider: metricsFilterProvider(bearerToken),
+	}
+}
+
+func metricsFilterProvider(token string) func(*rest.Config, *http.Client) (metricsserver.Filter, error) {
+	return func(*rest.Config, *http.Client) (metricsserver.Filter, error) {
+		return func(_ logr.Logger, handler http.Handler) (http.Handler, error) {
+			if token == "" {
+				return handler, nil
+			}
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				auth := r.Header.Get("Authorization")
+				if len(auth) < 8 || auth[:7] != "Bearer " || subtle.ConstantTimeCompare([]byte(auth[7:]), []byte(token)) != 1 {
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+				handler.ServeHTTP(w, r)
+			}), nil
+		}, nil
+	}
+}
+
 func main() {
-	var metricsAddr, probeAddr, allowedServers, watchNamespaces string
+	var metricsAddr, probeAddr, allowedServers, watchNamespaces, metricsBearerToken string
 	var enableLeaderElection, allNamespaces bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the probe endpoint binds to")
+	flag.StringVar(&metricsBearerToken, "metrics-bearer-token", os.Getenv("KEYORIX_METRICS_TOKEN"),
+		"OPTIONAL bearer token required on the metrics endpoint's Authorization header (e.g. by a Prometheus scrape "+
+			"config's authorization.credentials). The metrics endpoint is always served over TLS (a self-signed "+
+			"certificate is generated automatically) regardless of this flag; when this flag is unset the endpoint "+
+			"itself is left unauthenticated -- matching the main Keyorix server's own MetricsToken default -- so set "+
+			"it, or restrict network access with a NetworkPolicy, for internet-reachable or multi-tenant clusters.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"enable leader election for controller manager (run a single active replica)")
 	flag.StringVar(&allowedServers, "allowed-servers", os.Getenv("KEYORIX_ALLOWED_SERVERS"),
@@ -186,10 +263,15 @@ func main() {
 		setupLog.Info("restricting watched namespaces", "namespaces", scope.namespaces)
 	}
 
+	if metricsBearerToken == "" {
+		setupLog.Info("WARNING: -metrics-bearer-token is not set; the metrics endpoint is reachable over TLS but " +
+			"without authentication -- set it or restrict network access via a NetworkPolicy")
+	}
+
 	secretCache, secretClient := secretCacheOptions(scope)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
+		Metrics:                newMetricsOptions(metricsAddr, metricsBearerToken),
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "keyorix-operator.secrets.keyorix.io",

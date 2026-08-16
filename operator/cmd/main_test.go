@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/keyorixhq/keyorix/operator/internal/controller"
 )
@@ -170,4 +173,91 @@ func TestResolveScope_AllNamespacesSetIgnoresPodNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, scope.allNamespaces)
 	assert.Empty(t, scope.namespaces)
+}
+
+// TestNewMetricsOptions_AlwaysSecureServing pins the fix for finding operator-keyorix.json#1:
+// the metrics server's TLS (SecureServing) must be on unconditionally -- not just when an
+// operator remembers to opt in -- and a FilterProvider must always be wired in (its own
+// behavior, pass-through vs. token-gated, is pinned separately by
+// TestMetricsFilterProvider_*). This exercises the exact function main() calls to build
+// ctrl.Options.Metrics, not a reimplementation of it.
+func TestNewMetricsOptions_AlwaysSecureServing(t *testing.T) {
+	for _, token := range []string{"", "s3cr3t"} {
+		opts := newMetricsOptions(":8080", token)
+		assert.True(t, opts.SecureServing, "metrics server must always serve over TLS, token=%q", token)
+		assert.NotNil(t, opts.FilterProvider, "metrics server must always have a FilterProvider wired in, token=%q", token)
+	}
+}
+
+// filterFromProvider runs a metricsFilterProvider-shaped FilterProvider end to end (nil
+// rest.Config/http.Client, since this implementation ignores both) to get the http.Handler
+// it produces around a stub inner handler, for the two tests below to drive with real HTTP
+// requests.
+func filterFromProvider(t *testing.T, token string, inner http.Handler) http.Handler {
+	t.Helper()
+	provider := metricsFilterProvider(token)
+	filter, err := provider(nil, nil)
+	require.NoError(t, err)
+	wrapped, err := filter(log.Log, inner)
+	require.NoError(t, err)
+	return wrapped
+}
+
+// TestMetricsFilterProvider_EmptyTokenPassesThrough pins the documented, non-breaking
+// default: with no -metrics-bearer-token configured, the metrics endpoint stays reachable
+// without an Authorization header (TLS via SecureServing is still unconditional) --
+// matching the main Keyorix server's own MetricsToken default.
+func TestMetricsFilterProvider_EmptyTokenPassesThrough(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler := filterFromProvider(t, "", inner)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.Equal(t, http.StatusOK, rr.Code, "an empty token must leave the endpoint unauthenticated")
+}
+
+// TestMetricsFilterProvider_RequiresMatchingBearerToken pins the actual fix: once
+// -metrics-bearer-token is set, only a request carrying the exact matching
+// "Authorization: Bearer <token>" header reaches the real metrics handler -- no header, the
+// wrong token, and a malformed header must all be rejected with 401.
+func TestMetricsFilterProvider_RequiresMatchingBearerToken(t *testing.T) {
+	const token = "s3cr3t-metrics-token"
+	reached := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := filterFromProvider(t, token, inner)
+
+	cases := map[string]string{
+		"no header":       "",
+		"wrong token":     "Bearer not-the-token",
+		"malformed":       token, // missing the "Bearer " prefix entirely
+		"wrong scheme":    "Basic " + token,
+		"empty bearer":    "Bearer ",
+		"case-mismatched": "bearer " + token, // lowercase scheme must not match
+	}
+	for name, header := range cases {
+		t.Run(name, func(t *testing.T) {
+			reached = false
+			req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+			if header != "" {
+				req.Header.Set("Authorization", header)
+			}
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			assert.Equal(t, http.StatusUnauthorized, rr.Code, "case %q must be rejected", name)
+			assert.False(t, reached, "case %q must never reach the real metrics handler", name)
+		})
+	}
+
+	t.Run("matching token", func(t *testing.T) {
+		reached = false
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.True(t, reached, "a matching bearer token must reach the real metrics handler")
+	})
 }

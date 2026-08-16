@@ -249,6 +249,99 @@ else
   bad "#179: heredoc delimiter entropy looks too low (delimiter: '${delim_line}', suffix length: ${#delim_suffix})"
 fi
 
+# --- adversarial-review (integrations-github-action.json#2): a secret
+# VALUE containing $(...) or `...` command substitution must NOT execute if
+# the generated output file is later `source`d by a shell — a real,
+# documented consumption pattern for this exact file (see docs/CI_CD.md's
+# GitLab/CircleCI examples: `set -a && . ./keyorix.env && set +a`).
+# write_output_file used to double-quote such values, which does not
+# suppress $(...)/backtick expansion, so `source`ing the file would have
+# executed the embedded command.
+cp "${fixtures}/mock_keyorix_injection.sh" "${mockbin}/keyorix"
+chmod +x "${mockbin}/keyorix"
+
+injection_canary="${workdir}/injection_canary"
+backtick_canary="${workdir}/backtick_canary"
+out_file_inj="${workdir}/injection.env"
+set +e
+PATH="${mockbin}:${PATH}" \
+  KEYORIX_SERVER="https://example.invalid" \
+  KEYORIX_TOKEN="dummy-token" \
+  INPUT_VERSION="v1.2.3" \
+  MOCK_KEYORIX_PATH="${mockbin}/keyorix" \
+  INJECTION_CANARY="$injection_canary" \
+  BACKTICK_CANARY="$backtick_canary" \
+  INPUT_EXPORT_TO_ENV="false" \
+  INPUT_OUTPUT_FILE="$out_file_inj" \
+  bash "$entrypoint" >"${workdir}/stdout4.log" 2>"${workdir}/stderr4.log"
+rc4=$?
+set -e
+
+if [[ "$rc4" -eq 0 ]] && [[ -f "$out_file_inj" ]]; then
+  ok "#2: entrypoint completed successfully and wrote the injection-payload output file"
+else
+  bad "#2: entrypoint did not complete successfully for the injection case (rc=${rc4}); stderr: $(cat "${workdir}/stderr4.log")"
+fi
+
+# The payloads must be SINGLE-quoted in the output file (the fix), not
+# double-quoted or left unquoted, so $(...)/backticks inside them can never
+# be evaluated by a later `source`.
+if grep -qF "INJECTION_SECRET='\$(touch ${injection_canary})'" "$out_file_inj" \
+  && grep -qF "BACKTICK_SECRET='\`touch ${backtick_canary}\`'" "$out_file_inj"; then
+  ok "#2: command-substitution and backtick payloads are single-quoted (not double-quoted/unquoted) in the output file"
+else
+  bad "#2: output file did not single-quote the injection payloads as expected: $(cat "$out_file_inj")"
+fi
+
+# The actual proof: sourcing the generated file (the documented consumption
+# pattern) must NOT execute either embedded command.
+# shellcheck disable=SC1090
+( set +u; set -a; . "$out_file_inj"; set +a ) || true
+if [[ -f "$injection_canary" || -f "$backtick_canary" ]]; then
+  bad "#2: sourcing the output file executed an embedded \$(...)/backtick command (a canary file was created)"
+else
+  ok "#2: sourcing the output file did NOT execute either embedded \$(...)/backtick command"
+fi
+
+# --- adversarial-review (integrations-github-action.json#3): install_cli's
+# on-PATH-reuse branch checksum-verifies an on-PATH `keyorix` ONCE and must
+# not go on to trust/re-execute that same shared PATH location for a LATER
+# invocation without re-verification. Simulates an attacker with write
+# access to the shared PATH location swapping the binary immediately after
+# the checksum check passes but before the later `secret export` call —
+# the fix must make that later call unaffected (an already-verified private
+# copy), not re-resolve/re-read the now-swapped shared path.
+cp "${fixtures}/mock_keyorix_toctou.sh" "${mockbin}/keyorix"
+chmod +x "${mockbin}/keyorix"
+
+toctou_canary="${workdir}/toctou_canary"
+toctou_github_env="${workdir}/toctou_github_env"
+
+set +e
+PATH="${mockbin}:${PATH}" \
+  KEYORIX_SERVER="https://example.invalid" \
+  KEYORIX_TOKEN="dummy-token" \
+  INPUT_VERSION="v1.2.3" \
+  MOCK_KEYORIX_PATH="${mockbin}/keyorix" \
+  TOCTOU_CANARY="$toctou_canary" \
+  INPUT_EXPORT_TO_ENV="true" \
+  GITHUB_ENV="$toctou_github_env" \
+  bash "$entrypoint" >"${workdir}/stdout5.log" 2>"${workdir}/stderr5.log"
+rc5=$?
+set -e
+
+if [[ "$rc5" -eq 0 ]] && [[ ! -f "$toctou_canary" ]]; then
+  ok "#3: TOCTOU — the later \$KEYORIX_BIN invocation was unaffected by swapping the on-PATH binary after the checksum check (a private copy was used)"
+else
+  bad "#3: TOCTOU — swapping the on-PATH binary after the checksum check affected a later \$KEYORIX_BIN invocation (rc=${rc5}, canary present: $([[ -f "$toctou_canary" ]] && echo yes || echo no)); stdout: $(cat "${workdir}/stdout5.log"); stderr: $(cat "${workdir}/stderr5.log")"
+fi
+
+if grep -q "copied to a private location" "${workdir}/stdout5.log"; then
+  ok "#3: install_cli logged that the verified on-PATH binary was copied to a private location before reuse"
+else
+  bad "#3: install_cli did not log the private-copy behavior the TOCTOU fix relies on; stdout: $(cat "${workdir}/stdout5.log")"
+fi
+
 echo
 echo "${pass} passed, ${fail} failed"
 [[ "$fail" -eq 0 ]]

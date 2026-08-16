@@ -449,10 +449,13 @@ func (v *Validator) validateNumeric(field reflect.Value) error {
 var identifierRegex = regexp.MustCompile(`^[a-zA-Z0-9 _-]+$`)
 
 // validateIdentifier validates that a string is a safe resource identifier: letters,
-// digits, spaces, `-`, `_` only (see identifierRegex). Opt-in via `validate:"identifier"`
-// for Name-like fields that should be restricted to a safe, unambiguous charset — not
-// applied globally, since some fields (e.g. free-form secret names) intentionally allow
-// a broader charset.
+// digits, spaces, `-`, `_` only (see identifierRegex), with no leading/trailing or
+// repeated internal whitespace and not entirely whitespace — a value can satisfy the
+// charset alone (e.g. "   ", "  my project  ", "my  project") and still be visually
+// confusable with, or indistinguishable from, another value. Opt-in via
+// `validate:"identifier"` for Name-like fields that should be restricted to a safe,
+// unambiguous charset — not applied globally, since some fields (e.g. free-form secret
+// names) intentionally allow a broader charset.
 func (v *Validator) validateIdentifier(field reflect.Value) error {
 	resolved, ok := derefForRule(field)
 	if !ok {
@@ -470,6 +473,16 @@ func (v *Validator) validateIdentifier(field reflect.Value) error {
 
 	if !identifierRegex.MatchString(str) {
 		return fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil))
+	}
+
+	// Reject whitespace variants that stay inside the [a-zA-Z0-9 _-] charset
+	// but defeat the anti-spoofing intent above: a name that's entirely
+	// whitespace (renders blank), has leading/trailing whitespace, or has
+	// repeated internal whitespace (e.g. "Support Team" vs "Support  Team")
+	// can be visually indistinguishable from — or confusable with — another
+	// name despite passing the charset check.
+	if trimmed := strings.TrimSpace(str); trimmed == "" || trimmed != str || strings.Contains(trimmed, "  ") {
+		return fmt.Errorf("%s: must not be all whitespace or have leading, trailing, or repeated internal whitespace", i18n.T("ErrorValidation", nil))
 	}
 
 	return nil

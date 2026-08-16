@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -47,6 +48,13 @@ func validateIdentifier(name string) error {
 	if !identifierRegex.MatchString(name) {
 		return fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil))
 	}
+	// Mirrors server/validation/validator.go's validateIdentifier: reject
+	// whitespace variants that pass the charset check above but defeat the
+	// anti-spoofing intent — all-whitespace, leading/trailing whitespace, or
+	// repeated internal whitespace (e.g. "Support Team" vs "Support  Team").
+	if trimmed := strings.TrimSpace(name); trimmed == "" || trimmed != name || strings.Contains(trimmed, "  ") {
+		return fmt.Errorf("%s: must not be all whitespace or have leading, trailing, or repeated internal whitespace", i18n.T("ErrorValidation", nil))
+	}
 	return nil
 }
 
@@ -63,7 +71,11 @@ func validateProjectName(name string) error {
 	return validateIdentifier(name)
 }
 
-// validateEnvironmentName bounds Environment.Name (#383), mirroring validateProjectName.
+// validateEnvironmentName bounds Environment.Name (#383), mirroring
+// validateProjectName. Also enforces the anti-homograph identifier charset
+// (G38) — see validateIdentifier. Environment names were previously missed by
+// G38's project-name fix, so a confusable/spoofed environment name could
+// still slip past every transport (gRPC, CLI embedded mode), not just HTTP.
 func validateEnvironmentName(name string) error {
 	if name == "" {
 		return fmt.Errorf("%s: environment name is required", i18n.T("ErrorValidation", nil))
@@ -71,7 +83,7 @@ func validateEnvironmentName(name string) error {
 	if len(name) > maxEnvironmentNameLen {
 		return fmt.Errorf("%s: environment name exceeds %d characters", i18n.T("ErrorValidation", nil), maxEnvironmentNameLen)
 	}
-	return nil
+	return validateIdentifier(name)
 }
 
 // translateProjectNameError surfaces storage.ErrDuplicateProjectName (#385, the

@@ -514,60 +514,149 @@ func TestReconcile_RetargetWipeFailureKeepsOldLastTargetNameAndWarns(t *testing.
 		"a blocked orphan wipe must be visible in the Ready message, not just logged")
 }
 
-// TestReconcile_OrphanWipeFailureSurfacedAlongsideLaterSyncFailure is #G54:
-// before the fix, orphanWipeErr was captured but then silently dropped
-// whenever the SAME reconcile also failed later (buildDesired or
-// applySecret) — fail() had no way to carry it. An operator reading .status
-// after a reconcile that hit BOTH failures would see only the later one,
-// with no indication a stale Secret is still sitting in the cluster under
-// the old target name.
-func TestReconcile_OrphanWipeFailureSurfacedAlongsideLaterSyncFailure(t *testing.T) {
+// TestReconcile_RetargetSyncFailureLeavesOldSecretInPlace is the regression test for the
+// fix to the "delete-then-create" rename bug: a spec.target.name rename used to wipe the
+// Secret materialised under the OLD name UNCONDITIONALLY, before buildDesired/applySecret
+// had confirmed the NEW-named Secret could actually be synced. If that later sync then
+// failed (a bad ref, a revoked token, a transient upstream outage — anything), NEITHER
+// Secret was left in the cluster: the old one was already gone, and the new one never got
+// created — a self-inflicted availability outage for every workload mounting the old
+// name. The fix reorders Reconcile to build-and-apply the NEW Secret FIRST and only wipe
+// the OLD one after that succeeds, so a failed rename now leaves the OLD (still-working)
+// Secret in place instead. This pins that: with the new target's own fetch made to fail,
+// the OLD Secret must survive the failed reconcile untouched, and the NEW Secret must
+// never have been created.
+func TestReconcile_RetargetSyncFailureLeavesOldSecretInPlace(t *testing.T) {
 	ks := ksFixture()
 	fetcher := &fakeFetcher{values: map[string][]byte{
 		"app/production/db-password": []byte("p4ss"),
 		"app/production/api-key":     []byte("k3y"),
 	}}
-	s := testScheme(t)
-	inner := fake.NewClientBuilder().
-		WithScheme(s).
-		WithStatusSubresource(&secretsv1alpha1.KeyorixSecret{}).
-		WithObjects(ks, tokenSecret()).
-		Build()
-	blocked := &deleteBlockingClient{Client: inner, blockDeleteName: "db-creds"}
-	r := &KeyorixSecretReconciler{
-		Client:         blocked,
-		Scheme:         s,
-		AllowedServers: []string{"https://keyorix.internal"},
-		newClient:      func(_, _ string) valueFetcher { return fetcher },
-		hashKey:        []byte("test-fixture-hmac-key"),
-	}
+	r, c := newReconciler(t, fetcher, ks, tokenSecret())
 	_, err := reconcile(t, r)
 	require.NoError(t, err)
 
+	var before corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &before),
+		"precondition: the target Secret exists under the original name")
+
 	var got secretsv1alpha1.KeyorixSecret
-	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
 	require.Equal(t, "db-creds", got.Status.LastTargetName)
 
-	// Retarget AND make the new target's own fetch fail transiently (NOT
-	// ErrSecretGone) — buildDesired hits the default branch in Reconcile,
-	// which used to drop orphanWipeErr entirely.
+	// Retarget AND make the new target's own fetch fail (NOT ErrSecretGone — a plain
+	// transient-style failure), so buildDesired for "db-creds-v2" never succeeds.
 	got.Spec.Target.Name = "db-creds-v2"
-	require.NoError(t, blocked.Update(context.Background(), &got))
+	require.NoError(t, c.Update(context.Background(), &got))
 	fetcher.failRefs = map[string]bool{"app/production/db-password": true}
 
 	_, err = reconcile(t, r)
-	require.Error(t, err, "the transient fetch failure must still fail this reconcile")
+	require.Error(t, err, "the fetch failure must still fail this reconcile")
 
-	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
-	assert.Equal(t, "db-creds", got.Status.LastTargetName,
-		"LastTargetName must stay at the OLD name so the next reconcile retries the orphan wipe")
+	// The OLD Secret must still be present, untouched — this is the availability
+	// guarantee the fix restores: a failed rename must not delete a still-working Secret.
+	var after corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after),
+		"the OLD target Secret must survive a reconcile where the NEW target's sync failed")
+	assert.Equal(t, before.Data, after.Data, "the surviving OLD Secret's data must be untouched")
+
+	// The NEW Secret must never have been created — buildDesired failed before
+	// applySecret ever ran.
+	var newSecret corev1.Secret
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds-v2", Namespace: "app"}, &newSecret)
+	assert.Error(t, err, "the NEW target Secret must not exist when its own sync failed")
+
+	// status.LastTargetName must stay at the OLD name so the next reconcile retries the
+	// whole rename (build the new Secret, then wipe the old one) instead of forgetting.
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	assert.Equal(t, "db-creds", got.Status.LastTargetName)
 	require.Len(t, got.Status.Conditions, 1)
-	cond := got.Status.Conditions[0]
-	assert.Equal(t, metav1.ConditionFalse, cond.Status)
-	assert.Equal(t, "SyncErrorOrphanWipeFailed", cond.Reason)
-	assert.Contains(t, cond.Message, "boom", "the fetch failure that actually failed this reconcile must still be visible")
-	assert.Contains(t, cond.Message, "wiping the Secret orphaned",
-		"the SEPARATE orphan-wipe failure must not be silently dropped just because this reconcile also failed later")
+	assert.Equal(t, metav1.ConditionFalse, got.Status.Conditions[0].Status)
+	assert.Equal(t, "SyncError", got.Status.Conditions[0].Reason)
+}
+
+// TestReconcile_RetargetApplyFailureLeavesOldSecretInPlace is
+// TestReconcile_RetargetSyncFailureLeavesOldSecretInPlace's sibling for the OTHER way the
+// new target's sync can fail after buildDesired succeeds: applySecret itself erroring
+// (e.g. attempting to adopt a pre-existing unmanaged Secret at the new name). The OLD
+// Secret must still survive, exactly as when buildDesired fails.
+func TestReconcile_RetargetApplyFailureLeavesOldSecretInPlace(t *testing.T) {
+	ks := ksFixture()
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	// A pre-existing, unmanaged Secret already sits at the NEW target name — applySecret
+	// refuses to adopt it, so applying the new target fails.
+	foreignNewTarget := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-creds-v2", Namespace: "app"},
+		Data:       map[string][]byte{"OTHER": []byte("do-not-touch")},
+	}
+	r, c := newReconciler(t, fetcher, ks, tokenSecret(), foreignNewTarget)
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var before corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &before),
+		"precondition: the target Secret exists under the original name")
+
+	got := &secretsv1alpha1.KeyorixSecret{}
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, got))
+	got.Spec.Target.Name = "db-creds-v2"
+	require.NoError(t, c.Update(context.Background(), got))
+
+	_, err = reconcile(t, r)
+	require.Error(t, err, "applySecret must refuse to adopt the unmanaged Secret at the new name")
+
+	// The OLD Secret must still be present, untouched.
+	var after corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after),
+		"the OLD target Secret must survive a reconcile where applying the NEW target failed")
+	assert.Equal(t, before.Data, after.Data)
+
+	// The foreign Secret at the new name must be untouched too (still not ours).
+	var foreign corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds-v2", Namespace: "app"}, &foreign))
+	assert.Equal(t, []byte("do-not-touch"), foreign.Data["OTHER"])
+
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, got))
+	assert.Equal(t, "db-creds", got.Status.LastTargetName)
+}
+
+// TestReconcile_RetargetHappyPathEndsWithOnlyNewSecret confirms the fix didn't regress the
+// success path: when the rename's new-named sync succeeds, the result is exactly the same
+// as before — only the NEW-named Secret remains, and the OLD one is cleaned up. (This
+// mirrors TestReconcile_RetargetWipesOrphanedSecretUnderOldName; kept here as an explicit
+// "only one Secret survives" assertion alongside the two failure-path siblings above.)
+func TestReconcile_RetargetHappyPathEndsWithOnlyNewSecret(t *testing.T) {
+	ks := ksFixture()
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ks, tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	got := &secretsv1alpha1.KeyorixSecret{}
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, got))
+	got.Spec.Target.Name = "db-creds-v2"
+	require.NoError(t, c.Update(context.Background(), got))
+
+	_, err = reconcile(t, r)
+	require.NoError(t, err, "the rename's new-named sync succeeds")
+
+	var newSecret corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds-v2", Namespace: "app"}, &newSecret),
+		"the NEW target Secret must exist")
+	assert.Equal(t, []byte("p4ss"), newSecret.Data["DB_PASSWORD"])
+
+	var oldSecret corev1.Secret
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &oldSecret)
+	assert.Error(t, err, "the OLD target Secret must be gone — only the new one survives a successful rename")
+
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, got))
+	assert.Equal(t, "db-creds-v2", got.Status.LastTargetName)
 }
 
 // A target Secret this operator does NOT manage (no ManagedByLabel — applySecret

@@ -73,6 +73,21 @@ type Storage interface {
 	// SQLite (single instance, no cross-process concern) a process mutex is enough.
 	WithAuditCheckpointLock(ctx context.Context, fn func() error) error
 
+	// WithBootstrapLock serializes BootstrapSystem's whole "is this a fresh
+	// install" check through admin/RBAC/project seeding (auth_bootstrap.go) across
+	// every replica of an HA deployment (ADR-039), mirroring WithAuditCheckpointLock's
+	// mutex+advisory-lock design: an in-process mutex alone only serializes callers
+	// within ONE server, so two different replicas racing POST /system/init could
+	// both observe "not yet initialised" before either's commit is visible to the
+	// other and each independently seed a "first admin" (double-seed / partial-RBAC
+	// corruption). This BLOCKS until the lock is free, same as
+	// WithAuditCheckpointLock: a losing replica must actually re-check under the
+	// lock and observe the winner's now-committed state, not silently skip. On
+	// PostgreSQL it holds a session advisory lock (pg_advisory_lock) for the
+	// duration of fn; on SQLite (single instance, no cross-process concern) a
+	// process mutex is enough.
+	WithBootstrapLock(ctx context.Context, fn func() error) error
+
 	// WithTransaction runs fn inside a single storage transaction: every mutation fn
 	// performs through the provided Storage commits together, or rolls back together if
 	// fn returns an error. The backing store decides the semantics — the local (DB)

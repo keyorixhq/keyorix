@@ -84,6 +84,40 @@ func TestCreateProjectWithEnvs_RejectsHomographCharset(t *testing.T) {
 	assert.Contains(t, err.Error(), "letters, digits, spaces, - or _")
 }
 
+// TestCreateEnvironment_RejectsHomographCharset: sibling of
+// TestCreateProject_RejectsHomographCharset — environment names must be
+// refused the same anti-homograph/anti-spoofing charset guard project names
+// get. Before this fix, validateEnvironmentName only checked for empty/
+// over-length names, so a confusable/spoofed environment name (e.g. a
+// Cyrillic "а" standing in for Latin "a") could slip past every transport,
+// not just HTTP.
+func TestCreateEnvironment_RejectsHomographCharset(t *testing.T) {
+	c, _ := newG38TestCore(t)
+	ctx := context.Background()
+
+	p, err := c.CreateProject(ctx, "legit-project", "")
+	require.NoError(t, err)
+
+	for _, name := range []string{
+		"аdmin",    // Cyrillic "а" (U+0430) homograph of Latin "a"
+		"env™",     // trademark symbol
+		"a/b",      // path separator
+		"a\u200bb", // zero-width space
+	} {
+		_, err := c.CreateEnvironment(ctx, p.ID, name)
+		require.Errorf(t, err, "name %q should have been rejected", name)
+		assert.Contains(t, err.Error(), "letters, digits, spaces, - or _")
+	}
+
+	// Legitimate names (letters, digits, spaces, hyphen, underscore) are accepted.
+	// (CreateProject auto-seeds "development"/"staging"/"production", so use
+	// names that don't collide with those defaults.)
+	for _, name := range []string{"qa", "staging-2"} {
+		_, err := c.CreateEnvironment(ctx, p.ID, name)
+		require.NoError(t, err)
+	}
+}
+
 // TestCreateEnvironment_RefusesDeadParentProject pins member 3 ("parent
 // project must be live"): CreateEnvironment must refuse to create an
 // environment under a soft-deleted project. Before this fix, only the HTTP

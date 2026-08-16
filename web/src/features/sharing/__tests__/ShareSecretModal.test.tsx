@@ -92,6 +92,21 @@ describe('ShareSecretModal expiry', () => {
         expect(payload.expiresAt).toBeUndefined();
     });
 
+    // Regression test: the modal must forward the id of the user actually
+    // selected from the dropdown (captured at selection time), not just the
+    // username string, so useShareSecret can pin the share to that exact
+    // account instead of re-resolving it by name at submit time.
+    it('forwards the selected recipient id (captured at selection time), not just the username', async () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'bob' } });
+        fireEvent.click(await screen.findByText('Bob'));
+        fireEvent.click(screen.getByRole('button', { name: /^Share$/i }));
+
+        await waitFor(() => expect(mockMutate).toHaveBeenCalled());
+        const [payload] = mockMutate.mock.calls[0];
+        expect(payload.recipientId).toBe(7);
+    });
+
     it('passes an ISO expiresAt when a duration preset is chosen', async () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'bob' } });

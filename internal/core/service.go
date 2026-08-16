@@ -90,13 +90,12 @@ type KeyorixCore struct {
 	// (from KEYORIX_BOOTSTRAP_TOKEN, or a random value logged for the operator while the
 	// system is uninitialised); init refuses unless the caller presents a matching token.
 	bootstrapToken string
-	// bootstrapMu serializes BootstrapSystem's whole check-then-create sequence
-	// (permanent marker lookup, live user count, then seeding) through the admin
-	// CreateUser call, so two concurrent first calls — e.g. different usernames,
-	// both already holding the valid bootstrap token (#339) — cannot both observe
-	// "not yet initialised" and each create a "first admin". Zero value is ready to
-	// use. See auth_bootstrap.go.
-	bootstrapMu       sync.Mutex
+	// BootstrapSystem's check-then-create sequence is serialized via
+	// storage.WithBootstrapLock (a process mutex, plus a PostgreSQL advisory lock
+	// across HA replicas — see auth_bootstrap.go and #core-auth-03), not a
+	// KeyorixCore-level mutex: a per-process mutex here would only serialize
+	// callers within ONE replica, same gap #339 originally closed for concurrent
+	// same-process callers only.
 	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)

@@ -25,6 +25,40 @@ func TestClient_FetchValue(t *testing.T) {
 	assert.Equal(t, []byte("p4ss"), v)
 }
 
+// TestClient_FetchValueMissingDataValueErrors pins the fix for finding
+// operator-keyorix.json#0: a 200 response whose body omits data.value entirely (a
+// malformed/unexpected response shape, a partial response, or an upstream API contract
+// change) must return an explicit error, never a silent ("", nil) success that would
+// materialize an empty Kubernetes Secret value in place of a real one.
+func TestClient_FetchValueMissingDataValueErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// No "value" key in data at all -- distinct from an explicit "value":"".
+		_, _ = w.Write([]byte(`{"data":{"secret":{"Name":"db"}}}`))
+	}))
+	defer srv.Close()
+
+	v, err := New(srv.URL, "tok").FetchValue(context.Background(), "app/production/db")
+	require.Error(t, err, "a 200 response missing data.value must not silently succeed")
+	assert.Nil(t, v)
+	assert.Contains(t, err.Error(), "missing data.value")
+}
+
+// TestClient_FetchValueExplicitEmptyValueSucceeds pins the other half of the same fix:
+// a response that explicitly sets data.value to "" is a deliberate, well-formed answer
+// (the wire contract doesn't forbid it, even though today's server-side validation never
+// produces one in practice) and must be returned as a real empty value, not treated as
+// the same failure as an outright missing field.
+func TestClient_FetchValueExplicitEmptyValueSucceeds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"secret":{"Name":"db"},"value":""}}`))
+	}))
+	defer srv.Close()
+
+	v, err := New(srv.URL, "tok").FetchValue(context.Background(), "app/production/db")
+	require.NoError(t, err)
+	assert.Equal(t, []byte(""), v)
+}
+
 func TestClient_FetchValueErrors(t *testing.T) {
 	cases := map[int]string{
 		http.StatusUnauthorized:        "not authorized",
