@@ -34,20 +34,31 @@ cleanup_ntfy_curl_cfg() {
 }
 trap cleanup_ntfy_curl_cfg EXIT
 
-efficacy="$(python3 -c "import json; print(json.load(open('$SUMMARY_JSON')).get('test_efficacy_pct'))")"
-total="$(python3 -c "import json; print(json.load(open('$SUMMARY_JSON')).get('total_mutants'))")"
-lived_count="$(python3 -c "import json; print(len(json.load(open('$SUMMARY_JSON')).get('lived', [])))")"
-not_covered="$(python3 -c "import json; print(json.load(open('$SUMMARY_JSON')).get('counts', {}).get('NOT COVERED', 0))")"
+efficacy="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("test_efficacy_pct"))' "$SUMMARY_JSON")"
+total="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("total_mutants"))' "$SUMMARY_JSON")"
+lived_count="$(python3 -c 'import json, sys; print(len(json.load(open(sys.argv[1])).get("lived", [])))' "$SUMMARY_JSON")"
+not_covered="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("counts", {}).get("NOT COVERED", 0))' "$SUMMARY_JSON")"
 
 regressed=false
 regression_body=""
 if [[ -n "$PREV_SUMMARY_JSON" && -f "$PREV_SUMMARY_JSON" ]]; then
-  prev_efficacy="$(python3 -c "import json; e = json.load(open('$PREV_SUMMARY_JSON')).get('test_efficacy_pct'); print(e if e is not None else -1)")"
-  if python3 -c "
+  prev_efficacy="$(python3 -c 'import json, sys; e = json.load(open(sys.argv[1])).get("test_efficacy_pct"); print(e if e is not None else -1)' "$PREV_SUMMARY_JSON")"
+  # Values are passed as argv rather than interpolated into the Python
+  # source string, so a value containing a quote/backslash can't break out
+  # of a string literal and get read as Python code.
+  if python3 -c '
 import sys
-eff, prev, thresh = $efficacy, $prev_efficacy, $MUTATION_EFFICACY_DROP_THRESHOLD
-sys.exit(0 if (prev >= 0 and eff is not None and prev - eff >= thresh) else 1)
-"; then
+
+
+def parse_num(s):
+    return None if s == "None" else float(s)
+
+
+eff = parse_num(sys.argv[1])
+prev = parse_num(sys.argv[2])
+thresh = parse_num(sys.argv[3])
+sys.exit(0 if (prev is not None and prev >= 0 and eff is not None and prev - eff >= thresh) else 1)
+' "$efficacy" "$prev_efficacy" "$MUTATION_EFFICACY_DROP_THRESHOLD"; then
     regressed=true
     regression_body="$(python3 - "$SUMMARY_JSON" "$PREV_SUMMARY_JSON" <<'PYEOF'
 import json, sys
