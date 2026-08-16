@@ -69,6 +69,20 @@ const (
 	minRSABits = 2048
 )
 
+// maxRSAPublicExponent bounds the RSA public exponent accepted from a JWKS.
+// Verification cost (modular exponentiation) grows with the bit length of the
+// exponent, same as it does with the modulus — parseJWK previously only
+// checked that e was a positive int64 (i.e. anything up to ~63 bits), so a
+// compromised/MITM'd issuer could pair an in-bounds [minRSABits,maxRSABits]
+// modulus with a needlessly huge exponent and make every verification against
+// that cached key several times more expensive than a normal e=65537 key —
+// the same sustained-DoS shape maxRSABits guards against, just via the other
+// operand. 2^32 comfortably exceeds every exponent used in real-world
+// deployments (3, 17, and 65537 are effectively universal; even unusual
+// configurations don't approach this) while remaining far below the ~63-bit
+// ceiling the int64 conversion otherwise allows.
+const maxRSAPublicExponent = 1 << 32
+
 // jwksStaleGrace bounds how far PAST the TTL a cached key set may still be served
 // as a fallback when a JWKS refetch fails transiently. Without a bound, a key the
 // issuer rotated out — e.g. because its private key was compromised — would keep
@@ -341,6 +355,9 @@ func parseJWK(k jwk) (interface{}, error) { // NOSONAR -- cognitive complexity 1
 		if !e.IsInt64() || e.Int64() <= 0 {
 			return nil, fmt.Errorf("rsa e out of range")
 		}
+		if e.Int64() > maxRSAPublicExponent {
+			return nil, fmt.Errorf("rsa exponent %d exceeds allowed maximum %d", e.Int64(), int64(maxRSAPublicExponent))
+		}
 		return &rsa.PublicKey{N: n, E: int(e.Int64())}, nil
 	case "EC":
 		var curve elliptic.Curve
@@ -361,6 +378,20 @@ func parseJWK(k jwk) (interface{}, error) { // NOSONAR -- cognitive complexity 1
 		y, err := b64uBigInt(k.Y)
 		if err != nil {
 			return nil, err
+		}
+		// Explicit, independent bound-check on the raw coordinates, mirroring the
+		// RSA modulus/exponent checks above: this file's own defense-in-depth
+		// guarantee shouldn't rely solely on the underlying crypto/ecdsa (or
+		// nistec) verification path rejecting an oversized or off-curve point —
+		// that's an implementation detail of the Go toolchain in use, not a
+		// contract parseJWK controls. maxJWKSBytes bounds the whole JWKS response
+		// but not an individual coordinate within it.
+		fieldBits := curve.Params().BitSize
+		if x.BitLen() > fieldBits || y.BitLen() > fieldBits {
+			return nil, fmt.Errorf("ec coordinate size exceeds curve %q field size (%d bits)", k.Crv, fieldBits)
+		}
+		if !curve.IsOnCurve(x, y) {
+			return nil, fmt.Errorf("ec point is not on curve %q", k.Crv)
 		}
 		return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
 	default:
