@@ -478,7 +478,7 @@ func TestParseJWK_RejectsOffCurveECPoint(t *testing.T) {
 	require.NoError(t, err)
 	ecKey, isEC := parsed.(*ecdsa.PublicKey)
 	require.True(t, isEC)
-	assert.Equal(t, 0, priv.X.Cmp(ecKey.X))
+	assert.True(t, priv.PublicKey.Equal(ecKey))
 }
 
 // TestParseJWK_RejectsOversizedECCoordinate pins CORE-OIDC-05: a coordinate

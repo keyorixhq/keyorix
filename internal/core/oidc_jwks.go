@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
@@ -361,13 +362,17 @@ func parseJWK(k jwk) (interface{}, error) { // NOSONAR -- cognitive complexity 1
 		return &rsa.PublicKey{N: n, E: int(e.Int64())}, nil
 	case "EC":
 		var curve elliptic.Curve
+		var ecdhCurve ecdh.Curve
 		switch k.Crv {
 		case "P-256":
 			curve = elliptic.P256()
+			ecdhCurve = ecdh.P256()
 		case "P-384":
 			curve = elliptic.P384()
+			ecdhCurve = ecdh.P384()
 		case "P-521":
 			curve = elliptic.P521()
+			ecdhCurve = ecdh.P521()
 		default:
 			return nil, fmt.Errorf("unsupported EC curve %q", k.Crv)
 		}
@@ -390,7 +395,15 @@ func parseJWK(k jwk) (interface{}, error) { // NOSONAR -- cognitive complexity 1
 		if x.BitLen() > fieldBits || y.BitLen() > fieldBits {
 			return nil, fmt.Errorf("ec coordinate size exceeds curve %q field size (%d bits)", k.Crv, fieldBits)
 		}
-		if !curve.IsOnCurve(x, y) {
+		// elliptic.Curve.IsOnCurve is deprecated (low-level, unsafe API) in favor
+		// of crypto/ecdh, which performs the on-curve check as part of decoding
+		// an uncompressed point via NewPublicKey — same guarantee, supported API.
+		byteLen := (fieldBits + 7) / 8
+		point := make([]byte, 1+2*byteLen)
+		point[0] = 0x04
+		x.FillBytes(point[1 : 1+byteLen])
+		y.FillBytes(point[1+byteLen : 1+2*byteLen])
+		if _, err := ecdhCurve.NewPublicKey(point); err != nil {
 			return nil, fmt.Errorf("ec point is not on curve %q", k.Crv)
 		}
 		return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
