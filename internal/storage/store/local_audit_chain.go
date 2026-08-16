@@ -13,6 +13,7 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"strconv"
 	"time"
@@ -34,15 +35,53 @@ const auditAdvisoryLockKey = 0x4B455941_55444954 // "KEYAUDIT"
 const auditChainVerifyBatch = 1000
 
 // computeAuditEntryHash hashes an event's semantically meaningful fields plus
-// prevHash, in a fixed order with null separators (so field boundaries are
-// unambiguous). The DB-assigned id is excluded — it is unknown before insert and
-// chain linkage already pins position. event_time is encoded as Unix
-// microseconds to round-trip identically on Postgres (µs precision) and SQLite.
+// prevHash, in a fixed order, each field preceded by its own big-endian
+// uint64 byte length ("length-prefixed" / TLV-style encoding). The DB-assigned
+// id is excluded — it is unknown before insert and chain linkage already pins
+// position. event_time is encoded as Unix microseconds to round-trip
+// identically on Postgres (µs precision) and SQLite.
+//
+// Length-prefixing (not a delimiter byte) is required for the encoding to be
+// injective: several of these fields are free-form strings that can
+// legitimately (or, via IngestAuditEventProxy's raw passthrough on
+// SQLite-backed deployments — Postgres TEXT columns reject embedded NUL
+// outright, so this was only ever live there) contain ANY byte value,
+// including a delimiter byte. A single NUL-separated write() (the prior
+// scheme) is then non-injective: "a\x00" + "bc" and "a" + "\x00bc" concatenate
+// to the identical byte stream and therefore hash identically, even though
+// the field values differ — defeating the tamper-evidence guarantee this hash
+// chain exists to provide. A length prefix carried out-of-band (as a fixed-
+// width binary integer, never as characters that could themselves be part of
+// the content) removes that ambiguity regardless of what bytes a field
+// contains.
+//
+// BREAKING CHANGE / no backward compatibility with pre-fix hashes: this
+// encoding is NOT the same byte stream the old NUL-delimited scheme produced,
+// even for a field that never contained a NUL byte — so the change is a hash-
+// format break, not a content-preserving refactor. VerifyAuditChain re-derives
+// every row's entry_hash from this same function (see verifyBatchEvents), so
+// on any deployment that already has chained audit_events rows written before
+// this fix, re-verifying those rows post-upgrade WILL recompute a different
+// hash than what is stored and report the chain broken at the first pre-
+// upgrade row — indistinguishable, from VerifyAuditChain's callers' point of
+// view, from real tampering. There is no per-row encoding-version marker in
+// the schema to let verification pick the right algorithm per row (adding one
+// is a real schema migration, out of scope here), and the existing retention
+// re-anchor mechanism (audit_retention_anchor.go) does not help either — it
+// only substitutes the genesis-prevHash requirement for the anchored row, it
+// does not skip re-deriving that row's own entry_hash. Coordinating a fix for
+// deployments with pre-existing audit history (e.g. a one-time migration that
+// re-derives entry_hash/prev_hash for every existing row under this new
+// encoding, in ascending id order, before the upgrade takes live traffic) is
+// left to the integrating release process; this change intentionally does not
+// attempt that migration itself, per this change's own review discussion.
 func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 	h := sha256.New()
+	var lenBuf [8]byte
 	write := func(s string) {
+		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(s)))
+		h.Write(lenBuf[:])
 		h.Write([]byte(s))
-		h.Write([]byte{0})
 	}
 	uptr := func(p *uint) string {
 		if p == nil {

@@ -276,3 +276,53 @@ func TestComputeAuditEntryHash_Deterministic(t *testing.T) {
 		computeAuditEntryHash(e, "different-prev"),
 		"prev_hash is bound into the entry hash")
 }
+
+// TestComputeAuditEntryHash_FieldBoundaryCollisionRejected is the regression
+// test for the NUL-delimiter injectivity bug (findings-store/store-audit.json#1).
+//
+// IPAddress and Description are adjacent in computeAuditEntryHash's write
+// order. Under the OLD scheme (each field followed by a single 0x00
+// separator, no length prefix), these two field-value pairs concatenate to
+// the byte-identical stream even though the field values themselves differ:
+//
+//	e1: IPAddress="1.2.3.4\x00evil", Description="normal"
+//	    -> "1.2.3.4" 0x00 "evil" 0x00 "normal" 0x00
+//	e2: IPAddress="1.2.3.4",         Description="evil\x00normal"
+//	    -> "1.2.3.4" 0x00 "evil" 0x00 "normal" 0x00   (same bytes!)
+//
+// e2's Description simply contains the 0x00 delimiter byte itself plus the
+// bytes that used to be e1's next field content — the delimiter byte inside a
+// field's own value is indistinguishable from a real field boundary. A
+// SQLite-backed deployment accepts an embedded NUL in a TEXT column (unlike
+// Postgres), and IngestAuditEventProxy passes a caller-supplied
+// models.AuditEvent straight to LogAuditEvent without the control-character
+// stripping the normal emitAudit path applies — so a caller reaching that
+// proxy can supply exactly this kind of value.
+//
+// The length-prefixed encoding must NOT collide here: the byte length of each
+// field is carried out-of-band, so no field content — NUL or otherwise — can
+// be mistaken for a length prefix or shift a boundary.
+func TestComputeAuditEntryHash_FieldBoundaryCollisionRejected(t *testing.T) {
+	tr := true
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	base := models.AuditEvent{
+		EventType: "secret.read", Success: &tr, EventTime: at, ActorType: "user",
+	}
+
+	e1 := base
+	e1.IPAddress = "1.2.3.4\x00evil"
+	e1.Description = "normal"
+
+	e2 := base
+	e2.IPAddress = "1.2.3.4"
+	e2.Description = "evil\x00normal"
+
+	require.NotEqual(t, e1.IPAddress, e2.IPAddress, "sanity: the two events carry different IPAddress values")
+	require.NotEqual(t, e1.Description, e2.Description, "sanity: the two events carry different Description values")
+
+	h1 := computeAuditEntryHash(&e1, auditGenesisHash)
+	h2 := computeAuditEntryHash(&e2, auditGenesisHash)
+	assert.NotEqual(t, h1, h2,
+		"logically different field values must never hash to the same entry_hash, regardless of embedded delimiter-like bytes")
+}
