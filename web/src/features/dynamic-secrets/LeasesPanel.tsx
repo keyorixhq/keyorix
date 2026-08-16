@@ -127,11 +127,7 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                             CountActiveLeases/ListExpiredActiveLeases treating revoke_failed as
                             active) — surface why it failed so the operator isn't left guessing. */}
                         {l.status === 'revoke_failed' && l.revokeError && (
-                            <span
-                                className="truncate"
-                                style={{ color: 'var(--error)' }}
-                                title={l.revokeError}
-                            >
+                            <span className="truncate" style={{ color: 'var(--error)' }} title={l.revokeError}>
                                 {l.revokeError}
                             </span>
                         )}
@@ -203,7 +199,10 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                                                 message: `Revoked ${revoked} of ${revoked + failed} lease(s) — ${failed} failed. Check the lease list below and retry the failed one(s).`,
                                             });
                                         } else {
-                                            setRevokeAllNotice({ type: 'success', message: `Revoked ${revoked} lease(s).` });
+                                            setRevokeAllNotice({
+                                                type: 'success',
+                                                message: `Revoked ${revoked} lease(s).`,
+                                            });
                                         }
                                     },
                                     onError: (err) => surface(err, 'Failed to revoke leases.'),
