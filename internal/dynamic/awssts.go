@@ -63,11 +63,15 @@ func (e *AWSSTSEngine) SupportsNativeExpiry() bool { return true } // AWS enforc
 func (e *AWSSTSEngine) IsEphemeralBackend() bool   { return true }
 
 type awsSTSConfig struct {
-	RoleARN          string `json:"role_arn"`
-	Region           string `json:"region,omitempty"`
-	ExternalID       string `json:"external_id,omitempty"`
-	DurationSeconds  int32  `json:"duration_seconds,omitempty"`
-	AllowedAccountID string `json:"allowed_account_id,omitempty"` // when set, RoleARN must belong to this AWS account ID
+	RoleARN         string `json:"role_arn"`
+	Region          string `json:"region,omitempty"`
+	ExternalID      string `json:"external_id,omitempty"`
+	DurationSeconds int32  `json:"duration_seconds,omitempty"`
+	// AllowedAccountID, when non-empty, pins RoleARN to this AWS account ID
+	// (DYN-003) — any role_arn whose embedded account ID doesn't match is
+	// refused. If empty, account-ID pinning is not configured and any
+	// syntactically-valid role_arn is accepted (no restriction).
+	AllowedAccountID string `json:"allowed_account_id,omitempty"`
 }
 
 func (e *AWSSTSEngine) client(ctx context.Context, region string) (stsRoleAssumer, error) {
@@ -89,19 +93,17 @@ func validateAWSSTSCfg(cfg awsSTSConfig) error {
 	if strings.TrimSpace(cfg.RoleARN) == "" {
 		return fmt.Errorf("aws-sts: role_arn is required")
 	}
-	// Always enforce account-ID pinning: derive from the ARN when not set explicitly
-	// so a config without allowed_account_id still rejects cross-account role ARNs
-	// that may be injected through a config update (DYN-003).
-	if cfg.AllowedAccountID == "" {
-		derived := arnAccountID(cfg.RoleARN)
-		if derived == "" {
-			return fmt.Errorf("aws-sts: role_arn %q does not contain a recognisable AWS account ID; set allowed_account_id explicitly", cfg.RoleARN)
+	// Account-ID pinning (DYN-003) is opt-in: only enforced when the operator
+	// explicitly sets allowed_account_id. Deriving the "expected" account ID
+	// from role_arn itself — the same value being validated — would make this
+	// a tautology that can never fail, so an unset allowed_account_id simply
+	// skips the check (no restriction), matching this package's other opt-in
+	// allow-list fields (e.g. AllowedNamespaces in kubernetes.go).
+	if cfg.AllowedAccountID != "" {
+		if got := arnAccountID(cfg.RoleARN); got != cfg.AllowedAccountID {
+			return fmt.Errorf("aws-sts: role ARN account ID %q does not match allowed_account_id %q",
+				got, cfg.AllowedAccountID)
 		}
-		cfg.AllowedAccountID = derived
-	}
-	if arnAccountID(cfg.RoleARN) != cfg.AllowedAccountID {
-		return fmt.Errorf("aws-sts: role ARN account ID %q does not match allowed_account_id %q",
-			arnAccountID(cfg.RoleARN), cfg.AllowedAccountID)
 	}
 	return nil
 }
