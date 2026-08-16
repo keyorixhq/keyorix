@@ -79,6 +79,14 @@ func runAuthEncryptionStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	return authStatusWithConfig(cfg)
+}
+
+// authStatusWithConfig is the testable core of runAuthEncryptionStatus: no flag
+// parsing, no config.Load — callers pass an explicit cfg, matching the
+// *WithConfig convention the DEK-focused commands in encryption.go already use
+// (rotateWithConfig, validateWithConfig, ...).
+func authStatusWithConfig(cfg *config.Config) error {
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -88,6 +96,14 @@ func runAuthEncryptionStatus(cmd *cobra.Command, args []string) error {
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
+	// #292/G62: take the same cross-process shared DEK lock the sibling DEK
+	// commands (status/validate/fix-perms/upgrade-aad) already require, so this
+	// fails fast instead of racing a concurrent migrate-provider/rotate.
+	if err := authEnc.AcquireSharedKeyLock(); err != nil {
+		authEnc.Shutdown()
+		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+	}
+	defer authEnc.Shutdown()
 	status := authEnc.GetAuthEncryptionStatus()
 
 	fmt.Println("🔐 Authentication Encryption Status")
@@ -117,6 +133,12 @@ func runEnableAuthEncryption(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	return enableAuthEncryptionWithConfig(cfg, force)
+}
+
+// enableAuthEncryptionWithConfig is the testable core of runEnableAuthEncryption:
+// no flag parsing, no config.Load — callers pass an explicit cfg and force bool.
+func enableAuthEncryptionWithConfig(cfg *config.Config, force bool) error {
 	if !cfg.Storage.Encryption.Enabled && !force {
 		return fmt.Errorf("encryption is disabled in configuration. Enable it in config or use --force flag")
 	}
@@ -134,6 +156,14 @@ func runEnableAuthEncryption(cmd *cobra.Command, args []string) error {
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
+	// #292/G62: take the same cross-process shared DEK lock the sibling DEK
+	// commands (status/validate/fix-perms/upgrade-aad) already require, so this
+	// fails fast instead of racing a concurrent migrate-provider/rotate.
+	if err := authEnc.AcquireSharedKeyLock(); err != nil {
+		authEnc.Shutdown()
+		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+	}
+	defer authEnc.Shutdown()
 	fmt.Println("✅ Authentication encryption enabled successfully")
 	fmt.Println("🔑 New authentication tokens will be encrypted")
 	fmt.Println("💡 Use 'migrate' command to encrypt existing plaintext data")

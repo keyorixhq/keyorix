@@ -86,6 +86,13 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 	if err != nil {
 		return nil, fmt.Errorf("failed to recreate encryption service after rotation: %w", err)
 	}
+	// The old encryption service wraps the now-superseded DEK (a distinct copy from
+	// s.keyManager.GetDEK(), not the km.currentDEK slice the key manager itself
+	// already wipes) and is about to be discarded — wipe its DEK copy from memory
+	// here, like every other DEK-bearing variable in this package.
+	if s.encryptionService != nil {
+		wipeBytes(s.encryptionService.dek)
+	}
 	s.encryptionService = encSvc
 	return sweepResult, nil
 }
@@ -208,11 +215,23 @@ func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
 // file is modified. The server must be stopped (exclusive key lock must not
 // be held by another process) before running this command.
 func (s *Service) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
 	if !s.initialized {
+		s.mu.RUnlock()
 		return fmt.Errorf("encryption service not initialized")
 	}
+	s.mu.RUnlock()
+
+	// Self-enforce the same exclusive server-vs-CLI lock RotateDEKWithSweep and
+	// RewrapDEKWithProvider already take internally, rather than relying solely on
+	// the CLI caller (rotate-kek) to acquire it first, as defense in depth.
+	// Idempotent — a no-op if this Service (or its caller) already holds it.
+	if err := s.AcquireExclusiveKeyLock(); err != nil {
+		return fmt.Errorf("refusing to rotate KEK: %w — stop the running server before rotating", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.keyManager.RotateKEKPassphrase(oldPassphrase, newPassphrase)
 }
 
@@ -224,11 +243,24 @@ func (s *Service) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error
 // then verify the new provider unwraps the DEK before discarding the previous
 // wrapped-DEK backup.
 func (s *Service) RewrapDEKWithProvider(newProvider crypto.KeyProvider) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
 	if !s.initialized {
+		s.mu.RUnlock()
 		return fmt.Errorf("encryption service not initialized")
 	}
+	s.mu.RUnlock()
+
+	// Refuse to re-wrap against a live server (#92, mirroring RotateDEKWithSweep):
+	// without this, a concurrent `migrate-provider` run and a live server (or a
+	// concurrent rotation) could race on the same dek.key.pending → dek.key path.
+	// AcquireExclusiveKeyLock is released by the deferred Shutdown() the CLI
+	// already calls after this function returns.
+	if err := s.AcquireExclusiveKeyLock(); err != nil {
+		return fmt.Errorf("refusing to re-wrap DEK: %w — stop the running server before migrating the KEK provider", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.keyManager.RewrapDEK(newProvider)
 }
 
@@ -318,6 +350,13 @@ func (s *Service) Shutdown() {
 	defer s.mu.Unlock()
 	if s.keyManager != nil {
 		s.keyManager.Wipe()
+	}
+	// s.keyManager.Wipe() only zeroes km.currentDEK — s.encryptionService.dek is a
+	// separate copy (made via s.keyManager.GetDEK() in Initialize/RotateDEKWithSweep)
+	// and was never wiped, unlike every other DEK-bearing variable in this package.
+	if s.encryptionService != nil {
+		wipeBytes(s.encryptionService.dek)
+		s.encryptionService = nil
 	}
 	releaseKeyLock(s.serverLock)
 	s.serverLock = nil

@@ -22,6 +22,12 @@ func runValidateAuthEncryption(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	return validateAuthEncryptionWithConfig(cfg, verbose)
+}
+
+// validateAuthEncryptionWithConfig is the testable core of runValidateAuthEncryption:
+// no flag parsing, no config.Load — callers pass an explicit cfg and verbose bool.
+func validateAuthEncryptionWithConfig(cfg *config.Config, verbose bool) error {
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -31,6 +37,14 @@ func runValidateAuthEncryption(cmd *cobra.Command, args []string) error {
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
+	// #292/G62: take the same cross-process shared DEK lock the sibling DEK
+	// commands (status/validate/fix-perms/upgrade-aad) already require, so this
+	// fails fast instead of racing a concurrent migrate-provider/rotate.
+	if err := authEnc.AcquireSharedKeyLock(); err != nil {
+		authEnc.Shutdown()
+		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+	}
+	defer authEnc.Shutdown()
 
 	fmt.Println("🔍 Validating authentication encryption...")
 

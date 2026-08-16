@@ -20,6 +20,12 @@ func runMigrateAuthData(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	return migrateAuthDataWithConfig(cfg, dryRun)
+}
+
+// migrateAuthDataWithConfig is the testable core of runMigrateAuthData: no flag
+// parsing, no config.Load — callers pass an explicit cfg and dryRun bool.
+func migrateAuthDataWithConfig(cfg *config.Config, dryRun bool) error {
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -29,6 +35,15 @@ func runMigrateAuthData(cmd *cobra.Command, args []string) error {
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
+	// #292/G62: take the same cross-process shared DEK lock the sibling DEK
+	// commands (status/validate/fix-perms/upgrade-aad) already require — migrate
+	// writes under the current DEK without rotating it, exactly like upgrade-aad,
+	// so this fails fast instead of racing a concurrent migrate-provider/rotate.
+	if err := authEnc.AcquireSharedKeyLock(); err != nil {
+		authEnc.Shutdown()
+		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+	}
+	defer authEnc.Shutdown()
 
 	if dryRun {
 		fmt.Println("🔍 DRY RUN: Analyzing authentication data for migration...")

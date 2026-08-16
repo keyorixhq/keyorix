@@ -42,6 +42,31 @@ func (ae *AuthEncryption) Initialize(passphrase string) error {
 	return ae.service.Initialize(passphrase)
 }
 
+// AcquireSharedKeyLock takes the same cross-process shared DEK lock
+// (Service.AcquireSharedKeyLock, #196) the DEK-focused local CLI commands
+// (status/validate/fix-perms/upgrade-aad) already require, for the sibling
+// auth-encryption commands (status/enable/migrate/validate) that read (or, for
+// migrate, write under) the CURRENT DEK without themselves rotating it. Refused
+// while a live server or an in-progress rotation/migrate-provider holds the lock
+// exclusively, so those commands fail fast instead of racing a DEK that's
+// concurrently being replaced. A no-op when encryption is disabled, matching
+// Initialize's own no-op in that case (there is no DEK to guard).
+func (ae *AuthEncryption) AcquireSharedKeyLock() error {
+	if !ae.service.IsEnabled() {
+		return nil
+	}
+	return ae.service.AcquireSharedKeyLock()
+}
+
+// Shutdown releases resources held by the underlying encryption Service —
+// wiping the DEK from memory and releasing the key lock if AcquireSharedKeyLock
+// (or Initialize's own exclusive-lock paths, e.g. via RotateAuthEncryption) took
+// one. Safe to call even if encryption is disabled or Initialize was never
+// called.
+func (ae *AuthEncryption) Shutdown() {
+	ae.service.Shutdown()
+}
+
 // GetAuthEncryptionStatus returns the current authentication encryption status.
 func (ae *AuthEncryption) GetAuthEncryptionStatus() map[string]interface{} {
 	status := map[string]interface{}{

@@ -106,14 +106,20 @@ func rotateKEKWithConfig(cfg *config.Config, confirm bool) error {
 		return fmt.Errorf("KEK rotation failed: %w", err)
 	}
 
-	_, eskID, ok := service.EvidenceSignKey()
+	// EvidenceSignKey/AuditCheckpointKey return fresh copies of the raw 32-byte
+	// HMAC key material (KeyManager.GetEvidenceSignKey/GetAuditCheckpointKey) —
+	// only the fingerprint is needed here, so wipe each copy immediately rather
+	// than letting it sit unwiped in memory until the GC gets to it.
+	eskKey, eskID, ok := service.EvidenceSignKey()
 	if !ok {
 		eskID = "(unavailable)"
 	}
-	_, ackID, ok := service.AuditCheckpointKey()
+	wipeBytes(eskKey)
+	ackKey, ackID, ok := service.AuditCheckpointKey()
 	if !ok {
 		ackID = "(unavailable)"
 	}
+	wipeBytes(ackKey)
 
 	fmt.Println("KEK rotation complete.")
 	fmt.Println()

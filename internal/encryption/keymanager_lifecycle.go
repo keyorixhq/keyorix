@@ -224,6 +224,10 @@ func (km *KeyManager) Initialize(passphrase string) error {
 	// unchanged (#268).
 	esk, eskID, err := deriveEvidenceSignKey(kek)
 	if err != nil {
+		// dek was already unwrapped above and would otherwise leak, unwiped, on
+		// this error path — matching how RotateKEKPassphrase wipes its own
+		// same-shaped intermediate on the identical derivation-failure branch.
+		wipeBytes(dek)
 		return fmt.Errorf("failed to derive evidence-signing key: %w", err)
 	}
 
@@ -232,6 +236,8 @@ func (km *KeyManager) Initialize(passphrase string) error {
 	// verifiable after one.
 	ack, ackID, err := deriveAuditCheckpointKey(kek)
 	if err != nil {
+		wipeBytes(dek)
+		wipeBytes(esk)
 		return fmt.Errorf("failed to derive audit-checkpoint key: %w", err)
 	}
 

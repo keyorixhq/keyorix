@@ -56,6 +56,10 @@ unrecoverable. Store shares separately and back them up.`,
 		if _, err := cryptorand.Read(kek); err != nil {
 			return fmt.Errorf("generate KEK: %w", err)
 		}
+		// The KEK is genuine, maximally sensitive key material — this command's own
+		// doc comment promises it is "NEVER printed or stored". Wipe it from memory
+		// once split/committed below, rather than leaving it for the GC.
+		defer wipeBytes(kek)
 		shares, err := crypto.SplitKEK(kek, ssShares, ssThreshold)
 		if err != nil {
 			return err

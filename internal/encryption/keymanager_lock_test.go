@@ -15,9 +15,20 @@ package encryption
 // database, and asserts the security property that matters — whichever one
 // "wins" the race, the DEK left on disk once both finish is the one the
 // database was actually re-encrypted under, never a stale, superseded one.
+//
+// G62: RewrapDEKWithProvider now also self-enforces the exclusive,
+// non-blocking Service-level dek.lock RotateDEKWithSweep already took (the
+// #92 server-vs-CLI lock, distinct from this file's #195 KeyManager-level
+// dek.key.lock). Before that fix only rotate took it, so rewrap could run
+// concurrently and rely purely on RewrapDEK's staleness check to detect and
+// abort a lost race after the fact. Now the two are mutually exclusive at the
+// Service layer too: whichever acquires the lock first runs to completion,
+// and the other is refused immediately, before it ever touches the DEK file —
+// so exactly one of the two must succeed, not both racing to the finish line.
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -131,40 +142,57 @@ func TestRewrapAndRotate_ConcurrentRace_FinalDEKMatchesDB(t *testing.T) {
 	}()
 	wg.Wait()
 
-	// Rotate must always succeed — a concurrent rewrap attempt must never be
-	// able to block or corrupt it.
-	if rotateErr != nil {
-		t.Fatalf("RotateDEKWithSweep failed under concurrent rewrap: %v", rotateErr)
+	// G62: RewrapDEKWithProvider now self-enforces the same exclusive
+	// Service-level dek.lock RotateDEKWithSweep takes, so the two can no
+	// longer both proceed concurrently — whichever acquires it first runs to
+	// completion, and the other is refused immediately with a DEK-lock error,
+	// before touching the DEK file at all. Exactly one of the two must
+	// succeed.
+	if (rotateErr == nil) == (rewrapErr == nil) {
+		t.Fatalf("expected exactly one of RotateDEKWithSweep/RewrapDEKWithProvider to succeed under the Service-level exclusive lock; rotateErr=%v rewrapErr=%v", rotateErr, rewrapErr)
 	}
-	// Rewrap either wins cleanly, or correctly detects that the DEK it holds
-	// went stale under it and aborts rather than clobbering the rotated one.
-	// Both are safe outcomes; the invariant checked below is what matters.
-	t.Logf("concurrent RewrapDEKWithProvider result: %v", rewrapErr)
 
-	// Fetch the row rotate's sweep re-encrypted and confirm svcA (which now
-	// holds the freshly-rotated DEK) can still decrypt it — the DB and svcA's
-	// in-memory DEK must agree.
 	var v models.SecretVersion
 	if err := db.First(&v, versionID).Error; err != nil {
 		t.Fatalf("failed to fetch SecretVersion: %v", err)
 	}
 	aad := SecretAAD(nodeID, projectID, 1)
-	plaintext, err := svcA.DecryptSecretWithAAD(v.EncryptedValue, aad)
+
+	var winner *Service
+	if rotateErr == nil {
+		// Rotate won: the DB was fully re-encrypted under the new DEK —
+		// confirm svcA (which now holds it) can still decrypt the row, and
+		// that the loser was refused via the DEK lock, not some other error.
+		winner = svcA
+		if !strings.Contains(rewrapErr.Error(), "DEK lock") {
+			t.Errorf("expected the refused rewrap to report the DEK lock, got: %v", rewrapErr)
+		}
+	} else {
+		// Rewrap won instead: the DEK VALUE is unchanged (only its wrapping
+		// changed), so the pre-existing row must still decrypt under svcB
+		// (now holding that same DEK, wrapped under newProvider).
+		winner = svcB
+		if !strings.Contains(rotateErr.Error(), "DEK lock") {
+			t.Errorf("expected the refused rotate to report the DEK lock, got: %v", rotateErr)
+		}
+	}
+	plaintext, err := winner.DecryptSecretWithAAD(v.EncryptedValue, aad)
 	if err != nil {
-		t.Fatalf("decrypt post-rotation row with svcA: %v", err)
+		t.Fatalf("decrypt row with the winning service: %v", err)
 	}
 	if string(plaintext) != "top-secret-race-value" {
-		t.Fatalf("unexpected plaintext after rotation: %q", plaintext)
+		t.Fatalf("unexpected plaintext after the race: %q", plaintext)
 	}
 
 	// Now resolve whichever DEK is ACTUALLY on disk right now, independently
 	// of which candidate provider wrapped it, and confirm it is byte-
-	// identical to svcA's post-rotation in-memory DEK — i.e. the file left
-	// behind is never the stale pre-rotation value.
+	// identical to the winner's own in-memory DEK — i.e. the file left behind
+	// always matches the operation that actually ran, never a stale or
+	// corrupted value from the race.
 	finalDEK := resolveFinalDEK(t, dir, cfg, "test-passphrase", newProvider)
-	postRotateDEK := captureCurrentDEK(t, svcA)
-	if string(finalDEK) != string(postRotateDEK) {
-		t.Fatalf("on-disk DEK after the race does not match the DEK the database was re-encrypted under — ciphertext orphaned")
+	winnerDEK := captureCurrentDEK(t, winner)
+	if string(finalDEK) != string(winnerDEK) {
+		t.Fatalf("on-disk DEK after the race does not match the winning operation's in-memory DEK — ciphertext orphaned")
 	}
 }
 
