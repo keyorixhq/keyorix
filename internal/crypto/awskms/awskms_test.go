@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/aws/aws-sdk-go-v2/service/kms/types"
 )
 
 // fakeKMS models AWS KMS EncryptionContext semantics: a blob decrypts only with the
@@ -34,6 +35,47 @@ func (fakeKMS) Decrypt(_ context.Context, in *kms.DecryptInput, _ ...func(*kms.O
 		return nil, errors.New("InvalidCiphertextException: encryption context mismatch")
 	}
 	return &kms.DecryptOutput{Plaintext: b.Plaintext}, nil
+}
+
+// DescribeKey treats whatever KeyId it's asked about as already canonical, echoing
+// it back as the "resolved" ARN — fine for fakeKMS's usual role (tests build a
+// *client directly via newTestClient, bypassing resolution entirely). Tests that
+// specifically exercise alias-to-ARN resolution use fakeKMSWithDescribe instead,
+// which resolves to a DIFFERENT value than the input so the two are distinguishable.
+func (fakeKMS) DescribeKey(_ context.Context, in *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+	arn := *in.KeyId
+	return &kms.DescribeKeyOutput{KeyMetadata: &types.KeyMetadata{KeyId: in.KeyId, Arn: &arn}}, nil
+}
+
+// fakeKMSWithDescribe extends fakeKMS with a DescribeKey that resolves ANY input
+// KeyId to a fixed canonical ARN distinct from the input — modeling a real alias
+// resolution — and records the KeyId used on the most recent Encrypt/Decrypt call
+// so tests can assert calls pin the resolved ARN, not the original alias/ID passed
+// to New.
+type fakeKMSWithDescribe struct {
+	fakeKMS
+	resolvedARN      string
+	describeErr      error
+	lastEncryptKeyID string
+	lastDecryptKeyID string
+}
+
+func (f *fakeKMSWithDescribe) DescribeKey(_ context.Context, _ *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+	if f.describeErr != nil {
+		return nil, f.describeErr
+	}
+	arn := f.resolvedARN
+	return &kms.DescribeKeyOutput{KeyMetadata: &types.KeyMetadata{Arn: &arn}}, nil
+}
+
+func (f *fakeKMSWithDescribe) Encrypt(ctx context.Context, in *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error) {
+	f.lastEncryptKeyID = *in.KeyId
+	return f.fakeKMS.Encrypt(ctx, in, optFns...)
+}
+
+func (f *fakeKMSWithDescribe) Decrypt(ctx context.Context, in *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+	f.lastDecryptKeyID = *in.KeyId
+	return f.fakeKMS.Decrypt(ctx, in, optFns...)
 }
 
 func contextEqual(a, b map[string]string) bool {

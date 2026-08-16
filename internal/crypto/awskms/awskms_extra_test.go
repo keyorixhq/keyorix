@@ -20,6 +20,10 @@ func (fakeKMSEncryptError) Decrypt(_ context.Context, _ *kms.DecryptInput, _ ...
 	return nil, errors.New("KMSAccessDeniedException: not authorized")
 }
 
+func (fakeKMSEncryptError) DescribeKey(_ context.Context, _ *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+	return nil, errors.New("KMSAccessDeniedException: not authorized")
+}
+
 // TestAWSKMS_EncryptError verifies Encrypt propagates KMS errors.
 func TestAWSKMS_EncryptError(t *testing.T) {
 	c := &client{kms: fakeKMSEncryptError{}, keyID: "test-key"}
@@ -44,6 +48,10 @@ func (fakeKMSInternalError) Encrypt(_ context.Context, _ *kms.EncryptInput, _ ..
 }
 
 func (fakeKMSInternalError) Decrypt(_ context.Context, _ *kms.DecryptInput, _ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+	return nil, errors.New("AccessDeniedException: user arn:aws:iam::" + fakeKMSMarker + " is not authorized")
+}
+
+func (fakeKMSInternalError) DescribeKey(_ context.Context, _ *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
 	return nil, errors.New("AccessDeniedException: user arn:aws:iam::" + fakeKMSMarker + " is not authorized")
 }
 
@@ -123,7 +131,7 @@ func TestAWSKMS_DecryptError(t *testing.T) {
 // (New itself cannot be tested without real AWS credentials, but the empty-key
 // guard fires before any network call.)
 func TestAWSKMS_New_EmptyKeyID(t *testing.T) {
-	_, err := New(context.Background(), "", nil, false)
+	_, err := New(context.Background(), "", nil, false, nil)
 	if err == nil {
 		t.Fatal("expected an error for an empty key ID")
 	}
