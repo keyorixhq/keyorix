@@ -38,6 +38,22 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	service := core.NewKeyorixCore(st)
 
+	// cli-connect-007 (info, deliberate — not a bug): ListSecretShares is the
+	// non-authorization-checked variant (see its doc comment and
+	// ListSecretSharesWithPermissionCheck, both in
+	// internal/core/sharing_query.go) — unlike HTTP/gRPC, which gate the caller
+	// to the secret's owner, this local CLI path does not. That's intentional:
+	// embedded/local mode has no authenticated-user concept (share/remote.go:7-9),
+	// so there is no caller identity to check against, and this command can
+	// enumerate the share list for any --secret-id. The residual risk is if
+	// embedded mode is ever pointed at a genuinely shared/multi-tenant backend
+	// (the scenario common.go's InitializeCoreService warning already
+	// contemplates for the cli-connect-004/#G67 ResolveActorID fix) — then this
+	// becomes an unrestricted enumeration surface. If that deployment shape ever
+	// becomes real, route this through common.ResolveActorID() and
+	// ListSecretSharesWithPermissionCheck instead, consistent with how
+	// group_shares.go's ListGroupShares call was hardened in #G10.
+	//
 	// Call service
 	ctx := context.Background()
 	shares, err := service.ListSecretShares(ctx, listSecretID)
