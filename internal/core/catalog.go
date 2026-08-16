@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -26,8 +27,32 @@ const (
 	maxEnvironmentNameLen = 200
 )
 
+// identifierRegex is the anti-homograph/anti-spoofing charset guard (G38):
+// letters, digits, spaces, hyphens, and underscores only — no zero-width
+// characters, no mixed-script confusables, no control characters. Ported
+// verbatim from server/validation/validator.go's identical `identifier` rule.
+// Before this fix, this charset check was enforced ONLY by the HTTP JSON
+// decoder's `validate:"identifier"` struct tag on the request body — the
+// gRPC service layer and CLI embedded-mode path, which construct a Project
+// directly without ever routing through that HTTP-specific validator, could
+// create a project whose name silently smuggled a confusable/spoofed
+// character sequence past every UI and audit log that assumes the HTTP path
+// already sanitized it. Duplicated here (not imported from server/validation)
+// to keep internal/core independent of the server/* packages that depend on
+// it, matching this file's existing validateProjectName/validateEnvironmentName
+// convention.
+var identifierRegex = regexp.MustCompile(`^[a-zA-Z0-9 _-]+$`)
+
+func validateIdentifier(name string) error {
+	if !identifierRegex.MatchString(name) {
+		return fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil))
+	}
+	return nil
+}
+
 // validateProjectName bounds Project.Name (#383): required, and capped so an
-// unbounded text column can't be used to bloat storage/index size.
+// unbounded text column can't be used to bloat storage/index size. Also
+// enforces the anti-homograph identifier charset (G38) — see validateIdentifier.
 func validateProjectName(name string) error {
 	if name == "" {
 		return fmt.Errorf("%s: project name is required", i18n.T("ErrorValidation", nil))
@@ -35,7 +60,7 @@ func validateProjectName(name string) error {
 	if len(name) > maxProjectNameLen {
 		return fmt.Errorf("%s: project name exceeds %d characters", i18n.T("ErrorValidation", nil), maxProjectNameLen)
 	}
-	return nil
+	return validateIdentifier(name)
 }
 
 // validateEnvironmentName bounds Environment.Name (#383), mirroring validateProjectName.
@@ -332,9 +357,22 @@ func (c *KeyorixCore) GetEnvironment(ctx context.Context, id uint) (*models.Envi
 // CreateProjectWithEnvs's fan-out create; callers (the HTTP
 // POST /projects/{id}/environments handler, the `keyorix project env create`
 // CLI) previously wrote straight to storage, bypassing any name-length guard.
+//
+// G38: also confirms projectID names a LIVE (non-soft-deleted) project before
+// creating anything under it. The HTTP handler's own scope middleware resolves
+// projectID from the URL without verifying the project still exists, so
+// without this check here, a caller who still held write authority on a
+// since-soft-deleted project (RBAC grants aren't retroactively revoked by a
+// project delete) could re-establish a usable environment/scope under it —
+// storage.GetProject excludes soft-deleted projects, so this fails closed the
+// same way the HTTP handler's own defense-in-depth check already does, but
+// now for every transport (gRPC, CLI embedded mode) instead of only HTTP.
 func (c *KeyorixCore) CreateEnvironment(ctx context.Context, projectID uint, name string) (*models.Environment, error) {
 	if err := validateEnvironmentName(name); err != nil {
 		return nil, err
+	}
+	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("%s: project not found", i18n.T("ErrorNotFound", nil))
 	}
 	return c.storage.CreateEnvironment(ctx, &models.Environment{ProjectID: projectID, Name: name})
 }
