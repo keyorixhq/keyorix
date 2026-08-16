@@ -1346,6 +1346,15 @@ type Storage interface {
 	// DeleteMFAStepUpGrantsFor removes all step-up grants for userID (used on
 	// session revocation or security-incident response).
 	DeleteMFAStepUpGrantsFor(ctx context.Context, userID uint) error
+	// PruneMFAStepUpGrants removes MFAStepUpGrant rows whose ExpiresAt predates
+	// `before`, returning how many were removed (store-mfa-002: each successful
+	// VerifyMFAStepUp creates a new grant row, kept briefly past its own expiry
+	// for audit purposes — see internal/storage/store/local_mfa_stepup_grant.go
+	// — but with no bound this grows without limit). The sole intended caller is
+	// internal/core.KeyorixCore.PruneMFAStepUpGrants, which computes and clamps
+	// the cutoff; callers should not invoke this directly with an
+	// externally-influenced `before`.
+	PruneMFAStepUpGrants(ctx context.Context, before time.Time) (int64, error)
 
 	// WebAuthn / passkeys (ADR-036).
 	CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error

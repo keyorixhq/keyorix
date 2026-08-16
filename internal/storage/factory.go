@@ -1499,6 +1499,17 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		&models.AnomalyConfigRecord{},
 		&models.StatsSnapshot{},
 		&models.DeploymentStatsSnapshot{},
+		// MFAStepUpGrant (store-mfa-002): was never migrated anywhere — a fresh
+		// install's CreateMFAStepUpGrant/GetActiveMFAStepUpGrant/
+		// PruneMFAStepUpGrants calls (VerifyMFAStepUp, the classification gate,
+		// and the mfa_stepup_grant_prune maintenance sweep) would all fail with
+		// "no such table" / "relation does not exist" against a real database.
+		// A plain new, simple table with no legacy columns to conditionally
+		// backfill, so it belongs in this generic bulk list rather than one of
+		// the guarded/existence-checked blocks above (those exist for models
+		// that need to distinguish "already existed" from "freshly created" to
+		// decide whether to add a follow-up column).
+		&models.MFAStepUpGrant{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			return fmt.Errorf("failed to migrate %T: %w", m, err)

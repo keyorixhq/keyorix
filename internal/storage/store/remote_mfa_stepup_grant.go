@@ -111,3 +111,31 @@ func (rs *RemoteStorage) DeleteMFAStepUpGrantsFor(ctx context.Context, userID ui
 	}
 	return nil
 }
+
+// mfaStepUpGrantPruneWire is the request body for PruneMFAStepUpGrants.
+type mfaStepUpGrantPruneWire struct {
+	Before time.Time `json:"before"`
+}
+
+// PruneMFAStepUpGrants removes expired MFA step-up grant rows via
+// POST /api/v1/system/mfa/stepup-grants/prune (store-mfa-002 maintenance
+// sweep). The upstream handler re-derives/clamps the effective cutoff itself
+// (mirroring PruneLoginAttemptsProxy's CORE-RATE-003 defense) rather than
+// trusting `before` verbatim, so this passthrough is safe even though `before`
+// crosses the wire.
+func (rs *RemoteStorage) PruneMFAStepUpGrants(ctx context.Context, before time.Time) (int64, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/stepup-grants/prune", mfaStepUpGrantPruneWire{Before: before})
+	if err != nil {
+		return 0, fmt.Errorf("failed to prune MFA step-up grants: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("prune MFA step-up grants failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Deleted, nil
+}

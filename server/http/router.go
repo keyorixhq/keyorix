@@ -1892,10 +1892,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// MFAStepUpGrant proxy — lets a RemoteStorage spoke node persist and
 			// query step-up grants against this server's real storage backend, so
 			// the classification gate works correctly under storage.type: remote.
-			// Static sub-path ("stepup-grants/active") is registered before the
-			// {userId} wildcard to avoid route shadowing.
+			// Static sub-paths ("stepup-grants/active", "stepup-grants/prune") are
+			// registered before the {userId} wildcard to avoid route shadowing.
+			// stepup-grants/prune (store-mfa-002) backs the periodic maintenance
+			// sweep (mfa_stepup_grant_prune scheduler, server/main.go) that bounds
+			// retention of expired grant rows.
 			r.Post("/mfa/stepup-grants", authHandler.CreateMFAStepUpGrantProxy)
 			r.Post("/mfa/stepup-grants/active", authHandler.GetActiveMFAStepUpGrantProxy)
+			r.Post("/mfa/stepup-grants/prune", authHandler.PruneMFAStepUpGrantsProxy)
 			r.Delete("/mfa/stepup-grants/{userId}", authHandler.DeleteMFAStepUpGrantsForProxy)
 
 			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
