@@ -56,11 +56,24 @@ func NewHTTPClient(config *Config) (*HTTPClient, error) {
 	// Create HTTP client with timeout. Refuse a redirect to a different host so a
 	// compromised/misbehaving server can't bounce the token-bearing request elsewhere
 	// (Go already strips the Authorization header cross-host, but don't follow at all).
+	// Also refuse a redirect that downgrades from https to a non-https scheme on the
+	// same host: validateBaseURL (config.go) requires https for every non-loopback
+	// base_url, so a same-host https->http redirect (e.g. from a compromised
+	// intermediary/reverse-proxy) would otherwise silently strip TLS and send the
+	// bearer API key, and any request/response body, in cleartext. An initial
+	// request that legitimately starts on http (the loopback-only dev exception in
+	// validateBaseURL) is unaffected -- this only fires once the chain has already
+	// been on https.
 	httpClient := &http.Client{
 		Timeout: config.GetTimeout(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) > 0 && req.URL.Host != via[0].URL.Host {
-				return fmt.Errorf("remote: refusing redirect to a different host %q", req.URL.Host)
+			if len(via) > 0 {
+				if req.URL.Host != via[0].URL.Host {
+					return fmt.Errorf("remote: refusing redirect to a different host %q", req.URL.Host)
+				}
+				if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+					return fmt.Errorf("remote: refusing redirect from https to %q (TLS downgrade)", req.URL.Scheme)
+				}
 			}
 			return nil
 		},

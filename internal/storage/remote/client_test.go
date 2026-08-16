@@ -41,6 +41,84 @@ func TestNewHTTPClient_InvalidConfig(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestHTTPClient_CheckRedirect_RejectsHTTPSDowngrade guards against a
+// same-host redirect that strips TLS (e.g. from a compromised/misbehaving
+// intermediary): if the chain started on https, a redirect to any other
+// scheme on the same host must be rejected, or the bearer API key and any
+// response body would be sent in cleartext. httptest.NewServer/NewTLSServer
+// bind to distinct 127.0.0.1:port host:port pairs, so a real end-to-end
+// redirect can't isolate the scheme check from the pre-existing cross-host
+// check -- this exercises the CheckRedirect closure directly instead, with
+// constructed requests, the same way the cross-host case below does.
+func TestHTTPClient_CheckRedirect_RejectsHTTPSDowngrade(t *testing.T) {
+	config := &Config{
+		BaseURL:        "https://api.example.com",
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  3,
+		TLSVerify:      true,
+	}
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+	require.NotNil(t, client.client.CheckRedirect)
+
+	originalReq, err := http.NewRequest(http.MethodGet, "https://api.example.com/v1/secrets/foo", nil)
+	require.NoError(t, err)
+	downgradedReq, err := http.NewRequest(http.MethodGet, "http://api.example.com/v1/secrets/foo", nil)
+	require.NoError(t, err)
+
+	err = client.client.CheckRedirect(downgradedReq, []*http.Request{originalReq})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "downgrade")
+}
+
+// TestHTTPClient_CheckRedirect_AllowsSameHostSameScheme confirms the fix
+// above didn't break the legitimate case: a same-host, same-scheme redirect
+// (e.g. a path change) must still be followed.
+func TestHTTPClient_CheckRedirect_AllowsSameHostSameScheme(t *testing.T) {
+	config := &Config{
+		BaseURL:        "https://api.example.com",
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  3,
+		TLSVerify:      true,
+	}
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+
+	originalReq, err := http.NewRequest(http.MethodGet, "https://api.example.com/v1/secrets/foo", nil)
+	require.NoError(t, err)
+	redirectedReq, err := http.NewRequest(http.MethodGet, "https://api.example.com/v1/secrets/foo/canonical", nil)
+	require.NoError(t, err)
+
+	err = client.client.CheckRedirect(redirectedReq, []*http.Request{originalReq})
+	assert.NoError(t, err)
+}
+
+// TestHTTPClient_CheckRedirect_RejectsCrossHost documents the pre-existing
+// host-pinning behavior CheckRedirect already had, so a future change can't
+// silently regress it while touching the scheme check above.
+func TestHTTPClient_CheckRedirect_RejectsCrossHost(t *testing.T) {
+	config := &Config{
+		BaseURL:        "https://api.example.com",
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  3,
+		TLSVerify:      true,
+	}
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+
+	originalReq, err := http.NewRequest(http.MethodGet, "https://api.example.com/v1/secrets/foo", nil)
+	require.NoError(t, err)
+	crossHostReq, err := http.NewRequest(http.MethodGet, "https://evil.example.com/v1/secrets/foo", nil)
+	require.NoError(t, err)
+
+	err = client.client.CheckRedirect(crossHostReq, []*http.Request{originalReq})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "different host")
+}
+
 func TestHTTPClient_Get(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
