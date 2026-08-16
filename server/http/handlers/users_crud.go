@@ -786,6 +786,14 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
+	// A global admin must not delete their own account and lock themselves out
+	// of admin access. Mirrors accountStateAction's / RevokeSessions' self-action
+	// guard; core's "last install administrator" check does not fire here since
+	// other admins may still exist.
+	if uint(id) == userCtx.UserID {
+		sendError(w, "BadRequest", "Cannot delete your own account", http.StatusBadRequest, nil)
+		return
+	}
 	if err := h.coreService.DeleteUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting user: %v", err)
 		switch {
