@@ -80,25 +80,38 @@ export const useCreateShare = () => {
 // Lives here so components don't import directly from services/.
 export const searchRecipients = (query: string) => usersApi.search(query);
 
-// Composite mutation: search user by username then create share in one step.
+// Composite mutation: share with the identity already verified in the UI
+// (recipientId, captured when the caller picked a specific user from the
+// autocomplete dropdown), falling back to a fresh username search only when
+// no id was supplied. Resolving by username string at submit time would let
+// a username reassigned/renamed between selection and submit silently
+// redirect the share to a different account than the one the sharer picked.
 export const useShareSecret = (secretId: number) => {
     return useMutation({
         mutationFn: async ({
             username,
+            recipientId,
             permission,
             expiresAt,
         }: {
             username: string;
+            recipientId?: number;
             permission: 'read' | 'write';
             expiresAt?: string;
         }) => {
-            const results = await usersApi.search(username.trim());
-            const match = results.find((r) => r.name.toLowerCase() === username.trim().toLowerCase());
-            if (!match) throw new Error(`User "${username}" not found.`);
+            let recipient: { id: number; type: 'user' | 'group' };
+            if (recipientId != null) {
+                recipient = { id: recipientId, type: 'user' };
+            } else {
+                const results = await usersApi.search(username.trim());
+                const match = results.find((r) => r.name.toLowerCase() === username.trim().toLowerCase());
+                if (!match) throw new Error(`User "${username}" not found.`);
+                recipient = match;
+            }
             return sharingApi.create({
                 secretId,
-                recipientType: match.type,
-                recipientId: match.id,
+                recipientType: recipient.type,
+                recipientId: recipient.id,
                 permission,
                 ...(expiresAt ? { expiresAt } : {}),
             });
