@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -295,4 +296,165 @@ func TestRenderSecretTemplate_RejectsTooManyDistinctReferences(t *testing.T) {
 	var n int64
 	require.NoError(t, db.Model(&models.SecretAccessLog{}).Count(&n).Error)
 	assert.Zero(t, n, "an over-cap template must be rejected before resolving/reading any secret")
+}
+
+// callRecordingStorage wraps a real *store.LocalStorage and records the sequence
+// of GetSecret / GetSecretByName / GetLatestSecretVersion calls made through it,
+// delegating every other method (and the real behavior of these three) to the
+// embedded implementation. Used by
+// TestRenderSecretTemplate_EqualizesResolutionCostShape to assert the SAME SET
+// of storage calls happens whether a reference doesn't exist, exists but is
+// forbidden, or exists and is readable — the timing side-channel closed by
+// equalizeReferenceResolutionCost in secret_render.go.
+type callRecordingStorage struct {
+	*store.LocalStorage
+	mu    sync.Mutex
+	calls []string
+}
+
+func (s *callRecordingStorage) record(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, name)
+}
+
+func (s *callRecordingStorage) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = nil
+}
+
+func (s *callRecordingStorage) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.calls))
+	copy(out, s.calls)
+	return out
+}
+
+func (s *callRecordingStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
+	s.record("GetSecret")
+	return s.LocalStorage.GetSecret(ctx, id)
+}
+
+func (s *callRecordingStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
+	s.record("GetSecretByName")
+	return s.LocalStorage.GetSecretByName(ctx, name, projectID, environmentID)
+}
+
+func (s *callRecordingStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
+	s.record("GetLatestSecretVersion")
+	return s.LocalStorage.GetLatestSecretVersion(ctx, secretID)
+}
+
+// #<timing finding>: RenderSecretTemplate's per-reference resolution must perform
+// the SAME SHAPE of DB lookup work — GetSecretByName, GetSecret, and
+// GetLatestSecretVersion all invoked — whether the reference doesn't exist,
+// exists but is forbidden, or exists and is readable. Before the fix, a
+// nonexistent reference returned after GetSecretByName alone (skipping GetSecret
+// and GetLatestSecretVersion entirely) and a forbidden reference returned after
+// GetSecretByName + GetSecret (skipping GetLatestSecretVersion) — cheaper, and
+// therefore measurably faster, than the readable case. A caller who can submit
+// templates with guessed references and measure response time could use that
+// gap to tell "doesn't exist" apart from "exists but forbidden" apart from
+// "exists and readable", defeating this function's own anti-enumeration design
+// (#181). This is a structural stand-in for a true timing measurement (flaky in
+// a unit test): it asserts the call SET is now uniform, which is what makes the
+// three cases' cost uniform.
+func TestRenderSecretTemplate_EqualizesResolutionCostShape(t *testing.T) {
+	ctx := context.Background()
+	c, _, projectID, _ := newRenderFixture(t)
+
+	realStorage, ok := c.storage.(*store.LocalStorage)
+	require.True(t, ok, "fixture must back RenderSecretTemplate with *store.LocalStorage")
+	spy := &callRecordingStorage{LocalStorage: realStorage}
+	c.storage = spy
+
+	wantCalls := []string{"GetSecretByName", "GetSecret", "GetLatestSecretVersion"}
+
+	spy.reset()
+	_, err := c.RenderSecretTemplate(ctx, "${secret:production/does-not-exist}", projectID, 1, "owner", "10.0.0.1", "ua")
+	require.Error(t, err)
+	notFoundCalls := spy.snapshot()
+
+	spy.reset()
+	// User 2 owns nothing and has no share on db-password, which DOES exist.
+	_, err = c.RenderSecretTemplate(ctx, "${secret:production/db-password}", projectID, 2, "viewer", "10.0.0.1", "ua")
+	require.Error(t, err)
+	forbiddenCalls := spy.snapshot()
+
+	spy.reset()
+	_, err = c.RenderSecretTemplate(ctx, "${secret:production/db-password}", projectID, 1, "owner", "10.0.0.1", "ua")
+	require.NoError(t, err)
+	readableCalls := spy.snapshot()
+
+	cases := map[string][]string{
+		"not-found": notFoundCalls,
+		"forbidden": forbiddenCalls,
+		"readable":  readableCalls,
+	}
+	for label, calls := range cases {
+		got := make(map[string]bool, len(calls))
+		for _, c := range calls {
+			got[c] = true
+		}
+		for _, want := range wantCalls {
+			assert.True(t, got[want], "%s case: expected a %s call among %v", label, want, calls)
+		}
+	}
+}
+
+// #<rollback finding>: a template naming N references where a LATER one fails
+// must not leave the earlier, successfully-resolved-but-ultimately-discarded
+// references "half charged" — no secret.read audit event, no access-log row,
+// and no max-reads budget consumed for any of them, since the overall render
+// produced no output. Extends the documented "fails the whole render, no
+// partial output" contract to RenderSecretTemplate's side effects, not just its
+// return value — otherwise a caller could submit a large template naming many
+// real references plus one deliberately-failing one to burn through a read
+// budget and flood the audit trail with reads that delivered nothing.
+func TestRenderSecretTemplate_NoSideEffectsWhenLaterReferenceFails(t *testing.T) {
+	ctx := context.Background()
+	c, db, projectID, dbSecretID := newRenderFixture(t)
+
+	envs, err := c.storage.ListEnvironmentsByProject(ctx, projectID)
+	require.NoError(t, err)
+	require.Len(t, envs, 1)
+
+	maxReads := 5
+	apiKey, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: "api-key", ProjectID: projectID, EnvironmentID: envs[0].ID, Type: "password",
+		OwnerID: 1, IsSecret: true, MaxReads: &maxReads, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	_, err = c.storage.CreateSecretVersion(ctx, &models.SecretVersion{
+		SecretNodeID: apiKey.ID, VersionNumber: 1, EncryptedValue: []byte("a-p-i"),
+	})
+	require.NoError(t, err)
+
+	// The first two references resolve cleanly; the third names a secret that
+	// doesn't exist, so the whole render fails.
+	tmpl := "${secret:production/db-password}${secret:production/api-key}${secret:production/does-not-exist}"
+	_, err = c.RenderSecretTemplate(ctx, tmpl, projectID, 1, "owner", "10.0.0.1", "ua")
+	require.Error(t, err)
+
+	// Give any (incorrect) stray audit/access-log writes a moment to land before
+	// asserting they never happened.
+	time.Sleep(30 * time.Millisecond)
+
+	var accessLogs int64
+	require.NoError(t, db.Model(&models.SecretAccessLog{}).Count(&accessLogs).Error)
+	assert.Zero(t, accessLogs, "no secret_access_logs row for any reference in a template whose render ultimately failed")
+
+	var auditEvents int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "secret.read").Count(&auditEvents).Error)
+	assert.Zero(t, auditEvents, "no secret.read audit event for any reference in a template whose render ultimately failed")
+
+	reloadedAPIKey, err := c.storage.GetSecret(ctx, apiKey.ID)
+	require.NoError(t, err)
+	assert.Zero(t, reloadedAPIKey.ReadCount, "max-reads budget must not be consumed for a reference in a template whose render ultimately failed")
+
+	reloadedDB, err := c.storage.GetSecret(ctx, dbSecretID)
+	require.NoError(t, err)
+	assert.Zero(t, reloadedDB.ReadCount)
 }
