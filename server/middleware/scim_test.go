@@ -1,11 +1,13 @@
 package middleware
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSCIMToken(t *testing.T) {
@@ -70,4 +72,25 @@ func TestSCIMToken_ThrottlesRepeatedFailures(t *testing.T) {
 	// The next attempt from the same IP must be throttled, not re-evaluated as
 	// just another failed comparison.
 	assert.Equal(t, http.StatusTooManyRequests, call(), "attempt exceeding the failure budget must be throttled")
+}
+
+// G798: scimError previously hand-built its JSON body via fmt.Fprintf with a raw
+// %s substitution for detail, so a detail string containing a `"` would corrupt
+// the response's JSON structure instead of round-tripping as a properly-escaped
+// value. This asserts the response is well-formed JSON with the exact SCIM error
+// shape (RFC 7644 §3.12: schemas array, string status, detail), not just a status
+// code -- proving the fix actually goes through encoding/json now, not just that
+// Fprintf happened to still produce parseable output for today's fixed-string callers.
+func TestSCIMError_ProducesWellFormedJSON(t *testing.T) {
+	w := httptest.NewRecorder()
+	scimError(w, http.StatusUnauthorized, `detail with a "quote" and a backslash \`)
+
+	assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"))
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), "response body must be valid JSON")
+
+	assert.Equal(t, []any{"urn:ietf:params:scim:api:messages:2.0:Error"}, body["schemas"])
+	assert.Equal(t, "401", body["status"])
+	assert.Equal(t, `detail with a "quote" and a backslash \`, body["detail"])
 }
