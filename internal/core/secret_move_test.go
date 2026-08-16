@@ -244,6 +244,74 @@ func TestMoveSecret_ZeroSecretID(t *testing.T) {
 	assert.Contains(t, err.Error(), "required")
 }
 
+// createFolder is a small helper for the descendant-cycle tests below: it
+// creates a folder node (IsSecret=false) in project/env 1, optionally under
+// parentID.
+func createFolder(t *testing.T, c *KeyorixCore, name string, parentID *uint) uint {
+	t.Helper()
+	ctx := context.Background()
+	f, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: name, ProjectID: 1, EnvironmentID: 1,
+		Type: "folder", OwnerID: 1, IsSecret: false, Status: "active",
+		ParentID: parentID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	return f.ID
+}
+
+// TestMoveSecret_RefusesDescendantCycle builds A -> B -> C (A is B's parent,
+// B is C's parent) and asserts that moving A to become a child of its own
+// grandchild C is refused: the direct self-parent guard (*newParentID ==
+// secretID) does not catch this, since A != C — only walking C's ancestor
+// chain (C -> B -> A) reveals that A is being moved under its own descendant.
+func TestMoveSecret_RefusesDescendantCycle(t *testing.T) {
+	c, _, _, _ := newMoveFixture(t)
+	ctx := context.Background()
+
+	a := createFolder(t, c, "A", nil)
+	b := createFolder(t, c, "B", &a)
+	cc := createFolder(t, c, "C", &b)
+
+	_, err := c.MoveSecret(ctx, 1, a, &cc)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "descendant")
+}
+
+// TestMoveSecret_RefusesDescendantCycle_Deeper is the same scenario one level
+// deeper: A -> B -> C -> D, move A under D (A's great-grandchild). Confirms
+// the ancestor walk isn't accidentally limited to a single hop.
+func TestMoveSecret_RefusesDescendantCycle_Deeper(t *testing.T) {
+	c, _, _, _ := newMoveFixture(t)
+	ctx := context.Background()
+
+	a := createFolder(t, c, "A", nil)
+	b := createFolder(t, c, "B", &a)
+	cc := createFolder(t, c, "C", &b)
+	d := createFolder(t, c, "D", &cc)
+
+	_, err := c.MoveSecret(ctx, 1, a, &d)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "descendant")
+}
+
+// TestMoveSecret_AllowsNonDescendantMove is the legitimate counterpart to the
+// two cycle tests above: given the same A -> B -> C chain plus an unrelated
+// folder E, moving C under E (not a descendant of C) must still succeed.
+func TestMoveSecret_AllowsNonDescendantMove(t *testing.T) {
+	c, _, _, _ := newMoveFixture(t)
+	ctx := context.Background()
+
+	a := createFolder(t, c, "A", nil)
+	b := createFolder(t, c, "B", &a)
+	cc := createFolder(t, c, "C", &b)
+	e := createFolder(t, c, "E", nil)
+
+	updated, err := c.MoveSecret(ctx, 1, cc, &e)
+	require.NoError(t, err)
+	require.NotNil(t, updated.ParentID)
+	assert.Equal(t, e, *updated.ParentID)
+}
+
 // TestMoveFolder_ToAnotherFolder moves a folder node into a sibling folder.
 func TestMoveFolder_ToAnotherFolder(t *testing.T) {
 	c, _, folderID, db := newMoveFixture(t)
