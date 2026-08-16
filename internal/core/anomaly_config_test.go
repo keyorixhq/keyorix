@@ -198,6 +198,74 @@ func TestApplyAnomalyConfig_PropagatesBusinessHoursError(t *testing.T) {
 	assert.Equal(t, 0.75, detector.ml.Threshold)
 }
 
+// TestApplyAnomalyConfig_HotloadDoesNotDuplicateAuditOnUnchangedConfig is the
+// findings-core-2/core-anomaly.json#1 regression at the ApplyAnomalyConfig level:
+// server/main.go's scheduler calls ApplyAnomalyConfig on every tick to hot-load the
+// persisted config, and it previously called SetBusinessHours -> the audit write
+// unconditionally, so an unchanged persisted off-hours config produced a fresh
+// anomaly.business_hours_configured audit event every single tick. Calling
+// ApplyAnomalyConfig repeatedly with the SAME persisted config (simulating
+// consecutive scheduler ticks) must only audit once.
+func TestApplyAnomalyConfig_HotloadDoesNotDuplicateAuditOnUnchangedConfig(t *testing.T) {
+	store := new(MockStorage)
+	c := newAnomalyConfigCore(store)
+	ctx := context.Background()
+
+	cfg := &models.AnomalyConfigRecord{
+		OffHoursEnabled:  true,
+		OffHoursTimezone: "UTC",
+		OffHoursStart:    20,
+		OffHoursEnd:      7,
+	}
+	store.On("GetAnomalyConfig", ctx).Return(cfg, nil)
+	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+
+	detector := NewAnomalyDetector(store)
+
+	// Simulate five consecutive scheduler ticks hot-loading the same persisted
+	// config, as server/main.go's runScheduler loop does every scan interval.
+	for i := 0; i < 5; i++ {
+		require.NoError(t, c.ApplyAnomalyConfig(ctx, detector))
+	}
+
+	store.AssertNumberOfCalls(t, "LogAuditEvent", 1)
+}
+
+// TestApplyAnomalyConfig_HotloadAuditsGenuineChange confirms the fix above doesn't
+// just suppress the audit event outright: a real operator change to the persisted
+// off-hours config must still produce a fresh audit event on the next hot-load
+// tick, and that new value must then stop re-auditing on subsequent unchanged ticks.
+func TestApplyAnomalyConfig_HotloadAuditsGenuineChange(t *testing.T) {
+	store := new(MockStorage)
+	c := newAnomalyConfigCore(store)
+	ctx := context.Background()
+
+	cfg := &models.AnomalyConfigRecord{
+		OffHoursEnabled:  true,
+		OffHoursTimezone: "UTC",
+		OffHoursStart:    20,
+		OffHoursEnd:      7,
+	}
+	store.On("GetAnomalyConfig", ctx).Return(cfg, nil)
+	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+
+	detector := NewAnomalyDetector(store)
+
+	require.NoError(t, c.ApplyAnomalyConfig(ctx, detector))
+	require.NoError(t, c.ApplyAnomalyConfig(ctx, detector))
+	store.AssertNumberOfCalls(t, "LogAuditEvent", 1)
+
+	// A genuine operator change to the persisted band...
+	cfg.OffHoursStart = 21
+	require.NoError(t, c.ApplyAnomalyConfig(ctx, detector))
+	store.AssertNumberOfCalls(t, "LogAuditEvent", 2)
+
+	// ...and re-applying that NEW value on subsequent ticks must not duplicate it
+	// again either.
+	require.NoError(t, c.ApplyAnomalyConfig(ctx, detector))
+	store.AssertNumberOfCalls(t, "LogAuditEvent", 2)
+}
+
 func TestApplyAnomalyConfig_PropagatesGetError(t *testing.T) {
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)

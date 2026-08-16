@@ -68,11 +68,19 @@ func (e *RedisExecutor) Rotate(ctx context.Context, ref, newValue string) error 
 	}
 	c, err := e.conn(ctx)
 	if err != nil {
-		return err
+		// conn() can fail with a redis.ParseURL error that echoes the admin DSN —
+		// credentials and all — verbatim (net/url does not redact on a parse
+		// failure). Redact before wrapping so the live admin password never
+		// egresses via the rotation-failure SIEM audit / notification broadcast
+		// (#132, extended to this backend's DSN-echo leak shape).
+		return redactConnError("redis", ref, err)
 	}
 	defer func() { _ = c.Close() }()
 	if err := c.SetUserPassword(ctx, ref, newValue); err != nil {
-		return fmt.Errorf("redis: rotate user %q: %w", ref, err)
+		// Redact before wrapping — see the comment on the conn() error above; kept
+		// consistent here even though SetUserPassword's args are discrete (not
+		// string-concatenated), matching mysql.go's own defense-in-depth precedent.
+		return redactConnError("redis", ref, err)
 	}
 	return nil
 }

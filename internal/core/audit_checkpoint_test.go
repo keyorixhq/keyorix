@@ -205,6 +205,58 @@ func TestAuditCheckpoint_AnchorIsBestEffort(t *testing.T) {
 	assert.Empty(t, row.AnchorToken, "an un-anchored checkpoint is still a valid checkpoint")
 }
 
+// TestAuditCheckpoint_AnchorTrustRootConfigured_NoRoots confirms that anchoring
+// without a configured trust root (SetCheckpointAnchorRoots never called) still
+// records the raw TSA receipt (a legitimate, intentional configuration — see
+// CheckpointNotaryConfig.CACertPath's doc comment) but surfaces
+// AnchorTrustRootConfigured=false on every read, so a caller/auditor can tell a
+// recorded-but-unverifiable anchor apart from one this server actually checked
+// against a root of trust (#baseline/notary-findings.json#1).
+func TestAuditCheckpoint_AnchorTrustRootConfigured_NoRoots(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	fn := &fakeNotary{token: []byte("opaque-tsa-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
+	c.SetCheckpointNotary(fn)
+	// Deliberately no SetCheckpointAnchorRoots call.
+
+	_, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	assert.False(t, c.CheckpointAnchorVerifiable())
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, v.AnchorToken, "the anchor was still recorded")
+	assert.False(t, v.AnchorTrustRootConfigured, "no trust root configured — must not read as verified")
+	assert.True(t, v.Valid, "recording without a trust root must not itself fail the checkpoint")
+}
+
+// TestAuditCheckpoint_AnchorTrustRootConfigured_WithRoots confirms
+// AnchorTrustRootConfigured flips true once a trust root is wired
+// (SetCheckpointAnchorRoots), independent of whether the specific stored token
+// actually verifies against it (checked separately by the tamper-detection path).
+func TestAuditCheckpoint_AnchorTrustRootConfigured_WithRoots(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	fn := &fakeNotary{token: []byte("opaque-tsa-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
+	c.SetCheckpointNotary(fn)
+	c.SetCheckpointAnchorRoots(x509.NewCertPool())
+
+	_, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	assert.True(t, c.CheckpointAnchorVerifiable())
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, v.AnchorToken)
+	assert.True(t, v.AnchorTrustRootConfigured, "a trust root is configured — server can locally re-verify")
+}
+
 func TestVerifyCheckpointAnchor_NoAnchor(t *testing.T) {
 	c, _ := newCheckpointCore(t)
 	at, ok, err := c.VerifyCheckpointAnchor(&models.AuditCheckpoint{ID: 1})

@@ -122,7 +122,7 @@ func TestInitializeEncryption_S22_FileProvider_NoPasswordRequired(t *testing.T) 
 			},
 		},
 	}
-	_, err := initializeEncryption(cfg)
+	_, err := initializeEncryption(cfg, nil)
 	// Must get an error — but NOT "KEYORIX_MASTER_PASSWORD is not set".
 	// Any error from reading/deriving is acceptable; the passphrase guard must be silent.
 	if err == nil {
@@ -152,7 +152,7 @@ func TestInitializeEncryption_S22_EnvProvider_NoPasswordRequired(t *testing.T) {
 			},
 		},
 	}
-	_, err := initializeEncryption(cfg)
+	_, err := initializeEncryption(cfg, nil)
 	// Expect an error from the missing/empty env key, NOT from passphrase guard.
 	if err == nil {
 		t.Fatal("expected an error (empty env var key), got nil")

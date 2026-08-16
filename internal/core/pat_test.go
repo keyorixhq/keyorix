@@ -116,6 +116,8 @@ func TestValidatePATToken(t *testing.T) {
 		past := time.Now().Add(-time.Hour)
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1, Name: "old-ci", ExpiresAt: &past}, nil)
 		// emitPATExpiredNotification is called best-effort before the error is returned.
+		// It dedups against any existing unread notification for this token first.
+		ms.On("ListNotifications", ctx, uint(1), true, 200).Return([]*models.Notification{}, nil)
 		ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{ID: 1}, nil)
 		_, _, _, _, err := c.ValidatePATToken(ctx, raw)
 		require.Error(t, err)

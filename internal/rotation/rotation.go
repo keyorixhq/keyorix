@@ -143,3 +143,30 @@ func redactSQLError(backend, ref string, err error) error {
 	redacted := sqlStringLiteral.ReplaceAllString(err.Error(), "'***'")
 	return fmt.Errorf("%s: rotate %q: %s", backend, ref, redacted)
 }
+
+// connURICredentialPattern matches the userinfo segment of a URI (scheme://user:pass@ or
+// scheme://user@) — the shape the admin credential takes in redis.go's and mongodb.go's
+// dsn field (redis://user:pass@host, mongodb://user:pass@host).
+var connURICredentialPattern = regexp.MustCompile(`://[^/@\s]*@`)
+
+// redactConnError wraps err with a value-free message: the Redis and MongoDB rotation
+// backends (redis.go, mongodb.go) carry their admin credential IN the DSN/URI itself,
+// rather than in a SQL statement — a different leak shape than PostgreSQL/MySQL's
+// (redactSQLError above), so a literal-scrubbing SQL redaction doesn't transfer; this is
+// a URI-shaped equivalent following the same defensive intent.
+//
+// Confirmed empirically (see internal/rotation package tests / #132 follow-up): go-redis's
+// ParseURL parses the DSN with the stdlib net/url package, and on a malformed DSN,
+// net/url's *url.Error stringifies as `parse %q: %s` with the ORIGINAL raw input —
+// credentials and all. net/url only redacts userinfo when a caller explicitly calls
+// URL.Redacted(); a parse failure never does that. Left unwrapped, a config error as
+// mundane as a typo'd port would put the live admin password into the rotation-failure
+// SIEM audit Description and the Slack/webhook broadcast — the same failure mode #132
+// closed for postgres.go/mysql.go (there via a statement echo; here via a DSN echo).
+// MongoDB's connstring parser was checked too and does not echo the raw URI on the
+// malformed-DSN cases exercised, but the same redaction is applied to it for defense in
+// depth and so a future connstring/driver change can't silently reopen this.
+func redactConnError(backend, ref string, err error) error {
+	redacted := connURICredentialPattern.ReplaceAllString(err.Error(), "://***@")
+	return fmt.Errorf("%s: rotate %q: %s", backend, ref, redacted)
+}

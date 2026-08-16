@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 var FilePermsCmd = &cobra.Command{
@@ -30,6 +32,18 @@ type FilePermSpec struct {
 // read/write to a location outside it (a purely lexical filepath.Clean check would miss
 // that). The target file itself may not exist yet (writes), so its longest existing
 // ancestor is resolved and the unresolved tail re-attached.
+//
+// This is a cheap pre-check only, used to fail fast with a clear "access denied" error
+// on an obviously-escaping path (e.g. "../etc/passwd"). It is NOT sufficient on its own
+// as a security boundary: it can only resolve symlinks up to the longest EXISTING
+// ancestor at the moment it runs, so a not-yet-existing intermediate path component
+// (e.g. baseDir/not-yet-created-dir/file) is passed through unresolved, and an attacker
+// racing between this check and the later open could plant that component as a symlink
+// pointing outside baseDir. Every caller that actually opens the file MUST use
+// secureOpenBeneath (below) to perform the open, which closes that gap by walking the
+// path component-by-component with O_NOFOLLOW relative to already-open parent file
+// descriptors — see its doc comment for why that eliminates the TOCTOU window that this
+// function's path-string check alone cannot.
 func isPathInsideBase(baseDir, targetPath string) (bool, error) {
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
@@ -81,11 +95,25 @@ func SafeReadFile(baseDir, filePath string) ([]byte, error) {
 		return nil, fmt.Errorf("access denied: file %q is outside of %q", cleanPath, baseDir)
 	}
 
-	return os.ReadFile(cleanPath)
+	// The actual open happens via secureOpenBeneath, not os.ReadFile(cleanPath): the
+	// isPathInsideBase check above only resolves symlinks up to the longest existing
+	// ancestor, so it cannot see a symlink an attacker plants at a not-yet-existing (or
+	// racily-replaced) intermediate component between this check and the open below.
+	// secureOpenBeneath closes that gap by walking every component with O_NOFOLLOW.
+	f, err := secureOpenBeneath(baseDir, filePath, unix.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(f)
 }
 
 // resolveInside joins and cleans baseDir/path and verifies the result stays
 // inside baseDir, returning the validated absolute-ish clean path.
+//
+// The returned path is for error messages and logging only — callers that open the
+// file MUST do so via secureOpenBeneath, not by re-opening this returned string, for
+// the same TOCTOU reason documented on isPathInsideBase.
 func resolveInside(baseDir, path string) (string, error) {
 	cleanPath := filepath.Clean(filepath.Join(baseDir, path))
 	ok, err := isPathInsideBase(baseDir, cleanPath)
@@ -98,6 +126,95 @@ func resolveInside(baseDir, path string) (string, error) {
 	return cleanPath, nil
 }
 
+// safeRelComponents cleans relPath and splits it into path components, rejecting
+// anything absolute, empty, or containing a ".." component that could escape baseDir.
+// This is a lexical check only — it never touches the filesystem. The actual
+// containment guarantee against symlinks (including ones racily planted at an
+// intermediate component) comes from secureOpenBeneath's per-component O_NOFOLLOW
+// walk below, not from this function.
+func safeRelComponents(relPath string) ([]string, error) {
+	if filepath.IsAbs(relPath) {
+		return nil, fmt.Errorf("access denied: path %q must be relative", relPath)
+	}
+	clean := filepath.Clean(relPath)
+	if clean == "." || clean == "" {
+		return nil, fmt.Errorf("access denied: empty path")
+	}
+	parts := strings.Split(clean, string(os.PathSeparator))
+	for _, p := range parts {
+		if p == ".." || p == "" {
+			return nil, fmt.Errorf("access denied: path %q escapes the base directory", relPath)
+		}
+	}
+	return parts, nil
+}
+
+// secureOpenBeneath opens (and, per flags, creates/truncates) the file at
+// baseDir/relPath, refusing to follow a symlink at ANY path component — not just the
+// final one.
+//
+// It walks relPath component-by-component using openat(2) (via golang.org/x/sys/unix)
+// relative to the file descriptor of the directory opened for the PREVIOUS component,
+// passing O_NOFOLLOW|O_DIRECTORY for every intermediate directory component and
+// O_NOFOLLOW for the final (leaf) component. This closes the TOCTOU gap that a plain
+// "validate path string, then os.OpenFile(path, ...O_NOFOLLOW)" leaves open:
+//
+//   - isPathInsideBase/resolveInside can only resolve symlinks up to the longest
+//     EXISTING ancestor at the moment they run; a not-yet-existing intermediate
+//     directory component is passed through unresolved.
+//   - A plain O_NOFOLLOW on the final os.OpenFile call only protects the FINAL path
+//     component — it does nothing to stop an attacker who, in the window between the
+//     validation and that final open, plants a symlink at an INTERMEDIATE component
+//     (one the containment check never resolved because it didn't exist yet).
+//
+// Once a component has been opened here, every subsequent step operates relative to
+// that already-open file descriptor (openat), never by re-resolving the path string —
+// so a symlink swapped in afterward at any already-traversed component cannot redirect
+// anything: the fd is bound to the inode that was actually opened, not to a path. A
+// symlink at a component not yet traversed is refused outright (ELOOP from O_NOFOLLOW)
+// instead of being followed. This mirrors the O_NOFOLLOW-on-open pattern already used
+// elsewhere in this file (SecureWriteFile, SecureWriteFileSync, FixFilePerms,
+// SecureDeleteFile) and extends it to cover every path component, not just the last.
+//
+// It does not create missing intermediate directories (matching the pre-existing
+// contract of SecureWriteFile/SecureWriteFileSync — callers create parent directories
+// themselves); a missing intermediate component is simply an open error.
+func secureOpenBeneath(baseDir, relPath string, flags int, perm os.FileMode) (*os.File, error) {
+	parts, err := safeRelComponents(relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	dirFd, err := unix.Open(baseDir, unix.O_DIRECTORY|unix.O_RDONLY, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open base directory %q: %w", baseDir, err)
+	}
+
+	for _, component := range parts[:len(parts)-1] {
+		childFd, oerr := unix.Openat(dirFd, component, unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_RDONLY, 0)
+		_ = unix.Close(dirFd)
+		if oerr != nil {
+			if errors.Is(oerr, unix.ELOOP) {
+				return nil, fmt.Errorf("access denied: path component %q of %q is a symlink", component, relPath)
+			}
+			return nil, fmt.Errorf("open path component %q of %q: %w", component, relPath, oerr)
+		}
+		dirFd = childFd
+	}
+
+	leaf := parts[len(parts)-1]
+	fd, oerr := unix.Openat(dirFd, leaf, flags|unix.O_NOFOLLOW, uint32(perm))
+	_ = unix.Close(dirFd)
+	if oerr != nil {
+		if errors.Is(oerr, unix.ELOOP) {
+			return nil, fmt.Errorf("access denied: %q is a symlink", filepath.Join(baseDir, relPath))
+		}
+		return nil, oerr
+	}
+
+	return os.NewFile(uintptr(fd), filepath.Join(baseDir, relPath)), nil
+}
+
 // SecureWriteFile writes data to filepath.Join(baseDir, path), validating
 // that the resolved path remains inside baseDir. The file mode is enforced
 // even if the file pre-existed with a looser mode (O_CREATE|O_TRUNC alone
@@ -106,15 +223,17 @@ func resolveInside(baseDir, path string) (string, error) {
 // SecureWriteFileSync, minus the fsync). Callers writing durability-critical
 // key material should prefer SecureWriteFileSync instead.
 func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error {
-	cleanPath, err := resolveInside(baseDir, path)
-	if err != nil {
+	// resolveInside is a cheap pre-check that fails fast on an obviously-escaping path
+	// (e.g. "../x") with a clear "access denied" error; the actual open — including the
+	// symlink-safety guarantee — is performed by secureOpenBeneath below. See both
+	// functions' doc comments for why the pre-check alone is not sufficient.
+	if _, err := resolveInside(baseDir, path); err != nil {
 		return err
 	}
-	// O_NOFOLLOW refuses to write THROUGH a final-component symlink. The containment
-	// check resolves EXISTING symlinks, but a DANGLING final symlink (its target not yet
-	// existing) slips past it — os.WriteFile would then follow it and create a file
-	// outside baseDir. With O_NOFOLLOW the open fails (ELOOP) instead of following it.
-	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
+	// secureOpenBeneath refuses to traverse OR write THROUGH a symlink at any path
+	// component, not just the final one (see its doc comment for the TOCTOU this
+	// closes that a bare O_NOFOLLOW on the final open would miss).
+	f, err := secureOpenBeneath(baseDir, path, unix.O_WRONLY|unix.O_CREAT|unix.O_TRUNC, perm) // #nosec G304 -- path validated inside baseDir by resolveInside + secureOpenBeneath's per-component O_NOFOLLOW walk
 	if err != nil {
 		return err
 	}
@@ -138,11 +257,13 @@ func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error 
 // ciphertext. Pair it with SyncDir after any rename to make the rename durable
 // too. The file mode is enforced even if the file pre-existed with a looser mode.
 func SecureWriteFileSync(baseDir, path string, data []byte, perm os.FileMode) error {
-	cleanPath, err := resolveInside(baseDir, path)
-	if err != nil {
+	// See SecureWriteFile above: resolveInside is a fast lexical pre-check only; the
+	// actual symlink-safe open (including intermediate path components, not just the
+	// final one) is performed by secureOpenBeneath.
+	if _, err := resolveInside(baseDir, path); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside; O_NOFOLLOW refuses a final-component symlink
+	f, err := secureOpenBeneath(baseDir, path, unix.O_WRONLY|unix.O_CREAT|unix.O_TRUNC, perm) // #nosec G304 -- path validated inside baseDir by resolveInside + secureOpenBeneath's per-component O_NOFOLLOW walk
 	if err != nil {
 		return err
 	}

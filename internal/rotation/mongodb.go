@@ -77,11 +77,19 @@ func (e *MongoExecutor) Rotate(ctx context.Context, ref, newValue string) error 
 	}
 	c, err := e.conn(ctx)
 	if err != nil {
-		return err
+		// conn() wraps mongo.Connect, whose connection-string parsing was checked
+		// and does not echo the raw URI on the malformed-DSN cases exercised, but
+		// is redacted anyway for defense in depth — matching the same treatment
+		// applied to redis.go's confirmed DSN-echo leak and #132's original fix.
+		return redactConnError("mongodb", ref, err)
 	}
 	defer c.Close(ctx)
 	if err := c.UpdateUserPassword(ctx, ref, newValue); err != nil {
-		return fmt.Errorf("mongodb: rotate user %q: %w", ref, err)
+		// Redact before wrapping — see the comment on the conn() error above; kept
+		// consistent here even though UpdateUserPassword's args are typed BSON
+		// values (not string-concatenated), matching mysql.go's own
+		// defense-in-depth precedent.
+		return redactConnError("mongodb", ref, err)
 	}
 	return nil
 }

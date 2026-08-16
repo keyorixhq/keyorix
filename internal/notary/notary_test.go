@@ -83,7 +83,9 @@ func TestRFC3161_AnchorAndVerifyRoundTrip(t *testing.T) {
 	roots.AddCert(cert)
 
 	msg := []byte("v1\x00128\x0099\x00deadbeef\x00v1")
-	rec, err := NewRFC3161(srv.URL, 5*time.Second).Anchor(context.Background(), msg)
+	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+	rec, err := tsa.Anchor(context.Background(), msg)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec.Token)
 	assert.WithinDuration(t, fixedTime, rec.Time, time.Second)
@@ -128,7 +130,9 @@ func TestRFC3161_Anchor_HTTPError(t *testing.T) {
 		http.Error(w, "nope", http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(srv.Close)
-	_, err := NewRFC3161(srv.URL, 5*time.Second).Anchor(context.Background(), []byte("m"))
+	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+	_, err = tsa.Anchor(context.Background(), []byte("m"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 503")
 }
@@ -138,6 +142,8 @@ func TestRFC3161_Anchor_GarbageResponse(t *testing.T) {
 		_, _ = w.Write([]byte("not-a-timestamp-response"))
 	}))
 	t.Cleanup(srv.Close)
-	_, err := NewRFC3161(srv.URL, 5*time.Second).Anchor(context.Background(), []byte("m"))
+	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+	_, err = tsa.Anchor(context.Background(), []byte("m"))
 	require.Error(t, err)
 }

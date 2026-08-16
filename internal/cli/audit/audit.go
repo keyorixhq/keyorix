@@ -119,6 +119,12 @@ type verifyResult struct {
 	AnchorToken    string `json:"anchor_token,omitempty"`
 	AnchoredAt     string `json:"anchored_at,omitempty"`
 	AnchorProvider string `json:"anchor_provider,omitempty"`
+	// AnchorTrustRootConfigured is false when the server has no TSA trust root
+	// (ca_cert_path) configured — AnchorToken above was recorded (a real RFC 3161
+	// receipt exists) but never locally verified against any root of trust. Do not
+	// read a present AnchorToken alone as proof this anchor was cryptographically
+	// confirmed.
+	AnchorTrustRootConfigured bool `json:"anchor_trust_root_configured,omitempty"`
 }
 
 var verifyCmd = &cobra.Command{
@@ -168,6 +174,11 @@ var verifyCmd = &cobra.Command{
 				fmt.Printf("  anchored at:      %s\n", v.AnchoredAt)
 				fmt.Printf("  anchor:           %s\n", v.AnchorProvider)
 				fmt.Printf("  anchor token:     %s\n", v.AnchorToken)
+				if v.AnchorTrustRootConfigured {
+					fmt.Println("  anchor verified:  yes (checked locally against the configured TSA trust root)")
+				} else {
+					fmt.Println("  anchor verified:  NO — no TSA trust root (ca_cert_path) is configured; this token was recorded but never checked against any root of trust")
+				}
 			}
 		}
 
@@ -308,6 +319,9 @@ type checkpointResult struct {
 	// here, since checkpoints are normally written by the background scheduler and
 	// this on-demand write may be the only time an operator sees this response.
 	AnchorToken string `json:"anchor_token"`
+	// AnchorTrustRootConfigured is false when no TSA trust root (ca_cert_path) is
+	// configured — see verifyResult.AnchorTrustRootConfigured for what that means.
+	AnchorTrustRootConfigured bool `json:"anchor_trust_root_configured"`
 }
 
 var checkpointCmd = &cobra.Command{
@@ -341,6 +355,9 @@ verify (broken, or a prior signed checkpoint proves a truncation).`,
 			fmt.Printf("  anchored at:    %s\n", out.AnchoredAt)
 			fmt.Printf("  anchor:         %s\n", out.AnchorProvider)
 			fmt.Printf("  anchor token:   %s\n", out.AnchorToken)
+			if !out.AnchorTrustRootConfigured {
+				fmt.Println("  anchor verified: NO — no TSA trust root (ca_cert_path) is configured; this token was recorded but never checked against any root of trust")
+			}
 		}
 		return nil
 	},

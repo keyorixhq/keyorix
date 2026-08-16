@@ -1862,6 +1862,14 @@ type AuditChainVerification struct {
 	AnchorToken    []byte
 	AnchoredAt     *time.Time
 	AnchorProvider string
+	// AnchorTrustRootConfigured is true when a TSA trust root
+	// (audit.checkpoint_notary.ca_cert_path) is configured, i.e. this server is
+	// actually able to locally re-verify AnchorToken against a root of trust.
+	// Only meaningful when AnchorToken is non-empty. When false, AnchorToken was
+	// still merely RECORDED (a raw TSA receipt was obtained and stored) but this
+	// server has never checked it against any root of trust — callers must not
+	// treat a recorded-but-unverifiable anchor as equivalent to a verified one.
+	AnchorTrustRootConfigured bool
 }
 
 // AuditChainAnchor is an authenticated re-anchor point for VerifyAuditChain's

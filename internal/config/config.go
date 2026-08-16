@@ -644,6 +644,18 @@ type KeyProviderConfig struct {
 	TPMDevice string `yaml:"tpm_device"`
 	// Fallbacks is an ordered list of providers tried when the primary fails.
 	Fallbacks []KeyProviderConfig `yaml:"fallbacks,omitempty"`
+	// AllowWeakerFallback must be explicitly set to allow a Fallbacks chain that
+	// downgrades KEK-sourcing strength — e.g. a hardware/HSM/cloud-KMS-backed
+	// provider (tpm, aws-kms, gcp-kms, azure-kms) falling back to a software-
+	// derivable one (password, file, env, exec) or to shamir. Without it, a
+	// downgrading chain is a hard startup error (crypto.DetectFallbackDowngrade):
+	// silently accepting one would mean a transient failure of the strong primary
+	// (a momentary TPM glitch, a KMS network blip) quietly drops the deployment's
+	// actual security to "whatever a local password/file/env-var can be
+	// leaked/brute-forced", with only a log line marking the moment it happened. A
+	// fallback chain that stays flat or gets stronger (e.g. one KMS region falling
+	// back to another) is unaffected and never needs this flag.
+	AllowWeakerFallback bool `yaml:"allow_weaker_fallback"`
 }
 
 type SecretsConfig struct {
