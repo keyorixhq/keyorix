@@ -42,7 +42,7 @@ func TestValidatePATToken_SuspendRevokesTokenAccess(t *testing.T) {
 	}).Error)
 
 	// Precondition: the PAT validates while the account is active.
-	u, _, _, err := c.ValidatePATToken(ctx, raw)
+	u, _, _, _, err := c.ValidatePATToken(ctx, raw)
 	require.NoError(t, err)
 	require.Equal(t, uint(1), u.ID)
 
@@ -51,7 +51,7 @@ func TestValidatePATToken_SuspendRevokesTokenAccess(t *testing.T) {
 
 	// The PAT must now be rejected — suspension actively revokes the user's PATs (not just
 	// blocking them via account state), so the token is reported revoked.
-	_, _, _, err = c.ValidatePATToken(ctx, raw)
+	_, _, _, _, err = c.ValidatePATToken(ctx, raw)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "revoked")
 

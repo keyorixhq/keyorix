@@ -174,12 +174,21 @@ export const useAuthStore = create<AuthStore>()(
             logout: async () => {
                 set({ isLoading: true });
 
+                // G65: track whether the server-side session invalidation
+                // itself failed, so it can be surfaced below instead of
+                // silently reported as a clean logout. authService.logout()
+                // rethrows on failure (it no longer swallows the error
+                // itself); this is the only place that catches it.
+                let serverLogoutFailed = false;
                 try {
                     await authService.logout();
                 } catch (error) {
+                    serverLogoutFailed = true;
                     console.warn('Logout request failed:', error);
                 } finally {
-                    // Always clear local state regardless of server response
+                    // Always clear local state regardless of server response —
+                    // a failed server-side logout must not trap the user in a
+                    // "logged in" UI state.
                     set({
                         user: null,
                         isAuthenticated: false,
@@ -190,8 +199,15 @@ export const useAuthStore = create<AuthStore>()(
 
                     // Clear stored data
                     clearPersistedAuthData();
-                    // Redirect to login
-                    window.location.href = '/login';
+                    // Redirect to login. This is a hard navigation
+                    // (window.location.href), so no in-memory React/store
+                    // state survives it — a server-side logout failure is
+                    // surfaced via a query param instead, mirroring the
+                    // sso_error pattern LoginPage already reads. The user
+                    // needs to know their session may still be valid
+                    // server-side (e.g. on a shared machine) even though the
+                    // client has cleared its own local state.
+                    window.location.href = serverLogoutFailed ? '/login?logout_error=1' : '/login';
                 }
             },
 
@@ -324,8 +340,23 @@ export const useAuthStore = create<AuthStore>()(
         }),
         {
             name: 'auth-storage',
+            // G65: never write `permissions` (or other authorization-shaping
+            // fields, should this list grow) to localStorage. The persisted
+            // snapshot is purely optimistic pre-paint bookkeeping — merge()
+            // below forces hasCheckedAuth: false on every rehydrate, and
+            // every route guard (ProtectedRoute/AdminRoute) gates its render
+            // on hasCheckedAuth, so a rehydrated user is never actually used
+            // for an authorization decision before checkAuth() re-validates
+            // and repopulates the real permissions into (non-persisted)
+            // in-memory state. Scrubbing it here means there is no sensitive
+            // permission snapshot left on disk to go stale in the first
+            // place — closing the gap for every session-ending path,
+            // including ones no client-side code can react to at all (tab
+            // crash, forced browser close, server-side revocation before the
+            // next request), not just the two functions (logout/checkAuth)
+            // that proactively clear the whole `auth-storage` key today.
             partialize: (state) => ({
-                user: state.user,
+                user: state.user ? { ...state.user, permissions: [] } : state.user,
                 isAuthenticated: state.isAuthenticated,
             }),
             // Prevent synchronous localStorage hydration on store creation.

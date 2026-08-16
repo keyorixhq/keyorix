@@ -22,6 +22,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -60,40 +61,44 @@ func (fakeValidator) ValidateSessionToken(_ context.Context, token string) (*mod
 // ValidatePATToken accepts a single fixed PAT and resolves it to a user, mirroring
 // the shape of ValidateSessionToken so the prefix-routing in validateToken can be
 // exercised. Anything else is rejected.
-func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.User, []string, *core.PATRestriction, error) {
+func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.User, []string, *core.PATRestriction, uint, error) {
 	if token == "kx_pat_validtoken" {
 		return &models.User{
 			ID:       3,
 			Username: "patuser",
 			Email:    "pat@example.com",
-		}, []string{"system_viewer"}, nil, nil
+		}, []string{"system_viewer"}, nil, 0, nil
 	}
 	if token == "kx_pat_scopedtoken" {
 		// A least-privilege token confined to secrets.read in project 5 (ADR-042).
 		return &models.User{ID: 3, Username: "patuser", Email: "pat@example.com"},
 			[]string{"system_viewer"},
 			&core.PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: 5},
+			0,
 			nil
 	}
 	if token == "kx_pat_cidrtoken" {
-		// A token restricted to the 10.0.0.0/8 network.
+		// A token restricted to the 10.0.0.0/8 network. patID is 0 (fake, not a real
+		// storage-backed PAT), so handleAuthRequest's post-check TouchPATLastUsed is a
+		// harmless no-op in tests exercising this fake.
 		return &models.User{ID: 3, Username: "patuser", Email: "pat@example.com"},
 			[]string{"system_viewer"},
 			&core.PATRestriction{AllowedCIDRs: []string{"10.0.0.0/8"}},
+			0,
 			nil
 	}
-	return nil, nil, nil, fmt.Errorf("invalid token")
+	return nil, nil, nil, 0, fmt.Errorf("invalid token")
 }
 
-func (fakeValidator) ValidateMachineToken(_ context.Context, token string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, error) {
+func (fakeValidator) ValidateMachineToken(_ context.Context, token string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, uint, error) {
 	if token == "kx_machine_validtoken" {
 		return &models.MachineIdentity{
 			ID:    9,
 			Name:  "ci-bot",
 			State: "active",
-		}, []string{"project_viewer"}, nil, nil
+		}, []string{"project_viewer"}, nil, 0, nil
 	}
-	return nil, nil, nil, fmt.Errorf("invalid token")
+	return nil, nil, nil, 0, fmt.Errorf("invalid token")
 }
 
 func (fakeValidator) OIDCEnabled() bool { return true }
@@ -371,6 +376,7 @@ func TestRequireRole_DeniesMachinePrincipal(t *testing.T) {
 		&models.MachineIdentity{ID: machineID, Name: "ci-deployer"},
 		[]string{"deployer"}, // GetMachineRoles' unscoped flattening of a project-A-only grant
 		nil,
+		0,
 	)
 	require.NotNil(t, userCtx.MachineIdentityID)
 	require.Equal(t, machineID, *userCtx.MachineIdentityID)
@@ -758,6 +764,70 @@ func TestAuthentication_PATNetworkAllowlist_RefreshesOnCacheHit(t *testing.T) {
 		"a narrowed allowlist must take effect on the very next request, not after the cache TTL")
 	// And the newly-allowed network is now honored, also on a cache hit.
 	assert.Equal(t, http.StatusOK, serve("192.0.2.7:5555"))
+}
+
+// #G60 regression: a CIDR-restricted PAT presented from a disallowed source IP
+// must be rejected WITHOUT stamping last_used_at — the touch must only fire
+// once the network-restriction check has actually passed, not merely because
+// the token itself resolved. This exercises the real core.KeyorixCore (not
+// fakeValidator) as the sessionValidator so ValidatePATToken's real PAT-id
+// plumbing and handleAuthRequest's post-check TouchPATLastUsed both run.
+func TestAuthentication_PATNetworkAllowlist_DeniedRequestDoesNotTouchLastUsed(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	// Role/UserRole are needed by ValidatePATToken's GetUserRoles call on the real
+	// (non-fake) storage path this test exercises.
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PersonalAccessToken{}, &models.Role{}, &models.UserRole{}))
+	require.NoError(t, db.Create(&models.User{ID: 4, Username: "cidruser", Email: "cidr@example.com", IsActive: true}).Error)
+
+	hashOf := func(raw string) string {
+		sum := sha256.Sum256([]byte(raw))
+		return hex.EncodeToString(sum[:])
+	}
+
+	// Two DISTINCT tokens, each used exactly once, so neither request can be
+	// served from the auth cache (a cache HIT deliberately never re-touches
+	// last_used_at at all — see TestAuthentication_PATNetworkAllowlist_RefreshesOnCacheHit
+	// above — which would make the second assertion below vacuously true if
+	// this test instead reused the SAME token for both calls).
+	const deniedRaw = "kx_pat_touchcidr_denied"
+	deniedPAT := &models.PersonalAccessToken{ID: 1, UserID: 4, Name: "ci-denied", TokenHash: hashOf(deniedRaw), AllowedCIDRs: `["10.0.0.0/8"]`}
+	require.NoError(t, db.Create(deniedPAT).Error)
+
+	const allowedRaw = "kx_pat_touchcidr_allowed"
+	allowedPAT := &models.PersonalAccessToken{ID: 2, UserID: 4, Name: "ci-allowed", TokenHash: hashOf(allowedRaw), AllowedCIDRs: `["10.0.0.0/8"]`}
+	require.NoError(t, db.Create(allowedPAT).Error)
+
+	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
+	mw := Authentication(coreService)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	serve := func(raw, remoteAddr string) int {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		req.RemoteAddr = remoteAddr
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// A PAT presented from a disallowed network is rejected...
+	require.Equal(t, http.StatusForbidden, serve(deniedRaw, "203.0.113.9:5555"))
+
+	var reloadedDenied models.PersonalAccessToken
+	require.NoError(t, db.First(&reloadedDenied, 1).Error)
+	assert.Nil(t, reloadedDenied.LastUsedAt, "a request rejected for its source network must not stamp last_used_at")
+
+	// ...but a different token, from an allowed network, succeeds and DOES stamp
+	// it — confirming the assertion above isn't just "never touched at all".
+	require.Equal(t, http.StatusOK, serve(allowedRaw, "10.1.2.3:5555"))
+
+	var reloadedAllowed models.PersonalAccessToken
+	require.NoError(t, db.First(&reloadedAllowed, 2).Error)
+	assert.NotNil(t, reloadedAllowed.LastUsedAt, "a request accepted from an allowed network stamps last_used_at")
 }
 
 // A token revoked WHILE a slow-path validation was in flight must not be resurrected by

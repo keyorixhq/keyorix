@@ -310,3 +310,33 @@ func TestEndImpersonation_RejectsNonImpersonationSession(t *testing.T) {
 		t.Fatal("expected an error for a non-impersonation session")
 	}
 }
+
+// #G60 regression: EndImpersonation must not write the impersonation.end audit
+// event before the session row is actually deleted. This fault-injects a
+// DeleteSession failure and asserts the function (a) surfaces the error and
+// (b) never wrote the misleading "ended" audit event — before the fix, the
+// audit write ran first unconditionally, so a failed delete still left an
+// audit trail claiming the session had ended.
+func TestEndImpersonation_DeleteSessionFails_NoMisleadingAuditEvent(t *testing.T) {
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+
+	started := c.now().Add(-2 * time.Minute)
+	admin := uint(1)
+	store.On("GetSession", ctx, "tok").Return(&models.Session{
+		ID: 99, UserID: 2, ImpersonatedBy: &admin, ImpersonationStartedAt: &started,
+	}, nil)
+	store.On("CountImpersonatedActions", uint(2), uint(1), started).Return(int64(1), nil)
+	store.On("DeleteSession", ctx, uint(99)).Return(fmt.Errorf("db unavailable"))
+
+	err := c.EndImpersonation(ctx, "tok")
+	if err == nil {
+		t.Fatal("expected an error when the session delete fails")
+	}
+	// The impersonation.end event must never have been written: it asserts the
+	// session ended, which is false here — the delete failed and the session is
+	// still live.
+	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+	store.AssertExpectations(t)
+}

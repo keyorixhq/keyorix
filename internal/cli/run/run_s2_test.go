@@ -177,7 +177,7 @@ func TestFetchSecretsRemote_ListSecretsError(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
@@ -197,7 +197,7 @@ func TestRunRun_FullRemoteSuccess(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[]}}`))
@@ -233,7 +233,7 @@ func TestRunRun_CleanEnvWithCommand(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[]}}`))
@@ -302,7 +302,7 @@ func TestRunRun_StderrNotCaptured_TokenWarningPath(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[]}}`))

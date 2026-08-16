@@ -21,50 +21,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestApiClientGet_NilDataEnvelope tests the path where the response envelope
-// has the "data" key absent, which leaves envelope.Data as a nil
-// json.RawMessage and triggers the "empty data" error (run.go line 213-214).
-func TestApiClientGet_NilDataEnvelope(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Valid JSON object but no "data" key → envelope.Data remains nil (zero
-		// json.RawMessage).  Note: `{"data":null}` does NOT produce a nil
-		// RawMessage (it decodes to the 4-byte literal "null"); only a missing
-		// key leaves the field as nil.
-		_, _ = w.Write([]byte(`{"success":true}`))
-	}))
-	defer srv.Close()
-
-	api := &apiClient{
-		endpoint: srv.URL,
-		token:    "tok",
-		http:     srv.Client(),
-	}
-	var out struct{}
-	err := api.get(context.Background(), "/api/v1/projects", &out)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "empty data")
-}
-
-// TestApiClientGet_UnmarshalError tests the path where the data field is valid
-// JSON but cannot be unmarshalled into the target type.
-func TestApiClientGet_UnmarshalError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// data is a JSON string, but out expects an object.
-		_, _ = w.Write([]byte(`{"data":"not-an-object"}`))
-	}))
-	defer srv.Close()
-
-	api := &apiClient{
-		endpoint: srv.URL,
-		token:    "tok",
-		http:     srv.Client(),
-	}
-	var out struct {
-		Projects []struct{ ID uint } `json:"projects"`
-	}
-	err := api.get(context.Background(), "/api/v1/projects", &out)
-	require.Error(t, err)
-}
+// NOTE: apiClient (and its tests TestApiClientGet_NilDataEnvelope /
+// TestApiClientGet_UnmarshalError) was removed under #G71: fetchSecretsRemote now
+// goes through common.RemoteClient instead of a homegrown, bypassing HTTP client.
+// The nil-data-envelope scenario is exercised against the shared implementation by
+// TestRemoteClient_Get_EmptyDataEnvelope in internal/cli/common/common_s3_test.go;
+// the data-present-but-wrong-type unmarshal scenario is preserved there as
+// TestRemoteClient_Get_UnmarshalError.
 
 // TestIsSensitiveKeyorixEnv_SecretAndDsnSuffixes exercises the _SECRET and _DSN
 // suffixes that are in sensitiveEnvSuffixes but were not covered by existing tests.
@@ -148,7 +111,7 @@ func TestFetchSecretsRemote_EnvironmentsFetchError(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)

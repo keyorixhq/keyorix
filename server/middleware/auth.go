@@ -38,8 +38,8 @@ const (
 // downstream per-scope authorization work unchanged.
 type sessionValidator interface {
 	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
-	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, *core.PATRestriction, error)
-	ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, error)
+	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, *core.PATRestriction, uint, error)
+	ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, uint, error)
 	ValidateOIDCToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
 	OIDCEnabled() bool
 }
@@ -89,6 +89,16 @@ type UserContext struct {
 	// MachineTokenRestriction carries the network-level IP allowlist for a machine
 	// token credential, or nil when none is set. Enforced at the auth boundary.
 	MachineTokenRestriction *core.MachineTokenRestriction `json:"-"`
+	// patID is the validated PAT's row id (0 for a non-PAT principal). #G60: kept
+	// unexported/uncached-in-JSON, used only by handleAuthRequest to stamp
+	// last_used_at via TouchPATLastUsed AFTER tokenNetworkAllowed has passed for
+	// this specific request — never touched on a cache hit (serveAuthCacheHit
+	// deliberately never re-stamps, matching pre-existing behavior).
+	patID uint `json:"-"`
+	// machineCredID is the validated machine credential's row id (0 for a
+	// non-machine principal) — the machine-token sibling of patID, same #G60
+	// rationale and same handleAuthRequest post-check touch.
+	machineCredID uint `json:"-"`
 }
 
 // cloneUserContextWithRestriction returns a shallow copy of base with
@@ -296,6 +306,16 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	if !tokenNetworkAllowed(r, userCtx) {
 		forbiddenResponse(w, "token not permitted from this network")
 		return
+	}
+	// #G60: stamp last_used_at only now that the token's network restriction has
+	// actually been evaluated and passed — touching earlier (formerly done
+	// unconditionally inside ValidatePATToken/ValidateMachineToken) would mark a
+	// credential as "used" even for a request just rejected above for arriving
+	// from a disallowed network. Each Touch* is a no-op when its id is 0 (i.e.
+	// the principal is not that credential kind).
+	if coreService != nil {
+		coreService.TouchPATLastUsed(r.Context(), userCtx.patID)
+		coreService.TouchMachineTokenLastUsed(r.Context(), userCtx.machineCredID)
 	}
 	next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
 }
@@ -905,7 +925,7 @@ func GetUserFromContext(ctx context.Context) *UserContext {
 // machine id, and ActorType machine_identity so RBAC and audit are identical.
 // restriction is nil for OIDC tokens (no per-credential allowlist) and for
 // opaque tokens that carry no AllowedCIDRs.
-func machineUserContext(m *models.MachineIdentity, roleNames []string, restriction *core.MachineTokenRestriction) *UserContext {
+func machineUserContext(m *models.MachineIdentity, roleNames []string, restriction *core.MachineTokenRestriction, credID uint) *UserContext {
 	mid := m.ID
 	return &UserContext{
 		UserID:                  0,
@@ -916,6 +936,7 @@ func machineUserContext(m *models.MachineIdentity, roleNames []string, restricti
 		Roles:                   roleNames,
 		AccountState:            core.AccountActive,
 		MachineTokenRestriction: restriction,
+		machineCredID:           credID,
 	}
 }
 
@@ -994,11 +1015,11 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	}
 	// Machine tokens (ADR-030) authenticate AS a machine identity, not a user.
 	if strings.HasPrefix(token, machineTokenPrefix) {
-		m, roleNames, restriction, err := validator.ValidateMachineToken(ctx, token)
+		m, roleNames, restriction, credID, err := validator.ValidateMachineToken(ctx, token)
 		if err != nil {
 			return nil, err
 		}
-		return machineUserContext(m, roleNames, restriction), nil
+		return machineUserContext(m, roleNames, restriction, credID), nil
 	}
 
 	// Federated OIDC / Kubernetes-JWT tokens (ADR-031) also authenticate AS a
@@ -1036,7 +1057,7 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 				boundedForLog(issuer), boundedForLog(kid), boundedForLog(err.Error()))
 			return nil, err
 		}
-		return machineUserContext(m, roleNames, nil), nil
+		return machineUserContext(m, roleNames, nil, 0), nil
 	}
 
 	// Route by prefix: PATs authenticate AS their owning user, resolving to the same
@@ -1045,11 +1066,12 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		user        *models.User
 		roleNames   []string
 		restriction *core.PATRestriction
+		patID       uint
 		err         error
 		viaSession  bool
 	)
 	if strings.HasPrefix(token, patTokenPrefix) {
-		user, roleNames, restriction, err = validator.ValidatePATToken(ctx, token)
+		user, roleNames, restriction, patID, err = validator.ValidatePATToken(ctx, token)
 	} else {
 		user, roleNames, err = validator.ValidateSessionToken(ctx, token)
 		viaSession = true
@@ -1068,6 +1090,7 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		MFAEnabled:     user.MFAEnabled || user.WebAuthnEnabled,
 		SessionAuth:    viaSession,
 		PATRestriction: restriction,
+		patID:          patID,
 	}, nil
 }
 

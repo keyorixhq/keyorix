@@ -284,11 +284,12 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 	var (
 		user        *models.User
 		restriction *core.PATRestriction
+		patID       uint
 		err         error
 	)
 	viaPAT := strings.HasPrefix(token, patTokenPrefix)
 	if viaPAT {
-		user, _, restriction, err = coreService.ValidatePATToken(ctx, token)
+		user, _, restriction, patID, err = coreService.ValidatePATToken(ctx, token)
 	} else {
 		user, _, err = coreService.ValidateSessionToken(ctx, token)
 	}
@@ -340,6 +341,17 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		return nil, nil, err
 	}
 
+	// #G60: stamp last_used_at only now that the PAT's network restriction (and
+	// the rest of enforceGRPCAccessPolicy) has actually been evaluated and
+	// passed — touching earlier (formerly done unconditionally inside
+	// ValidatePATToken) would mark a PAT as "used" even for a request just
+	// rejected above for arriving from a disallowed network. No-op for a
+	// non-PAT principal (patID is 0). gRPC has no auth cache, so every request
+	// re-validates and this always runs on the success path.
+	if viaPAT {
+		coreService.TouchPATLastUsed(ctx, patID)
+	}
+
 	// Resolve roles + permissions for downstream per-method authorization.
 	identity, err := coreService.GetUserIdentity(ctx, user.ID)
 	if err != nil {
@@ -365,7 +377,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 }
 
 func validateGRPCMachineToken(ctx context.Context, coreService *core.KeyorixCore, token string) (*UserContext, *core.PATRestriction, error) {
-	machine, roles, restriction, err := coreService.ValidateMachineToken(ctx, token)
+	machine, roles, restriction, credID, err := coreService.ValidateMachineToken(ctx, token)
 	if err != nil {
 		return nil, nil, grpcAuthFailure(ctx)
 	}
@@ -384,6 +396,10 @@ func validateGRPCMachineToken(ctx context.Context, coreService *core.KeyorixCore
 			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
 		}
 	}
+	// #G60: stamp last_used_at only now that the network restriction has been
+	// evaluated and passed (sibling of the same fix for the PAT path below).
+	// gRPC has no auth cache, so this always runs on the success path.
+	coreService.TouchMachineTokenLastUsed(ctx, credID)
 	return uc, nil, nil
 }
 

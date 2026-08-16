@@ -11,6 +11,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// wipeBytes overwrites a byte slice with zeros. Mirrors
+// internal/encryption's own unexported wipeBytes (not accessible from this
+// package) for the few places this CLI package handles raw key material
+// directly (rotate-kek's discarded evidence/audit-checkpoint key copies,
+// shamir-split's generated KEK) rather than only through Service/AuthEncryption.
+func wipeBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
 // masterPassphrase reads the master passphrase from KEYORIX_MASTER_PASSWORD. It is
 // required only for the default "password" key provider; with the file/env
 // providers (ADR-038) the KEK comes from key material elsewhere, so it returns ""

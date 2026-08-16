@@ -155,7 +155,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	envID, err := resolveEnvironmentID(ctx, rc, importEnv)
+	envID, err := resolveEnvironmentID(ctx, rc, nsID, importEnv)
 	if err != nil {
 		return err
 	}
@@ -227,11 +227,22 @@ func resolveProjectID(ctx context.Context, rc *common.RemoteClient, name string)
 	return 0, fmt.Errorf("project %q not found", name)
 }
 
-func resolveEnvironmentID(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
+// resolveEnvironmentID resolves an environment name to its ID WITHIN the given
+// project, via the project-scoped GET /api/v1/projects/{id}/environments.
+//
+// This must stay project-scoped rather than falling back to the deployment-
+// wide GET /api/v1/environments listing: picking the first case-insensitive
+// name match against every project's environments can resolve `--environment
+// prod` to a different project's "prod" than the one just resolved via
+// --project, silently importing secrets into the wrong project/environment
+// (G78 sibling — see internal/cli/rbac/remote.go's resolveEnvironmentIDByName
+// for the original finding).
+func resolveEnvironmentID(ctx context.Context, rc *common.RemoteClient, projectID uint, name string) (uint, error) {
 	var body struct {
 		Environments []*models.Environment `json:"environments"`
 	}
-	if err := rc.Get(ctx, "/api/v1/environments", &body); err != nil {
+	path := fmt.Sprintf("/api/v1/projects/%d/environments", projectID)
+	if err := rc.Get(ctx, path, &body); err != nil {
 		return 0, fmt.Errorf("list environments: %w", err)
 	}
 	for _, e := range body.Environments {
@@ -239,7 +250,7 @@ func resolveEnvironmentID(ctx context.Context, rc *common.RemoteClient, name str
 			return e.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("environment %q not found", name)
+	return 0, fmt.Errorf("environment %q not found in project", name)
 }
 
 // ── Import logic ──────────────────────────────────────────────────────────────

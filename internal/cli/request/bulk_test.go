@@ -36,28 +36,6 @@ func withFailingInitService(t *testing.T) {
 // bulkBrokenCounter avoids DSN collisions across parallel tests.
 var bulkBrokenCounter int
 
-// withBrokenDBService replaces bulkInitService with one that returns a
-// KeyorixCore backed by a closed SQLite connection (all storage calls fail).
-func withBrokenDBService(t *testing.T) {
-	t.Helper()
-	require.NoError(t, i18n.InitializeForTesting())
-	bulkBrokenCounter++
-	dsn := fmt.Sprintf("file:bulk_broken_%d?mode=memory&cache=shared", bulkBrokenCounter)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.AccessRequest{},
-		&models.RejectionReasonTemplate{},
-	))
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-	svc := core.NewKeyorixCore(store.NewLocalStorage(db))
-	orig := bulkInitService
-	bulkInitService = func() (*core.KeyorixCore, error) { return svc, nil }
-	t.Cleanup(func() { bulkInitService = orig })
-}
-
 // withUserSeededPartialService returns a KeyorixCore backed by a SQLite DB
 // that has ONLY the users table migrated (not access_requests / templates),
 // with an admin user seeded. GetUserByEmail succeeds; bulk-access / template
@@ -391,7 +369,21 @@ func TestRunBulkReject_BulkRejectError(t *testing.T) {
 }
 
 func TestRunTmplList_ListError(t *testing.T) {
-	withBrokenDBService(t)
+	// #G72: runTmplList now verifies the --by actor holds roles.assign before
+	// calling ListRejectionReasonTemplates. withBrokenDBService's connection is
+	// closed for every query (including the new authority check itself), so it
+	// can no longer isolate a ListRejectionReasonTemplates-specific failure.
+	// Use the full RBAC-catalog fixture (bootstrap admin authorized) instead —
+	// it has no rejection_reason_templates table, so the call still fails at
+	// the intended step, preserving this test's original assertion.
+	origBy := tmplListBy
+	defer func() { tmplListBy = origBy }()
+	tmplListBy = "admin@example.com"
+	svc, _ := newTestRequestCore(t)
+	origInit := bulkInitService
+	bulkInitService = func() (*core.KeyorixCore, error) { return svc, nil }
+	t.Cleanup(func() { bulkInitService = origInit })
+
 	err := runTmplList(nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list templates")
@@ -402,11 +394,22 @@ func TestRunTmplAdd_CreateError(t *testing.T) {
 	defer func() { tmplName = origName; tmplReason = origReason; tmplBy = origBy }()
 	tmplName = "x"
 	tmplReason = "y"
-	tmplBy = "partial@example.com"
-	// Service has only the users table — GetUserByEmail succeeds (user is seeded)
-	// but CreateRejectionReasonTemplate fails (no rejection_reason_templates table),
-	// triggering the error branch at lines 207-209.
-	withUserSeededPartialService(t, "partial@example.com")
+	// #G72: runTmplAdd now verifies the --by actor holds roles.assign before
+	// calling CreateRejectionReasonTemplate, so this needs a service with the
+	// full RBAC catalog seeded (newTestRequestCore's bootstrap admin), NOT the
+	// users-only withUserSeededPartialService fixture — that fixture has no
+	// role/permission tables at all, so the new authority check would fail
+	// closed on a missing-table error before ever reaching the create call.
+	// The bootstrap admin (global admin bypass) is authorized, so the flow
+	// still reaches CreateRejectionReasonTemplate, which fails (no
+	// rejection_reason_templates table), preserving this test's original
+	// intent: exercising the error branch at lines 207-209.
+	tmplBy = "admin@example.com"
+	svc, _ := newTestRequestCore(t)
+	origInit := bulkInitService
+	bulkInitService = func() (*core.KeyorixCore, error) { return svc, nil }
+	t.Cleanup(func() { bulkInitService = origInit })
+
 	err := runTmplAdd(nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create template")

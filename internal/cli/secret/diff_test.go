@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 
@@ -361,4 +362,83 @@ func TestRunDiff_EmbeddedMode_DiffError(t *testing.T) {
 	// Version 99 doesn't exist → DiffSecretVersions returns an error.
 	err = runDiff(nil, []string{"ignored", "1", "99"})
 	require.Error(t, err)
+}
+
+// ── G70: buildByNamePath must escape query-string metacharacters ────────────
+//
+// Regression coverage for G70 member 1 (internal/cli/secret/diff.go:139):
+// buildByNamePath used to concatenate name/project/env into the query string
+// unescaped, so a name containing "&" or "#" could inject extra query
+// parameters (HTTP parameter injection) or truncate the query at a fragment.
+
+// TestBuildByNamePath_EscapesAmpersandInjection proves that a name containing
+// "&key=value" cannot inject or override the project/environment parameters.
+func TestBuildByNamePath_EscapesAmpersandInjection(t *testing.T) {
+	// A caller-supplied name that attempts to inject its own "project" param.
+	maliciousName := "my-key&project=evil-project"
+
+	p := buildByNamePath(maliciousName, "prod", "staging")
+
+	u, err := url.Parse(p)
+	require.NoError(t, err)
+	q := u.Query()
+
+	// The name must round-trip exactly — the "&project=evil-project" is part
+	// of the name value, not a second query parameter.
+	assert.Equal(t, maliciousName, q.Get("name"))
+	// The real --project flag value must win; the injected one must not appear.
+	assert.Equal(t, "prod", q.Get("project"))
+	assert.Equal(t, "staging", q.Get("environment"))
+	assert.Len(t, q["project"], 1, "project must not be duplicated by the injected value")
+}
+
+// TestBuildByNamePath_EscapesFragmentAndSpecialChars proves that "#", "/", and
+// other metacharacters in the name are preserved as literal name content.
+func TestBuildByNamePath_EscapesFragmentAndSpecialChars(t *testing.T) {
+	maliciousName := "weird/name#with?special=chars"
+
+	p := buildByNamePath(maliciousName, "", "")
+
+	u, err := url.Parse(p)
+	require.NoError(t, err)
+	assert.Equal(t, maliciousName, u.Query().Get("name"))
+	// The raw path must not have been truncated at a literal "#" (fragment).
+	assert.Equal(t, "/api/v1/secrets/by-name", u.Path)
+}
+
+// TestSecretDiff_Remote_NameWithAmpersand drives runDiffRemote end-to-end
+// against a real httptest server and inspects the actual request the CLI
+// sent, confirming the server receives the intended name/project/environment
+// and not an attacker-redirected parameter set (the G70 detection idea).
+func TestSecretDiff_Remote_NameWithAmpersand(t *testing.T) {
+	maliciousName := "my-key&project=evil-project&environment=evil-env"
+
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/secrets/by-name" {
+			gotQuery = r.URL.Query()
+			_, _ = w.Write([]byte(`{"data":{"id":1,"name":"my-key"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-tok")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+
+	prevProject, prevEnv := diffProject, diffEnv
+	diffProject, diffEnv = "prod", "staging"
+	defer func() { diffProject, diffEnv = prevProject, prevEnv }()
+
+	// The diff endpoint will 404 (id=1 lookup only); we only care about what
+	// the by-name lookup actually sent, so accept either outcome here.
+	_ = runDiffRemote(rc, maliciousName, 1, 2)
+
+	require.NotNil(t, gotQuery, "by-name endpoint must have been called")
+	assert.Equal(t, maliciousName, gotQuery.Get("name"))
+	assert.Equal(t, "prod", gotQuery.Get("project"), "the real --project flag must win over any value smuggled in the name")
+	assert.Equal(t, "staging", gotQuery.Get("environment"), "the real --env flag must win over any value smuggled in the name")
 }

@@ -168,7 +168,7 @@ func TestRunImport_RemoteMode(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"ID":1,"Name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"ID":2,"Name":"development"}]}}`))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"ID":100,"Name":"FOO"}}`))
@@ -264,7 +264,7 @@ func TestResolveEnvironmentID_NotFoundS3(t *testing.T) {
 	rc, ok := common.NewRemoteClient()
 	require.True(t, ok)
 
-	_, err := resolveEnvironmentID(context.Background(), rc, "nonexistent")
+	_, err := resolveEnvironmentID(context.Background(), rc, 1, "nonexistent")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "environment")
 }
@@ -294,7 +294,7 @@ func TestResolveEnvironmentID_FoundS3(t *testing.T) {
 	rc, ok := common.NewRemoteClient()
 	require.True(t, ok)
 
-	id, err := resolveEnvironmentID(context.Background(), rc, "staging")
+	id, err := resolveEnvironmentID(context.Background(), rc, 1, "staging")
 	require.NoError(t, err)
 	assert.Equal(t, uint(2), id)
 }

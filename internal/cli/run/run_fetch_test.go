@@ -2,10 +2,12 @@ package run
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -38,7 +40,7 @@ func TestFetchSecretsRemote(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"projects":[{"id":1,"name":"web"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[{"id":9,"name":"db-password"}]}}`))
@@ -65,6 +67,54 @@ func TestFetchSecretsRemote_ProjectNotFound(t *testing.T) {
 	_, err := fetchSecretsRemote(context.Background(), srv.URL, "tok", "ghost", "dev")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `project "ghost" not found on server`)
+}
+
+// TestFetchSecretsRemote_HungServerTimesOut is the #G71 detection-idea regression
+// test: point fetchSecretsRemote at a server that accepts the TCP connection but
+// never writes a response, and assert the call fails with a bounded timeout error
+// rather than hanging indefinitely — matching common.RemoteClient's own
+// defaultRemoteClientTimeout (30s), since fetchSecretsRemote now goes through
+// common.NewRemoteClientWithCredentials instead of a homegrown *http.Client.
+func TestFetchSecretsRemote_HungServerTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close() //nolint:errcheck
+
+	// Accept connections but never read/write/close them — simulates a hung or
+	// malicious KEYORIX_SERVER that completes the TCP handshake and then stalls.
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			_ = c // deliberately leaked for the test's duration; never responded to
+		}
+	}()
+	endpoint := "http://" + ln.Addr().String()
+
+	type result struct {
+		err error
+	}
+	done := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		_, ferr := fetchSecretsRemote(context.Background(), endpoint, "tok", "web", "dev")
+		done <- result{err: ferr}
+	}()
+
+	// Generous outer bound well above the 30s client timeout so this isn't flaky,
+	// but still bounded so a regression to an unbounded hang fails the test instead
+	// of hanging the suite forever.
+	const outerBound = 55 * time.Second
+	select {
+	case r := <-done:
+		elapsed := time.Since(start)
+		require.Error(t, r.err, "a hung server must surface a timeout error, not succeed or hang")
+		assert.Less(t, elapsed, outerBound, "fetchSecretsRemote must return close to the client's own request timeout, not hang indefinitely")
+	case <-time.After(outerBound):
+		t.Fatal("fetchSecretsRemote hung indefinitely against an unresponsive server (#G71): the CLI HTTP client is missing its request timeout")
+	}
 }
 
 func TestFetchSecretsEmbedded(t *testing.T) {

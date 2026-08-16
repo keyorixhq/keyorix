@@ -506,15 +506,55 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	return nil
 }
 
+// GetSCIMUser retrieves a user by ID for a SCIM GET, refusing (as the not-found
+// sentinel) a target that isn't SCIM-managed (scimManaged) — closing the read-path
+// half of the boundary UpdateSCIMUser/DeprovisionSCIMUser already enforce on write
+// (#120). Before this, GET /scim/v2/Users/{id} called the generic core.GetUser (also
+// used by the admin console and self-profile lookups) with no scimManaged check at
+// all, so a valid SCIM bearer token could disclose ANY native (non-SCIM-managed)
+// account's userName/email/displayName just by guessing/enumerating numeric ids
+// (#G85). The handler maps this error to a generic SCIM 404 either way — same as a
+// truly nonexistent id — so the response never confirms whether an out-of-scope id
+// exists at all, matching SCIM convention for a resource outside the client's scope.
+func (c *KeyorixCore) GetSCIMUser(ctx context.Context, id uint) (*models.User, error) {
+	user, err := c.storage.GetUser(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	if !scimManaged(user) {
+		return nil, fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+	}
+	return user, nil
+}
+
 // SCIMMaxPageSize bounds how many resources a single SCIM list page returns — the
 // value advertised in ServiceProviderConfig (filter.maxResults). A larger requested
 // count is clamped to it so an unfiltered list can't drain the whole directory into one
 // response (memory + DB amplification).
 const SCIMMaxPageSize = 200
 
-// ListSCIMUsersPage returns one page of users for a SCIM list and the total count.
-// startIndex is 1-based (SCIM convention); count is clamped to [0, SCIMMaxPageSize]
-// (count==0 returns no resources, just the total).
+// ListSCIMUsersPage returns one page of SCIM-managed users for a SCIM list, and the
+// SCIM-managed total (not the full directory size). startIndex is 1-based (SCIM
+// convention); count is clamped to [0, SCIMMaxPageSize] (count==0 returns no
+// resources, just the total).
+//
+// Filtered to scimManaged (#G85): GET /scim/v2/Users previously enumerated the
+// ENTIRE user directory — native, non-SCIM-managed accounts included — because
+// storage.ListUsers/UserFilter has no externalId-presence filter and this method
+// never applied one of its own, unlike UpdateSCIMUser/DeprovisionSCIMUser which
+// already refuse a non-SCIM-managed target (#120). A leaked totalResults count was
+// itself a smaller instance of the same disclosure, so it's fixed here too.
+//
+// Rather than add a filter to storage.UserFilter — which would need wiring through
+// BOTH LocalStorage's query AND RemoteStorage's wire protocol plus whatever
+// server-side route it proxies to (the server can run against either backend via
+// the storage factory; the SCIM handler doesn't know or care which) — this loads
+// the already storage-agnostic full user list via ListSCIMUsers and filters/pages
+// it in Go. That's the same "load once, filter/slice in memory" shape
+// ListGroups' filtered path already uses for groups (scim_groups.go), and it
+// guarantees the scimManaged boundary holds no matter which storage backend is
+// configured, at the cost of an O(directory size) scan per page instead of a
+// DB-level LIMIT/OFFSET.
 func (c *KeyorixCore) ListSCIMUsersPage(ctx context.Context, startIndex, count int) ([]*models.User, int, error) {
 	if startIndex < 1 {
 		startIndex = 1
@@ -525,20 +565,27 @@ func (c *KeyorixCore) ListSCIMUsersPage(ctx context.Context, startIndex, count i
 	if count > SCIMMaxPageSize {
 		count = SCIMMaxPageSize
 	}
-	if count == 0 {
-		// SCIM count=0 → return totalResults only. Use PageSize=1 to get an accurate
-		// total without a separate count API; the single fetched row is discarded.
-		_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
-		if err != nil {
-			return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-		}
-		return []*models.User{}, int(total), nil
-	}
-	users, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Offset: startIndex - 1, PageSize: count})
+	allUsers, err := c.ListSCIMUsers(ctx)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, 0, err
 	}
-	return users, int(total), nil
+	managed := make([]*models.User, 0, len(allUsers))
+	for _, u := range allUsers {
+		if scimManaged(u) {
+			managed = append(managed, u)
+		}
+	}
+	total := len(managed)
+	if count == 0 || startIndex > total {
+		// SCIM count=0 (or a startIndex past the end) → return totalResults only.
+		return []*models.User{}, total, nil
+	}
+	lo := startIndex - 1
+	hi := lo + count
+	if hi > total {
+		hi = total
+	}
+	return managed[lo:hi], total, nil
 }
 
 // ListSCIMUsers returns users for a SCIM list, paging through all of them.

@@ -253,7 +253,7 @@ describe('authStore', () => {
             expect(window.location.href).toBe('/login');
         });
 
-        it('still clears local state and redirects even when the server logout call fails', async () => {
+        it('still clears local state and redirects even when the server logout call fails, but surfaces the failure via a logout_error query param instead of silently succeeding (G65)', async () => {
             useAuthStore.setState({ user: makeUser(), isAuthenticated: true });
             vi.mocked(authService.logout).mockRejectedValueOnce(new Error('network blip'));
             const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -265,9 +265,89 @@ describe('authStore', () => {
             expect(state.user).toBeNull();
             expect(state.isAuthenticated).toBe(false);
             expect(authUtils.clearPersistedAuthData).toHaveBeenCalledOnce();
-            expect(window.location.href).toBe('/login');
+            // G65: pre-fix this asserted plain '/login' — the exact same URL as
+            // the success path — meaning a failed server-side logout was
+            // indistinguishable from a clean one. LoginPage reads this param
+            // (mirroring the existing sso_error pattern) and shows a banner.
+            expect(window.location.href).toBe('/login?logout_error=1');
 
             warnSpy.mockRestore();
+        });
+
+        it('does NOT append logout_error when the server logout call succeeds (only a genuine failure is surfaced)', async () => {
+            useAuthStore.setState({ user: makeUser(), isAuthenticated: true });
+            vi.mocked(authService.logout).mockResolvedValueOnce(undefined);
+
+            await useAuthStore.getState().logout();
+
+            expect(window.location.href).toBe('/login');
+        });
+    });
+
+    describe('persisted snapshot never carries permissions (G65)', () => {
+        // Regression coverage for the two G65 gaps together: (1) logout()
+        // clearing the whole 'auth-storage' key on every session-ending path
+        // that runs through it, and (2) the persist middleware's own
+        // partialize() never writing `permissions` to localStorage in the
+        // first place — so even a session-ending path that DOESN'T run any
+        // client-side code at all (tab crash, forced browser close) can't
+        // leave a stale permissions snapshot behind, because nothing
+        // sensitive was ever written to disk to begin with.
+        function withLocalStorageBacking() {
+            const backing = new Map<string, string>();
+            vi.mocked(localStorage.getItem).mockImplementation((key: string) => backing.get(key) ?? null);
+            vi.mocked(localStorage.setItem).mockImplementation((key: string, value: string) => {
+                backing.set(key, value);
+            });
+            vi.mocked(localStorage.removeItem).mockImplementation((key: string) => {
+                backing.delete(key);
+            });
+            return backing;
+        }
+
+        it('never writes permissions to the auth-storage entry, even while the session is active', () => {
+            withLocalStorageBacking();
+
+            useAuthStore.setState({
+                user: makeUser({ permissions: ['secrets:read', 'secrets:write', 'admin:users'] }),
+                isAuthenticated: true,
+            });
+
+            const raw = localStorage.getItem('auth-storage');
+            expect(raw).not.toBeNull();
+            const parsed = JSON.parse(raw as string);
+            expect(parsed.state.user.permissions).toEqual([]);
+            // Sanity check: the in-memory store still has the real permissions
+            // (only the on-disk copy is scrubbed) — checkAuth()/login() still
+            // populate the real value for hasPermission()/route guards to use.
+            expect(useAuthStore.getState().user?.permissions).toEqual(['secrets:read', 'secrets:write', 'admin:users']);
+        });
+
+        it('leaves no stale permissions in localStorage after a non-logout session-ending path (checkAuth detecting a server-side revocation)', async () => {
+            const backing = withLocalStorageBacking();
+
+            // Start from an authenticated session whose on-disk snapshot
+            // already exists (permissions scrubbed per the above, but present).
+            useAuthStore.setState({
+                user: makeUser({ permissions: ['secrets:read'] }),
+                isAuthenticated: true,
+            });
+            expect(backing.has('auth-storage')).toBe(true);
+
+            // Simulate the session ending some way OTHER than the user
+            // clicking "log out" — e.g. the server revoked the session and
+            // the next checkAuth() (inactivity-timeout re-check, tab focus,
+            // multi-tab sync, etc.) discovers it via a 401. This is the same
+            // clearPersistedAuthData() call the inactivity-timeout and
+            // 401-forced-logout paths ultimately reach via logout(); checkAuth
+            // reaches it directly on its own failure branch.
+            vi.mocked(authService.getProfile).mockRejectedValueOnce(new Error('unauthorized'));
+            await useAuthStore.getState().checkAuth();
+
+            expect(authUtils.clearPersistedAuthData).toHaveBeenCalled();
+            const state = useAuthStore.getState();
+            expect(state.user).toBeNull();
+            expect(state.isAuthenticated).toBe(false);
         });
     });
 

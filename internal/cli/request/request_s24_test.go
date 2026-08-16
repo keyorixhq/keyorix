@@ -34,6 +34,12 @@ func TestRunList_EmptyProject(t *testing.T) {
 	defer func() { listProject = orig }()
 	listProject = "testproj"
 
+	// #G72: runList now requires --by and verifies roles.assign before listing;
+	// the bootstrap admin seeded by seedRequestDB is authorized.
+	origBy := listBy
+	defer func() { listBy = origBy }()
+	listBy = "admin@example.com"
+
 	// Project exists, zero requests → must print "No access requests found."
 	// and return nil (not an error).
 	require.NoError(t, runList(nil, nil))

@@ -206,6 +206,63 @@ func TestSCIM_ListFilterDoesNotLeakNativeAccount(t *testing.T) {
 	assert.Empty(t, resources, "a filter match against a native (non-SCIM-managed) account must not be returned")
 }
 
+// TestSCIM_ListUsersOnlyReturnsSCIMManaged pins the "GET /scim/v2/Users" half of
+// #G85: ListSCIMUsersPage previously queried storage.ListUsers with no scimManaged
+// filter at all, so the unfiltered SCIM directory listing enumerated EVERY user
+// account — native, non-SCIM-managed accounts included, not just the ones actually
+// under SCIM control. Seeds one SCIM-managed user (via the normal CreateUser flow)
+// and one native account (created directly, no externalId — same shape as the
+// classic bootstrap admin), then asserts the unfiltered list surfaces only the
+// SCIM-managed one, and that totalResults/itemsPerPage reflect that filtered count,
+// not the full 2-user directory.
+func TestSCIM_ListUsersOnlyReturnsSCIMManaged(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	managedID := provisionUser(t, h, "managed@corp.com")
+	require.NoError(t, db.Create(&models.User{
+		ID: 999, Username: "native", Email: "native@corp.com", DisplayName: "Native Admin",
+		IsActive: true, AccountState: core.AccountActive,
+	}).Error)
+
+	w := httptest.NewRecorder()
+	h.ListUsers(w, httptest.NewRequest(http.MethodGet, "/scim/v2/Users", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeSCIM(t, w)
+
+	assert.Equal(t, float64(1), resp["totalResults"], "totalResults must reflect only the SCIM-managed user, not the full 2-user directory")
+	assert.Equal(t, float64(1), resp["itemsPerPage"])
+
+	resources, _ := resp["Resources"].([]interface{})
+	require.Len(t, resources, 1, "only the SCIM-managed account may be listed")
+	only, _ := resources[0].(map[string]interface{})
+	assert.Equal(t, managedID, only["id"], "the returned resource must be the SCIM-managed user, not the native one")
+	assert.NotEqual(t, "native@corp.com", only["userName"], "a native (non-SCIM-managed) account must never appear in a SCIM listing")
+}
+
+// TestSCIM_GetUserRefusesNativeAccount pins the "GET /scim/v2/Users/{id}" half of
+// #G85: GetUser previously called the generic core.GetUser with no scimManaged
+// check at all, so any valid numeric id — including a NATIVE admin account SCIM
+// never provisioned — would be disclosed. A native id must now come back as a
+// generic SCIM 404, the same response a genuinely nonexistent id gets, so the
+// response never confirms whether an out-of-scope resource exists, and must not
+// leak any of the native account's fields along the way.
+func TestSCIM_GetUserRefusesNativeAccount(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Create(&models.User{
+		ID: 42, Username: "native", Email: "native@corp.com", DisplayName: "Native Admin",
+		IsActive: true, AccountState: core.AccountActive,
+	}).Error)
+
+	w := httptest.NewRecorder()
+	h.GetUser(w, withID(httptest.NewRequest(http.MethodGet, "/scim/v2/Users/42", nil), "42"))
+	assert.Equal(t, http.StatusNotFound, w.Code, "GET on a non-SCIM-managed id must be refused, not disclosed")
+
+	resp := decodeSCIM(t, w)
+	assert.Equal(t, "user not found", resp["detail"], "the refusal must be the same generic message a nonexistent id gets")
+	body := w.Body.String()
+	assert.NotContains(t, body, "native@corp.com", "the native account's email must not leak in the refusal response")
+	assert.NotContains(t, body, "Native Admin", "the native account's display name must not leak in the refusal response")
+}
+
 func TestSCIM_ServiceProviderConfig(t *testing.T) {
 	h, _ := setupSCIMTest(t)
 	w := httptest.NewRecorder()

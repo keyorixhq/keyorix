@@ -47,7 +47,8 @@ func (h *SecretHandler) MoveSecret(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusNotFound
 		case strings.Contains(msg, "validation") ||
 			strings.Contains(msg, "not a folder") ||
-			strings.Contains(msg, "cannot move"):
+			strings.Contains(msg, "cannot move") ||
+			strings.Contains(msg, "does not belong to the same project"):
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
 			status = http.StatusForbidden

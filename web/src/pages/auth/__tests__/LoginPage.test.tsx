@@ -162,6 +162,19 @@ describe('LoginPage', () => {
         expect(screen.queryByText(/SSO sign-in failed/)).not.toBeInTheDocument();
     });
 
+    it('shows a logout-failure banner from the logout_error query param (G65: surfaced instead of a silent redirect)', () => {
+        window.history.pushState({}, '', '/login?logout_error=1');
+        render(<LoginPage />);
+
+        expect(screen.getByText(/Sign-out could not be confirmed with the server/)).toBeInTheDocument();
+    });
+
+    it('does not show a logout-failure banner when there is no logout_error param (e.g. a clean logout)', () => {
+        render(<LoginPage />);
+
+        expect(screen.queryByText(/Sign-out could not be confirmed/)).not.toBeInTheDocument();
+    });
+
     it('renders SSO provider links once they load, targeting the default dashboard return_to', async () => {
         getSSOProvidersMock.mockResolvedValue(['google', 'okta']);
         render(<LoginPage />);

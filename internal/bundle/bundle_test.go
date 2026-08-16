@@ -93,6 +93,44 @@ func writeRawBundle(t *testing.T, manifest, sig []byte, files [][2]string) []byt
 	return buf.Bytes()
 }
 
+// writeRawBundleOversizedEntry crafts a tar entry whose header declares declaredSize while
+// writing NO body bytes at all — a header lying about a size no real WriteBundle output would
+// ever contain. Used to prove the per-entry size cap rejects based on the declared header
+// alone, before ever attempting to read (let alone decompress) that many bytes: a correct
+// reader must never depend on the body actually being present in order to reject.
+func writeRawBundleOversizedEntry(t *testing.T, manifest, sig []byte, name string, declaredSize int64) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	put := func(n string, b []byte) {
+		if err := tw.WriteHeader(&tar.Header{Name: n, Mode: 0o644, Size: int64(len(b)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatalf("hdr %s: %v", n, err)
+		}
+		if _, err := tw.Write(b); err != nil {
+			t.Fatalf("write %s: %v", n, err)
+		}
+	}
+	if manifest != nil {
+		put(manifestName, manifest)
+	}
+	if sig != nil {
+		put(sigName, sig)
+	}
+	// The malicious entry: only a header claiming declaredSize bytes, with no body written at
+	// all. tw.Close() is deliberately never called (a well-behaved tar.Writer would refuse
+	// this incomplete entry there) — the point of the test is that a correct reader must
+	// reject based on the declared header Size alone, so an absent/short body must never
+	// matter for that rejection to happen.
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: declaredSize, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatalf("hdr %s: %v", name, err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gz close: %v", err)
+	}
+	return buf.Bytes()
+}
+
 // --- tests ---
 
 func TestVerify_RoundTrip(t *testing.T) {
@@ -228,6 +266,84 @@ func TestVerify_NoManifest(t *testing.T) {
 	raw := writeRawBundle(t, nil, nil, [][2]string{{"a", "x"}})
 	if _, err := Verify(bytes.NewReader(raw), reg); !errors.Is(err, ErrNoManifest) {
 		t.Fatalf("want ErrNoManifest, got %v", err)
+	}
+}
+
+// TestVerify_RejectsOversizedComponentDeclaredSize proves the G57 #1 fix: a tar header that
+// declares a size bigger than maxComponentBytes must be rejected immediately, based on the
+// header alone — before streamComponent ever calls io.Copy to read (and thereby decompress)
+// that many bytes. Without this cap, a crafted archive could force unbounded decompression
+// work by simply lying in one entry's header, regardless of what its pinned manifest size
+// says.
+func TestVerify_RejectsOversizedComponentDeclaredSize(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	dir := srcDirWith(t, map[string]string{"images/a.tar": "AAAA"})
+	m, err := BuildManifest(dir, "v1.0.0", "update-2026", "", time.Unix(1_700_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, _ := Sign(m, priv)
+	manifestBytes, _ := m.MarshalCanonical()
+
+	// Declares far more than the cap, but writes no body — a decompression-bomb-shaped
+	// header a legitimate WriteBundle would never produce.
+	raw := writeRawBundleOversizedEntry(t, manifestBytes, sig, "images/a.tar", maxComponentBytes+1)
+
+	reg := trust.NewRegistry()
+	_ = reg.Add(trust.PurposeUpdate, "update-2026", pub)
+	if _, err := Verify(bytes.NewReader(raw), reg); !errors.Is(err, ErrEntryTooLarge) {
+		t.Fatalf("want ErrEntryTooLarge, got %v", err)
+	}
+}
+
+// TestVerify_RejectsOversizedManifestDeclaredSize proves the same cap applies to the very
+// first entry read, manifest.json itself (G57 #1, bundle.go:648): an oversized declared size
+// must be rejected before any signature check even runs, since the manifest hasn't been
+// parsed or verified yet at that point.
+func TestVerify_RejectsOversizedManifestDeclaredSize(t *testing.T) {
+	raw := writeRawBundleOversizedEntry(t, nil, nil, manifestName, maxManifestBytes+1)
+	reg := trust.NewRegistry()
+	pub, _, _ := ed25519.GenerateKey(nil)
+	_ = reg.Add(trust.PurposeUpdate, "update-2026", pub)
+	if _, err := Verify(bytes.NewReader(raw), reg); !errors.Is(err, ErrEntryTooLarge) {
+		t.Fatalf("want ErrEntryTooLarge, got %v", err)
+	}
+}
+
+// TestVerify_RejectsThousandsOfRepeatedValidEntries proves the G57 #2 fix: a boolean "seen"
+// map alone does not bound total processing — a crafted archive that repeats ONE
+// legitimately-signed, digest-matching component entry thousands of times must be rejected
+// well before all entries are processed. Pre-fix, this archive is NOT rejected at all: every
+// repeat individually matches its pinned digest, so the loop happily reprocesses all of them
+// and Verify succeeds once every pinned component has been "seen" — the vulnerability is
+// exactly that unbounded, wasted reprocessing, not an eventual failure.
+func TestVerify_RejectsThousandsOfRepeatedValidEntries(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	dir := srcDirWith(t, map[string]string{"images/a.tar": "x"})
+	m, err := BuildManifest(dir, "v1.0.0", "update-2026", "", time.Unix(1_700_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, _ := Sign(m, priv)
+	manifestBytes, _ := m.MarshalCanonical()
+
+	// Well beyond maxComponentEntries, all of them individually valid (correct name,
+	// correct digest-matching content) — only the repeat-processing cap can catch this.
+	const repeats = maxComponentEntries + 500
+	files := make([][2]string, repeats)
+	for i := range files {
+		files[i] = [2]string{"images/a.tar", "x"}
+	}
+	raw := writeRawBundle(t, manifestBytes, sig, files)
+
+	reg := trust.NewRegistry()
+	_ = reg.Add(trust.PurposeUpdate, "update-2026", pub)
+	_, err = Verify(bytes.NewReader(raw), reg)
+	if err == nil {
+		t.Fatalf("want an error rejecting the repeated entries, got nil (unbounded reprocessing)")
+	}
+	if !errors.Is(err, ErrDuplicateComponent) && !errors.Is(err, ErrTooManyEntries) {
+		t.Fatalf("want ErrDuplicateComponent or ErrTooManyEntries, got %v", err)
 	}
 }
 

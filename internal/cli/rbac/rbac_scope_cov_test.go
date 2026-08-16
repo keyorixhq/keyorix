@@ -525,7 +525,7 @@ func TestResolveProjectIDByName_NotFound(t *testing.T) {
 // TestResolveEnvironmentIDByName_GETError verifies rc.Get error propagation.
 func TestResolveEnvironmentIDByName_GETError(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/1/environments", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"down"}`))
 	})
@@ -533,7 +533,7 @@ func TestResolveEnvironmentIDByName_GETError(t *testing.T) {
 	t.Cleanup(srv.Close)
 	rc := remoteClientFor(t, srv)
 
-	_, err := resolveEnvironmentIDByName(context.Background(), rc, "any")
+	_, err := resolveEnvironmentIDByName(context.Background(), rc, 1, "any")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list environments")
 }
@@ -541,16 +541,50 @@ func TestResolveEnvironmentIDByName_GETError(t *testing.T) {
 // TestResolveEnvironmentIDByName_NotFound verifies not-found error.
 func TestResolveEnvironmentIDByName_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/1/environments", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"staging"}]}}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	rc := remoteClientFor(t, srv)
 
-	_, err := resolveEnvironmentIDByName(context.Background(), rc, "production")
+	_, err := resolveEnvironmentIDByName(context.Background(), rc, 1, "production")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"production" not found`)
+}
+
+// TestResolveEnvironmentIDByName_ScopedToProject verifies the resolver only
+// matches environments within the requested project's scope, never falling
+// back to a deployment-wide match — regression test for G78 (cross-project
+// scope confusion via resolveEnvironmentIDByName's former unscoped
+// GET /api/v1/environments listing).
+func TestResolveEnvironmentIDByName_ScopedToProject(t *testing.T) {
+	mux := http.NewServeMux()
+	// Two projects, each with an environment literally named "prod" but a
+	// different environment ID — the classic decoy-name-collision setup.
+	mux.HandleFunc("/api/v1/projects/1/environments", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":101,"name":"prod"}]}}`))
+	})
+	mux.HandleFunc("/api/v1/projects/2/environments", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":202,"name":"prod"}]}}`))
+	})
+	// The deployment-wide listing must never be consulted by the fixed
+	// resolver; if it is, resolving project A's "prod" here would wrongly
+	// pick up project B's environment ID.
+	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":202,"name":"prod"},{"id":101,"name":"prod"}]}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	rc := remoteClientFor(t, srv)
+
+	envID, err := resolveEnvironmentIDByName(context.Background(), rc, 1, "prod")
+	require.NoError(t, err)
+	assert.Equal(t, uint(101), envID, "must resolve project A's own \"prod\" environment, never project B's")
+
+	envID, err = resolveEnvironmentIDByName(context.Background(), rc, 2, "prod")
+	require.NoError(t, err)
+	assert.Equal(t, uint(202), envID, "must resolve project B's own \"prod\" environment, never project A's")
 }
 
 // ── runRemoveRoleRemote project+env path ──────────────────────────────────────
@@ -568,7 +602,7 @@ func TestRunRemoveRoleRemote_WithProjectAndEnv(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":3,"name":"myproject"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/3/environments", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":7,"name":"production"}]}}`))
 	})
 	mux.HandleFunc("/api/v1/user-roles", func(w http.ResponseWriter, r *http.Request) {
@@ -620,7 +654,7 @@ func TestRunAssignRoleRemote_EnvError(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":3,"name":"myproject"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/3/environments", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	srv := httptest.NewServer(mux)
@@ -937,7 +971,7 @@ func TestRunAssignRoleToGroupRemote_EnvError(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"production"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/5/environments", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	srv := httptest.NewServer(mux)
@@ -1015,7 +1049,7 @@ func TestRunRemoveRoleFromGroupRemote_EnvError(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"production"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/5/environments", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	srv := httptest.NewServer(mux)
@@ -1071,7 +1105,7 @@ func TestRunRemoveRoleRemote_EnvError(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":3,"name":"myproject"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/3/environments", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	srv := httptest.NewServer(mux)
@@ -1429,7 +1463,7 @@ func TestRunRemoveRoleFromGroupRemote_WithEnv(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"production"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/5/environments", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":9,"name":"prod"}]}}`))
 	})
 	mux.HandleFunc("/api/v1/groups/7/roles/2", func(w http.ResponseWriter, r *http.Request) {
@@ -1498,7 +1532,7 @@ func TestRunAssignRoleToGroupRemote_WithProjectAndEnv(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"production"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/5/environments", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":9,"name":"prod"}]}}`))
 	})
 	mux.HandleFunc("/api/v1/groups/7/roles", func(w http.ResponseWriter, r *http.Request) {
@@ -1570,7 +1604,7 @@ func TestRunRemoveRoleFromGroupRemote_WithEnvSuccess(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"prod"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/5/environments", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":9,"name":"staging"}]}}`))
 	})
 	mux.HandleFunc("/api/v1/groups/7/roles/2", func(w http.ResponseWriter, r *http.Request) {

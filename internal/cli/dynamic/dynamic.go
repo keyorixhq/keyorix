@@ -8,6 +8,7 @@ package dynamic
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 
@@ -257,7 +258,7 @@ var renewCmd = &cobra.Command{
 			ExpiresAt string `json:"expires_at"`
 		}
 		body := map[string]int{"ttl_seconds": flagTTL}
-		if err := c.Post(context.Background(), fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/renew", args[0]), body, &out); err != nil {
+		if err := c.Post(context.Background(), fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/renew", url.PathEscape(args[0])), body, &out); err != nil {
 			return err
 		}
 		fmt.Printf("Lease %s renewed — new expiry %s\n", out.LeaseID, out.ExpiresAt)
@@ -278,7 +279,7 @@ var revokeCmd = &cobra.Command{
 			LeaseID string `json:"lease_id"`
 			Status  string `json:"status"`
 		}
-		if err := c.Post(context.Background(), fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/revoke", args[0]), map[string]any{}, &out); err != nil {
+		if err := c.Post(context.Background(), fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/revoke", url.PathEscape(args[0])), map[string]any{}, &out); err != nil {
 			return err
 		}
 		fmt.Printf("Lease %s %s.\n", out.LeaseID, out.Status)

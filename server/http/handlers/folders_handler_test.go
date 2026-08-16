@@ -147,6 +147,104 @@ func TestCreateFolder_NoUserContext_401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+// withScopedWriterCtx injects a UserContext for a non-admin user with only
+// secrets.write on a single project (no admin bypass) — the "caller
+// authorized only on project A" persona used by the #G86 regression tests.
+func withScopedWriterCtx(r *http.Request, userID uint, username string) *http.Request {
+	uc := &middleware.UserContext{
+		UserID: userID, Username: username,
+		ActorType: core.ActorTypeUser, SessionAuth: true, MFAEnabled: true,
+	}
+	return r.WithContext(context.WithValue(r.Context(), middleware.GetUserContextKey(), uc))
+}
+
+// seedScopedWriter creates user userID with a non-admin role granting
+// secrets.write scoped ONLY to projectID (EnvironmentID: 0 = any environment
+// within that project, per the established RBAC scoping convention — see
+// TestListSecrets_ScopedUser_SingleProject in secrets_list_scoped_test.go).
+func seedScopedWriter(t *testing.T, db *gorm.DB, userID uint, username string, projectID uint) {
+	t.Helper()
+	require.NoError(t, db.Create(&models.User{ID: userID, Username: username, AccountState: "active"}).Error)
+	role := mustCreateRole(t, db, username+"-writer")
+	perm := mustCreatePermission(t, db, "secrets.write", "secrets", "write")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: userID, RoleID: role.ID, ProjectID: projectID, EnvironmentID: 0,
+	}).Error)
+}
+
+// TestCreateFolder_RefusesCrossProjectParent_HTTP is the #G86 regression: a
+// caller authorized ONLY on project 1 (secrets.write, not admin) declares
+// project_id=1 (their own, authorized scope) but points parent_id at a
+// folder that actually lives in project 2 — a project they have no access
+// to. Before the fix, CreateFolder happily nested the new project-1 folder
+// under the foreign project-2 parent; folder-inheriting ACL/sharing
+// resolution would then apply project 2's grants to it. Must be refused.
+func TestCreateFolder_RefusesCrossProjectParent_HTTP(t *testing.T) {
+	h, _, db := freshFolderFixture(t)
+
+	// A second project the scoped writer has no access to, with a folder in it.
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "proj-foreign"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 20, ProjectID: 2, Name: "env-foreign"}).Error)
+	foreignFolder := &models.SecretNode{
+		Name: "foreign-parent", ProjectID: 2, EnvironmentID: 20,
+		IsSecret: false, Type: "folder", Status: "active",
+		CreatedBy: "attacker", OwnerID: 99,
+	}
+	require.NoError(t, db.Create(foreignFolder).Error)
+
+	seedScopedWriter(t, db, 2, "attacker", 1) // write access to project 1 ONLY
+
+	body, _ := json.Marshal(map[string]any{
+		"name":           "smuggled",
+		"project_id":     1,
+		"environment_id": 10,
+		"parent_id":      foreignFolder.ID,
+	})
+	r := withScopedWriterCtx(
+		httptest.NewRequest(http.MethodPost, "/api/v1/folders", bytes.NewReader(body)),
+		2, "attacker",
+	)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateFolder(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "same project")
+}
+
+// TestCreateFolder_ScopedWriter_SameProjectParent_Succeeds_HTTP is the
+// legitimate-case companion to the above: the SAME scoped-to-project-1
+// writer nests a new folder under a parent that also lives in project 1 —
+// this must keep working after the #G86 fix.
+func TestCreateFolder_ScopedWriter_SameProjectParent_Succeeds_HTTP(t *testing.T) {
+	h, cs, db := freshFolderFixture(t)
+
+	parent, err := cs.CreateFolder(context.Background(), 1, "legit-parent", 1, 10, nil)
+	require.NoError(t, err)
+
+	seedScopedWriter(t, db, 2, "legit-user", 1)
+
+	body, _ := json.Marshal(map[string]any{
+		"name":           "legit-child",
+		"project_id":     1,
+		"environment_id": 10,
+		"parent_id":      parent.ID,
+	})
+	r := withScopedWriterCtx(
+		httptest.NewRequest(http.MethodPost, "/api/v1/folders", bytes.NewReader(body)),
+		2, "legit-user",
+	)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateFolder(w, r)
+
+	assert.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	var resp SuccessResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Success)
+}
+
 // ── ListFolders ──────────────────────────────────────────────────────────────
 
 func TestListFolders_HappyPath(t *testing.T) {

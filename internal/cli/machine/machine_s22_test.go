@@ -155,6 +155,61 @@ func TestFindMachineByRef_S22_ByNumericID(t *testing.T) {
 	assert.Equal(t, "ci-bot", m.Name)
 }
 
+// TestFindMachineByRef_S22_NumericRefNeverShadowedByDecoyName regression-tests
+// G78: the server enforces no uniqueness tying a machine identity's Name to
+// the ID space, so a purely-numeric Name like "5" is legal. Before the fix,
+// findMachineByRef scanned for the first entry where Name == ref OR
+// string(ID) == ref, so an attacker-planted decoy identity named "5" could
+// shadow the real machine whose numeric ID is 5 — silently redirecting
+// destructive operations (revoke/suspend) that reference it by ID, and
+// defeating their typed-name confirmation step (the prompt would echo back
+// the decoy's own Name, which trivially matches what the operator typed).
+// The decoy is listed FIRST so a naive first-match scan would pick it.
+func TestFindMachineByRef_S22_NumericRefNeverShadowedByDecoyName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/projects/9/machine-identities":
+			_, _ = w.Write([]byte(`{"data":{"machine_identities":[` +
+				`{"id":99,"name":"5","identity_type":"ci","state":"active"},` +
+				`{"id":5,"name":"real-target","identity_type":"service","state":"active"}` +
+				`]}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "tok")
+
+	m, err := findMachineByRef(context.Background(), 9, "5")
+	require.NoError(t, err)
+	assert.Equal(t, uint(5), m.ID, "a numeric ref must resolve to the matching numeric ID, never a decoy Name match")
+	assert.Equal(t, "real-target", m.Name)
+}
+
+// TestFindMachineByRef_S22_NonNumericRefStillMatchesByName confirms the fix
+// does not break the legitimate Name-lookup case: a ref that does NOT parse
+// as a numeric ID must still resolve by exact Name match.
+func TestFindMachineByRef_S22_NonNumericRefStillMatchesByName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/projects/9/machine-identities":
+			_, _ = w.Write([]byte(`{"data":{"machine_identities":[` +
+				`{"id":5,"name":"ci-runner","identity_type":"ci","state":"active"}` +
+				`]}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "tok")
+
+	m, err := findMachineByRef(context.Background(), 9, "ci-runner")
+	require.NoError(t, err)
+	assert.Equal(t, uint(5), m.ID)
+}
+
 // ── runList — empty project ───────────────────────────────────────────────────
 
 // TestRunList_S22_EmptyProject exercises printMachineTable's "no identities"

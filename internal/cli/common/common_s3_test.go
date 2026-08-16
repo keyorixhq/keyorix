@@ -94,6 +94,26 @@ func TestRemoteClient_Get_EmptyDataEnvelope(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty data")
 }
 
+// TestRemoteClient_Get_UnmarshalError tests the path where the "data" field is
+// present and valid JSON but cannot be unmarshalled into the caller's target type
+// (distinct from TestRemoteClient_Get_DecodeError, which covers the envelope
+// itself being malformed). Ported from internal/cli/run's now-removed
+// TestApiClientGet_UnmarshalError when that package's homegrown apiClient was
+// replaced by RemoteClient under #G71.
+func TestRemoteClient_Get_UnmarshalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// data is a JSON string, but out expects an object.
+		_, _ = w.Write([]byte(`{"data":"not-an-object"}`))
+	}))
+	defer srv.Close()
+
+	var out struct {
+		Projects []struct{ ID uint } `json:"projects"`
+	}
+	err := newTestClient(srv).Get(context.Background(), "/api/v1/projects", &out)
+	require.Error(t, err)
+}
+
 // ── Post ──────────────────────────────────────────────────────────────────────
 
 func TestRemoteClient_Post_Success(t *testing.T) {

@@ -434,6 +434,17 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	// O_TRUNC keeps a pre-existing destination's mode untouched — the 0600 passed to
+	// OpenFile above only applies when the file is freshly created. Without this
+	// explicit Chmod, re-running migrate-provider (or restoreBackup) against a dst
+	// that already existed with a looser mode (e.g. a DEK/backup path left
+	// world-readable by an older build, or created under a permissive umask) would
+	// silently keep serving that looser mode to the re-wrapped/restored key material
+	// (G68). Mirrors securefiles.SecureWriteFile/SecureWriteFileSync.
+	if cerr := f.Chmod(0600); cerr != nil {
+		_ = f.Close()
+		return cerr
+	}
 	if _, werr := f.Write(data); werr != nil {
 		_ = f.Close()
 		return werr

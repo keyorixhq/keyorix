@@ -3,8 +3,11 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -96,9 +99,39 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// warnIfInsecureRemoteURL prints the same cleartext-transmission warning as
+// internal/cli/common.WarnIfInsecureEndpoint when a server URL that a real API
+// key is about to be persisted against is not HTTPS (and not a loopback
+// target used for local testing). Duplicated here (not imported) rather than
+// calling common.WarnIfInsecureEndpoint: internal/cli/common already imports
+// this package (internal/cli/config) for the CLI-connect config, so importing
+// it back here would cycle. Keep this message in sync with that one. #G74
+func warnIfInsecureRemoteURL(raw string) {
+	if raw == "" {
+		return
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "https" {
+		return
+	}
+	host := u.Hostname()
+	if host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1" {
+		return
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "⚠️  Remote endpoint %q is not HTTPS — the access token is sent in cleartext and is MITM-capturable.\n", raw)
+}
+
 func runSetRemote(cmd *cobra.Command, args []string) error {
-	url, _ := cmd.Flags().GetString("url")
+	remoteURL, _ := cmd.Flags().GetString("url")
 	timeout, _ := cmd.Flags().GetInt("timeout")
+
+	// #G74: about to persist a real API key against this server URL — warn
+	// before it's written if the URL isn't HTTPS (and not a loopback target),
+	// since the token will be sent in cleartext on every subsequent request.
+	warnIfInsecureRemoteURL(remoteURL)
 
 	// Resolve the API key without ever requiring it on the command line: the
 	// (insecure, warned) --api-key flag if set, else KEYORIX_API_KEY. The key is
@@ -116,7 +149,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	if cfg.Storage.Remote == nil {
 		cfg.Storage.Remote = &config.RemoteConfig{}
 	}
-	cfg.Storage.Remote.BaseURL = url
+	cfg.Storage.Remote.BaseURL = remoteURL
 	cfg.Storage.Remote.APIKey = apiKey
 	cfg.Storage.Remote.TimeoutSeconds = timeout
 	cfg.Storage.Remote.TLSVerify = config.BoolPtr(true)
@@ -126,7 +159,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✅ Configuration updated successfully!\n")
-	fmt.Printf("🌐 CLI now uses remote server: %s\n", url)
+	fmt.Printf("🌐 CLI now uses remote server: %s\n", remoteURL)
 	if apiKey == "" {
 		fmt.Printf("💡 Tip: set the KEYORIX_API_KEY environment variable if the server requires authentication (preferred over --api-key, which leaks via ps/history)\n")
 	}

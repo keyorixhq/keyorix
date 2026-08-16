@@ -841,7 +841,7 @@ func TestResolveEnvironmentID_Error_S7(t *testing.T) {
 	defer srv.Close()
 
 	rc := newS7Client(t, srv)
-	_, err := resolveEnvironmentID(context.Background(), rc, "production")
+	_, err := resolveEnvironmentID(context.Background(), rc, 1, "production")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list environments")
 }
@@ -853,7 +853,7 @@ func TestResolveEnvironmentID_NotFound_S7(t *testing.T) {
 	defer srv.Close()
 
 	rc := newS7Client(t, srv)
-	_, err := resolveEnvironmentID(context.Background(), rc, "production")
+	_, err := resolveEnvironmentID(context.Background(), rc, 1, "production")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -865,7 +865,7 @@ func TestResolveEnvironmentID_Found_S7(t *testing.T) {
 	defer srv.Close()
 
 	rc := newS7Client(t, srv)
-	id, err := resolveEnvironmentID(context.Background(), rc, "production")
+	id, err := resolveEnvironmentID(context.Background(), rc, 1, "production")
 	require.NoError(t, err)
 	assert.Equal(t, uint(3), id)
 }

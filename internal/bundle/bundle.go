@@ -46,6 +46,27 @@ const (
 // can't exhaust memory before the signature is even checked. A real manifest is a few KiB.
 const maxManifestBytes = 4 << 20 // 4 MiB
 
+// maxComponentBytes caps a single component tar entry's declared size, checked immediately
+// after its header is parsed and BEFORE streamComponent ever calls io.Copy — so a corrupt or
+// malicious entry can't force wasted decompression/read work merely by lying in its header
+// (G57 #1). Real components are container images, Helm charts, CRDs, binaries, and DB
+// migrations; 2 GiB is an order of magnitude above the largest other in-repo transfer cap
+// (maxResponseBytes at 64 MiB, internal/storage/remote/client.go) yet comfortably covers any
+// single legitimate release artifact, while still being a hard, finite ceiling rather than
+// "whatever the archive claims."
+const maxComponentBytes = 2 << 30 // 2 GiB
+
+// maxComponentEntries caps the number of tar entries streamBundleComponents will iterate —
+// matched, unlisted, or non-regular — before refusing the archive outright (G57 #2). A
+// boolean "seen" map alone does not bound total work: nothing stops a crafted archive from
+// repeating one legitimately-signed component entry thousands of times, forcing thousands of
+// redundant hash/copy passes over otherwise-valid content, or padding the archive with large
+// numbers of cheap-to-parse-but-still-iterated non-regular entries. A real bundle's entry
+// count is 2 (manifest+sig) plus the pinned component count from its own size-bounded
+// manifest — realistically dozens; 1000 is a generous ceiling comfortably above any
+// legitimate release while bounding a pathological archive's total iteration cost.
+const maxComponentEntries = 1000
+
 var (
 	// ErrNoManifest means the archive did not begin with manifest.json + manifest.sig.
 	ErrNoManifest = errors.New("bundle: manifest.json/manifest.sig missing or out of order")
@@ -59,6 +80,12 @@ var (
 	ErrNotUpgrade = errors.New("bundle: version is not an upgrade over the installed version")
 	// ErrUpgradeSkipped means the installed version is older than the bundle's min_upgrade_from.
 	ErrUpgradeSkipped = errors.New("bundle: installed version is below the bundle's minimum upgrade-from")
+	// ErrEntryTooLarge means a tar entry declared a size exceeding the configured cap.
+	ErrEntryTooLarge = errors.New("bundle: tar entry declares a size exceeding the maximum allowed")
+	// ErrTooManyEntries means the archive contained more tar entries than the configured cap.
+	ErrTooManyEntries = errors.New("bundle: archive contains more tar entries than allowed")
+	// ErrDuplicateComponent means a component entry appeared more than once in the archive.
+	ErrDuplicateComponent = errors.New("bundle: duplicate component entry")
 )
 
 // Component pins one file in the bundle by its digest and size. Path is a clean,
@@ -365,6 +392,7 @@ func resolveIdempotentInstall(opts *extractOpts, m *Manifest) (installed string,
 // component was seen. Fails closed on any mismatch or missing component.
 func streamBundleComponents(tr *tar.Reader, pinned map[string]Component, dest string) error {
 	seen := make(map[string]bool, len(pinned))
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -373,8 +401,22 @@ func streamBundleComponents(tr *tar.Reader, pinned map[string]Component, dest st
 		if err != nil {
 			return fmt.Errorf("bundle: read archive: %w", err)
 		}
+		// Count every entry iterated — matched, unlisted, or non-regular — and cap it as
+		// early as possible, before any other work on this entry. A boolean "seen" map alone
+		// does not bound total loop iterations; this is the general backstop (the duplicate
+		// check below is the specific, cheaper one for repeats of an already-matched name).
+		entries++
+		if entries > maxComponentEntries {
+			return fmt.Errorf("%w: more than %d entries", ErrTooManyEntries, maxComponentEntries)
+		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
+		}
+		// Reject an oversized declared size before ever reading (let alone decompressing)
+		// this entry's content — do this before the pinned-component lookup too, so an
+		// oversized entry can't hide behind a not-yet-checked name.
+		if hdr.Size > maxComponentBytes {
+			return fmt.Errorf("%w: %s declares %d bytes (max %d)", ErrEntryTooLarge, hdr.Name, hdr.Size, maxComponentBytes)
 		}
 		name, err := cleanComponentPath(hdr.Name)
 		if err != nil {
@@ -383,6 +425,20 @@ func streamBundleComponents(tr *tar.Reader, pinned map[string]Component, dest st
 		comp, ok := pinned[name]
 		if !ok {
 			return fmt.Errorf("%w: %s", ErrUnlistedComponent, name)
+		}
+		// A boolean "seen" map alone would silently allow reprocessing an already-verified
+		// component entry an unbounded number of times — a crafted archive repeating one
+		// legitimately-signed, digest-matching entry thousands of times would otherwise be
+		// re-hashed and re-staged that many times before ever reaching maxComponentEntries.
+		// Reject the repeat outright instead of doing that redundant work.
+		if seen[name] {
+			return fmt.Errorf("%w: %s", ErrDuplicateComponent, name)
+		}
+		// The tar header's declared size must match the pinned (signature-verified)
+		// manifest size before we trust it enough to stream — belt-and-suspenders atop the
+		// comp.Size-bounded read in streamComponent below.
+		if hdr.Size != comp.Size {
+			return fmt.Errorf("%w: %s (header size %d, manifest size %d)", ErrDigestMismatch, name, hdr.Size, comp.Size)
 		}
 		if err := streamComponent(tr, comp, dest); err != nil {
 			return err
@@ -652,6 +708,13 @@ func readNamedEntry(tr *tar.Reader, want string) ([]byte, error) {
 	}
 	if hdr.Name != want || hdr.Typeflag != tar.TypeReg {
 		return nil, fmt.Errorf("%w: got %q, want %q", ErrNoManifest, hdr.Name, want)
+	}
+	// Reject a header that declares more than the cap BEFORE ever reading (and thereby
+	// decompressing) its content — an explicit, promptly-returned error rather than relying
+	// solely on io.LimitReader's silent truncation below, which this manifest/sig path runs
+	// entirely before the signature is checked.
+	if hdr.Size > maxManifestBytes {
+		return nil, fmt.Errorf("%w: %s declares %d bytes (max %d)", ErrEntryTooLarge, want, hdr.Size, maxManifestBytes)
 	}
 	b, err := io.ReadAll(io.LimitReader(tr, maxManifestBytes))
 	if err != nil {

@@ -196,7 +196,22 @@ func (k *KeyorixCore) ListRejectionReasonTemplates(ctx context.Context) ([]model
 	return k.storage.ListRejectionReasonTemplates(ctx)
 }
 
-// DeleteRejectionReasonTemplate deletes the rejection reason template with the given ID.
-func (k *KeyorixCore) DeleteRejectionReasonTemplate(ctx context.Context, id uint) error {
-	return k.storage.DeleteRejectionReasonTemplate(ctx, id)
+// EventRejectionReasonTemplateDeleted is emitted when a rejection-reason
+// template is deleted, so the deletion is attributable to an actor in the
+// audit trail. DeleteRejectionReasonTemplate previously took no actor at all
+// (#G72) — callers (CLI `request rejection-templates delete`, the HTTP
+// DELETE /rejection-reason-templates/{id} route) must resolve/authenticate
+// the acting user before calling.
+const EventRejectionReasonTemplateDeleted = "rejection_reason_template.deleted"
+
+// DeleteRejectionReasonTemplate deletes the rejection reason template with the
+// given ID on behalf of actorID, recording an audit event so the deletion is
+// attributable (#G72).
+func (k *KeyorixCore) DeleteRejectionReasonTemplate(ctx context.Context, actorID, id uint) error {
+	if err := k.storage.DeleteRejectionReasonTemplate(ctx, id); err != nil {
+		return err
+	}
+	k.writeAuditEvent(ctx, EventRejectionReasonTemplateDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("rejection-reason template %d deleted", id))
+	return nil
 }

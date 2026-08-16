@@ -81,11 +81,12 @@ func TestValidateMachineToken(t *testing.T) {
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
 
-		m, roles, restriction, err := c.ValidateMachineToken(context.Background(), raw)
+		m, roles, restriction, credID, err := c.ValidateMachineToken(context.Background(), raw)
 		require.NoError(t, err)
 		require.Equal(t, uint(1), m.ID)
 		require.Equal(t, []string{"project_viewer"}, roles)
 		require.Nil(t, restriction)
+		require.Equal(t, uint(5), credID, "the credential's row id is surfaced so the caller can touch last_used_at itself")
 	})
 
 	t.Run("revoked credential rejected", func(t *testing.T) {
@@ -93,7 +94,7 @@ func TestValidateMachineToken(t *testing.T) {
 		store.On("GetMachineIdentityCredentialByHash", mock.Anything, hash).Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, Revoked: true}, nil)
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
-		_, _, _, err := c.ValidateMachineToken(context.Background(), raw)
+		_, _, _, _, err := c.ValidateMachineToken(context.Background(), raw)
 		require.ErrorContains(t, err, "revoked")
 	})
 
@@ -103,7 +104,7 @@ func TestValidateMachineToken(t *testing.T) {
 		store.On("GetMachineIdentityCredentialByHash", mock.Anything, hash).Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, ExpiresAt: &past}, nil)
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
-		_, _, _, err := c.ValidateMachineToken(context.Background(), raw)
+		_, _, _, _, err := c.ValidateMachineToken(context.Background(), raw)
 		require.ErrorContains(t, err, "expired")
 	})
 
@@ -113,7 +114,7 @@ func TestValidateMachineToken(t *testing.T) {
 		store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, State: MachineSuspended}, nil)
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
-		_, _, _, err := c.ValidateMachineToken(context.Background(), raw)
+		_, _, _, _, err := c.ValidateMachineToken(context.Background(), raw)
 		require.ErrorContains(t, err, "suspended")
 	})
 }

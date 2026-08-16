@@ -100,12 +100,28 @@ func ResolveRemote() (endpoint, token string, ok bool) { // NOSONAR -- cognitive
 
 	// A non-HTTPS endpoint sends the bearer token in cleartext — warn loudly (a loopback
 	// target for local testing is fine).
-	if endpoint != "" && !endpointIsSecure(endpoint) {
-		fmt.Fprintf(os.Stderr, "⚠️  Remote endpoint %q is not HTTPS — the access token is sent in cleartext and is MITM-capturable.\n", endpoint)
-	}
+	WarnIfInsecureEndpoint(endpoint)
 
 	ok = endpoint != "" && token != ""
 	return
+}
+
+// WarnIfInsecureEndpoint prints the same cleartext-transmission warning that
+// ResolveRemote emits when a security-relevant remote endpoint is not HTTPS
+// (and not a loopback target used for local testing). ResolveRemote's own
+// check only fires when a *previously persisted* remote config is later read
+// back — it can't protect a credential that is about to be written or sent
+// for the first time. #G74: callers that persist an API key against a
+// user-supplied server URL (e.g. 'auth login', 'config set-remote') or that
+// transmit real credentials directly (e.g. 'system init --server' bootstrap)
+// must call this before committing to that URL, not rely on ResolveRemote
+// catching it afterwards. Returns true if a warning was printed.
+func WarnIfInsecureEndpoint(endpoint string) bool {
+	if endpoint == "" || endpointIsSecure(endpoint) {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "⚠️  Remote endpoint %q is not HTTPS — the access token is sent in cleartext and is MITM-capturable.\n", endpoint)
+	return true
 }
 
 // ValidateRemoteEndpointURL checks that a configured remote server endpoint is a
@@ -164,6 +180,25 @@ func NewRemoteClient() (*RemoteClient, bool) {
 	if !ok {
 		return nil, false
 	}
+	return newHardenedRemoteClient(endpoint, token)
+}
+
+// NewRemoteClientWithCredentials builds a RemoteClient for an explicit
+// endpoint/token pair rather than the one ResolveRemote resolves from
+// env/config — for the rare caller that needs to override just the token
+// (e.g. 'keyorix run --token', which still wants the endpoint resolved via
+// the normal ResolveRemote chain but a token supplied on the command line).
+// Carries the exact same hardened http.Client (request timeout + anti-SSRF
+// redirect refusal) as NewRemoteClient so callers don't have to reimplement
+// it. Returns (nil, false) when endpoint fails validation.
+func NewRemoteClientWithCredentials(endpoint, token string) (*RemoteClient, bool) {
+	return newHardenedRemoteClient(endpoint, token)
+}
+
+// newHardenedRemoteClient builds a RemoteClient with the http.Client hardening
+// every remote-mode CLI request needs, shared by NewRemoteClient and
+// NewRemoteClientWithCredentials so there is exactly one place this is set up.
+func newHardenedRemoteClient(endpoint, token string) (*RemoteClient, bool) {
 	rc := &RemoteClient{
 		Endpoint: endpoint,
 		Token:    token,

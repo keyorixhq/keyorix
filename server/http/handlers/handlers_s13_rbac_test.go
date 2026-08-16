@@ -834,8 +834,13 @@ func TestGetUserPermissionsForUser_BadParam_S13(t *testing.T) {
 // TestGetUserPermissionsForUser_NonExistent_S13 confirms that a request for a
 // non-existent user returns 200 with an empty permissions list (storage returns
 // nil/nil for unknown users — the handler succeeds with empty data).
+// G84: reading a DIFFERENT user's (even a nonexistent one's) permission set
+// requires the caller to be self, an admin, or a roles.read holder — a bare
+// authenticated context is no longer enough. Use the admin-seeded core so this
+// still exercises the "nonexistent target" data path the test is named for.
 func TestGetUserPermissionsForUser_NonExistent_S13(t *testing.T) {
-	h := newUsersRolesHandlerS13(t)
+	cs, _ := freshCoreS12WithAdmin(t)
+	h := NewUsersRolesHandler(cs)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/9999/permissions", nil)
 	req = withUserCtx(withChiParam(req, "id", "9999"))
 	w := httptest.NewRecorder()

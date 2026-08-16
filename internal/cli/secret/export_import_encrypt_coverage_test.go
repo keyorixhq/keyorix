@@ -85,7 +85,7 @@ func newExportTestServer(t *testing.T) *httptest.Server {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"production"}]}}`))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":5,"name":"DB_PASSWORD"}]}}`))
@@ -199,7 +199,7 @@ func TestRunExport_EncryptedJSON_ListSecretsError(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case "/api/v1/environments":
+		case "/api/v1/projects/1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"production"}]}}`))
 		default:
 			w.WriteHeader(http.StatusInternalServerError)

@@ -207,7 +207,7 @@ func TestRunAssignRoleRemote_WithProjectAndEnv(t *testing.T) {
 	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":3,"name":"staging"}]}}`))
 	})
-	mux.HandleFunc("/api/v1/environments", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/projects/3/environments", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"environments":[{"id":2,"name":"dev"}]}}`))
 	})
 	mux.HandleFunc("/api/v1/user-roles", func(w http.ResponseWriter, r *http.Request) {

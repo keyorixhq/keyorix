@@ -237,43 +237,61 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 }
 
 // ValidateMachineToken resolves a raw machine token to its identity, granted
-// role names, and network restriction. It rejects revoked/expired credentials
-// and any machine not in the active state, and best-effort throttled-updates
-// last_used_at. The middleware gates on the machineTokenPrefix before calling this.
-func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, *MachineTokenRestriction, error) {
+// role names, network restriction, and the credential's row id. It rejects
+// revoked/expired credentials and any machine not in the active state. The
+// middleware gates on the machineTokenPrefix before calling this.
+//
+// #G60: this deliberately does NOT touch last_used_at itself (sibling of the
+// same fix in ValidatePATToken). The credential's network allowlist is
+// evaluated by the CALLER (server/middleware, server/grpc/interceptors),
+// strictly after this function returns — stamping last_used_at in here would
+// record the credential as "used" even for a request the caller is about to
+// reject outright for arriving from a disallowed network. The returned
+// credential id lets the caller invoke TouchMachineTokenLastUsed itself, once
+// its own restriction check has actually passed.
+func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, *MachineTokenRestriction, uint, error) {
 	if !strings.HasPrefix(raw, machineTokenPrefix) {
-		return nil, nil, nil, fmt.Errorf("not a machine token")
+		return nil, nil, nil, 0, fmt.Errorf("not a machine token")
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByHash(ctx, sha256Hex(raw))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("invalid token")
+		return nil, nil, nil, 0, fmt.Errorf("invalid token")
 	}
 	if cred.Revoked {
-		return nil, nil, nil, ErrMachineTokenRevoked
+		return nil, nil, nil, 0, ErrMachineTokenRevoked
 	}
 	if cred.ExpiresAt != nil && c.now().After(*cred.ExpiresAt) {
-		return nil, nil, nil, ErrMachineTokenExpired
+		return nil, nil, nil, 0, ErrMachineTokenExpired
 	}
 	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("machine identity not found")
+		return nil, nil, nil, 0, fmt.Errorf("machine identity not found")
 	}
 	if m.State != MachineActive {
-		return nil, nil, nil, fmt.Errorf("machine identity is %s", m.State)
+		return nil, nil, nil, 0, fmt.Errorf("machine identity is %s", m.State)
 	}
-
-	// Best-effort, throttled last-used stamp — never fails the request.
-	_ = c.storage.TouchMachineIdentityCredential(ctx, cred.ID, c.now(), machineTouchInterval)
 
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
 	if err != nil {
-		return m, []string{}, machineRestrictionFrom(cred), nil
+		return m, []string{}, machineRestrictionFrom(cred), cred.ID, nil
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {
 		roleNames[i] = r.Name
 	}
-	return m, roleNames, machineRestrictionFrom(cred), nil
+	return m, roleNames, machineRestrictionFrom(cred), cred.ID, nil
+}
+
+// TouchMachineTokenLastUsed records that machine credential credID was just
+// used, subject to the same machineTouchInterval throttle the inline stamp
+// always used. Split out of ValidateMachineToken (#G60) so the caller only
+// stamps last_used_at AFTER its own network-restriction (CIDR allowlist)
+// check has passed. Best-effort: never fails the caller's request.
+func (c *KeyorixCore) TouchMachineTokenLastUsed(ctx context.Context, credID uint) {
+	if credID == 0 {
+		return
+	}
+	_ = c.storage.TouchMachineIdentityCredential(ctx, credID, c.now(), machineTouchInterval)
 }
 
 // CurrentMachineTokenRestriction re-fetches a machine token's network restriction

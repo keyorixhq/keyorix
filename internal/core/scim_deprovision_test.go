@@ -43,7 +43,7 @@ func TestDeprovisionSCIMUser_RevokesSessionAndPAT(t *testing.T) {
 	su, _, err := c.ValidateSessionToken(ctx, "sess-tok")
 	require.NoError(t, err)
 	require.Equal(t, uint(1), su.ID)
-	pu, _, _, err := c.ValidatePATToken(ctx, raw)
+	pu, _, _, _, err := c.ValidatePATToken(ctx, raw)
 	require.NoError(t, err)
 	require.Equal(t, uint(1), pu.ID)
 
@@ -53,7 +53,7 @@ func TestDeprovisionSCIMUser_RevokesSessionAndPAT(t *testing.T) {
 	// Neither credential may authenticate the deprovisioned user any longer.
 	_, _, err = c.ValidateSessionToken(ctx, "sess-tok")
 	require.Error(t, err, "a deprovisioned user's session must not validate")
-	_, _, _, err = c.ValidatePATToken(ctx, raw)
+	_, _, _, _, err = c.ValidatePATToken(ctx, raw)
 	require.Error(t, err, "a deprovisioned user's PAT must not validate")
 
 	// And the user is soft-deleted — no longer resolvable.

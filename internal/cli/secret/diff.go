@@ -13,6 +13,7 @@ package secret
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -137,12 +138,12 @@ type diffResponse struct {
 
 // buildByNamePath constructs the /api/v1/secrets/by-name query path.
 func buildByNamePath(name, project, env string) string {
-	path := "/api/v1/secrets/by-name?name=" + name
+	path := "/api/v1/secrets/by-name?name=" + url.QueryEscape(name)
 	if project != "" {
-		path += "&project=" + project
+		path += "&project=" + url.QueryEscape(project)
 	}
 	if env != "" {
-		path += "&environment=" + env
+		path += "&environment=" + url.QueryEscape(env)
 	}
 	return path
 }

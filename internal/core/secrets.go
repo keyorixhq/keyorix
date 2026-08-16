@@ -541,6 +541,20 @@ func (c *KeyorixCore) CreateFolder(
 		if parent.IsSecret {
 			return nil, fmt.Errorf("%s: parent node %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *parentID)
 		}
+		// The destination parent was loaded with a bare, unauthorized GetSecret:
+		// the caller's write authorization was only ever checked against
+		// (projectID, envID) — the NEW folder's own claimed scope — and says
+		// nothing about the target parent's actual scope. Mirror CreateSecret's
+		// own parent-folder validation (above in this file) and MoveSecret's
+		// (secret_move.go): require the destination to live in the SAME
+		// project/environment the caller was authorized for, otherwise a caller
+		// could nest a folder under a parent in a project/environment they have
+		// no access to, and folder-inheriting ACL/sharing resolution (see
+		// HasSecretACL's ancestor walk in secret_acl.go) would then apply that
+		// other project's grants to it.
+		if parent.ProjectID != projectID || parent.EnvironmentID != envID {
+			return nil, fmt.Errorf("%s: parent folder %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *parentID)
+		}
 	}
 
 	node := &models.SecretNode{

@@ -69,6 +69,24 @@ func (h *UsersRolesHandler) GetUserRolesForUser(w http.ResponseWriter, r *http.R
 	sendSuccess(w, map[string]interface{}{"roles": apiRoles}, "")
 }
 
+// canReadRBACStateFor reports whether actor may view TARGET user's RBAC state
+// (effective permissions or project memberships): either the actor IS the target
+// (own-profile read), or the actor holds roles.read (global scope) — the same
+// admin-tier gate GetUserRolesForUser already requires for a user's role list
+// (#141), and the tier this codebase treats as "may manage/inspect access" rather
+// than the much broader, nearly-universally-held users.read. G84.
+func (h *UsersRolesHandler) canReadRBACStateFor(r *http.Request, actor *middleware.UserContext, targetUserID uint) bool {
+	if actor.UserID == targetUserID {
+		return true
+	}
+	allowed, err := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.read", core.Scope{})
+	if err != nil {
+		log.Printf("Error checking roles.read for RBAC-state read (actor=%d target=%d): %v", actor.UserID, targetUserID, err)
+		return false
+	}
+	return allowed
+}
+
 // apiPermission is one entry in a user's effective-permission view.
 type apiPermission struct {
 	Name        string `json:"name"`
@@ -80,14 +98,28 @@ type apiPermission struct {
 // GetUserPermissionsForUser handles GET /api/v1/users/{id}/permissions — the user's
 // effective permission set (the de-duplicated union across all assigned roles). The
 // "what can this user do" view for the dashboard and access reviews.
+//
+// This discloses a TARGET user's full effective RBAC state, which is a much bigger
+// disclosure than the route's group-level users.read gate implies (users.read is held
+// by nearly every seeded role, so it lets any project member reconnoiter an arbitrary
+// other user's complete permission set — privilege-escalation targeting material).
+// Require self OR roles.read: the same roles.read tier GetUserRolesForUser already
+// requires for the sibling roles-list view (#141), which restricts this data to the
+// personas that actually manage access (system_admin/system_auditor/project_admin).
 func (h *UsersRolesHandler) GetUserPermissionsForUser(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	userID, ok := parseUintParam(w, r, "id")
 	if !ok {
+		return
+	}
+
+	if !h.canReadRBACStateFor(r, actor, userID) {
+		sendError(w, "Forbidden", "You may not view another user's permissions", http.StatusForbidden, nil)
 		return
 	}
 
@@ -120,14 +152,24 @@ type apiUserMembership struct {
 // GetUserMembershipsForUser handles GET /api/v1/users/{id}/memberships (ADR-025) —
 // the user's project memberships with project name, role, and lifecycle state,
 // powering the per-user assignments table on the detail page.
+//
+// Same disclosure class as GetUserPermissionsForUser above (G84): the group-wide
+// users.read gate lets any project member enumerate an arbitrary other user's full
+// project-membership/role footprint. Same fix — self OR roles.read.
 func (h *UsersRolesHandler) GetUserMembershipsForUser(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	userID, ok := parseUintParam(w, r, "id")
 	if !ok {
+		return
+	}
+
+	if !h.canReadRBACStateFor(r, actor, userID) {
+		sendError(w, "Forbidden", "You may not view another user's memberships", http.StatusForbidden, nil)
 		return
 	}
 

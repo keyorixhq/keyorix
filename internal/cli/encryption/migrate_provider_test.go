@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -51,6 +52,74 @@ func TestCopyFile_RefusesSymlinkDestination(t *testing.T) {
 	}
 	if string(got) != sentinelContent {
 		t.Fatalf("sentinel file was clobbered through the symlink: got %q, want %q", got, sentinelContent)
+	}
+}
+
+// TestCopyFile_NewDestinationRestrictiveModeRegardlessOfUmask — regression test for
+// G68: copyFile writes DEK/key material (the pre-migration wrapped-DEK backup, and
+// the restoreBackup path), so a freshly-created destination must end up at mode 0600
+// even under a permissive process umask (0022), not whatever OpenFile's perm
+// argument would otherwise be masked down to.
+func TestCopyFile_NewDestinationRestrictiveModeRegardlessOfUmask(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.key")
+	if err := os.WriteFile(src, []byte("wrapped-dek-bytes"), 0600); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	dst := filepath.Join(dir, "dst.key")
+
+	oldUmask := syscall.Umask(0o022)
+	defer syscall.Umask(oldUmask)
+
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("expected new destination mode 0600 regardless of umask, got %o", perm)
+	}
+}
+
+// TestCopyFile_EnforcesModeOnPreexistingDestination — the finding (G68) specifically
+// calls out that copyFile's os.OpenFile mode argument only applies when the
+// destination is freshly created; O_TRUNC leaves an EXISTING file's mode untouched.
+// A stale world-readable destination (e.g. a leftover DEK/backup path from an older
+// build, or one created under a permissive umask before this fix) must be tightened
+// to 0600 when copyFile writes new key material over it, not left as-is.
+func TestCopyFile_EnforcesModeOnPreexistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.key")
+	if err := os.WriteFile(src, []byte("new-wrapped-dek-bytes"), 0600); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	dst := filepath.Join(dir, "dst.key")
+	// Pre-create the destination with a world-readable mode.
+	if err := os.WriteFile(dst, []byte("stale-content"), 0o644); err != nil {
+		t.Fatalf("write pre-existing dst: %v", err)
+	}
+
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("expected pre-existing destination mode to be tightened to 0600, got %o", perm)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(got) != "new-wrapped-dek-bytes" {
+		t.Fatalf("expected copy to overwrite content, got %q", got)
 	}
 }
 

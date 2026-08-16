@@ -30,6 +30,11 @@ type moveFixtureResult struct {
 	handler  *SecretHandler
 	secretID uint
 	folderID uint
+	// db and projectID are exposed (in addition to the pre-seeded IDs above)
+	// so #G86 regression tests can seed a SECOND, foreign project/folder to
+	// verify cross-project moves are refused.
+	db        *gorm.DB
+	projectID uint
 }
 
 // freshMoveFixture opens a unique in-memory SQLite DB with all required models,
@@ -113,7 +118,27 @@ func freshMoveFixture(t *testing.T) moveFixtureResult {
 
 	handler, err := NewSecretHandler(cs)
 	require.NoError(t, err)
-	return moveFixtureResult{handler: handler, secretID: secret.ID, folderID: folder.ID}
+	return moveFixtureResult{
+		handler: handler, secretID: secret.ID, folderID: folder.ID,
+		db: db, projectID: proj.ID,
+	}
+}
+
+// seedForeignMoveFolder creates a SECOND project (that fx's owner has no
+// stake in) with its own folder, and returns the foreign folder's ID.
+func seedForeignMoveFolder(t *testing.T, fx moveFixtureResult) uint {
+	t.Helper()
+	foreignProj := &models.Project{Name: "proj-move-foreign"}
+	require.NoError(t, fx.db.Create(foreignProj).Error)
+	foreignEnv := &models.Environment{Name: "env-move-foreign", ProjectID: foreignProj.ID}
+	require.NoError(t, fx.db.Create(foreignEnv).Error)
+	foreignFolder := &models.SecretNode{
+		Name: "foreign-folder-move", ProjectID: foreignProj.ID, EnvironmentID: foreignEnv.ID,
+		Type: "folder", OwnerID: 99, IsSecret: false, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	require.NoError(t, fx.db.Create(foreignFolder).Error)
+	return foreignFolder.ID
 }
 
 // withMoveUserCtx injects user 1 into the request context.
@@ -228,6 +253,38 @@ func TestMoveSecret_InvalidJSON_HTTP(t *testing.T) {
 	fx.handler.MoveSecret(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestMoveSecret_RefusesCrossProjectParent_HTTP is the HTTP-layer companion
+// to core's TestMoveSecret_RefusesCrossProjectParent (#G86): the caller owns
+// (and has write access to) the secret in their own project, but the
+// parent_id they supply belongs to a DIFFERENT project. core.MoveSecret
+// already refuses this (fixed by #1396), but the HTTP status-code
+// classification in MoveSecret's error switch never matched the resulting
+// "does not belong to the same project/environment" message (it only tested
+// for a lowercase "validation" substring, which never matches the
+// capitalized, i18n-translated "Validation error:" prefix) — so the refusal
+// fell through to a bare 500 instead of a proper 400. This test locks in
+// both: the move must still be refused, AND it must surface as 400.
+func TestMoveSecret_RefusesCrossProjectParent_HTTP(t *testing.T) {
+	fx := freshMoveFixture(t)
+
+	// A folder in a DIFFERENT project that the actor has no stake in.
+	foreignFolderID := seedForeignMoveFolder(t, fx)
+
+	body, _ := json.Marshal(map[string]uint{"parent_id": foreignFolderID})
+	req := withChiParamS14(
+		httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)),
+		"id", strconv.Itoa(int(fx.secretID)),
+	)
+	req = withMoveUserCtx(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	fx.handler.MoveSecret(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "same project")
 }
 
 // TestMoveSecret_NoUserCtx_HTTP verifies a 401 when no user context is present.

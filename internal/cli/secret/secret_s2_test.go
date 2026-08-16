@@ -1957,7 +1957,7 @@ func TestRunExport_UnknownFormat(t *testing.T) {
 			return
 		}
 		// environments
-		if r.URL.Path == "/api/v1/environments" {
+		if r.URL.Path == "/api/v1/projects/1/environments" {
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"production"}]}}`))
 			return
 		}

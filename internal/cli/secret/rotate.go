@@ -1,36 +1,15 @@
 package secret
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
+	"net/url"
 	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
-
-// maxSecretListResponseBytes caps how much of the Keyorix server's secrets-list
-// response this command will read into memory before decoding — the response
-// can list every secret in an environment, so a generous cap is used (matching
-// the same 10MB idiom used elsewhere for Keyorix server response decodes).
-// This bounds a malicious or misbehaving server response from exhausting
-// client memory via an unbounded json.Decode of resp.Body.
-const maxSecretListResponseBytes = 10 << 20 // 10MB
-
-// rotateHTTPClient is used instead of http.DefaultClient so a 3xx response from
-// the configured server can't bounce the bearer-token-bearing request to an
-// internal host (e.g. cloud IMDS) — CWE-918. Matches the CheckRedirect idiom
-// used by this codebase's other Keyorix API clients.
-var rotateHTTPClient = &http.Client{CheckRedirect: refuseRotateRedirect}
-
-func refuseRotateRedirect(req *http.Request, _ []*http.Request) error {
-	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
-}
 
 var rotateCmd = &cobra.Command{
 	Use:   "rotate <name>",
@@ -73,38 +52,30 @@ func runRotate(cmd *cobra.Command, args []string) error {
 		rotateValue = v
 	}
 
-	cfg, err := cliconfig.LoadCLIConfig("")
-	if err != nil {
+	// common.NewRemoteClient (not a homegrown *http.Client) so this request gets the
+	// same HTTPS-cleartext warning and bounded request timeout as every other CLI
+	// remote-mode command — this endpoint transmits the new secret value (#G71).
+	rc, ok := common.NewRemoteClient()
+	if !ok {
 		return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 	}
 
-	// Find secret ID by name
-	listURL := cfg.Client.Endpoint + "/api/v1/secrets?environment=" + rotateEnv
-	req, err := http.NewRequest("GET", listURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Client.Auth.GetAPIKey())
-	resp, err := rotateHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
+	ctx := context.Background()
 
+	// Find secret ID by name
 	var listResult struct {
-		Data struct {
-			Secrets []struct {
-				ID   uint   `json:"ID"`
-				Name string `json:"Name"`
-			} `json:"secrets"`
-		} `json:"data"`
+		Secrets []struct {
+			ID   uint   `json:"ID"`
+			Name string `json:"Name"`
+		} `json:"secrets"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSecretListResponseBytes)).Decode(&listResult); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
+	listPath := "/api/v1/secrets?environment=" + url.QueryEscape(rotateEnv)
+	if err := rc.Get(ctx, listPath, &listResult); err != nil {
+		return fmt.Errorf("failed to list secrets: %w", err)
 	}
 
 	var secretID uint
-	for _, s := range listResult.Data.Secrets {
+	for _, s := range listResult.Secrets {
 		if s.Name == name {
 			secretID = s.ID
 			break
@@ -115,22 +86,9 @@ func runRotate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rotate
-	rotateURL := fmt.Sprintf("%s/api/v1/secrets/%d/rotate", cfg.Client.Endpoint, secretID)
-	body, _ := json.Marshal(map[string]string{"new_value": rotateValue})
-	req2, err := http.NewRequest("POST", rotateURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req2.Header.Set("Authorization", "Bearer "+cfg.Client.Auth.GetAPIKey())
-	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := rotateHTTPClient.Do(req2)
-	if err != nil {
+	rotatePath := fmt.Sprintf("/api/v1/secrets/%d/rotate", secretID)
+	if err := rc.Post(ctx, rotatePath, map[string]string{"new_value": rotateValue}, nil); err != nil {
 		return fmt.Errorf("rotate request failed: %w", err)
-	}
-	defer resp2.Body.Close() //nolint:errcheck
-
-	if resp2.StatusCode != 200 {
-		return fmt.Errorf("server returned %d", resp2.StatusCode)
 	}
 
 	fmt.Printf("✓ Secret '%s' rotated successfully in %s\n", name, rotateEnv)

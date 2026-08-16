@@ -140,11 +140,26 @@ func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) error 
 	duration := c.now().Sub(start)
 	actions, _ := c.storage.CountImpersonatedActions(ctx, targetID, adminID, start)
 
+	// #G60: delete the session BEFORE writing the impersonation.end audit event.
+	// The event below asserts the session ended, so it must not be recorded
+	// unless the delete actually succeeded — otherwise a failed delete leaves an
+	// audit trail claiming the impersonation session ended when it's still live
+	// and usable. Mirrors StartImpersonation, which likewise only writes
+	// impersonation.start after CreateSession has already succeeded. No
+	// dedicated "failed" event is written on error here — matching this
+	// package's existing convention (e.g. RevokeMachineToken, RevokeUserSessions)
+	// of a plain error return when a state-changing storage call fails
+	// mid-operation, reserving the explicit failed-audit-event helper for
+	// pre-mutation authorization denials instead.
+	if err := c.storage.DeleteSession(ctx, session.ID); err != nil {
+		return fmt.Errorf("failed to end impersonation session: %w", err)
+	}
+
 	diff := fmt.Sprintf(`{"duration_seconds":%d,"action_count":%d}`, int64(duration.Seconds()), actions)
 	desc := fmt.Sprintf("impersonation ended after %s (%d action(s))", duration.Round(time.Second), actions)
 	c.writeImpersonationEvent(ctx, EventImpersonationEnd, adminID, targetID, session.IPAddress, desc, diff)
 
-	return c.storage.DeleteSession(ctx, session.ID)
+	return nil
 }
 
 // ReauthorizeImpersonation re-verifies an ACTIVE impersonation session's admin

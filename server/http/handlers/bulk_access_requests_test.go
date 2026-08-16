@@ -224,7 +224,7 @@ func TestListRejectionTemplates_WithData(t *testing.T) {
 
 func TestDeleteRejectionTemplate_InvalidID(t *testing.T) {
 	h := newBulkAccessTestHandler(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "abc")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "abc")
 	w := httptest.NewRecorder()
 	h.DeleteRejectionReasonTemplate(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -232,7 +232,7 @@ func TestDeleteRejectionTemplate_InvalidID(t *testing.T) {
 
 func TestDeleteRejectionTemplate_NotFound(t *testing.T) {
 	h := newBulkAccessTestHandler(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "999")
 	w := httptest.NewRecorder()
 	h.DeleteRejectionReasonTemplate(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -245,7 +245,7 @@ func TestDeleteRejectionTemplate_Success(t *testing.T) {
 		bytes.NewBufferString(`{"name":"del-me","reason":"to delete"}`))))
 	require.Equal(t, http.StatusCreated, cw.Code)
 
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "1")
 	w := httptest.NewRecorder()
 	h.DeleteRejectionReasonTemplate(w, req)
 	assert.Equal(t, http.StatusNoContent, w.Code)
@@ -300,7 +300,7 @@ func TestDeleteRejectionTemplate_DBError_Returns500(t *testing.T) {
 	h := newBulkAccessBrokenHandler(t)
 	// DB is closed: DeleteRejectionReasonTemplate returns a generic error (not
 	// "not found") which routes to the 500 else-branch.
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "1")
 	w := httptest.NewRecorder()
 	h.DeleteRejectionReasonTemplate(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
