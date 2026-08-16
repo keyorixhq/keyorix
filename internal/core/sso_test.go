@@ -138,6 +138,53 @@ func TestVerifyIDToken_EmailVerified(t *testing.T) {
 	assert.Equal(t, "ada@x.io", email)
 }
 
+// TestVerifyIDToken_Azp covers the multi-audience azp (authorized party) check that
+// mirrors OIDCVerifier.Verify in oidc.go: a single-audience token needs no azp, but a
+// multi-audience token MUST carry an azp equal to this provider's client_id, or a token
+// legitimately issued to a different (also-trusted) party could be replayed here.
+func TestVerifyIDToken_Azp(t *testing.T) {
+	c, _, key, p := ssoTestCore(t)
+	ctx := context.Background()
+	base := func() jwt.MapClaims {
+		return jwt.MapClaims{
+			"iss": "https://idp.test", "aud": []string{"client-1"}, "sub": "okta|123",
+			"email": "ada@x.io", "nonce": "N1", "exp": time.Now().Add(time.Hour).Unix(),
+		}
+	}
+
+	t.Run("single audience, no azp: accepted", func(t *testing.T) {
+		sub, _, _, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", base()))
+		require.NoError(t, err)
+		assert.Equal(t, "okta|123", sub)
+	})
+
+	t.Run("multiple audiences, no azp: rejected", func(t *testing.T) {
+		claims := base()
+		claims["aud"] = []string{"client-1", "some-other-trusted-client"}
+		_, _, _, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", claims))
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "azp")
+	})
+
+	t.Run("multiple audiences, azp for a different client: rejected", func(t *testing.T) {
+		claims := base()
+		claims["aud"] = []string{"client-1", "some-other-trusted-client"}
+		claims["azp"] = "some-other-trusted-client" // matches an audience, but not this provider's client_id
+		_, _, _, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", claims))
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "azp")
+	})
+
+	t.Run("multiple audiences, azp matches this client: accepted", func(t *testing.T) {
+		claims := base()
+		claims["aud"] = []string{"client-1", "some-other-trusted-client"}
+		claims["azp"] = "client-1"
+		sub, _, _, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", claims))
+		require.NoError(t, err)
+		assert.Equal(t, "okta|123", sub)
+	})
+}
+
 func TestResolveSSOUser(t *testing.T) {
 	// Mirrors the real storage "not found" error (wrapping the typed
 	// storage.ErrUserNotFound sentinel, #504), so the mock matches the real path.
@@ -210,6 +257,38 @@ func TestResolveSSOUser(t *testing.T) {
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
+		assert.Nil(t, u)
+	})
+
+	// No-subject regression: a SAML assertion can carry an email with no Subject (see
+	// CompleteSAML). The claim protection must still bind the account to THIS provider
+	// so a later, different provider can't take it over by asserting the same email —
+	// silently skipping the claim step just because sub=="" would defeat it.
+	t.Run("verified email with NO subject still claims the account for this provider", func(t *testing.T) {
+		c, store, _, _ := ssoTestCore(t)
+		// sub=="" so the externalId fast-path lookup must not even run.
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
+		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+			return u.ID == 9 && u.ExternalID == "sso:okta:"
+		})).Return(&models.User{ID: 9, ExternalID: "sso:okta:"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "", "ada@x.io", true)
+		require.NoError(t, err)
+		require.NotNil(t, u)
+		assert.Equal(t, uint(9), u.ID)
+		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "GetUserByExternalID", mock.Anything, mock.Anything)
+	})
+
+	// Once claimed via a no-subject assertion, a DIFFERENT provider asserting the same
+	// email must still be refused — that is the whole point of the claim.
+	t.Run("account claimed via a no-subject assertion still blocks a different provider", func(t *testing.T) {
+		c, store, _, _ := ssoTestCore(t)
+		store.On("GetUserByExternalID", mock.Anything, "sso:azure:azure|1").Return((*models.User)(nil), notFound())
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").
+			Return(&models.User{ID: 9, ExternalID: "sso:okta:"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "azure", "azure|1", "ada@x.io", true)
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "different SSO provider")
 		assert.Nil(t, u)
 	})
 }
