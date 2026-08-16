@@ -2,30 +2,17 @@ package run
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
-
-// maxAPIResponseBytes caps how much of a Keyorix server response body this
-// client will read into memory before decoding — the response here is a
-// project's secrets envelope, potentially a large list, so a generous cap is
-// used (matching the same 10MB idiom used elsewhere for Keyorix server
-// response decodes, e.g. internal/cli/common/remote_client.go). This bounds a
-// malicious or misbehaving server response from exhausting client memory via
-// an unbounded json.Decode of resp.Body.
-const maxAPIResponseBytes = 10 << 20 // 10MB
 
 var (
 	runEnv      string
@@ -80,6 +67,17 @@ func init() {
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
+	// context.Background() with NO deadline attached: matches the other 100+
+	// common.RemoteClient call sites across this CLI (secret/rbac/machine/rotation/
+	// project/dynamic, etc — see NewRemoteClient's own comment). The hang protection
+	// against a stalled/malicious KEYORIX_SERVER comes from common.RemoteClient's
+	// per-request http.Client.Timeout (fetchSecretsRemote below), not a context
+	// deadline: fetchSecretsRemote pages through and fetches every secret in the
+	// project/environment (up to maxRunInjectedSecrets) as a sequence of individual
+	// requests, so a single fixed *total* deadline here would risk aborting a
+	// legitimately large — but healthy — fetch partway through. The child process
+	// execChild launches afterwards is unaffected either way: it takes no context and
+	// is free to run indefinitely, matching 'keyorix run's interactive/streaming design.
 	ctx := context.Background()
 
 	// Resolve project via ADR-016 chain: --project → KEYORIX_PROJECT → cli.yaml → "default"
@@ -190,72 +188,24 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 
 // ── Remote / client mode ──────────────────────────────────────────────────────
 
-// apiClient makes authenticated requests to the Keyorix HTTP API.
-type apiClient struct {
-	endpoint string
-	token    string
-	http     *http.Client
-}
-
-// refuseRedirect stops apiClient from following any redirect: without this, a
-// 3xx response from the configured server could bounce the bearer-token-bearing
-// request to an internal host (e.g. cloud IMDS) at request time (CWE-918).
-func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
-}
-
-// get performs a GET, strips the {"data":…} wrapper, and unmarshals into out.
-func (c *apiClient) get(ctx context.Context, path string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+path, nil)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("request: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
-	}
-
-	var envelope struct {
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAPIResponseBytes)).Decode(&envelope); err != nil {
-		return fmt.Errorf("decode envelope: %w", err)
-	}
-	if envelope.Data == nil {
-		return fmt.Errorf("empty data in response from %s", path)
-	}
-	return json.Unmarshal(envelope.Data, out)
-}
-
-// fetchSecretsRemote fetches secrets by talking to the Keyorix HTTP API.
+// fetchSecretsRemote fetches secrets by talking to the Keyorix HTTP API through
+// common.RemoteClient (not a homegrown *http.Client) so this command gets the
+// same request timeout and anti-SSRF redirect refusal as every other CLI
+// remote-mode command (#G71) — this previously ran on a zero-value http.Client
+// with an infinite Timeout. endpoint/token are passed explicitly (rather than
+// letting the client re-resolve them) because the caller may have overridden
+// the token from --token.
 func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env string) (map[string]string, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
-	api := &apiClient{
-		endpoint: endpoint,
-		token:    token,
-		http:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
-	}
-	// api.endpoint is a distinct field declaration from ClientConfig.Endpoint/
-	// RemoteConfig.BaseURL (already validated in common.ResolveRemote, which this
-	// endpoint parameter is sourced from) -- this direct read of api.endpoint is what
-	// lets a static analyzer recognize the same validation as covering the field
-	// apiClient.get below actually reads.
-	if err := common.ValidateRemoteEndpointURL(api.endpoint); err != nil {
-		return nil, err
+	rc, ok := common.NewRemoteClientWithCredentials(endpoint, token)
+	if !ok {
+		return nil, fmt.Errorf("invalid remote endpoint %q", endpoint)
 	}
 
 	// ── 1. Resolve project name → ID ─────────────────────────────────────────
 	var projBody struct {
 		Projects []*models.Project `json:"projects"`
 	}
-	if err := api.get(ctx, "/api/v1/projects", &projBody); err != nil {
+	if err := rc.Get(ctx, "/api/v1/projects", &projBody); err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
 	var nsID uint
@@ -280,7 +230,7 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 	var envBody struct {
 		Environments []*models.Environment `json:"environments"`
 	}
-	if err := api.get(ctx, fmt.Sprintf("/api/v1/projects/%d/environments", nsID), &envBody); err != nil {
+	if err := rc.Get(ctx, fmt.Sprintf("/api/v1/projects/%d/environments", nsID), &envBody); err != nil {
 		return nil, fmt.Errorf("list environments: %w", err)
 	}
 	var envID uint
@@ -315,7 +265,7 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 				Name string `json:"name"`
 			} `json:"secrets"`
 		}
-		if err := api.get(ctx, listPath, &secretsBody); err != nil {
+		if err := rc.Get(ctx, listPath, &secretsBody); err != nil {
 			return nil, fmt.Errorf("list secrets: %w", err)
 		}
 		if len(result)+len(secretsBody.Secrets) > maxRunInjectedSecrets {
@@ -326,7 +276,7 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 				Value string `json:"value"`
 			}
 			path := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", s.ID)
-			if err := api.get(ctx, path, &secretBody); err != nil {
+			if err := rc.Get(ctx, path, &secretBody); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
 				continue
 			}

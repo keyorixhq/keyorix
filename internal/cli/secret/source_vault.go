@@ -14,7 +14,16 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
+
+// vaultClientTimeout bounds every request this client makes to a configured Vault
+// server. Matches common.RemoteClient's own defaultRemoteClientTimeout (#G71
+// sibling fix): the caller's ctx (fetchFromVault ← cmd.Context(), which carries no
+// deadline anywhere in this CLI) previously left this client's requests with NO
+// bound at all — a hung/misconfigured/malicious VAULT_ADDR could stall 'secret
+// import --source vault' forever.
+const vaultClientTimeout = 30 * time.Second
 
 // maxVaultResponseBytes caps how much of a Vault HTTP response body this
 // client will read into memory before decoding. Vault responses read here are
@@ -63,7 +72,7 @@ func newVaultClient() (*vaultClient, error) {
 		// default client would otherwise follow a 30x carrying the live X-Vault-Token
 		// header wherever a compromised/misconfigured Vault (or a MITM) points it (#114,
 		// twin of #98's server-side connector).
-		hc: &http.Client{CheckRedirect: refuseVaultRedirect},
+		hc: &http.Client{Timeout: vaultClientTimeout, CheckRedirect: refuseVaultRedirect},
 	}, nil
 }
 

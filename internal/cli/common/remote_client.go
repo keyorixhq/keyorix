@@ -180,6 +180,25 @@ func NewRemoteClient() (*RemoteClient, bool) {
 	if !ok {
 		return nil, false
 	}
+	return newHardenedRemoteClient(endpoint, token)
+}
+
+// NewRemoteClientWithCredentials builds a RemoteClient for an explicit
+// endpoint/token pair rather than the one ResolveRemote resolves from
+// env/config — for the rare caller that needs to override just the token
+// (e.g. 'keyorix run --token', which still wants the endpoint resolved via
+// the normal ResolveRemote chain but a token supplied on the command line).
+// Carries the exact same hardened http.Client (request timeout + anti-SSRF
+// redirect refusal) as NewRemoteClient so callers don't have to reimplement
+// it. Returns (nil, false) when endpoint fails validation.
+func NewRemoteClientWithCredentials(endpoint, token string) (*RemoteClient, bool) {
+	return newHardenedRemoteClient(endpoint, token)
+}
+
+// newHardenedRemoteClient builds a RemoteClient with the http.Client hardening
+// every remote-mode CLI request needs, shared by NewRemoteClient and
+// NewRemoteClientWithCredentials so there is exactly one place this is set up.
+func newHardenedRemoteClient(endpoint, token string) (*RemoteClient, bool) {
 	rc := &RemoteClient{
 		Endpoint: endpoint,
 		Token:    token,

@@ -91,38 +91,9 @@ func TestFetchSecretsRemote_MultiPage(t *testing.T) {
 	assert.Equal(t, "v1", got["S1"])
 }
 
-// TestApiClientGet_HTTP400 tests that the apiClient surfaces HTTP errors.
-func TestApiClientGet_HTTP400(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer srv.Close()
-
-	api := &apiClient{
-		endpoint: srv.URL,
-		token:    "bad",
-		http:     srv.Client(),
-	}
-	var out struct{}
-	err := api.get(context.Background(), "/api/v1/projects", &out)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "401")
-}
-
-// TestApiClientGet_InvalidJSON tests that a malformed response body is an error.
-func TestApiClientGet_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`not-json`))
-	}))
-	defer srv.Close()
-
-	api := &apiClient{
-		endpoint: srv.URL,
-		token:    "tok",
-		http:     srv.Client(),
-	}
-	var out struct{}
-	err := api.get(context.Background(), "/some/path", &out)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decode envelope")
-}
+// NOTE: apiClient (and its tests TestApiClientGet_HTTP400 / TestApiClientGet_InvalidJSON)
+// was removed under #G71: fetchSecretsRemote now goes through common.RemoteClient
+// instead of a homegrown, bypassing HTTP client. The HTTP-4xx and malformed-response
+// scenarios those tests covered are exercised against the shared implementation by
+// TestRemoteClient_Get_HTTP4xx and TestRemoteClient_Get_DecodeError in
+// internal/cli/common/common_s3_test.go.

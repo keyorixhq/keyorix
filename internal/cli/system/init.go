@@ -263,6 +263,12 @@ type bootstrapAPIResponse struct {
 	Error   string                `json:"error"`
 }
 
+// refuseInitRedirect stops runRemoteInit's client from following any redirect —
+// see the CheckRedirect comment at its call site below.
+func refuseInitRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
+}
+
 // runRemoteInit bootstraps a running Keyorix server by calling POST /system/init.
 // The server creates the admin user, RBAC roles/permissions, and seeds the default
 // project and environments in a single idempotent call.
@@ -292,7 +298,12 @@ func runRemoteInit() error { // NOSONAR -- cognitive complexity 16, suppress go:
 		return fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	// CheckRedirect: without it, a 3xx response from the configured server could bounce
+	// this request — which carries the new admin username/password/bootstrap token — to
+	// an internal host (e.g. cloud IMDS) at request time (CWE-918). Sibling fix alongside
+	// #G71 (internal/cli/run, internal/cli/secret/rotate): every other ad-hoc HTTP client
+	// in this package already sets an equivalent guard; this one didn't.
+	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: refuseInitRedirect}
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body)) // #nosec G107
 	if err != nil {
 		return fmt.Errorf("could not reach server at %s: %w", server, err)
