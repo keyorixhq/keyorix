@@ -51,6 +51,9 @@ func (s *BreakGlassGRPCService) ListBreakGlassActivations(ctx context.Context, r
 	if err != nil {
 		return nil, err
 	}
+	if req.GetProjectId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
 	if err := authorizeScoped(ctx, s.core, actor, "roles.read", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
@@ -70,6 +73,9 @@ func (s *BreakGlassGRPCService) RevokeBreakGlass(ctx context.Context, req *pb.Re
 	actor, err := requireUser(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if req.GetProjectId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
 	if err := authorizeScoped(ctx, s.core, actor, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err

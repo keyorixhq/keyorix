@@ -70,3 +70,44 @@ func TestBreakGlass_Unauthenticated(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
+
+// TestBreakGlass_ZeroProjectIDRejectedBeforeAuthz guards against the gap where
+// ListBreakGlassActivations/RevokeBreakGlass called authorizeScoped(ctx, ...,
+// core.Scope{ProjectID: uint(req.GetProjectId())}, ...) without first rejecting
+// project_id == 0, unlike every machine-identity RPC. core.Scope{} (ProjectID 0)
+// is the GLOBAL scope, so a project_id: 0 request was authorized against
+// roles.read/roles.assign at GLOBAL scope instead of being rejected up front.
+//
+// This is proven by giving the actor a roles.read/roles.assign grant ONLY at
+// project 1 (via the "admin" role, which bypasses per-permission checks but
+// ONLY within the scope it is assigned — see adminRoleNames in
+// internal/core/authz.go) and NO global grant at all. Before the fix, calling
+// with ProjectId: 0 would route into authorizeScoped(Scope{ProjectID: 0}) — the
+// actor holds no global grant, so that call fails PermissionDenied only AFTER
+// evaluating the (wrong) global-scope authorization check. After the fix, the
+// RPC rejects with InvalidArgument before authorizeScoped/the core layer are
+// ever reached, matching the machine-identity RPCs' project_id != 0 guard.
+func TestBreakGlass_ZeroProjectIDRejectedBeforeAuthz(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+	require.NoError(t, h.DB.AutoMigrate(&models.BreakGlassActivation{}, &models.AuditEvent{}))
+
+	const scopedUserID = uint(2)
+	proj := uint(1)
+	// role 2 = "admin": grants roles.read/roles.assign and admin bypass, but
+	// ONLY within project 1's scope — this user holds NO global-scope grant.
+	h.AssignUserRole(t, scopedUserID, 2, &proj)
+
+	ctx := authCtx(scopedUserID, "project-scoped-admin", "roles.read", "roles.assign")
+	svc := NewBreakGlassService(h.CoreService)
+
+	_, err := svc.ListBreakGlassActivations(ctx, &pb.ListBreakGlassActivationsRequest{ProjectId: 0})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err),
+		"project_id: 0 must be rejected before the (wrong) global-scope authorization check runs")
+
+	_, err = svc.RevokeBreakGlass(ctx, &pb.RevokeBreakGlassRequest{ProjectId: 0, ActivationId: 1})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err),
+		"project_id: 0 must be rejected before the (wrong) global-scope authorization check runs")
+}
