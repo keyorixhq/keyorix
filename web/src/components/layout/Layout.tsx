@@ -37,11 +37,18 @@ const Layout: React.FC<LayoutProps> = ({ children, breadcrumbs, showFooter = tru
 
             {/* Main content area */}
             <div className="lg:pl-64 flex flex-col min-h-screen">
-                {/* Impersonation warning bar (visible only while impersonating) */}
-                <ImpersonationBanner />
+                {/* Impersonation banner + header stick together at the top of the
+                    viewport (not just the banner) so the header never scrolls up
+                    underneath the sticky banner and clips against it — see
+                    ImpersonationBanner's own `sticky` for why the banner must never
+                    scroll out of view during an impersonated session. */}
+                <div className="sticky top-0 z-50 flex flex-col">
+                    {/* Impersonation warning bar (visible only while impersonating) */}
+                    <ImpersonationBanner />
 
-                {/* Header */}
-                <Header onMenuClick={() => setSidebarOpen(true)} />
+                    {/* Header */}
+                    <Header onMenuClick={() => setSidebarOpen(true)} />
+                </div>
 
                 {/* Main content */}
                 <main className="flex-1">
