@@ -186,8 +186,12 @@ func (s *scanTime) parse(str string) error {
 
 // MostAccessedSecrets ranks secrets by read count in the window, joining
 // secret_nodes for the name/environment. Reads are the usage signal, so only
-// access logs with action="read" are counted.
-func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
+// access logs with action="read" are counted. When environmentID is non-nil
+// the result is further confined to that single environment within the
+// project — matching the {project, environment} scope the HTTP route
+// authorizes against (ScopeFromQuery), so a caller authorized for only one
+// environment cannot receive the whole project's aggregate usage data.
+func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID, environmentID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -204,6 +208,9 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 		Limit(limit)
 	if projectID != nil {
 		q = q.Where("s.project_id = ?", *projectID)
+	}
+	if environmentID != nil {
+		q = q.Where("s.environment_id = ?", *environmentID)
 	}
 
 	type row struct {
@@ -230,8 +237,13 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 
 // UnusedSecrets returns secrets whose most recent read is older than
 // notReadSince (or that have never been read), ordered never-read first. Only
-// real secrets (is_secret) are considered, not folder nodes.
-func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
+// real secrets (is_secret) are considered, not folder nodes. When
+// environmentID is non-nil the result is further confined to that single
+// environment within the project — matching the {project, environment} scope
+// the HTTP route authorizes against (ScopeFromQuery), so a caller authorized
+// for only one environment cannot receive the whole project's aggregate
+// usage data.
+func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
 	q := ls.db.WithContext(ctx).
 		Table("secret_nodes AS s").
 		Select("s.id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, MAX(l.access_time) AS last_read").
@@ -244,6 +256,9 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notR
 		Limit(maxUnboundedListRows)
 	if projectID != nil {
 		q = q.Where("s.project_id = ?", *projectID)
+	}
+	if environmentID != nil {
+		q = q.Where("s.environment_id = ?", *environmentID)
 	}
 
 	type row struct {

@@ -1265,8 +1265,8 @@ func (m *MockStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.T
 	return args.Get(0).(map[string]map[uint]time.Time), args.Error(1)
 }
 
-func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
-	args := m.Called(ctx, projectID, since, limit)
+func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID, environmentID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
+	args := m.Called(ctx, projectID, environmentID, since, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -1327,8 +1327,8 @@ func (m *MockStorage) SetSystemMetadata(ctx context.Context, key, value string) 
 	return args.Error(0)
 }
 
-func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
-	args := m.Called(ctx, projectID, notReadSince)
+func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
+	args := m.Called(ctx, projectID, environmentID, notReadSince)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

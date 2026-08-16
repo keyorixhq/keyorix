@@ -764,47 +764,63 @@ func TestMostAccessedSecrets_DefaultsApplied(t *testing.T) {
 	ms := new(MockStorage)
 	// Expect defaults: days=30, limit=10
 	stats := []storage.SecretUsageStat{{SecretID: 1, SecretName: "db-pass", ReadCount: 42}}
-	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), mock.AnythingOfType("time.Time"), 10).Return(stats, nil)
+	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time"), 10).Return(stats, nil)
 	c := NewKeyorixCore(ms)
-	got, err := c.MostAccessedSecrets(context.Background(), nil, 0, 0)
+	got, err := c.MostAccessedSecrets(context.Background(), nil, nil, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
 }
 
 func TestMostAccessedSecrets_LimitCapped(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), mock.AnythingOfType("time.Time"), 100).Return([]storage.SecretUsageStat{}, nil)
+	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time"), 100).Return([]storage.SecretUsageStat{}, nil)
 	c := NewKeyorixCore(ms)
-	_, err := c.MostAccessedSecrets(context.Background(), nil, 7, 9999)
+	_, err := c.MostAccessedSecrets(context.Background(), nil, nil, 7, 9999)
 	require.NoError(t, err)
 	ms.AssertExpectations(t)
 }
 
 func TestMostAccessedSecrets_StorageError(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), mock.AnythingOfType("time.Time"), 10).Return(nil, errors.New("query failed"))
+	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time"), 10).Return(nil, errors.New("query failed"))
 	c := NewKeyorixCore(ms)
-	_, err := c.MostAccessedSecrets(context.Background(), nil, 0, 0)
+	_, err := c.MostAccessedSecrets(context.Background(), nil, nil, 0, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "most-accessed")
+}
+
+// TestMostAccessedSecrets_WithEnvironmentScope confirms the environmentID
+// argument (added to close the scope-widening leak where the HTTP handler
+// ignored environment_id and always returned the whole project's aggregate)
+// is threaded through to the storage layer unchanged.
+func TestMostAccessedSecrets_WithEnvironmentScope(t *testing.T) {
+	ms := new(MockStorage)
+	pid := uint(5)
+	eid := uint(9)
+	ms.On("MostAccessedSecrets", mock.Anything, &pid, &eid, mock.AnythingOfType("time.Time"), 10).Return([]storage.SecretUsageStat{{SecretID: 1}}, nil)
+	c := NewKeyorixCore(ms)
+	got, err := c.MostAccessedSecrets(context.Background(), &pid, &eid, 0, 0)
+	require.NoError(t, err)
+	assert.Len(t, got, 1)
+	ms.AssertExpectations(t)
 }
 
 // ── usage_analytics.go — UnusedSecrets ───────────────────────────────────────
 
 func TestUnusedSecrets_DefaultsApplied(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("UnusedSecrets", mock.Anything, (*uint)(nil), mock.AnythingOfType("time.Time")).Return([]storage.UnusedSecretStat{}, nil)
+	ms.On("UnusedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time")).Return([]storage.UnusedSecretStat{}, nil)
 	c := NewKeyorixCore(ms)
-	got, err := c.UnusedSecrets(context.Background(), nil, 0)
+	got, err := c.UnusedSecrets(context.Background(), nil, nil, 0)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
 
 func TestUnusedSecrets_StorageError(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("UnusedSecrets", mock.Anything, (*uint)(nil), mock.AnythingOfType("time.Time")).Return(nil, errors.New("db err"))
+	ms.On("UnusedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time")).Return(nil, errors.New("db err"))
 	c := NewKeyorixCore(ms)
-	_, err := c.UnusedSecrets(context.Background(), nil, 30)
+	_, err := c.UnusedSecrets(context.Background(), nil, nil, 30)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unused secrets")
 }
@@ -812,11 +828,25 @@ func TestUnusedSecrets_StorageError(t *testing.T) {
 func TestUnusedSecrets_WithProjectScope(t *testing.T) {
 	ms := new(MockStorage)
 	pid := uint(5)
-	ms.On("UnusedSecrets", mock.Anything, &pid, mock.AnythingOfType("time.Time")).Return([]storage.UnusedSecretStat{{SecretID: 3}}, nil)
+	ms.On("UnusedSecrets", mock.Anything, &pid, (*uint)(nil), mock.AnythingOfType("time.Time")).Return([]storage.UnusedSecretStat{{SecretID: 3}}, nil)
 	c := NewKeyorixCore(ms)
-	got, err := c.UnusedSecrets(context.Background(), &pid, 14)
+	got, err := c.UnusedSecrets(context.Background(), &pid, nil, 14)
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
+}
+
+// TestUnusedSecrets_WithEnvironmentScope confirms the environmentID argument
+// is threaded through to the storage layer unchanged.
+func TestUnusedSecrets_WithEnvironmentScope(t *testing.T) {
+	ms := new(MockStorage)
+	pid := uint(5)
+	eid := uint(9)
+	ms.On("UnusedSecrets", mock.Anything, &pid, &eid, mock.AnythingOfType("time.Time")).Return([]storage.UnusedSecretStat{{SecretID: 3}}, nil)
+	c := NewKeyorixCore(ms)
+	got, err := c.UnusedSecrets(context.Background(), &pid, &eid, 14)
+	require.NoError(t, err)
+	assert.Len(t, got, 1)
+	ms.AssertExpectations(t)
 }
 
 // ── users.go — GetUser ────────────────────────────────────────────────────────

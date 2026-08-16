@@ -1105,13 +1105,15 @@ type Storage interface {
 	// bound rather than a narrow live-window one.
 	PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error)
 	// MostAccessedSecrets returns the most-read secrets (optionally scoped to a
-	// project) in the window since `since`, ordered by read count descending,
-	// capped at `limit`. Backs the usage-analytics dashboard.
-	MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]SecretUsageStat, error)
-	// UnusedSecrets returns secrets (optionally scoped to a project) with no read
-	// access since `notReadSince` — including never-read secrets — ordered
-	// never-read first, then oldest last read.
-	UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
+	// project and, further, to a single environment within it) in the window
+	// since `since`, ordered by read count descending, capped at `limit`. Backs
+	// the usage-analytics dashboard.
+	MostAccessedSecrets(ctx context.Context, projectID, environmentID *uint, since time.Time, limit int) ([]SecretUsageStat, error)
+	// UnusedSecrets returns secrets (optionally scoped to a project and, further,
+	// to a single environment within it) with no read access since
+	// `notReadSince` — including never-read secrets — ordered never-read first,
+	// then oldest last read.
+	UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
 	// CountUnusedSecretsByProject returns, for every project in projectIDs in a
 	// single grouped query, the count of secrets not read since notReadSince (or
 	// never read) — the deployment-wide counterpart to UnusedSecrets, used by the

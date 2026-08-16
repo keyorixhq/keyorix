@@ -145,12 +145,12 @@ func (rs *RemoteStorage) PrincipalSecretFirstSeen(_ context.Context, _ time.Time
 }
 
 // MostAccessedSecrets is not available in remote mode; usage analytics aggregate server-side.
-func (rs *RemoteStorage) MostAccessedSecrets(_ context.Context, _ *uint, _ time.Time, _ int) ([]storage.SecretUsageStat, error) {
+func (rs *RemoteStorage) MostAccessedSecrets(_ context.Context, _, _ *uint, _ time.Time, _ int) ([]storage.SecretUsageStat, error) {
 	return nil, fmt.Errorf("MostAccessedSecrets not available in remote mode")
 }
 
 // UnusedSecrets is not available in remote mode; usage analytics aggregate server-side.
-func (rs *RemoteStorage) UnusedSecrets(_ context.Context, _ *uint, _ time.Time) ([]storage.UnusedSecretStat, error) {
+func (rs *RemoteStorage) UnusedSecrets(_ context.Context, _, _ *uint, _ time.Time) ([]storage.UnusedSecretStat, error) {
 	return nil, fmt.Errorf("UnusedSecrets not available in remote mode")
 }
 
