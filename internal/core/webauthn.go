@@ -376,6 +376,15 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	if c.classificationRestrictedRequiresMFAStepUp {
 		_ = c.storage.UpsertMFAStepupToken(ctx, ch.UserID, c.now().Add(c.mfaStepUpWindow()))
 	}
+	// Also mint a genuine MFAStepUpGrant, unconditionally (not gated behind
+	// classificationRestrictedRequiresMFAStepUp): a WebAuthn login is itself proof
+	// of possessing the second factor, but — unlike TOTP, which requireReauth can
+	// verify directly against a freshly-typed code — a passkey assertion has no
+	// typable "code" to hand a later self-service re-auth call. Without this,
+	// requireReauth's second-factor requirement (#372-follow-up) would have no
+	// path at all for a WebAuthn-only account. Best-effort: a write failure does
+	// not block the login.
+	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ch.UserID, ExpiresAt: c.now().Add(c.mfaStepUpWindow())})
 	uid := ch.UserID
 	c.writeAuditEventFull(ctx, "webauthn.login_verified", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s passed WebAuthn", wu.user.Username))
@@ -469,6 +478,12 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	if c.classificationRestrictedRequiresMFAStepUp {
 		_ = c.storage.UpsertMFAStepupToken(ctx, resolved.ID, c.now().Add(c.mfaStepUpWindow()))
 	}
+	// Also mint a genuine MFAStepUpGrant, unconditionally — see the identical
+	// comment in FinishWebAuthnLogin: this is the only way a WebAuthn-only
+	// account can ever satisfy requireReauth's second-factor requirement, since a
+	// passkey assertion has no typable "code" equivalent to a TOTP code.
+	// Best-effort: a write failure does not block the login.
+	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: resolved.ID, ExpiresAt: c.now().Add(c.mfaStepUpWindow())})
 	uid := resolved.ID
 	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s logged in passwordlessly via WebAuthn", resolved.Username))

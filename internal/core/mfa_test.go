@@ -187,6 +187,10 @@ func TestMFA_FullFlow(t *testing.T) {
 	require.Error(t, err, "recovery code is single-use")
 
 	// ── Disable via password → MFA off, secret cleared ──
+	// MFA is enrolled, so password alone no longer satisfies requireReauth's
+	// second-factor requirement (#372-follow-up): the caller must also hold an
+	// active step-up grant, proving they recently re-verified the second factor.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword))
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.False(t, user.MFAEnabled)
@@ -305,11 +309,15 @@ func TestMFA_RecoveryCodesRemaining(t *testing.T) {
 }
 
 func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
-	c, _, fixed := newMFATestCore(t)
+	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, original := activateMFAForTest(t, c, fixed)
 
 	// Regenerate with the password → a fresh distinct set; the old codes stop working.
+	// MFA is enrolled, so password alone no longer satisfies requireReauth's
+	// second-factor requirement (#372-follow-up): also seed an active step-up
+	// grant, proving the caller recently re-verified the second factor.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
 	require.NoError(t, err)
 	require.Len(t, fresh, 10)
@@ -568,7 +576,11 @@ func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
 	require.NoError(t, db.First(&mid, 1).Error)
 	assert.Equal(t, 2, mid.FailedLoginAttempts)
 
-	// A correct password succeeds and resets the accrued failures.
+	// A correct password succeeds and resets the accrued failures. MFA is
+	// enrolled, so password alone no longer satisfies requireReauth's
+	// second-factor requirement (#372-follow-up): also seed an active step-up
+	// grant, proving the caller recently re-verified the second factor.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword))
 	var after models.User
 	require.NoError(t, db.First(&after, 1).Error)
@@ -673,6 +685,79 @@ func TestRequireReauth_TOTPCodeNotReplayable(t *testing.T) {
 	err = c.requireReauth(ctx, user, code, "test_phase")
 	require.Error(t, err, "replaying the same TOTP code must be rejected by requireReauth")
 	assert.Contains(t, err.Error(), "invalid", "replay must surface as an invalid-code error, not a lock error")
+}
+
+// #372-follow-up: requireReauth's shared second-factor requirement — password
+// alone must no longer satisfy "step-up" re-auth once MFA is enabled. A stolen
+// session or a narrowly-scoped PAT (ADR-042 exempts PATs from MFA policy
+// entirely) already carries the password-equivalent trust a bearer token
+// implies; before this fix, requireReauth still fell through to a bare bcrypt
+// password check even when user.MFAEnabled was true, letting a bearer-token
+// thief who merely knows the password fully disable/downgrade the account's
+// second factor. Exercised via UpdateOwnProfile's email-change path — the exact
+// call site the underlying finding named, and the most direct test surface one
+// layer above requireReauth itself.
+func TestUpdateOwnProfile_EmailChange_PasswordAloneRefusedWhenMFAEnabled(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	activateMFAForTest(t, c, fixed)
+
+	_, err := c.UpdateOwnProfile(ctx, 1, "", "alice-new@b.com", mfaTestPassword)
+	require.Error(t, err, "the CORRECT password alone must not satisfy re-auth once MFA is enabled")
+
+	u, gerr := c.storage.GetUser(ctx, 1)
+	require.NoError(t, gerr)
+	assert.Equal(t, "a@b.com", u.Email, "a refused re-auth must not change the email")
+}
+
+// Companion positive case #1: a directly-supplied, currently-valid TOTP code
+// satisfies re-auth on its own (unchanged behavior) — the code itself IS the
+// second-factor proof, no step-up grant needed.
+func TestUpdateOwnProfile_EmailChange_ValidTOTPCodeSucceeds(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	secret, _ := activateMFAForTest(t, c, fixed)
+
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	u, err := c.UpdateOwnProfile(ctx, 1, "", "alice-new@b.com", code)
+	require.NoError(t, err, "a valid current TOTP code must satisfy re-auth directly")
+	assert.Equal(t, "alice-new@b.com", u.Email)
+}
+
+// Companion positive case #2: the correct password PLUS an active, independent
+// MFA step-up grant (proof the caller recently re-verified the second factor,
+// e.g. via VerifyMFAStepUp or a WebAuthn login) DOES satisfy re-auth — password
+// alone is insufficient, but password + a genuine step-up grant is equivalent
+// proof to supplying the code directly.
+func TestUpdateOwnProfile_EmailChange_PasswordPlusActiveStepUpGrantSucceeds(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	activateMFAForTest(t, c, fixed)
+
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+
+	u, err := c.UpdateOwnProfile(ctx, 1, "", "alice-new@b.com", mfaTestPassword)
+	require.NoError(t, err, "password + an active step-up grant must satisfy re-auth")
+	assert.Equal(t, "alice-new@b.com", u.Email)
+}
+
+// The fix closes the gap at the SHARED requireReauth helper, not just the
+// UpdateOwnProfile call site the finding named — confirm a second, independent
+// caller (DisableMFA) also now refuses password-only re-auth once MFA is
+// enabled.
+func TestDisableMFA_PasswordAloneRefusedWhenMFAEnabled(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	activateMFAForTest(t, c, fixed)
+
+	err := c.DisableMFA(ctx, 1, mfaTestPassword)
+	require.Error(t, err, "the CORRECT password alone must not satisfy DisableMFA's re-auth once MFA is enabled")
+
+	u, gerr := c.storage.GetUser(ctx, 1)
+	require.NoError(t, gerr)
+	assert.True(t, u.MFAEnabled, "a refused re-auth must not disable MFA")
 }
 
 // VerifyMFALogin must record a MFA step-up token when the classification gate

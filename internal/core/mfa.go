@@ -438,15 +438,36 @@ func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase str
 }
 
 // requireReauth is the shared self-service re-authentication gate (#372) for
-// account-security-factor changes: it verifies codeOrPassword against a CURRENT,
-// already-active TOTP secret (only when user.MFAEnabled — never against an
-// in-flight, not-yet-activated enrolment secret, which an attacker who just called
-// BeginMFAEnrollment/BeginWebAuthnRegistration themselves would already know) or
-// the account password. Every caller (DisableMFA, RegenerateMFARecoveryCodes,
-// ActivateMFA, FinishWebAuthnRegistration, DeleteWebAuthnCredential) is reachable
+// account-security-factor changes. Every caller (DisableMFA,
+// RegenerateMFARecoveryCodes, ActivateMFA, FinishWebAuthnRegistration,
+// DeleteWebAuthnCredential, UpdateOwnProfile's email-change path) is reachable
 // with nothing but a bearer token — a stolen session OR a narrowly-scoped PAT,
 // which ADR-042 exempts from MFA policy entirely — so this check is the only thing
 // standing between a leaked bearer and a full account-security-factor takeover.
+//
+// Once a second factor is enrolled (user.MFAEnabled or user.WebAuthnEnabled), the
+// account password ALONE is no longer sufficient proof — accepting it would let a
+// bearer-token thief satisfy "step-up" re-auth with nothing but a password,
+// defeating the entire point of requiring a SECOND factor. In that case the
+// caller must additionally prove they still hold the second factor, via one of:
+//
+//  1. codeOrPassword is itself a CURRENT, currently-valid TOTP code, checked
+//     directly against the already-active secret (only possible when
+//     user.MFAEnabled — never against an in-flight, not-yet-activated
+//     enrolment secret, which an attacker who just called
+//     BeginMFAEnrollment/BeginWebAuthnRegistration themselves would already
+//     know). Anti-replay via MarkTOTPStepUsed, same as VerifyMFACredentials.
+//  2. codeOrPassword is the correct account password AND the user separately
+//     holds an active MFA step-up grant (HasActiveMFAStepUp) — an
+//     independent, time-limited proof that they recently re-verified their
+//     second factor (VerifyMFAStepUp for TOTP/recovery codes; a WebAuthn
+//     login also mints one, see FinishWebAuthnLogin/
+//     FinishWebAuthnPasswordlessLogin — a passkey assertion has no typable
+//     "code" to hand this function directly, so login itself is the proof).
+//
+// With no second factor enrolled at all, the account password alone remains
+// sufficient re-auth — unchanged from before this check existed.
+//
 // Feeds the same per-account lockout the second login factor (VerifyMFALogin)
 // uses, keyed by user (not IP, since this is an authenticated-session endpoint):
 // without it, this check would be the only throttle on guessing. phase labels the
@@ -455,6 +476,7 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	if c.loginLocked(user) {
 		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
+	secondFactorEnrolled := user.MFAEnabled || user.WebAuthnEnabled
 	ok := false
 	if user.MFAEnabled {
 		if secret, err := c.loadTOTPSecret(ctx, user.ID); err == nil {
@@ -469,7 +491,15 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 		}
 	}
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
-		ok = true
+		if !secondFactorEnrolled {
+			ok = true
+		} else if hasGrant, gerr := c.HasActiveMFAStepUp(ctx, user.ID); gerr == nil && hasGrant {
+			// The password is correct AND the caller independently proved they
+			// still hold the enrolled second factor recently — password alone
+			// would not be enough on its own, but password + a fresh, genuine
+			// step-up grant is equivalent proof to supplying the code directly.
+			ok = true
+		}
 	}
 	if !ok {
 		c.auditMFAFailed(ctx, user.ID, phase)
