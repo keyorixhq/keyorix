@@ -208,13 +208,17 @@ func listResponsePaged(resources []map[string]interface{}, total, startIndex int
 	}
 }
 
-// GetUser handles GET /scim/v2/Users/{id}.
+// GetUser handles GET /scim/v2/Users/{id}. Routed through GetSCIMUser (not the
+// generic core.GetUser also used by the admin console/self-profile lookups) so a
+// non-SCIM-managed (native) account's id is refused the same way ReplaceUser/
+// PatchUser/DeleteUser already refuse one (#120) — a generic 404 either way, so the
+// response never confirms whether an out-of-scope id exists at all (#G85).
 func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := scimID(w, r)
 	if !ok {
 		return
 	}
-	user, err := h.coreService.GetUser(r.Context(), id)
+	user, err := h.coreService.GetSCIMUser(r.Context(), id)
 	if err != nil {
 		scimError(w, http.StatusNotFound, "user not found")
 		return
