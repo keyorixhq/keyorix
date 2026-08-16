@@ -432,6 +432,82 @@ func TestImpersonationEnd_HappyPath_NoAdminCookie_S11(t *testing.T) {
 	assert.False(t, data["admin_session_restored"].(bool), "admin session should NOT have been restored")
 }
 
+// TestImpersonationEnd_MismatchedAdminCookie_NotRestored_S11 is the
+// admin-billing-2 regression: End() must bind the restore check to the
+// impersonation session's OWN ImpersonatedBy admin, not just "any currently
+// valid session token sitting in the AdminSessionCookieName cookie". This
+// starts a real impersonation (admin → target), then calls End with the
+// impersonation token but with a DIFFERENT, unrelated (and still perfectly
+// valid) user's session token in the admin cookie — e.g. a stale cookie left
+// over from a previous admin's impersonation on a shared browser profile, or
+// one substituted by a client capable of sending an arbitrary Cookie header
+// for this origin. Before the fix, ValidateSessionToken succeeding was the
+// ONLY check, so the unrelated session would be silently promoted to the
+// caller's active session (admin_session_restored=true, kx_session swapped to
+// the other user's token). After the fix, the mismatched cookie must be
+// rejected: admin_session_restored=false and the session cookie cleared, not
+// swapped to the wrong session.
+func TestImpersonationEnd_MismatchedAdminCookie_NotRestored_S11(t *testing.T) {
+	t.Parallel()
+	cs := freshCoreS11(t)
+	h := NewImpersonationHandler(cs, false)
+
+	bootstrapS11(t, cs, "impendmis")
+	ctx := context.Background()
+	admin, err := cs.GetUserByUsername(ctx, "s11impendmis")
+	require.NoError(t, err)
+
+	// Create the impersonation target.
+	target, err := cs.CreateUser(ctx, &core.CreateUserRequest{
+		Username:    "s11impendmis-target",
+		Email:       "s11impendmis-target@example.com",
+		DisplayName: "Target",
+		Password:    "Kx#Vr9$Mn2!Zp4@Qw",
+	})
+	require.NoError(t, err)
+
+	// Create a wholly unrelated third user with their OWN live session — this
+	// stands in for the "different, unrelated but still-valid session token"
+	// from the finding. It is never the admin who started this impersonation.
+	_, err = cs.CreateUser(ctx, &core.CreateUserRequest{
+		Username:    "s11impendmis-other",
+		Email:       "s11impendmis-other@example.com",
+		DisplayName: "Other",
+		Password:    "Kx#Vr9$Mn2!Zp4@Qw",
+	})
+	require.NoError(t, err)
+	otherSession, _, err := cs.Login(ctx, &core.LoginRequest{
+		Username: "s11impendmis-other",
+		Password: "Kx#Vr9$Mn2!Zp4@Qw",
+	})
+	require.NoError(t, err)
+
+	impSession, _, err := cs.StartImpersonation(ctx, admin.ID, target.ID, "127.0.0.1")
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+impSession.SessionToken)
+	// The admin cookie holds someone else's valid session, not the impersonating
+	// admin's own stashed token.
+	req.AddCookie(&http.Cookie{Name: middleware.AdminSessionCookieName, Value: otherSession.SessionToken})
+	w := httptest.NewRecorder()
+	h.End(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp2 map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp2))
+	data2, _ := resp2["data"].(map[string]any)
+	assert.False(t, data2["admin_session_restored"].(bool), "a different admin's session must not be restored")
+
+	// The session cookie must be CLEARED, not swapped to the other user's
+	// token — assert no Set-Cookie for kx_session carries otherSession's value.
+	for _, c := range w.Result().Cookies() {
+		if c.Name == middleware.SessionCookieName {
+			assert.NotEqual(t, otherSession.SessionToken, c.Value, "session cookie must not be swapped to the unrelated session's token")
+		}
+	}
+}
+
 // ── catalog.go: ListProjects / ListEnvironments ───────────────────────────────
 
 // TestListProjects_IncludeDeleted_S11 — ?include_deleted=true → 200.

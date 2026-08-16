@@ -110,6 +110,48 @@ func TestProjectService_Unauthorized(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// TestProjectService_ListRotateOnSoftDeletedProject_GlobalGrantStillEmpty verifies
+// the liveness check added to ListEnvironments / GetProjectRotationOrder /
+// GetProjectRotationPlan. A caller who holds a GLOBAL (project_id=0) secrets.read
+// grant passes authorizeScoped for ANY project regardless of that project's liveness
+// — the deleted_at exclusion GetUserRoleIDsAt applies only to a grant whose OWN
+// project_id matches the target scope, not to a project_id=0 grant, which is
+// unconditional by design. Before this fix, ListEnvironmentsByProject /
+// ListSecretDependenciesForProject / GenerateRotationPlan query raw project_id with
+// no liveness check of their own, so such a caller got a quiet EMPTY success instead
+// of NotFound for a soft-deleted project — the exact "structural gap" this fix closes
+// (GetProject/UpdateProject already get NotFound for free via storage.GetProject).
+func TestProjectService_ListRotateOnSoftDeletedProject_GlobalGrantStillEmpty(t *testing.T) {
+	svc, db := newProjectTestRigWithDB(t)
+
+	// Project 2: a second, later-deleted project. User 1 (the rig's seeded global
+	// writer, ProjectID:0) never held a project-2-scoped grant — only the global one.
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "doomed"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "staging"}).Error)
+
+	globalCtx := authCtx(1, "owner")
+
+	// Sanity: before deletion, the global grant reads project 2 fine.
+	envs, err := svc.ListEnvironments(globalCtx, &pb.ListEnvironmentsRequest{ProjectId: 2})
+	require.NoError(t, err)
+	require.Len(t, envs.GetEnvironments(), 1)
+
+	// Soft-delete project 2 (its environment is cascaded into the same soft-delete).
+	require.NoError(t, svc.core.DeleteProject(context.Background(), 2, true))
+
+	_, err = svc.ListEnvironments(globalCtx, &pb.ListEnvironmentsRequest{ProjectId: 2})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+
+	_, err = svc.GetProjectRotationOrder(globalCtx, &pb.GetProjectRequest{Id: 2})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+
+	_, err = svc.GetProjectRotationPlan(globalCtx, &pb.GetProjectRequest{Id: 2})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
 func TestProjectService_InvalidArgument(t *testing.T) {
 	svc := newProjectTestRig(t)
 	ctx := authCtx(1, "owner")

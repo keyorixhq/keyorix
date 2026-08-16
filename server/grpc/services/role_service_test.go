@@ -159,6 +159,28 @@ func TestRoleService_UpdateRole(t *testing.T) {
 	assert.Equal(t, "new description", updated.GetDescription())
 }
 
+// TestRoleService_UpdateRole_BuiltinRefused proves the gRPC path refuses to
+// update a product built-in role, matching the HTTP handler. Without the guard a
+// roles.write holder could shrink super_admin/admin's permission set over gRPC
+// (UpdateRole strips the entire current set before re-adding the caller-supplied
+// one) and lock out every administrator who relies on that role. A non-built-in
+// role must remain updatable, matching TestRoleService_UpdateRole above.
+func TestRoleService_UpdateRole_BuiltinRefused(t *testing.T) {
+	svc, _ := newRoleService(t)
+	// super_admin is seeded with ID 1 by the RBAC test helper.
+	_, err := svc.UpdateRole(roleAdminCtx(), &pb.UpdateRoleRequest{
+		Id: 1, Description: strPtr("hijacked description"),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+
+	// And it is unchanged afterwards.
+	got, gerr := svc.GetRole(roleAdminCtx(), &pb.GetRoleRequest{Id: 1})
+	require.NoError(t, gerr)
+	assert.Equal(t, "super_admin", got.GetName())
+	assert.NotEqual(t, "hijacked description", got.GetDescription())
+}
+
 func TestRoleService_DeleteRole(t *testing.T) {
 	svc, h := newRoleService(t)
 	created, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{

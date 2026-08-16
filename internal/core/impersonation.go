@@ -137,18 +137,22 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 // EndImpersonation terminates the impersonation session identified by token,
 // logging an impersonation.end event with the session duration and the number
 // of actions taken while impersonating. The token must belong to an
-// impersonation session. Restoring the admin's own session is a caller (HTTP
-// handler) concern — see admin_impersonation.go's End, which stashes the
-// admin's token in a second cookie at Start and reads it back here, rather than
-// this core layer trying to recall a plaintext token it never retains (session
-// tokens are stored only as a hash, see local_auth.go's hashSessionToken).
-func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) error {
+// impersonation session. Returns the admin ID that was impersonating (i.e.
+// the ended session's ImpersonatedBy) so the caller can bind any "restore my
+// own session" step to that SAME admin, rather than trusting whatever session
+// token happens to be sitting in a client-supplied cookie (see
+// admin_impersonation.go's End). Restoring the admin's own session is
+// otherwise a caller (HTTP handler) concern — End stashes the admin's token in
+// a second cookie at Start and reads it back here, rather than this core
+// layer trying to recall a plaintext token it never retains (session tokens
+// are stored only as a hash, see local_auth.go's hashSessionToken).
+func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) (uint, error) {
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {
-		return fmt.Errorf("session not found")
+		return 0, fmt.Errorf("session not found")
 	}
 	if session.ImpersonatedBy == nil {
-		return fmt.Errorf("not an impersonation session")
+		return 0, fmt.Errorf("not an impersonation session")
 	}
 	adminID := *session.ImpersonatedBy
 	targetID := session.UserID
@@ -172,14 +176,14 @@ func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) error 
 	// mid-operation, reserving the explicit failed-audit-event helper for
 	// pre-mutation authorization denials instead.
 	if err := c.storage.DeleteSession(ctx, session.ID); err != nil {
-		return fmt.Errorf("failed to end impersonation session: %w", err)
+		return 0, fmt.Errorf("failed to end impersonation session: %w", err)
 	}
 
 	diff := fmt.Sprintf(`{"duration_seconds":%d,"action_count":%d}`, int64(duration.Seconds()), actions)
 	desc := fmt.Sprintf("impersonation ended after %s (%d action(s))", duration.Round(time.Second), actions)
 	c.writeImpersonationEvent(ctx, EventImpersonationEnd, adminID, targetID, session.IPAddress, desc, diff)
 
-	return nil
+	return adminID, nil
 }
 
 // ReauthorizeImpersonation re-verifies an ACTIVE impersonation session's admin

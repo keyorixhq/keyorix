@@ -287,6 +287,53 @@ func TestRBACReal_DeleteRole_Builtin_Forbidden(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
+// TestRBACReal_UpdateRole_Builtin_Forbidden proves UpdateRole refuses to touch a
+// product built-in role. Without this guard replaceRolePermissions unconditionally
+// strips a role's entire current permission set before re-adding the caller-supplied
+// one, so a roles.write holder could shrink e.g. admin's grants down to whatever
+// subset they hold themselves, silently locking out every administrator who relies
+// on that built-in role. Mirrors DeleteRole's identical guard above.
+func TestRBACReal_UpdateRole_Builtin_Forbidden(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	role := mustCreateRole(t, db, "admin")
+
+	body := `{"description":"hijacked description"}`
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/roles/%d", role.ID), bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUserCtx(withChiParam(req, "id", fmt.Sprintf("%d", role.ID)))
+	w := httptest.NewRecorder()
+
+	handler.UpdateRole(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// Unchanged in storage — the request must never reach Storage().UpdateRole.
+	var reloaded models.Role
+	require.NoError(t, db.First(&reloaded, role.ID).Error)
+	assert.Equal(t, "admin role", reloaded.Description)
+}
+
+// TestRBACReal_UpdateRole_NonBuiltin_Succeeds proves the new built-in guard does not
+// over-block: an ordinary, non-reserved role must remain updatable exactly as before.
+func TestRBACReal_UpdateRole_NonBuiltin_Succeeds(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	role := mustCreateRole(t, db, "custom-role")
+
+	body := `{"description":"updated description"}`
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/roles/%d", role.ID), bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUserCtx(withChiParam(req, "id", fmt.Sprintf("%d", role.ID)))
+	w := httptest.NewRecorder()
+
+	handler.UpdateRole(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var reloaded models.Role
+	require.NoError(t, db.First(&reloaded, role.ID).Error)
+	assert.Equal(t, "updated description", reloaded.Description)
+}
+
 func TestRBACReal_GetRole_NotFound(t *testing.T) {
 	handler, _, _ := setupRBACTestWithDB(t)
 

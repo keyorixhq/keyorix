@@ -317,6 +317,18 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 		}
 		return
 	}
+	// A built-in role must not be mutable through the API — mirrors the CreateRole/
+	// DeleteRole guards below/above. replaceRolePermissions unconditionally strips a
+	// role's entire current permission set before re-adding the caller-supplied one, so
+	// without this check a roles.write holder could shrink e.g. admin/system_admin down
+	// to whatever subset they hold themselves, silently locking out every administrator
+	// who relies on that built-in role. The gRPC RoleGRPCService.UpdateRole applies the
+	// identical guard (server/grpc/services/role_service.go); without it here the guard
+	// is bypassable by switching transport.
+	if core.IsBuiltinRole(role.Name) {
+		sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
+		return
+	}
 
 	// #169: resolve + authorize every requested permission BEFORE touching the
 	// role's existing permission set — otherwise a request naming even one

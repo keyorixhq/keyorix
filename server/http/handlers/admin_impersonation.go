@@ -124,7 +124,8 @@ func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", "Missing authorization token", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.EndImpersonation(r.Context(), token); err != nil {
+	adminID, err := h.coreService.EndImpersonation(r.Context(), token)
+	if err != nil {
 		if strings.Contains(err.Error(), "not an impersonation") {
 			sendError(w, "BadRequest", "Not an impersonation session", http.StatusBadRequest, nil)
 		} else {
@@ -145,7 +146,20 @@ func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 		// expired, or the admin's account may have been suspended, while they
 		// were impersonating. This is the same check every other request goes
 		// through, not a new trust boundary.
-		if _, _, verr := h.coreService.ValidateSessionToken(r.Context(), adminCookie.Value); verr == nil {
+		//
+		// Beyond validity, the resolved session must belong to the SAME admin
+		// who was just impersonating (adminID, from the ended session's own
+		// ImpersonatedBy — resolved server-side, not client-supplied). Without
+		// this binding, ANY currently-valid session token sitting in the
+		// AdminSessionCookieName cookie — a stale cookie left over from a
+		// PREVIOUS, different admin's impersonation on a shared browser
+		// profile, or one substituted by a client capable of setting an
+		// arbitrary Cookie header for this origin — would be silently promoted
+		// to the caller's active session. The cookie is HttpOnly, so this isn't
+		// exploitable from in-browser JS, but nothing else here enforces that
+		// the restored session actually belongs to the admin who started this
+		// impersonation.
+		if adminUser, _, verr := h.coreService.ValidateSessionToken(r.Context(), adminCookie.Value); verr == nil && adminUser != nil && adminUser.ID == adminID {
 			middleware.SetSessionCookie(w, adminCookie.Value, nil, h.tlsEnabled)
 			if csrfToken, cerr2 := middleware.GenerateCSRFToken(); cerr2 == nil {
 				middleware.SetCSRFCookie(w, csrfToken, h.tlsEnabled)

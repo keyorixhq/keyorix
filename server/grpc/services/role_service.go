@@ -120,6 +120,16 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
+	// A built-in role must not be mutable over gRPC either — mirrors the CreateRole/
+	// DeleteRole guards above/below. UpdateRole unconditionally strips a role's entire
+	// current permission set before re-adding the caller-supplied one (see below), so
+	// without this check a roles.write holder could shrink e.g. admin/system_admin down
+	// to whatever subset they hold themselves, silently locking out every administrator
+	// who relies on that built-in role. The HTTP handler applies the identical guard
+	// (handlers/rbac.go); without it here the guard is bypassable by switching transport.
+	if core.IsBuiltinRole(role.Name) {
+		return nil, status.Errorf(codes.FailedPrecondition, "cannot update built-in role: %s", role.Name)
+	}
 
 	if req.Description != nil {
 		role.Description = req.GetDescription()
