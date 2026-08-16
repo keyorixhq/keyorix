@@ -48,3 +48,25 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s:%s" .Values.web.image.repository (default .Chart.AppVersion .Values.web.image.tag) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+nginx's add_header does NOT merge/inherit across nesting levels: if a location
+block defines even one add_header of its own, every add_header inherited from
+the enclosing http/server block is silently dropped for that location, not
+just individually overridden. web-config.yaml's http{} block sets these as
+baseline security headers, but several location blocks also set their own
+add_header (CORS, Cache-Control, health-check Content-Type) for other
+purposes, which would otherwise strip all of these from those responses. This
+template is the single source of truth; every location block that defines its
+own add_header must also include this so the headers still apply there.
+*/}}
+{{- define "keyorix.web.securityHeaders" -}}
+add_header X-Frame-Options "DENY" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Referrer-Policy "no-referrer" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none';" always;
+add_header Cross-Origin-Resource-Policy "same-origin" always;
+add_header Cross-Origin-Embedder-Policy "require-corp" always;
+add_header Cross-Origin-Opener-Policy "same-origin" always;
+{{- end -}}
