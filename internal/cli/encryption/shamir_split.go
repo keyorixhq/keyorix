@@ -12,6 +12,7 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
@@ -75,6 +76,25 @@ unrecoverable. Store shares separately and back them up.`,
 		fmt.Printf("Generated a new 32-byte KEK split into %d shares (threshold %d).\n", ssShares, ssThreshold)
 		fmt.Println("The KEK itself is not stored — keep at least the threshold many shares safe.")
 		fmt.Println()
+		if ssOutDir == "" {
+			// #cli-encryption-005: each printed share, on its own, is genuine key
+			// material below the configured threshold (only the KEK itself is never
+			// printed). Unlike the KEK, a run without --out-dir puts these shares
+			// straight into whatever is watching this terminal — scrollback, a
+			// tmux/screen logger, a session recorder, a CI log, or a shoulder-surfer
+			// during a live demo. Enough of them reaching the same log/recording lets
+			// the reader reconstruct the KEK without ever touching a custodian's share
+			// file. Warn loudly on stderr (not stdout) immediately before printing any
+			// share, so the warning survives even if stdout alone is piped/redirected
+			// away from the terminal.
+			fmt.Fprintln(os.Stderr, "⚠️  WARNING: printing Shamir shares to stdout.")
+			fmt.Fprintln(os.Stderr, "   Each share below is genuine key material — enough of them (threshold")
+			fmt.Fprintln(os.Stderr, "   many) reconstruct the KEK. Anything capturing this terminal (scrollback,")
+			fmt.Fprintln(os.Stderr, "   tmux/screen logging, session recorders, CI logs) can leak that key.")
+			fmt.Fprintln(os.Stderr, "   Prefer --out-dir <dir> unless this is a live, unrecorded,")
+			fmt.Fprintln(os.Stderr, "   single-viewer terminal.")
+			fmt.Fprintln(os.Stderr)
+		}
 		for i, s := range shares {
 			enc := hex.EncodeToString(s)
 			if ssOutDir == "" {
