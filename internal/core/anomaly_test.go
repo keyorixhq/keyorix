@@ -322,6 +322,58 @@ func TestSetBusinessHours(t *testing.T) {
 	assert.Equal(t, before, d.offHours, "a rejected degenerate band must not mutate the policy")
 }
 
+// TestSetBusinessHours_PartialUpdateCollision covers wave6/G05: a partial-update
+// caller (e.g. one that fetches the persisted config and overlays only the field it
+// means to change) can supply one genuinely valid hour that happens to numerically
+// collide with the OTHER field's still-in-effect value. The pre-fix bug only checked
+// startHour==endHour on the RAW inputs when BOTH independently passed validHour, so
+// an out-of-range value on the untouched field slipped past that check, silently fell
+// back to the hardcoded default (22 start / 6 end), and could collide with the
+// explicitly-supplied field to produce a degenerate, zero-width band with no error.
+func TestSetBusinessHours_PartialUpdateCollision(t *testing.T) {
+	ctx := context.Background()
+
+	// startHour=6 collides with the hardcoded default endHour (6) once endHour is
+	// out of range and silently falls back to that default.
+	t.Run("valid start collides with default end via out-of-range end", func(t *testing.T) {
+		d := NewAnomalyDetector(nil)
+		before := d.offHours
+		err := d.SetBusinessHours(ctx, "", 6, -1)
+		require.Error(t, err, "an out-of-range end_hour must be rejected, not silently defaulted")
+		assert.Equal(t, before, d.offHours, "a rejected config must not mutate the policy")
+	})
+
+	// endHour=22 collides with the hardcoded default startHour (22) once startHour is
+	// out of range and silently falls back to that default.
+	t.Run("valid end collides with default start via out-of-range start", func(t *testing.T) {
+		d := NewAnomalyDetector(nil)
+		before := d.offHours
+		err := d.SetBusinessHours(ctx, "", 99, 22)
+		require.Error(t, err, "an out-of-range start_hour must be rejected, not silently defaulted")
+		assert.Equal(t, before, d.offHours, "a rejected config must not mutate the policy")
+	})
+
+	// The legitimate "explicitly disabled/keep default" state — both hours 0 — must
+	// still work: this is the one deliberate way to request the default band, distinct
+	// from an accidental collision, and must not be broken by the stricter validation.
+	t.Run("both zero still explicitly keeps the default band", func(t *testing.T) {
+		d := NewAnomalyDetector(nil)
+		err := d.SetBusinessHours(ctx, "", 0, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 22, d.offHours.start)
+		assert.Equal(t, 6, d.offHours.end)
+	})
+
+	// A genuinely valid, non-colliding, fully-supplied pair must still be accepted.
+	t.Run("valid distinct pair is accepted", func(t *testing.T) {
+		d := NewAnomalyDetector(nil)
+		err := d.SetBusinessHours(ctx, "", 6, 18)
+		require.NoError(t, err)
+		assert.Equal(t, 6, d.offHours.start)
+		assert.Equal(t, 18, d.offHours.end)
+	})
+}
+
 func TestVolumeSpike(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 1, Name: "db"}
