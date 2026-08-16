@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -52,6 +53,49 @@ func TestMigrateUserToMachine(t *testing.T) {
 		assert.True(t, seen["account.suspended"], "suspend event")
 		assert.True(t, seen["machine_identity.migrated_from_user"], "migration event")
 		store.AssertExpectations(t)
+	})
+
+	t.Run("machine identity Description omits the source user's email; the audit event carries it", func(t *testing.T) {
+		// CMI-2: the created machine identity's Description is readable by any
+		// project member with project-scoped users.read (ListMachineIdentities/
+		// ListStaleMachineIdentities over both HTTP and gRPC), a far lower bar
+		// than the users.write (global) + roles.assign (project) required to
+		// perform this migration. The source user need not be a member of the
+		// target project, so the email must not leak into Description — the
+		// full detail belongs in the audit event instead, which is gated
+		// behind audit.read.
+		store := new(MockStorage)
+		c := newMachineCore(store)
+		ctx := context.Background()
+
+		store.On("GetUserByUsername", ctx, "jane.doe").
+			Return(&models.User{ID: 4821, Username: "jane.doe", Email: "jane.doe@customer.example", AccountState: "active"}, nil)
+
+		var createdDesc string
+		store.On("CreateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+			createdDesc = m.Description
+			return m.ProjectID == 3
+		})).Return(&models.MachineIdentity{ID: 20, ProjectID: 3, Name: "jane.doe", IdentityType: MachineTypeService, State: MachineActive, Description: createdDesc}, nil)
+
+		var auditDescs []string
+		store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+			auditDescs = append(auditDescs, e.Description)
+			return true
+		})).Return(nil)
+
+		_, err := c.MigrateUserToMachine(ctx, "jane.doe", 3, "", "", 9, false)
+		require.NoError(t, err)
+
+		assert.NotContains(t, createdDesc, "jane.doe@customer.example", "machine identity Description must not leak the source user's email")
+		assert.Contains(t, createdDesc, "jane.doe", "Description may still reference the source username")
+
+		foundEmailInAudit := false
+		for _, d := range auditDescs {
+			if strings.Contains(d, "jane.doe@customer.example") {
+				foundEmailInAudit = true
+			}
+		}
+		assert.True(t, foundEmailInAudit, "the migration audit event (gated behind audit.read) should still record the full detail, including email")
 	})
 
 	t.Run("keep-user leaves the source account untouched", func(t *testing.T) {

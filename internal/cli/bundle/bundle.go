@@ -40,8 +40,10 @@ var (
 	buildMinFrom    string
 	buildReleased   string
 	verifyInstalled string
+	verifyForce     bool
 	importDest      string
 	importInstalled string
+	importForce     bool
 	importLicense   string
 )
 
@@ -125,6 +127,9 @@ var verifyCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("verification failed (fail-closed): %w", err)
 		}
+		if err := requireVerifyInstalledVersion(); err != nil {
+			return err
+		}
 		if err := m.CheckUpgrade(verifyInstalled); err != nil {
 			return err
 		}
@@ -165,6 +170,10 @@ var importCmd = &cobra.Command{
 		// deployment). Gating strips nothing from community source builds, which can't
 		// import anyway (no embedded update key).
 		if err := requireAirgapUpdates(reg); err != nil {
+			return err
+		}
+
+		if err := requireImportInstalledVersion(); err != nil {
 			return err
 		}
 
@@ -235,6 +244,72 @@ func configuredDeploymentID() string {
 	return cfg.License.DeploymentID
 }
 
+// requireVerifyInstalledVersion enforces that `bundle verify` gets an operator-supplied
+// --installed-version before the no-downgrade / anti-skip (min-upgrade-from) check runs.
+// `verify` is fully offline and stateless — unlike `import`, there is no staging directory
+// to persist a marker in, so the flag is the ONLY input the check has (cli-project-001: it
+// was previously optional with an empty default, which made ibundle.Manifest.CheckUpgrade
+// silently no-op — a substituted, older-but-validly-signed bundle would then verify clean
+// with no indication it's a downgrade). Skipping the check is still possible, but only as an
+// explicit, auditable --force, never as the silent default.
+func requireVerifyInstalledVersion() error {
+	verifyInstalled = strings.TrimSpace(verifyInstalled)
+	if verifyInstalled != "" {
+		return nil
+	}
+	if !verifyForce {
+		return fmt.Errorf("--installed-version is required to check the no-downgrade / anti-skip " +
+			"(min-upgrade-from) guarantees for this deployment: pass --installed-version " +
+			"<currently-running-version> (recommended — a substituted, older-but-validly-signed bundle " +
+			"would otherwise verify cleanly with no warning that it's a downgrade). Re-run with --force to " +
+			"verify only the signature and component digests, with no downgrade check")
+	}
+	fmt.Fprintln(os.Stderr, "WARNING: --installed-version was not supplied — proceeding with --force means "+
+		"the no-downgrade and anti-skip (min-upgrade-from) checks are SKIPPED for this verification.")
+	return nil
+}
+
+// requireImportInstalledVersion enforces that `bundle import` has *something* to anchor the
+// no-downgrade / anti-skip (min-upgrade-from) check against before it opens or extracts the
+// bundle. Unlike verify, import already has a fail-closed auto-discovery mechanism (#111):
+// ibundle.Extract persists a version marker at --dest on every successful import and treats
+// it as authoritative over this flag on the next one, so a routine re-import needs no flag at
+// all. That mechanism only protects a destination that has already been imported into at
+// least once, though — cli-project-001 is the gap on a FIRST import into a fresh/empty
+// --dest, where --installed-version was merely optional with an empty default. An empty
+// default there means ibundle.Manifest.CheckUpgrade silently no-ops, so the routine `keyorix
+// bundle import --dest /stage <bundle>` invocation from the command's own help text staged a
+// substituted, older-but-validly-signed bundle with zero downgrade protection. This makes
+// that gap an explicit, auditable operator choice (--force) instead of a silent default.
+func requireImportInstalledVersion() error {
+	importInstalled = strings.TrimSpace(importInstalled)
+	if importInstalled != "" {
+		return nil
+	}
+	_, hasMarker, err := ibundle.PersistedInstalledVersion(importDest)
+	if err != nil {
+		return fmt.Errorf("import failed (fail-closed, nothing staged on a verify failure): %w", err)
+	}
+	if hasMarker {
+		// A prior import already anchors the gate at this destination; ibundle.Extract will
+		// read and enforce against that marker regardless of this (empty) flag value.
+		return nil
+	}
+	if !importForce {
+		return fmt.Errorf("--installed-version is required: no prior import was recorded at %q, so there is "+
+			"nothing to anchor the no-downgrade / anti-skip (min-upgrade-from) check against. Pass "+
+			"--installed-version <currently-running-version> (recommended — an attacker, a compromised "+
+			"internal mirror, or a compromised artifact-staging host could otherwise substitute an older, "+
+			"still validly-signed bundle and silently downgrade this deployment). If this really is a first "+
+			"install with nothing yet to protect, re-run with --force to proceed without a downgrade check",
+			importDest)
+	}
+	fmt.Fprintf(os.Stderr, "WARNING: --installed-version was not supplied and no prior import was found at %s "+
+		"— proceeding with --force means the no-downgrade and anti-skip (min-upgrade-from) checks are SKIPPED "+
+		"for this import.\n", importDest)
+	return nil
+}
+
 func init() {
 	buildCmd.Flags().StringVar(&buildSrc, "src", "", "directory of release artifacts to bundle (required)")
 	buildCmd.Flags().StringVar(&buildOut, "out", "", "output bundle file (required)")
@@ -249,10 +324,16 @@ func init() {
 	_ = buildCmd.MarkFlagRequired("key-id")
 	_ = buildCmd.MarkFlagRequired("sign-key")
 
-	verifyCmd.Flags().StringVar(&verifyInstalled, "installed-version", "", "currently-installed version, to enforce no-downgrade / min-upgrade-from")
+	verifyCmd.Flags().StringVar(&verifyInstalled, "installed-version", "",
+		"currently-installed version, to enforce no-downgrade / min-upgrade-from (required unless --force)")
+	verifyCmd.Flags().BoolVar(&verifyForce, "force", false,
+		"proceed without --installed-version (dangerous — skips the no-downgrade / anti-skip check, verifies signature and digests only)")
 
 	importCmd.Flags().StringVar(&importDest, "dest", "", "directory to stage verified artifacts into (required)")
-	importCmd.Flags().StringVar(&importInstalled, "installed-version", "", "currently-installed version, to enforce no-downgrade / min-upgrade-from")
+	importCmd.Flags().StringVar(&importInstalled, "installed-version", "",
+		"currently-installed version, to enforce no-downgrade / min-upgrade-from (required on a first import into --dest, unless --force)")
+	importCmd.Flags().BoolVar(&importForce, "force", false,
+		"proceed without --installed-version on a first import into --dest (dangerous — skips the no-downgrade / anti-skip check)")
 	importCmd.Flags().StringVar(&importLicense, "license", "", "path to the installed license token (bundle import is a commercial feature)")
 	_ = importCmd.MarkFlagRequired("dest")
 

@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1719,8 +1722,22 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file %q: %w", path, err)
 	}
 
+	// KnownFields(true) makes an unrecognized key (e.g. a correctly-spelled field
+	// nested under the wrong parent, or a typo) fail loudly at startup instead of
+	// being silently dropped by yaml.Unmarshal. Without this, an operator can set
+	// e.g. a top-level `encryption:` block (instead of the real `storage.encryption`)
+	// and believe it took effect when it was actually discarded — see configs/dev.yaml
+	// history for a real instance of exactly this bug.
+	//
+	// An empty, whitespace-only, or comments-only file is not an error — yaml.Decoder
+	// returns io.EOF for a document with no content, whereas the package-level
+	// yaml.Unmarshal silently leaves the target at its zero value. Preserve that
+	// historical "no content = all defaults" behavior explicitly rather than
+	// surfacing io.EOF as a confusing "failed to unmarshal config" error.
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 

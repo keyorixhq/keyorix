@@ -58,6 +58,18 @@ describe('ImpersonationBanner', () => {
         expect(screen.getByText(/signed in as Admin One/)).toBeInTheDocument();
     });
 
+    it('stays pinned to the viewport top so it cannot scroll out of view on tall pages', () => {
+        authState.user = { displayName: 'Target User' };
+        authState.impersonatedBy = { adminId: 1, adminUsername: 'admin1' };
+        render(<ImpersonationBanner />);
+
+        // Regression guard for web-layout-extras#0: the banner is the admin's only
+        // visual cue that actions are taken as the impersonated user, not
+        // themselves. Without `sticky top-0`, it scrolls away with the page on
+        // any content taller than the viewport (long secrets/RBAC/audit lists).
+        expect(screen.getByRole('alert')).toHaveClass('sticky', 'top-0');
+    });
+
     it('falls back to the username when the impersonated user has no display name', () => {
         authState.user = { username: 'target' };
         authState.impersonatedBy = { adminId: 1, adminUsername: 'admin1' };

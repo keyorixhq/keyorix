@@ -14,7 +14,13 @@
 // /auth/login path already uses (ADR-040) — no rate-limiting POLICY decision (the
 // threshold, the window) is made here; that stays entirely in the CALLING server's
 // own internal/core.KeyorixCore, exactly as it does against a local backend. This
-// file only persists/counts/prunes the raw (key, timestamp) rows.
+// file only persists/counts/prunes the raw (key, timestamp) rows. The one exception
+// is PruneLoginAttemptsProxy (CORE-RATE-003): it deliberately does NOT call
+// storage.Storage.PruneLoginAttempts directly, because the request body's `before`
+// is attacker-influenced and an unbounded passthrough let any system.write
+// principal wipe the entire table on demand. It routes through
+// core.KeyorixCore.PruneLoginAttempts instead, which clamps the cutoff and audits
+// the deletion — see that handler's own doc comment.
 //
 // Response envelope: these three handlers deliberately do NOT use the package's
 // generic sendSuccess/sendError helpers. Those write {"data":...}/{"error":"...",
@@ -30,6 +36,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // remoteAPIResponse mirrors internal/storage/remote.APIResponse's wire shape.
@@ -117,6 +125,20 @@ func (h *AuthHandler) CountLoginAttemptsProxy(w http.ResponseWriter, r *http.Req
 }
 
 // PruneLoginAttemptsProxy handles POST /api/v1/system/login-attempts/prune.
+//
+// CORE-RATE-003: this used to call h.coreService.Storage().PruneLoginAttempts
+// directly — an unbounded passthrough onto the raw storage primitive with the
+// only validation being "before is non-zero". Any principal holding
+// system.write (the group's baseline permission) could pass an arbitrary
+// future `before` (e.g. year 2099) and wipe the ENTIRE login_attempts table
+// on demand: every IP's failed-login counter reset to zero and the only
+// record a brute-force campaign was ever attempted from any address erased,
+// with no audit trail marking that the wipe occurred. It now routes through
+// core.KeyorixCore.PruneLoginAttempts instead, which clamps the effective
+// cutoff to never exceed `now - LoginWindow` (the maintenance sweep's own
+// invariant — a caller here can only narrow the window, never widen it) and
+// emits a `data.login_attempts_pruned` audit event (actor + row count +
+// cutoff) whenever anything is actually removed.
 func (h *AuthHandler) PruneLoginAttemptsProxy(w http.ResponseWriter, r *http.Request) {
 	var body loginAttemptPruneBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -127,7 +149,11 @@ func (h *AuthHandler) PruneLoginAttemptsProxy(w http.ResponseWriter, r *http.Req
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "before is required")
 		return
 	}
-	n, err := h.coreService.Storage().PruneLoginAttempts(r.Context(), body.Before)
+	var actorID uint
+	if userCtx := middleware.GetUserFromContext(r.Context()); userCtx != nil {
+		actorID = userCtx.UserID
+	}
+	n, err := h.coreService.PruneLoginAttempts(r.Context(), body.Before, actorID)
 	if err != nil {
 		log.Printf("login-attempts proxy: prune failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

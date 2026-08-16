@@ -65,6 +65,22 @@ describe('Layout', () => {
         expect(screen.getByTestId('page-content')).toBeInTheDocument();
     });
 
+    it('keeps the impersonation banner and header stuck to the viewport top as a unit', () => {
+        render(
+            <Layout>
+                <div>content</div>
+            </Layout>
+        );
+
+        // Regression guard for web-layout-extras#0: the banner (and the header
+        // below it) must stay pinned while scrolling a tall page, not just be
+        // laid out in normal flow above a scrolling body.
+        const banner = screen.getByTestId('impersonation-banner-stub');
+        const stickyWrapper = banner.parentElement;
+        expect(stickyWrapper).toHaveClass('sticky', 'top-0');
+        expect(stickyWrapper).toContainElement(screen.getByText('open-sidebar-trigger'));
+    });
+
     it('does not render a breadcrumb when no breadcrumbs prop is passed', () => {
         render(
             <Layout>

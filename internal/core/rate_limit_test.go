@@ -12,6 +12,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -167,13 +168,106 @@ func TestRateLimit_PruneRemovesAgedRows(t *testing.T) {
 	}
 	// Move past the window and prune — aged rows are removed.
 	setNow(base.Add(LoginWindow + time.Minute))
-	removed, err := c.PruneLoginAttempts(ctx)
+	removed, err := c.PruneLoginAttempts(ctx, time.Time{}, 0)
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), removed)
 
 	n, err := c.storage.CountRecentLoginAttempts(ctx, "1.2.3.4", time.Time{})
 	require.NoError(t, err)
 	assert.Zero(t, n, "table is empty after pruning aged rows")
+}
+
+// TestPruneLoginAttempts_ClampsFutureBeforeToWindow is the CORE-RATE-003
+// regression test at the core layer: a caller-supplied `before` LATER than
+// now-LoginWindow (an attacker-controlled request body's far-future
+// timestamp, e.g. "2099-01-01T00:00:00Z") must never widen the deletion
+// window — the storage call underneath must always receive the clamped
+// cutoff, not the caller's value.
+func TestPruneLoginAttempts_ClampsFutureBeforeToWindow(t *testing.T) {
+	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	maxCutoff := now.Add(-LoginWindow)
+	attackerBefore := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	mockStore := new(MockStorage)
+	// Expectation is set on the CLAMPED cutoff, not the attacker's `before` —
+	// if the fix regresses to passing `before` straight through, this
+	// expectation is never satisfied and testify panics on the unexpected call.
+	mockStore.On("PruneLoginAttempts", mock.Anything, maxCutoff).Return(int64(3), nil)
+	mockStore.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	c := &KeyorixCore{storage: mockStore, now: func() time.Time { return now }, passwordPolicy: DefaultPasswordPolicy()}
+	removed, err := c.PruneLoginAttempts(context.Background(), attackerBefore, 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), removed)
+	mockStore.AssertExpectations(t)
+}
+
+// TestPruneLoginAttempts_NarrowerBeforeIsHonored confirms a caller CAN still
+// narrow the deletion window below the default now-LoginWindow cutoff (a
+// stricter, not wider, request) — only widening past the window is blocked.
+func TestPruneLoginAttempts_NarrowerBeforeIsHonored(t *testing.T) {
+	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	narrowerBefore := now.Add(-2 * LoginWindow)
+
+	mockStore := new(MockStorage)
+	mockStore.On("PruneLoginAttempts", mock.Anything, narrowerBefore).Return(int64(1), nil)
+	mockStore.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	c := &KeyorixCore{storage: mockStore, now: func() time.Time { return now }, passwordPolicy: DefaultPasswordPolicy()}
+	removed, err := c.PruneLoginAttempts(context.Background(), narrowerBefore, 0)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed)
+	mockStore.AssertExpectations(t)
+}
+
+// TestPruneLoginAttempts_AuditsActorRowCountAndCutoff proves the previously
+// entirely-missing audit trail (CORE-RATE-003): a successful prune that
+// actually removes rows emits a data.login_attempts_pruned event recording
+// the acting principal, the row count, and the effective cutoff — mirroring
+// PurgeExpiredSoftDeletes/PurgeExpiredComplianceRecords.
+func TestPruneLoginAttempts_AuditsActorRowCountAndCutoff(t *testing.T) {
+	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	maxCutoff := now.Add(-LoginWindow)
+
+	mockStore := new(MockStorage)
+	mockStore.On("PruneLoginAttempts", mock.Anything, maxCutoff).Return(int64(7), nil)
+
+	var audited *models.AuditEvent
+	mockStore.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		if e.EventType == "data.login_attempts_pruned" {
+			audited = e
+			return true
+		}
+		return false
+	})).Return(nil)
+
+	c := &KeyorixCore{storage: mockStore, now: func() time.Time { return now }, passwordPolicy: DefaultPasswordPolicy()}
+	actorID := uint(42)
+	removed, err := c.PruneLoginAttempts(context.Background(), time.Time{}, actorID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), removed)
+
+	require.NotNil(t, audited, "a data.login_attempts_pruned audit event must be written when rows are removed")
+	require.NotNil(t, audited.UserID, "the acting principal is recorded")
+	assert.Equal(t, actorID, *audited.UserID)
+	assert.Contains(t, audited.Description, "7", "row count is recorded")
+	assert.Contains(t, audited.Description, maxCutoff.UTC().Format(time.RFC3339), "effective cutoff is recorded")
+}
+
+// TestPruneLoginAttempts_NoAuditWhenNothingRemoved mirrors
+// PurgeExpiredSoftDeletes/PurgeExpiredComplianceRecords: a prune that removes
+// zero rows writes no audit event at all (avoids flooding the audit trail
+// every maintenance-sweep tick when there's nothing to report).
+func TestPruneLoginAttempts_NoAuditWhenNothingRemoved(t *testing.T) {
+	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	mockStore := new(MockStorage)
+	mockStore.On("PruneLoginAttempts", mock.Anything, mock.Anything).Return(int64(0), nil)
+
+	c := &KeyorixCore{storage: mockStore, now: func() time.Time { return now }, passwordPolicy: DefaultPasswordPolicy()}
+	removed, err := c.PruneLoginAttempts(context.Background(), time.Time{}, 5)
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+	mockStore.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 }
 
 // fakeUpstreamLoginAttempts is a minimal, in-memory stand-in for the real
@@ -325,7 +419,7 @@ func TestRateLimit_RemoteStorageGenuinelyThrottles(t *testing.T) {
 	// and actually removes the now-aged rows upstream (both the login-attempt rows
 	// for 203.0.113.5 and the password-reset-prefixed rows for 198.51.100.9 — every
 	// row recorded at `base`, now past both windows).
-	removed, err := c.PruneLoginAttempts(ctx)
+	removed, err := c.PruneLoginAttempts(ctx, time.Time{}, 0)
 	require.NoError(t, err, "PruneLoginAttempts now succeeds against a real remote-storage upstream")
 	assert.Equal(t, int64(LoginMaxAttempts+PasswordResetMaxAttempts), removed, "every aged login/password-reset attempt row was pruned upstream")
 }

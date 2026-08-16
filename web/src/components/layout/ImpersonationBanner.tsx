@@ -44,7 +44,7 @@ export const ImpersonationBanner: React.FC = () => {
     return (
         <div
             role="alert"
-            className="flex items-center justify-center gap-4 px-4 py-2 text-sm font-medium text-white"
+            className="sticky top-0 z-50 flex items-center justify-center gap-4 px-4 py-2 text-sm font-medium text-white"
             style={{ backgroundColor: 'var(--warning, #b45309)' }}
         >
             <span>

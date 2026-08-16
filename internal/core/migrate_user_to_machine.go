@@ -42,7 +42,17 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 	if name == "" {
 		name = user.Username
 	}
-	desc := fmt.Sprintf("Migrated from user %q (id %d, %s)", user.Username, user.ID, user.Email)
+	// The machine identity's Description is readable by any project member
+	// holding users.read (project-scoped) via ListMachineIdentities/
+	// ListStaleMachineIdentities — a far lower bar than the users.write
+	// (global) + roles.assign (project) required to perform this migration.
+	// The source user need not be, and often isn't, a member of projectID, so
+	// embedding their email here would leak it to anyone in projectID who has
+	// no other way to look that user up. Keep the Description limited to the
+	// username (already visible in the resulting identity's Name in the
+	// common case) and put the full detail, including the email, in the audit
+	// event below, which is gated behind audit.read.
+	desc := fmt.Sprintf("Migrated from user %q (id %d)", user.Username, user.ID)
 
 	m, err := c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID)
 	if err != nil {
@@ -58,9 +68,13 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 		}
 	}
 
+	// Full detail, including the source user's email, goes in the audit event
+	// rather than the machine identity's Description: the audit log is gated
+	// behind audit.read, whereas Description is readable by any project
+	// member with project-scoped users.read (see the comment above).
 	aid, pid := actorID, projectID
 	c.writeAuditEventFull(ctx, "machine_identity.migrated_from_user", &aid, nil, &pid, "",
-		fmt.Sprintf("user %q (id %d) migrated to machine identity %q (id %d) in project %d", user.Username, user.ID, m.Name, m.ID, projectID))
+		fmt.Sprintf("user %q (id %d, %s) migrated to machine identity %q (id %d) in project %d", user.Username, user.ID, user.Email, m.Name, m.ID, projectID))
 
 	return m, nil
 }

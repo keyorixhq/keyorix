@@ -1372,7 +1372,13 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 	// 15 minutes, so a 15-minute cadence keeps the table at roughly one window of rows.
 	runScheduler(ctx, "login_attempt_prune", 15*time.Minute, func() middleware.SchedulerOutcome {
 		return lockedRun(ctx, coreService.Storage(), schedLockLoginPrune, "Login-attempt prune", func() error {
-			_, perr := coreService.PruneLoginAttempts(ctx)
+			// Zero `before` and a zero actorID: PruneLoginAttempts resolves the
+			// cutoff itself (now - LoginWindow) and attributes the event to no
+			// human/machine principal. System-actored via WithActorType so the
+			// resulting data.login_attempts_pruned audit event (when anything is
+			// removed) reads as "system", not the default "user".
+			sysCtx := core.WithActorType(ctx, core.ActorTypeSystem)
+			_, perr := coreService.PruneLoginAttempts(sysCtx, time.Time{}, 0)
 			return perr
 		})
 	})

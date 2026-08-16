@@ -75,7 +75,7 @@ func TestVerifyCmd_Success_MultipleComponents(t *testing.T) {
 	resetDefaultRegistryFn(t)
 	origV := verifyInstalled
 	defer func() { verifyInstalled = origV }()
-	verifyInstalled = ""
+	verifyInstalled = "v0.50.0"
 
 	const keyID = "test-key-s25-multi"
 	bundlePath, pub, _ := buildSignedBundle(t, map[string]string{
@@ -99,8 +99,9 @@ func TestBundleCmd_Metadata(t *testing.T) {
 }
 
 // TestVerifyCmd_HasInstalledVersionFlag verifies the verify subcommand registers
-// --installed-version (registered in init()).
+// --installed-version and --force (registered in init()).
 func TestVerifyCmd_HasInstalledVersionFlag(t *testing.T) {
 	f := verifyCmd.Flags().Lookup("installed-version")
 	assert.NotNil(t, f, "verify should have --installed-version flag")
+	assert.NotNil(t, verifyCmd.Flags().Lookup("force"), "verify should have --force flag")
 }
