@@ -147,6 +147,46 @@ func TestListFolders_FiltersByIsSecret(t *testing.T) {
 	assert.False(t, folders[0].IsSecret)
 }
 
+// TestCreateFolder_RefusesCrossProjectParent is the #G86 regression:
+// CreateFolder previously loaded the destination parent with a bare,
+// unauthorized GetSecret and never checked it belonged to the same
+// project/environment being declared for the new folder — a caller with
+// secrets.write on project 1 could pass project_id=1 (their own, authorized
+// scope) but nest the new folder under a parent_id belonging to an entirely
+// different project, and folder-inheriting ACL/sharing resolution (see
+// HasSecretACL's ancestor walk in secret_acl.go) would then apply that other
+// project's grants to it. Mirrors TestMoveSecret_RefusesCrossProjectParent.
+func TestCreateFolder_RefusesCrossProjectParent(t *testing.T) {
+	cs, db := freshFolderCoreDB(t)
+	ctx := context.Background()
+
+	// A folder in a DIFFERENT project (2) that the actor has no stake in.
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "other-proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 6, ProjectID: 2, Name: "other-env"}).Error)
+	foreignFolder, err := cs.CreateFolder(ctx, 1, "foreign-parent", 2, 6, nil)
+	require.NoError(t, err)
+
+	_, err = cs.CreateFolder(ctx, 1, "smuggled-child", 1, 5, &foreignFolder.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "same project/environment")
+}
+
+// TestCreateFolder_RefusesCrossEnvironmentParent verifies the same guard
+// catches a same-project, different-environment mismatch (folders/secrets in
+// this codebase are scoped by project AND environment).
+func TestCreateFolder_RefusesCrossEnvironmentParent(t *testing.T) {
+	cs, db := freshFolderCoreDB(t)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Environment{ID: 7, ProjectID: 1, Name: "other-env-same-proj"}).Error)
+	foreignEnvFolder, err := cs.CreateFolder(ctx, 1, "other-env-parent", 1, 7, nil)
+	require.NoError(t, err)
+
+	_, err = cs.CreateFolder(ctx, 1, "smuggled-child-env", 1, 5, &foreignEnvFolder.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "same project/environment")
+}
+
 // TestListFolders_ParentFilter verifies that parent_id filtering works.
 func TestListFolders_ParentFilter(t *testing.T) {
 	cs, _ := freshFolderCoreDB(t)
