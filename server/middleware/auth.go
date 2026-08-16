@@ -281,6 +281,28 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	validatedAt := time.Now()
 	userCtx, err := validateToken(r.Context(), validator, token)
 	if err != nil {
+		// #G-transient: a TRANSIENT infrastructure failure (DB timeout, connection
+		// error, context deadline exceeded during the underlying lookup) says
+		// nothing about whether this token/credential is actually valid — it must
+		// not be treated the same as a genuinely bad token. validateToken's
+		// underlying validators (ValidateSessionToken/ValidatePATToken/
+		// ValidateMachineToken/ValidateOIDCToken) collapse every storage error into
+		// an opaque message before it reaches here (deliberately — the detailed
+		// reason must never leak to an unauthenticated caller), so the request's
+		// OWN context is the only reliable transient-vs-permanent signal available
+		// at this layer: if it was canceled or hit its deadline while validation
+		// was in flight, that — not credential invalidity — is almost certainly
+		// why validation failed. See isTransientValidationError.
+		if isTransientValidationError(r.Context(), err) {
+			// Do NOT negative-cache: a stale "invalid" entry would keep rejecting
+			// this same token for up to invalidTokenTTL even after the backend
+			// recovers. Do NOT count against the per-IP brute-force budget either:
+			// many legitimate callers sharing one NAT/egress IP retrying during a
+			// shared blip would otherwise trip tokenAuthFailureBurst and start
+			// getting 429'd once the backend is already healthy again.
+			serviceUnavailableResponse(w, "authentication temporarily unavailable, please retry")
+			return
+		}
 		// Cache the negative result so subsequent retries skip the DB.
 		cacheSet(key, tokenCacheEntry{userCtx: nil, expiresAt: time.Now().Add(invalidTokenTTL)})
 		// Rate-limit by source IP: after tokenAuthFailureBurst failures the IP is
@@ -318,6 +340,26 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 		coreService.TouchMachineTokenLastUsed(r.Context(), userCtx.machineCredID)
 	}
 	next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
+}
+
+// isTransientValidationError reports whether a validateToken failure reflects a
+// transient infrastructure problem (the caller's context was canceled or hit its
+// deadline while validation was in flight) rather than the credential itself
+// being invalid. ctx is checked directly — not just err — because the storage
+// layer's own errors are deliberately opaque by the time they reach this
+// package (ValidateSessionToken/ValidatePATToken/ValidateMachineToken collapse
+// every lookup failure, including a DB timeout or connection error, into a
+// generic message so the specific reason never leaks to an unauthenticated
+// caller). A context that was canceled or ran out of time during that lookup is
+// therefore the one reliable signal available here that the failure was ours
+// (or the client's, disconnecting mid-request), not the token's. errors.Is is
+// still checked against err too, in case a future/alternate validator
+// implementation does propagate a wrapped context error.
+func isTransientValidationError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // serveAuthCacheHit handles the fast-path cache hit. #146 originally re-fetched
@@ -1137,6 +1179,20 @@ func tooManyRequestsResponse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "RateLimited", "message": message, "code": http.StatusTooManyRequests,
+	})
+}
+
+// serviceUnavailableResponse sends a 503 Service Unavailable response for a
+// transient failure (e.g. a storage-layer hiccup during token validation, see
+// isTransientValidationError) that the caller should simply retry, as opposed
+// to a 401 which tells the caller its credential itself is bad. Retry-After is
+// short — this is meant for a brief infrastructure blip, not a sustained outage.
+func serviceUnavailableResponse(w http.ResponseWriter, message string) {
+	w.Header().Set(hdrContentType, mimeJSON)
+	w.Header().Set("Retry-After", "2")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "ServiceUnavailable", "message": message, "code": http.StatusServiceUnavailable,
 	})
 }
 
