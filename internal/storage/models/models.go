@@ -403,6 +403,19 @@ type MFAStepupToken struct {
 	CreatedAt time.Time
 }
 
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// mirrors MFAStepUpGrant's identical hook below; this sibling model was never
+// given one when it was added, reopening the same bug class). Note this hook
+// only fires on a plain Create/Save — UpsertMFAStepupToken's ON CONFLICT
+// DoUpdates path writes expires_at from a raw map on the UPDATE branch,
+// bypassing model hooks entirely, so that call site normalises explicitly too
+// (see local_mfa_stepup.go).
+func (t *MFAStepupToken) BeforeSave(_ *gorm.DB) error {
+	t.ExpiresAt = t.ExpiresAt.UTC()
+	return nil
+}
+
 // MFAStepUpGrant records that a user explicitly re-verified their second factor
 // (via VerifyMFAStepUp) to gain a time-limited window for reading
 // restricted-classified secrets. Unlike MFAStepupToken (which is upserted on
@@ -838,6 +851,20 @@ type DynamicSecretLease struct {
 	IssuedAt       time.Time
 	ExpiresAt      time.Time `gorm:"index:idx_lease_status_expiry"`
 	RevokedAt      *time.Time
+}
+
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81). Before
+// this hook, a lease issued while the server ran in a non-UTC local timezone
+// stored expires_at in that local time, but ListExpiredActiveLeases' sweep
+// query compares it against a caller-supplied `before` cutoff — if that
+// cutoff isn't consistently normalised the same way, SQLite's string-based
+// time comparison can silently misjudge which leases are actually past
+// expiry, letting the auto-revoke sweep skip a genuinely-expired credential
+// (or revoke one prematurely) depending on the sign of the offset from UTC.
+func (l *DynamicSecretLease) BeforeSave(_ *gorm.DB) error {
+	l.ExpiresAt = l.ExpiresAt.UTC()
+	return nil
 }
 
 type SecretAccessLog struct {

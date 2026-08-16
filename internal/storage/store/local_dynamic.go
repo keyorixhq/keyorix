@@ -128,10 +128,20 @@ func (ls *LocalStorage) CountActiveLeases(ctx context.Context, configID uint) (i
 // revoke failed, so their credential is still live). Ordered by id (stable) for the sweep.
 // Without the revoke_failed inclusion such a credential would stay live past TTL forever,
 // excluded from both the sweep and a manual retry.
+//
+// before is normalised to UTC here (G81), not left to the caller: DynamicSecretLease's
+// BeforeSave hook already stores expires_at as UTC, but the caller-supplied cutoff
+// (server/main.go's sweep passes time.Now(), local system time) previously wasn't —
+// SQLite compares time.Time values as strings, so a local-time cutoff compared against
+// a UTC-normalised expires_at column could silently misjudge which leases are actually
+// past expiry, letting the auto-revoke sweep skip a genuinely-expired credential (or
+// revoke one prematurely) depending on the sign of the local/UTC offset. Normalising
+// here — the single place this comparison happens — means every caller gets a correct
+// comparison regardless of whether it remembers to pass UTC itself.
 func (ls *LocalStorage) ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error) {
 	var leases []*models.DynamicSecretLease
 	if err := ls.db.WithContext(ctx).
-		Where("status IN ? AND expires_at < ?", []string{"active", "revoke_failed"}, before).
+		Where("status IN ? AND expires_at < ?", []string{"active", "revoke_failed"}, before.UTC()).
 		Order("id").Limit(maxUnboundedListRows).Find(&leases).Error; err != nil {
 		return nil, err
 	}
