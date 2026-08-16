@@ -28,6 +28,13 @@ type Service struct {
 	// serverLock is held for as long as this Service is the live DEK holder (set
 	// by AcquireExclusiveKeyLock, released by Shutdown). See exclusive_lock.go.
 	serverLock *os.File
+	// auditSink optionally records security-relevant runtime events (e.g. a
+	// key-provider fallback chain actually firing a downgrade, see
+	// key_provider_downgrade.go) as audit events. Guarded by its own mutex, not mu:
+	// it is read from deep inside Initialize (via the MultiKeyProvider downgrade
+	// hook) while mu is already held for writing, and mu is not reentrant.
+	auditSink   AuditSink
+	auditSinkMu sync.RWMutex
 }
 
 // NewService creates a new encryption Service.
@@ -76,8 +83,18 @@ func (s *Service) Initialize(passphrase string) error {
 }
 
 // buildKeyProvider selects the KEK source for this service from its own config.
+// If the result is a fallback chain (crypto.MultiKeyProvider), wires this
+// Service's audit sink so a downgrade that actually FIRES at KEK() time — not
+// just one the config permits — is recorded as more than a log line.
 func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error) {
-	return NewKeyProviderFromConfig(s.config, s.keyManager.baseDir, passphrase)
+	provider, err := NewKeyProviderFromConfig(s.config, s.keyManager.baseDir, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	if mp, ok := provider.(*crypto.MultiKeyProvider); ok {
+		mp.SetDowngradeHook(s.auditKeyProviderDowngrade)
+	}
+	return provider, nil
 }
 
 // NewKeyProviderFromConfig builds the KEK source described by an EncryptionConfig
@@ -105,6 +122,18 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 			return nil, fmt.Errorf("fallback provider [%d] (%s): %w", i, cfg.KeyProvider.Fallbacks[i].Type, err)
 		}
 		providers = append(providers, fb)
+	}
+	// Fail closed on a fallback chain that can silently downgrade KEK-sourcing
+	// strength (e.g. a TPM/KMS-backed primary falling back to a software-derived
+	// key on any transient failure) unless the operator has explicitly opted in.
+	// This is a config-SHAPE check — it fires whenever the chain CAN downgrade,
+	// regardless of whether a fallback ever actually happens at runtime; see
+	// MultiKeyProvider.KEK / SetDowngradeHook for the separate runtime signal that
+	// fires only when a fallback to a weaker provider actually occurs.
+	if d, downgrades := crypto.DetectFallbackDowngrade(providers); downgrades && !cfg.KeyProvider.AllowWeakerFallback {
+		return nil, fmt.Errorf(
+			"key_provider fallback [%d] (%q, %s) is weaker than an earlier provider in the configured chain (%s) — a fallback chain that can silently downgrade encryption strength requires explicit key_provider.allow_weaker_fallback: true; refusing to start without it",
+			d.Index-1, d.Provider, d.ToTier, d.FromTier)
 	}
 	return crypto.NewMultiKeyProvider(providers)
 }

@@ -227,8 +227,13 @@ const (
 // and returns an initialized encryption.Service. If encryption is disabled in
 // config, it returns nil without error. For the default "password" provider it
 // requires KEYORIX_MASTER_PASSWORD; for the "file"/"env" providers the KEK comes
-// from key material elsewhere, so no passphrase is needed.
-func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
+// from key material elsewhere, so no passphrase is needed. auditSink, if non-nil,
+// is wired before Initialize so that a key_provider.fallbacks chain actually
+// downgrading KEK strength on THIS boot (not just one the config permits) is
+// recorded as a queryable audit event rather than only a log line — pass
+// store.LogAuditEvent once storage is available; nil is fine (tests, or contexts
+// without a live audit trail) and falls back to logging only.
+func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*encryption.Service, error) {
 	if !cfg.Storage.Encryption.Enabled {
 		return nil, nil
 	}
@@ -246,6 +251,9 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 		baseDir = "."
 	}
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+	if auditSink != nil {
+		svc.SetAuditSink(auditSink)
+	}
 	svc.CleanPendingDEK() // remove leftover .pending file from any interrupted prior rotation
 	if err := svc.Initialize(passphrase); err != nil {
 		return nil, fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
@@ -289,7 +297,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		return nil, nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
-	encSvc, err := initializeEncryption(cfg)
+	encSvc, err := initializeEncryption(cfg, store.LogAuditEvent)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize encryption: %w", err)
 	}

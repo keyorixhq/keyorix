@@ -702,7 +702,7 @@ func TestInitializeEncryption_Disabled(t *testing.T) {
 			Encryption: config.EncryptionConfig{Enabled: false},
 		},
 	}
-	svc, err := initializeEncryption(cfg)
+	svc, err := initializeEncryption(cfg, nil)
 	if err != nil {
 		t.Errorf("initializeEncryption (disabled): %v", err)
 	}
@@ -722,7 +722,7 @@ func TestInitializeEncryption_PasswordProvider_NoPassword(t *testing.T) {
 			},
 		},
 	}
-	_, err := initializeEncryption(cfg)
+	_, err := initializeEncryption(cfg, nil)
 	if err == nil {
 		t.Fatal("expected error for password provider with no KEYORIX_MASTER_PASSWORD")
 	}
@@ -742,7 +742,7 @@ func TestInitializeEncryption_ExplicitPasswordProvider_NoPassword(t *testing.T) 
 			},
 		},
 	}
-	_, err := initializeEncryption(cfg)
+	_, err := initializeEncryption(cfg, nil)
 	if err == nil {
 		t.Fatal("expected error for explicit password provider with no KEYORIX_MASTER_PASSWORD")
 	}
