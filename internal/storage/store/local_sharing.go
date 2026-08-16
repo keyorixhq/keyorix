@@ -259,9 +259,16 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 	// Expired (time-bound) shares no longer authorize, so they must not surface in
 	// the "shared with me" listing either — filter them the same way the auth queries do.
 	now := time.Now()
+	// store-secret-acl-002: JOIN users ... deleted_at IS NULL mirrors the group query's
+	// user-liveness guard below (and CheckSharePermission's identical direct-share
+	// guard) — a soft-deleted recipient's direct ShareRecord row stays live for
+	// audit/restore, so without this guard a deleted user's own "shared with me"
+	// listing would keep surfacing secrets whose access CheckSharePermission already
+	// denies for that same account.
 	directQuery := fmt.Sprintf(`
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
+		JOIN users u ON u.id = sr.recipient_id AND u.deleted_at IS NULL
 		WHERE sr.recipient_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
 		LIMIT %d
@@ -325,22 +332,47 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 	// secretOwnedBy helper (permissions.go) already carries this guard for its own
 	// callers, but this storage-layer check reimplemented the comparison independently
 	// — closing it here too rather than relying solely on callers validating userID != 0.
+	//
+	// store-secret-acl-002: a soft-deleted (deprovisioned) owner's account row stays
+	// live for audit/restore, and DeleteUser's session/token-cache invalidation runs on
+	// a separate code path whose propagation isn't instantaneous across instances — so
+	// the OwnerID==userID branch must independently verify the owner account is still
+	// active, exactly as the group-share branch below already verifies group-member
+	// liveness. Without this, a deleted owner's STRONGEST access path (owner-level
+	// "write") would outlive its WEAKEST (group share), which is already denied.
 	if secret.OwnerID != 0 && secret.OwnerID == userID {
-		return "write", nil
+		var ownerActive int64
+		if err := ls.db.Model(&models.User{}).
+			Where("id = ? AND deleted_at IS NULL", secret.OwnerID).
+			Count(&ownerActive).Error; err != nil {
+			return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+		}
+		if ownerActive > 0 {
+			return "write", nil
+		}
+		// Owner account soft-deleted: fall through to the direct/group share checks
+		// below instead of returning here — fail-closed, not fail-open.
 	}
 
 	// Skip expired (time-bound) shares — an expired share grants no permission.
 	now := time.Now()
+	// store-secret-acl-002: JOIN users ... deleted_at IS NULL mirrors the group-share
+	// query's user-liveness guard below — a soft-deleted recipient's direct
+	// ShareRecord row stays live for audit/restore, so without this guard a deleted
+	// user's direct share would keep granting access even though the equivalent
+	// group-share path already denies it for a deleted group member.
 	var directShare models.ShareRecord
-	haveDirect := false
-	err := ls.db.Where(
-		"secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		secretID, userID, false, now,
-	).First(&directShare).Error
-	if err == nil {
-		haveDirect = true
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+	directQuery := `
+		SELECT sr.* FROM share_records sr
+		JOIN users u ON u.id = sr.recipient_id AND u.deleted_at IS NULL
+		WHERE sr.secret_id = ? AND sr.recipient_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL
+		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
+		LIMIT 1
+	`
+	dres := ls.db.Raw(directQuery, secretID, userID, false, now).Scan(&directShare)
+	haveDirect := dres.Error == nil && directShare.ID != 0
+	if dres.Error != nil && !errors.Is(dres.Error, gorm.ErrRecordNotFound) {
+		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), dres.Error)
 	}
 
 	// #G01: ug.project_id = 0 OR ug.project_id = ? (secret.ProjectID) — a

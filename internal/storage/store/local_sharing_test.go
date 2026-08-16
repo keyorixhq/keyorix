@@ -465,6 +465,77 @@ func TestCheckSharePermission_ProjectScopedMembershipDoesNotCrossProjects(t *tes
 	}
 }
 
+// store-secret-acl-002: CheckSharePermission's owner-equality branch used to grant
+// owner-level "write" purely on secret.OwnerID == userID, with no check that the
+// owner account itself was still live — unlike the group-share branch, which already
+// JOINs users ... deleted_at IS NULL and denies a soft-deleted group member. A
+// deprovisioned owner's account row stays live for audit/restore (SCIM/DeleteUser
+// soft-delete), and DeleteUser's session/cache invalidation runs on a separate code
+// path whose propagation isn't instantaneous across instances, so this branch must
+// independently verify owner liveness — the same guard the group branch already has.
+func TestCheckSharePermission_SoftDeletedOwnerDeniesAccess(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@x.io"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 300, Name: "s4", ProjectID: 1, EnvironmentID: 1, OwnerID: 1, Status: "active", Type: "password",
+	}).Error)
+
+	// While the owner is live, owner-equality grants "write".
+	perm, err := ls.CheckSharePermission(ctx, 300, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "write", perm, "a live owner must still get owner-level access")
+
+	// Soft-delete the owner's account (mirrors DeleteUser's user-row soft delete).
+	require.NoError(t, db.Delete(&models.User{}, 1).Error)
+
+	perm, err = ls.CheckSharePermission(ctx, 300, 1)
+	require.Error(t, err, "a soft-deleted owner must not retain owner-level access via OwnerID equality")
+	assert.Empty(t, perm)
+}
+
+// store-secret-acl-002: CheckSharePermission's direct-share query used to have no
+// user-liveness guard at all, unlike the group-share query's JOIN users ...
+// deleted_at IS NULL. A soft-deleted direct recipient's ShareRecord row stays live
+// for audit/restore, so without this guard a deleted user's direct share kept
+// granting access even though the equivalent group-share path already denied it for
+// a deleted group member (see TestGroupShare_SoftDeletedMemberExcluded). Also checks
+// ListSharedSecrets's identical direct-query gap, fixed for the same consistency
+// reason.
+func TestCheckSharePermission_SoftDeletedDirectRecipientDeniesAccess(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner3", Email: "o3@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "grantee3", Email: "g3@x.io"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 301, Name: "s5", ProjectID: 1, EnvironmentID: 1, OwnerID: 1, Status: "active", Type: "password",
+	}).Error)
+	_, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: 301, RecipientID: 2, IsGroup: false, OwnerID: 1, Permission: "write",
+	})
+	require.NoError(t, err)
+
+	// While the recipient is live, the direct share grants access.
+	perm, err := ls.CheckSharePermission(ctx, 301, 2)
+	require.NoError(t, err)
+	assert.Equal(t, "write", perm, "a live direct recipient must still get the shared permission")
+	secrets, err := ls.ListSharedSecrets(ctx, 2)
+	require.NoError(t, err)
+	assert.Len(t, secrets, 1, "a live direct recipient must see the secret in their shared list")
+
+	// Soft-delete the recipient's account.
+	require.NoError(t, db.Delete(&models.User{}, 2).Error)
+
+	perm, err = ls.CheckSharePermission(ctx, 301, 2)
+	require.Error(t, err, "a soft-deleted direct recipient must not retain access via their ShareRecord")
+	assert.Empty(t, perm)
+	secrets, err = ls.ListSharedSecrets(ctx, 2)
+	require.NoError(t, err)
+	assert.Empty(t, secrets, "a soft-deleted direct recipient must not see the secret in their shared list")
+}
+
 // CWE-284 / sibling of #370: DeleteSecret must also delete SecretACL rows in the
 // same transaction so that ACL-based access cannot silently reactivate when the
 // secret is later restored from the recycle bin (the same class of bug fixed for
