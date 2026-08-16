@@ -116,15 +116,22 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 		c.recordFailedLogin(ctx, user) // increment + lock at the threshold
 		return nil, fmt.Errorf("invalid credentials")
 	}
-	// Correct password — but a concurrent burst of failed attempts against this
-	// account may have tripped the lock between the snapshot read at the top of
-	// this function and now (TOCTOU). Re-check the lock state under the same
-	// serialization recordFailedLogin uses (the account's mutex shard + a Postgres
-	// row lock) before minting a session, and only then clear any accumulated
-	// failure state — never trust the stale pre-bcrypt snapshot alone.
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return nil, err
-	}
+	// Correct password — but this is only PARTIAL authentication when the account
+	// has a second factor configured (MFAEnabled/WebAuthnEnabled): Login refuses to
+	// mint a session at this point and instead returns ErrMFARequired, deferring to
+	// CreateMFAChallenge -> VerifyMFALogin (or the WebAuthn assertion ceremony).
+	// Deliberately do NOT clear the accumulated lockout state here: this function
+	// has no visibility into whether a second factor is required (that gate lives
+	// in the caller, Login), so clearing unconditionally would let an attacker who
+	// merely knows the correct password — without ever passing MFA — repeatedly
+	// reset the account's failed-login counter/lock, defeating the lockout as a
+	// brute-force backstop and even undoing a defender-triggered lock. The
+	// TOCTOU-safe recheck-and-clear (checkLockAndClearLoginFailures) instead
+	// happens at the ACTUAL full-authentication point for each login path: Login
+	// itself, immediately before mintSession, when no second factor is required;
+	// VerifyMFALogin and the WebAuthn Finish* functions, immediately before their
+	// own mintSession, when one is. Every login path ends up covered exactly once,
+	// at the point it is truly done authenticating — never earlier.
 	// A deactivated account (IsActive=false — e.g. admin deactivation via UpdateUser,
 	// or a SCIM/IdP deactivation) is refused login regardless of account_state. The
 	// state-based gate below does not cover this, so without it a deactivated user who
@@ -184,8 +191,24 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// Accounts with any second factor (TOTP or a passkey) get no session from the
 	// password step — the caller must complete it (CreateMFAChallenge →
 	// VerifyMFALogin for TOTP, or the WebAuthn assertion ceremony for a passkey).
+	// Critically, the lockout counter is NOT cleared on this branch: a correct
+	// password alone is not full authentication for these accounts, so an
+	// attacker who knows the password but lacks the second factor must not be
+	// able to reset the account's brute-force lockout state (VerifyMFALogin /
+	// the WebAuthn Finish* functions each do their own clear once the second
+	// factor actually succeeds).
 	if user.MFAEnabled || user.WebAuthnEnabled {
 		return nil, user, ErrMFARequired
+	}
+	// No second factor configured — the password step IS the full authentication.
+	// Re-check the lock state under the same serialization recordFailedLogin uses
+	// (the account's mutex shard + a Postgres row lock) before minting a session,
+	// and only then clear any accumulated failure state: a concurrent burst of
+	// failed attempts against this account may have tripped the lock between the
+	// snapshot read inside VerifyPasswordCredentials and now (TOCTOU) — never
+	// trust that stale snapshot alone.
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+		return nil, nil, err
 	}
 	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)
 	if err != nil {
