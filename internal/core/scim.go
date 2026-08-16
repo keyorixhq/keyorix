@@ -453,11 +453,14 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 // isn't SCIM-managed (scimManaged) — a valid SCIM token must not be able to
 // deprovision an arbitrary native account it never provisioned.
 func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint) error {
-	user, err := c.storage.GetUser(ctx, id)
+	// Best-effort pre-check only (matching UpdateSCIMUser's identical pre-fetch, #120):
+	// the authoritative scimManaged decision is re-made below against the fresh,
+	// lock-guarded read inside the transaction, not this struct.
+	precheck, err := c.storage.GetUser(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
-	if !scimManaged(user) {
+	if !scimManaged(precheck) {
 		return fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
 	}
 	// #G03: guardLastAdminDeactivation's read is serialized against every other
@@ -471,30 +474,75 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
 		return err
 	}
-	user.IsActive = false
-	// Mark as SCIM-deprovisioned rather than admin-suspended, but never downgrade an
-	// existing admin security suspension. The user is soft-deleted below regardless,
-	// so this only affects the state on the recoverable record.
-	if NormalizeAccountState(user.AccountState) != AccountSuspended {
-		user.AccountState = AccountDeprovisioned
-	}
-	user.UpdatedAt = c.now()
 	// Capture the user's session-token hashes BEFORE the transaction so they can be
 	// evicted from the auth cache after commit (the stored token is the SHA-256 cache key).
 	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, id)
+	var username string
 	// Suspend + terminate sessions + soft-delete atomically: a SCIM DELETE either fully
 	// deprovisions or leaves the account untouched, so a mid-way storage failure can't
 	// leave it half-deprovisioned (suspended but not deleted), which would make retries
 	// non-idempotent.
 	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		if _, err := tx.UpdateUser(ctx, user); err != nil {
+		// Re-read the row via a locked read INSIDE the transaction, immediately before
+		// the write, instead of reusing the struct captured by the unlocked GetUser
+		// above — a concurrent state-changing write (e.g. SuspendUser, or another
+		// accountStateMu-guarded action that landed between that read and here) would
+		// otherwise be silently clobbered by a blind write of the stale struct.
+		// Mirrors scimUpdateUserTx/setAccountState's locked-read-then-selective-write
+		// pattern (both in this package) rather than scimUpdateUserTx's own #G42
+		// caveat: everything from here to the write below runs while accountStateMu is
+		// still held, so this fresh read can't itself go stale before it's persisted.
+		user, err := tx.LockUserForUpdate(ctx, id)
+		if err != nil {
 			return err
+		}
+		if !scimManaged(user) {
+			return storage.ErrUserNotFound
+		}
+		username = user.Username
+		origState := user.AccountState
+		wasActive := user.IsActive
+		user.IsActive = false
+		// Mark as SCIM-deprovisioned rather than admin-suspended, but never downgrade an
+		// existing admin security suspension — evaluated against the FRESH state so a
+		// suspension that committed after the pre-check above isn't lost. The user is
+		// soft-deleted below regardless, so this only affects the state on the
+		// recoverable record.
+		if NormalizeAccountState(user.AccountState) != AccountSuspended {
+			user.AccountState = AccountDeprovisioned
+		}
+		user.UpdatedAt = c.now()
+		if user.AccountState != origState {
+			// #454: persist the state transition via the narrow column-only write (not
+			// folded into the full-row write below) so it also lands under
+			// storage.type: remote, which can't express account_state in the generic
+			// UpdateUser wire format. See SetAccountState's doc comment.
+			if err := tx.SetAccountState(ctx, id, user.AccountState, user.UpdatedAt); err != nil {
+				return err
+			}
+		}
+		// Persist IsActive (and the rest of the now-fresh row) via the same conditional
+		// write every other IsActive-flipping path in this package uses, rather than a
+		// blind tx.UpdateUser: succeeds only if the row's current is_active still
+		// matches wasActive, which — since user was just read under LockUserForUpdate
+		// while accountStateMu is held — should always hold true here; a false match
+		// means a non-accountStateMu-guarded write raced in, and must surface as a
+		// conflict rather than being silently overwritten or retried.
+		matched, err := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
+		if err != nil {
+			return err
+		}
+		if !matched {
+			return fmt.Errorf("user %d: %w", id, ErrUserActiveStateConflict)
 		}
 		if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
 			return err
 		}
 		return tx.DeleteUser(ctx, id)
 	}); err != nil {
+		if errors.Is(err, storage.ErrUserNotFound) {
+			return fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	// Evict the terminated sessions from the auth cache AFTER commit, so a deprovisioned
@@ -502,7 +550,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	// lingering for the cache TTL.
 	c.invalidateTokenCache(sessionHashes...)
 	c.writeAuditEvent(ctx, EventSCIMUserDeprovisioned, actorPtr(actorID), nil,
-		fmt.Sprintf("SCIM deprovisioned user %d (%s)", id, user.Username))
+		fmt.Sprintf("SCIM deprovisioned user %d (%s)", id, username))
 	return nil
 }
 
