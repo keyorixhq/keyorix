@@ -63,7 +63,11 @@ func validateProjectName(name string) error {
 	return validateIdentifier(name)
 }
 
-// validateEnvironmentName bounds Environment.Name (#383), mirroring validateProjectName.
+// validateEnvironmentName bounds Environment.Name (#383), mirroring
+// validateProjectName. Also enforces the anti-homograph identifier charset
+// (G38) — see validateIdentifier. Environment names were previously missed by
+// G38's project-name fix, so a confusable/spoofed environment name could
+// still slip past every transport (gRPC, CLI embedded mode), not just HTTP.
 func validateEnvironmentName(name string) error {
 	if name == "" {
 		return fmt.Errorf("%s: environment name is required", i18n.T("ErrorValidation", nil))
@@ -71,7 +75,7 @@ func validateEnvironmentName(name string) error {
 	if len(name) > maxEnvironmentNameLen {
 		return fmt.Errorf("%s: environment name exceeds %d characters", i18n.T("ErrorValidation", nil), maxEnvironmentNameLen)
 	}
-	return nil
+	return validateIdentifier(name)
 }
 
 // translateProjectNameError surfaces storage.ErrDuplicateProjectName (#385, the
