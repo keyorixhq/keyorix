@@ -1707,11 +1707,24 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file %q: %w", path, err)
 	}
 
-	data = expandEnvVars(data)
-
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// server.http.domain/allowed_origins are the only fields documented (in
+	// server/config/production.yaml) as supporting ${VAR}/${VAR:-default} interpolation.
+	// Expansion is applied here, per-field, AFTER unmarshaling — not as a raw-bytes
+	// preprocessing pass over the whole file before yaml.Unmarshal — because
+	// storage.remote.api_key also legitimately contains a literal "${VAR}"-shaped string
+	// (see remote.Config.GetAPIKeyFromEnv, TestEnvironmentVariableSupport): that field is
+	// deliberately left as the unexpanded template by Load() and resolved lazily, only
+	// when the API key is actually used. A whole-file preprocessing pass can't tell that
+	// field's literal template apart from server.http's real interpolation points and
+	// would silently expand both.
+	cfg.Server.HTTP.Domain = expandEnvVars(cfg.Server.HTTP.Domain)
+	for i, origin := range cfg.Server.HTTP.AllowedOrigins {
+		cfg.Server.HTTP.AllowedOrigins[i] = expandEnvVars(origin)
 	}
 
 	return &cfg, nil
@@ -1724,37 +1737,34 @@ func Load(path string) (*Config, error) {
 // match) untouched.
 var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`)
 
-// expandEnvVars resolves ${VAR} / ${VAR:-default} references in raw config bytes against
-// the process environment before YAML parsing. Go's os.ExpandEnv doesn't support the
-// `:-default` bash fallback form, so this is a small, scoped preprocessing step run only
-// from Load(), over the raw file bytes, before yaml.Unmarshal — not a general templating
-// engine.
+// expandEnvVars resolves ${VAR} / ${VAR:-default} references in a single already-parsed
+// config string value against the process environment. Go's os.ExpandEnv doesn't support
+// the `:-default` bash fallback form, so this is a small, scoped helper applied only to
+// the specific server.http.domain/allowed_origins fields Load() documents as supporting
+// it — not a general templating engine, and not run over the raw file bytes (see Load's
+// comment for why: storage.remote.api_key uses the identical "${VAR}" syntax for its own,
+// separately-deferred expansion and must not be touched here).
 //
 // Semantics match bash's ${VAR:-default}: the default is used when VAR is unset OR set to
 // the empty string. A reference with no default whose variable is unset is left
 // UNRESOLVED (not silently replaced with ""), so a misconfigured/missing env var fails
 // loudly downstream (e.g. as an invalid domain or empty allowed_origins entry) instead of
 // silently shipping a blank value.
-//
-// Caveat: this is a plain text substitution done before YAML parsing, so a substituted
-// value containing a literal `"` or newline could change the surrounding YAML's
-// structure — the same caveat that applies to any envsubst-style preprocessor. Values
-// like hostnames (the only documented use here) don't hit this.
-func expandEnvVars(data []byte) []byte {
-	return envVarPattern.ReplaceAllFunc(data, func(match []byte) []byte {
-		sub := envVarPattern.FindSubmatch(match)
-		name := string(sub[1])
+func expandEnvVars(s string) string {
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		sub := envVarPattern.FindStringSubmatch(match)
+		name := sub[1]
 		hasDefault := len(sub[2]) > 0
 		v, set := os.LookupEnv(name)
 		if set && v != "" {
-			return []byte(v)
+			return v
 		}
 		if hasDefault {
-			return []byte(sub[3])
+			return sub[3]
 		}
 		if set {
 			// Explicitly set to "" with no default — honor the explicit empty value.
-			return []byte(v)
+			return v
 		}
 		return match
 	})
