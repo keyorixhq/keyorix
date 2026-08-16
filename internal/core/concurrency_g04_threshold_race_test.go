@@ -108,7 +108,7 @@ func TestConcurrency_DecideAccessReviewItem_AttestRevokeRace(t *testing.T) {
 	const trials = 30
 	for trial := 0; trial < trials; trial++ {
 		db := openRaceDB(t, fmt.Sprintf("arc_mixed_%d", trial))
-		require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.AuditEvent{}, &models.UserRole{}, &models.GroupRole{}))
+		require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.AuditEvent{}, &models.UserRole{}, &models.GroupRole{}, &models.Group{}))
 
 		const proj = uint(2)
 		campaign := &models.AccessReviewCampaign{ProjectID: proj, Name: "race", State: core.CampaignStateOpen}

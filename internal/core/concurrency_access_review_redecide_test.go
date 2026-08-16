@@ -32,7 +32,7 @@ func TestConcurrency_DecideAccessReviewItem_OnlyOneDecisionWins(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "arc.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.AuditEvent{}, &models.UserRole{}, &models.GroupRole{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.AuditEvent{}, &models.UserRole{}, &models.GroupRole{}, &models.Group{}))
 
 	const proj = uint(2)
 	campaign := &models.AccessReviewCampaign{ProjectID: proj, Name: "race", State: core.CampaignStateOpen}

@@ -202,7 +202,7 @@ func TestRemoteStorage_MostAccessedSecrets_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.MostAccessedSecrets(context.Background(), nil, time.Now(), 10)
+	_, err = rs.MostAccessedSecrets(context.Background(), nil, nil, time.Now(), 10)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }
@@ -213,7 +213,7 @@ func TestRemoteStorage_UnusedSecrets_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.UnusedSecrets(context.Background(), nil, time.Now())
+	_, err = rs.UnusedSecrets(context.Background(), nil, nil, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }
@@ -246,7 +246,7 @@ func TestRemoteStorage_VerifyAuditChain_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.VerifyAuditChain(context.Background())
+	_, err = rs.VerifyAuditChain(context.Background(), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }
@@ -390,8 +390,9 @@ func TestRemoteStorage_DeleteAuditLogsBefore_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	n, err := rs.DeleteAuditLogsBefore(context.Background(), time.Now())
+	n, anchor, err := rs.DeleteAuditLogsBefore(context.Background(), time.Now())
 	assert.Error(t, err)
 	assert.Equal(t, int64(0), n)
+	assert.Nil(t, anchor)
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }

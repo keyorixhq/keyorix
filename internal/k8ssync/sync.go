@@ -87,9 +87,15 @@ func (t target) String() string { return t.namespace + "/" + t.name }
 
 // Reconcile groups the mappings by target Secret, fetches each referenced value,
 // and creates/updates the Secret only when its desired data differs from what's
-// already there. A fetch or apply failure for one target is recorded and skipped —
-// it never aborts the pass or writes a partial Secret — so other targets still sync.
-// The returned Result tallies the outcome.
+// already there. A TRANSIENT fetch or apply failure for one target is recorded and
+// skipped — it never aborts the pass or writes a partial Secret — so other targets
+// still sync unaffected. A DEFINITIVE per-key failure (ErrUpstreamGone: the upstream
+// secret was deleted, or this agent's access to it was revoked) instead drops only
+// that one key and applies the Secret with its remaining, still-valid keys — or
+// removes the Secret entirely if none are left — so one revoked key in a Secret
+// backed by several mappings never collaterally wipes out unrelated live keys
+// (G05). See buildDesired for the fetch-time split between the two cases. The
+// returned Result tallies the outcome.
 func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Result, error) { // NOSONAR -- cognitive complexity 31, suppress go:S3776
 	var res Result
 
@@ -105,32 +111,48 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 	sort.Slice(targets, func(i, j int) bool { return targets[i].String() < targets[j].String() })
 
 	for _, t := range targets {
-		desired, ferr := e.buildDesired(ctx, grouped[t])
+		desired, revokedRefs, ferr := e.buildDesired(ctx, grouped[t])
 		if ferr != nil {
-			// #140: a DEFINITIVE failure (the upstream secret was deleted, or this
-			// agent's access to it was revoked — 404/401/403, never a transient
-			// network/5xx error) must propagate to the cluster: the materialized
-			// Secret is actively removed rather than left at its last-known,
-			// possibly-compromised or now-unauthorized value indefinitely (the
-			// prior behavior — skip and retry next pass — never converges, since
-			// the SAME definitive failure recurs every pass). A transient failure
-			// still just skips this pass and retries next time, unchanged.
-			if errors.Is(ferr, ErrUpstreamGone) {
-				res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked, removing stale value: %v", t, ferr))
-				if e.dryRun {
-					res.Revoked++
-					continue
-				}
-				if derr := e.sink.Delete(ctx, t.namespace, t.name); derr != nil {
-					res.Failed++
-					res.Errors = append(res.Errors, fmt.Sprintf("%s: failed to remove revoked secret: %v", t, derr))
-					continue
-				}
+			// A TRANSIENT failure (network/5xx — never ErrUpstreamGone, see
+			// buildDesired) just skips this pass and retries next time: the value
+			// may still be valid, so the existing Secret is left completely
+			// untouched rather than written with a key missing or removed outright.
+			res.Failed++
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t, ferr))
+			continue
+		}
+
+		if len(revokedRefs) > 0 {
+			// #140 / G05: a DEFINITIVE failure for one or more mappings (the
+			// upstream secret was deleted, or this agent's access to it was
+			// revoked — 404/401/403, never a transient network/5xx error) must
+			// propagate to the cluster rather than being left at its last-known,
+			// possibly-compromised or now-unauthorized value indefinitely (skip
+			// and retry never converges, since the SAME definitive failure
+			// recurs every pass). Only the affected key(s) are dropped here —
+			// unrelated keys mapped to the same target Secret that fetched fine
+			// are still applied below; the Secret itself is removed only if
+			// buildDesired left nothing valid for it at all.
+			action := "dropping the affected key(s) from the Secret"
+			if len(desired) == 0 {
+				action = "removing the now-empty Secret entirely"
+			}
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked for %s; %s", t, strings.Join(revokedRefs, ", "), action))
+		}
+
+		if len(desired) == 0 {
+			// Every mapping for this target came back revoked/gone: nothing valid
+			// remains to materialize, so the stale Secret is removed outright.
+			if e.dryRun {
 				res.Revoked++
 				continue
 			}
-			res.Failed++
-			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t, ferr))
+			if derr := e.sink.Delete(ctx, t.namespace, t.name); derr != nil {
+				res.Failed++
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: failed to remove revoked secret: %v", t, derr))
+				continue
+			}
+			res.Revoked++
 			continue
 		}
 
@@ -266,18 +288,32 @@ func NewEngine(fetcher Fetcher, sink Sink, opts ...Option) *Engine {
 }
 
 // buildDesired fetches every mapping's referenced value and assembles the target
-// Secret's desired data map. Any fetch error fails the whole target (so a transient
-// failure can't silently drop a key from an otherwise-complete Secret).
-func (e *Engine) buildDesired(ctx context.Context, mappings []SecretMapping) (map[string][]byte, error) {
-	desired := make(map[string][]byte, len(mappings))
+// Secret's desired data map. The two fetch-error cases are handled differently:
+//
+//   - ErrUpstreamGone (a DEFINITIVE failure: the referenced Keyorix secret was
+//     deleted, or this agent's access was revoked) drops only THAT mapping's key
+//     from the desired map and records its ref in the returned revoked slice, then
+//     keeps fetching the rest — so one revoked key never discards the other,
+//     still-valid keys mapped to the same target Secret.
+//   - Any OTHER (transient network/5xx) error aborts the whole build and returns
+//     an error: the value may still be valid, so a transient blip must not
+//     silently drop — nor overwrite with a partial result — a key from an
+//     otherwise-complete Secret. The caller skips this target entirely for the
+//     pass in that case.
+func (e *Engine) buildDesired(ctx context.Context, mappings []SecretMapping) (desired map[string][]byte, revoked []string, err error) {
+	desired = make(map[string][]byte, len(mappings))
 	for _, m := range mappings {
-		val, err := e.fetcher.Fetch(ctx, m.Ref)
-		if err != nil {
-			return nil, fmt.Errorf("fetch %q: %w", m.Ref, err)
+		val, ferr := e.fetcher.Fetch(ctx, m.Ref)
+		if ferr != nil {
+			if errors.Is(ferr, ErrUpstreamGone) {
+				revoked = append(revoked, m.Ref)
+				continue
+			}
+			return nil, nil, fmt.Errorf("fetch %q: %w", m.Ref, ferr)
 		}
 		desired[m.Key] = val
 	}
-	return desired, nil
+	return desired, revoked, nil
 }
 
 // groupByTarget buckets mappings by their target Secret, validating each and

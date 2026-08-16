@@ -67,6 +67,22 @@ else
   bad "#176: installer is not pinned to a commit SHA"
 fi
 
+# --- adversarial-review (integrations-github-action.json#0): being pinned to
+# SOME commit SHA (#176 above) isn't enough on its own — the pin must not
+# point at a pre-fix commit. 6dd9e555125500e76b4e2035a867621e416585a3 predates
+# b8f79619 (#1342), which closed install.sh's own fail-OPEN checksum gap (a
+# missing checksums.txt entry for the platform, or no sha256sum/shasum tool,
+# used to log a warning and install anyway). Staying on the stale pin meant
+# this default ("latest") install path kept fetching that vulnerable
+# install.sh regardless of what HEAD's own copy already fixed. Block-list the
+# specific known-vulnerable SHA so a future revert/rebase can't silently
+# reintroduce it.
+if grep -q '6dd9e555125500e76b4e2035a867621e416585a3' "$entrypoint"; then
+  bad "installer is pinned to a pre-#1342 commit with install.sh's fail-open checksum gap"
+else
+  ok "installer is not pinned to the known-vulnerable pre-#1342 commit"
+fi
+
 # --- #179 (item 2, static): the CLI download path must no longer be the
 # fixed, guessable /tmp/keyorix — it must use a fresh, non-predictable
 # mktemp'd directory instead, closing the "guess the path and race a

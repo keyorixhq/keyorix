@@ -12,6 +12,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -271,6 +272,159 @@ func TestUsageUnused_Success_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.UsageUnused(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestUsageMostAccessed_BadEnvironmentID_S13 exercises the 400 branch when
+// environment_id is malformed.
+func TestUsageMostAccessed_BadEnvironmentID_S13(t *testing.T) {
+	h := newSecretHandlerForS13(t)
+	req := withUserCtx(
+		httptest.NewRequest(http.MethodGet, "/?environment_id=notanumber", nil),
+	)
+	w := httptest.NewRecorder()
+	h.UsageMostAccessed(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestUsageUnused_BadEnvironmentID_S13 exercises the 400 branch when
+// environment_id is malformed.
+func TestUsageUnused_BadEnvironmentID_S13(t *testing.T) {
+	h := newSecretHandlerForS13(t)
+	req := withUserCtx(
+		httptest.NewRequest(http.MethodGet, "/?environment_id=notanumber", nil),
+	)
+	w := httptest.NewRecorder()
+	h.UsageUnused(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// usageEnvFixture seeds one project with two environments, each holding a
+// distinctly-named secret with distinctly-identifiable usage data: env1's
+// secret is read repeatedly (making it "most accessed") and env2's secret is
+// never read (making it "unused"), so a leak in either direction — env2 data
+// bleeding into an env1-scoped most-accessed query, or vice versa for
+// unused — is independently observable.
+func usageEnvFixture(t *testing.T) (h *SecretHandler, projectID, env1ID, env2ID uint) {
+	t.Helper()
+	cs, db := freshCoreS12WithAdmin(t)
+	proj := &models.Project{Name: "usage-scope-proj"}
+	require.NoError(t, db.Create(proj).Error)
+	env1 := &models.Environment{Name: "env1", ProjectID: proj.ID}
+	require.NoError(t, db.Create(env1).Error)
+	env2 := &models.Environment{Name: "env2", ProjectID: proj.ID}
+	require.NoError(t, db.Create(env2).Error)
+
+	sec1 := &models.SecretNode{
+		Name: "env1-hot-secret", ProjectID: proj.ID, EnvironmentID: env1.ID,
+		OwnerID: 1, Type: "static", IsSecret: true,
+	}
+	require.NoError(t, db.Create(sec1).Error)
+	sec2 := &models.SecretNode{
+		Name: "env2-cold-secret", ProjectID: proj.ID, EnvironmentID: env2.ID,
+		OwnerID: 1, Type: "static", IsSecret: true,
+	}
+	require.NoError(t, db.Create(sec2).Error)
+
+	// env1's secret is read (most-accessed in env1, and NOT unused in env1).
+	require.NoError(t, db.Create(&models.SecretAccessLog{
+		SecretNodeID: sec1.ID, AccessedBy: "u", AccessTime: time.Now(), Action: "read",
+	}).Error)
+	// env2's secret is never read — it is unused in env2, and absent from
+	// env2's most-accessed report.
+
+	hh, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+	return hh, proj.ID, env1.ID, env2.ID
+}
+
+// TestUsageMostAccessed_ScopedToEnvironment is the regression test for the
+// scope-widening leak (handlers-secrets-access-history.json#0): the route
+// authorizes at {project, environment} via ScopeFromQuery, but the handler
+// used to never read/forward environment_id, so a caller scoped to a single
+// environment received the whole project's aggregate. Confirms an
+// environment_id-scoped request returns only that environment's secret.
+func TestUsageMostAccessed_ScopedToEnvironment(t *testing.T) {
+	h, projectID, env1ID, _ := usageEnvFixture(t)
+
+	url := fmt.Sprintf("/?project_id=%d&environment_id=%d", projectID, env1ID)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, url, nil))
+	w := httptest.NewRecorder()
+	h.UsageMostAccessed(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Data struct {
+			Secrets []struct {
+				SecretName string `json:"secret_name"`
+			} `json:"secrets"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+
+	names := make([]string, 0, len(body.Data.Secrets))
+	for _, s := range body.Data.Secrets {
+		names = append(names, s.SecretName)
+	}
+	assert.Contains(t, names, "env1-hot-secret")
+	assert.NotContains(t, names, "env2-cold-secret", "environment-scoped most-accessed query must not leak the other environment's usage data")
+}
+
+// TestUsageUnused_ScopedToEnvironment is the UnusedSecrets-side counterpart
+// of TestUsageMostAccessed_ScopedToEnvironment: an environment_id-scoped
+// request must return only that environment's unused secret.
+func TestUsageUnused_ScopedToEnvironment(t *testing.T) {
+	h, projectID, _, env2ID := usageEnvFixture(t)
+
+	url := fmt.Sprintf("/?project_id=%d&environment_id=%d", projectID, env2ID)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, url, nil))
+	w := httptest.NewRecorder()
+	h.UsageUnused(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Data struct {
+			Secrets []struct {
+				SecretName string `json:"secret_name"`
+			} `json:"secrets"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+
+	names := make([]string, 0, len(body.Data.Secrets))
+	for _, s := range body.Data.Secrets {
+		names = append(names, s.SecretName)
+	}
+	assert.Contains(t, names, "env2-cold-secret")
+	assert.NotContains(t, names, "env1-hot-secret", "environment-scoped unused query must not leak the other environment's usage data")
+}
+
+// TestUsageMostAccessed_NoEnvironment_ReturnsProjectWideAggregate confirms
+// backward compatibility: omitting environment_id still returns the whole
+// project's aggregate (both environments' secrets), matching pre-fix
+// behavior for callers that intentionally query at project scope.
+func TestUsageMostAccessed_NoEnvironment_ReturnsProjectWideAggregate(t *testing.T) {
+	h, projectID, _, _ := usageEnvFixture(t)
+
+	url := fmt.Sprintf("/?project_id=%d", projectID)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, url, nil))
+	w := httptest.NewRecorder()
+	h.UsageMostAccessed(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Data struct {
+			Secrets []struct {
+				SecretName string `json:"secret_name"`
+			} `json:"secrets"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+
+	names := make([]string, 0, len(body.Data.Secrets))
+	for _, s := range body.Data.Secrets {
+		names = append(names, s.SecretName)
+	}
+	assert.Contains(t, names, "env1-hot-secret", "project-wide query (no environment_id) keeps today's aggregate behavior")
 }
 
 // ── secrets_audit_trail.go: AuditTrail + toSecretAuditEntry ──────────────────

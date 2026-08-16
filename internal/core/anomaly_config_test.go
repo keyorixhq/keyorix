@@ -138,6 +138,66 @@ func TestApplyAnomalyConfig_ZeroValuesNotApplied(t *testing.T) {
 	assert.Equal(t, originalQuarantine, detector.quarantine)
 }
 
+func TestApplyAnomalyConfig_OffHoursEnabled_AppliesBand(t *testing.T) {
+	// Legitimate case: OffHoursEnabled with a valid, distinct hour pair must be
+	// applied to the live detector and audited, with no error.
+	store := new(MockStorage)
+	c := newAnomalyConfigCore(store)
+	ctx := context.Background()
+
+	cfg := &models.AnomalyConfigRecord{
+		OffHoursEnabled:  true,
+		OffHoursTimezone: "UTC",
+		OffHoursStart:    20,
+		OffHoursEnd:      7,
+	}
+	store.On("GetAnomalyConfig", ctx).Return(cfg, nil)
+	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+
+	detector := NewAnomalyDetector(store)
+	err := c.ApplyAnomalyConfig(ctx, detector)
+	require.NoError(t, err)
+	assert.Equal(t, 20, detector.offHours.start)
+	assert.Equal(t, 7, detector.offHours.end)
+}
+
+// TestApplyAnomalyConfig_PropagatesBusinessHoursError is the wave6/G05 regression:
+// previously ApplyAnomalyConfig discarded SetBusinessHours' error entirely
+// (`_ = detector.SetBusinessHours(...)`), so a rejected/invalid persisted off-hours
+// config — including the accidental-collision case where a partial update leaves one
+// field matching the other's still-in-effect value — surfaced no error anywhere. The
+// detector must keep its prior (safe) policy, but the caller must now be told the
+// persisted config didn't take effect, AND the other independent knobs (ML here)
+// must still be applied rather than the whole config apply aborting.
+func TestApplyAnomalyConfig_PropagatesBusinessHoursError(t *testing.T) {
+	store := new(MockStorage)
+	c := newAnomalyConfigCore(store)
+	ctx := context.Background()
+
+	// OffHoursStart=6 collides with the hardcoded default OffHoursEnd (6) once
+	// OffHoursEnd is out of range and would (pre-fix) have silently fallen back to
+	// that default, producing a degenerate {6,6} band with no error.
+	cfg := &models.AnomalyConfigRecord{
+		OffHoursEnabled:  true,
+		OffHoursTimezone: "UTC",
+		OffHoursStart:    6,
+		OffHoursEnd:      -1,
+		MLEnabled:        true,
+		MLThreshold:      0.75,
+	}
+	store.On("GetAnomalyConfig", ctx).Return(cfg, nil)
+
+	detector := NewAnomalyDetector(store)
+	before := detector.offHours
+
+	err := c.ApplyAnomalyConfig(ctx, detector)
+	require.Error(t, err, "a rejected off-hours config must be surfaced, not swallowed")
+	assert.Equal(t, before, detector.offHours, "the detector must keep its prior policy, not a degenerate band")
+	// Independent knobs still applied despite the off-hours rejection.
+	assert.True(t, detector.ml.Enabled)
+	assert.Equal(t, 0.75, detector.ml.Threshold)
+}
+
 func TestApplyAnomalyConfig_PropagatesGetError(t *testing.T) {
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)

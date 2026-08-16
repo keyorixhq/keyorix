@@ -1265,8 +1265,8 @@ func (m *MockStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.T
 	return args.Get(0).(map[string]map[uint]time.Time), args.Error(1)
 }
 
-func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
-	args := m.Called(ctx, projectID, since, limit)
+func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID, environmentID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
+	args := m.Called(ctx, projectID, environmentID, since, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -1281,13 +1281,17 @@ func (m *MockStorage) AuditRetentionStats(ctx context.Context) (*storage.AuditRe
 	return args.Get(0).(*storage.AuditRetentionStats), args.Error(1)
 }
 
-func (m *MockStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+func (m *MockStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, *storage.AuditChainAnchor, error) {
 	args := m.Called(ctx, cutoff)
-	return args.Get(0).(int64), args.Error(1)
+	var anchor *storage.AuditChainAnchor
+	if args.Get(1) != nil {
+		anchor = args.Get(1).(*storage.AuditChainAnchor)
+	}
+	return args.Get(0).(int64), anchor, args.Error(2)
 }
 
-func (m *MockStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditChainVerification, error) {
-	args := m.Called(ctx)
+func (m *MockStorage) VerifyAuditChain(ctx context.Context, anchor *storage.AuditChainAnchor) (*storage.AuditChainVerification, error) {
+	args := m.Called(ctx, anchor)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -1327,8 +1331,8 @@ func (m *MockStorage) SetSystemMetadata(ctx context.Context, key, value string) 
 	return args.Error(0)
 }
 
-func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
-	args := m.Called(ctx, projectID, notReadSince)
+func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
+	args := m.Called(ctx, projectID, environmentID, notReadSince)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

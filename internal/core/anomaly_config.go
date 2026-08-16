@@ -54,9 +54,17 @@ func (c *KeyorixCore) ApplyAnomalyConfig(ctx context.Context, detector *AnomalyD
 	if cfg.QuarantineHours > 0 {
 		detector.SetBaselineQuarantine(time.Duration(cfg.QuarantineHours) * time.Hour)
 	}
-	// Off-hours (only applied when enabled; the detector keeps its own default when disabled)
+	// Off-hours (only applied when enabled; the detector keeps its own default when
+	// disabled). A rejected band (invalid hour, or a degenerate start==end collision —
+	// see SetBusinessHours) must not be silently swallowed: the detector keeps its
+	// prior policy, but the caller needs to know the persisted config didn't take
+	// effect, so this deferred until after the remaining, independent knobs below are
+	// applied rather than aborting the whole config apply.
+	var offHoursErr error
 	if cfg.OffHoursEnabled {
-		_ = detector.SetBusinessHours(ctx, cfg.OffHoursTimezone, cfg.OffHoursStart, cfg.OffHoursEnd)
+		if err := detector.SetBusinessHours(ctx, cfg.OffHoursTimezone, cfg.OffHoursStart, cfg.OffHoursEnd); err != nil {
+			offHoursErr = fmt.Errorf("anomaly business_hours config rejected: %w", err)
+		}
 	}
 	// ML
 	detector.SetMLConfig(MLConfig{
@@ -75,7 +83,7 @@ func (c *KeyorixCore) ApplyAnomalyConfig(ctx context.Context, detector *AnomalyD
 	if cfg.CumulativeRateMax > 0 {
 		detector.SetCumulativeRateMax(cfg.CumulativeRateMax)
 	}
-	return nil
+	return offHoursErr
 }
 
 // GetAnomalyConfig returns the current persisted anomaly detection config (or

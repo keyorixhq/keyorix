@@ -78,7 +78,7 @@ func TestConcurrency_AuditChain_StaysWellFormed(t *testing.T) {
 	}
 
 	// The chain must verify as a single unbroken line of exactly N events.
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid, "chain must stay valid under concurrent appends")
 	assert.Nil(t, v.FirstBrokenID, "no event may break the chain")

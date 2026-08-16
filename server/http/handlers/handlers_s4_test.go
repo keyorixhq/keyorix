@@ -12936,7 +12936,7 @@ func TestCatalogHandler_RestoreProject_NotFound_S4(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{},
-		&models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.Role{}, &models.UserRole{}, &models.GroupRole{}))
+		&models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.Role{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}))
 	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999")
 	w := httptest.NewRecorder()

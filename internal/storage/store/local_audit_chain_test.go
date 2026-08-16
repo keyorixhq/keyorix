@@ -49,7 +49,7 @@ func TestLogAuditEvent_BuildsChain(t *testing.T) {
 	assert.Equal(t, e2.EntryHash, e3.PrevHash)
 	assert.NotEqual(t, e1.EntryHash, e2.EntryHash)
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid)
 	assert.Equal(t, int64(3), v.ChainedEvents)
@@ -68,7 +68,7 @@ func TestVerifyAuditChain_HeadAnchorDetectsTruncation(t *testing.T) {
 	appendEvent(t, ls, "secret.read", "second", base.Add(time.Second))
 	e3 := appendEvent(t, ls, "secret.updated", "third", base.Add(2*time.Second))
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	require.True(t, v.Valid)
 	assert.Equal(t, int64(3), v.ChainedEvents)
@@ -77,7 +77,7 @@ func TestVerifyAuditChain_HeadAnchorDetectsTruncation(t *testing.T) {
 
 	// A DB-writer truncates the tail. On-box verify still passes…
 	require.NoError(t, ls.db.Where("id = ?", e3.ID).Delete(&models.AuditEvent{}).Error)
-	v2, err := ls.VerifyAuditChain(context.Background())
+	v2, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v2.Valid, "truncated chain stays internally consistent (the documented limitation)")
 	// …but the recorded anchor moved — the count dropped and the head changed.
@@ -97,7 +97,7 @@ func TestVerifyAuditChain_DetectsModification(t *testing.T) {
 		Where("id = ?", e2.ID).
 		Update("description", "TAMPERED").Error)
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.False(t, v.Valid)
 	require.NotNil(t, v.FirstBrokenID)
@@ -117,7 +117,7 @@ func TestVerifyAuditChain_DetectsDeletion(t *testing.T) {
 	// Delete a middle event; e3's prev_hash now links to a vanished entry.
 	require.NoError(t, ls.db.Delete(&models.AuditEvent{}, e2.ID).Error)
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.False(t, v.Valid)
 	require.NotNil(t, v.FirstBrokenID)
@@ -142,7 +142,7 @@ func TestVerifyAuditChain_LegacyPrefix(t *testing.T) {
 	appendEvent(t, ls, "auth.login", "chained-1", base.Add(10*time.Second))
 	appendEvent(t, ls, "secret.read", "chained-2", base.Add(11*time.Second))
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid)
 	assert.Equal(t, int64(2), v.UnchainedEvents, "legacy rows counted, not failed")
@@ -151,7 +151,7 @@ func TestVerifyAuditChain_LegacyPrefix(t *testing.T) {
 
 func TestVerifyAuditChain_Empty(t *testing.T) {
 	ls := newAuditChainTestStore(t)
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid)
 	assert.Equal(t, int64(0), v.ChainedEvents)
@@ -183,7 +183,7 @@ func TestLogAuditEvent_ConcurrentAppendsStayChained(t *testing.T) {
 	}
 	wg.Wait()
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid, "chain intact under concurrent writers: %s", v.Reason)
 	assert.Equal(t, int64(writers*perWriter), v.ChainedEvents)
@@ -216,7 +216,7 @@ func TestLogAuditEvent_EmptyActorTypeStillVerifies(t *testing.T) {
 	require.NoError(t, ls.db.First(&stored, shareEvt.ID).Error)
 	assert.Equal(t, "user", stored.ActorType)
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid, "chain with an empty-ActorType event must verify: %s", v.Reason)
 	assert.Equal(t, int64(2), v.ChainedEvents)
@@ -248,7 +248,7 @@ func TestLogAuditEvent_NilSuccessStillVerifies(t *testing.T) {
 	require.NotNil(t, stored.Success)
 	assert.True(t, *stored.Success)
 
-	v, err := ls.VerifyAuditChain(context.Background())
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid, "chain with a nil-Success event must verify: %s", v.Reason)
 	assert.Equal(t, int64(2), v.ChainedEvents)

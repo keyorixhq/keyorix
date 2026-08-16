@@ -2,8 +2,8 @@
 //
 // Routes (under /api/v1/secrets):
 //
-//	GET /usage/most-accessed — top secrets by read count (params: project_id, days, limit)
-//	GET /usage/unused        — secrets not read in N days, never-read first (params: project_id, days)
+//	GET /usage/most-accessed — top secrets by read count (params: project_id, environment_id, days, limit)
+//	GET /usage/unused        — secrets not read in N days, never-read first (params: project_id, environment_id, days)
 package handlers
 
 import (
@@ -53,10 +53,19 @@ func (h *SecretHandler) UsageMostAccessed(w http.ResponseWriter, r *http.Request
 		h.sendError(w, "InvalidParameter", "Invalid project_id", http.StatusBadRequest, nil)
 		return
 	}
+	// Honour environment_id so an environment-scoped reader's view is confined to
+	// their environment (the route gate authorizes at {project, environment} via
+	// ScopeFromQuery, but this previously ignored the env and returned the whole
+	// project's aggregate usage data regardless of the caller's actual scope).
+	environmentID, perr := parseOptionalUintQuery(r, "environment_id")
+	if perr != nil {
+		h.sendError(w, "InvalidParameter", errInvalidEnvIDField, http.StatusBadRequest, nil)
+		return
+	}
 	days := parseIntQuery(r, "days", 30)
 	limit := parseIntQuery(r, "limit", 10)
 
-	stats, err := h.coreService.MostAccessedSecrets(r.Context(), projectID, days, limit)
+	stats, err := h.coreService.MostAccessedSecrets(r.Context(), projectID, environmentID, days, limit)
 	if err != nil {
 		h.sendError(w, "InternalError", "Failed to compute most-accessed secrets", http.StatusInternalServerError, nil)
 		return
@@ -77,9 +86,16 @@ func (h *SecretHandler) UsageUnused(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "InvalidParameter", "Invalid project_id", http.StatusBadRequest, nil)
 		return
 	}
+	// Honour environment_id so an environment-scoped reader's view is confined to
+	// their environment (see UsageMostAccessed).
+	environmentID, perr := parseOptionalUintQuery(r, "environment_id")
+	if perr != nil {
+		h.sendError(w, "InvalidParameter", errInvalidEnvIDField, http.StatusBadRequest, nil)
+		return
+	}
 	days := parseIntQuery(r, "days", 30)
 
-	stats, err := h.coreService.UnusedSecrets(r.Context(), projectID, days)
+	stats, err := h.coreService.UnusedSecrets(r.Context(), projectID, environmentID, days)
 	if err != nil {
 		h.sendError(w, "InternalError", "Failed to compute unused secrets", http.StatusInternalServerError, nil)
 		return

@@ -213,7 +213,7 @@ func TestMostAccessedSecrets_NilProjectID(t *testing.T) {
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 
-	result, err := ls.MostAccessedSecrets(ctx, nil, time.Now().Add(-time.Hour), 10)
+	result, err := ls.MostAccessedSecrets(ctx, nil, nil, time.Now().Add(-time.Hour), 10)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -228,7 +228,7 @@ func TestMostAccessedSecrets_ZeroLimit(t *testing.T) {
 	ctx := context.Background()
 
 	pid := uint(1)
-	result, err := ls.MostAccessedSecrets(ctx, &pid, time.Now().Add(-time.Hour), 0)
+	result, err := ls.MostAccessedSecrets(ctx, &pid, nil, time.Now().Add(-time.Hour), 0)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -245,7 +245,7 @@ func TestUnusedSecrets_NilProjectID(t *testing.T) {
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 
-	result, err := ls.UnusedSecrets(ctx, nil, time.Now())
+	result, err := ls.UnusedSecrets(ctx, nil, nil, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -390,7 +390,7 @@ func TestAuditRetentionStats_BrokenDB(t *testing.T) {
 func TestMostAccessedSecrets_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
 	pid := uint(1)
-	_, err := ls.MostAccessedSecrets(context.Background(), &pid, time.Now().Add(-time.Hour), 10)
+	_, err := ls.MostAccessedSecrets(context.Background(), &pid, nil, time.Now().Add(-time.Hour), 10)
 	require.Error(t, err)
 }
 
@@ -398,7 +398,7 @@ func TestMostAccessedSecrets_BrokenDB(t *testing.T) {
 func TestUnusedSecrets_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
 	pid := uint(1)
-	_, err := ls.UnusedSecrets(context.Background(), &pid, time.Now())
+	_, err := ls.UnusedSecrets(context.Background(), &pid, nil, time.Now())
 	require.Error(t, err)
 }
 

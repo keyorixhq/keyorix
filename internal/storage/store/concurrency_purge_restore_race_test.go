@@ -159,7 +159,7 @@ func TestConcurrency_PurgeDeletedUsersBefore_RestoreWinsRace(t *testing.T) {
 func TestConcurrency_PurgeDeletedProjectsBefore_RestoreWinsRace(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.UserRole{}, &models.GroupRole{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 

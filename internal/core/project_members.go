@@ -159,7 +159,17 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 // project's membership either — it doesn't count as a survivor. Passing a
 // nil/roles.assign-free targetRoleIDsBefore is a fast no-op (the target wasn't
 // an admin to begin with).
-func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targetID uint, targetRoleIDsBefore, targetRoleIDsAfter []uint) error { // NOSONAR -- cognitive complexity 18, suppress go:S3776
+//
+// Uses resolveProjectAdminHolders (the project-scope counterpart of
+// resolveGlobalAdminHolders, #G05) to expand a surviving group grant to its
+// LIVE members before counting it as a survivor — NOT the previous per-row
+// scan, which treated ANY project-level roles.assign-granting group ASSIGNMENT
+// as "another admin survives" without checking whether the group actually had
+// any live members. A group that's empty, whose every member was deactivated,
+// or that was itself soft-deleted therefore never covers the project, even
+// though its group_roles grant row (pre-fix: even its soft-deleted self) still
+// existed.
+func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targetID uint, targetRoleIDsBefore, targetRoleIDsAfter []uint) error {
 	hadAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsBefore, permRolesAssign)
 	if err != nil {
 		return err
@@ -178,27 +188,60 @@ func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targ
 	if err != nil {
 		return fmt.Errorf("failed to check project administrators: %w", err)
 	}
+	holders, err := c.resolveProjectAdminHolders(ctx, targetID, assignments)
+	if err != nil {
+		return fmt.Errorf("failed to check project administrators: %w", err)
+	}
+	if len(holders) > 0 {
+		return nil // another admin (user or group, live members only) survives the change
+	}
+	return fmt.Errorf("cannot remove or demote the project's last administrator; assign another project admin first")
+}
+
+// resolveProjectAdminHolders is guardLastProjectAdmin's project-scope
+// counterpart of resolveGlobalAdminHolders (internal/core/authz.go, #G03):
+// it expands the project-level (environment_id = 0) assignments in
+// `assignments` that carry roles.assign into the set of user IDs who would
+// actually survive as project admins after targetID's change — group grants
+// are expanded to their LIVE members via resolveGroupAdminMembers (a
+// soft-deleted group's assignment row is already excluded upstream by
+// ListProjectRoleAssignments, but an undeleted, empty, or fully-deactivated
+// group must also not count), and filterActiveHolders drops any holder
+// (direct or group-derived) who is themselves deactivated or soft-deleted.
+// targetID is excluded both as a direct grant holder and as a group member —
+// a grant belonging to the target themselves doesn't count as "another"
+// admin. `assignments` is assumed already scoped to a single project (the
+// caller's ListProjectRoleAssignments(ctx, projectID) result).
+func (c *KeyorixCore) resolveProjectAdminHolders(ctx context.Context, targetID uint, assignments []storage.RoleAssignment) (map[uint]bool, error) {
+	holders := make(map[uint]bool)
 	checked := make(map[uint]bool, len(assignments))
 	for _, a := range assignments {
 		if a.EnvironmentID != 0 {
 			continue // not project-level; can't administer /projects/{id}/members
 		}
-		// A grant belonging to the target themselves doesn't count as "another"
-		// admin — only groups and other users can pick up the slack.
-		if a.PrincipalType == "user" && a.PrincipalID == targetID {
-			continue
-		}
 		hasAssign, ok := checked[a.RoleID]
 		if !ok {
+			var err error
 			hasAssign, err = c.storage.RoleSetHasPermission(ctx, []uint{a.RoleID}, permRolesAssign)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			checked[a.RoleID] = hasAssign
 		}
-		if hasAssign {
-			return nil // another admin (user or group) survives the change
+		if !hasAssign {
+			continue
+		}
+		switch a.PrincipalType {
+		case "user":
+			if a.PrincipalID == targetID {
+				continue
+			}
+			holders[a.PrincipalID] = true
+		case "group":
+			if err := c.resolveGroupAdminMembers(ctx, a.PrincipalID, func(_, userID uint) bool { return userID == targetID }, holders); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return fmt.Errorf("cannot remove or demote the project's last administrator; assign another project admin first")
+	return c.filterActiveHolders(ctx, holders)
 }

@@ -553,11 +553,18 @@ func newMFAChallengeProxyWire(c *models.MFAChallenge) mfaChallengeProxyWire {
 }
 
 // mfaChallengeLookupBody is the wire body shared by GetActiveMFAChallenge and
-// ConsumeMFAChallenge below — both take the identical (token_hash, now) pair
-// storage.Storage's GetActiveMFAChallenge/ConsumeMFAChallenge already take.
+// ConsumeMFAChallenge below. It used to also carry a caller-supplied `now`
+// that was passed straight into the expiry comparison — removed (G-wave6):
+// a remote caller could set `now` to a moment before the challenge's real
+// expiry to keep an already-expired challenge usable past its TTL, or to a
+// far-future moment to force a live challenge to appear expired. Every
+// in-process caller of the same storage methods (internal/core/webauthn.go's
+// BeginWebAuthnLogin/FinishWebAuthnLogin, internal/core/mfa.go's
+// VerifyMFACredentials) already computes the comparison time itself via
+// c.now() (= time.Now()) rather than accepting it as input; this handler now
+// does the same instead of trusting the wire.
 type mfaChallengeLookupBody struct {
-	TokenHash string    `json:"token_hash"`
-	Now       time.Time `json:"now"`
+	TokenHash string `json:"token_hash"`
 }
 
 // GetActiveMFAChallenge handles POST /api/v1/users/mfa-challenge/active (#522) —
@@ -590,11 +597,17 @@ func (h *UserHandler) GetActiveMFAChallenge(w http.ResponseWriter, r *http.Reque
 		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
-	if body.TokenHash == "" || body.Now.IsZero() {
-		sendError(w, "ValidationError", "token_hash and now are required", http.StatusBadRequest, nil)
+	if body.TokenHash == "" {
+		sendError(w, "ValidationError", "token_hash is required", http.StatusBadRequest, nil)
 		return
 	}
-	ch, err := h.coreService.Storage().GetActiveMFAChallenge(r.Context(), body.TokenHash, body.Now)
+	// Use this server's own clock for the expiry comparison — never a
+	// caller-supplied value; see mfaChallengeLookupBody's doc comment. No
+	// .UTC(): models.MFAChallenge has no BeforeSave UTC-normalization hook,
+	// so ExpiresAt is written using c.now()'s (= time.Now()'s) own Location,
+	// matching this codebase's established GORM/SQLite comparison convention
+	// (see dynamic_secrets_proxy.go / retention_proxy.go).
+	ch, err := h.coreService.Storage().GetActiveMFAChallenge(r.Context(), body.TokenHash, time.Now())
 	if err != nil {
 		sendError(w, "NotFound", "invalid or expired challenge", http.StatusNotFound, nil)
 		return
@@ -628,11 +641,14 @@ func (h *UserHandler) ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request
 		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
-	if body.TokenHash == "" || body.Now.IsZero() {
-		sendError(w, "ValidationError", "token_hash and now are required", http.StatusBadRequest, nil)
+	if body.TokenHash == "" {
+		sendError(w, "ValidationError", "token_hash is required", http.StatusBadRequest, nil)
 		return
 	}
-	ch, err := h.coreService.Storage().ConsumeMFAChallenge(r.Context(), body.TokenHash, body.Now)
+	// Use this server's own clock for the expiry comparison — never a
+	// caller-supplied value; see mfaChallengeLookupBody's doc comment above
+	// GetActiveMFAChallenge.
+	ch, err := h.coreService.Storage().ConsumeMFAChallenge(r.Context(), body.TokenHash, time.Now())
 	if err != nil {
 		sendError(w, "NotFound", "invalid or expired challenge", http.StatusNotFound, nil)
 		return

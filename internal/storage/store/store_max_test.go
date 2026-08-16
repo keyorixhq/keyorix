@@ -858,7 +858,7 @@ func newAuditStoreMax(t *testing.T) *LocalStorage {
 func TestMostAccessedSecrets_Empty(t *testing.T) {
 	ls := newAuditStoreMax(t)
 	var pid uint = 1
-	result, err := ls.MostAccessedSecrets(context.Background(), &pid, time.Now().Add(-time.Hour), 10)
+	result, err := ls.MostAccessedSecrets(context.Background(), &pid, nil, time.Now().Add(-time.Hour), 10)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -867,7 +867,7 @@ func TestMostAccessedSecrets_Empty(t *testing.T) {
 func TestUnusedSecrets_Empty(t *testing.T) {
 	ls := newAuditStoreMax(t)
 	var pid uint = 1
-	result, err := ls.UnusedSecrets(context.Background(), &pid, time.Now())
+	result, err := ls.UnusedSecrets(context.Background(), &pid, nil, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }

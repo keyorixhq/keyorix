@@ -408,10 +408,14 @@ func (h *AuthHandler) CreateWebAuthnSessionProxy(w http.ResponseWriter, r *http.
 }
 
 // webAuthnSessionConsumeProxyBody is the wire body for
-// ConsumeWebAuthnSessionProxy.
+// ConsumeWebAuthnSessionProxy. It used to also carry a caller-supplied `now`
+// forwarded straight into the expiry comparison — removed (G-wave6, same
+// class as users_crud.go's mfaChallengeLookupBody): a remote caller could
+// manipulate the effective "current time" used to decide whether a WebAuthn
+// ceremony session is still valid. This server now always uses its own
+// clock for that comparison.
 type webAuthnSessionConsumeProxyBody struct {
-	TokenHash string    `json:"token_hash"`
-	Now       time.Time `json:"now"`
+	TokenHash string `json:"token_hash"`
 }
 
 // ConsumeWebAuthnSessionProxy handles POST
@@ -431,11 +435,16 @@ func (h *AuthHandler) ConsumeWebAuthnSessionProxy(w http.ResponseWriter, r *http
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
-	if body.TokenHash == "" || body.Now.IsZero() {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "token_hash and now are required")
+	if body.TokenHash == "" {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "token_hash is required")
 		return
 	}
-	sess, err := h.coreService.Storage().ConsumeWebAuthnSession(r.Context(), body.TokenHash, body.Now)
+	// This server's own clock, never a caller-supplied value — see
+	// webAuthnSessionConsumeProxyBody's doc comment. No .UTC(): no
+	// BeforeSave hook normalizes models.WebAuthnSession.ExpiresAt, so writes
+	// (internal/core/webauthn.go's c.now()) and reads must share the same
+	// (local) Location convention.
+	sess, err := h.coreService.Storage().ConsumeWebAuthnSession(r.Context(), body.TokenHash, time.Now())
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "invalid or expired webauthn session")
 		return

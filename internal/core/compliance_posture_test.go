@@ -224,7 +224,7 @@ func TestGetCompliancePosture_DegradedOnClassificationCountQueryErrors(t *testin
 // dropped from ProjectsNeverReviewed/ProjectsWithOpenCampaign/PendingItems/ProjectsOverdue.
 func TestGetCompliancePosture_DegradedOnAccessReviewCampaignsQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 	// models.AccessReviewCampaign deliberately NOT migrated.
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -239,7 +239,7 @@ func TestGetCompliancePosture_DegradedOnAccessReviewCampaignsQueryError(t *testi
 // emergency access from the report.
 func TestGetCompliancePosture_DegradedOnBreakGlassQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 	// models.BreakGlassActivation deliberately NOT migrated.
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -268,7 +268,7 @@ func TestGetCompliancePosture_DegradedOnDormantRoleGrantsAssignmentsQueryError(t
 
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsActivityQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.Group{}))
 	// models.AuditEvent deliberately NOT migrated → LastUserSecretReadActivity's raw
 	// "audit_events" table query fails (the first of the two plain-tier per-
 	// permission activity queries countDormantRoleGrants runs, #487 round 112).
@@ -298,7 +298,7 @@ func (s *failingSecretWriteActivityStore) LastUserSecretWriteActivity(_ context.
 // standing access) on a storage error.
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsWriteActivityQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Group{}))
 	c.storage = &failingSecretWriteActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -326,7 +326,7 @@ func (s *failingRoleManagementActivityStore) LastUserRoleManagementActivity(_ co
 // privileged access) on a storage error.
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsRoleManagementActivityQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Group{}))
 	c.storage = &failingRoleManagementActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -349,7 +349,7 @@ func (s *failingSecretsDeletionActivityStore) LastUserSecretDeletionActivity(_ c
 
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsSecretsDeletionActivityQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Group{}))
 	c.storage = &failingSecretsDeletionActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
 
 	p, err := c.GetCompliancePosture(context.Background())

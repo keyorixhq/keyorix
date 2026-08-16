@@ -48,9 +48,12 @@ func decodeMFAStepUpGrantResponse(data []byte) (*models.MFAStepUpGrant, error) {
 }
 
 // mfaStepUpGrantActiveWire is the request body for GetActiveMFAStepUpGrant.
+// It no longer carries `now` on the wire (G-wave6, same fix as
+// remote_mfa.go's mfaChallengeLookupWire): the upstream server always uses
+// its own clock for the expiry comparison instead of trusting a
+// caller-supplied value.
 type mfaStepUpGrantActiveWire struct {
-	UserID uint      `json:"user_id"`
-	Now    time.Time `json:"now"`
+	UserID uint `json:"user_id"`
 }
 
 // CreateMFAStepUpGrant persists a new MFA step-up grant via
@@ -75,10 +78,12 @@ func (rs *RemoteStorage) CreateMFAStepUpGrant(ctx context.Context, grant *models
 // GetActiveMFAStepUpGrant returns the most recent non-expired MFA step-up
 // grant for userID via POST /api/v1/system/mfa/stepup-grants/active.
 // Returns (nil, nil) when the server returns null data (no active grant).
-func (rs *RemoteStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, now time.Time) (*models.MFAStepUpGrant, error) {
+// now is accepted only for interface parity with LocalStorage — the
+// upstream server ignores any caller-supplied "current time" and always
+// uses its own clock (see mfaStepUpGrantActiveWire's doc comment).
+func (rs *RemoteStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, _ time.Time) (*models.MFAStepUpGrant, error) {
 	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/stepup-grants/active", mfaStepUpGrantActiveWire{
 		UserID: userID,
-		Now:    now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active MFA step-up grant: %w", err)

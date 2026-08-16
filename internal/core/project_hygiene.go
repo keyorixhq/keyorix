@@ -54,7 +54,7 @@ func (c *KeyorixCore) ProjectHygieneSummary(ctx context.Context, projectID uint,
 	}
 	out.OrphanedSecrets = len(orphaned)
 
-	unused, err := c.UnusedSecrets(ctx, &projectID, unusedDays)
+	unused, err := c.UnusedSecrets(ctx, &projectID, nil, unusedDays)
 	if err != nil {
 		return nil, fmt.Errorf("unused secrets: %w", err)
 	}

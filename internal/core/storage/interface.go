@@ -1105,13 +1105,15 @@ type Storage interface {
 	// bound rather than a narrow live-window one.
 	PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error)
 	// MostAccessedSecrets returns the most-read secrets (optionally scoped to a
-	// project) in the window since `since`, ordered by read count descending,
-	// capped at `limit`. Backs the usage-analytics dashboard.
-	MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]SecretUsageStat, error)
-	// UnusedSecrets returns secrets (optionally scoped to a project) with no read
-	// access since `notReadSince` — including never-read secrets — ordered
-	// never-read first, then oldest last read.
-	UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
+	// project and, further, to a single environment within it) in the window
+	// since `since`, ordered by read count descending, capped at `limit`. Backs
+	// the usage-analytics dashboard.
+	MostAccessedSecrets(ctx context.Context, projectID, environmentID *uint, since time.Time, limit int) ([]SecretUsageStat, error)
+	// UnusedSecrets returns secrets (optionally scoped to a project and, further,
+	// to a single environment within it) with no read access since
+	// `notReadSince` — including never-read secrets — ordered never-read first,
+	// then oldest last read.
+	UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
 	// CountUnusedSecretsByProject returns, for every project in projectIDs in a
 	// single grouped query, the count of secrets not read since notReadSince (or
 	// never read) — the deployment-wide counterpart to UnusedSecrets, used by the
@@ -1145,14 +1147,28 @@ type Storage interface {
 	// table.
 	AuditRetentionStats(ctx context.Context) (*AuditRetentionStats, error)
 	// DeleteAuditLogsBefore hard-deletes AuditEvent rows with created_at < cutoff.
-	// Returns the number of rows deleted.
-	DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error)
+	// Returns the number of rows deleted, plus a re-anchor candidate when the
+	// delete reached into the chained (post-ADR-029) region: the new earliest
+	// surviving row's id/prev_hash/entry_hash, for the caller to authenticate
+	// (HMAC, checkpoint signing key) and persist as the retention anchor BEFORE
+	// VerifyAuditChain can walk the surviving chain again — nil when nothing
+	// chained was deleted (nothing to re-anchor). See AuditChainAnchor.
+	DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, *AuditChainAnchor, error)
 	// VerifyAuditChain re-walks the tamper-evidence hash chain (ADR-029) over
 	// audit_events and reports whether it is intact. The first divergence —
 	// modified field, deleted/inserted row, or broken linkage — is reported
 	// with the offending event id. A leading run of pre-ADR-029 rows with empty
 	// hashes is counted as an unchained legacy prefix, not a failure.
-	VerifyAuditChain(ctx context.Context) (*AuditChainVerification, error)
+	//
+	// anchor, when non-nil, seeds the walk at a legitimately-moved chain start
+	// (a retention purge removed the original earliest rows) instead of
+	// requiring the true genesis: the earliest surviving row must match
+	// anchor.RowID/PrevHash/EntryHash exactly, or the chain is reported broken.
+	// The caller MUST have already authenticated anchor (this layer trusts it
+	// literally); pass nil to verify from genesis as before. A surviving chain
+	// that already starts at genesis (the purge only removed the legacy
+	// unchained prefix, or the table is now empty) ignores a non-nil anchor.
+	VerifyAuditChain(ctx context.Context, anchor *AuditChainAnchor) (*AuditChainVerification, error)
 	// CreateAuditCheckpoint appends a signed checkpoint of the chain head (ADR-029).
 	CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error
 	// UpdateAuditCheckpointAnchor stores the external-notary anchor (RFC 3161 token,
@@ -1824,6 +1840,23 @@ type AuditChainVerification struct {
 	AnchorToken    []byte
 	AnchoredAt     *time.Time
 	AnchorProvider string
+}
+
+// AuditChainAnchor is an authenticated re-anchor point for VerifyAuditChain's
+// walk, produced when a retention purge (DeleteAuditLogsBefore) removes rows
+// from the chained (post-ADR-029) region: the new earliest surviving row's own
+// id, prev_hash (which now points at a deleted predecessor), and entry_hash.
+//
+// The store layer that walks the chain has no signing key and trusts this
+// value literally — authenticating it (HMAC-signing at write time under the
+// checkpoint signing key, verifying the signature before ever constructing one
+// to pass in) is entirely the caller's (core layer's) responsibility. Without
+// that, any DB-writable actor could forge an anchor claiming an arbitrary gap
+// is sanctioned, defeating the tamper-evidence the chain exists to provide.
+type AuditChainAnchor struct {
+	RowID     uint
+	PrevHash  string
+	EntryHash string
 }
 
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when

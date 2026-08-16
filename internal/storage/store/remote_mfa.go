@@ -360,12 +360,16 @@ func decodeMFAChallengeResponse(data []byte) (*models.MFAChallenge, error) {
 }
 
 // mfaChallengeLookupWire is the wire body shared by GetActiveMFAChallenge and
-// ConsumeMFAChallenge below — both take the identical (tokenHash, now) pair
-// internal/core/webauthn.go already passes to storage.Storage's local
-// implementation (local_mfa.go).
+// ConsumeMFAChallenge below. It no longer carries `now` on the wire
+// (G-wave6): the upstream server computes the expiry-comparison time itself
+// from its own clock rather than trusting a value a caller could manipulate
+// to keep an expired challenge usable or force a live one to look expired —
+// see server/http/handlers/users_crud.go's mfaChallengeLookupBody doc
+// comment. The `now` parameter below is kept on RemoteStorage's methods only
+// for interface parity with LocalStorage (internal/core/storage.Storage);
+// it is intentionally not sent.
 type mfaChallengeLookupWire struct {
-	TokenHash string    `json:"token_hash"`
-	Now       time.Time `json:"now"`
+	TokenHash string `json:"token_hash"`
 }
 
 // ConsumeMFAChallenge atomically marks a valid (unused, unexpired) challenge used
@@ -382,10 +386,12 @@ type mfaChallengeLookupWire struct {
 // close. This is an ordinary storage passthrough, NOT part of the
 // RemoteMFAVerifier proxy above — see the package doc for why that split is
 // correct here (the challenge row carries no secret of its own).
-func (rs *RemoteStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
+// now is accepted only for interface parity with LocalStorage — the
+// upstream server ignores any caller-supplied "current time" and always
+// uses its own clock (see mfaChallengeLookupWire's doc comment).
+func (rs *RemoteStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash string, _ time.Time) (*models.MFAChallenge, error) {
 	resp, err := rs.client.Post(ctx, "/api/v1/users/mfa-challenge/consume", mfaChallengeLookupWire{
 		TokenHash: tokenHash,
-		Now:       now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired challenge")
@@ -404,10 +410,12 @@ func (rs *RemoteStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash stri
 // ConsumeMFAChallenge above (called from FinishWebAuthnLogin) is what actually
 // spends it, matching local_mfa.go's own GetActiveMFAChallenge/
 // ConsumeMFAChallenge split exactly.
-func (rs *RemoteStorage) GetActiveMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
+// now is accepted only for interface parity with LocalStorage — the
+// upstream server ignores any caller-supplied "current time" and always
+// uses its own clock (see mfaChallengeLookupWire's doc comment).
+func (rs *RemoteStorage) GetActiveMFAChallenge(ctx context.Context, tokenHash string, _ time.Time) (*models.MFAChallenge, error) {
 	resp, err := rs.client.Post(ctx, "/api/v1/users/mfa-challenge/active", mfaChallengeLookupWire{
 		TokenHash: tokenHash,
-		Now:       now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired challenge")

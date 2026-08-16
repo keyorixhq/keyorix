@@ -642,3 +642,77 @@ func (c *KeyorixCore) requireGrantSetNoSoDViolation(ctx context.Context, roleIDs
 	}
 	return nil
 }
+
+// requireGroupJoinNoSoDViolation is requireNoSoDViolation's GROUP-JOIN
+// counterpart (AUTHZ-007 / #G05): joining a group confers EVERY role the
+// group holds at once, so the permissions a new member gains are a SET
+// landing atomically — not a sequence of independent single-role grants. A
+// per-role loop, where each iteration re-queries the user's CURRENT held
+// permissions fresh from storage, structurally cannot see a violation that
+// only exists because two of the group's OWN roles combine with each other:
+// neither role's individual permission set, checked against what the user
+// held BEFORE this join, ever includes the other new role's permissions in
+// the same pass. (Confirmed empirically: two roles X and Y granted together
+// by one group, {X, Y} a forbidden policy pair, held by neither the user nor
+// either role alone, sailed straight through the old per-grant
+// requireNoSoDViolation loop.)
+//
+// This mirrors requireGrantSetNoSoDViolation's "evaluate the whole set
+// together" shape, but — unlike that function, which is for a brand-new
+// principal with NO prior grants to weigh against — this principal already
+// exists, so "held" starts from their actual current permissions
+// (userHeldPermissionSet, exactly as requireNoSoDViolation uses), and
+// "adding" is the union of every permission ALL of the group's role grants
+// would confer, checked together in one pass. Any role in the set that is
+// itself admin-bypass exempts the whole join (see package doc above — a
+// member who would gain admin-bypass through this join trivially "violates"
+// every policy already, same carve-out requireGrantSetNoSoDViolation makes).
+func (c *KeyorixCore) requireGroupJoinNoSoDViolation(ctx context.Context, userID uint, grants []storage.RoleAssignment) error {
+	// A group with no role grants confers nothing, so there is nothing to
+	// evaluate — return before touching storage at all. This matches the old
+	// per-role loop's behavior (an empty grants slice meant its body, and thus
+	// every storage call inside it, never ran) and keeps a plain, role-less
+	// group join working in callers/tests that never provision the
+	// sod_policies table.
+	if len(grants) == 0 {
+		return nil
+	}
+	policies, err := c.storage.ListSoDPolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(policies) == 0 {
+		return nil
+	}
+	if c.isGlobalAdminRoleName(ctx, userID) != "" {
+		return nil // already holds admin-bypass — see package doc above
+	}
+	adding := make(map[string]bool)
+	for _, g := range grants {
+		role, err := c.storage.GetRole(ctx, g.RoleID)
+		if err != nil {
+			continue // mirrors validateGroupJoinRoles' existing "skip roles whose definition cannot be loaded"
+		}
+		if isAdminRoleName(role.Name) {
+			return nil // this join grants admin-bypass — see package doc above
+		}
+		perms, err := c.rolePermissionNameSet(ctx, g.RoleID)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		for name := range perms {
+			adding[name] = true
+		}
+	}
+	if len(adding) == 0 {
+		return nil
+	}
+	held, err := c.userHeldPermissionSet(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if pol := sodPolicyNewlyCompletedBy(policies, held, adding); pol != nil {
+		return sodBlockedErr(pol, "join this group")
+	}
+	return nil
+}

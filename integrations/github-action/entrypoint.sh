@@ -152,7 +152,19 @@ install_cli() {
     # SHA (not the mutable `main` branch, and not a movable tag ref) so a
     # future main-branch or tag compromise can't alter the code piped into
     # `sh` here. Bump deliberately when install.sh's logic needs to change.
-    curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/6dd9e555125500e76b4e2035a867621e416585a3/install.sh | sh # NOSONAR -- bash:S6506 false positive: --proto '=https' --tlsv1.2 enforces HTTPS; commit SHA is pinned not floating
+    #
+    # Pinned to b8f79619d29fa35355f6ed695e04e24929131a94 (#1342): the
+    # previous pin (6dd9e555...) predates that commit, which closed
+    # install.sh's own fail-OPEN checksum-verification gap — a missing
+    # checksums.txt entry for the runner's platform, or neither sha256sum
+    # nor shasum being available, used to only log a warning and install the
+    # binary anyway with zero integrity signal. Staying on the stale pin
+    # meant this default ("latest", unpinned `version` input) install path
+    # kept fetching that vulnerable install.sh regardless of what HEAD's own
+    # copy already fixed. install.sh has not changed since b8f79619, so this
+    # is the current known-good state — see `git log <pin>..HEAD -- install.sh`
+    # before bumping further.
+    curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/b8f79619d29fa35355f6ed695e04e24929131a94/install.sh | sh # NOSONAR -- bash:S6506 false positive: --proto '=https' --tlsv1.2 enforces HTTPS; commit SHA is pinned not floating
     # install.sh (pinned above) always installs to this same directory.
     KEYORIX_BIN="${install_dir}/keyorix"
   fi

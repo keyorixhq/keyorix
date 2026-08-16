@@ -196,7 +196,7 @@ func TestAuditService_WriteAuditCheckpoint_UnsafeErrorIsSanitized_G50(t *testing
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}))
+		&models.Project{}, &models.Environment{}, &models.SystemMetadata{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
@@ -206,6 +206,10 @@ func TestAuditService_WriteAuditCheckpoint_UnsafeErrorIsSanitized_G50(t *testing
 
 	// Drop the table VerifyAuditChain reads from, so it fails with a raw SQL
 	// error instead of the "refusing to checkpoint" sentinel path.
+	// system_metadata stays migrated (the audit chain re-anchor lookup and the
+	// high-water mark both read it before the raw chain walk) so this test still
+	// isolates the intended audit_events failure instead of a table-missing
+	// error at an earlier, unrelated read.
 	require.NoError(t, db.Exec("DROP TABLE audit_events").Error)
 
 	svc := NewAuditService(c)

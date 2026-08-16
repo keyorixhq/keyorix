@@ -422,6 +422,103 @@ func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
 	assert.Nil(t, sess)
 }
 
+// Regression test: a correct password against an MFA-enabled account is only
+// PARTIAL authentication — Login refuses to mint a session and returns
+// ErrMFARequired instead. Before the fix, VerifyPasswordCredentials cleared the
+// account's accumulated failed-login count/lockout state unconditionally as soon
+// as the password matched, regardless of whether a second factor was still
+// outstanding. That let an attacker who merely knows (or has guessed/leaked) a
+// victim's correct password — but does NOT have the second factor — repeatedly
+// submit it to reset the lockout counter back to zero before ever passing MFA,
+// defeating the counter as a brute-force backstop and even undoing a
+// defender-triggered lock. The clear must be deferred to the actual
+// full-authentication point (VerifyMFALogin, once the second factor also
+// succeeds) — see TestLogin_FullMFACompletionClearsLockout below.
+func TestLogin_PasswordOnlyDoesNotClearLockoutWhenMFARequired(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 5, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	require.NoError(t, err)
+
+	// Two prior failed password attempts (below the MaxAttempts=5 threshold) leave a
+	// non-zero failed-login count on the account, without tripping the lock.
+	user, err := c.storage.GetUser(ctx, 1)
+	require.NoError(t, err)
+	c.recordFailedLogin(ctx, user)
+	c.recordFailedLogin(ctx, user)
+	var before models.User
+	require.NoError(t, db.First(&before, 1).Error)
+	require.Equal(t, 2, before.FailedLoginAttempts, "test setup: two prior failures recorded")
+	require.Nil(t, before.LoginLockedUntil, "test setup: not yet locked")
+
+	// Correct password — but the account has MFA enabled, so Login must decline to
+	// mint a session and report ErrMFARequired instead.
+	session, u, err := c.Login(ctx, &LoginRequest{Username: "alice", Password: mfaTestPassword})
+	require.ErrorIs(t, err, ErrMFARequired)
+	assert.Nil(t, session)
+	require.NotNil(t, u)
+
+	var after models.User
+	require.NoError(t, db.First(&after, 1).Error)
+	assert.Equal(t, 2, after.FailedLoginAttempts,
+		"a correct password alone must NOT clear the lockout counter when MFA is still outstanding")
+}
+
+// Companion to the test above: once the SAME login sequence also completes the
+// second factor, THAT is the true full-authentication point, and the lockout
+// state must be cleared then.
+func TestLogin_FullMFACompletionClearsLockout(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 5, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	// A mutable clock: ActivateMFA below consumes (marks used) the TOTP step at
+	// `fixed`, so the later login-step code must be generated at a different step
+	// or it would be rejected as a replay of the activation code, not a genuine
+	// re-exercise of the login flow.
+	clock := fixed
+	c.now = func() time.Time { return clock }
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, clock)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	require.NoError(t, err)
+
+	user, err := c.storage.GetUser(ctx, 1)
+	require.NoError(t, err)
+	c.recordFailedLogin(ctx, user)
+	c.recordFailedLogin(ctx, user)
+	var before models.User
+	require.NoError(t, db.First(&before, 1).Error)
+	require.Equal(t, 2, before.FailedLoginAttempts, "test setup: two prior failures recorded")
+
+	_, u, err := c.Login(ctx, &LoginRequest{Username: "alice", Password: mfaTestPassword})
+	require.ErrorIs(t, err, ErrMFARequired)
+	require.NotNil(t, u)
+
+	clock = clock.Add(totpPeriod * time.Second) // advance one step past the activation code
+	code, err := totp.GenerateCode(secret, clock)
+	require.NoError(t, err)
+	ch, err := c.CreateMFAChallenge(ctx, u.ID)
+	require.NoError(t, err)
+	session, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "9.9.9.9")
+	require.NoError(t, err)
+	require.NotNil(t, session)
+
+	var after models.User
+	require.NoError(t, db.First(&after, 1).Error)
+	assert.Equal(t, 0, after.FailedLoginAttempts, "completing MFA fully authenticates and clears the lockout counter")
+	assert.Nil(t, after.LoginLockedUntil)
+	assert.Equal(t, 0, after.LoginLockoutCount)
+}
+
 // DisableMFA is an authenticated-session self-service endpoint: a stolen session
 // with no TOTP secret must not be able to brute-force the current code unbounded.
 // Repeated wrong codes must feed the same per-account lockout VerifyMFALogin uses,

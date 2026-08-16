@@ -239,6 +239,89 @@ describe('LeasesPanel', () => {
         expect(revokeAllMutate).toHaveBeenCalled();
     });
 
+    // A lease whose revoke attempt failed is still LIVE upstream (the backend
+    // treats revoke_failed as active — see CountActiveLeases/ListExpiredActiveLeases)
+    // so the operator must be able to see why it failed and retry from this panel.
+    describe('revoke_failed leases (incident-response gap)', () => {
+        it('shows a retry affordance and the revokeError message for a revoke_failed lease', () => {
+            leasesData = [
+                {
+                    leaseId: 'lease-failed',
+                    roleName: 'admin-role',
+                    status: 'revoke_failed',
+                    revokeError: 'target database unreachable: dial tcp: i/o timeout',
+                },
+            ];
+            render(<LeasesPanel configId={5} canManage />);
+
+            expect(screen.getByText('target database unreachable: dial tcp: i/o timeout')).toBeInTheDocument();
+            expect(screen.getByTitle('Retry revoke')).toBeInTheDocument();
+            expect(screen.queryByTitle('Revoke lease')).not.toBeInTheDocument();
+        });
+
+        it('does not render a revokeError message when the field is absent', () => {
+            leasesData = [{ leaseId: 'lease-failed', roleName: 'admin-role', status: 'revoke_failed' }];
+            render(<LeasesPanel configId={5} canManage />);
+
+            expect(screen.getByTitle('Retry revoke')).toBeInTheDocument();
+        });
+
+        it('retries revoking a revoke_failed lease via the same revoke mutation, after a distinct confirmation', () => {
+            leasesData = [
+                { leaseId: 'lease-failed', roleName: 'admin-role', status: 'revoke_failed', revokeError: 'timeout' },
+            ];
+            const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+            render(<LeasesPanel configId={5} canManage />);
+            fireEvent.click(screen.getByTitle('Retry revoke'));
+
+            expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/retry revoking this lease/i));
+            expect(revokeMutate).toHaveBeenCalledWith('lease-failed', expect.anything());
+        });
+
+        it('hides the retry control for non-managers even on a revoke_failed lease', () => {
+            leasesData = [
+                { leaseId: 'lease-failed', roleName: 'admin-role', status: 'revoke_failed', revokeError: 'timeout' },
+            ];
+            render(<LeasesPanel configId={5} canManage={false} />);
+            expect(screen.queryByTitle('Retry revoke')).not.toBeInTheDocument();
+        });
+    });
+
+    // revokeAll's response carries a {revoked, failed} breakdown (api.ts) — a
+    // partial failure must be visibly distinct from a full success, not silently
+    // swallowed by only wiring onError.
+    describe('revoke all: partial-failure visibility', () => {
+        it('shows a warning notice distinguishing a partial failure from full success', () => {
+            leasesData = [
+                { leaseId: 'lease-1', roleName: 'role', status: 'active' },
+                { leaseId: 'lease-2', roleName: 'role2', status: 'active' },
+            ];
+            revokeAllMutate.mockImplementation((_vars, opts) => opts.onSuccess({ revoked: 4, failed: 2 }));
+            vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+            render(<LeasesPanel configId={5} canManage />);
+            fireEvent.click(screen.getByRole('button', { name: /revoke all/i }));
+
+            expect(screen.getByText(/revoked 4 of 6 lease\(s\) — 2 failed/i)).toBeInTheDocument();
+        });
+
+        it('shows a plain success notice (no partial-failure wording) when nothing failed', () => {
+            leasesData = [
+                { leaseId: 'lease-1', roleName: 'role', status: 'active' },
+                { leaseId: 'lease-2', roleName: 'role2', status: 'active' },
+            ];
+            revokeAllMutate.mockImplementation((_vars, opts) => opts.onSuccess({ revoked: 2, failed: 0 }));
+            vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+            render(<LeasesPanel configId={5} canManage />);
+            fireEvent.click(screen.getByRole('button', { name: /revoke all/i }));
+
+            expect(screen.getByText('Revoked 2 lease(s).')).toBeInTheDocument();
+            expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
+        });
+    });
+
     it('closes the credential modal via the close (X) control and via Done', () => {
         issueMutate.mockImplementation((_vars, opts) =>
             opts.onSuccess({ leaseId: 'lease-x', username: 'u', password: 'p' })

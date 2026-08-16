@@ -178,11 +178,17 @@ const EventAnomalyBusinessHoursConfigured = "anomaly.business_hours_configured" 
 // that timezone. A blank tz keeps UTC, and the band defaults to 22:00–06:00 unless
 // overridden. Because 0 is the config zero value AND a valid hour, both hours being 0
 // is treated as "unset" (a 0–0 band would be empty) — set the timezone alone and the
-// default band is kept. Returns an error for an unparseable timezone OR a degenerate
-// band (startHour == endHour for any other, explicitly-supplied pair) — a start==end
+// default band is kept. Any other call must supply BOTH hours as a valid, differing
+// pair: partial-update callers (e.g. a caller that loads the persisted config and
+// only overlays the field it means to change) can otherwise collide an intentionally
+// changed hour with the OTHER field's untouched value — including the hardcoded
+// default (22/6) when an out-of-range hour is passed for it, since that used to fall
+// back to the default silently instead of erroring. Returns an error for an
+// unparseable timezone, an out-of-range hour, or a degenerate band (the two hours
+// equal, checked on the FINAL merged pair, not just the raw inputs) — a start==end
 // band matches no hour in isOffHours, which would silently disable the rule with no
-// validation error and no audit trail if allowed through. Either error leaves the
-// prior policy unchanged. On success the new band is recorded as an audit event.
+// validation error and no audit trail if allowed through. Any error leaves the prior
+// policy unchanged. On success the new band is recorded as an audit event.
 func (d *AnomalyDetector) SetBusinessHours(ctx context.Context, tz string, startHour, endHour int) error {
 	p := defaultOffHoursPolicy()
 	if tz != "" {
@@ -193,15 +199,21 @@ func (d *AnomalyDetector) SetBusinessHours(ctx context.Context, tz string, start
 		p.loc = loc
 	}
 	if startHour != 0 || endHour != 0 { // both zero = unset → keep the default band
-		if validHour(startHour) && validHour(endHour) && startHour == endHour {
-			return fmt.Errorf("anomaly business_hours: start_hour and end_hour must differ (an equal start/end band is empty and would silently disable the off_hours rule; pass 0,0 to explicitly keep the default band)")
+		if !validHour(startHour) {
+			return fmt.Errorf("anomaly business_hours: start_hour %d out of range [0,23]", startHour)
 		}
-		if validHour(startHour) {
-			p.start = startHour
+		if !validHour(endHour) {
+			return fmt.Errorf("anomaly business_hours: end_hour %d out of range [0,23]", endHour)
 		}
-		if validHour(endHour) {
-			p.end = endHour
-		}
+		p.start = startHour
+		p.end = endHour
+	}
+	// Checked on the final merged band (not the raw inputs) so a start that
+	// intentionally matches the OTHER field's still-in-effect value — whether that
+	// value came from the hardcoded default above or, before the out-of-range check
+	// above existed, from a silently-kept default — is always caught.
+	if p.start == p.end {
+		return fmt.Errorf("anomaly business_hours: start_hour and end_hour must differ (an equal start/end band is empty and would silently disable the off_hours rule; pass 0,0 to explicitly keep the default band)")
 	}
 	d.offHours = p
 	d.auditBusinessHoursConfig(ctx, tz, p)

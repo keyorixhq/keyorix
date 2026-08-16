@@ -157,6 +157,14 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 // validateGroupJoinRoles checks that actorID has the authority to grant all roles
 // the group already holds, and that userID would not gain a SoD-violating role
 // combination by joining (AUTHZ-007). Skips roles whose definition cannot be loaded.
+//
+// #G05: the SoD check is done ONCE, over the group's FULL role set
+// (requireGroupJoinNoSoDViolation), not per role inside the authority loop
+// below. A per-role check (each call only weighing ONE new role's permissions
+// against what the user held before the join) cannot see a violation that
+// only exists because two of the group's OWN roles combine with each other —
+// see requireGroupJoinNoSoDViolation's doc comment (sod.go) for the concrete
+// gap and how this mirrors requireGrantSetNoSoDViolation's set-based shape.
 func (c *KeyorixCore) validateGroupJoinRoles(ctx context.Context, actorID, userID, groupID uint) error {
 	grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
 	if err != nil {
@@ -170,20 +178,18 @@ func (c *KeyorixCore) validateGroupJoinRoles(ctx context.Context, actorID, userI
 		if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
 			return err
 		}
-		if err := c.requireNoSoDViolation(ctx, userID, g.RoleID); err != nil {
-			return err
-		}
 	}
-	return nil
+	return c.requireGroupJoinNoSoDViolation(ctx, userID, grants)
 }
 
 func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
-	// #G04: validateGroupJoinRoles' per-role requireNoSoDViolation check and the
-	// membership write below must be treated as one step — see sodGrantMu's doc
-	// comment in service.go (AssignUserRole has the identical race).
+	// #G04: validateGroupJoinRoles' set-based requireGroupJoinNoSoDViolation check
+	// and the membership write below must be treated as one step — see
+	// sodGrantMu's doc comment in service.go (AssignUserRole has the identical
+	// race).
 	c.sodGrantMu.Lock()
 	defer c.sodGrantMu.Unlock()
 	if actorID != 0 {

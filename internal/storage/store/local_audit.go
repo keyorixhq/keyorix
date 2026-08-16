@@ -186,8 +186,12 @@ func (s *scanTime) parse(str string) error {
 
 // MostAccessedSecrets ranks secrets by read count in the window, joining
 // secret_nodes for the name/environment. Reads are the usage signal, so only
-// access logs with action="read" are counted.
-func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
+// access logs with action="read" are counted. When environmentID is non-nil
+// the result is further confined to that single environment within the
+// project — matching the {project, environment} scope the HTTP route
+// authorizes against (ScopeFromQuery), so a caller authorized for only one
+// environment cannot receive the whole project's aggregate usage data.
+func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID, environmentID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -204,6 +208,9 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 		Limit(limit)
 	if projectID != nil {
 		q = q.Where("s.project_id = ?", *projectID)
+	}
+	if environmentID != nil {
+		q = q.Where("s.environment_id = ?", *environmentID)
 	}
 
 	type row struct {
@@ -230,8 +237,13 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 
 // UnusedSecrets returns secrets whose most recent read is older than
 // notReadSince (or that have never been read), ordered never-read first. Only
-// real secrets (is_secret) are considered, not folder nodes.
-func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
+// real secrets (is_secret) are considered, not folder nodes. When
+// environmentID is non-nil the result is further confined to that single
+// environment within the project — matching the {project, environment} scope
+// the HTTP route authorizes against (ScopeFromQuery), so a caller authorized
+// for only one environment cannot receive the whole project's aggregate
+// usage data.
+func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
 	q := ls.db.WithContext(ctx).
 		Table("secret_nodes AS s").
 		Select("s.id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, MAX(l.access_time) AS last_read").
@@ -244,6 +256,9 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notR
 		Limit(maxUnboundedListRows)
 	if projectID != nil {
 		q = q.Where("s.project_id = ?", *projectID)
+	}
+	if environmentID != nil {
+		q = q.Where("s.environment_id = ?", *environmentID)
 	}
 
 	type row struct {
@@ -311,12 +326,53 @@ func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, project
 }
 
 // DeleteAuditLogsBefore hard-deletes all AuditEvent rows whose event_time is
-// before cutoff. It returns the number of rows deleted.
-func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+// before cutoff. It returns the number of rows deleted, plus a re-anchor
+// candidate (storage.AuditChainAnchor) when the delete reached into the
+// chained (post-ADR-029) hash-chain region rather than just the pre-ADR-029
+// unchained legacy prefix: the new earliest surviving row's own
+// id/prev_hash/entry_hash. That row's prev_hash still points at its
+// now-deleted predecessor — without authenticating and persisting this as a
+// retention anchor, VerifyAuditChain can never again walk past this row (see
+// the ADR-029 retention-purge finding this closes). The caller
+// (core.PurgeAuditLogs) is responsible for HMAC-signing and persisting it,
+// inside the same transaction as this delete, via SetSystemMetadata.
+//
+// candidate is nil when nothing was deleted, the table is now empty, or the
+// new earliest surviving row already legitimately starts at genesis (the
+// purge only removed the unchained legacy prefix) — nothing to re-anchor.
+func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, *storage.AuditChainAnchor, error) {
 	result := ls.db.WithContext(ctx).
 		Where("event_time < ?", cutoff).
 		Delete(&models.AuditEvent{})
-	return result.RowsAffected, result.Error
+	if result.Error != nil || result.RowsAffected == 0 {
+		return result.RowsAffected, nil, result.Error
+	}
+
+	var head struct {
+		ID        uint
+		PrevHash  string
+		EntryHash string
+	}
+	if err := ls.db.WithContext(ctx).
+		Model(&models.AuditEvent{}).
+		Select("id, prev_hash, entry_hash").
+		Order("id ASC").
+		Limit(1).
+		Scan(&head).Error; err != nil {
+		return result.RowsAffected, nil, err
+	}
+	if head.ID == 0 || head.PrevHash == "" || head.PrevHash == auditGenesisHash {
+		// Table now empty, or the surviving prefix already legitimately starts at
+		// genesis (the purge only removed pre-ADR-029 legacy/unchained rows, or
+		// the next append will restart the chain from genesis) — no re-anchor
+		// needed; VerifyAuditChain's normal genesis walk already handles this.
+		return result.RowsAffected, nil, nil
+	}
+	return result.RowsAffected, &storage.AuditChainAnchor{
+		RowID:     head.ID,
+		PrevHash:  head.PrevHash,
+		EntryHash: head.EntryHash,
+	}, nil
 }
 
 // AuditRetentionStats returns the total audit event count plus the oldest and
