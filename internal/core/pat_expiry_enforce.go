@@ -35,7 +35,29 @@ func IsPATExpired(pat *models.PersonalAccessToken, now time.Time) bool {
 // emitPATExpiredNotification creates a best-effort in-app notification for the
 // PAT owner when an expired token is presented at the auth boundary.  Errors
 // are swallowed so a failed insert never blocks the auth rejection.
+//
+// Deduplicated the same way as every other standing reminder in this package
+// (see unreadPATExpiryReminder / unreadMachineCredExpiryReminder in
+// token_expiry_remind.go, unreadRoleExpiryReminder, unreadRotationReminder,
+// unreadExpiryReminder): skip creating a new notification while the owner
+// already has an unread one of this type for this exact token. Without this,
+// anyone who ever captured the raw token string — even long after it stopped
+// being valid for anything else — could keep presenting it at the auth
+// boundary and get a fresh notification (and any wired email/webhook
+// delivery) fired every single time, spamming the owner indefinitely. The
+// standing notification only clears, letting a fresh one fire, once the
+// owner reads/dismisses it — this codebase has no time-window/cooldown-based
+// dedup anywhere; every periodic-notification mechanism here dedups on
+// unread-notification presence instead, so this follows suit rather than
+// inventing a new mechanism.
 func (c *KeyorixCore) emitPATExpiredNotification(ctx context.Context, pat *models.PersonalAccessToken) {
+	if pat.UserID == 0 {
+		return
+	}
+	link := patExpiredUsedLink(pat.ID)
+	if c.unreadPATExpiredUsedReminder(ctx, pat.UserID, link) != nil {
+		return
+	}
 	c.notifyWithSeverity(
 		ctx,
 		pat.UserID,
@@ -43,9 +65,37 @@ func (c *KeyorixCore) emitPATExpiredNotification(ctx context.Context, pat *model
 		"Expired PAT presented",
 		fmt.Sprintf("Personal access token '%s' has expired and was rejected. Revoke or replace it.", pat.Name),
 		nil,
-		"/account/tokens",
+		link,
 		models.NotificationSeverityWarning,
 	)
+}
+
+// patExpiredUsedLink builds the stable per-token dedup key (and in-app
+// navigation target) for an "expired PAT presented" notification. Keyed on
+// the token's ID, not its display Name — two PATs owned by the same user are
+// not required to have distinct names, and matching on name would let one
+// token's standing reminder silently suppress a distinct token's reminder
+// (mirrors the #G22 rationale for patExpiryLink/machineCredExpiryLink in
+// token_expiry_remind.go).
+func patExpiredUsedLink(patID uint) string {
+	return fmt.Sprintf("/account/tokens?token=%d", patID)
+}
+
+// unreadPATExpiredUsedReminder returns an existing unread "expired PAT
+// presented" notification for the given user matching link (see
+// patExpiredUsedLink), or nil if none exists (including on a storage error —
+// best-effort, same fail-open behavior as unreadPATExpiryReminder).
+func (c *KeyorixCore) unreadPATExpiredUsedReminder(ctx context.Context, userID uint, link string) *models.Notification {
+	notes, err := c.storage.ListNotifications(ctx, userID, true, 200)
+	if err != nil {
+		return nil
+	}
+	for _, n := range notes {
+		if n.Type == NotificationPATExpiredUsed && n.Link == link {
+			return n
+		}
+	}
+	return nil
 }
 
 // ListExpiredOwnPATs returns the caller's own non-revoked PATs whose ExpiresAt
