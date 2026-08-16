@@ -48,6 +48,64 @@ func TestRegistry_AddRejectsBadKey(t *testing.T) {
 	assert.Error(t, r.Add(PurposeUpdate, "", pub), "empty key-id is rejected")
 }
 
+// TestRegistry_AddRejectsKeyReuseAcrossPurposes is the regression test for the documented
+// "independent blast radii" guarantee (see the Purpose doc comment): registering the SAME
+// ed25519 public key under both PurposeUpdate and PurposeLicense must be refused, because
+// without this check a signature valid for one purpose would trivially verify as valid for
+// the other too (ed25519 signatures carry no purpose tag of their own).
+func TestRegistry_AddRejectsKeyReuseAcrossPurposes(t *testing.T) {
+	pub, priv, err := GenerateKey()
+	require.NoError(t, err)
+
+	r := NewRegistry()
+	require.NoError(t, r.Add(PurposeUpdate, "upd-1", pub))
+
+	// Registering the identical key under a different purpose must be refused.
+	err = r.Add(PurposeLicense, "lic-1", pub)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrKeyReusedAcrossPurposes)
+
+	// The registry must not have been mutated by the rejected Add: the license purpose
+	// still has no trusted keys at all.
+	assert.Empty(t, r.KeyIDs(PurposeLicense))
+
+	// And critically: a signature produced under the update purpose must still fail to
+	// verify against the license purpose, because the key was never actually registered
+	// there — the exploit this guards against (a cross-purpose signature verifying) never
+	// gets the chance to occur.
+	msg := []byte("update manifest bytes")
+	sig := ed25519.Sign(priv, msg)
+	require.NoError(t, r.Verify(PurposeUpdate, "upd-1", msg, sig))
+	assert.ErrorIs(t, r.Verify(PurposeLicense, "lic-1", msg, sig), ErrNoKeys)
+}
+
+// TestRegistry_AddAllowsSameKeySameePurposeDifferentKeyID confirms the reuse check is scoped
+// to cross-PURPOSE reuse only — re-registering the same key under the SAME purpose (e.g. for
+// key-id rotation bookkeeping) must still work.
+func TestRegistry_AddAllowsSameKeySamePurposeDifferentKeyID(t *testing.T) {
+	pub, _, err := GenerateKey()
+	require.NoError(t, err)
+
+	r := NewRegistry()
+	require.NoError(t, r.Add(PurposeUpdate, "upd-old", pub))
+	require.NoError(t, r.Add(PurposeUpdate, "upd-new", pub))
+	assert.ElementsMatch(t, []string{"upd-new", "upd-old"}, r.KeyIDs(PurposeUpdate))
+}
+
+// TestRegistry_AddLegitimateSinglePurposeUseStillWorks confirms the ordinary, non-reused case
+// — a key registered and used consistently for exactly ONE purpose — is unaffected.
+func TestRegistry_AddLegitimateSinglePurposeUseStillWorks(t *testing.T) {
+	pub, priv, err := GenerateKey()
+	require.NoError(t, err)
+
+	r := NewRegistry()
+	require.NoError(t, r.Add(PurposeLicense, "lic-2026", pub))
+
+	msg := []byte("license payload")
+	sig := ed25519.Sign(priv, msg)
+	assert.NoError(t, r.Verify(PurposeLicense, "lic-2026", msg, sig))
+}
+
 func TestRegistry_KeyIDsSorted(t *testing.T) {
 	pub, _, _ := GenerateKey()
 	r := NewRegistry()

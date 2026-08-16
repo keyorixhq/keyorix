@@ -11,6 +11,7 @@
 package trust
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -22,7 +23,11 @@ import (
 )
 
 // Purpose scopes a key to one use, so an update-signing key can never validate a license
-// (independent blast radii).
+// (independent blast radii). This is enforced, not just a naming convention: Add refuses to
+// register the same raw public key under two different purposes (see Add below) — because an
+// ed25519 signature carries no purpose tag of its own, a key shared across purposes would
+// otherwise let a signature valid for one purpose (e.g. an update manifest) verify as valid
+// for the other (e.g. a license), defeating the independent-blast-radii guarantee entirely.
 type Purpose string
 
 const (
@@ -38,6 +43,9 @@ var (
 	ErrUnknownKey = errors.New("trust: no trusted key for key-id")
 	// ErrBadSignature means the signature did not verify against the trusted key.
 	ErrBadSignature = errors.New("trust: signature verification failed")
+	// ErrKeyReusedAcrossPurposes means Add was asked to register a public key that is
+	// already trusted under a different purpose. Refused: see the Purpose doc comment.
+	ErrKeyReusedAcrossPurposes = errors.New("trust: public key is already trusted for a different purpose")
 )
 
 // KeyRegistry holds trusted public keys keyed by purpose and key-id.
@@ -58,7 +66,20 @@ func NewRegistry() *KeyRegistry {
 	return &KeyRegistry{keys: make(map[Purpose]map[string]ed25519.PublicKey)}
 }
 
-// Add trusts pub for (purpose, keyID). It rejects a key of the wrong size.
+// Add trusts pub for (purpose, keyID). It rejects a key of the wrong size, and — this is the
+// enforcement point for the Purpose doc comment's "independent blast radii" guarantee — it
+// refuses to register a public key that is already trusted under a DIFFERENT purpose.
+//
+// Without this check, the purpose scoping is purely a naming/registration convention: an
+// ed25519 signature carries no domain/purpose tag of its own, so if the SAME key were ever
+// registered under both PurposeUpdate and PurposeLicense (by operator mistake, or a build
+// misconfiguration that embeds the same key material for both -X vars), a signature produced
+// for one purpose would trivially verify as valid for the other too. Catching the reuse here,
+// at registration time, means the mistake fails the whole registry construction (e.g.
+// DefaultRegistry() at process startup) instead of silently weakening trust at verify time.
+//
+// A re-Add of the SAME key under the SAME purpose (e.g. under a different key-id, for
+// rotation) is unaffected — only cross-purpose reuse is refused.
 func (r *KeyRegistry) Add(purpose Purpose, keyID string, pub ed25519.PublicKey) error {
 	if len(pub) != ed25519.PublicKeySize {
 		return fmt.Errorf("trust: bad public key size %d (want %d)", len(pub), ed25519.PublicKeySize)
@@ -68,6 +89,17 @@ func (r *KeyRegistry) Add(purpose Purpose, keyID string, pub ed25519.PublicKey) 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for otherPurpose, ids := range r.keys {
+		if otherPurpose == purpose {
+			continue
+		}
+		for otherKeyID, otherPub := range ids {
+			if bytes.Equal(otherPub, pub) {
+				return fmt.Errorf("%w: key-id %q (purpose %q) is the same public key already trusted as key-id %q for purpose %q",
+					ErrKeyReusedAcrossPurposes, keyID, purpose, otherKeyID, otherPurpose)
+			}
+		}
+	}
 	if r.keys[purpose] == nil {
 		r.keys[purpose] = make(map[string]ed25519.PublicKey)
 	}
