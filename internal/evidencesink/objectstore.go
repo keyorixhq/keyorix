@@ -17,6 +17,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -80,6 +83,76 @@ func objectLockMode(mode string) (s3types.ObjectLockMode, error) {
 	}
 }
 
+// validateObjectStoreEndpoint checks that a custom S3-compatible endpoint URL is
+// well-formed and uses an http(s) scheme, before it is handed to the AWS SDK as
+// BaseEndpoint. Unlike webhook.go's validateEndpoint, this deliberately does NOT
+// block private/link-local destinations: a self-hosted S3-compatible store (MinIO,
+// a local gateway, an in-cluster service, ...) legitimately lives on an internal
+// address — that's the whole point of self-hosting — so the blanket SSRF IP-range
+// guard webhook.go applies to its own (public-collector-shaped) endpoint would
+// break the primary use case here. What IS worth rejecting regardless of target:
+// a malformed URL, or a scheme other than http/https (e.g. file://) that has no
+// business being handed to an S3 client's BaseEndpoint. An empty raw (use the
+// default AWS S3 endpoint) is always fine and returns a nil URL with no error.
+func validateObjectStoreEndpoint(raw string) (*url.URL, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("evidencesink: invalid object-store endpoint %q: %w", raw, err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return nil, fmt.Errorf("evidencesink: object-store endpoint %q must use http or https", raw)
+	}
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("evidencesink: object-store endpoint %q has no host", raw)
+	}
+	return u, nil
+}
+
+// rawDialContext performs the actual network dial once a target address has been
+// chosen. A package-level var (like lookupIPAddr below it) so tests can observe
+// the address a pinned dial actually connects to without opening a real socket.
+var rawDialContext = (&net.Dialer{}).DialContext
+
+// pinnedDialContext resolves host ONCE — here, at NewObjectStore construction
+// time — and returns a DialContext that connects to that literal resolved IP for
+// EVERY future connection, never re-resolving. This closes the residual DNS-
+// rebinding gap the finding describes: ObjectStoreConfig.Endpoint is a long-lived,
+// operator-set config value reused for many uploads over the ObjectStore's whole
+// lifetime (unlike webhook.go's per-delivery dialer, which re-validates on every
+// dial because it also has a private/link-local block to keep enforcing). Here
+// there is no such block to repeat — the endpoint may legitimately be private —
+// so the only protection worth applying is pinning: if the hostname is LATER
+// repointed via DNS (the domain lapses and is re-registered, an internal DNS
+// record is repointed, ...), this long-lived client keeps talking to the address
+// that was actually resolved at setup time, instead of silently starting to PUT
+// the evidence pack — and its SigV4 Authorization header — to a new, unvetted
+// host. A literal IP endpoint has nothing to resolve or pin.
+func pinnedDialContext(host string) (func(ctx context.Context, network, addr string) (net.Conn, error), error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return rawDialContext, nil
+	}
+	addrs, err := lookupIPAddr(host)
+	if err != nil {
+		return nil, fmt.Errorf("evidencesink: resolve object-store endpoint host %q: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("evidencesink: object-store endpoint host %q did not resolve to any address", host)
+	}
+	pinned := addrs[0].IP
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("evidencesink: invalid dial address %q: %w", addr, err)
+		}
+		return rawDialContext(ctx, network, net.JoinHostPort(pinned.String(), port))
+	}, nil
+}
+
 // NewObjectStore builds the S3-compatible sink. The bucket is required; credentials
 // resolve via the default AWS credential chain.
 func NewObjectStore(ctx context.Context, cfg ObjectStoreConfig) (*ObjectStore, error) {
@@ -93,6 +166,20 @@ func NewObjectStore(ctx context.Context, cfg ObjectStoreConfig) (*ObjectStore, e
 	if lockMode != "" && cfg.LockRetainDays <= 0 {
 		return nil, fmt.Errorf("evidencesink: object_lock_retain_days must be > 0 when object_lock_mode is set")
 	}
+	epURL, err := validateObjectStoreEndpoint(cfg.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var endpointHTTPClient *http.Client
+	if epURL != nil {
+		dialCtx, derr := pinnedDialContext(epURL.Hostname())
+		if derr != nil {
+			return nil, derr
+		}
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.DialContext = dialCtx
+		endpointHTTPClient = &http.Client{Transport: tr}
+	}
 	var loadOpts []func(*awsconfig.LoadOptions) error
 	if cfg.Region != "" {
 		loadOpts = append(loadOpts, awsconfig.WithRegion(cfg.Region))
@@ -104,6 +191,9 @@ func NewObjectStore(ctx context.Context, cfg ObjectStoreConfig) (*ObjectStore, e
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if cfg.Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
+		}
+		if endpointHTTPClient != nil {
+			o.HTTPClient = endpointHTTPClient
 		}
 		o.UsePathStyle = cfg.UsePathStyle
 	})
