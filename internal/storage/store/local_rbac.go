@@ -492,6 +492,27 @@ func (ls *LocalStorage) IsProjectMember(ctx context.Context, userID, projectID u
 	return viaGroup > 0, nil
 }
 
+// IsGroupProjectScoped reports whether groupID holds a LIVE role grant scoped to
+// the project itself (group_roles.project_id = projectID) — the group-share
+// counterpart to IsProjectMember above. A global/install-wide group role grant
+// (project_id = 0) does NOT count, matching IsProjectMember's own global
+// exclusion, and a soft-deleted group never counts (sqlJoinGroups filters it).
+func (ls *LocalStorage) IsGroupProjectScoped(ctx context.Context, groupID, projectID uint) (bool, error) {
+	if projectID == 0 {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	var count int64
+	if err := ls.db.WithContext(ctx).Table("group_roles").
+		Joins(sqlJoinGroups).
+		Where("group_roles.group_id = ? AND group_roles.project_id = ?", groupID, projectID).
+		Where(sqlWhereGRNotExpired, now).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return count > 0, nil
+}
+
 // ListProjectMembers returns the users holding a LIVE role at the project's scope
 // (project_id = projectID, environment_id = 0 — project-level membership per ADR-021).
 // Soft-deleted users AND expired time-bound grants are excluded — the same expires_at

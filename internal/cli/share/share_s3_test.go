@@ -86,6 +86,12 @@ func seedShareData(t *testing.T, svc *core.KeyorixCore) (ownerID, secretID, proj
 	require.NoError(t, err)
 	projID = proj.ID
 
+	// ShareSecret/UpdateSharePermission/RevokeShare gate the owner on live project
+	// membership (RBAC-001, requireLiveOwnerAuthority) — CreateProject alone
+	// doesn't grant the creator a project-scoped role, so add it explicitly,
+	// matching real onboarding (a project creator adds themselves as a member).
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, proj.ID, ownerID, "project_admin"))
+
 	// CreateProject seeds default environments; fetch the first one.
 	envs, err := svc.Storage().ListEnvironmentsByProject(ctx, proj.ID)
 	require.NoError(t, err)
@@ -152,12 +158,17 @@ func TestRunCreate_GroupShare_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID, _ := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runCreate now asserts SharedBy from this
 
 	ctx := context.Background()
 	grp, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "teamalpha"})
 	require.NoError(t, err)
+
+	// ShareSecretWithGroup verifies the group is scoped to the secret's project.
+	role, err := svc.Storage().GetRoleByName(ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup :=
 		createSecretID, createRecipientID, createPermission, createIsGroup
@@ -323,11 +334,16 @@ func TestRunGroupShares_PrintsTable(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID, _ := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	grp, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "devteam"})
 	require.NoError(t, err)
+
+	// ShareSecretWithGroup verifies the group is scoped to the secret's project.
+	role, err := svc.Storage().GetRoleByName(ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}))
 
 	_, err = svc.ShareSecretWithGroup(ctx, &core.GroupShareSecretRequest{
 		SecretID:   secretID,

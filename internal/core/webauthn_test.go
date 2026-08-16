@@ -27,7 +27,8 @@ func newWebAuthnTestCore(t *testing.T, withRP bool) (*KeyorixCore, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
-		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{}))
+		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{},
+		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
 	hash, _ := bcrypt.GenerateFromPassword([]byte(webauthnTestPassword), bcrypt.DefaultCost)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
 		PasswordHash: string(hash), AccountState: "active"}).Error)
@@ -52,6 +53,17 @@ func seedCredential(t *testing.T, c *KeyorixCore, db *gorm.DB, userID uint, cred
 		UserID: userID, CredentialID: []byte(credID), Name: "test key", CredentialBlob: blob,
 	}).Error)
 	require.NoError(t, c.storage.SetUserWebAuthnEnabled(context.Background(), userID, true))
+}
+
+// seedStepUpGrant inserts an active MFAStepUpGrant for userID, mirroring what a
+// recent VerifyMFAStepUp call (TOTP) or WebAuthn login (FinishWebAuthnLogin/
+// FinishWebAuthnPasswordlessLogin) would produce. Since a WebAuthn-only account
+// has no typable "code" to hand requireReauth directly, this is the only way
+// such an account can satisfy requireReauth's password-plus-second-factor-proof
+// requirement in a unit test that doesn't drive a full login ceremony.
+func seedStepUpGrant(t *testing.T, db *gorm.DB, userID uint, now time.Time) {
+	t.Helper()
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: userID, ExpiresAt: now.Add(15 * time.Minute)}).Error)
 }
 
 func TestWebAuthn_LoginGateRequiresSecondFactor(t *testing.T) {
@@ -135,17 +147,26 @@ func TestWebAuthn_DeleteClearsFlagOnLastAndIsUserScoped(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", AccountState: "active"}).Error)
 	require.Error(t, c.DeleteWebAuthnCredential(ctx, 2, cred.ID, webauthnTestPassword))
 
-	// The owner deletes their last passkey → WebAuthn disabled.
+	// The owner deletes their last passkey → WebAuthn disabled. WebAuthn is now
+	// enrolled (seedCredential above), so password alone is no longer sufficient
+	// re-auth (#372-follow-up) — a WebAuthn-only account proves it still holds the
+	// second factor via an active step-up grant (see seedStepUpGrant's doc comment).
+	seedStepUpGrant(t, db, 1, c.now())
 	require.NoError(t, c.DeleteWebAuthnCredential(ctx, 1, cred.ID, webauthnTestPassword))
 	var user models.User
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.False(t, user.WebAuthnEnabled, "removing the last passkey disables WebAuthn")
 }
 
-// #372: DeleteWebAuthnCredential must reject the deletion without a valid current
-// TOTP code or the account password — otherwise a stolen session/PAT alone can
+// #372 / #372-follow-up: DeleteWebAuthnCredential must reject the deletion
+// without valid re-authentication — otherwise a stolen session/PAT alone can
 // wipe every passkey (and, once the last one is gone, silently disable WebAuthn
-// account-wide). Mirrors TestMFA_RegenerateRequiresReauth's structure.
+// account-wide). Since WebAuthn enrollment is active, the account password
+// ALONE is no longer sufficient (requireReauth's second-factor requirement): the
+// caller must also hold an active MFA step-up grant, proving they recently
+// re-verified the second factor (a WebAuthn login mints one automatically, since
+// a passkey assertion has no typable "code" to hand this check directly).
+// Mirrors TestMFA_RegenerateRequiresReauth's structure.
 func TestWebAuthn_DeleteRequiresReauth(t *testing.T) {
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
@@ -166,7 +187,18 @@ func TestWebAuthn_DeleteRequiresReauth(t *testing.T) {
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.True(t, user.WebAuthnEnabled, "a failed re-auth must not touch the WebAuthnEnabled flag")
 
-	// Correct password → succeeds.
+	// The CORRECT password alone is still refused — WebAuthn is enrolled, so
+	// password-only re-auth must not satisfy the second-factor requirement.
+	err = c.DeleteWebAuthnCredential(ctx, 1, cred.ID, webauthnTestPassword)
+	require.Error(t, err, "correct password alone must not satisfy re-auth once a second factor (WebAuthn) is enrolled")
+
+	var stillThere2 models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ? AND id = ?", 1, cred.ID).First(&stillThere2).Error,
+		"password-only re-auth must not remove the credential once a second factor is enrolled")
+
+	// Correct password PLUS an active step-up grant (the caller separately proved
+	// they still hold the second factor) → succeeds.
+	seedStepUpGrant(t, db, 1, c.now())
 	require.NoError(t, c.DeleteWebAuthnCredential(ctx, 1, cred.ID, webauthnTestPassword))
 }
 

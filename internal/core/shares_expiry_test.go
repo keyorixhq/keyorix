@@ -35,13 +35,16 @@ func newSharesExpiryFixture(t *testing.T) (*KeyorixCore, uint, time.Time, *gorm.
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{},
 		&models.AuditEvent{}, &models.User{}, &models.Group{}, &models.UserGroup{},
-		&models.UserRole{},
+		&models.UserRole{}, &models.GroupRole{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recip2", Email: "recip2@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 3, Username: "recip3", Email: "recip3@test.com"}).Error)
 	// ShareSecret checks IsProjectMember before creating the share record; seed
-	// project membership for both recipients so that check passes.
+	// project membership for both recipients so that check passes. The owner (1)
+	// also needs live project membership — requireLiveOwnerAuthority now re-checks
+	// it on every owner-gated sharing call (RBAC-001), mirroring CheckSecretPermission.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: 1}).Error)
 
@@ -253,6 +256,9 @@ func TestReShareTightensExpiry(t *testing.T) {
 	t.Run("group share: re-sharing a permanent grant with an expiry persists it", func(t *testing.T) {
 		c, secretID, now, db := newSharesExpiryFixture(t)
 		require.NoError(t, db.Create(&models.Group{ID: 10, Name: "eng"}).Error)
+		// ShareSecretWithGroup verifies the group is scoped to the secret's project
+		// (project 1, per newSharesExpiryFixture); seed that grant so the share succeeds.
+		require.NoError(t, db.Create(&models.GroupRole{GroupID: 10, RoleID: 1, ProjectID: 1}).Error)
 
 		rec, err := c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{
 			SecretID: secretID, GroupID: 10, Permission: "read", SharedBy: 1,

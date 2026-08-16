@@ -125,11 +125,16 @@ func TestDisableMFA_DBErrorSanitized(t *testing.T) {
 
 	require.NoError(t, db.Migrator().DropTable(&models.MFASecret{}))
 
+	// MFA is enrolled, so a password alone no longer satisfies requireReauth's
+	// second-factor requirement (#372-follow-up) — even here, where the TOTP
+	// secret read fails silently because mfa_secrets is gone. Seed an active
+	// step-up grant (the same proof VerifyMFAStepUp/a WebAuthn login would
+	// produce) so password re-auth succeeds and the failure below genuinely
+	// comes from DeleteMFAForUser, not re-auth.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: time.Now().Add(15 * time.Minute)}).Error)
+
 	logBuf := captureLogBuf(t)
 
-	// Password-only re-auth: requireReauth's TOTP-secret read fails silently
-	// (mfa_secrets is gone) and falls back to the bcrypt password check, which
-	// succeeds — so the failure below comes from DeleteMFAForUser, not re-auth.
 	body, _ := json.Marshal(map[string]string{"password": reauthTestPassword})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/mfa/disable", bytes.NewReader(body))
 	r = withUserContext(r, 1)
@@ -154,6 +159,12 @@ func TestRegenerateRecoveryCodes_DBErrorSanitized(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, db.Migrator().DropTable(&models.MFARecoveryCode{}))
+
+	// MFA is enrolled, so a password alone no longer satisfies requireReauth's
+	// second-factor requirement (#372-follow-up). Seed an active step-up grant so
+	// password re-auth succeeds and the failure below genuinely comes from
+	// DeleteMFARecoveryCodes, not re-auth.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: time.Now().Add(15 * time.Minute)}).Error)
 
 	logBuf := captureLogBuf(t)
 

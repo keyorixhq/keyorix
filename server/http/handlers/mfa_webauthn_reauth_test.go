@@ -44,7 +44,8 @@ func setupMFAReauthTest(t *testing.T) (*AuthHandler, *core.KeyorixCore, *gorm.DB
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{},
 		&models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
-		&models.WebAuthnCredential{}, &models.WebAuthnSession{}))
+		&models.WebAuthnCredential{}, &models.WebAuthnSession{},
+		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
 	hash, err := bcrypt.GenerateFromPassword([]byte(reauthTestPassword), bcrypt.MinCost)
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",

@@ -672,9 +672,22 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	// their own readable secret (or reset an unrelated target's password) — the same
 	// escalation-by-proxy shape #93/#107 closed for role grants, applied here to
 	// credential-minting backends (#90).
-	if spec.Backend != "" {
+	//
+	// The same authority is required to CLEAR an existing binding: an admin decided this
+	// secret should auto-rotate against an upstream backend, and undoing that decision is
+	// just as security-relevant as making it — otherwise a plain secrets.write caller
+	// could silently strip an admin-configured rotation binding they were never allowed
+	// to set up in the first place. `secret` here still holds the PRE-update value (it
+	// was fetched above, before spec is applied below), so secret.RotationBackend is the
+	// backend that was bound before this call — non-empty only when there is something to
+	// unbind. An unbind-when-nothing-was-bound (both empty) stays a no-op and isn't gated.
+	if spec.Backend != "" || secret.RotationBackend != "" {
 		if err := c.requireAdminAuthorityAt(ctx, actorID, secret.ProjectID); err != nil {
-			return fmt.Errorf("binding a rotation backend requires admin authority on this project: %w", err)
+			action := "binding"
+			if spec.Backend == "" {
+				action = "unbinding"
+			}
+			return fmt.Errorf("%s a rotation backend requires admin authority on this project: %w", action, err)
 		}
 	}
 	secret.AutoRotate = spec.Enabled

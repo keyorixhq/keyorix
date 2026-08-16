@@ -148,6 +148,9 @@ func TestShareSecret_ExpiryInPast_S13(t *testing.T) {
 	// Seed a project, put the recipient (ID=2) in it, and assign the secret that project.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
+	// Wave 6: ShareSecret now also gates the owner on live project membership
+	// (RBAC-001, requireLiveOwnerAuthority) — user 1 (owner) must be a member too.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	// Seed a secret owned by user 1.
 	require.NoError(t, db.Create(&models.SecretNode{ID: 101, Name: "expiry-test", IsSecret: true, OwnerID: 1, ProjectID: 1}).Error)
 
@@ -252,7 +255,11 @@ func TestUpdateSharePermission_NotFound_S13(t *testing.T) {
 // TestUpdateSharePermission_ExpiryInPast_S13 — expiry error branch → 400.
 func TestUpdateSharePermission_ExpiryInPast_S13(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
-	require.NoError(t, db.Create(&models.SecretNode{ID: 102, Name: "upd-expiry", IsSecret: true, OwnerID: 1}).Error)
+	// Wave 6: UpdateSharePermission now also gates the owner on live project
+	// membership (RBAC-001, requireLiveOwnerAuthority) — needs a real project.
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 102, Name: "upd-expiry", IsSecret: true, OwnerID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.ShareRecord{ID: 50, SecretID: 102, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}).Error)
 
 	h, err := NewShareHandler(cs)
@@ -738,7 +745,11 @@ func TestShareHandler_SendError_WithDetails_S13(t *testing.T) {
 // TestRevokeShare_Success_S13 seeds a share owned by user 1 and revokes it → 204.
 func TestRevokeShare_Success_S13(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
-	require.NoError(t, db.Create(&models.SecretNode{ID: 200, Name: "revoke-me", IsSecret: true, OwnerID: 1}).Error)
+	// Wave 6: RevokeShare now also gates the owner on live project membership
+	// (RBAC-001, requireLiveOwnerAuthority) — needs a real project.
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 200, Name: "revoke-me", IsSecret: true, OwnerID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.ShareRecord{ID: 60, SecretID: 200, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}).Error)
 
 	h, err := NewShareHandler(cs)
@@ -767,6 +778,9 @@ func TestShareSecret_Success_S13(t *testing.T) {
 	// User ID=1 is already seeded by freshCoreS12WithAdmin. Add recipient.
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recip-share-s13", Email: "recip-share-s13@x.com", AccountState: "active"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
+	// Wave 6: ShareSecret now also gates the owner on live project membership
+	// (RBAC-001, requireLiveOwnerAuthority) — user 1 (owner) must be a member too.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.SecretNode{ID: 300, Name: "my-secret-s13", IsSecret: true, OwnerID: 1, ProjectID: 1}).Error)
 
 	h, err := NewShareHandler(cs)

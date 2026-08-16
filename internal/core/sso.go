@@ -421,8 +421,13 @@ func ssoBoundToOtherProvider(externalID, provider string) bool {
 // a scoped identity owned by a DIFFERENT provider (see ssoBoundToOtherProvider);
 // otherwise a second IdP asserting the same email could take over an account owned by
 // the first. A never-federated (native or SCIM-by-email) account is claimed for THIS
-// provider+subject on first link, so a later provider can't re-link it by asserting the
-// same address.
+// provider on first link (scoped even when the assertion carries no subject — e.g. a
+// SAML IdP that omits the Subject and relies solely on TrustAssertedEmail; see
+// CompleteSAML), so a later provider can't re-link it by asserting the same address.
+// The subject-less claim only marks provider ownership; it doesn't enable the
+// fast-path externalID lookup above, so a later assertion from the SAME provider that
+// does carry a subject still falls through to this email path and re-resolves here —
+// that's fine, since ssoBoundToOtherProvider still passes for the owning provider.
 func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email string, emailVerified bool) (*models.User, error) {
 	if sub != "" {
 		if u, err := c.storage.GetUserByExternalID(ctx, ssoExternalID(provider, sub)); err == nil {
@@ -444,10 +449,14 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 	if ssoBoundToOtherProvider(u.ExternalID, provider) {
 		return nil, fmt.Errorf("the email %q is already linked to a different SSO provider", email)
 	}
-	if u.ExternalID == "" && sub != "" {
-		// Claim this never-federated account for the verifying provider+subject so a
-		// later provider can't re-link it by asserting the same email. Best-effort: a
-		// failed update just means we re-link on the next login.
+	if u.ExternalID == "" {
+		// Claim this never-federated account for the verifying provider (scoped by
+		// subject when the assertion carries one; ssoExternalID(provider, "") when it
+		// doesn't — e.g. a SAML assertion with no Subject) so a later provider can't
+		// re-link it by asserting the same email. A subject-less claim still fully
+		// closes the cross-provider vector: ssoBoundToOtherProvider only cares which
+		// provider owns the scoped id, not whether a subject is present. Best-effort:
+		// a failed update just means we re-link on the next login.
 		u.ExternalID = ssoExternalID(provider, sub)
 		if updated, uerr := c.storage.UpdateUser(ctx, u); uerr == nil {
 			u = updated
@@ -811,13 +820,14 @@ func (b *ssoBool) UnmarshalJSON(data []byte) error {
 }
 
 // verifyIDToken validates the id_token's signature (asymmetric only), issuer,
-// audience (= the provider's client_id), expiry, and the nonce, returning the
-// subject, email, (best-effort) name, and whether the email was EXPLICITLY verified.
-// The email is dropped only when the IdP explicitly marks it unverified
-// (email_verified: false). An absent email_verified claim is treated as trusted for
-// JIT-provisioning — it is OPTIONAL in OIDC and common enterprise IdPs (e.g. Entra ID)
-// omit it — but emailVerified is reported true only when the claim is present and true,
-// so resolveSSOUser can refuse to MATCH AN EXISTING account on a merely-asserted email.
+// audience (= the provider's client_id), azp (when the token names more than one
+// audience), expiry, and the nonce, returning the subject, email, (best-effort)
+// name, and whether the email was EXPLICITLY verified. The email is dropped only
+// when the IdP explicitly marks it unverified (email_verified: false). An absent
+// email_verified claim is treated as trusted for JIT-provisioning — it is OPTIONAL
+// in OIDC and common enterprise IdPs (e.g. Entra ID) omit it — but emailVerified is
+// reported true only when the claim is present and true, so resolveSSOUser can
+// refuse to MATCH AN EXISTING account on a merely-asserted email.
 func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expectedNonce, raw string) (sub, email, name string, emailVerified bool, err error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	var claims struct {
 		jwt.RegisteredClaims
@@ -825,6 +835,7 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 		EmailVerified *ssoBool `json:"email_verified"`
 		Name          string   `json:"name"`
 		Nonce         string   `json:"nonce"`
+		Azp           string   `json:"azp,omitempty"`
 	}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}),
@@ -855,6 +866,21 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 	}
 	if !audOK {
 		return "", "", "", false, fmt.Errorf("id_token audience does not match the client id")
+	}
+	// A token naming MORE THAN ONE audience is, per OIDC, ambiguous about which
+	// party it was actually issued to — any one of the audiences matching our
+	// client_id isn't enough, since a multi-tenant IdP could mint a token shared
+	// across several relying parties and an attacker holding a copy issued to a
+	// DIFFERENT (also-trusted) party could replay it here. azp (authorized party)
+	// disambiguates the true recipient and must equal this provider's client_id.
+	// Mirrors OIDCVerifier.Verify in oidc.go (the machine-federation path).
+	if len(claims.Audience) > 1 {
+		if claims.Azp == "" {
+			return "", "", "", false, fmt.Errorf("id_token has multiple audiences but no azp claim")
+		}
+		if claims.Azp != p.ClientID {
+			return "", "", "", false, fmt.Errorf("id_token azp does not match the client id")
+		}
 	}
 	if expectedNonce == "" || claims.Nonce != expectedNonce {
 		return "", "", "", false, fmt.Errorf("id_token nonce mismatch")

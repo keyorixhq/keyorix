@@ -99,12 +99,22 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	adminRole := &models.Role{ID: 1, Name: "admin", Description: "Administrator"}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
+	// ShareSecret/UpdateSharePermission/RevokeShare also gate the OWNER on live
+	// project membership (RBAC-001, requireLiveOwnerAuthority) — the global grant
+	// above doesn't count (IsProjectMember only counts a project-scoped grant),
+	// so give user 1 one too. Without this, every "Share Secret" step below fails
+	// with "not authorized to share this secret".
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 
 	// Seed a viewer role (secrets.read) for user 2 (recipient) so it can read.
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer", Description: "Reader"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2}).Error)
+	// ShareSecretWithGroup rejects a group with no live role grant at the secret's
+	// project (group_sharing.go's IsGroupProjectScoped gate) — give test-group
+	// (ID 1) one, or every "Share Secret (group)" step below fails.
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 2, ProjectID: 1}).Error)
 	// Also grant it scoped to project 1: ShareSecret rejects a non-group share to a
 	// recipient who isn't a member of the secret's project (sharing.go's
 	// IsProjectMember gate), and IsProjectMember only counts a project-scoped role
