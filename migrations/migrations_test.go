@@ -531,3 +531,130 @@ func TestScopeUserGroupRolesDownMigration_PreservesEnvironmentScoping(t *testing
 		t.Fatalf("group_roles_backup.environment_id = %d, want 7", envID)
 	}
 }
+
+// auditorPermissions returns every permission name granted to the 'auditor'
+// role via role_permissions.
+func auditorPermissions(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+
+	rows, err := db.Query(`
+		SELECT p.name FROM permissions p
+		JOIN role_permissions rp ON rp.permission_id = p.id
+		JOIN roles r ON r.id = rp.role_id
+		WHERE r.name = 'auditor'
+		ORDER BY p.name
+	`)
+	if err != nil {
+		t.Fatalf("query auditor role_permissions: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var perms []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan permission name: %v", err)
+		}
+		perms = append(perms, name)
+	}
+	return perms
+}
+
+// TestAuditorSeedDoesNotGrantAuditAdmin pins findings-unreviewed/migrations.json#1:
+// 003_rbac_seed_data.up.sql defines 'auditor' as a read-only role ("Can view
+// audit logs and system information") but originally granted it both
+// 'audit.read' and 'audit.admin' ("Full administrative access to audit
+// system"). This is a non-regression check on 003 itself: applying only
+// 001-003 (the historical bootstrap set) must show the over-grant existed,
+// so the corrective migration below has something real to fix.
+func TestAuditorSeedGrantsAuditAdminBefore009(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "002_rbac_enhancements.up.sql")
+	execSQLFile(t, db, "003_rbac_seed_data.up.sql")
+
+	perms := auditorPermissions(t, db)
+	found := false
+	for _, p := range perms {
+		if p == "audit.admin" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("auditor permissions = %v, want 'audit.admin' present pre-009 (this pins the documented bug, not the fix)", perms)
+	}
+}
+
+// TestFixAuditorAuditAdminOvergrantMigration pins the fix for
+// findings-unreviewed/migrations.json#1: after applying the corrective
+// 009_fix_auditor_audit_admin_overgrant migration on top of 001-003 (the
+// legacy bootstrap set this directory exists to serve, per
+// migrations/README.md), the 'auditor' role must hold 'audit.read' but must
+// NOT hold 'audit.admin' -- matching the role's own read-only description
+// and the live app's canonical system_auditor/project_auditor definitions
+// (internal/core/auth_bootstrap.go), which never grant audit.admin. It also
+// confirms the migration doesn't collaterally touch any other role's
+// grants -- namely 'admin', which never held audit.admin in the first place.
+func TestFixAuditorAuditAdminOvergrantMigration(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "002_rbac_enhancements.up.sql")
+	execSQLFile(t, db, "003_rbac_seed_data.up.sql")
+	execSQLFile(t, db, "009_fix_auditor_audit_admin_overgrant.up.sql")
+
+	perms := auditorPermissions(t, db)
+	want := []string{"audit.read", "namespaces.read", "roles.read", "system.read", "users.read"}
+	if len(perms) != len(want) {
+		t.Fatalf("auditor permissions after 009 = %v, want %v", perms, want)
+	}
+	for i, p := range perms {
+		if p != want[i] {
+			t.Fatalf("auditor permissions after 009 = %v, want %v", perms, want)
+		}
+	}
+	for _, p := range perms {
+		if p == "audit.admin" {
+			t.Fatal("auditor role still holds audit.admin after 009_fix_auditor_audit_admin_overgrant.up.sql")
+		}
+	}
+
+	// Non-regression: 'admin' never held audit.admin, and 009 must not
+	// change that (or grant it accidentally via a role-name typo/join bug).
+	var adminHasAuditAdmin int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM role_permissions rp
+		JOIN roles r ON r.id = rp.role_id
+		JOIN permissions p ON p.id = rp.permission_id
+		WHERE r.name = 'admin' AND p.name = 'audit.admin'
+	`).Scan(&adminHasAuditAdmin)
+	if err != nil {
+		t.Fatalf("query admin role_permissions: %v", err)
+	}
+	if adminHasAuditAdmin != 0 {
+		t.Fatal("'admin' role unexpectedly holds audit.admin after 009_fix_auditor_audit_admin_overgrant.up.sql")
+	}
+}
+
+// TestFixAuditorAuditAdminOvergrantDownMigration pins that the down-migration
+// correctly reverts the correction: reapplying it restores the (legacy,
+// over-broad) audit.admin grant on 'auditor'. This is deliberate symmetry
+// with the rest of this directory's reversible migrations, not an
+// endorsement of running the down-migration in production.
+func TestFixAuditorAuditAdminOvergrantDownMigration(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "002_rbac_enhancements.up.sql")
+	execSQLFile(t, db, "003_rbac_seed_data.up.sql")
+	execSQLFile(t, db, "009_fix_auditor_audit_admin_overgrant.up.sql")
+	execSQLFile(t, db, "009_fix_auditor_audit_admin_overgrant.down.sql")
+
+	perms := auditorPermissions(t, db)
+	found := false
+	for _, p := range perms {
+		if p == "audit.admin" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("auditor permissions after up+down = %v, want 'audit.admin' restored by the down-migration", perms)
+	}
+}
