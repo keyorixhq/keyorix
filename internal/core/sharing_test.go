@@ -57,7 +57,9 @@ func TestKeyorixCore_ShareSecret(t *testing.T) {
 
 	// Mock expectations
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
-	// ShareSecret verifies the recipient is a member of the secret's project.
+	// ShareSecret verifies the owner is still a live project member (RBAC-001) as
+	// well as that the recipient is a member of the secret's project.
+	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("IsProjectMember", ctx, uint(2), uint(0)).Return(true, nil)
 	mockStorage.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
@@ -212,6 +214,7 @@ func TestKeyorixCore_ShareSecret_RejectsSelfShare(t *testing.T) {
 	groupSecret := &models.SecretNode{ID: 1, Name: "s", OwnerID: 1}
 	groupShareRecord := &models.ShareRecord{ID: 2, SecretID: 1, OwnerID: 1, RecipientID: 1, IsGroup: true, Permission: "read"}
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(groupSecret, nil)
+	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("CreateShareRecord", ctx, mock.MatchedBy(func(s *models.ShareRecord) bool {
 		return s.SecretID == 1 && s.IsGroup
 	})).Return(groupShareRecord, nil)
@@ -291,6 +294,8 @@ func TestKeyorixCore_UpdateSharePermission(t *testing.T) {
 	// Mock expectations
 	mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+	// UpdateSharePermission verifies the owner is still a live project member (RBAC-001).
+	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("UpdateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(updatedShareRecord, nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 
@@ -333,6 +338,8 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 	// Mock expectations
 	mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+	// RevokeShare verifies the owner is still a live project member (RBAC-001).
+	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 	// Revoking a direct share notifies the recipient (best-effort).
@@ -374,6 +381,8 @@ func TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
 
 	mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+	// RevokeShare verifies the owner is still a live project member (RBAC-001).
+	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(errors.New("storage unavailable"))
 
 	err := core.RevokeShare(ctx, 1, 1)
@@ -494,6 +503,126 @@ func TestKeyorixCore_ListSharesByUser(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, shares, result)
 	mockStorage.AssertExpectations(t)
+}
+
+// TestKeyorixCore_ShareSecret_DepartedOwnerDenied is the regression test for the
+// RBAC-001 gap in sharing.go (adversarial-review finding core-sharing.json#1): an
+// owner who created a secret then left the secret's project (removed from
+// membership; OwnerID on the secret row is untouched) must no longer be able to
+// share it — mirrors CheckSecretPermission's owner branch. A still-live owner must
+// be unaffected.
+func TestKeyorixCore_ShareSecret_DepartedOwnerDenied(t *testing.T) {
+	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
+	secret := &models.SecretNode{ID: 1, Name: "test-secret", OwnerID: 1, ProjectID: 5}
+	req := &ShareSecretRequest{SecretID: 1, RecipientID: 2, Permission: "read", SharedBy: 1}
+
+	t.Run("departed owner is denied", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
+		ctx := context.Background()
+		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		// The owner no longer holds a live role grant in the secret's project.
+		mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(false, nil)
+
+		_, err := core.ShareSecret(ctx, req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), i18n.T("ErrorPermissionDenied", nil))
+		mockStorage.AssertNotCalled(t, "CreateShareRecord", mock.Anything, mock.Anything)
+	})
+
+	t.Run("live owner still succeeds", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
+		ctx := context.Background()
+		shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, Permission: "read"}
+		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(true, nil)
+		mockStorage.On("IsProjectMember", ctx, uint(2), uint(5)).Return(true, nil)
+		mockStorage.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
+		mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
+		mockStorage.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{}, nil)
+
+		result, err := core.ShareSecret(ctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, shareRecord, result)
+	})
+}
+
+// TestKeyorixCore_UpdateSharePermission_DepartedOwnerDenied is the RBAC-001
+// regression test for UpdateSharePermission — see
+// TestKeyorixCore_ShareSecret_DepartedOwnerDenied.
+func TestKeyorixCore_UpdateSharePermission_DepartedOwnerDenied(t *testing.T) {
+	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
+	secret := &models.SecretNode{ID: 1, Name: "test-secret", OwnerID: 1, ProjectID: 5}
+	shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}
+	req := &UpdateShareRequest{ShareID: 1, Permission: "write", UpdatedBy: 1}
+
+	t.Run("departed owner is denied", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
+		ctx := context.Background()
+		mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
+		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(false, nil)
+
+		_, err := core.UpdateSharePermission(ctx, req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), i18n.T("ErrorPermissionDenied", nil))
+		mockStorage.AssertNotCalled(t, "UpdateShareRecord", mock.Anything, mock.Anything)
+	})
+
+	t.Run("live owner still succeeds", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
+		ctx := context.Background()
+		updatedShareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "write"}
+		mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
+		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(true, nil)
+		mockStorage.On("UpdateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(updatedShareRecord, nil)
+		mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
+
+		result, err := core.UpdateSharePermission(ctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, updatedShareRecord, result)
+	})
+}
+
+// TestKeyorixCore_RevokeShare_DepartedOwnerDenied is the RBAC-001 regression test
+// for RevokeShare — see TestKeyorixCore_ShareSecret_DepartedOwnerDenied.
+func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
+	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
+	secret := &models.SecretNode{ID: 1, Name: "test-secret", OwnerID: 1, ProjectID: 5}
+	shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}
+
+	t.Run("departed owner is denied", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
+		ctx := context.Background()
+		mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
+		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(false, nil)
+
+		err := core.RevokeShare(ctx, 1, 1)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), i18n.T("ErrorPermissionDenied", nil))
+		mockStorage.AssertNotCalled(t, "DeleteShareRecord", mock.Anything, mock.Anything)
+	})
+
+	t.Run("live owner still succeeds", func(t *testing.T) {
+		mockStorage := new(MockStorage)
+		core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return mockTime }}
+		ctx := context.Background()
+		mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
+		mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(true, nil)
+		mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(nil)
+		mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
+		mockStorage.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{}, nil)
+
+		err := core.RevokeShare(ctx, 1, 1)
+		require.NoError(t, err)
+	})
 }
 
 func TestKeyorixCore_CheckSharePermission(t *testing.T) {

@@ -50,8 +50,13 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 	}
 
 	// Only the secret owner may share it (an ownerless / machine-created secret —
-	// OwnerID 0 — is owned by nobody and cannot be shared via the owner gate).
-	if !secretOwnedBy(secret.OwnerID, req.SharedBy) {
+	// OwnerID 0 — is owned by nobody and cannot be shared via the owner gate), and
+	// only while still a live member of the secret's project — mirrors
+	// CheckSecretPermission's owner branch (RBAC-001): an owner removed from the
+	// project keeps their OwnerID tag until ClearProjectSecretOwnership runs.
+	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, req.SharedBy); err != nil {
+		return nil, err
+	} else if !isLiveOwner {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
@@ -120,7 +125,10 @@ func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShar
 	if err != nil {
 		return nil, err
 	}
-	if !secretOwnedBy(secret.OwnerID, req.UpdatedBy) {
+	// Owner authority also requires live project membership — see ShareSecret.
+	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, req.UpdatedBy); err != nil {
+		return nil, err
+	} else if !isLiveOwner {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
@@ -176,7 +184,10 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 	if err != nil {
 		return err
 	}
-	if !secretOwnedBy(secret.OwnerID, revokedBy) {
+	// Owner authority also requires live project membership — see ShareSecret.
+	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, revokedBy); err != nil {
+		return err
+	} else if !isLiveOwner {
 		return fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 

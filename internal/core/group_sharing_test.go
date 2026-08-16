@@ -59,6 +59,8 @@ func TestKeyorixCore_ShareSecretWithGroup(t *testing.T) {
 
 	// Mock expectations
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+	// ShareSecretWithGroup verifies the owner is still a live project member (RBAC-001).
+	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 
@@ -271,6 +273,49 @@ func TestKeyorixCore_ListGroupSharedSecrets_ValidationError(t *testing.T) {
 	c := &KeyorixCore{storage: new(MockStorage), now: time.Now}
 	_, err := c.ListGroupSharedSecrets(context.Background(), ActorTypeUser, 1, 0)
 	assert.Error(t, err)
+}
+
+// TestShareSecretWithGroup_DepartedOwnerDenied is the RBAC-001 regression test for
+// ShareSecretWithGroup (adversarial-review finding core-sharing.json#1): an owner
+// who created a secret then left the secret's project (removed from membership;
+// OwnerID on the secret row is untouched) must no longer be able to group-share it
+// — mirrors CheckSecretPermission's owner branch. A still-live owner is unaffected.
+func TestShareSecretWithGroup_DepartedOwnerDenied(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
+	secret := &models.SecretNode{ID: 1, Name: "test-secret", OwnerID: 1, ProjectID: 5}
+	req := &GroupShareSecretRequest{SecretID: 1, GroupID: 2, Permission: "read", SharedBy: 1}
+
+	t.Run("departed owner is denied", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := &KeyorixCore{storage: ms, now: time.Now}
+		ctx := context.Background()
+		ms.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		// The owner no longer holds a live role grant in the secret's project.
+		ms.On("IsProjectMember", ctx, uint(1), uint(5)).Return(false, nil)
+
+		_, err := c.ShareSecretWithGroup(ctx, req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not authorized")
+		ms.AssertNotCalled(t, "CreateShareRecord", mock.Anything, mock.Anything)
+	})
+
+	t.Run("live owner still succeeds", func(t *testing.T) {
+		ms := new(MockStorage)
+		mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
+		c := &KeyorixCore{storage: ms, now: func() time.Time { return mockTime }}
+		ctx := context.Background()
+		shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: true, Permission: "read"}
+		ms.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+		ms.On("IsProjectMember", ctx, uint(1), uint(5)).Return(true, nil)
+		ms.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
+		ms.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
+
+		result, err := c.ShareSecretWithGroup(ctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, shareRecord, result)
+	})
 }
 
 // Regression (security review): a non-owner must not be able to group-share a

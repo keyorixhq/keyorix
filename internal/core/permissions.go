@@ -40,6 +40,25 @@ func secretOwnedBy(ownerID, actorID uint) bool {
 	return ownerID != 0 && ownerID == actorID
 }
 
+// requireLiveOwnerAuthority reports whether actorID holds owner-level authority over
+// secret: they must be the secret's OwnerID AND still be a LIVE member of the
+// secret's project. An owner who is removed from the project keeps their OwnerID tag
+// on the secret row until ClearProjectSecretOwnership runs, so a bare secretOwnedBy
+// check alone would let a departed owner retain full authority over the secret
+// forever (RBAC-001). Every owner-gated operation — CheckSecretPermission's owner
+// branch, and the sharing.go/group_sharing.go mutation paths — must call this instead
+// of secretOwnedBy directly.
+func (c *KeyorixCore) requireLiveOwnerAuthority(ctx context.Context, secret *models.SecretNode, actorID uint) (bool, error) {
+	if !secretOwnedBy(secret.OwnerID, actorID) {
+		return false, nil
+	}
+	member, err := c.storage.IsProjectMember(ctx, actorID, secret.ProjectID)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return member, nil
+}
+
 // PermissionLevel represents the level of access a user has to a secret.
 type PermissionLevel string
 
@@ -77,19 +96,15 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	// project. A user removed from the project retains their OwnerID tag until
 	// ClearProjectSecretOwnership runs (RBAC-002), so we gate owner access on live
 	// project membership to prevent post-offboarding access (RBAC-001).
-	if secretOwnedBy(secret.OwnerID, userID) {
-		member, err := c.storage.IsProjectMember(ctx, userID, secret.ProjectID)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-		}
-		if member {
-			return &PermissionContext{
-				SecretID:   secretID,
-				UserID:     userID,
-				Permission: PermissionOwner,
-				Source:     "owner",
-			}, nil
-		}
+	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, userID); err != nil {
+		return nil, err
+	} else if isLiveOwner {
+		return &PermissionContext{
+			SecretID:   secretID,
+			UserID:     userID,
+			Permission: PermissionOwner,
+			Source:     "owner",
+		}, nil
 	}
 
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID)

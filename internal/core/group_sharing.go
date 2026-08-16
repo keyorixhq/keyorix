@@ -33,8 +33,13 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 	}
 	// Only the owner may share a secret — mirror the direct (non-group) path.
 	// Without this, any caller with secrets.write could group-share a secret they
-	// do not own, granting their group read/write access to it.
-	if !secretOwnedBy(secret.OwnerID, req.SharedBy) {
+	// do not own, granting their group read/write access to it. Owner authority also
+	// requires live project membership — see ShareSecret / CheckSecretPermission
+	// (RBAC-001): an owner removed from the project keeps their OwnerID tag until
+	// ClearProjectSecretOwnership runs.
+	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, req.SharedBy); err != nil {
+		return nil, err
+	} else if !isLiveOwner {
 		return nil, fmt.Errorf("not authorized to share this secret")
 	}
 
