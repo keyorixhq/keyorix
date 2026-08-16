@@ -37,6 +37,25 @@ type AnomalyDetector struct {
 	// cumulative_rate rule fires for low-traffic secrets (ANOMALY-06). Defaults to
 	// defaultCumulativeRateMax when zero.
 	cumulativeRateMax int
+	// lastAuditedOffHours is the off-hours band/timezone last written to the audit
+	// log by auditBusinessHoursConfig. ApplyAnomalyConfig re-applies the persisted
+	// config (including SetBusinessHours) on every scheduler tick — see
+	// server/main.go's "Hotload" comment — so without this, an unchanged persisted
+	// config would write a fresh anomaly.business_hours_configured audit event every
+	// tick, drowning out genuine changes. nil until the first successful
+	// SetBusinessHours call, which is always audited.
+	lastAuditedOffHours *auditedOffHours
+}
+
+// auditedOffHours is the comparable subset of a SetBusinessHours call's applied
+// state, used to detect whether the band/timezone actually changed since the last
+// audit write. tz is the canonical location name (offHoursPolicy.loc.String()), not
+// the raw caller-supplied string, so "" and "UTC" — which resolve to the same
+// location — are treated as the same config rather than a spurious change.
+type auditedOffHours struct {
+	tz    string
+	start int
+	end   int
 }
 
 // minDetectionLookback is the floor for the per-pass scan window.
@@ -188,7 +207,11 @@ const EventAnomalyBusinessHoursConfigured = "anomaly.business_hours_configured" 
 // equal, checked on the FINAL merged pair, not just the raw inputs) — a start==end
 // band matches no hour in isOffHours, which would silently disable the rule with no
 // validation error and no audit trail if allowed through. Any error leaves the prior
-// policy unchanged. On success the new band is recorded as an audit event.
+// policy unchanged. On success the new band is recorded as an audit event — but only
+// the first time it's applied, or when it actually differs from what was last
+// audited (see lastAuditedOffHours). ApplyAnomalyConfig calls this on every
+// scheduler tick to hot-load the persisted config (server/main.go); without this
+// change check, an unchanged config would write a duplicate audit event every tick.
 func (d *AnomalyDetector) SetBusinessHours(ctx context.Context, tz string, startHour, endHour int) error {
 	p := defaultOffHoursPolicy()
 	if tz != "" {
@@ -216,14 +239,22 @@ func (d *AnomalyDetector) SetBusinessHours(ctx context.Context, tz string, start
 		return fmt.Errorf("anomaly business_hours: start_hour and end_hour must differ (an equal start/end band is empty and would silently disable the off_hours rule; pass 0,0 to explicitly keep the default band)")
 	}
 	d.offHours = p
-	d.auditBusinessHoursConfig(ctx, tz, p)
+	current := auditedOffHours{tz: p.loc.String(), start: p.start, end: p.end}
+	if d.lastAuditedOffHours == nil || *d.lastAuditedOffHours != current {
+		d.auditBusinessHoursConfig(ctx, tz, p)
+		d.lastAuditedOffHours = &current
+	}
 	return nil
 }
 
 // auditBusinessHoursConfig records the newly-applied off-hours band/timezone as an
-// audit event. Best-effort: a storage failure here must not undo the in-memory
-// policy change SetBusinessHours already applied, but it is logged loudly (a missed
-// audit write for a detection-control config change is itself a small gap).
+// audit event. Called by SetBusinessHours only when the band/timezone actually
+// changed since the last audit write (see lastAuditedOffHours), so a caller that
+// re-applies the same persisted config on every scheduler tick doesn't spam the
+// audit log with identical no-op events. Best-effort: a storage failure here must
+// not undo the in-memory policy change SetBusinessHours already applied, but it is
+// logged loudly (a missed audit write for a detection-control config change is
+// itself a small gap).
 func (d *AnomalyDetector) auditBusinessHoursConfig(ctx context.Context, tz string, p offHoursPolicy) {
 	if d.storage == nil {
 		return

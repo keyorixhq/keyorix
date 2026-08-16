@@ -17,6 +17,7 @@ type captureStore struct {
 	sinces       []time.Time
 	createErr    error
 	createdCount int
+	auditCount   int
 }
 
 func (c *captureStore) ListSecretAccessLogs(_ context.Context, _ uint, since time.Time) ([]models.SecretAccessLog, error) {
@@ -39,7 +40,10 @@ func (c *captureStore) ListAnomalyAlerts(_ context.Context, _ *bool) ([]models.A
 func (c *captureStore) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) (map[string]map[uint]time.Time, error) {
 	return nil, nil
 }
-func (c *captureStore) LogAuditEvent(_ context.Context, _ *models.AuditEvent) error { return nil }
+func (c *captureStore) LogAuditEvent(_ context.Context, _ *models.AuditEvent) error {
+	c.auditCount++
+	return nil
+}
 
 // The recent-access scan window must honor the configured lookback (so a longer scan
 // cadence scans a proportionally longer window), and be floored at one hour.
@@ -372,6 +376,47 @@ func TestSetBusinessHours_PartialUpdateCollision(t *testing.T) {
 		assert.Equal(t, 6, d.offHours.start)
 		assert.Equal(t, 18, d.offHours.end)
 	})
+}
+
+// TestSetBusinessHours_AuditsOnlyOnChange is the findings-core-2/core-anomaly.json#1
+// regression: ApplyAnomalyConfig re-applies the persisted off-hours config via
+// SetBusinessHours on every scheduler tick (server/main.go's "Hotload" comment), and
+// SetBusinessHours previously wrote an anomaly.business_hours_configured audit event
+// unconditionally on every successful call -- so an unchanged persisted config wrote
+// a fresh, identical audit event every tick, defeating the event's change-tracking
+// purpose and growing the audit table without bound. Repeated calls with the SAME
+// band/timezone must audit exactly once; a genuine change must still audit again.
+func TestSetBusinessHours_AuditsOnlyOnChange(t *testing.T) {
+	store := &captureStore{}
+	d := NewAnomalyDetector(store)
+	ctx := context.Background()
+
+	// The very first call has no prior known state and must be audited.
+	require.NoError(t, d.SetBusinessHours(ctx, "UTC", 20, 7))
+	assert.Equal(t, 1, store.auditCount)
+
+	// Repeated calls with the SAME config (simulating ApplyAnomalyConfig's
+	// per-scheduler-tick hotload) must NOT audit again.
+	for i := 0; i < 4; i++ {
+		require.NoError(t, d.SetBusinessHours(ctx, "UTC", 20, 7))
+	}
+	assert.Equal(t, 1, store.auditCount, "an unchanged band/timezone must not re-audit on every hotload tick")
+
+	// A genuine band change must audit again.
+	require.NoError(t, d.SetBusinessHours(ctx, "UTC", 21, 7))
+	assert.Equal(t, 2, store.auditCount)
+
+	// A timezone-only change (same hours) is also a genuine change.
+	require.NoError(t, d.SetBusinessHours(ctx, "America/New_York", 21, 7))
+	assert.Equal(t, 3, store.auditCount)
+
+	// "" and "UTC" resolve to the same canonical location and must NOT be treated
+	// as a change from one another.
+	d2 := NewAnomalyDetector(store)
+	require.NoError(t, d2.SetBusinessHours(ctx, "UTC", 0, 0))
+	assert.Equal(t, 4, store.auditCount)
+	require.NoError(t, d2.SetBusinessHours(ctx, "", 0, 0))
+	assert.Equal(t, 4, store.auditCount, "\"\" and \"UTC\" resolve to the same location and must not re-audit")
 }
 
 func TestVolumeSpike(t *testing.T) {
