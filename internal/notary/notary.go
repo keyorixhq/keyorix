@@ -15,6 +15,7 @@ package notary
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/sha256"
 	"crypto/x509"
 	"fmt"
@@ -43,8 +44,9 @@ type Notary interface {
 // VerifyReceipt re-checks an RFC 3161 receipt token against the original message.
 // It (1) verifies the token's signature chains to one of the configured TSA roots
 // with the time-stamping extended key usage — so a self-signed or otherwise
-// untrusted issuer is rejected; (2) confirms the token's hashed message equals
-// SHA-256(message), binding the receipt to exactly this message; and (3) returns
+// untrusted issuer is rejected; (2) confirms the token declares a SHA-256
+// message-imprint algorithm and that its hashed message equals SHA-256(message),
+// binding the receipt to exactly this message and this algorithm; and (3) returns
 // the authority's asserted time.
 //
 // roots is REQUIRED: without a trust anchor a token's issuer cannot be trusted, so
@@ -70,6 +72,19 @@ func VerifyReceipt(roots *x509.CertPool, message, token []byte) (_ time.Time, er
 	if err != nil {
 		return time.Time{}, fmt.Errorf("notary: invalid timestamp token: %w", err)
 	}
+	// The token declares its own message-imprint hash algorithm (digitorus/timestamp
+	// resolves the ASN.1 OID into ts.HashAlgorithm and already rejects unrecognized
+	// OIDs at Parse time). We only ever compute a SHA-256 digest of message below, so
+	// confirm the token actually claims SHA-256 (OID 2.16.840.1.101.3.4.2.1) before
+	// comparing bytes — otherwise a token declaring a different algorithm (e.g.
+	// SHA-1) but happening to carry a HashedMessage of the same length as a SHA-256
+	// digest would pass a raw byte comparison even though it was never validated
+	// against that algorithm. digitorus/timestamp does not itself check that
+	// HashedMessage's length matches the declared algorithm's output size, so this
+	// check is the only thing tying the comparison to the algorithm the token claims.
+	if ts.HashAlgorithm != crypto.SHA256 {
+		return time.Time{}, fmt.Errorf("notary: receipt uses unsupported message-imprint hash algorithm %v (want SHA-256)", ts.HashAlgorithm)
+	}
 	want := sha256.Sum256(message)
 	if !bytes.Equal(ts.HashedMessage, want[:]) {
 		return time.Time{}, fmt.Errorf("notary: receipt does not bind this message (timestamped digest differs)")
@@ -86,6 +101,20 @@ func VerifyReceipt(roots *x509.CertPool, message, token []byte) (_ time.Time, er
 	for _, c := range p7.Certificates {
 		intermediates.AddCert(c)
 	}
+	// #notary-findings-2's residual (scoped down, documented rather than built): this
+	// chain check does NOT perform CRL/OCSP revocation checking of the TSA cert
+	// chain — neither Go's x509.Verify nor digitorus/pkcs7's VerifyWithOpts (which is
+	// a thin wrapper around it, confirmed by reading both vendored sources) expose
+	// any revocation hook to wire into, so there is no small change available here;
+	// a real one means shipping an OCSP client or a CRL fetch+cache path, plus a
+	// fail-open-vs-fail-closed policy for a network call sitting inside a signature-
+	// verification path — all of that is disproportionate to this being a low-
+	// severity, defense-in-depth gap on a niche feature (checkpoint anchoring) with a
+	// narrow window (only matters if the configured TSA's signing key is later
+	// compromised AND the malicious token also carries a ts.Time predating the real
+	// revocation date, since verification is deliberately pinned to the token's own
+	// claimed time — see below). If this needs closing later, prefer OCSP stapling
+	// or a periodically-refreshed CRL cache over a synchronous fetch per verify call.
 	if err := p7.VerifyWithOpts(x509.VerifyOptions{
 		Roots:         roots,
 		Intermediates: intermediates,

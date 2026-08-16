@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/pbkdf2"
@@ -19,10 +21,41 @@ const (
 	aesCipherSuite = "AES-256-GCM"
 )
 
+// nonceBudgetWarnThreshold is a conservative, coarse checkpoint on the number of
+// Encrypt/EncryptWithAAD calls made under a single DEK, logged as a one-time loud
+// warning to nudge an operator toward a routine `keyorix encryption rotate` well
+// before nonce-collision risk becomes material. Standard random 96-bit AES-GCM
+// nonces only become a real birthday-bound collision risk near 2^32 encryptions
+// under one key; this threshold (2^28, ~268M) sits far below that boundary, giving
+// a wide safety margin. This is purely an observability nudge — not a hard limit,
+// and encryption is never refused past this point.
+const nonceBudgetWarnThreshold uint64 = 1 << 28
+
 // EncryptionService handles all encryption/decryption operations
 type EncryptionService struct {
 	dek []byte // Data Encryption Key
 	gcm cipher.AEAD
+
+	// encryptCount is a coarse, non-durable (reset on process restart) tally of
+	// Encrypt/EncryptWithAAD calls made under this DEK. It exists only to drive
+	// the one-time nonceBudgetWarnThreshold warning below — not a security
+	// control, and rotation is never enforced or blocked on it.
+	encryptCount atomic.Uint64
+	// nonceBudgetWarned latches once the nonce-budget warning has fired, so
+	// sustained write volume past the threshold logs it exactly once rather
+	// than on every subsequent call.
+	nonceBudgetWarned atomic.Bool
+}
+
+// checkNonceBudget increments the per-DEK encryption counter and, the first time it
+// crosses nonceBudgetWarnThreshold, logs a loud one-time warning nudging the operator
+// toward a routine DEK rotation (`keyorix encryption rotate --confirm`). See
+// nonceBudgetWarnThreshold for why this threshold, not 2^32, is used.
+func (es *EncryptionService) checkNonceBudget() {
+	count := es.encryptCount.Add(1)
+	if count >= nonceBudgetWarnThreshold && es.nonceBudgetWarned.CompareAndSwap(false, true) {
+		log.Printf("[WARN] SECURITY: this DEK has performed %d encryptions, approaching the AES-GCM 96-bit random-nonce birthday bound — run `keyorix encryption rotate --confirm` to rotate to a fresh DEK", count)
+	}
 }
 
 // EncryptionMetadata contains metadata about encrypted data
@@ -100,6 +133,8 @@ func GenerateRandomKey(size int) ([]byte, error) {
 
 // Encrypt encrypts data using AES-GCM with the KEK
 func (es *EncryptionService) Encrypt(plaintext []byte, keyVersion string) (*EncryptedData, error) {
+	es.checkNonceBudget()
+
 	nonce := make([]byte, es.gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
@@ -206,6 +241,8 @@ func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
 // The AAD is mixed into the GCM authentication tag — it is not stored in the
 // ciphertext but must be supplied identically on decryption.
 func (es *EncryptionService) EncryptWithAAD(plaintext []byte, keyVersion string, aad []byte) (*EncryptedData, error) {
+	es.checkNonceBudget()
+
 	nonce := make([]byte, es.gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)

@@ -87,7 +87,7 @@ func (s *Service) Initialize(passphrase string) error {
 // Service's audit sink so a downgrade that actually FIRES at KEK() time — not
 // just one the config permits — is recorded as more than a log line.
 func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error) {
-	provider, err := NewKeyProviderFromConfig(s.config, s.keyManager.baseDir, passphrase)
+	provider, err := newKeyProviderFromConfig(s.config, s.keyManager.baseDir, passphrase, s.auditKMSContextFallback)
 	if err != nil {
 		return nil, err
 	}
@@ -106,9 +106,24 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 // configured, wraps all providers in a MultiKeyProvider that tries them in order.
 // baseDir resolves provider-relative paths (salt / wrapped_key_path). Exported so
 // the KEK-provider migration tool can build a *target* provider from a different
-// config than the running service's.
+// config than the running service's — the returned provider gets no
+// kms-context-fallback audit wiring (see newKeyProviderFromConfig), which is
+// correct here since a migration-target provider is never used to serve a live
+// decrypt.
 func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase string) (crypto.KeyProvider, error) {
-	primary, err := buildSingleProvider(&cfg.KeyProvider, baseDir, passphrase, cfg.SaltPath)
+	return newKeyProviderFromConfig(cfg, baseDir, passphrase, nil)
+}
+
+// newKeyProviderFromConfig is NewKeyProviderFromConfig's implementation, with an
+// added kmsFallbackHook wired only from Service.buildKeyProvider (the live-serving
+// path) so a KMSAllowContextFallback decrypt actually firing gets recorded as more
+// than a log line — see awskms.FallbackHook and Service.auditKMSContextFallback.
+// Kept unexported rather than added as a new exported parameter so the many
+// existing NewKeyProviderFromConfig call sites (tests, the migration CLI) that
+// have no audit sink to wire don't need updating for an audit path that doesn't
+// apply to them.
+func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase string, kmsFallbackHook awskms.FallbackHook) (crypto.KeyProvider, error) {
+	primary, err := buildSingleProvider(&cfg.KeyProvider, baseDir, passphrase, cfg.SaltPath, kmsFallbackHook)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +132,7 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 	}
 	providers := []crypto.KeyProvider{primary}
 	for i := range cfg.KeyProvider.Fallbacks {
-		fb, err := buildSingleProvider(&cfg.KeyProvider.Fallbacks[i], baseDir, passphrase, cfg.SaltPath)
+		fb, err := buildSingleProvider(&cfg.KeyProvider.Fallbacks[i], baseDir, passphrase, cfg.SaltPath, kmsFallbackHook)
 		if err != nil {
 			return nil, fmt.Errorf("fallback provider [%d] (%s): %w", i, cfg.KeyProvider.Fallbacks[i].Type, err)
 		}
@@ -140,7 +155,8 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 
 // buildSingleProvider constructs a single KeyProvider from one KeyProviderConfig.
 // saltPath is the encryption config's salt file path (used by the password provider).
-func buildSingleProvider(kp *config.KeyProviderConfig, baseDir, passphrase, saltPath string) (crypto.KeyProvider, error) {
+// kmsFallbackHook is wired into an aws-kms provider only (see NewKeyProviderFromConfig).
+func buildSingleProvider(kp *config.KeyProviderConfig, baseDir, passphrase, saltPath string, kmsFallbackHook awskms.FallbackHook) (crypto.KeyProvider, error) {
 	switch kp.Type {
 	case "", "password":
 		return crypto.NewPasswordKeyProvider(passphrase, baseDir, saltPath), nil
@@ -155,7 +171,7 @@ func buildSingleProvider(kp *config.KeyProviderConfig, baseDir, passphrase, salt
 	case "tpm":
 		return crypto.NewTPMKeyProvider(kp.TPMDevice, baseDir, kp.WrappedKeyPath), nil
 	case "aws-kms":
-		kmsClient, err := awskms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext, kp.KMSAllowContextFallback)
+		kmsClient, err := awskms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext, kp.KMSAllowContextFallback, kmsFallbackHook)
 		if err != nil {
 			return nil, err
 		}

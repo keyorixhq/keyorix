@@ -2,12 +2,20 @@ package notary
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/digitorus/timestamp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -184,4 +192,86 @@ func TestNewRFC3161_AcceptsPlaintextHTTP_Loopback(t *testing.T) {
 func TestNewRFC3161_RejectsMalformedURL(t *testing.T) {
 	_, err := NewRFC3161("not-a-url", 5*time.Second)
 	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// VerifyReceipt — message-imprint hash algorithm must be SHA-256
+// (Wave 6, notary-findings.json#2)
+// ---------------------------------------------------------------------------
+
+// craftTokenWithHashAlgorithm builds a validly-signed RFC 3161 TimeStampToken,
+// self-issued by a fresh timestamping cert, whose message-imprint declares
+// hashAlg as its hash algorithm but carries hashedMessage as the raw imprint
+// bytes verbatim — regardless of whether hashedMessage is actually
+// hashAlg(message). This mirrors what a misconfigured or hostile TSA could
+// produce: digitorus/timestamp does not itself check that HashedMessage's
+// length/content matches the declared algorithm.
+func craftTokenWithHashAlgorithm(t *testing.T, fixedTime time.Time, hashAlg crypto.Hash, hashedMessage []byte) ([]byte, *x509.Certificate) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Test TSA"},
+		NotBefore:             fixedTime.Add(-365 * 24 * time.Hour),
+		NotAfter:              fixedTime.Add(3650 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+
+	ts := &timestamp.Timestamp{
+		HashAlgorithm:     hashAlg,
+		HashedMessage:     hashedMessage,
+		Time:              fixedTime,
+		Policy:            asn1.ObjectIdentifier{1, 2, 3, 4, 1},
+		SerialNumber:      big.NewInt(42),
+		AddTSACertificate: true,
+	}
+	resp, err := ts.CreateResponseWithOpts(cert, key, crypto.SHA256)
+	require.NoError(t, err)
+	parsed, err := timestamp.ParseResponse(resp)
+	require.NoError(t, err)
+	return parsed.RawToken, cert
+}
+
+// TestVerifyReceipt_RejectsNonSHA256HashAlgorithm crafts a token that declares
+// SHA-384 as its message-imprint hash algorithm but carries a HashedMessage
+// equal to sha256.Sum256(message) — the scenario the pre-fix code accepted, since it
+// compared raw bytes against a SHA-256 digest regardless of what algorithm the
+// token claimed to have used. VerifyReceipt must reject the mismatch instead of
+// silently trusting the byte comparison.
+func TestVerifyReceipt_RejectsNonSHA256HashAlgorithm(t *testing.T) {
+	fixedTime := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	msg := []byte("checkpoint bytes being anchored")
+	want := sha256.Sum256(msg)
+
+	token, cert := craftTokenWithHashAlgorithm(t, fixedTime, crypto.SHA384, want[:])
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+
+	_, err := VerifyReceipt(roots, msg, token)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hash algorithm")
+}
+
+// TestVerifyReceipt_AcceptsSHA256HashAlgorithm is the positive-path sibling:
+// a token that correctly declares SHA-256 and carries the matching digest must
+// still verify — the new check must not reject the legitimate case.
+func TestVerifyReceipt_AcceptsSHA256HashAlgorithm(t *testing.T) {
+	fixedTime := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	msg := []byte("checkpoint bytes being anchored")
+	want := sha256.Sum256(msg)
+
+	token, cert := craftTokenWithHashAlgorithm(t, fixedTime, crypto.SHA256, want[:])
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+
+	at, err := VerifyReceipt(roots, msg, token)
+	require.NoError(t, err)
+	assert.WithinDuration(t, fixedTime, at, time.Second)
 }
