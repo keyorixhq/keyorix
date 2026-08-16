@@ -78,6 +78,9 @@ func (m Migrator) HasColumn(value interface{}, name string) bool {
 func (m Migrator) AlterColumn(value interface{}, name string) error {
 	return m.RunWithoutForeignKey(func() error {
 		return m.recreateTable(value, nil, func(ddl *ddl, stmt *gorm.Statement) (*ddl, []interface{}, error) {
+			if stmt.Schema == nil {
+				return nil, nil, fmt.Errorf("failed to alter field with name %v: model with schema is required", name)
+			}
 			if field := stmt.Schema.LookUpField(name); field != nil {
 				var sqlArgs []interface{}
 				for i, f := range ddl.fields {

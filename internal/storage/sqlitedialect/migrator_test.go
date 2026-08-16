@@ -170,6 +170,27 @@ func TestMigrator_AlterColumn(t *testing.T) {
 	require.NoError(t, db.Create(&migratorTestModel{Name: "still-works", Score: 1}).Error)
 }
 
+// TestMigrator_AlterColumn_NilSchemaReturnsErrorNotPanic guards against a
+// nil-pointer panic in AlterColumn. Upstream gorm.io/driver/sqlite checks
+// stmt.Schema != nil before calling stmt.Schema.LookUpField; this fork's
+// AlterColumn was missing that guard. Every AutoMigrate call site in
+// internal/storage/factory.go passes a concrete struct pointer, so stmt.Schema
+// is always resolved in practice today — but AlterColumn is also reachable
+// directly via db.Migrator().AlterColumn(...), and passing a bare table-name
+// string (a value GORM can't resolve a schema for) must return a normal
+// error instead of crashing the process handling migrations.
+func TestMigrator_AlterColumn_NilSchemaReturnsErrorNotPanic(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&migratorTestModel{}))
+	m := db.Migrator()
+
+	assert.NotPanics(t, func() {
+		err := m.AlterColumn("migrator_test_models", "Name")
+		require.Error(t, err, "AlterColumn with a schema-less value must return an error, not panic")
+		assert.Contains(t, err.Error(), "schema")
+	})
+}
+
 func TestMigrator_ColumnTypesAndTablesAndCurrentDatabase(t *testing.T) {
 	db := openTestDB(t)
 	require.NoError(t, db.AutoMigrate(&migratorTestModel{}))
