@@ -92,6 +92,15 @@ func (s *ProjectGRPCService) GetProjectRotationOrder(ctx context.Context, req *p
 	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
 	}
+	// authorizeScoped only checks the caller's role binding, not whether the project
+	// itself is still live: UserRole/GroupRole rows scoped to a project are deliberately
+	// left in place across a soft-delete (to support RestoreProject), so a caller who
+	// held a scoped grant before the project was deleted would otherwise keep passing
+	// this check indefinitely. Confirm the project is live before proceeding, mirroring
+	// the CreateProjectEnvironment precedent (catalog.go).
+	if _, err := s.core.GetProject(ctx, uint(req.GetId())); err != nil {
+		return nil, mapProjectError(err)
+	}
 	order, err := s.core.GetProjectRotationOrder(ctx, uint(req.GetId()))
 	if err != nil {
 		return nil, mapProjectError(err)
@@ -111,6 +120,11 @@ func (s *ProjectGRPCService) GetProjectRotationPlan(ctx context.Context, req *pb
 	}
 	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
+	}
+	// See GetProjectRotationOrder above: a scoped role binding survives project
+	// soft-delete, so confirm the project is still live before proceeding.
+	if _, err := s.core.GetProject(ctx, uint(req.GetId())); err != nil {
+		return nil, mapProjectError(err)
 	}
 	plan, err := s.core.GenerateRotationPlan(ctx, uint(req.GetId()))
 	if err != nil {
@@ -219,6 +233,11 @@ func (s *ProjectGRPCService) ListEnvironments(ctx context.Context, req *pb.ListE
 	}
 	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
+	}
+	// See GetProjectRotationOrder above: a scoped role binding survives project
+	// soft-delete, so confirm the project is still live before proceeding.
+	if _, err := s.core.GetProject(ctx, uint(req.GetProjectId())); err != nil {
+		return nil, mapProjectError(err)
 	}
 	envs, err := s.core.ListEnvironmentsByProject(ctx, uint(req.GetProjectId()))
 	if err != nil {
