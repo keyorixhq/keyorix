@@ -337,7 +337,7 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 	// PATCH that never touches lifecycle state.
 	origState := user.AccountState
 	wasActive := user.IsActive
-	if displayName != nil {
+	if displayName != nil && *displayName != "" {
 		user.DisplayName = *displayName
 	}
 	if email != nil && *email != "" {
