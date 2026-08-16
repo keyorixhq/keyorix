@@ -79,7 +79,7 @@ func TestWithMigrationLock_S27_PostgresPathErrorOnSQLite(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "mig-pg-path.db"))
 	require.NoError(t, err)
 
-	err = withMigrationLock(db, true, func(_ *gorm.DB) error { return nil })
+	err = withMigrationLock(db, true, "", func(_ *gorm.DB) error { return nil })
 	require.Error(t, err, "pg_advisory_lock does not exist on SQLite: must error")
 	assert.Contains(t, err.Error(), "acquire migration advisory lock")
 }
@@ -91,7 +91,7 @@ func TestWithMigrationLock_S27_PostgresPathFnNeverCalled(t *testing.T) {
 	require.NoError(t, err)
 
 	called := false
-	_ = withMigrationLock(db, true, func(_ *gorm.DB) error {
+	_ = withMigrationLock(db, true, "", func(_ *gorm.DB) error {
 		called = true
 		return nil
 	})

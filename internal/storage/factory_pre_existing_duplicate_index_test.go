@@ -148,6 +148,86 @@ func TestProjectMembershipIndex_FailsLoudOnPreExistingDuplicates(t *testing.T) {
 	assert.Equal(t, int64(1), revokedCount, "the revoked row (outside the partial predicate) must be untouched")
 }
 
+// TestReminderNotificationDedupIndex_FailsLoudOnPreExistingDuplicates pins
+// #STORAGE-FACTORY-004: ensureReminderNotificationDedupIndex was the one
+// ensure*Index helper in this file that skipped the warnIfDuplicatesExist
+// pre-flight check every sibling helper performs (e.g.
+// ensureDynamicSecretConfigNameIndex above), going straight to a bare
+// `CREATE UNIQUE INDEX IF NOT EXISTS`. An upgraded install that already
+// accumulated colliding unread reminder rows for the same (user, type,
+// project) — precisely the #488 TOCTOU this index exists to close — would hit
+// an opaque driver-level "UNIQUE constraint failed" error instead of the same
+// clear, actionable error every sibling helper produces. This asserts the
+// fixed helper now fails loud with that actionable message, and touches
+// neither conflicting row nor the unrelated ones.
+func TestReminderNotificationDedupIndex_FailsLoudOnPreExistingDuplicates(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reminder-dedup-dup.db")
+	db, err := gormOpenForTest(t, dbPath)
+	require.NoError(t, err)
+
+	// Create the table WITHOUT the unique index — mirrors a pre-fix database.
+	require.NoError(t, db.AutoMigrate(&models.Notification{}))
+
+	projectID := uint(9)
+	dup1 := &models.Notification{UserID: 1, ProjectID: &projectID, Type: "rotation.reminder", IsRead: false, Title: "rotate me"}
+	require.NoError(t, db.Create(dup1).Error)
+	dup2 := &models.Notification{UserID: 1, ProjectID: &projectID, Type: "rotation.reminder", IsRead: false, Title: "rotate me too"}
+	require.NoError(t, db.Create(dup2).Error)
+	// A read row sharing the same key is outside the partial index's predicate
+	// and must be left alone.
+	read := &models.Notification{UserID: 1, ProjectID: &projectID, Type: "rotation.reminder", IsRead: true, Title: "already read"}
+	require.NoError(t, db.Create(read).Error)
+	// A different notification type legitimately creates more than one unread
+	// row for the same user/project and must not be flagged.
+	other := &models.Notification{UserID: 1, ProjectID: &projectID, Type: "secret.shared", IsRead: false, Title: "shared with you"}
+	require.NoError(t, db.Create(other).Error)
+
+	var countBefore int64
+	require.NoError(t, db.Model(&models.Notification{}).Count(&countBefore).Error)
+	require.Equal(t, int64(4), countBefore)
+
+	err = ensureReminderNotificationDedupIndex(db)
+	require.Error(t, err, "pre-existing duplicate unread reminder rows must block the migration with an actionable error, not fail with an opaque constraint violation")
+	// Must be the actionable warnIfDuplicatesExist message, not the raw
+	// driver-level "UNIQUE constraint failed" error a bare CREATE UNIQUE INDEX
+	// would otherwise surface (which also happens to mention "notifications" —
+	// e.g. "UNIQUE constraint failed: notifications.user_id, ..." — so a check
+	// for that alone would not actually distinguish the two).
+	assert.Contains(t, err.Error(), "pre-existing group(s) of rows already share a value")
+	assert.Contains(t, err.Error(), "notifications API")
+
+	var countAfter int64
+	require.NoError(t, db.Model(&models.Notification{}).Count(&countAfter).Error)
+	assert.Equal(t, int64(4), countAfter, "no row may be deleted by a failed migration check")
+
+	var survivingDup2 models.Notification
+	require.NoError(t, db.First(&survivingDup2, dup2.ID).Error, "dup2 must not have been deleted")
+}
+
+// TestReminderNotificationDedupIndex_NoDuplicates_CreatesIndex confirms the
+// happy path still works: with no pre-existing duplicates, the helper creates
+// the partial unique index and a subsequent conflicting insert is rejected.
+func TestReminderNotificationDedupIndex_NoDuplicates_CreatesIndex(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reminder-dedup-ok.db")
+	db, err := gormOpenForTest(t, dbPath)
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Notification{}))
+
+	projectID := uint(3)
+	require.NoError(t, db.Create(&models.Notification{UserID: 1, ProjectID: &projectID, Type: "rotation.reminder", IsRead: false}).Error)
+
+	require.NoError(t, ensureReminderNotificationDedupIndex(db))
+	assert.True(t, indexExists(db, "uniq_notifications_unread_reminder"))
+
+	// A second unread reminder for the same (user, type, project) now violates
+	// the index.
+	err = db.Create(&models.Notification{UserID: 1, ProjectID: &projectID, Type: "rotation.reminder", IsRead: false}).Error
+	require.Error(t, err, "the partial unique index must reject a second unread reminder for the same key")
+
+	// Re-running the helper is idempotent.
+	require.NoError(t, ensureReminderNotificationDedupIndex(db))
+}
+
 // gormOpenForTest opens a fresh SQLite connection at dbPath using the same
 // DSN/config the production factory uses, for tests that need to drive the
 // migration helpers directly against a hand-seeded database.

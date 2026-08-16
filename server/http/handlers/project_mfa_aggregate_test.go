@@ -68,6 +68,7 @@ func newHTTPMFAAggregateTestRig(t *testing.T) *httpMFAAggregateTestRig {
 	}).Error)
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "auditor", Email: "auditor@example.com"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recipient", Email: "recipient@example.com"}).Error)
 	require.NoError(t, db.Create(&models.ShareRecord{SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}).Error)
 	require.NoError(t, db.Create(&models.ShareRecord{SecretID: 2, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}).Error)
 

@@ -1,6 +1,7 @@
 // mfa_stepup_proxy.go — server-side endpoints backing RemoteStorage's
 // MFAStepUpGrant storage primitives:
-// CreateMFAStepUpGrant / GetActiveMFAStepUpGrant / DeleteMFAStepUpGrantsFor.
+// CreateMFAStepUpGrant / GetActiveMFAStepUpGrant / DeleteMFAStepUpGrantsFor /
+// PruneMFAStepUpGrants.
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049)
 // proxies these calls to this server's real storage backend so that the MFA
@@ -111,4 +112,41 @@ func (h *AuthHandler) DeleteMFAStepUpGrantsForProxy(w http.ResponseWriter, r *ht
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
+}
+
+// mfaStepUpGrantPruneBody is the wire body for POST /api/v1/system/mfa/stepup-grants/prune.
+type mfaStepUpGrantPruneBody struct {
+	Before time.Time `json:"before"`
+}
+
+// PruneMFAStepUpGrantsProxy handles POST /api/v1/system/mfa/stepup-grants/prune
+// (store-mfa-002). Mirrors login_attempts_proxy.go's PruneLoginAttemptsProxy
+// (CORE-RATE-003): deliberately does NOT call
+// h.coreService.Storage().PruneMFAStepUpGrants directly with the request
+// body's `before` — that value is attacker/caller-influenced (any
+// system.write / node-credential principal), and an unbounded passthrough
+// would let a caller wipe the entire mfa_stepup_grants table on demand. It
+// routes through core.KeyorixCore.PruneMFAStepUpGrants instead, which clamps
+// the effective cutoff to the configured/default retention window so a
+// caller can only narrow the deletion window, never widen it.
+func (h *AuthHandler) PruneMFAStepUpGrantsProxy(w http.ResponseWriter, r *http.Request) {
+	var body mfaStepUpGrantPruneBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
+		return
+	}
+	if body.Before.IsZero() {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "before is required")
+		return
+	}
+	// retention=0: this upstream server uses its own configured/default
+	// retention window (see core.KeyorixCore.PruneMFAStepUpGrants), not one
+	// dictated by the downstream caller.
+	n, err := h.coreService.PruneMFAStepUpGrants(r.Context(), 0, body.Before)
+	if err != nil {
+		log.Printf("mfa stepup proxy: prune failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]int64{"deleted": n})
 }

@@ -77,7 +77,15 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 		}
 		// ShareRecord carries its own DeletedAt (soft-delete) — Unscoped so this is a
 		// true hard delete, not another soft-deleted orphan nothing else purges.
-		if e := tx.Unscoped().Where("recipient_id IN (?) AND is_group = ?", stillEligible(), false).Delete(&models.ShareRecord{}).Error; e != nil {
+		// #store-purge-2: matches BOTH sides — recipient_id (shares the purged user
+		// RECEIVED) and owner_id (shares the purged user GRANTED to someone else).
+		// Only checking recipient_id left a share a purged user created for a
+		// still-active recipient fully live and functional indefinitely: the
+		// recipient's access grant survives (RecipientID still resolves to a real
+		// user) with no owner left to attribute, audit, or ever explicitly revoke
+		// it, and no account-lifecycle or access-review tooling keyed off active
+		// users would ever surface it for re-certification.
+		if e := tx.Unscoped().Where("(recipient_id IN (?) OR owner_id IN (?)) AND is_group = ?", stillEligible(), stillEligible(), false).Delete(&models.ShareRecord{}).Error; e != nil {
 			return e
 		}
 		if e := tx.Where(sqlWhereUserIDIn, stillEligible()).Delete(&models.PersonalAccessToken{}).Error; e != nil {

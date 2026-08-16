@@ -1,6 +1,9 @@
 // local_mfa_stepup_grant.go — MFAStepUpGrant persistence for LocalStorage.
 // Each VerifyMFAStepUp call creates a new grant row; queries return the most
-// recent non-expired one. Expired rows are kept for audit purposes.
+// recent non-expired one. Expired rows are kept for audit purposes, bounded by
+// the PruneMFAStepUpGrants maintenance sweep (store-mfa-002) rather than kept
+// indefinitely — see internal/core.KeyorixCore.PruneMFAStepUpGrants and its
+// scheduler wiring in server/main.go (mfa_stepup_grant_prune).
 package store
 
 import (
@@ -35,4 +38,12 @@ func (ls *LocalStorage) DeleteMFAStepUpGrantsFor(ctx context.Context, userID uin
 	return ls.db.WithContext(ctx).
 		Where("user_id = ?", userID).
 		Delete(&models.MFAStepUpGrant{}).Error
+}
+
+// PruneMFAStepUpGrants deletes grants whose ExpiresAt predates `before` and
+// returns how many were removed (store-mfa-002 maintenance sweep — see
+// internal/core.KeyorixCore.PruneMFAStepUpGrants, the sole intended caller).
+func (ls *LocalStorage) PruneMFAStepUpGrants(ctx context.Context, before time.Time) (int64, error) {
+	res := ls.db.WithContext(ctx).Where("expires_at < ?", before).Delete(&models.MFAStepUpGrant{})
+	return res.RowsAffected, res.Error
 }

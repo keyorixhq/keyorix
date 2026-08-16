@@ -205,22 +205,23 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 // namespaced to each background job, so on PostgreSQL only one replica runs a
 // given scheduler per tick. Distinct from the audit-chain key (0x4B455941_55444954).
 const (
-	schedLockAnomaly      int64 = 0x4B455953_414E4F4D // "KEYSANOM"
-	schedLockPurge        int64 = 0x4B455953_50555247 // "KEYSPURG"
-	schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
-	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
-	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
-	schedLockExpiryRmdr   int64 = 0x4B455953_45585052 // "KEYSEXPR"
-	schedLockCertExpiry   int64 = 0x4B455953_43455254 // "KEYSCERT"
-	schedLockAutoRotate   int64 = 0x4B455953_4155544F // "KEYSAUTO"
-	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
-	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
-	schedLockRetention    int64 = 0x4B455953_52455445 // "KEYSRETE"
-	schedLockEvidence     int64 = 0x4B455953_45564944 // "KEYSEVID"
-	schedLockRecertify    int64 = 0x4B455953_52454354 // "KEYSRECT"
-	schedLockDigest       int64 = 0x4B455953_44494753 // "KEYSDIGS"
-	schedLockLicenseExp   int64 = 0x4B455953_4C494345 // "KEYSLICE"
-	schedLockReadQuota    int64 = 0x4B455953_52445154 // "KEYSRDQT"
+	schedLockAnomaly       int64 = 0x4B455953_414E4F4D // "KEYSANOM"
+	schedLockPurge         int64 = 0x4B455953_50555247 // "KEYSPURG"
+	schedLockDynamicSweep  int64 = 0x4B455953_44594E53 // "KEYSDYNS"
+	schedLockLoginPrune    int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
+	schedLockRotationRmdr  int64 = 0x4B455953_524F5452 // "KEYSROTR"
+	schedLockExpiryRmdr    int64 = 0x4B455953_45585052 // "KEYSEXPR"
+	schedLockCertExpiry    int64 = 0x4B455953_43455254 // "KEYSCERT"
+	schedLockAutoRotate    int64 = 0x4B455953_4155544F // "KEYSAUTO"
+	schedLockAuditCkpt     int64 = 0x4B455953_41434B50 // "KEYSACKP"
+	schedLockJITExpiry     int64 = 0x4B455953_4A495445 // "KEYSJITE"
+	schedLockRetention     int64 = 0x4B455953_52455445 // "KEYSRETE"
+	schedLockEvidence      int64 = 0x4B455953_45564944 // "KEYSEVID"
+	schedLockRecertify     int64 = 0x4B455953_52454354 // "KEYSRECT"
+	schedLockDigest        int64 = 0x4B455953_44494753 // "KEYSDIGS"
+	schedLockLicenseExp    int64 = 0x4B455953_4C494345 // "KEYSLICE"
+	schedLockReadQuota     int64 = 0x4B455953_52445154 // "KEYSRDQT"
+	schedLockMFAGrantPrune int64 = 0x4B455953_4D464147 // "KEYSMFAG"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -1379,6 +1380,31 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 			// removed) reads as "system", not the default "user".
 			sysCtx := core.WithActorType(ctx, core.ActorTypeSystem)
 			_, perr := coreService.PruneLoginAttempts(sysCtx, time.Time{}, 0)
+			return perr
+		})
+	})
+
+	// Prune expired MFA step-up grant rows every 6 hours (store-mfa-002). Each
+	// successful VerifyMFAStepUp creates a new MFAStepUpGrant row, kept briefly
+	// past its own expiry for audit purposes (internal/storage/store/
+	// local_mfa_stepup_grant.go) — with no sweep, every legitimate
+	// re-verification left a permanent row (DeleteMFAStepUpGrantsFor exists but
+	// is only reachable via the RemoteStorage proxy, never called from a local
+	// maintenance path). Like login_attempt_prune above, this ALWAYS runs — not
+	// legal-hold-gated: a grant row's CREATION is already permanently,
+	// independently audited (mfa.stepup_verified, never purged — ADR-029), so
+	// pruning the row itself never destroys evidence, only a redundant
+	// operational copy, and letting a long-running legal hold block this would
+	// just grow the table unbounded for no compliance benefit. Retention
+	// defaults to 30 days (config classification.mfa_stepup_grant_retention_days,
+	// mirroring SoftDeleteConfig's default) — much looser than the 15-minute
+	// cadence/window ratio login_attempt_prune uses, since grant rows are
+	// created far less often (once per MFA step-up verification, not once per
+	// rate-limit check).
+	mfaGrantRetention := time.Duration(cfg.Classification.GetMFAStepUpGrantRetentionDays()) * 24 * time.Hour
+	runScheduler(ctx, "mfa_stepup_grant_prune", 6*time.Hour, func() middleware.SchedulerOutcome {
+		return lockedRun(ctx, coreService.Storage(), schedLockMFAGrantPrune, "MFA step-up grant prune", func() error {
+			_, perr := coreService.PruneMFAStepUpGrants(ctx, mfaGrantRetention, time.Time{})
 			return perr
 		})
 	})

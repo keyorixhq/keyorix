@@ -1605,6 +1605,31 @@ type ClassificationConfig struct {
 	// RestrictedMFAStepUpWindowMinutes is how long (in minutes) a completed MFA
 	// verification remains valid for restricted-secret reads. 0 = default (15 min).
 	RestrictedMFAStepUpWindowMinutes int `yaml:"restricted_mfa_stepup_window_minutes"`
+	// MFAStepUpGrantRetentionDays bounds how long an MFAStepUpGrant row is kept
+	// past its own expiry (store-mfa-002) before the periodic maintenance sweep
+	// hard-deletes it — every successful VerifyMFAStepUp inserts a new row, kept
+	// briefly for audit purposes rather than deleted the instant it expires (see
+	// internal/storage/store/local_mfa_stepup_grant.go), so without a bound the
+	// table grows forever. This is independent of RestrictedMFAStepUpWindowMinutes
+	// (how long a grant is ACTIVE) — it governs how long the row survives AFTER
+	// it stops being active. 0 = default (30 days, matching
+	// SoftDeleteConfig.GetRetentionDays's default). The sweep runs unconditionally
+	// (like the login-attempt prune it mirrors) — this is bookkeeping cleanup, not
+	// an opt-in compliance-retention feature, and a grant's CREATION is
+	// independently, permanently audited (mfa.stepup_verified, never purged per
+	// ADR-029), so pruning the row itself never destroys the sole evidentiary
+	// record.
+	MFAStepUpGrantRetentionDays int `yaml:"mfa_stepup_grant_retention_days"`
+}
+
+// GetMFAStepUpGrantRetentionDays returns the MFAStepUpGrant retention window in
+// days, defaulting to 30 when unset or non-positive (matches
+// SoftDeleteConfig.GetRetentionDays's default).
+func (c ClassificationConfig) GetMFAStepUpGrantRetentionDays() int {
+	if c.MFAStepUpGrantRetentionDays <= 0 {
+		return 30
+	}
+	return c.MFAStepUpGrantRetentionDays
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the

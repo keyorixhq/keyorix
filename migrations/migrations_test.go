@@ -658,3 +658,152 @@ func TestFixAuditorAuditAdminOvergrantDownMigration(t *testing.T) {
 		t.Fatalf("auditor permissions after up+down = %v, want 'audit.admin' restored by the down-migration", perms)
 	}
 }
+
+// seedSharedSecretForStatusSyncTest seeds one owner, one recipient, and one
+// secret shared between them (share_records row id=1, secret_nodes row
+// id=1). 005_secret_sharing.up.sql's AFTER INSERT trigger fires on the
+// share_records insert below and sets secret_nodes.is_shared to TRUE, so
+// callers start from a known "currently shared" state.
+func seedSharedSecretForStatusSyncTest(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('owner1', 'owner1@example.com', 'x')`,
+	); err != nil {
+		t.Fatalf("seed users (owner): %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('recipient1', 'recipient1@example.com', 'x')`,
+	); err != nil {
+		t.Fatalf("seed users (recipient): %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO namespaces (name) VALUES ('ns1')`); err != nil {
+		t.Fatalf("seed namespaces: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO zones (name) VALUES ('zone1')`); err != nil {
+		t.Fatalf("seed zones: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO environments (name) VALUES ('env1')`); err != nil {
+		t.Fatalf("seed environments: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO secret_nodes (namespace_id, zone_id, environment_id, name, is_secret, type, created_by, owner_id)
+		 VALUES (1, 1, 1, 's1', 1, 'secret', 'owner1', 1)`,
+	); err != nil {
+		t.Fatalf("seed secret_nodes: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO share_records (secret_id, owner_id, recipient_id, is_group, permission, created_at, updated_at)
+		 VALUES (1, 1, 2, 0, 'read', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("seed share_records: %v", err)
+	}
+}
+
+// softDeleteShareRecord mirrors what internal/storage/store/local_sharing.go's
+// DeleteShareRecord and DeleteExpiredShareRecords actually issue via GORM
+// against a ShareRecord (whose DeletedAt field is a gorm.DeletedAt soft-delete
+// column): an UPDATE setting deleted_at, never a raw SQL DELETE.
+func softDeleteShareRecord(t *testing.T, db *sql.DB, id int) {
+	t.Helper()
+
+	if _, err := db.Exec(`UPDATE share_records SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
+		t.Fatalf("soft-delete share_records id=%d: %v", id, err)
+	}
+}
+
+func assertSecretIsShared(t *testing.T, db *sql.DB, secretID int, want bool) {
+	t.Helper()
+
+	var isShared bool
+	if err := db.QueryRow(`SELECT is_shared FROM secret_nodes WHERE id = ?`, secretID).Scan(&isShared); err != nil {
+		t.Fatalf("query secret_nodes.is_shared for id=%d: %v", secretID, err)
+	}
+	if isShared != want {
+		t.Fatalf("secret_nodes.is_shared for id=%d = %v, want %v", secretID, isShared, want)
+	}
+}
+
+// TestShareStatusStaleAfterSoftDeleteBefore010 pins migrations-003: applying
+// only 005 (the historical bootstrap set this migration's fix targets, per
+// migrations/README.md), revoking the only share on a secret through the
+// application's real GORM soft-delete path leaves secret_nodes.is_shared
+// incorrectly TRUE, because 005's update_secret_shared_status_delete trigger
+// only fires on a raw SQL DELETE, which the application never issues. This is
+// a non-regression check on 005 itself: it must show the bug exists before
+// 010 is applied, so the corrective migration below has something real to
+// fix.
+func TestShareStatusStaleAfterSoftDeleteBefore010(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "005_secret_sharing.up.sql")
+
+	seedSharedSecretForStatusSyncTest(t, db)
+	assertSecretIsShared(t, db, 1, true)
+
+	softDeleteShareRecord(t, db, 1)
+
+	// This pins the documented bug pre-010: the AFTER DELETE trigger never
+	// fires for a soft delete, so is_shared incorrectly stays TRUE even
+	// though the secret's only share was just revoked.
+	assertSecretIsShared(t, db, 1, true)
+}
+
+// TestFixShareStatusSoftDeleteSyncMigration pins the fix for migrations-003:
+// after applying the corrective 010_fix_share_status_soft_delete_sync
+// migration on top of 005, revoking a secret's only share through the
+// application's real GORM soft-delete path correctly flips
+// secret_nodes.is_shared back to FALSE.
+func TestFixShareStatusSoftDeleteSyncMigration(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "005_secret_sharing.up.sql")
+	execSQLFile(t, db, "010_fix_share_status_soft_delete_sync.up.sql")
+
+	seedSharedSecretForStatusSyncTest(t, db)
+	assertSecretIsShared(t, db, 1, true)
+
+	softDeleteShareRecord(t, db, 1)
+
+	// Regression fix: is_shared must flip back to FALSE once the only share
+	// on the secret has been soft-deleted.
+	assertSecretIsShared(t, db, 1, false)
+
+	// Non-regression: a secret that still has an active share must remain
+	// marked as shared after some OTHER share on it is revoked.
+	if _, err := db.Exec(
+		`INSERT INTO share_records (secret_id, owner_id, recipient_id, is_group, permission, created_at, updated_at)
+		 VALUES (1, 1, 2, 0, 'read', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("seed second share_records row: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO share_records (secret_id, owner_id, recipient_id, is_group, permission, created_at, updated_at)
+		 VALUES (1, 1, 2, 0, 'read', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("seed third share_records row: %v", err)
+	}
+	assertSecretIsShared(t, db, 1, true)
+	softDeleteShareRecord(t, db, 2)
+	assertSecretIsShared(t, db, 1, true)
+}
+
+// TestFixShareStatusSoftDeleteSyncDownMigration pins that the down-migration
+// correctly reverts the correction: reapplying it restores the original
+// (stale) behaviour where a soft-deleted share no longer flips is_shared back
+// to FALSE. This is deliberate symmetry with the rest of this directory's
+// reversible migrations, not an endorsement of running the down-migration in
+// production.
+func TestFixShareStatusSoftDeleteSyncDownMigration(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "005_secret_sharing.up.sql")
+	execSQLFile(t, db, "010_fix_share_status_soft_delete_sync.up.sql")
+	execSQLFile(t, db, "010_fix_share_status_soft_delete_sync.down.sql")
+
+	seedSharedSecretForStatusSyncTest(t, db)
+	assertSecretIsShared(t, db, 1, true)
+
+	softDeleteShareRecord(t, db, 1)
+
+	// After up+down, the corrective trigger is gone again -- the original
+	// stale is_shared bug is restored.
+	assertSecretIsShared(t, db, 1, true)
+}

@@ -63,6 +63,11 @@ func (m *MockStorage) PruneLoginAttempts(ctx context.Context, before time.Time) 
 	return a.Get(0).(int64), a.Error(1)
 }
 
+func (m *MockStorage) PruneMFAStepUpGrants(ctx context.Context, before time.Time) (int64, error) {
+	a := m.Called(ctx, before)
+	return a.Get(0).(int64), a.Error(1)
+}
+
 // Permission Management
 
 func (m *MockStorage) CreatePermission(_ context.Context, permission *models.Permission) (*models.Permission, error) {

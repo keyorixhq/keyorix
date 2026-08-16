@@ -1,0 +1,14 @@
+-- Revert 010_fix_share_status_soft_delete_sync.up.sql: drop the corrective
+-- soft-delete trigger, restoring the original (stale) behaviour where
+-- secret_nodes.is_shared only recomputes on a raw SQL DELETE from
+-- share_records, not on the GORM soft delete the application actually
+-- issues.
+--
+-- WARNING: this reintroduces the gap that migrations-003 (this migration's
+-- own up-migration) fixes -- is_shared will again fail to flip back to
+-- FALSE when every share on a secret is revoked via the application's real
+-- DeleteShareRecord/DeleteExpiredShareRecords paths. This down-migration
+-- exists only for symmetry with the rest of this directory's reversible
+-- migrations (see migrations/README.md); do not apply it to a production
+-- database without understanding that it reintroduces the finding.
+DROP TRIGGER IF EXISTS update_secret_shared_status_soft_delete;
