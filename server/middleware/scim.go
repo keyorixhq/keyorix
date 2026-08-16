@@ -6,8 +6,9 @@ package middleware
 
 import (
 	"crypto/subtle"
-	"fmt"
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -37,12 +38,21 @@ func SCIMToken(token string) func(http.Handler) http.Handler {
 	}
 }
 
-// scimError writes a SCIM-format (RFC 7644 §3.12) error response.
+// scimError writes a SCIM-format (RFC 7644 §3.12) error response. Both current
+// callers pass a fixed string literal, but detail is encoded via encoding/json
+// (matching the sibling scimError in server/http/handlers/scim.go) rather than
+// spliced into a hand-built JSON string with %s -- a future caller passing
+// anything containing a `"` or control character would otherwise corrupt the
+// response's JSON structure (semgrep: no-fprintf-to-responsewriter, #G798).
 func scimError(w http.ResponseWriter, status int, detail string) {
 	w.Header().Set("Content-Type", "application/scim+json")
 	if status == http.StatusTooManyRequests {
 		w.Header().Set("Retry-After", "60")
 	}
 	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(w, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"%d","detail":"%s"}`, status, detail)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
+		"status":  strconv.Itoa(status),
+		"detail":  detail,
+	})
 }
