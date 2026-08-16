@@ -42,7 +42,6 @@ func TestLoadExpandsEnvVarFallsBackToDefaultWhenUnset(t *testing.T) {
 	), 0600))
 
 	t.Setenv("KEYORIX_DOMAIN", "") // ensure not set from the outer environment
-	os.Unsetenv("KEYORIX_DOMAIN")
 	cfg, err := Load(p)
 	require.NoError(t, err)
 	assert.Equal(t, "localhost", cfg.Server.HTTP.Domain)
@@ -73,7 +72,7 @@ func TestLoadLeavesUnresolvedEnvVarWithNoDefaultIntact(t *testing.T) {
 		"server:\n  http:\n    domain: \"${KEYORIX_REQUIRED_DOMAIN}\"\n",
 	), 0600))
 
-	os.Unsetenv("KEYORIX_REQUIRED_DOMAIN")
+	require.NoError(t, os.Unsetenv("KEYORIX_REQUIRED_DOMAIN"))
 	cfg, err := Load(p)
 	require.NoError(t, err)
 	assert.Equal(t, "${KEYORIX_REQUIRED_DOMAIN}", cfg.Server.HTTP.Domain)
