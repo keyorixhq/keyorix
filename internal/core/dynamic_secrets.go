@@ -741,12 +741,20 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 // deleted_at predicate. Shared by IssueLease and RenewLease (#369): a project's
 // soft-delete does not, on its own, revoke the role grants scoped to it, so
 // issuance/renewal need their own explicit liveness gate independent of RBAC.
+//
+// Uses GetEnvironmentInProject (not the bare GetEnvironment) so this also
+// refuses when environmentID exists but belongs to a DIFFERENT project than
+// projectID — both callers (IssueLease/RenewLease) already have both IDs
+// available (from the config/lease row), so there's no reason to accept a
+// mismatch here even though today's callers happen to pass coupled fields
+// from the same row; this closes the gap defensively rather than relying on
+// that coupling holding forever.
 func (c *KeyorixCore) requireLiveProjectAndEnvironment(ctx context.Context, projectID, environmentID uint) error {
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
 		return fmt.Errorf("cannot issue lease: project not found or deleted")
 	}
 	if environmentID != 0 {
-		if _, err := c.storage.GetEnvironment(ctx, environmentID); err != nil {
+		if _, err := c.GetEnvironmentInProject(ctx, projectID, environmentID); err != nil {
 			return fmt.Errorf("cannot issue lease: environment not found or deleted")
 		}
 	}

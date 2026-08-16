@@ -348,8 +348,44 @@ func (c *KeyorixCore) ListEnvironmentsByProjectIncludingDeleted(ctx context.Cont
 }
 
 // GetEnvironment returns a single environment by ID.
+//
+// storage.Storage's GetEnvironment/DeleteEnvironment take a bare, unscoped id
+// (unlike RestoreEnvironment, which is deliberately project-scoped) because
+// some legitimate callers don't yet know which project an id belongs to and
+// use this to find out (e.g. server/middleware.ScopeFromEnvParam resolving an
+// authorization scope from a URL id, or the read-only display-name cache in
+// permission_matrix.go). Callers that already believe an environment belongs
+// to a specific project — and would silently operate on the wrong tenant's
+// environment if that belief were wrong — must use GetEnvironmentInProject
+// below instead of calling this (or storage.GetEnvironment) directly.
 func (c *KeyorixCore) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
 	return c.storage.GetEnvironment(ctx, id)
+}
+
+// GetEnvironmentInProject returns an environment by id, but only if it
+// actually belongs to projectID — the project-scoped counterpart to the bare
+// GetEnvironment above, mirroring the scoping storage.Storage.RestoreEnvironment
+// already gets from its signature. Use this (not GetEnvironment) whenever a
+// caller already has a projectID in hand (from a nested URL path, a request
+// body field, an active CLI project context, etc.) and is about to look up or
+// act on an environment it BELIEVES belongs to that project — so a bare-id
+// mismatch (the environment actually belongs to a different project) is
+// refused instead of silently operating cross-tenant.
+//
+// Returns a generic "environment not found" error (not a distinct "wrong
+// project" error) on mismatch, matching storage.GetEnvironment's own
+// not-found error and RestoreEnvironment's WHERE-clause behavior, so a caller
+// without access to project B can't use this to probe whether a given
+// environment id exists there.
+func (c *KeyorixCore) GetEnvironmentInProject(ctx context.Context, projectID, id uint) (*models.Environment, error) {
+	env, err := c.storage.GetEnvironment(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if env.ProjectID != projectID {
+		return nil, fmt.Errorf("environment not found")
+	}
+	return env, nil
 }
 
 // CreateEnvironment creates a single environment under an existing project,
