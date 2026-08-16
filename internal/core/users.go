@@ -8,12 +8,55 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// emailRegex/usernameMinLen/usernameMaxLen/displayNameMinLen/displayNameMaxLen
+// mirror the exact format rules server/http/handlers' request-body `validate`
+// struct tags enforce for username/email/display_name (users_handler.go,
+// users_crud.go) — NOT internal/core/users_types.go's CreateUserRequest.validate
+// tags, which are unread dead documentation (no validator library in this
+// codebase resolves them) and, for Username, actually claim a stricter
+// `alphanum` rule the live HTTP path never enforces. Duplicated here rather
+// than imported from server/validation (which internal/core does not, and per
+// this repo's layering should not, depend on) so gRPC and CLI embedded-mode —
+// which construct a CreateUserRequest/UpdateUserRequest directly and never
+// route through the HTTP JSON decoder's validator — get the identical format
+// guarantee the HTTP path already has (G38).
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+const (
+	usernameMinLen    = 3
+	usernameMaxLen    = 50
+	displayNameMinLen = 1
+	displayNameMaxLen = 100
+)
+
+func validateUsernameFormat(username string) error {
+	if len(username) < usernameMinLen || len(username) > usernameMaxLen {
+		return fmt.Errorf("%s: username must be between %d and %d characters", i18n.T("ErrorValidation", nil), usernameMinLen, usernameMaxLen)
+	}
+	return nil
+}
+
+func validateEmailFormat(email string) error {
+	if !emailRegex.MatchString(email) {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
+	}
+	return nil
+}
+
+func validateDisplayNameFormat(displayName string) error {
+	if len(displayName) < displayNameMinLen || len(displayName) > displayNameMaxLen {
+		return fmt.Errorf("%s: display name must be between %d and %d characters", i18n.T("ErrorValidation", nil), displayNameMinLen, displayNameMaxLen)
+	}
+	return nil
+}
 
 // ProjectAssignment grants Role to the new user at a project's scope, applied
 // atomically with the user create (ADR-028).
@@ -587,8 +630,23 @@ func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	if req.Username == "" {
 		return fmt.Errorf("%s", i18n.T("LabelUsername", nil))
 	}
+	if err := validateUsernameFormat(req.Username); err != nil {
+		return err
+	}
 	if req.Email == "" {
 		return fmt.Errorf("%s", i18n.T("LabelEmail", nil))
+	}
+	if err := validateEmailFormat(req.Email); err != nil {
+		return err
+	}
+	// DisplayName is optional at this layer (buildUserForCreate defaults it to
+	// Username when blank) — only format-check it when the caller actually
+	// supplied one, matching the HTTP path's required-at-the-request-body-level
+	// semantics without re-imposing that requirement here.
+	if req.DisplayName != "" {
+		if err := validateDisplayNameFormat(req.DisplayName); err != nil {
+			return err
+		}
 	}
 	if req.Password == "" {
 		return fmt.Errorf("%s", i18n.T("LabelPassword", nil))
@@ -599,6 +657,28 @@ func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 func (c *KeyorixCore) validateUpdateUserRequest(req *UpdateUserRequest) error {
 	if req.ID == 0 {
 		return fmt.Errorf("user ID is required")
+	}
+	// Username/Email/DisplayName are partial-update fields (UpdateUser only
+	// applies a non-empty value; see the req.Username != "" / req.Email != "" /
+	// req.DisplayName != "" guards below in UpdateUser) — an empty string means
+	// "leave unchanged," not "clear the field," so only format-check a value
+	// the caller actually supplied (G38: gRPC/CLI-embedded previously skipped
+	// this check entirely, unlike the HTTP path's `omitempty,...` request-body
+	// validate tags).
+	if req.Username != "" {
+		if err := validateUsernameFormat(req.Username); err != nil {
+			return err
+		}
+	}
+	if req.Email != "" {
+		if err := validateEmailFormat(req.Email); err != nil {
+			return err
+		}
+	}
+	if req.DisplayName != "" {
+		if err := validateDisplayNameFormat(req.DisplayName); err != nil {
+			return err
+		}
 	}
 	return nil
 }
