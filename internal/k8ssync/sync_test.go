@@ -235,6 +235,70 @@ func TestReconcile_RevokedUpstreamDryRunReportsButDoesNotDelete(t *testing.T) {
 	assert.Empty(t, s.deleted, "dry-run must not delete anything")
 }
 
+// TestReconcile_RevokedSingleKeyKeepsUnrelatedKeysInSameSecret pins the G05 fix: a
+// target Secret backed by SEVERAL mappings (several distinct Keyorix refs, each its
+// own key) must not be deleted wholesale just because ONE of those refs comes back
+// ErrUpstreamGone (its lease independently revoked/rotated, or the secret deleted).
+// The other, still-valid keys must survive — the Secret is updated to drop only the
+// revoked key, never deleted outright, so unrelated workload-relied-upon keys in the
+// same Secret aren't collaterally destroyed by one key's definitive failure.
+func TestReconcile_RevokedSingleKeyKeepsUnrelatedKeysInSameSecret(t *testing.T) {
+	f := &fakeFetcher{
+		values:  map[string][]byte{"prod/api": []byte("k3y")},
+		revoked: map[string]bool{"prod/db": true},
+	}
+	s := newFakeSink()
+	s.existing["app/creds"] = map[string][]byte{
+		"DB_PASSWORD": []byte("stale-value"),
+		"API_KEY":     []byte("k3y"),
+	}
+	s.owned["app/creds"] = true
+	e := NewEngine(f, s)
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
+		{Ref: "prod/api", Namespace: "app", Name: "creds", Key: "API_KEY"},
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, s.deleted, "the whole Secret must not be deleted over one revoked key")
+	assert.Equal(t, 0, res.Revoked, "the target itself was not removed, only trimmed")
+
+	got, stillExists := s.existing["app/creds"]
+	require.True(t, stillExists, "the Secret must still exist")
+	assert.Equal(t, map[string][]byte{"API_KEY": []byte("k3y")}, got,
+		"the still-valid key must survive; only the revoked key is dropped")
+
+	require.Len(t, res.Errors, 1)
+	assert.Contains(t, res.Errors[0], "revoked")
+	assert.Contains(t, res.Errors[0], "prod/db")
+}
+
+// TestReconcile_RevokedAllKeysStillDeletesSecret confirms the existing single-mapping
+// behavior generalizes correctly: when EVERY mapping for a target is revoked/gone
+// (not just one of several), nothing valid remains and the Secret is still removed
+// entirely, exactly as before the G05 fix.
+func TestReconcile_RevokedAllKeysStillDeletesSecret(t *testing.T) {
+	f := &fakeFetcher{revoked: map[string]bool{"prod/db": true, "prod/api": true}}
+	s := newFakeSink()
+	s.existing["app/creds"] = map[string][]byte{
+		"DB_PASSWORD": []byte("stale-value"),
+		"API_KEY":     []byte("also-stale"),
+	}
+	s.owned["app/creds"] = true
+	e := NewEngine(f, s)
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
+		{Ref: "prod/api", Namespace: "app", Name: "creds", Key: "API_KEY"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Revoked)
+	assert.Contains(t, s.deleted, "app/creds")
+	_, stillExists := s.existing["app/creds"]
+	assert.False(t, stillExists)
+}
+
 func TestReconcile_DryRunReportsButDoesNotWrite(t *testing.T) {
 	f := &fakeFetcher{values: map[string][]byte{"prod/new": []byte("v"), "prod/chg": []byte("rotated")}}
 	s := newFakeSink()
