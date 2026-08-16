@@ -13,7 +13,6 @@ package encryption
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -238,46 +237,15 @@ func TestMigrateProviderCleanupWithConfig_S23_DryRunWithBackup(t *testing.T) {
 }
 
 // ── runValidateAuthEncryption: per-table error wrapping ─────────────────────
-
-// TestRunValidateAuthEncryption_S23_APIClientValidationError drives the
-// "API client validation failed" error-wrapping branch in
-// runValidateAuthEncryption by inserting a row with invalid ciphertext into a
-// full local DB so the validate shim reaches validateAPIClients and fails there.
-func TestRunValidateAuthEncryption_S23_APIClientValidationError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	// Insert a row with invalid ciphertext: validateAPIClients will try to
-	// DecryptClientSecret and fail, returning an error.
-	require.NoError(t, db.Create(&models.APIClient{
-		Name:                  "bad-client",
-		ClientID:              "bad-crypt-s23",
-		EncryptedClientSecret: []byte("not-valid-ciphertext"),
-		IsActive:              true,
-	}).Error)
-
-	// Call the helpers directly in the same order as runValidateAuthEncryption to
-	// confirm the error wrapping message surfaces.
-	_, err := validateAPIClients(db, ae, false)
-	require.Error(t, err)
-	assert.True(t,
-		strings.Contains(err.Error(), "bad-crypt-s23") || strings.Contains(err.Error(), "decrypt"),
-		"error should reference the client or decryption failure: %v", err)
-}
-
-// TestRunValidateAuthEncryption_S23_APITokenValidationError drives the
-// "API token validation failed" error-wrapping branch.
-func TestRunValidateAuthEncryption_S23_APITokenValidationError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	require.NoError(t, db.Create(&models.APIToken{
-		ClientID:       9,
-		EncryptedToken: []byte("garbage-ciphertext-s23"),
-	}).Error)
-
-	_, err := validateAPITokens(db, ae, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "token")
-}
+//
+// TestRunValidateAuthEncryption_S23_APIClientValidationError and
+// TestRunValidateAuthEncryption_S23_APITokenValidationError, which used to
+// live here, drove validateAPIClients/validateAPITokens's decrypt-error
+// branches. Both helpers have been removed entirely — api_clients.client_secret
+// and api_tokens.token hold a SHA-256 hash, never plaintext, so
+// runValidateAuthEncryption no longer inspects either table (see
+// auth_encryption_validate.go). password_resets below is the one remaining
+// table this per-table error-wrapping coverage applies to.
 
 // TestRunValidateAuthEncryption_S23_ResetTokenValidationError drives the
 // "password reset token validation failed" error-wrapping branch.

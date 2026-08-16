@@ -72,47 +72,11 @@ func getSharedS3Fixture(t *testing.T) (*encryption.AuthEncryption, *gorm.DB) {
 	return s3Fixture.authEnc, s3Fixture.db
 }
 
-// ── validateAPITokens ─────────────────────────────────────────────────────────
-
-func TestValidateAPITokens_EmptyDB(t *testing.T) {
-	ae, db := getSharedS3Fixture(t)
-	n, err := validateAPITokens(db, ae, false)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
-
-func TestValidateAPITokens_VerboseEmptyDB(t *testing.T) {
-	ae, db := getSharedS3Fixture(t)
-	n, err := validateAPITokens(db, ae, true)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
-
-func TestValidateAPITokens_UnmigratedRow(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	tok := &models.APIToken{ClientID: 1, Token: "plaintext-api-token"}
-	require.NoError(t, db.Create(tok).Error)
-
-	n, err := validateAPITokens(db, ae, false)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-}
-
-func TestValidateAPITokens_EncryptedRow_Verbose(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	enc, meta, err := ae.EncryptAPIToken("api-token-value", uint(0))
-	require.NoError(t, err)
-	tok := &models.APIToken{ClientID: 1, EncryptedToken: enc, TokenMetadata: meta}
-	require.NoError(t, db.Create(tok).Error)
-
-	n, err := validateAPITokens(db, ae, true)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
-
 // ── validatePasswordResetTokens ───────────────────────────────────────────────
+//
+// (validateAPITokens coverage, which used to live here, was removed —
+// api_tokens.token holds a SHA-256 hash, never plaintext, so validateAPITokens
+// was removed entirely. See auth_encryption_validate.go.)
 
 func TestValidatePasswordResetTokens_EmptyDB(t *testing.T) {
 	ae, db := getSharedS3Fixture(t)
@@ -152,26 +116,9 @@ func TestValidatePasswordResetTokens_EncryptedRow_Verbose(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
-// ── validateAPIClients: verbose path ─────────────────────────────────────────
-
-func TestValidateAPIClients_Verbose(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	enc, meta, err := ae.EncryptClientSecret("secret-value")
-	require.NoError(t, err)
-	client := &models.APIClient{
-		Name:                  "test",
-		ClientID:              "verbose-client",
-		EncryptedClientSecret: enc,
-		ClientSecretMetadata:  models.JSON(meta),
-		IsActive:              true,
-	}
-	require.NoError(t, db.Create(client).Error)
-
-	n, err := validateAPIClients(db, ae, true)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
+// (validateAPIClients coverage, which used to live here, was removed —
+// api_clients.client_secret holds a SHA-256 hash, never plaintext, so
+// validateAPIClients was removed entirely. See auth_encryption_validate.go.)
 
 // ── showAuthEncryptionStats: encryptionEnabled=false path ─────────────────────
 
@@ -188,13 +135,11 @@ func TestShowAuthEncryptionStats_EncryptionEnabled(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// ── migrateAPITokens dry-run=false ────────────────────────────────────────────
-
-func TestMigrateAPITokens_NonDryRun_Empty(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	err := migrateAPITokens(db, ae, false)
-	require.NoError(t, err)
-}
+// ── migratePasswordResetTokens dry-run=false ──────────────────────────────────
+//
+// (migrateAPITokens coverage, which used to live here, was removed —
+// api_tokens.token holds a SHA-256 hash, never plaintext, so migrateAPITokens
+// was removed entirely. See auth_encryption_migrate.go.)
 
 func TestMigratePasswordResetTokens_NonDryRun_Empty(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
@@ -202,18 +147,7 @@ func TestMigratePasswordResetTokens_NonDryRun_Empty(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// dry-run=true paths for tokens/resets (covers the "return nil" early branch)
-
-func TestMigrateAPITokens_DryRun(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	tok := &models.APIToken{ClientID: 1, Token: "api-tok"}
-	require.NoError(t, db.Create(tok).Error)
-	err := migrateAPITokens(db, ae, true)
-	require.NoError(t, err)
-	var got models.APIToken
-	require.NoError(t, db.First(&got, tok.ID).Error)
-	assert.Equal(t, "api-tok", got.Token)
-}
+// dry-run=true path for resets (covers the "return nil" early branch)
 
 func TestMigratePasswordResetTokens_DryRun(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
