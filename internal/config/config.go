@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1706,12 +1707,57 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file %q: %w", path, err)
 	}
 
+	data = expandEnvVars(data)
+
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
 	return &cfg, nil
+}
+
+// envVarPattern matches shell-style ${VAR} and ${VAR:-default} references — the
+// interpolation syntax documented (and used) in server/config/production.yaml for
+// server.http.domain/allowed_origins. This is intentionally narrow: it recognizes only
+// this one pattern and leaves any other "${" text (including a literal one that doesn't
+// match) untouched.
+var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`)
+
+// expandEnvVars resolves ${VAR} / ${VAR:-default} references in raw config bytes against
+// the process environment before YAML parsing. Go's os.ExpandEnv doesn't support the
+// `:-default` bash fallback form, so this is a small, scoped preprocessing step run only
+// from Load(), over the raw file bytes, before yaml.Unmarshal — not a general templating
+// engine.
+//
+// Semantics match bash's ${VAR:-default}: the default is used when VAR is unset OR set to
+// the empty string. A reference with no default whose variable is unset is left
+// UNRESOLVED (not silently replaced with ""), so a misconfigured/missing env var fails
+// loudly downstream (e.g. as an invalid domain or empty allowed_origins entry) instead of
+// silently shipping a blank value.
+//
+// Caveat: this is a plain text substitution done before YAML parsing, so a substituted
+// value containing a literal `"` or newline could change the surrounding YAML's
+// structure — the same caveat that applies to any envsubst-style preprocessor. Values
+// like hostnames (the only documented use here) don't hit this.
+func expandEnvVars(data []byte) []byte {
+	return envVarPattern.ReplaceAllFunc(data, func(match []byte) []byte {
+		sub := envVarPattern.FindSubmatch(match)
+		name := string(sub[1])
+		hasDefault := len(sub[2]) > 0
+		v, set := os.LookupEnv(name)
+		if set && v != "" {
+			return []byte(v)
+		}
+		if hasDefault {
+			return []byte(sub[3])
+		}
+		if set {
+			// Explicitly set to "" with no default — honor the explicit empty value.
+			return []byte(v)
+		}
+		return match
+	})
 }
 
 // LoadConfig loads configuration using the default path.

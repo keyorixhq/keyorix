@@ -1498,6 +1498,16 @@ func resolvePasswordPolicy(pp config.PasswordPolicyConfig) core.PasswordPolicy {
 // protocol_versions remains a separate, still-unwired tuning field (out of scope for
 // #333 — the TLS 1.2 floor stays fixed in code) — it still only warns, not fails, so an
 // operator isn't misled into thinking it took effect.
+//
+// For HTTP specifically, a cleartext listener commonly means "TLS is terminated by a
+// reverse proxy in front of this" (the topology production.yaml/web-enabled.yaml
+// document) — but server.http.trusted_proxies defaults to empty, which makes
+// middleware.ClientIP ignore X-Forwarded-For/X-Real-IP and use the raw TCP peer address
+// (the proxy's own IP, not the real client's) for every request. That silently breaks
+// per-client rate limiting and audit logging, with no error, so warn whenever both hold:
+// this is deliberately a warning, not a fail-closed check — an empty trusted_proxies is
+// also the correct, safe setting for a listener that has NO proxy in front of it, and
+// config alone can't tell the two cases apart.
 func checkTransportTLSPosture(cfg *config.Config) error {
 	require := cfg.Security.RequireTransportTLS
 	check := func(name string, inst config.ServerInstanceConfig) error {
@@ -1523,6 +1533,9 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 			return fmt.Errorf("%s listener has no TLS but security.require_transport_tls is set: refusing to serve credentials/secrets in cleartext (enable tls or front it with a TLS-terminating proxy and unset the requirement)", name)
 		}
 		log.Printf("WARNING: %s listener is serving CLEARTEXT (no TLS) — bearer tokens and secret values are unencrypted. Front it with a TLS-terminating proxy, enable tls, or set security.require_transport_tls to fail closed.", name)
+		if name == "HTTP" && len(inst.TrustedProxies) == 0 {
+			log.Printf("WARNING: HTTP listener has TLS disabled and server.http.trusted_proxies is empty. If a reverse proxy terminates TLS in front of this listener (as the cleartext warning above implies), X-Forwarded-For/X-Real-IP are being IGNORED and every client IP resolves to the proxy's address — silently breaking per-client rate limiting and audit logging. Set trusted_proxies to your proxy's address/CIDR, or ignore this if the listener truly has no proxy in front of it.")
+		}
 		return nil
 	}
 	if err := check("HTTP", cfg.Server.HTTP); err != nil {

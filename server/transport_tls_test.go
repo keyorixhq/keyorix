@@ -185,6 +185,63 @@ func TestCheckTransportTLSPosture_ProtocolVersionsStillWarns(t *testing.T) {
 	}
 }
 
+// A cleartext HTTP listener with no trusted_proxies configured must warn — that
+// combination silently breaks per-client IP derivation (rate limiting, audit logging)
+// for the documented "TLS terminated by a reverse proxy in front" topology, since
+// middleware.ClientIP falls back to the raw TCP peer (the proxy's own address) when
+// trusted_proxies is empty.
+func TestCheckTransportTLSPosture_WarnsOnEmptyTrustedProxiesWithCleartextHTTP(t *testing.T) {
+	c := cfgWith(true, false, false, false, false)
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	if err := checkTransportTLSPosture(c); err != nil {
+		t.Fatalf("cleartext HTTP without require must not fail: %v", err)
+	}
+	if !strings.Contains(buf.String(), "trusted_proxies") {
+		t.Errorf("expected a warning mentioning trusted_proxies, got log output: %q", buf.String())
+	}
+}
+
+// The same listener with trusted_proxies set must NOT emit that warning.
+func TestCheckTransportTLSPosture_NoTrustedProxiesWarningWhenSet(t *testing.T) {
+	c := cfgWith(true, false, false, false, false)
+	c.Server.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	if err := checkTransportTLSPosture(c); err != nil {
+		t.Fatalf("cleartext HTTP without require must not fail: %v", err)
+	}
+	if strings.Contains(buf.String(), "trusted_proxies") {
+		t.Errorf("did not expect a trusted_proxies warning once it's configured, got log output: %q", buf.String())
+	}
+}
+
+// A cleartext gRPC listener has no ClientIP middleware wired to it, so it must never
+// emit the trusted_proxies warning regardless of TrustedProxies being empty.
+func TestCheckTransportTLSPosture_NoTrustedProxiesWarningForGRPC(t *testing.T) {
+	c := cfgWith(false, false, true, false, false)
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	if err := checkTransportTLSPosture(c); err != nil {
+		t.Fatalf("cleartext gRPC without require must not fail: %v", err)
+	}
+	if strings.Contains(buf.String(), "trusted_proxies") {
+		t.Errorf("gRPC listener must not trigger the HTTP-only trusted_proxies warning, got log output: %q", buf.String())
+	}
+}
+
 // #172: AutoCert mode must not silently discard the hardened MinVersion/CipherSuites
 // — buildAutoCertTLSConfig (the AutoCert-mode config builder) must apply the same
 // hardening as the non-AutoCert path (createTLSConfig).
