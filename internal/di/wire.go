@@ -8,11 +8,16 @@ import (
 
 func InitializeApp() (string, error) {
 	fmt.Println("InitializeApp() called")
-	conf, err := config.Load("keyorix.yaml")
+	_, err := config.Load("keyorix.yaml")
 	if err != nil {
 		fmt.Println("Error loading config:", err)
 		return "", err
 	}
-	fmt.Println("Config successfully loaded:", conf)
+	// Do not log the loaded *config.Config value: it embeds live secrets
+	// (DB password, remote/SIEM/webhook API tokens, SMTP password, KMS/Shamir
+	// key material, etc. — see internal/config.Config) that would otherwise
+	// leak into stdout, which is commonly captured by container/systemd/CI log
+	// pipelines with far broader read access than the config file itself.
+	fmt.Println("Config successfully loaded")
 	return "✅ Keyorix app initialized. DB migrated.", nil
 }
