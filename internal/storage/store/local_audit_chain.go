@@ -75,12 +75,27 @@ const auditChainVerifyBatch = 1000
 // encoding, in ascending id order, before the upgrade takes live traffic) is
 // left to the integrating release process; this change intentionally does not
 // attempt that migration itself, per this change's own review discussion.
+//
+// #G799 (go/weak-sensitive-data-hashing, false positive): the query's dataflow
+// correctly traces AccountState's AccountPasswordResetRequired constant into
+// this function's Description field write, then flags SHA256 as "insecure for
+// password hashing" -- but that constant is an account-status ENUM VALUE
+// ("this account currently requires a password reset"), not a credential; no
+// real password/secret value ever reaches this function. SHA256 is also the
+// deliberately correct choice here regardless: this hash is a tamper-evidence
+// chain link (integrity, not credential storage/verification), where a fast,
+// deterministic, collision-resistant hash is exactly what's wanted -- a slow
+// password KDF (bcrypt/argon2/scrypt) on every audit-log write would be a
+// severe, pointless performance regression with no security benefit, since
+// the threat model here is "detect tampering," not "resist offline brute-
+// forcing a stored hash." See the `write` closure below.
 func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 	h := sha256.New()
 	var lenBuf [8]byte
 	write := func(s string) {
 		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(s)))
 		h.Write(lenBuf[:])
+		// codeql[go/weak-sensitive-data-hashing]
 		h.Write([]byte(s))
 	}
 	uptr := func(p *uint) string {
