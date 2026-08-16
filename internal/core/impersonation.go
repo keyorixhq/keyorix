@@ -25,9 +25,15 @@ import (
 const impersonationSessionTTL = 1 * time.Hour
 
 // EventImpersonationStart / EventImpersonationEnd are the discrete bracket events.
+// EventImpersonationStartFailed is the failure counterpart of
+// EventImpersonationStart, following this codebase's `<domain>.<action>_failed`
+// convention for auditing a refused/blocked attempt alongside its success event
+// (e.g. auth.login_failed alongside auth.login, secret.rotate_failed alongside
+// secret.rotated) — see writeImpersonationDeniedEvent.
 const (
-	EventImpersonationStart = "impersonation.start"
-	EventImpersonationEnd   = "impersonation.end"
+	EventImpersonationStart       = "impersonation.start"
+	EventImpersonationEnd         = "impersonation.end"
+	EventImpersonationStartFailed = "impersonation.start_failed"
 )
 
 // StartImpersonation issues an impersonation session for targetID initiated by
@@ -35,6 +41,8 @@ const (
 // token the caller should hand back to the admin's client) and the target user.
 func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID uint, ip string) (*models.Session, *models.User, error) {
 	if adminID == targetID {
+		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+			fmt.Sprintf("user %d attempted to impersonate themselves", adminID))
 		return nil, nil, fmt.Errorf("cannot impersonate yourself")
 	}
 	// A request authenticated with a least-privilege PAT (ADR-042) must not LAUNDER that
@@ -43,6 +51,8 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	// permissions — escaping the bound the PAT deliberately imposed. Refuse, mirroring
 	// IsGlobalAdmin's fail-closed convention for the PAT restriction.
 	if patRestrictionFromContext(ctx) != nil {
+		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+			fmt.Sprintf("user %d attempted to impersonate user %d using a restricted access token", adminID, targetID))
 		return nil, nil, fmt.Errorf("a restricted access token may not start impersonation")
 	}
 	// #G07: the check above only catches a RESTRICTED PAT — patRestrictionFromContext
@@ -52,20 +62,28 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	// admin action, not something an API credential should ever be able to trigger,
 	// restricted or not — sessionAuthFromContext distinguishes the two.
 	if !sessionAuthFromContext(ctx) {
+		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+			fmt.Sprintf("user %d attempted to impersonate user %d using a non-interactive credential", adminID, targetID))
 		return nil, nil, fmt.Errorf("impersonation requires an interactive session, not an API credential")
 	}
 	admin, err := c.storage.GetUser(ctx, adminID)
 	if err != nil {
+		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+			fmt.Sprintf("impersonation attempt refused: acting admin user %d not found", adminID))
 		return nil, nil, fmt.Errorf("admin not found")
 	}
 	target, err := c.storage.GetUser(ctx, targetID)
 	if err != nil {
+		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+			fmt.Sprintf("%s attempted to impersonate user %d, but the target was not found", admin.Username, targetID))
 		return nil, nil, fmt.Errorf("target user not found")
 	}
 	// Don't mint a session for a target who cannot log in: it would be dead on arrival
 	// (ValidateSessionToken rejects blocked/inactive accounts on every request) and would
 	// only produce a misleading impersonation.start audit event.
 	if !target.IsActive || AccountLoginBlocked(target.AccountState) {
+		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+			fmt.Sprintf("%s attempted to impersonate %s, but the target is suspended or inactive", admin.Username, target.Username))
 		return nil, nil, fmt.Errorf("cannot impersonate a suspended or inactive user")
 	}
 	// Admin-rank-ceiling check (#165): the impersonator must already hold authority
@@ -82,6 +100,8 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	// is ever delegated to a lower-privileged (sub-admin) role, or if the target is
 	// merely a project-scoped project_admin the older global-only check never saw.
 	if err := c.requireEqualOrGreaterAdminAuthority(ctx, adminID, targetID, "impersonate"); err != nil {
+		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
+			fmt.Sprintf("%s attempted to impersonate %s but was refused by the admin-rank ceiling: %v", admin.Username, target.Username, err))
 		return nil, nil, err
 	}
 	// The ceiling check above runs once here at start, but is NOT only a
@@ -213,6 +233,35 @@ func (c *KeyorixCore) writeImpersonationEvent(ctx context.Context, eventType str
 		Diff:           diff,
 		ImpersonatedBy: &ab,
 		ActingAs:       &ta,
+		Impersonation:  true,
+	}
+	c.emitAudit(ctx, event)
+}
+
+// writeImpersonationDeniedEvent records a REFUSED impersonation attempt
+// (Success=false) — the failure counterpart of writeImpersonationEvent,
+// following this codebase's dedicated `<domain>.<action>_failed` convention
+// for auditing failures alongside successes (auth.login_failed alongside
+// auth.login, secret.rotate_failed alongside secret.rotated). Without this,
+// StartImpersonation's error returns (self-impersonation, a restricted-PAT
+// or non-interactive caller, a suspended target, or — critically — the
+// admin-rank-ceiling denial from #165/#G05) are invisible to security
+// monitoring: a defender investigating suspicious activity would see only
+// successful impersonations, never a blocked privilege-escalation attempt.
+// targetID is still recorded even when the target account itself could not
+// be resolved, so a probe against a non-existent user ID is not lost either.
+func (c *KeyorixCore) writeImpersonationDeniedEvent(ctx context.Context, adminID uint, targetID *uint, ip, description string) {
+	f := false
+	ab := adminID
+	event := &models.AuditEvent{
+		EventType:      EventImpersonationStartFailed,
+		UserID:         &ab,
+		IPAddress:      ip,
+		Description:    description,
+		Success:        &f,
+		EventTime:      time.Now(),
+		ImpersonatedBy: &ab,
+		ActingAs:       targetID,
 		Impersonation:  true,
 	}
 	c.emitAudit(ctx, event)
