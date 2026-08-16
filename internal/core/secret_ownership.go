@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -17,6 +18,20 @@ import (
 
 // EventSecretOwnerTransferred is audited when a secret's ownership changes hands.
 const EventSecretOwnerTransferred = "secret.owner_transferred"
+
+// ownershipTransferDetail is the structured payload stored in a
+// secret.owner_transferred event's Diff field, carrying the from/to user IDs
+// out-of-band from the free-text Description. The Description also embeds the
+// secret's NAME (e.g. `transferred ownership of secret "NAME" from user X to
+// user Y`), and the name is attacker-controllable via rename — a secret named
+// something like `evil" from user 1 to user 999 fake` would let a regex over the
+// Description forge the reported from/to owners. GetSecretOwnershipHistory reads
+// FromUserID/ToUserID from this structured field instead, so the untrusted name
+// can never be mistaken for the security-relevant IDs.
+type ownershipTransferDetail struct {
+	FromUserID uint `json:"from_user_id"`
+	ToUserID   uint `json:"to_user_id"`
+}
 
 // TransferSecretOwnership sets secretID's owner to newOwnerID. The caller (transport)
 // must have enforced scoped secrets.write. Authorization here: the actor must be the
@@ -78,8 +93,10 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 
 	uid := actorID
 	sid := secretID
-	c.writeAuditEvent(ctx, EventSecretOwnerTransferred, &uid, &sid,
-		fmt.Sprintf("transferred ownership of secret %q from user %d to user %d", updated.Name, oldOwner, newOwnerID))
+	detail, _ := json.Marshal(ownershipTransferDetail{FromUserID: oldOwner, ToUserID: newOwnerID})
+	c.writeAuditEventDiff(ctx, EventSecretOwnerTransferred, &uid, &sid, nil, "",
+		fmt.Sprintf("transferred ownership of secret %q from user %d to user %d", updated.Name, oldOwner, newOwnerID),
+		string(detail))
 	return updated, nil
 }
 
