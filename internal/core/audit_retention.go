@@ -57,9 +57,22 @@ func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionC
 		if hold != nil {
 			return fmt.Errorf("refusing to purge: a deployment-wide legal hold is active")
 		}
-		n, err = tx.DeleteAuditLogsBefore(ctx, cutoff)
+		var anchor *storage.AuditChainAnchor
+		n, anchor, err = tx.DeleteAuditLogsBefore(ctx, cutoff)
 		if err != nil {
 			return fmt.Errorf("failed to purge audit logs: %w", err)
+		}
+		// The purge reached into the chained (post-ADR-029) region: without a
+		// signed re-anchor recording the new earliest surviving row, the hash
+		// chain can never verify again (its prev_hash now points at a deleted
+		// predecessor) — VerifyAuditChain would report the trail broken forever,
+		// indistinguishable from real tampering. Persist it in the SAME
+		// transaction as the delete so the two can never be observed apart (a
+		// crash between them would otherwise leave a purge with no re-anchor).
+		if anchor != nil {
+			if err := c.persistAuditRetentionAnchor(ctx, tx, anchor.RowID, anchor.PrevHash, anchor.EntryHash); err != nil {
+				return fmt.Errorf("failed to persist audit chain re-anchor: %w", err)
+			}
 		}
 		return nil
 	})
@@ -146,8 +159,17 @@ func (c *KeyorixCore) AuditRetentionCoverage(ctx context.Context) (*AuditRetenti
 // detection of tail-truncation / genesis re-seed that the bare re-walk cannot
 // catch. Backs GET /api/v1/audit/verify — see
 // docs/adr-029-audit-log-tamper-evidence.md.
+//
+// The raw walk is seeded from the current retention anchor (if any and
+// authenticated) rather than always requiring genesis, so a prior sanctioned
+// retention purge (PurgeAuditLogs) does not permanently break verification of
+// the surviving chain — see audit_retention_anchor.go.
 func (c *KeyorixCore) VerifyAuditChain(ctx context.Context) (*storage.AuditChainVerification, error) {
-	v, err := c.storage.VerifyAuditChain(ctx)
+	anchor, err := c.loadAuditRetentionAnchor(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load audit chain re-anchor: %w", err)
+	}
+	v, err := c.storage.VerifyAuditChain(ctx, anchor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}

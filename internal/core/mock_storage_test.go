@@ -1281,13 +1281,17 @@ func (m *MockStorage) AuditRetentionStats(ctx context.Context) (*storage.AuditRe
 	return args.Get(0).(*storage.AuditRetentionStats), args.Error(1)
 }
 
-func (m *MockStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+func (m *MockStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, *storage.AuditChainAnchor, error) {
 	args := m.Called(ctx, cutoff)
-	return args.Get(0).(int64), args.Error(1)
+	var anchor *storage.AuditChainAnchor
+	if args.Get(1) != nil {
+		anchor = args.Get(1).(*storage.AuditChainAnchor)
+	}
+	return args.Get(0).(int64), anchor, args.Error(2)
 }
 
-func (m *MockStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditChainVerification, error) {
-	args := m.Called(ctx)
+func (m *MockStorage) VerifyAuditChain(ctx context.Context, anchor *storage.AuditChainAnchor) (*storage.AuditChainVerification, error) {
+	args := m.Called(ctx, anchor)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

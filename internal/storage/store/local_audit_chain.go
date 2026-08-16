@@ -139,13 +139,23 @@ func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 // unchained prefix. From the first chained row, each row's prev_hash must equal
 // the running previous entry_hash (genesis for the first) and its entry_hash
 // must recompute from its stored fields. The first divergence stops the walk.
-func (ls *LocalStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditChainVerification, error) {
+//
+// anchor, when non-nil, is an ALREADY-AUTHENTICATED re-anchor point (see
+// storage.AuditChainAnchor) written by a retention purge that removed the
+// original earliest rows. This method trusts it literally — it does not, and
+// cannot, re-verify its signature (no signing key at this layer); the caller
+// must have done that. When the earliest surviving row's own prev_hash is
+// still genesis (the purge only removed the unchained legacy prefix, emptied
+// the table, or no purge ever ran), the anchor is superfluous and ignored —
+// the walk proceeds exactly as it always has.
+func (ls *LocalStorage) VerifyAuditChain(ctx context.Context, anchor *storage.AuditChainAnchor) (*storage.AuditChainVerification, error) {
 	result := &storage.AuditChainVerification{Valid: true}
 
 	prevHash := auditGenesisHash
 	started := false
 	var lastID uint
 	var headID uint
+	firstBatch := true
 
 	for {
 		var batch []*models.AuditEvent
@@ -158,6 +168,22 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditCha
 		}
 		if len(batch) == 0 {
 			break
+		}
+		if firstBatch {
+			firstBatch = false
+			if head := batch[0]; anchor != nil && head.PrevHash != auditGenesisHash {
+				if head.EntryHash == "" || head.ID != anchor.RowID ||
+					head.PrevHash != anchor.PrevHash || head.EntryHash != anchor.EntryHash {
+					brokenChain(result, head.ID,
+						"earliest surviving audit row does not match the last retention re-anchor (rows removed outside a sanctioned purge, or the re-anchor is stale)")
+					return result, nil
+				}
+				// The anchor authenticates head's prev_hash as a legitimate chain
+				// position established before its predecessors were purged — seed
+				// the walk from there instead of requiring genesis.
+				prevHash = anchor.PrevHash
+				started = true
+			}
 		}
 		newPrev, newHead, newStarted, broke := verifyBatchEvents(batch, prevHash, started, result)
 		if broke {

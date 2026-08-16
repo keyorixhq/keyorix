@@ -235,7 +235,7 @@ func TestAuditCheckpoint_DetectsTailTruncation(t *testing.T) {
 	// only the signed checkpoint catches the drop.
 	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id >= 4").Error)
 
-	raw, err := c.storage.VerifyAuditChain(ctx)
+	raw, err := c.storage.VerifyAuditChain(ctx, nil)
 	require.NoError(t, err)
 	assert.True(t, raw.Valid, "the bare chain walk cannot catch tail-truncation on its own")
 
@@ -448,7 +448,7 @@ func TestAuditCheckpoint_DetectsRollbackToOlderCheckpoint(t *testing.T) {
 
 	// Sanity: the latest-checkpoint comparison alone is now satisfied — the surviving
 	// checkpoint certifies 5 and exactly 5 self-consistent events remain.
-	raw, err := c.storage.VerifyAuditChain(ctx)
+	raw, err := c.storage.VerifyAuditChain(ctx, nil)
 	require.NoError(t, err)
 	assert.True(t, raw.Valid, "the bare walk passes")
 

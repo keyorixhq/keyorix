@@ -77,9 +77,10 @@ func TestDeleteAuditLogsBefore_DeletesOldRows(t *testing.T) {
 		}).Error)
 	}
 
-	n, err := ls.DeleteAuditLogsBefore(ctx, cutoff)
+	n, anchor, err := ls.DeleteAuditLogsBefore(ctx, cutoff)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), n, "three old events deleted")
+	assert.Nil(t, anchor, "raw-inserted events have empty hashes (legacy/unchained) — nothing to re-anchor")
 
 	stats, err := ls.AuditRetentionStats(ctx)
 	require.NoError(t, err)
@@ -91,9 +92,10 @@ func TestDeleteAuditLogsBefore_EmptyTable(t *testing.T) {
 	ls := newAuditRetentionTestStore(t)
 	ctx := context.Background()
 
-	n, err := ls.DeleteAuditLogsBefore(ctx, time.Now().UTC())
+	n, anchor, err := ls.DeleteAuditLogsBefore(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n)
+	assert.Nil(t, anchor)
 }
 
 // TestDeleteAuditLogsBefore_NoneBeforeCutoff returns 0 when all events are newer.
@@ -109,9 +111,10 @@ func TestDeleteAuditLogsBefore_NoneBeforeCutoff(t *testing.T) {
 		}).Error)
 	}
 
-	n, err := ls.DeleteAuditLogsBefore(ctx, now.AddDate(0, 0, -30))
+	n, anchor, err := ls.DeleteAuditLogsBefore(ctx, now.AddDate(0, 0, -30))
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n, "no events old enough to delete")
+	assert.Nil(t, anchor)
 
 	stats, err := ls.AuditRetentionStats(ctx)
 	require.NoError(t, err)

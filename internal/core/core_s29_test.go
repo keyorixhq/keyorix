@@ -514,7 +514,7 @@ func TestAuditRetentionCoverage_Success(t *testing.T) {
 
 func TestVerifyAuditChain_StorageError(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("VerifyAuditChain", mock.Anything).Return(nil, errors.New("db error"))
+	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
 	_, err := c.VerifyAuditChain(context.Background())
 	require.Error(t, err)
@@ -522,7 +522,7 @@ func TestVerifyAuditChain_StorageError(t *testing.T) {
 
 func TestVerifyAuditChain_Valid(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("VerifyAuditChain", mock.Anything).Return(&storage.AuditChainVerification{
+	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
 		Valid:         true,
 		ChainedEvents: 5,
 	}, nil)

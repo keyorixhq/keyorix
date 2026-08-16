@@ -174,8 +174,14 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 // duration of this call (see WriteAuditCheckpoint).
 func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.AuditCheckpoint, error) {
 	// Verify the raw chain (walk only, no checkpoint enforcement) so we never sign
-	// a head over a broken chain.
-	raw, err := c.storage.VerifyAuditChain(ctx)
+	// a head over a broken chain. Seeded from the current retention anchor (if
+	// any and authenticated) so a prior sanctioned purge doesn't permanently
+	// refuse checkpointing — see audit_retention_anchor.go.
+	anchor, err := c.loadAuditRetentionAnchor(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load audit chain re-anchor: %w", err)
+	}
+	raw, err := c.storage.VerifyAuditChain(ctx, anchor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -114,7 +115,7 @@ func TestPurgeAuditLogs_StorageErrorPropagated(t *testing.T) {
 	storageErr := errors.New("db offline")
 	// legalHoldGuard → IsLegalHoldActive → storage.GetActiveLegalHold: no active hold.
 	ms.On("GetActiveLegalHold", mock.Anything).Return((*models.LegalHold)(nil), nil)
-	ms.On("DeleteAuditLogsBefore", mock.Anything, mock.Anything).Return(int64(0), storageErr)
+	ms.On("DeleteAuditLogsBefore", mock.Anything, mock.Anything).Return(int64(0), (*storage.AuditChainAnchor)(nil), storageErr)
 	// LogAuditEvent is called for the system purge event — but only on success.
 	// On error the function returns early, so LogAuditEvent is never called.
 

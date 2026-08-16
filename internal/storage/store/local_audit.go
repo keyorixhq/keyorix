@@ -326,12 +326,53 @@ func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, project
 }
 
 // DeleteAuditLogsBefore hard-deletes all AuditEvent rows whose event_time is
-// before cutoff. It returns the number of rows deleted.
-func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+// before cutoff. It returns the number of rows deleted, plus a re-anchor
+// candidate (storage.AuditChainAnchor) when the delete reached into the
+// chained (post-ADR-029) hash-chain region rather than just the pre-ADR-029
+// unchained legacy prefix: the new earliest surviving row's own
+// id/prev_hash/entry_hash. That row's prev_hash still points at its
+// now-deleted predecessor — without authenticating and persisting this as a
+// retention anchor, VerifyAuditChain can never again walk past this row (see
+// the ADR-029 retention-purge finding this closes). The caller
+// (core.PurgeAuditLogs) is responsible for HMAC-signing and persisting it,
+// inside the same transaction as this delete, via SetSystemMetadata.
+//
+// candidate is nil when nothing was deleted, the table is now empty, or the
+// new earliest surviving row already legitimately starts at genesis (the
+// purge only removed the unchained legacy prefix) — nothing to re-anchor.
+func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, *storage.AuditChainAnchor, error) {
 	result := ls.db.WithContext(ctx).
 		Where("event_time < ?", cutoff).
 		Delete(&models.AuditEvent{})
-	return result.RowsAffected, result.Error
+	if result.Error != nil || result.RowsAffected == 0 {
+		return result.RowsAffected, nil, result.Error
+	}
+
+	var head struct {
+		ID        uint
+		PrevHash  string
+		EntryHash string
+	}
+	if err := ls.db.WithContext(ctx).
+		Model(&models.AuditEvent{}).
+		Select("id, prev_hash, entry_hash").
+		Order("id ASC").
+		Limit(1).
+		Scan(&head).Error; err != nil {
+		return result.RowsAffected, nil, err
+	}
+	if head.ID == 0 || head.PrevHash == "" || head.PrevHash == auditGenesisHash {
+		// Table now empty, or the surviving prefix already legitimately starts at
+		// genesis (the purge only removed pre-ADR-029 legacy/unchained rows, or
+		// the next append will restart the chain from genesis) — no re-anchor
+		// needed; VerifyAuditChain's normal genesis walk already handles this.
+		return result.RowsAffected, nil, nil
+	}
+	return result.RowsAffected, &storage.AuditChainAnchor{
+		RowID:     head.ID,
+		PrevHash:  head.PrevHash,
+		EntryHash: head.EntryHash,
+	}, nil
 }
 
 // AuditRetentionStats returns the total audit event count plus the oldest and

@@ -58,7 +58,7 @@ func TestAuditRetentionCoverage_YoungDeployment(t *testing.T) {
 func TestVerifyAuditChain_PassesThrough(t *testing.T) {
 	brokenID := uint(42)
 	store := new(MockStorage)
-	store.On("VerifyAuditChain", mock.Anything).Return(&storage.AuditChainVerification{
+	store.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
 		Valid: false, ChainedEvents: 41, FirstBrokenID: &brokenID, Reason: "event modified",
 	}, nil)
 
@@ -118,11 +118,16 @@ func TestAuditRetentionCoverage_FutureOldest(t *testing.T) {
 // enforceAuditHighWater).
 func TestVerifyAuditChain_CheckpointEnforceError(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("VerifyAuditChain", mock.Anything).Return(&storage.AuditChainVerification{
+	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
 		Valid: true, ChainedEvents: 5,
 	}, nil)
+	// The retention-anchor lookup (loadAuditRetentionAnchor) also reads
+	// GetSystemMetadata, ahead of the raw walk — give it a clean "no anchor" so
+	// this test still isolates the high-water read's failure inside
+	// enforceAuditHighWater, not an earlier one.
+	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
 	// GetSystemMetadata is called by auditHighWaterFloor inside enforceAuditHighWater.
-	ms.On("GetSystemMetadata", mock.Anything, mock.Anything).
+	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).
 		Return("", false, errors.New("metadata store unavailable"))
 
 	c := NewKeyorixCore(ms)

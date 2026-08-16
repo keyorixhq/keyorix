@@ -336,7 +336,8 @@ func TestGenerateProjectAccessReview_ZeroProjectID(t *testing.T) {
 
 func TestWriteAuditCheckpointLocked_VerifyFails(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("VerifyAuditChain", mock.Anything).Return(nil, errors.New("db error"))
+	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
+	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
 	_, _, err := c.WriteAuditCheckpoint(context.Background())
@@ -350,7 +351,8 @@ func TestWriteAuditCheckpointLocked_VerifyFails(t *testing.T) {
 
 func TestWriteAuditCheckpointLocked_InvalidChain(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("VerifyAuditChain", mock.Anything).Return(&storage.AuditChainVerification{
+	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
+	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
 		Valid:  false,
 		Reason: "chain broken at row 5",
 	}, nil)
@@ -373,7 +375,8 @@ func TestWriteAuditCheckpointLocked_InvalidChain(t *testing.T) {
 func TestWriteAuditCheckpointLocked_LookAlikeErrorNotSpoofed(t *testing.T) {
 	lookAlike := errors.New("driver: refusing to checkpoint transaction on connection 0x7f — connection reset by peer")
 	ms := new(MockStorage)
-	ms.On("VerifyAuditChain", mock.Anything).Return(nil, lookAlike)
+	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
+	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(nil, lookAlike)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
 	_, _, err := c.WriteAuditCheckpoint(context.Background())
@@ -384,7 +387,8 @@ func TestWriteAuditCheckpointLocked_LookAlikeErrorNotSpoofed(t *testing.T) {
 
 func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("VerifyAuditChain", mock.Anything).Return(&storage.AuditChainVerification{
+	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
+	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
 		Valid:         true,
 		ChainedEvents: 3,
 		HeadID:        1,

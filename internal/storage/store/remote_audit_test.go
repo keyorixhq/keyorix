@@ -246,7 +246,7 @@ func TestRemoteStorage_VerifyAuditChain_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.VerifyAuditChain(context.Background())
+	_, err = rs.VerifyAuditChain(context.Background(), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }
@@ -390,8 +390,9 @@ func TestRemoteStorage_DeleteAuditLogsBefore_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	n, err := rs.DeleteAuditLogsBefore(context.Background(), time.Now())
+	n, anchor, err := rs.DeleteAuditLogsBefore(context.Background(), time.Now())
 	assert.Error(t, err)
 	assert.Equal(t, int64(0), n)
+	assert.Nil(t, anchor)
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }
