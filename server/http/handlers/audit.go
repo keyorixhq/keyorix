@@ -397,6 +397,12 @@ func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) 
 		if v.AnchoredAt != nil {
 			resp["anchored_at"] = v.AnchoredAt.UTC()
 		}
+		// anchor_trust_root_configured is false when no TSA trust root (ca_cert_path) is
+		// configured — the token above was RECORDED (a real RFC 3161 receipt was
+		// obtained) but this server has never checked it against any root of trust. A
+		// caller must not treat a recorded-but-unverifiable anchor as proof-equivalent
+		// to one this server actually verified without checking this first.
+		resp["anchor_trust_root_configured"] = v.AnchorTrustRootConfigured
 	}
 	sendSuccess(w, resp, "")
 }
@@ -451,6 +457,10 @@ func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Reque
 		resp["anchored_at"] = cp.AnchoredAt.UTC()
 		resp["anchor_provider"] = cp.AnchorProvider
 		resp["anchor_token"] = base64.StdEncoding.EncodeToString(cp.AnchorToken)
+		// See VerifyAuditChain's anchor_trust_root_configured for what this means: a
+		// token was recorded either way, but without a trust root this server cannot
+		// (and never will, until one is configured) verify it locally.
+		resp["anchor_trust_root_configured"] = h.coreService.CheckpointAnchorVerifiable()
 	}
 	sendSuccess(w, resp, "audit checkpoint written")
 }

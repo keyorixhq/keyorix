@@ -58,7 +58,10 @@ func FuzzRFC3161Anchor(f *testing.F) {
 			_, _ = w.Write(body)
 		}))
 		defer srv.Close()
-		r := NewRFC3161(srv.URL, defaultTimeout)
+		r, err := NewRFC3161(srv.URL, defaultTimeout)
+		if err != nil {
+			t.Fatalf("unexpected NewRFC3161 error for loopback test server URL: %v", err)
+		}
 		// Must never panic.
 		_, _ = r.Anchor(context.Background(), []byte("fuzz anchor message"))
 	})

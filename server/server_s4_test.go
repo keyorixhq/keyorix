@@ -286,16 +286,26 @@ func TestInitializeCoreService_CheckpointNotary_NoURL(t *testing.T) {
 
 // ── initializeCoreService — audit checkpoint notary (url + no ca_cert) ───────
 
+// Enabling the notary without a trust root must NOT fail startup — this is a
+// legitimate, intentional configuration (see config.CheckpointNotaryConfig.
+// CACertPath's doc comment: anchoring still records tokens for later/off-box
+// verification even without a locally-configured trust root). But the resulting
+// core must report the anchor as not locally verifiable
+// (#baseline/notary-findings.json#1), so a caller/auditor reviewing checkpoint
+// records can tell a recorded-but-unverifiable anchor apart from a verified one.
 func TestInitializeCoreService_CheckpointNotary_WithURL_NoCA(t *testing.T) {
 	initI18n(t)
 	cfg := newMinimalCfg(t)
 	cfg.Audit.CheckpointNotary.Enabled = true
-	cfg.Audit.CheckpointNotary.URL = "http://tsa.example.com/ts"
+	cfg.Audit.CheckpointNotary.URL = "https://tsa.example.com/ts"
 	cfg.Audit.CheckpointNotary.CACertPath = ""
 
-	_, _, err := initializeCoreService(cfg)
+	svc, _, err := initializeCoreService(cfg)
 	if err != nil {
 		t.Fatalf("initializeCoreService with notary URL but no CA: %v", err)
+	}
+	if svc.CheckpointAnchorVerifiable() {
+		t.Error("expected CheckpointAnchorVerifiable() to be false with no ca_cert_path configured")
 	}
 }
 
@@ -305,7 +315,7 @@ func TestInitializeCoreService_CheckpointNotary_BadCACert(t *testing.T) {
 	initI18n(t)
 	cfg := newMinimalCfg(t)
 	cfg.Audit.CheckpointNotary.Enabled = true
-	cfg.Audit.CheckpointNotary.URL = "http://tsa.example.com/ts"
+	cfg.Audit.CheckpointNotary.URL = "https://tsa.example.com/ts"
 	cfg.Audit.CheckpointNotary.CACertPath = "/nonexistent/ca.pem"
 
 	// A bad CA path only logs a warning; it must NOT fail startup.
@@ -1748,9 +1758,16 @@ func TestInitializeCoreService_CheckpointNotary_ValidCA(t *testing.T) {
 		},
 	}
 
-	_, _, err := initializeCoreService(cfg)
+	svc, _, err := initializeCoreService(cfg)
 	if err != nil {
 		t.Fatalf("initializeCoreService with valid CA cert: %v", err)
+	}
+	// A configured, loaded trust root must make the anchor locally verifiable
+	// (#baseline/notary-findings.json#1) — contrast with
+	// TestInitializeCoreService_CheckpointNotary_WithURL_NoCA, which pins the
+	// false case.
+	if !svc.CheckpointAnchorVerifiable() {
+		t.Error("expected CheckpointAnchorVerifiable() to be true once a valid ca_cert_path is configured")
 	}
 }
 

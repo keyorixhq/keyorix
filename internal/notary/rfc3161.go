@@ -6,6 +6,7 @@ import (
 	"crypto"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -30,12 +31,18 @@ type RFC3161 struct {
 }
 
 // NewRFC3161 builds a TSA notary for the given query URL. A non-positive timeout
-// falls back to defaultTimeout.
-func NewRFC3161(url string, timeout time.Duration) *RFC3161 {
+// falls back to defaultTimeout. Returns an error if url is not an https URL (or
+// http to a loopback host, for local testing — see validateTSAURL) so a
+// misconfigured plaintext TSA is caught at startup, not on the first anchor
+// attempt.
+func NewRFC3161(url string, timeout time.Duration) (*RFC3161, error) {
+	if err := validateTSAURL(url); err != nil {
+		return nil, err
+	}
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	return &RFC3161{url: url, client: &http.Client{Timeout: timeout, CheckRedirect: refuseRedirect}}
+	return &RFC3161{url: url, client: &http.Client{Timeout: timeout, CheckRedirect: refuseRedirect}}, nil
 }
 
 // refuseRedirect stops the TSA client from following any redirect: without this,
@@ -49,22 +56,41 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 func (r *RFC3161) Provider() string { return "rfc3161:" + r.url }
 
 // validateTSAURL checks that the configured TSA URL is a well-formed absolute
-// http(s) URL. Deliberately does NOT reject private/loopback hosts: this is
-// operator-configured deployment config (see the RFC3161 doc comment above) that
-// may legitimately point at an internal/self-hosted TSA — this only rejects a
-// malformed or non-HTTP(S) destination reaching the outbound client.
+// URL using https. Plaintext http is accepted ONLY to a loopback host
+// (localhost/127.0.0.1/::1), for local development/testing — the same
+// exception this codebase uses for other operator-configured outbound URLs
+// (internal/storage/remote/config.go's validateBaseURL, server/main.go's
+// requireSecureOrLoopback). A non-loopback http:// TSA URL is rejected: the
+// TSA response itself is a signed token, but the request leg (the checkpoint
+// hash being timestamped, plus the response in transit) still needs transport
+// confidentiality/integrity — a network attacker on a plaintext path can see
+// every checkpoint being anchored and swap in a rogue TSA's response, and
+// nothing else in this codebase distinguishes "recorded" from "meaningfully
+// anchored" for the operator relying on this feature.
 func validateTSAURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("rfc3161: invalid url %q: %w", raw, err)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("rfc3161: url %q must use http or https", raw)
-	}
 	if u.Host == "" {
 		return fmt.Errorf("rfc3161: url %q is missing a host", raw)
 	}
+	if u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname())) {
+		return fmt.Errorf("rfc3161: url %q must use https (http is allowed only for a loopback host, for local testing)", raw)
+	}
 	return nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP — mirrors
+// the same helper this codebase uses elsewhere for outbound-URL TLS checks.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func (r *RFC3161) Anchor(ctx context.Context, message []byte) (_ *Receipt, err error) {

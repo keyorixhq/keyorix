@@ -57,13 +57,18 @@ func TestAuditHandler_CheckpointAndVerify_SurfaceRawAnchorToken(t *testing.T) {
 
 	var writeResp struct {
 		Data struct {
-			AnchorToken    string `json:"anchor_token"`
-			AnchorProvider string `json:"anchor_provider"`
+			AnchorToken               string `json:"anchor_token"`
+			AnchorProvider            string `json:"anchor_provider"`
+			AnchorTrustRootConfigured bool   `json:"anchor_trust_root_configured"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(wRec.Body.Bytes(), &writeResp))
 	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("opaque-tsa-token")), writeResp.Data.AnchorToken)
 	require.Equal(t, "fake", writeResp.Data.AnchorProvider)
+	// No trust root was configured (SetCheckpointAnchorRoots never called) — the
+	// response must say so explicitly, not just carry a raw token that LOOKS like
+	// verified proof (#baseline/notary-findings.json#1).
+	require.False(t, writeResp.Data.AnchorTrustRootConfigured)
 
 	// The verify endpoint — the surface an operator actually polls — must ALSO
 	// surface it (checkpoints are normally written by the background scheduler, so
@@ -75,11 +80,13 @@ func TestAuditHandler_CheckpointAndVerify_SurfaceRawAnchorToken(t *testing.T) {
 
 	var verifyResp struct {
 		Data struct {
-			AnchorToken    string `json:"anchor_token"`
-			AnchorProvider string `json:"anchor_provider"`
+			AnchorToken               string `json:"anchor_token"`
+			AnchorProvider            string `json:"anchor_provider"`
+			AnchorTrustRootConfigured bool   `json:"anchor_trust_root_configured"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(vRec.Body.Bytes(), &verifyResp))
 	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("opaque-tsa-token")), verifyResp.Data.AnchorToken)
 	require.Equal(t, "fake", verifyResp.Data.AnchorProvider)
+	require.False(t, verifyResp.Data.AnchorTrustRootConfigured)
 }

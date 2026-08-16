@@ -370,12 +370,31 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if cn.URL == "" {
 			log.Printf("Audit checkpoint notary enabled but no url set; skipping external anchoring")
 		} else {
-			coreService.SetCheckpointNotary(notary.NewRFC3161(cn.URL, cn.GetTimeout()))
+			// NewRFC3161 validates the URL is https (or http to a loopback host, for
+			// local testing) — fail closed at startup rather than silently accepting a
+			// plaintext TSA URL that would leak every anchored checkpoint hash (and any
+			// rogue-response substitution) to a network attacker on the path.
+			tsa, err := notary.NewRFC3161(cn.URL, cn.GetTimeout())
+			if err != nil {
+				return nil, nil, fmt.Errorf("audit.checkpoint_notary: %w", err)
+			}
+			coreService.SetCheckpointNotary(tsa)
 			// Load the TSA trust anchor used to VERIFY stored anchors. Without it,
-			// anchoring still records tokens but verification fails closed (an
-			// untrusted issuer must not be trusted).
+			// anchoring still records each checkpoint's raw RFC 3161 receipt — that
+			// token remains valid, portable proof an independent party holding the
+			// TSA's root cert can check out-of-box (#182) — but THIS server cannot
+			// re-verify it locally, and must not present a merely-recorded anchor as
+			// though it were one this server actually checked against a root of trust.
+			// Deliberately not fail-closed here (unlike the URL-scheme check above):
+			// anchoring-without-local-verification is a legitimate, intentional
+			// configuration (see CheckpointNotaryConfig.CACertPath's doc comment) —
+			// the trust root can be wired in later, or verification can be done
+			// entirely off-box. Instead, the unverifiable state is surfaced explicitly
+			// on every checkpoint-verification read (KeyorixCore.CheckpointAnchorVerifiable,
+			// AuditChainVerification.AnchorTrustRootConfigured) so a caller/auditor can
+			// always tell a recorded-but-unverifiable anchor apart from a verified one.
 			if cn.CACertPath == "" {
-				log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s) — WARNING: no ca_cert_path set, stored anchors cannot be verified", cn.URL)
+				log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s) — WARNING: no ca_cert_path set, stored anchors are recorded but CANNOT be locally verified (checkpoint reads will report them as unverified)", cn.URL)
 			} else if roots, err := loadCertPool(cn.CACertPath); err != nil {
 				log.Printf("Audit checkpoint notary: failed to load ca_cert_path %q (%v) — anchors cannot be verified", cn.CACertPath, err)
 			} else {

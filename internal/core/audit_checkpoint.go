@@ -100,6 +100,20 @@ func (c *KeyorixCore) SetCheckpointAnchorRoots(roots *x509.CertPool) {
 	c.checkpointAnchorRoots = roots
 }
 
+// CheckpointAnchorVerifiable reports whether a TSA trust root is configured
+// (SetCheckpointAnchorRoots) — i.e. whether this server is able to locally
+// re-verify an external-notary anchor, as opposed to merely having recorded
+// one. Anchoring (writing a checkpoint's RFC 3161 receipt) can be enabled
+// without a trust root configured (see CheckpointNotaryConfig.CACertPath's doc
+// comment) — that is a legitimate, intentional configuration, not a bug — but
+// callers reviewing checkpoint records must be able to tell the two states
+// apart rather than assuming every recorded AnchorToken was cryptographically
+// confirmed. See AuditChainVerification.AnchorTrustRootConfigured, which
+// surfaces this on every VerifyAuditChain read.
+func (c *KeyorixCore) CheckpointAnchorVerifiable() bool {
+	return c.checkpointAnchorRoots != nil
+}
+
 // anchorCheckpoint best-effort anchors a checkpoint's canonical bytes with the
 // configured notary and persists the receipt on the row. A notary/storage failure
 // is logged and swallowed: an unanchored checkpoint is still a valid checkpoint,
@@ -300,6 +314,11 @@ func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.Aud
 		v.AnchorToken = cp.AnchorToken
 		v.AnchoredAt = cp.AnchoredAt
 		v.AnchorProvider = cp.AnchorProvider
+		// Surface whether THIS server can even locally re-verify that token (a trust
+		// root is configured) — without this, a recorded-but-never-checked anchor is
+		// indistinguishable from a cryptographically confirmed one to anything reading
+		// this verdict (#baseline/notary-findings.json#1).
+		v.AnchorTrustRootConfigured = c.CheckpointAnchorVerifiable()
 	}
 
 	if !c.checkpointSignatureValid(cp) {

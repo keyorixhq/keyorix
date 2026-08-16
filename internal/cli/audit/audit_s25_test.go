@@ -56,6 +56,21 @@ func TestVerify_ValidWithAnchor(t *testing.T) {
 	require.NoError(t, verifyCmd.RunE(verifyCmd, nil))
 }
 
+// TestVerify_ValidWithVerifiedAnchor exercises the "anchor verified: yes" branch
+// (anchor_trust_root_configured=true) — the counterpart to
+// TestVerify_ValidWithAnchor, which pins the false/unverified case
+// (#baseline/notary-findings.json#1).
+func TestVerify_ValidWithVerifiedAnchor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"valid":true,"chained_events":10,"unchained_events":0,"head_hash":"deadbeef","head_id":10,"anchor_token":"dG9rZW4=","anchored_at":"2026-07-01T00:00:00Z","anchor_provider":"RFC3161/example-tsa","anchor_trust_root_configured":true}}`))
+	}))
+	defer srv.Close()
+	setRemote(t, srv.URL)
+
+	flagJSON = false
+	require.NoError(t, verifyCmd.RunE(verifyCmd, nil))
+}
+
 // TestVerify_ServerError exercises the c.Get error path in verifyCmd.
 func TestVerify_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
