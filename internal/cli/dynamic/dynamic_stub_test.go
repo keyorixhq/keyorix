@@ -3,6 +3,7 @@ package dynamic
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -246,4 +247,68 @@ func TestClassifyInvalidID(t *testing.T) {
 	err := classifyCmd.RunE(classifyCmd, []string{"not-a-number"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid config id")
+}
+
+// ── G70: lease-id must be path-escaped before interpolation ─────────────────
+//
+// Regression coverage for G70 member 2 (internal/cli/dynamic/dynamic.go:260):
+// renew/revoke used to interpolate the caller-supplied lease-id straight into
+// the request path, so a lease-id containing "/" could add extra path
+// segments and target a different resource than intended. We assert on
+// r.RequestURI (the exact bytes sent on the wire) because r.URL.Path decodes
+// "%2F" back to "/", which would hide the bug.
+
+// TestRenewAgainstMockServer_LeaseIDWithSlash proves that a lease-id
+// containing "/" is sent as a single, correctly-escaped path segment and
+// cannot redirect the request to a different resource.
+func TestRenewAgainstMockServer_LeaseIDWithSlash(t *testing.T) {
+	maliciousLeaseID := "abc/../../other-config/leases/xyz"
+
+	var gotRequestURI, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		gotMethod = r.Method
+		_, _ = w.Write([]byte(`{"data":{"lease_id":"abc","expires_at":"2026-07-01T12:00:00Z"}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	flagTTL = 3600
+
+	require.NoError(t, renewCmd.RunE(renewCmd, []string{maliciousLeaseID}))
+
+	assert.Equal(t, http.MethodPost, gotMethod)
+	wantEscaped := "/api/v1/dynamic-secrets/leases/" + url.PathEscape(maliciousLeaseID) + "/renew"
+	assert.Equal(t, wantEscaped, gotRequestURI,
+		"the raw request-target must contain the escaped lease-id as one segment, not literal '/'s")
+	// The literal "/" from the lease-id must never appear unescaped in the
+	// request line — it must show up as "%2F" so the server sees one segment.
+	assert.NotContains(t, gotRequestURI, "leases/abc/../..",
+		"unescaped slashes would let the lease-id smuggle extra path segments")
+}
+
+// TestRevokeAgainstMockServer_LeaseIDWithSlash mirrors the renew case for revoke.
+func TestRevokeAgainstMockServer_LeaseIDWithSlash(t *testing.T) {
+	maliciousLeaseID := "abc/../../revoke-all"
+
+	var gotRequestURI, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		gotMethod = r.Method
+		_, _ = w.Write([]byte(`{"data":{"lease_id":"abc","status":"revoked"}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+
+	require.NoError(t, revokeCmd.RunE(revokeCmd, []string{maliciousLeaseID}))
+
+	assert.Equal(t, http.MethodPost, gotMethod)
+	wantEscaped := "/api/v1/dynamic-secrets/leases/" + url.PathEscape(maliciousLeaseID) + "/revoke"
+	assert.Equal(t, wantEscaped, gotRequestURI,
+		"the raw request-target must contain the escaped lease-id as one segment, not literal '/'s")
+	assert.NotContains(t, gotRequestURI, "leases/abc/../..",
+		"unescaped slashes would let the lease-id smuggle extra path segments")
 }
