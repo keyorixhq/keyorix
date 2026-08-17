@@ -626,7 +626,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
 			// By-reference value read (ESO etc.): resolve project/environment/name → the
 			// secret's value. Scoped to the resolved secret; static path, before /{id}.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromRefQuery)).Get("/value", secretHandler.GetSecretValueByRef)
+			// RequireScopedSecretRefPermission resolves the ref exactly once and pins
+			// the result on the request context so GetSecretValueByRef reuses it
+			// instead of re-resolving by name (closes a TOCTOU window — see its doc).
+			r.With(customMiddleware.RequireScopedSecretRefPermission(permSecretsRead)).Get("/value", secretHandler.GetSecretValueByRef)
 			// By-name metadata lookup, scoped by project_id/environment_id query params
 			// (same gate/convention as ListSecrets above) — the server-side counterpart
 			// RemoteStorage.GetSecretByName (#497) needs; a caller with only a secret's

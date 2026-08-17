@@ -339,7 +339,14 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 // reads a secret's value resolved by a human-readable reference instead of a numeric
 // ID, for integrations (e.g. the External Secrets Operator) that template a key string.
 // It reuses the exact by-id read path: the route's scoped-permission gate
-// (ScopeFromRefQuery) authorizes the caller against the resolved secret's scope, and the
+// (middleware.RequireScopedSecretRefPermission) resolves the ref, authorizes the caller
+// against the resolved secret's scope, and pins the resolution on the request context —
+// this handler reuses THAT SAME resolution (middleware.GetResolvedSecretRefFromContext)
+// rather than resolving the ref again by name. core.ResolveSecretRef has no
+// snapshot/version guarantee (a soft-deleted project's name is free for reuse), so two
+// independent resolutions of one ref string could legitimately return secrets from two
+// different projects if a delete-and-recreate landed between them; resolving once in the
+// middleware and threading the result here closes that TOCTOU window structurally. The
 // value is read through the same max-reads / suspension / audit machinery as GetSecret.
 func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Request) {
 	userCtx, ok := mustGetUser(w, r)
@@ -347,23 +354,20 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	secret, err := h.coreService.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
-	if err != nil {
-		switch {
-		case errors.Is(err, core.ErrSecretRefInvalid):
-			h.sendError(w, "InvalidParameter", "ref must be \"project/environment/name\"", http.StatusBadRequest, nil)
-		case errors.Is(err, core.ErrSecretRefNotFound):
-			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		default:
-			h.sendError(w, "InternalError", "Failed to resolve secret", http.StatusInternalServerError, nil)
-		}
+	secret := middleware.GetResolvedSecretRefFromContext(r.Context())
+	if secret == nil {
+		// Defensive only: every route serving this handler goes through
+		// RequireScopedSecretRefPermission, which always sets this on success.
+		h.sendError(w, "InternalError", "Failed to resolve secret", http.StatusInternalServerError, nil)
 		return
 	}
 
 	// Machine principals are already authorized at the secret's scope by the route gate
-	// (ScopeFromRefQuery); the per-user owner/sharing check applies to users only.
+	// (RequireScopedSecretRefPermission); the per-user owner/sharing check applies to
+	// users only.
 	isMachine := userCtx.MachineIdentityID != nil
 	var value []byte
+	var err error
 	if isMachine {
 		value, err = h.coreService.GetSecretValue(r.Context(), secret.ID)
 	} else {

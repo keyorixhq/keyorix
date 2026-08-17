@@ -145,6 +145,11 @@ type contextKey string
 const (
 	userContextKey        contextKey = "user"
 	coreServiceContextKey contextKey = "coreService"
+	// resolvedSecretRefContextKey carries the *models.SecretNode resolved by
+	// RequireScopedSecretRefPermission through to the handler, so a by-ref
+	// value read reuses that ONE resolution instead of resolving the ref by
+	// name a second time. See WithResolvedSecretRef / GetResolvedSecretRefFromContext.
+	resolvedSecretRefContextKey contextKey = "resolvedSecretRef"
 
 	// TTL for valid token cache entries (session is trusted for this window).
 	validTokenTTL = 30 * time.Second
@@ -540,6 +545,70 @@ func handleScopedSecretPermissionRequest(next http.Handler, w http.ResponseWrite
 	finishScopedPermissionRequest(next, w, r, cs, scope, allowed, err)
 }
 
+// RequireScopedSecretRefPermission is RequireScopedPermission specialized for
+// the by-reference value read (GET .../secrets/value?ref=project/environment/name).
+//
+// core.ResolveSecretRef carries no snapshot/version guarantee: project name
+// uniqueness is enforced only while a project is not soft-deleted, so a
+// soft-deleted project's name is free for a brand-new project to reuse. If
+// this middleware resolved the ref to compute the authorization scope and the
+// handler independently resolved the SAME ref string again by name, a
+// delete-and-recreate landing between the two calls could legitimately
+// resolve them to secrets in two DIFFERENT projects — authorizing against one
+// project's scope and then reading a secret from another. This middleware
+// closes that window structurally: it resolves the ref EXACTLY ONCE, and pins
+// the resolved *models.SecretNode on the request context
+// (GetResolvedSecretRefFromContext) so the handler consumes that same
+// resolution rather than calling ResolveSecretRef again.
+func RequireScopedSecretRefPermission(permission string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleScopedSecretRefPermissionRequest(next, w, r, permission)
+		})
+	}
+}
+
+func handleScopedSecretRefPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, permission string) {
+	userCtx, cs, ok := requireUserAndCore(w, r)
+	if !ok {
+		return
+	}
+	secret, err := cs.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
+	if err != nil {
+		resolveErr := errTargetNotFound
+		if errors.Is(err, core.ErrSecretRefInvalid) {
+			resolveErr = errInvalidTarget
+		}
+		handleScopeResolutionError(w, r, cs, userCtx, permission, resolveErr)
+		return
+	}
+	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+	allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, scope)
+	// Pin the resolution on the request context BEFORE dispatch, regardless of
+	// the authorize outcome (finishScopedPermissionRequest still gates on
+	// allowed/err below) — this is the ONLY resolution of this ref for the
+	// entire request; the handler must reuse it rather than resolve again.
+	r = r.WithContext(WithResolvedSecretRef(r.Context(), secret))
+	finishScopedPermissionRequest(next, w, r, cs, scope, allowed, err)
+}
+
+// WithResolvedSecretRef stores a secret resolved by ref on ctx, for
+// RequireScopedSecretRefPermission to hand off to its downstream handler (and
+// for tests to simulate that hand-off without going through the middleware).
+func WithResolvedSecretRef(ctx context.Context, secret *models.SecretNode) context.Context {
+	return context.WithValue(ctx, resolvedSecretRefContextKey, secret)
+}
+
+// GetResolvedSecretRefFromContext retrieves the secret resolved by
+// RequireScopedSecretRefPermission from the request context. Returns nil if no
+// ref resolution ran (e.g. the route isn't wired through that middleware).
+func GetResolvedSecretRefFromContext(ctx context.Context) *models.SecretNode {
+	if secret, ok := ctx.Value(resolvedSecretRefContextKey).(*models.SecretNode); ok {
+		return secret
+	}
+	return nil
+}
+
 // requireUserAndCore fetches the authenticated user and core service from the
 // request context, writing the appropriate error response and returning
 // ok=false if either is missing. Shared by RequireScopedPermission and
@@ -737,22 +806,6 @@ func ScopeFromSecretParam(param string) ScopeResolver {
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
 	}
-}
-
-// ScopeFromRefQuery resolves scope from a "?ref=project/environment/name" query param,
-// for the by-reference value read. It locates the referenced secret (no value read, no
-// read-count side effect) and returns its project/environment scope, so the standard
-// scoped-permission gate authorizes the caller against the secret's real scope — a
-// caller scoped to another project is denied exactly as for the by-id route.
-func ScopeFromRefQuery(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
-	secret, err := cs.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
-	if err != nil {
-		if errors.Is(err, core.ErrSecretRefInvalid) {
-			return core.Scope{}, errInvalidTarget
-		}
-		return core.Scope{}, errTargetNotFound
-	}
-	return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
 }
 
 // ScopeFromDeletedSecretParam resolves the scope of a secret that may be
