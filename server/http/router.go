@@ -626,7 +626,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
 			// By-reference value read (ESO etc.): resolve project/environment/name → the
 			// secret's value. Scoped to the resolved secret; static path, before /{id}.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromRefQuery)).Get("/value", secretHandler.GetSecretValueByRef)
+			// RequireScopedSecretRefPermission resolves the ref exactly once and pins
+			// the result on the request context so GetSecretValueByRef reuses it
+			// instead of re-resolving by name (closes a TOCTOU window — see its doc).
+			r.With(customMiddleware.RequireScopedSecretRefPermission(permSecretsRead)).Get("/value", secretHandler.GetSecretValueByRef)
 			// By-name metadata lookup, scoped by project_id/environment_id query params
 			// (same gate/convention as ListSecrets above) — the server-side counterpart
 			// RemoteStorage.GetSecretByName (#497) needs; a caller with only a secret's
@@ -741,8 +744,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, folderScope)).Delete("/{id}", folderHandler.DeleteFolder)
 		})
 
-		// Rotation calendar — deployment-wide view of upcoming / overdue rotations.
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/rotation-calendar", rotationCalendarHandler.Get)
+		// Rotation calendar. Deployment-wide by default (requires global secrets.read),
+		// but — like the rotation-policies List/Evaluate/Status routes below — accepts
+		// an optional ?project_id=/&environment_id= scope filter via ScopeFromQuery, in
+		// which case only a project (or environment) scoped secrets.read grant is
+		// required and the response is confined to that scope. This lets a caller who
+		// isn't authorized deployment-wide get their own project's calendar instead of
+		// needing the broader global grant just to see one project's rotation schedule.
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/rotation-calendar", rotationCalendarHandler.Get)
 
 		// Rotation policies endpoints. List/evaluate take an optional scope
 		// filter; per-policy routes resolve scope from the policy; create

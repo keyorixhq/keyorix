@@ -1406,13 +1406,20 @@ func TestSecretHandler_GetSecretValueByRef_UnauthorizedS5(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestSecretHandler_GetSecretValueByRef_NotFoundS5(t *testing.T) {
+// TestSecretHandler_GetSecretValueByRef_NoResolvedSecretInContextS5 covers the
+// handler's defensive branch: ref resolution now happens exactly once, in
+// middleware.RequireScopedSecretRefPermission, which pins the resolved secret
+// on the request context before dispatch. A direct handler call that bypasses
+// the middleware never gets that context value, so the handler must 500
+// rather than fall back to re-resolving the ref itself (see
+// core-secret-ref-4 / server/middleware/auth_s24_test.go for the 400/404
+// coverage of the middleware's own resolution).
+func TestSecretHandler_GetSecretValueByRef_NoResolvedSecretInContextS5(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?ref=prod/myapp/db_password", nil))
 	w := httptest.NewRecorder()
 	h.GetSecretValueByRef(w, req)
-	// ref not found → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // ── access_request_proxy.go — additional paths not yet in s4 ─────────────────
@@ -4984,22 +4991,16 @@ func TestSecretHandler_GetSecretValueByRef_Unauthorized_S5(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestSecretHandler_GetSecretValueByRef_InvalidRef_S5(t *testing.T) {
+// TestSecretHandler_GetSecretValueByRef_NoResolvedSecretInContext_S5 is a
+// second instance of the defensive-branch coverage above (this file has
+// accreted a few near-duplicate GetSecretValueByRef tests across sprints);
+// kept distinct since it exercises a different malformed-ref string.
+func TestSecretHandler_GetSecretValueByRef_NoResolvedSecretInContext_S5(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?ref=invalid-ref-no-slashes", nil))
 	w := httptest.NewRecorder()
 	h.GetSecretValueByRef(w, req)
-	// Invalid ref format → 400
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSecretHandler_GetSecretValueByRef_NotFound_S5(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?ref=proj-x/env-x/secret-x", nil))
-	w := httptest.NewRecorder()
-	h.GetSecretValueByRef(w, req)
-	// Not found → 404 or error
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestSecretHandler_RestoreSecret_Unauthorized_S5(t *testing.T) {

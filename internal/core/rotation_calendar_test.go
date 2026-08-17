@@ -42,7 +42,7 @@ func TestGetRotationCalendar_InvalidRange(t *testing.T) {
 	ms := new(MockStorage)
 	c := calCore(ms)
 
-	_, err := c.GetRotationCalendar(context.Background(), calTo, calFrom)
+	_, err := c.GetRotationCalendar(context.Background(), calTo, calFrom, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "from must not be after to")
 }
@@ -54,7 +54,7 @@ func TestGetRotationCalendar_StorageError(t *testing.T) {
 		Return(nil, errors.New("db down"))
 
 	c := calCore(ms)
-	_, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	_, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "db down")
 }
@@ -66,7 +66,7 @@ func TestGetRotationCalendar_InactivePolicy(t *testing.T) {
 		Return([]*models.RotationPolicy{calPolicy(1, false, 30)}, nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }
@@ -80,7 +80,7 @@ func TestGetRotationCalendar_SecretListError(t *testing.T) {
 		Return(nil, int64(0), errors.New("secrets unavailable"))
 
 	c := calCore(ms)
-	_, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	_, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "secrets unavailable")
 }
@@ -101,7 +101,7 @@ func TestGetRotationCalendar_SecretInWindowUsesLastRotatedAt(t *testing.T) {
 		Return(secrets, int64(1), nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -131,7 +131,7 @@ func TestGetRotationCalendar_FallsBackToCreatedAt(t *testing.T) {
 		Return(secrets, int64(1), nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -155,7 +155,7 @@ func TestGetRotationCalendar_BeforeWindowFiltered(t *testing.T) {
 		Return(secrets, int64(1), nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }
@@ -175,7 +175,7 @@ func TestGetRotationCalendar_AfterWindowFiltered(t *testing.T) {
 		Return(secrets, int64(1), nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }
@@ -196,7 +196,7 @@ func TestGetRotationCalendar_OverdueSecret(t *testing.T) {
 		Return(secrets, int64(1), nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -224,7 +224,7 @@ func TestGetRotationCalendar_SortedByNextRotation(t *testing.T) {
 		Return(secrets, int64(3), nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
 
@@ -241,7 +241,7 @@ func TestGetRotationCalendar_NoPolicies(t *testing.T) {
 		Return([]*models.RotationPolicy{}, nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }
@@ -280,10 +280,80 @@ func TestGetRotationCalendar_MultiplePolicies(t *testing.T) {
 	})).Return(p2Secrets, int64(1), nil)
 
 	c := calCore(ms)
-	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	// sorted: p2-key next=07-29, p1-key next=08-09
 	require.Equal(t, uint(31), entries[0].SecretID)
 	require.Equal(t, uint(30), entries[1].SecretID)
+}
+
+// core-rotation-2026-08-08-003: GetRotationCalendar previously had no way to scope
+// down from the full deployment-wide aggregate, so any caller who cleared the
+// (broad, global-scope) secrets.read bar saw every project's secret names/rotation
+// detail. A non-nil projectID now confines the calendar to that project: it's
+// passed straight through to ListRotationPolicies (the storage layer's own project
+// filter), so a policy belonging to a different project is never even fetched —
+// mirroring GetRotationStatus/EvaluateRotationPolicies' existing scoping. Since the
+// mock only has an expectation for ListRotationPolicies(&projectA, nil), a
+// regression back to the unscoped ListRotationPolicies(nil, nil) call would panic
+// here on an unmatched call rather than silently leaking project B's data.
+func TestGetRotationCalendar_ScopedToProject(t *testing.T) {
+	ms := new(MockStorage)
+	projectA := uint(1)
+	polA := calPolicy(20, true, 30)
+	polA.ProjectID = &projectA
+
+	rA := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC) // next=2026-08-09
+	secretsA := []*models.SecretNode{
+		{ID: 40, Name: "project-a-key", ProjectID: projectA, EnvironmentID: 2, LastRotatedAt: &rA},
+	}
+
+	ms.On("ListRotationPolicies", mock.Anything, &projectA, (*uint)(nil)).
+		Return([]*models.RotationPolicy{polA}, nil)
+	ms.On("ListSecrets", mock.Anything, mock.MatchedBy(func(f *storage.SecretFilter) bool {
+		return f.ProjectID != nil && *f.ProjectID == projectA
+	})).Return(secretsA, int64(1), nil)
+
+	c := calCore(ms)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, &projectA, nil)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, uint(40), entries[0].SecretID)
+	require.Equal(t, "project-a-key", entries[0].SecretName)
+	require.Equal(t, projectA, entries[0].ProjectID)
+	ms.AssertExpectations(t)
+}
+
+// When the caller further restricts to a specific environment, a project-scoped
+// policy's secret enumeration is confined to that environment, and any
+// environment-scoped policy targeting a DIFFERENT environment is skipped
+// entirely (never even reaches scopedPolicySecrets) — mirrors
+// TestGetRotationStatus_ConfinedToEnvironment via the same
+// policyAppliesToEnv + scopedPolicySecrets(reqEnvID) machinery.
+func TestGetRotationCalendar_ScopedToEnvironment(t *testing.T) {
+	ms := new(MockStorage)
+	projectID := uint(1)
+	envID := uint(2)
+	otherEnv := uint(9)
+
+	projPolicy := calPolicy(21, true, 30)
+	projPolicy.ProjectID = &projectID
+	otherEnvPolicy := &models.RotationPolicy{ID: 22, Name: "env9", Scope: "environment", EnvironmentID: &otherEnv, IntervalDays: 30, IsActive: true}
+
+	r := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC) // next=2026-08-09
+	ms.On("ListRotationPolicies", mock.Anything, &projectID, (*uint)(nil)).
+		Return([]*models.RotationPolicy{projPolicy, otherEnvPolicy}, nil)
+	ms.On("ListSecrets", mock.Anything, mock.MatchedBy(func(f *storage.SecretFilter) bool {
+		return f.EnvironmentID != nil && *f.EnvironmentID == envID
+	})).Return([]*models.SecretNode{
+		{ID: 41, Name: "env2-key", ProjectID: projectID, EnvironmentID: envID, LastRotatedAt: &r},
+	}, int64(1), nil)
+
+	c := calCore(ms)
+	entries, err := c.GetRotationCalendar(context.Background(), calFrom, calTo, &projectID, &envID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "only the project policy's env-2 secret; the env-9 policy is skipped")
+	require.Equal(t, uint(41), entries[0].SecretID)
+	ms.AssertExpectations(t)
 }

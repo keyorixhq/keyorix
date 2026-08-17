@@ -535,6 +535,65 @@ func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
 	assert.Equal(t, fixed.Add(30*time.Minute), issued.ExpiresAt, "issue TTL must be clamped to max_ttl_seconds")
 }
 
+// A caller-supplied ttl_seconds large enough to overflow int64 nanoseconds when
+// multiplied by time.Second must be rejected outright, not silently wrapped into an
+// arbitrary (possibly negative) Duration that would mint a credential with an
+// ExpiresAt in the past. 20_000_000_000 seconds (~634 years) comfortably exceeds the
+// ~9.22e9s int64-nanosecond overflow threshold.
+func TestDynamicSecrets_IssueRejectsOverflowingTTLSeconds(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "overflow-guard", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		ActorID: testAdminActorID,
+	})
+	require.NoError(t, err)
+
+	_, err = c.IssueLease(ctx, cfg.ID, 20_000_000_000, 7)
+	require.Error(t, err, "an overflowing ttl_seconds must be rejected, not silently wrapped into a negative Duration")
+	assert.Contains(t, err.Error(), "exceeds the maximum")
+}
+
+// The same overflow guard applies to RenewLease's ttlSeconds parameter.
+func TestDynamicSecrets_RenewRejectsOverflowingTTLSeconds(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "renew-overflow-guard", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 600, ActorID: testAdminActorID,
+	})
+	require.NoError(t, err)
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	_, err = c.RenewLease(ctx, issued.LeaseID, 20_000_000_000, 7)
+	require.Error(t, err, "an overflowing renewal ttl_seconds must be rejected, not silently wrapped into a negative Duration")
+	assert.Contains(t, err.Error(), "exceeds the maximum")
+}
+
+// Setting an oversized default_ttl_seconds/max_ttl_seconds at config-create time must
+// also be rejected — both are multiplied by time.Second the same way a caller-supplied
+// override is (in dynamicTTL's clamp and RenewLease's per-lease hardCap), so they carry
+// the identical int64-nanosecond overflow risk.
+func TestDynamicSecrets_CreateRejectsOverflowingConfigTTLFields(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "bad-default", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 20_000_000_000, ActorID: testAdminActorID,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds the maximum")
+
+	_, err = c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "bad-max", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		MaxTTLSeconds: 20_000_000_000, ActorID: testAdminActorID,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds the maximum")
+}
+
 // #97: an install-wide ceiling must clamp a lease's TTL even when the config's own
 // MaxTTLSeconds is left unset (unbounded) — otherwise a caller-supplied override
 // (or, on a misconfigured install, the config default) could mint an arbitrarily

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -221,6 +222,65 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		_, err := c.TransitionMachineIdentity(ctx, 1, 21, MachineRevoked, 9)
 		require.NoError(t, err)
 		assert.Contains(t, evicted, "hash-cred-def", "revoke must evict the machine token from cache")
+		ms.AssertExpectations(t)
+	})
+
+	// CMI-3: TransitionMachineIdentity is the ONLY eviction path for gRPC-originated
+	// suspend/revoke (server/grpc/services/machine_identity_service.go has no
+	// independent fallback re-fetch/evict the way the HTTP handler does). A storage
+	// error fetching the token hashes must not vanish silently — it must be
+	// retried once and, if still failing, logged loudly so operators can see that
+	// tokens may remain live in the auth cache past the transition.
+	t.Run("suspend logs loudly and does not evict when hash lookup keeps failing", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := newMachineCore(ms)
+		ctx := context.Background()
+		ms.On("LockMachineIdentityForUpdate", ctx, uint(30)).Return(&models.MachineIdentity{ID: 30, ProjectID: 1, State: MachineActive}, nil)
+		ms.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+			return m.State == MachineSuspended
+		}), MachineActive).Return(true, nil)
+		ms.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+		ms.On("ListMachineIdentityCredentials", ctx, uint(30)).Return(nil, errors.New("db unavailable"))
+
+		var evicted []string
+		c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
+		var err error
+		logged := captureLog(t, func() {
+			_, err = c.TransitionMachineIdentity(ctx, 1, 30, MachineSuspended, 9)
+		})
+		require.NoError(t, err, "a cache-eviction failure must not fail the already-committed transition")
+		assert.Empty(t, evicted, "nothing to evict when the hash lookup failed")
+		assert.Contains(t, logged, "SECURITY", "the failure must be logged loudly, not swallowed")
+		assert.Contains(t, logged, "30", "the log must identify the affected machine identity")
+		// One initial attempt plus one retry — not swallowed on the first transient error.
+		ms.AssertNumberOfCalls(t, "ListMachineIdentityCredentials", 2)
+	})
+
+	t.Run("suspend recovers via the single retry after a transient hash-lookup error", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := newMachineCore(ms)
+		ctx := context.Background()
+		ms.On("LockMachineIdentityForUpdate", ctx, uint(31)).Return(&models.MachineIdentity{ID: 31, ProjectID: 1, State: MachineActive}, nil)
+		ms.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+			return m.State == MachineSuspended
+		}), MachineActive).Return(true, nil)
+		ms.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+		ms.On("ListMachineIdentityCredentials", ctx, uint(31)).Return(nil, errors.New("db unavailable")).Once()
+		ms.On("ListMachineIdentityCredentials", ctx, uint(31)).Return([]*models.MachineIdentityCredential{
+			{ID: 3, TokenHash: "hash-cred-ghi"},
+		}, nil).Once()
+
+		var evicted []string
+		c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
+		var err error
+		logged := captureLog(t, func() {
+			_, err = c.TransitionMachineIdentity(ctx, 1, 31, MachineSuspended, 9)
+		})
+		require.NoError(t, err)
+		assert.Contains(t, evicted, "hash-cred-ghi", "the retry must still evict once it succeeds")
+		assert.Empty(t, logged, "a transient error that the retry recovers from should not be logged")
 		ms.AssertExpectations(t)
 	})
 

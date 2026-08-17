@@ -544,32 +544,22 @@ func TestGetSecretValueByRef_Unauthorized_S7(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// TestGetSecretValueByRef_InvalidRef_S7 tests an invalid ref format.
-func TestGetSecretValueByRef_InvalidRef_S7(t *testing.T) {
-	h := newSecretHandlerS7(t)
-	req := withUserCtxS7(httptest.NewRequest(http.MethodGet, "/?ref=invalid", nil))
-	w := httptest.NewRecorder()
-	h.GetSecretValueByRef(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestGetSecretValueByRef_EmptyRef_S7 tests missing ref param.
-func TestGetSecretValueByRef_EmptyRef_S7(t *testing.T) {
-	h := newSecretHandlerS7(t)
-	req := withUserCtxS7(httptest.NewRequest(http.MethodGet, "/?ref=", nil))
-	w := httptest.NewRecorder()
-	h.GetSecretValueByRef(w, req)
-	// Empty ref is treated as invalid format → 400
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestGetSecretValueByRef_NotFound_S7 tests a well-formed ref with no match.
-func TestGetSecretValueByRef_NotFound_S7(t *testing.T) {
+// TestGetSecretValueByRef_NoResolvedSecretInContext_S7 covers the handler's
+// defensive branch. Ref resolution now happens exactly once, in
+// middleware.RequireScopedSecretRefPermission (see auth_s24_test.go in
+// server/middleware for the 400 invalid-format / 404 not-found coverage that
+// used to live here as three separate tests), which pins the resolved secret
+// on the request context before dispatch. A direct handler call that bypasses
+// the middleware — as every test in this file does — never gets that context
+// value, so the handler must 500 rather than fall back to re-resolving the
+// ref itself; that fallback is exactly the second resolution that made
+// ResolveSecretRef callable twice per request (core-secret-ref-4).
+func TestGetSecretValueByRef_NoResolvedSecretInContext_S7(t *testing.T) {
 	h := newSecretHandlerS7(t)
 	req := withUserCtxS7(httptest.NewRequest(http.MethodGet, "/?ref=noproj/noenv/nosecret", nil))
 	w := httptest.NewRecorder()
 	h.GetSecretValueByRef(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // ── machine_identities.go: CreateMachineIdentity ───────────────────────────

@@ -3,7 +3,15 @@
 // maps each control Keyorix enforces to its clause references across the regimes an
 // auditor cares about, and evaluates a live status (pass / gap / not-configured)
 // from the posture. It turns the scattered A.5.x tiles into one auditor-ready
-// framework map. Read-only; gated by system.read.
+// framework map. Read-only; gated by audit.read at every real entry point (HTTP
+// GET /api/v1/compliance/controls and /compliance/controls.csv, and the gRPC
+// ComplianceGRPCService.GetComplianceControls). Do not gate this — or any new
+// caller — on system.read: that permission is granted to every user via the
+// baseline system_viewer role, so it is equivalent to no gate at all for this
+// disclosure-sensitive control matrix. Gating on system.read was a real,
+// fixed vulnerability (CP-001/CP-008); see the regression test
+// TestComplianceService_SystemViewerDenied in
+// server/grpc/services/compliance_service_test.go.
 package core
 
 import (

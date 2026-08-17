@@ -94,6 +94,28 @@ func TestValidateAdminDSNHost_PrivateLiteralIPRejected(t *testing.T) {
 	}
 }
 
+// net.ParseIP doesn't accept RFC 4007 zone-ID syntax ("fe80::1%eth0"), so a
+// zone-qualified link-local literal must still be recognised (by stripping the zone
+// and retrying ParseIP) rather than falling through to net.LookupHost — which errors
+// on a zone-qualified address and would otherwise land in the "unresolvable, skip"
+// branch, silently bypassing the fe80::/10 blocklist entry.
+func TestValidateAdminDSNHost_ZoneQualifiedLinkLocalRejected(t *testing.T) {
+	cases := []struct {
+		desc string
+		dsn  string
+	}{
+		{"key-value zone-qualified link-local", "host=fe80::1%eth0 port=5432 user=admin dbname=app"},
+		{"mysql tcp zone-qualified link-local", "admin:pass@tcp(fe80::1%eth0:3306)/app"},
+	}
+	for _, tc := range cases {
+		err := validateAdminDSNHost(tc.dsn)
+		assert.Error(t, err, "should reject zone-qualified link-local (%s): %s", tc.desc, tc.dsn)
+		if err != nil {
+			assert.Contains(t, err.Error(), "private or link-local")
+		}
+	}
+}
+
 func TestValidateAdminDSNHost_PublicIPAllowed(t *testing.T) {
 	dsn := "postgres://admin:pass@203.0.113.5:5432/app" // TEST-NET, globally routable
 	require.NoError(t, validateAdminDSNHost(dsn))
