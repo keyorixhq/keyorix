@@ -226,6 +226,20 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if err := validateCreateDynamicSecretConfigRequest(req); err != nil {
 		return nil, err
 	}
+	// Verify the environment belongs to the stated project — same cross-reference
+	// check CreateSecret already applies (secrets.go), and for the same reason:
+	// without it, a project-admin on project A could bind a dynamic-secret config
+	// whose EnvironmentID points at project B's environment. Downstream reads/leases
+	// stay keyed off the config's own stored ProjectID (not the environment's), so
+	// this wasn't a cross-project value leak, but it's real reference confusion — a
+	// config an operator believes is scoped to (A, envX) is actually associated with
+	// an environment that belongs to a project the creator may have no visibility
+	// into at all.
+	if env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID); err != nil {
+		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+	} else if env.ProjectID != req.ProjectID {
+		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
+	}
 	if _, err := c.dynamicEngine(req.BackendType); err != nil {
 		return nil, err
 	}
