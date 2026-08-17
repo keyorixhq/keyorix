@@ -221,6 +221,53 @@ func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 
+// TestCompleteSAML_LockedAccountSkipsGroupRoleSync pins CORE-OIDC-04 for the SAML
+// path (mirrors TestCompleteSSO_LockedAccountSkipsGroupRoleSync for OIDC): a
+// currently brute-force-locked account must not have its native group
+// memberships / mapped role grants reconciled from the SAML assertion — and no
+// reconciliation audit written — when the login is about to be refused for that
+// lock anyway. Before the fix, group/role sync ran BEFORE the loginLocked check
+// in CompleteSAML too. The assertion here carries a group that WOULD be
+// added/mapped if reconciliation ran.
+func TestCompleteSAML_LockedAccountSkipsGroupRoleSync(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{
+		Subject: "corp|66", Email: "locked@x.io", Name: "Locked",
+		Groups: []string{"keyorix-admins"},
+	}}
+	c, store := samlTestCore(stub)
+	c.loginLockout = LoginLockoutPolicy{
+		Enabled: true, MaxAttempts: 5, Window: time.Hour,
+		BaseCooldown: time.Minute, MaxCooldown: time.Hour,
+	}
+	c.ssoProviders["corp"].GroupSync = true
+	c.ssoProviders["corp"].GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
+
+	lockedUntil := time.Now().Add(10 * time.Minute)
+	lockedUser := &models.User{
+		ID: 66, IsActive: true, AccountState: "active",
+		LoginLockedUntil: &lockedUntil, LoginLockoutCount: 1,
+	}
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-locked").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|66").Return(lockedUser, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil)
+	session, _, _, err := c.CompleteSAML(context.Background(), "corp", req, "relay-locked", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "temporarily locked")
+	assert.Nil(t, session)
+
+	store.AssertNotCalled(t, "ListGroups", mock.Anything)
+	store.AssertNotCalled(t, "GetUserGroups", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	assert.Equal(t, 1, lockedUser.LoginLockoutCount)
+	assert.NotNil(t, lockedUser.LoginLockedUntil)
+}
+
 // TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch is the #89
 // regression at the CompleteSAML (not just provisionSSOUser) level, for the
 // AutoProvision=true path specifically: CompleteSAML previously passed a
