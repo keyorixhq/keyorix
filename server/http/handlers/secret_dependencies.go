@@ -172,6 +172,15 @@ func (h *SecretHandler) GetProjectRotationOrder(w http.ResponseWriter, r *http.R
 		h.sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
 		return
 	}
+	// A scoped role binding survives project soft-delete (RequireScopedPermission
+	// authorizes on the binding, not on the project's current lifecycle state), so
+	// re-check the project is actually live before returning its rotation data —
+	// mirrors the identical fix in the gRPC twin (ProjectGRPCService.
+	// GetProjectRotationOrder).
+	if _, err := h.coreService.GetProject(r.Context(), uint(id)); err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
 	order, err := h.coreService.GetProjectRotationOrder(r.Context(), uint(id))
 	if err != nil {
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
@@ -191,6 +200,13 @@ func (h *SecretHandler) GetProjectRotationPlan(w http.ResponseWriter, r *http.Re
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		h.sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	// See GetProjectRotationOrder above: a scoped role binding survives project
+	// soft-delete, so re-check liveness before returning rotation data — mirrors
+	// the gRPC twin's identical fix.
+	if _, err := h.coreService.GetProject(r.Context(), uint(id)); err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return
 	}
 	plan, err := h.coreService.GenerateRotationPlan(r.Context(), uint(id))
