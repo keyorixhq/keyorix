@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -383,4 +385,123 @@ func TestHTTPJWKSResolver_RejectsOversizedRSAKey(t *testing.T) {
 
 	_, err = r.Key(context.Background(), "https://iss", "huge")
 	require.ErrorContains(t, err, "no usable signing keys")
+}
+
+// TestParseJWK_RejectsOversizedRSAExponent pins CORE-OIDC-05: an RSA modulus
+// within [minRSABits,maxRSABits] paired with a needlessly huge public exponent
+// (up to the ~63-bit int64 ceiling the old code allowed) makes every cached
+// verification against that key several times more expensive than a normal
+// e=65537 key — the same sustained-DoS shape maxRSABits guards against, via
+// the other operand of the modexp.
+func TestParseJWK_RejectsOversizedRSAExponent(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	// e is a large-but-valid int64 (well above maxRSAPublicExponent, far below
+	// the int64 ceiling the old code capped at).
+	hugeE := new(big.Int).Lsh(big.NewInt(1), 62)
+	k := jwk{
+		Kty: "RSA",
+		Kid: "huge-exponent",
+		N:   base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+		E:   base64.RawURLEncoding.EncodeToString(hugeE.Bytes()),
+	}
+	got, err := parseJWK(k)
+	require.Error(t, err, "an oversized RSA exponent must be rejected")
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "exceeds allowed maximum")
+
+	// A real, common exponent on the same modulus still parses fine.
+	ok := jwk{Kty: "RSA", Kid: "ok",
+		N: base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes())}
+	parsed, err := parseJWK(ok)
+	require.NoError(t, err)
+	require.IsType(t, &rsa.PublicKey{}, parsed)
+}
+
+// TestHTTPJWKSResolver_RejectsOversizedRSAExponentInJWKS confirms the exponent
+// guard is wired through the full fetch path, mirroring
+// TestHTTPJWKSResolver_RejectsOversizedRSAKeyInJWKS for the modulus check.
+func TestHTTPJWKSResolver_RejectsOversizedRSAExponentInJWKS(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	hugeE := new(big.Int).Lsh(big.NewInt(1), 62)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"keys": []map[string]string{{
+				"kty": "RSA", "kid": "huge-exponent", "use": "sig",
+				"n": base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(hugeE.Bytes()),
+			}},
+		})
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	_, err = r.Key(context.Background(), "https://iss", "huge-exponent")
+	require.ErrorContains(t, err, "no usable signing keys")
+}
+
+// TestParseJWK_RejectsOffCurveECPoint pins CORE-OIDC-05's EC half: parseJWK
+// must independently verify a decoded (X,Y) actually lies on the claimed
+// curve, rather than handing an unchecked point straight to ecdsa.PublicKey
+// and relying solely on whatever validation the underlying crypto/ecdsa
+// verification path happens to do internally.
+func TestParseJWK_RejectsOffCurveECPoint(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// Perturb Y so (X,Y) no longer satisfies the P-256 curve equation, while
+	// keeping both coordinates comfortably within the field size.
+	offY := new(big.Int).Add(priv.Y, big.NewInt(2))
+
+	k := jwk{
+		Kty: "EC",
+		Kid: "off-curve",
+		Crv: "P-256",
+		X:   base64.RawURLEncoding.EncodeToString(priv.X.Bytes()),
+		Y:   base64.RawURLEncoding.EncodeToString(offY.Bytes()),
+	}
+	got, err := parseJWK(k)
+	require.Error(t, err, "an off-curve EC point must be rejected")
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "not on curve")
+
+	// The genuine, on-curve point still parses fine.
+	ok := jwk{Kty: "EC", Kid: "ok", Crv: "P-256",
+		X: base64.RawURLEncoding.EncodeToString(priv.X.Bytes()),
+		Y: base64.RawURLEncoding.EncodeToString(priv.Y.Bytes())}
+	parsed, err := parseJWK(ok)
+	require.NoError(t, err)
+	ecKey, isEC := parsed.(*ecdsa.PublicKey)
+	require.True(t, isEC)
+	assert.True(t, priv.PublicKey.Equal(ecKey))
+}
+
+// TestParseJWK_RejectsOversizedECCoordinate pins CORE-OIDC-05: a coordinate
+// whose bit length exceeds the claimed curve's field size must be rejected by
+// parseJWK's own check, independent of (in addition to) whatever bound the
+// underlying crypto/ecdsa/nistec implementation happens to enforce.
+func TestParseJWK_RejectsOversizedECCoordinate(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// P-256's field size is 256 bits; build an X well beyond that.
+	oversizedX := new(big.Int).Lsh(big.NewInt(1), 512)
+	oversizedX.Or(oversizedX, priv.X)
+
+	k := jwk{
+		Kty: "EC",
+		Kid: "oversized-coord",
+		Crv: "P-256",
+		X:   base64.RawURLEncoding.EncodeToString(oversizedX.Bytes()),
+		Y:   base64.RawURLEncoding.EncodeToString(priv.Y.Bytes()),
+	}
+	got, err := parseJWK(k)
+	require.Error(t, err, "an oversized EC coordinate must be rejected")
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "exceeds curve")
 }

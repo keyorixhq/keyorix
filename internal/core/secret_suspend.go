@@ -63,9 +63,10 @@ const projectSuspendPageSize = 500
 
 // SuspendProjectSecrets freezes value reads of every active secret in a project (a
 // breach-response "freeze the project" action) and returns how many it suspended.
-// Already-suspended secrets are left untouched; a per-secret failure is skipped so one
-// bad secret doesn't abort the freeze. The caller must have enforced scoped
-// secrets.write on the project.
+// Already-suspended secrets are left untouched; a per-secret failure (including a
+// per-secret authorization denial — see the EnforceSecretWritePermission re-check
+// below) is skipped so one bad secret doesn't abort the freeze. The caller must have
+// enforced scoped secrets.write on the project.
 func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, actorID uint, reason string) (int, error) {
 	if projectID == 0 || actorID == 0 {
 		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required")
@@ -77,6 +78,14 @@ func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, acto
 	n := 0
 	for _, s := range secrets {
 		if s.Status == SecretStatusSuspended {
+			continue
+		}
+		// Re-check per-secret write authorization (owner/share). The project-wide
+		// secrets.write route gate is not sufficient on its own — the single-secret PUT
+		// path enforces this too, so a caller who can't update a secret individually must
+		// not be able to via the bulk op (mirrors ExtendExpiringSecrets). Skip (don't
+		// abort) on denial.
+		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
 			continue
 		}
 		if _, err := c.SuspendSecret(ctx, s.ID, actorID, reason); err == nil {
@@ -99,6 +108,11 @@ func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actor
 	n := 0
 	for _, s := range secrets {
 		if s.Status != SecretStatusSuspended {
+			continue
+		}
+		// Re-check per-secret write authorization — see the matching check in
+		// SuspendProjectSecrets above.
+		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
 			continue
 		}
 		if _, err := c.ResumeSecret(ctx, s.ID, actorID); err == nil {
