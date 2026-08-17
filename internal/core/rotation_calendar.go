@@ -32,12 +32,23 @@ type RotationCalendarEntry struct {
 // NextRotationAt is computed as LastRotatedAt + IntervalDays, falling back to
 // CreatedAt + IntervalDays for secrets that have never been rotated.
 // from must not be after to.
-func (c *KeyorixCore) GetRotationCalendar(ctx context.Context, from, to time.Time) ([]RotationCalendarEntry, error) {
+//
+// projectID/environmentID are an optional scoping filter, mirroring
+// GetRotationStatus/EvaluateRotationPolicies: nil/nil returns the deployment-wide
+// calendar (every project, every tenant) as before; a non-nil projectID confines
+// the result to that project's policies (via ListRotationPolicies) and — via
+// policyAppliesToEnv + scopedPolicySecrets — a non-nil environmentID further
+// confines it to that environment, so a caller authorized only at project (or
+// environment) scope can request just their own slice instead of the full
+// deployment-wide detail. The HTTP route requires global secrets.read when no
+// filter is supplied and project/environment-scoped secrets.read when one is,
+// via RequireScopedPermission(ScopeFromQuery).
+func (c *KeyorixCore) GetRotationCalendar(ctx context.Context, from, to time.Time, projectID, environmentID *uint) ([]RotationCalendarEntry, error) {
 	if from.After(to) {
 		return nil, fmt.Errorf("from must not be after to")
 	}
 
-	policies, err := c.storage.ListRotationPolicies(ctx, nil, nil)
+	policies, err := c.storage.ListRotationPolicies(ctx, projectID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("rotation calendar: list policies: %w", err)
 	}
@@ -46,10 +57,10 @@ func (c *KeyorixCore) GetRotationCalendar(ctx context.Context, from, to time.Tim
 	var entries []RotationCalendarEntry
 
 	for _, policy := range policies {
-		if !policy.IsActive {
+		if !policy.IsActive || !policyAppliesToEnv(policy, environmentID) {
 			continue
 		}
-		secrets, err := c.scopedPolicySecrets(ctx, policy, nil)
+		secrets, err := c.scopedPolicySecrets(ctx, policy, environmentID)
 		if err != nil {
 			return nil, fmt.Errorf("rotation calendar: policy %d secrets: %w", policy.ID, err)
 		}

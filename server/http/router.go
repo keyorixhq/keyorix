@@ -741,8 +741,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, folderScope)).Delete("/{id}", folderHandler.DeleteFolder)
 		})
 
-		// Rotation calendar — deployment-wide view of upcoming / overdue rotations.
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/rotation-calendar", rotationCalendarHandler.Get)
+		// Rotation calendar. Deployment-wide by default (requires global secrets.read),
+		// but — like the rotation-policies List/Evaluate/Status routes below — accepts
+		// an optional ?project_id=/&environment_id= scope filter via ScopeFromQuery, in
+		// which case only a project (or environment) scoped secrets.read grant is
+		// required and the response is confined to that scope. This lets a caller who
+		// isn't authorized deployment-wide get their own project's calendar instead of
+		// needing the broader global grant just to see one project's rotation schedule.
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/rotation-calendar", rotationCalendarHandler.Get)
 
 		// Rotation policies endpoints. List/evaluate take an optional scope
 		// filter; per-policy routes resolve scope from the policy; create

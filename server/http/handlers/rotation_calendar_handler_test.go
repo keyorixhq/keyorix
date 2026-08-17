@@ -186,6 +186,67 @@ func TestRotationCalendarHandler_WithEntries(t *testing.T) {
 	assert.NotEmpty(t, entry["next_rotation_at"])
 }
 
+// core-rotation-2026-08-08-003: an optional project_id query param confines the
+// calendar to that project — a caller scoped to project A's secrets.read (see
+// router.go's RequireScopedPermission(permSecretsRead, ScopeFromQuery) gate on
+// this route) gets project A's rotation detail without needing the broader
+// global grant, and never sees project B's secret in the response.
+func TestRotationCalendarHandler_ScopedToProject(t *testing.T) {
+	svc, db := freshCalendarDB(t)
+
+	projA := &models.Project{Name: "project-a"}
+	require.NoError(t, db.Create(projA).Error)
+	envA := &models.Environment{Name: "prod", ProjectID: projA.ID}
+	require.NoError(t, db.Create(envA).Error)
+	polA := &models.RotationPolicy{Name: "30-day-a", Scope: "project", ProjectID: &projA.ID, IntervalDays: 30, IsActive: true}
+	require.NoError(t, db.Create(polA).Error)
+
+	projB := &models.Project{Name: "project-b"}
+	require.NoError(t, db.Create(projB).Error)
+	envB := &models.Environment{Name: "prod", ProjectID: projB.ID}
+	require.NoError(t, db.Create(envB).Error)
+	polB := &models.RotationPolicy{Name: "30-day-b", Scope: "project", ProjectID: &projB.ID, IntervalDays: 30, IsActive: true}
+	require.NoError(t, db.Create(polB).Error)
+
+	lastRotated := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	secretA := &models.SecretNode{Name: "a-key", ProjectID: projA.ID, EnvironmentID: envA.ID, LastRotatedAt: &lastRotated}
+	require.NoError(t, db.Create(secretA).Error)
+	secretB := &models.SecretNode{Name: "b-key", ProjectID: projB.ID, EnvironmentID: envB.ID, LastRotatedAt: &lastRotated}
+	require.NoError(t, db.Create(secretB).Error)
+
+	r := chi.NewRouter()
+	h := NewRotationCalendarHandler(svc)
+	r.Get("/rotation-calendar", h.Get)
+
+	url := fmt.Sprintf("/rotation-calendar?from=2026-07-01&to=2026-08-31&project_id=%d", projA.ID)
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	data := body["data"].([]interface{})
+	require.Len(t, data, 1, "only project A's secret, never project B's")
+	entry := data[0].(map[string]interface{})
+	assert.Equal(t, "a-key", entry["secret_name"])
+	assert.Equal(t, float64(projA.ID), entry["project_id"])
+}
+
+// An invalid project_id query param is rejected as a 400, not silently ignored.
+func TestRotationCalendarHandler_InvalidProjectID(t *testing.T) {
+	svc, _ := freshCalendarDB(t)
+
+	r := chi.NewRouter()
+	h := NewRotationCalendarHandler(svc)
+	r.Get("/rotation-calendar", h.Get)
+
+	req := httptest.NewRequest(http.MethodGet, "/rotation-calendar?from=2026-07-01&to=2026-08-31&project_id=not-a-number", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
 // RFC 3339 timestamps are also accepted as from/to values.
 func TestRotationCalendarHandler_RFC3339Format(t *testing.T) {
 	svc, _ := freshCalendarDB(t)
