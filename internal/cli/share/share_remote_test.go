@@ -88,6 +88,58 @@ func TestRunSharedSecrets_Remote_RoutesThroughRemoteClient(t *testing.T) {
 	assert.Equal(t, "/api/v1/shared-secrets", gotPath)
 }
 
+func TestRunGroupSharesRemote_EmptyResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"shares":[]}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+
+	require.NoError(t, runGroupSharesRemote(rc, 7))
+}
+
+func TestRunGroupSharesRemote_WithResults(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"shares":[
+			{"ID":1,"SecretID":5,"OwnerID":1,"RecipientID":7,"IsGroup":true,"Permission":"read","CreatedAt":"2026-06-01T10:00:00Z"}
+		]}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+
+	require.NoError(t, runGroupSharesRemote(rc, 7))
+	assert.Equal(t, "/api/v1/groups/7/shares", gotPath)
+}
+
+// TestRunGroupShares_Remote_RoutesThroughRemoteClient is the regression test
+// for #G66: previously runGroupShares had no remote-client branch at all and
+// always read local embedded storage, silently ignoring a connected server.
+func TestRunGroupShares_Remote_RoutesThroughRemoteClient(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"shares":[]}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+
+	origID := groupSharesGroupID
+	defer func() { groupSharesGroupID = origID }()
+	groupSharesGroupID = 11
+
+	require.NoError(t, runGroupShares(nil, nil))
+	assert.Equal(t, "/api/v1/groups/11/shares", gotPath)
+}
+
 func TestRunUpdate_PermissionValidation(t *testing.T) {
 	origPerm, origID := updatePermission, updateShareID
 	defer func() { updatePermission = origPerm; updateShareID = origID }()
