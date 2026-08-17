@@ -271,6 +271,16 @@ func TestApplyTemplate_NonEmptyPreserved(t *testing.T) {
 	assert.Equal(t, []string{"custom"}, result.Tags)
 }
 
+func TestApplyTemplate_InvalidClassification_Error(t *testing.T) {
+	c, m := newCoreWithMock()
+	// GetSecretTemplate must not even be reached: validation happens first.
+	result, err := c.ApplyTemplate(context.Background(), 1, "topsecret", "", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid classification")
+	assert.Nil(t, result)
+	m.AssertNotCalled(t, "GetSecretTemplate", mock.Anything, mock.Anything)
+}
+
 func TestApplyTemplate_UnknownTemplate_Error(t *testing.T) {
 	c, m := newCoreWithMock()
 	m.On("GetSecretTemplate", context.Background(), uint(999)).Return(nil, errors.New("secret template not found"))
