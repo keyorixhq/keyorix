@@ -422,7 +422,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Gated by the dedicated connect.read permission (ADR-044) — distinct from
 		// native secrets.read, so external-store access is granted explicitly.
 		r.With(customMiddleware.RequirePermission("connect.read")).Get("/connect/connectors", connectHandler.ListConnectors)
-		r.With(customMiddleware.RequirePermission("connect.read")).Get("/connect/{name}/secret", connectHandler.GetSecret)
+		r.With(customMiddleware.RequirePermission("connect.read")).Post("/connect/{name}/secret:read", connectHandler.ReadSecret)
 		// Per-reference grant management (ADR-045) — scopes which refs which roles may
 		// read. Privileged role-authorization config, so gated by roles.read/roles.write
 		// rather than connect.read.

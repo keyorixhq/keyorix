@@ -7,9 +7,15 @@ import (
 
 // SecretKeySelector points at one key of an existing Kubernetes Secret.
 type SecretKeySelector struct {
-	// Name of the Secret.
+	// Name of the Secret. Bounded like KeyorixSecretTarget.Name (a Kubernetes object
+	// name can never legitimately exceed this) so an oversized value can't inflate a
+	// validateServer-style error message embedding it past the Condition.message
+	// 32768-char cap (r143's rationale for Ref/Target.Name, applied here too).
+	// +kubebuilder:validation:MaxLength=253
 	Name string `json:"name"`
-	// Key within the Secret's data. Defaults to "token".
+	// Key within the Secret's data. Defaults to "token". Bounded for the same reason
+	// as Name above.
+	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:default=token
 	// +optional
 	Key string `json:"key,omitempty"`
@@ -49,7 +55,15 @@ type KeyorixSecretTarget struct {
 type KeyorixSecretSpec struct {
 	// Server is the Keyorix base URL, e.g. https://keyorix.internal. Must be https (the
 	// machine-identity token is sent as a bearer header) AND must match the operator's
-	// --allowed-servers list — the operator rejects any other destination.
+	// --allowed-servers list — the operator rejects any other destination. Bounded like
+	// every other CR-controlled string in this API (Ref at 512, Target.Name at 253):
+	// an oversized value here is echoed verbatim into validateServer's rejection
+	// message, which reconcile writes into the Ready condition's Message — capped at
+	// 32768 chars by the generated CRD's own Condition schema. An unbounded Server
+	// could exceed that cap, making the status subresource write itself fail
+	// validation and masking the real error behind a stuck, stale Ready condition.
+	// 2048 comfortably covers any real URL while staying far below the 32768 cap.
+	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:Pattern=`^https://`
 	Server string `json:"server"`
 	// TokenSecretRef sources the Keyorix machine-identity token (a least-privilege

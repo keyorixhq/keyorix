@@ -406,65 +406,87 @@ func TestDynamic_CreateConfig_AuthzDenied_S13(t *testing.T) {
 
 // ── connect.go ───────────────────────────────────────────────────────────────
 
-// GetSecret — no user context
-func TestConnect_GetSecret_NoUserCtx_S13(t *testing.T) {
+// connectReadBody builds the JSON POST body ReadSecret expects.
+func connectReadBody(ref string) *bytes.Buffer {
+	b, _ := json.Marshal(map[string]string{"ref": ref})
+	return bytes.NewBuffer(b)
+}
+
+// ReadSecret — no user context
+func TestConnect_ReadSecret_NoUserCtx_S13(t *testing.T) {
 	h := newConnectHandlerS13(t)
 	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/connect/vault/secret?ref=path/to/key", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/connect/vault/secret:read", connectReadBody("path/to/key")),
 		"name", "vault",
 	)
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// GetSecret — missing ref query param
-func TestConnect_GetSecret_MissingRef_S13(t *testing.T) {
+// ReadSecret — missing ref in body
+func TestConnect_ReadSecret_MissingRef_S13(t *testing.T) {
 	h := newConnectHandlerS13(t)
 	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/connect/vault/secret", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/connect/vault/secret:read", connectReadBody("")),
 		"name", "vault",
 	))
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "ref query parameter is required")
+	assert.Contains(t, w.Body.String(), "ref is required")
 }
 
-// GetSecret — unknown connector → isSafeConnectError matches → 502 with safe message
-func TestConnect_GetSecret_UnknownConnector_S13(t *testing.T) {
+// ReadSecret — unknown connector → isSafeConnectError matches → 502 with safe message
+func TestConnect_ReadSecret_UnknownConnector_S13(t *testing.T) {
 	h := newConnectHandlerS13(t)
 	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/connect/nonexistent/secret?ref=some/ref", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/connect/nonexistent/secret:read", connectReadBody("some/ref")),
 		"name", "nonexistent",
 	))
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	// "keyorix connect is not enabled" or "unknown connector" — either way ConnectError 502
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 }
 
-// GetSecret — upstream connector error that embeds a caller-controlled ref plus a
+// ReadSecret — upstream connector error that embeds a caller-controlled ref plus a
 // safe-marker phrase must NOT be classified as safe and must NOT reach the client
 // verbatim (G50: isSafeConnectError must check the error's type, not substring-match
 // its text).
-func TestConnect_GetSecret_SpoofedUnsafeErrorIsSanitized_G50(t *testing.T) {
+func TestConnect_ReadSecret_SpoofedUnsafeErrorIsSanitized_G50(t *testing.T) {
 	cs, _ := freshCoreS12WithAdmin(t)
 	cs.SetConnectManager(connect.NewManager([]connect.Connector{fakeSpoofConnector{name: "spoof"}}))
 	h := NewConnectHandler(cs)
 
 	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/connect/spoof/secret?ref=prod/db", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/connect/spoof/secret:read", connectReadBody("prod/db")),
 		"name", "spoof",
 	))
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 	body := w.Body.String()
 	assert.NotContains(t, body, "10.0.0.5", "raw upstream host detail must not reach the client")
 	assert.NotContains(t, body, "prod/db", "the caller-controlled ref must not be reflected back inside raw upstream error text")
 	assert.Contains(t, body, "an internal error occurred", "must fall back to the generic clientSafe() message")
+}
+
+// ReadSecret — ref is sent in the request body, not the URL, so it never lands in an
+// access log's captured query string.
+func TestConnect_ReadSecret_RefNotInQueryString_S13(t *testing.T) {
+	h := newConnectHandlerS13(t)
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPost, "/api/v1/connect/vault/secret:read", connectReadBody("prod/payments/stripe-key")),
+		"name", "vault",
+	))
+	assert.Empty(t, req.URL.RawQuery, "ref must never appear in the URL query string")
+	w := httptest.NewRecorder()
+	h.ReadSecret(w, req)
+	// Unauthorized/bad-gateway either way in this fake-storage test setup — the point
+	// pinned here is purely that the request itself carries no query string.
+	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
 // CreateRefGrant — no user context

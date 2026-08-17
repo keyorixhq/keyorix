@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -184,6 +185,51 @@ func TestKeyorixFetcher_Unauthorized(t *testing.T) {
 	_, err := f.Fetch(context.Background(), "production/db-password")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not authorized")
+}
+
+// TestKeyorixFetcher_EnvCacheExpiresAfterTTL pins the fix for the stale-cache
+// finding: a renamed-then-reused environment name must eventually resolve to
+// the NEW id, not the id cached before the TTL. environments is a live map
+// reference the stub server's handler closes over, so mutating it here after
+// the server starts simulates the server-side rename mid-test.
+func TestKeyorixFetcher_EnvCacheExpiresAfterTTL(t *testing.T) {
+	environments := map[string]uint{"production": 5}
+	srv := keyorixStub(t, "tok", 1,
+		environments,
+		map[uint][]stubSecret{
+			5: {{ID: 7, Name: "db-password"}},
+			9: {{ID: 11, Name: "db-password"}},
+		},
+	)
+	defer srv.Close()
+	f := NewKeyorixFetcher(srv.URL, "tok", 1)
+
+	now := time.Now()
+	f.now = func() time.Time { return now }
+
+	val, err := f.Fetch(context.Background(), "production/db-password")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value-of-7"), val, "first resolution: production -> env 5")
+
+	// Simulate env 5 being renamed away and a NEW environment reusing the name
+	// "production" with id 9 — the same map the running stub server reads from.
+	delete(environments, "production")
+	environments["production"] = 9
+
+	// Still within the TTL: the cached (now-stale) mapping is still used —
+	// this is the existing, intentional "don't hit the network on every call"
+	// behavior, unchanged by this fix.
+	val, err = f.Fetch(context.Background(), "production/db-password")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value-of-7"), val, "within TTL: still resolves to the stale cached env 5")
+
+	// Advance past the TTL: resolveEnvironmentID must now force a fresh lookup
+	// and pick up the renamed environment's new id.
+	now = now.Add(envCacheTTL + time.Second)
+
+	val, err = f.Fetch(context.Background(), "production/db-password")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value-of-11"), val, "after TTL: re-resolves to the new env 9")
 }
 
 func TestKeyorixFetcher_BadRef(t *testing.T) {
