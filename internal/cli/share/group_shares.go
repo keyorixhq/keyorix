@@ -30,15 +30,10 @@ func init() {
 }
 
 func runGroupShares(cmd *cobra.Command, args []string) error {
-	// KNOWN GAP (tracked, not fixed here): unlike every other command in this
-	// package, this has no `if rc, ok := common.NewRemoteClient(); ok { ... }`
-	// branch — it always reads local embedded storage, silently ignoring a
-	// connected server (#G66). #G10 (below) closed the OTHER half of this: the
-	// core function now self-authorizes, so a future remote endpoint can safely
-	// expose it without shipping a new unauthenticated-scope disclosure surface.
-	// Adding that endpoint (and this command's remote-client branch) is still
-	// out of scope here — it's #G66's fix, not #G10's.
-	//
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runGroupSharesRemote(rc, groupSharesGroupID)
+	}
+
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
 	st, err := common.InitializeStorage()
 	if err != nil {

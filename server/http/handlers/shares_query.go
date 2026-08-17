@@ -242,6 +242,44 @@ func (h *ShareHandler) ListGroupSharedSecrets(w http.ResponseWriter, r *http.Req
 	h.sendSuccess(w, map[string]interface{}{"secrets": secrets}, "")
 }
 
+// ListGroupShares handles GET /api/v1/groups/{id}/shares — the share grants
+// made TO a group (as opposed to ListGroupSharedSecrets' resolved-secrets
+// view). #G66: previously only the embedded/local CLI path
+// (`keyorix share group-shares`) could reach this data at all, silently
+// ignoring a connected server; there was no HTTP endpoint to route it
+// through. Mirrors ListGroupSharedSecrets' actor-threading exactly — #G10
+// already made the core function self-authorize, so this can safely expose
+// it without shipping a new unauthenticated-scope disclosure surface.
+func (h *ShareHandler) ListGroupShares(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+
+	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		return
+	}
+
+	shares, err := h.coreService.ListGroupShares(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(groupID))
+	if err != nil {
+		if strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized") {
+			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+			return
+		}
+		log.Printf("Error listing group shares: %v", err)
+		h.sendError(w, "InternalError", "Failed to list group shares", http.StatusInternalServerError, nil)
+		return
+	}
+	if shares == nil {
+		shares = []*models.ShareRecord{}
+	}
+
+	h.sendSuccess(w, map[string]interface{}{"shares": shares}, "")
+}
+
 // GetSharingStatusWithIndicators handles GET /api/v1/secrets/{id}/sharing-status
 func (h *ShareHandler) GetSharingStatusWithIndicators(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

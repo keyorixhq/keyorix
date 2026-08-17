@@ -935,6 +935,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Secrets a group can reach via shares — reveals secret names, so it needs
 			// secrets.read on top of the group-level users.read above.
 			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}/shared-secrets", shareHandler.ListGroupSharedSecrets)
+			// Share grants made TO the group (owner/secret IDs, not resolved secret
+			// content) — same sensitivity tier as shared-secrets above, same gate.
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}/shares", shareHandler.ListGroupShares)
 			// Adding/removing a group member confers (or revokes) every role the group
 			// holds — the same blast radius as a role grant, so gate on roles.assign
 			// (matching the group's role-grant routes below), not users.read.
