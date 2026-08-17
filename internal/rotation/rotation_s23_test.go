@@ -180,8 +180,12 @@ type fakeGCPNearLimit struct {
 	deleted  []string
 }
 
-func (f *fakeGCPNearLimit) ListKeyNames(_ context.Context, _ string) ([]string, error) {
-	return append([]string(nil), f.existing...), nil
+func (f *fakeGCPNearLimit) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
+	keys := make([]gcpServiceAccountKeyInfo, len(f.existing))
+	for i, name := range f.existing {
+		keys[i] = gcpServiceAccountKeyInfo{Name: name}
+	}
+	return keys, nil
 }
 func (f *fakeGCPNearLimit) CreateKey(_ context.Context, _ string) (string, string, error) {
 	return "k/NEW", `{"type":"service_account","key":"new"}`, nil
@@ -223,8 +227,12 @@ type fakeGCPSlotFreeThenCreateErr struct {
 	deleted  []string
 }
 
-func (f *fakeGCPSlotFreeThenCreateErr) ListKeyNames(_ context.Context, _ string) ([]string, error) {
-	return append([]string(nil), f.existing...), nil
+func (f *fakeGCPSlotFreeThenCreateErr) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
+	keys := make([]gcpServiceAccountKeyInfo, len(f.existing))
+	for i, name := range f.existing {
+		keys[i] = gcpServiceAccountKeyInfo{Name: name}
+	}
+	return keys, nil
 }
 func (f *fakeGCPSlotFreeThenCreateErr) CreateKey(_ context.Context, _ string) (string, string, error) {
 	return "", "", errors.New("GCP: quota exceeded")

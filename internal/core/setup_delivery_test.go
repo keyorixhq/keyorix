@@ -73,7 +73,7 @@ func TestResendAccountSetupLink(t *testing.T) {
 		ms.On("GetUser", ctx, uid).Return(user(), nil)
 		ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "new@acme.io", fixed.Add(-24*time.Hour)).Return(int64(0), nil)
 		ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "new@acme.io", fixed.Add(-resendMinInterval)).Return(int64(0), nil)
-		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "new@acme.io").Return(nil)
+		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "new@acme.io", (*uint)(nil)).Return(nil)
 		ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 		res, err := c.ResendAccountSetupLink(ctx, uid, 7)
@@ -94,7 +94,7 @@ func TestResendAccountSetupLink(t *testing.T) {
 		c, ms := newCore(fake)
 		ms.On("GetUser", ctx, uid).Return(user(), nil)
 		ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "new@acme.io", mock.AnythingOfType("time.Time")).Return(int64(0), nil)
-		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "new@acme.io").Return(nil)
+		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "new@acme.io", (*uint)(nil)).Return(nil)
 		ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 		res, err := c.ResendAccountSetupLink(ctx, uid, 7)
@@ -178,7 +178,7 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	// prior tokens clears both checks.
 	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-24*time.Hour)).Return(int64(0), nil)
 	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-resendMinInterval)).Return(int64(0), nil)
-	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io").Return(nil)
+	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io", (*uint)(nil)).Return(nil)
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 	user, prov, err := c.CreateUserWithSetupLink(ctx, &CreateUserRequest{
@@ -222,7 +222,7 @@ func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T)
 	ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, notFound())
 	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
 	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
-	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io").Return(nil).Once()
+	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io", (*uint)(nil)).Return(nil).Once()
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil).Once()
 
 	_, prov1, err := c.CreateUserWithSetupLink(ctx, req, 7)

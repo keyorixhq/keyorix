@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	iam "google.golang.org/api/iam/v1"
 )
@@ -22,9 +23,18 @@ const gcpServiceAccountMaxKeys = 10
 // seam so the SDK stays contained here and tests inject a fake. saName is the resource
 // name "projects/-/serviceAccounts/<email>"; keyName is a full key resource name.
 type gcpKeyAPI interface {
-	ListKeyNames(ctx context.Context, saName string) ([]string, error)
+	ListKeys(ctx context.Context, saName string) ([]gcpServiceAccountKeyInfo, error)
 	CreateKey(ctx context.Context, saName string) (keyName, privateKeyJSON string, err error)
 	DeleteKey(ctx context.Context, keyName string) error
+}
+
+// gcpServiceAccountKeyInfo carries just enough per-key metadata to pick a safe eviction
+// candidate (see evictableServiceAccountKey) without exposing the full iam.ServiceAccountKey
+// SDK type through the gcpKeyAPI seam.
+type gcpServiceAccountKeyInfo struct {
+	Name           string
+	Disabled       bool
+	ValidAfterTime string // RFC3339; GCP's closest equivalent to AWS IAM's CreateDate
 }
 
 // GCPServiceAccountKeyExecutor rotates a GCP service account's user-managed key. The
@@ -91,15 +101,16 @@ func (e *GCPServiceAccountKeyExecutor) GenerateUpstream(ctx context.Context, ref
 	}
 
 	saName := "projects/-/serviceAccounts/" + ref
-	prior, err := cl.ListKeyNames(ctx, saName)
+	prior, err := cl.ListKeys(ctx, saName)
 	if err != nil {
 		return "", fmt.Errorf("gcp-service-account: list keys for %q: %w", ref, err)
 	}
 	if len(prior) >= gcpServiceAccountMaxKeys {
-		if err := cl.DeleteKey(ctx, prior[0]); err != nil {
+		victim := evictableServiceAccountKey(prior)
+		if err := cl.DeleteKey(ctx, victim); err != nil {
 			return "", fmt.Errorf("gcp-service-account: free key slot for %q: %w", ref, err)
 		}
-		prior = prior[1:]
+		prior = removeKeyByName(prior, victim)
 	}
 
 	_, keyJSON, err := cl.CreateKey(ctx, saName)
@@ -120,8 +131,8 @@ func (e *GCPServiceAccountKeyExecutor) GenerateUpstream(ctx context.Context, ref
 	var undeleted []string
 	var lastErr error
 	for _, kn := range prior {
-		if derr := cl.DeleteKey(ctx, kn); derr != nil {
-			undeleted = append(undeleted, kn)
+		if derr := cl.DeleteKey(ctx, kn.Name); derr != nil {
+			undeleted = append(undeleted, kn.Name)
 			lastErr = derr
 		}
 	}
@@ -135,19 +146,69 @@ func (e *GCPServiceAccountKeyExecutor) GenerateUpstream(ctx context.Context, ref
 	return keyJSON, nil
 }
 
+// evictableServiceAccountKey picks the safest key to remove when freeing a slot at the
+// per-service-account key cap: a Disabled key if any (returned as soon as one is seen,
+// regardless of order), otherwise the oldest by ValidAfterTime — the same
+// disabled/inactive-first, then-oldest principle awsiam.go's evictableAccessKey uses for
+// AWS IAM access keys, adapted to the fields GCP's ServiceAccountKey actually exposes
+// (Disabled instead of an Active/Inactive status enum; ValidAfterTime, an RFC3339
+// timestamp, instead of CreateDate). Returns "" when no candidate has a name.
+func evictableServiceAccountKey(keys []gcpServiceAccountKeyInfo) string {
+	victim := ""
+	var oldest time.Time
+	haveOldest := false
+	for _, k := range keys {
+		if k.Name == "" {
+			continue
+		}
+		if k.Disabled {
+			return k.Name
+		}
+		t, err := time.Parse(time.RFC3339, k.ValidAfterTime)
+		if !haveOldest || (err == nil && t.Before(oldest)) {
+			victim = k.Name
+			if err == nil {
+				oldest = t
+				haveOldest = true
+			}
+		}
+	}
+	return victim
+}
+
+// removeKeyByName returns keys with the entry named victim removed (at most one, since
+// key names are unique). Used after evicting a slot so the caller's local view of
+// remaining prior keys stays in sync with what was actually deleted.
+func removeKeyByName(keys []gcpServiceAccountKeyInfo, victim string) []gcpServiceAccountKeyInfo {
+	out := make([]gcpServiceAccountKeyInfo, 0, len(keys))
+	removed := false
+	for _, k := range keys {
+		if !removed && k.Name == victim {
+			removed = true
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
 // gcpIAMClient adapts *iam.Service to the gcpKeyAPI seam.
 type gcpIAMClient struct{ svc *iam.Service }
 
-func (g *gcpIAMClient) ListKeyNames(ctx context.Context, saName string) ([]string, error) {
+func (g *gcpIAMClient) ListKeys(ctx context.Context, saName string) ([]gcpServiceAccountKeyInfo, error) {
 	resp, err := g.svc.Projects.ServiceAccounts.Keys.List(saName).KeyTypes("USER_MANAGED").Context(ctx).Do()
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(resp.Keys))
+	keys := make([]gcpServiceAccountKeyInfo, 0, len(resp.Keys))
 	for _, k := range resp.Keys {
-		names = append(names, k.Name)
+		keys = append(keys, gcpServiceAccountKeyInfo{
+			Name:           k.Name,
+			Disabled:       k.Disabled,
+			ValidAfterTime: k.ValidAfterTime,
+		})
 	}
-	return names, nil
+	return keys, nil
 }
 
 func (g *gcpIAMClient) CreateKey(ctx context.Context, saName string) (string, string, error) {

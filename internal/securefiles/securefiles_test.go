@@ -291,6 +291,34 @@ func TestFixFilePermsCorrectModeNoWarning(t *testing.T) {
 	require.NoError(t, FixFilePerms([]FilePermSpec{{Path: p, Mode: 0600}}, false))
 }
 
+// TestFixFilePermsClearsSetuidBitEvenWhenLow9BitsMatch pins the fix for the
+// info.Mode().Perm() masking gap: a file whose low 9 bits already equal the
+// target mode but which ALSO carries the setuid bit must still be corrected —
+// actualMode == f.Mode alone must not be treated as "nothing to do".
+func TestFixFilePermsClearsSetuidBitEvenWhenLow9BitsMatch(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "setuid.key")
+	require.NoError(t, os.WriteFile(p, []byte("x"), 0600))
+	require.NoError(t, os.Chmod(p, os.ModeSetuid|0600))
+
+	info, err := os.Stat(p)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0600), info.Mode().Perm(), "low 9 bits already match the target mode")
+	require.NotZero(t, info.Mode()&os.ModeSetuid, "setuid bit must actually be set going in")
+
+	// Audit only: the special bit alone must still be reported as a mismatch.
+	err = FixFilePerms([]FilePermSpec{{Path: p, Mode: 0600}}, false)
+	require.Error(t, err, "a setuid bit on an otherwise-correct-mode file must still warn")
+	info, _ = os.Stat(p)
+	assert.NotZero(t, info.Mode()&os.ModeSetuid, "audit-only must not modify the file")
+
+	// Autofix: the setuid bit must be stripped even though actualMode == f.Mode.
+	require.NoError(t, FixFilePerms([]FilePermSpec{{Path: p, Mode: 0600}}, true))
+	info, _ = os.Stat(p)
+	assert.Zero(t, info.Mode()&os.ModeSetuid, "autofix must clear the setuid bit")
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+}
+
 func TestFixFilePermsMissingFileWarns(t *testing.T) {
 	err := FixFilePerms([]FilePermSpec{{Path: filepath.Join(t.TempDir(), "absent"), Mode: 0600}}, false)
 	require.Error(t, err)

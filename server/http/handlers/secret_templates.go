@@ -198,13 +198,19 @@ func (h *SecretTemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.coreService.ApplyTemplate(r.Context(), uint(id), body.Classification, body.Description, body.Tags)
 	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, errNotFound):
 			sendError(w, "NotFound", errSecretTemplateNotFound, http.StatusNotFound, nil)
 			return
+		case strings.Contains(msg, "invalid classification"):
+			sendError(w, "Error", msg, http.StatusBadRequest, nil)
+			return
+		default:
+			log.Printf("Error applying secret template: %v", err)
+			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+			return
 		}
-		log.Printf("Error applying secret template: %v", err)
-		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
-		return
 	}
 	sendSuccess(w, result, "")
 }

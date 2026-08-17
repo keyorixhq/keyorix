@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -56,24 +57,29 @@ func newFakeIAMService(t *testing.T, handler http.Handler) (*iamv1.Service, *htt
 	return svc, srv
 }
 
-// TestGCPIAMClient_ListKeyNames exercises gcpIAMClient.ListKeyNames against a
+// TestGCPIAMClient_ListKeys exercises gcpIAMClient.ListKeys against a
 // fake HTTP server that returns a 403 response — the method body is covered
 // even though the call fails.
-func TestGCPIAMClient_ListKeyNames(t *testing.T) {
+func TestGCPIAMClient_ListKeys(t *testing.T) {
 	svc, srv := newFakeIAMService(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer srv.Close()
 
 	cl := &gcpIAMClient{svc: svc}
-	_, err := cl.ListKeyNames(context.Background(), "projects/-/serviceAccounts/fake@test.iam.gserviceaccount.com")
+	_, err := cl.ListKeys(context.Background(), "projects/-/serviceAccounts/fake@test.iam.gserviceaccount.com")
 	require.Error(t, err) // HTTP 403 from the fake server
 }
 
-// TestGCPIAMClient_ListKeyNames_Success exercises the happy path: the fake
-// server returns a valid key list JSON and ListKeyNames parses it.
-func TestGCPIAMClient_ListKeyNames_Success(t *testing.T) {
-	body := `{"keys":[{"name":"projects/-/serviceAccounts/sa/keys/k1"},{"name":"projects/-/serviceAccounts/sa/keys/k2"}]}`
+// TestGCPIAMClient_ListKeys_Success exercises the happy path: the fake
+// server returns a valid key list JSON (including a disabled key with a
+// ValidAfterTime) and ListKeys parses the metadata evictableServiceAccountKey
+// depends on, not just the names.
+func TestGCPIAMClient_ListKeys_Success(t *testing.T) {
+	body := `{"keys":[` +
+		`{"name":"projects/-/serviceAccounts/sa/keys/k1","validAfterTime":"2024-01-01T00:00:00Z"},` +
+		`{"name":"projects/-/serviceAccounts/sa/keys/k2","disabled":true,"validAfterTime":"2024-06-01T00:00:00Z"}` +
+		`]}`
 	svc, srv := newFakeIAMService(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
@@ -81,9 +87,12 @@ func TestGCPIAMClient_ListKeyNames_Success(t *testing.T) {
 	defer srv.Close()
 
 	cl := &gcpIAMClient{svc: svc}
-	names, err := cl.ListKeyNames(context.Background(), "projects/-/serviceAccounts/fake@test.iam.gserviceaccount.com")
+	keys, err := cl.ListKeys(context.Background(), "projects/-/serviceAccounts/fake@test.iam.gserviceaccount.com")
 	require.NoError(t, err)
-	require.Len(t, names, 2)
+	require.Len(t, keys, 2)
+	assert.False(t, keys[0].Disabled)
+	assert.True(t, keys[1].Disabled)
+	assert.Equal(t, "2024-06-01T00:00:00Z", keys[1].ValidAfterTime)
 }
 
 // TestGCPIAMClient_CreateKey exercises gcpIAMClient.CreateKey against a fake

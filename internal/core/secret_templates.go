@@ -182,8 +182,15 @@ type ApplyTemplateResult struct {
 
 // ApplyTemplate merges template defaults into a partial create request.
 // Fields already set in the request are preserved; template values only fill
-// in empty/zero fields (template is a default, not an override).
+// in empty/zero fields (template is a default, not an override). The
+// caller-supplied classification is validated against the same allow-list
+// as Create/UpdateSecretTemplate so the result is safe by construction even
+// if a downstream caller forwards it into an actual secret-creation call.
 func (c *KeyorixCore) ApplyTemplate(ctx context.Context, templateID uint, classification, description string, tags []string) (*ApplyTemplateResult, error) {
+	if err := validateTemplateClassification(classification); err != nil {
+		return nil, err
+	}
+
 	tmpl, err := c.storage.GetSecretTemplate(ctx, templateID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret template: %w", err)

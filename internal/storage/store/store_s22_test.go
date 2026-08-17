@@ -317,7 +317,7 @@ func TestSetupTokenLifecycle_S22(t *testing.T) {
 	require.Error(t, err)
 
 	// SupersedeActiveSetupTokens — flips active to superseded.
-	require.NoError(t, ls.SupersedeActiveSetupTokens(ctx, "password_reset_link", "alice@test.io"))
+	require.NoError(t, ls.SupersedeActiveSetupTokens(ctx, "password_reset_link", "alice@test.io", nil))
 	reloaded, err := ls.GetSetupTokenByHash(ctx, "abc123")
 	require.NoError(t, err)
 	assert.Equal(t, "superseded", reloaded.State)

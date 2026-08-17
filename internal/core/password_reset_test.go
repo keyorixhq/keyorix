@@ -39,7 +39,7 @@ func TestRequestPasswordReset(t *testing.T) {
 		ms.On("GetUserByEmail", ctx, email).Return(activeUser, nil)
 		ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-24*time.Hour)).Return(int64(0), nil)
 		ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-resendMinInterval)).Return(int64(0), nil)
-		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposePasswordResetLink, email).Return(nil)
+		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposePasswordResetLink, email, (*uint)(nil)).Return(nil)
 		ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 		require.NoError(t, c.RequestPasswordReset(ctx, email))
@@ -101,7 +101,7 @@ func TestRequestPasswordReset(t *testing.T) {
 		ms.On("GetUserByEmail", ctx, email).Return(activeUser, nil)
 		ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-24*time.Hour)).Return(int64(0), nil)
 		ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-resendMinInterval)).Return(int64(0), nil)
-		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposePasswordResetLink, email).Return(nil)
+		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposePasswordResetLink, email, (*uint)(nil)).Return(nil)
 		ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 		defer close(releaseDelivery) // don't leak the goroutine if the test fails early
 
@@ -182,7 +182,7 @@ func TestRequestPasswordReset_PanicInDetachedGoroutineDoesNotCrash(t *testing.T)
 	ms.On("GetUserByEmail", ctx, email).Return(activeUser, nil)
 	ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-24*time.Hour)).Return(int64(0), nil)
 	ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-resendMinInterval)).Return(int64(0), nil)
-	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposePasswordResetLink, email).Return(nil)
+	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposePasswordResetLink, email, (*uint)(nil)).Return(nil)
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 	// The enumeration-safe contract holds regardless: RequestPasswordReset

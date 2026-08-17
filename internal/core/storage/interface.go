@@ -1450,7 +1450,14 @@ type Storage interface {
 	GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error)
 	// SupersedeActiveSetupTokens flips every active token for (purpose, email) to
 	// superseded, so reissuing ("resend") atomically kills the prior link.
-	SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error
+	// projectID, when non-nil, additionally restricts the flip to tokens whose
+	// InvitationID belongs to that project (via project_invitations) — so a
+	// project-scoped invitation_accept reissue only supersedes that SAME project's
+	// pending invite to the address, not an unrelated project's (CORE-INVITATIONS-003).
+	// A nil projectID preserves the original (purpose, email)-only scope, which
+	// callers with no project dimension (global invites, account_setup,
+	// password_reset_link) still rely on.
+	SupersedeActiveSetupTokens(ctx context.Context, purpose, email string, projectID *uint) error
 	// MarkSetupTokenConsumed transitions active → consumed only if the token is still
 	// active, stamping consumedAt. It reports whether the transition happened, so a
 	// concurrent replay (state already consumed/expired/superseded) is rejected.

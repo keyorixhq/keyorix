@@ -238,11 +238,15 @@ func (rs *RemoteStorage) GetSetupTokenByHash(ctx context.Context, hash string) (
 // SupersedeActiveSetupTokens flips every active token for (purpose, email) to
 // superseded via POST /api/v1/system/setup-tokens/supersede, preserving
 // local_auth.go's exact semantics: a reissue kills the prior link atomically.
-func (rs *RemoteStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error {
+// projectID, when non-nil, is forwarded so the upstream server restricts the
+// flip to that project's own invitations (CORE-INVITATIONS-003) — see
+// local_auth.go's SupersedeActiveSetupTokens for the full rationale.
+func (rs *RemoteStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string, projectID *uint) error {
 	body := struct {
 		Purpose      string `json:"purpose"`
 		SubjectEmail string `json:"subject_email"`
-	}{Purpose: purpose, SubjectEmail: email}
+		ProjectID    *uint  `json:"project_id,omitempty"`
+	}{Purpose: purpose, SubjectEmail: email, ProjectID: projectID}
 	resp, err := rs.client.Post(ctx, "/api/v1/system/setup-tokens/supersede", body)
 	if err != nil {
 		return fmt.Errorf("failed to supersede setup tokens: %w", err)

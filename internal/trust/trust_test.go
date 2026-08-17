@@ -106,6 +106,25 @@ func TestRegistry_AddLegitimateSinglePurposeUseStillWorks(t *testing.T) {
 	assert.NoError(t, r.Verify(PurposeLicense, "lic-2026", msg, sig))
 }
 
+// TestRegistry_AddTrimsKeyIDForStorage is the regression test for the map-key/validation
+// mismatch: Add validated strings.TrimSpace(keyID) != "" but stored the entry under the raw,
+// untrimmed keyID argument. A caller passing a whitespace-padded key-id would have the
+// validation pass while Verify (called with the trimmed id, as callers naturally would) failed
+// to find the key at all. The fix stores under the trimmed key-id, so a padded Add and a
+// trimmed Verify agree on the same key-id.
+func TestRegistry_AddTrimsKeyIDForStorage(t *testing.T) {
+	pub, priv, err := GenerateKey()
+	require.NoError(t, err)
+
+	r := NewRegistry()
+	require.NoError(t, r.Add(PurposeUpdate, "  upd-1  ", pub))
+
+	msg := []byte("manifest bytes")
+	sig := ed25519.Sign(priv, msg)
+	require.NoError(t, r.Verify(PurposeUpdate, "upd-1", msg, sig))
+	assert.Equal(t, []string{"upd-1"}, r.KeyIDs(PurposeUpdate))
+}
+
 func TestRegistry_KeyIDsSorted(t *testing.T) {
 	pub, _, _ := GenerateKey()
 	r := NewRegistry()
@@ -136,6 +155,23 @@ func TestParseKeySpec(t *testing.T) {
 	assert.Error(t, err)
 	_, err = parseKeySpec("k=YWJj") // valid base64 but wrong key size
 	assert.Error(t, err)
+}
+
+// TestParseKeySpec_RejectsDuplicateKeyID is the regression test for the silent-overwrite gap:
+// parseKeySpec previously let a later keyID=... entry overwrite an earlier one with the same
+// key-id via plain map assignment, with no error — unlike every other malformed-input case in
+// this function. A copy-paste/typo reusing an existing key-id during key rotation (e.g.
+// "upd-2026=<old>,upd-2026=<new>") would silently drop one of the two keys. It must now be a
+// hard error, matching the rest of the function's "malformed spec = error" contract.
+func TestParseKeySpec_RejectsDuplicateKeyID(t *testing.T) {
+	pub1, _, _ := GenerateKey()
+	pub2, _, _ := GenerateKey()
+	spec := "upd-2026=" + EncodePublicKeyBase64(pub1) + ",upd-2026=" + EncodePublicKeyBase64(pub2)
+
+	_, err := parseKeySpec(spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate key-id")
+	assert.Contains(t, err.Error(), "upd-2026")
 }
 
 func TestDefaultRegistry_EmptyByDefaultFailsClosed(t *testing.T) {
