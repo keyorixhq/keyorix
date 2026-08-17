@@ -41,7 +41,18 @@ type crdSpecSchema struct {
 }
 
 type crdSpecSchemaProperties struct {
-	Data crdDataSchema `json:"data"`
+	Data           crdDataSchema               `json:"data"`
+	Server         crdRefSchema                `json:"server"`
+	TokenSecretRef crdTokenSecretRefProperties `json:"tokenSecretRef"`
+}
+
+type crdTokenSecretRefProperties struct {
+	Properties crdTokenSecretRefSchema `json:"properties"`
+}
+
+type crdTokenSecretRefSchema struct {
+	Name crdRefSchema `json:"name"`
+	Key  crdRefSchema `json:"key"`
 }
 
 type crdDataSchema struct {
@@ -95,6 +106,18 @@ func TestGeneratedCRD_DataMaxItemsAndRefMaxLength(t *testing.T) {
 		assert.Equal(t, 512, data.Items.Properties.Ref.MaxLength,
 			"spec.data[].ref must stay bounded (r143) so a single entry can't inflate "+
 				"request/response size arbitrarily")
+
+		spec := v.Schema.OpenAPIV3Schema.Properties.Spec.Properties
+		assert.Equal(t, 2048, spec.Server.MaxLength,
+			"spec.server must stay bounded: an oversized value is echoed verbatim into "+
+				"validateServer's rejection message, which reconcile writes into the Ready "+
+				"condition's Message — capped at 32768 chars by this CRD's own Condition "+
+				"schema, so an unbounded Server could make the status write itself fail "+
+				"validation and mask the real error behind a stuck Ready condition")
+		assert.Equal(t, 253, spec.TokenSecretRef.Properties.Name.MaxLength,
+			"spec.tokenSecretRef.name must stay bounded for the same reason as spec.server")
+		assert.Equal(t, 253, spec.TokenSecretRef.Properties.Key.MaxLength,
+			"spec.tokenSecretRef.key must stay bounded for the same reason as spec.server")
 	}
 	require.True(t, found, "CRD manifest must define the v1alpha1 version")
 }
