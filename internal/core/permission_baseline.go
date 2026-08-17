@@ -157,21 +157,20 @@ func (b *permBaselineBuilder) directGrantRows(ctx context.Context, allGrants []*
 // and expiry ride along instead of the caller re-deriving them — the fix for
 // #G25's scope-misrepresentation and missing-expiry-flag gaps on the
 // group-inherited path specifically (GetGroupRoles alone carries neither).
-func (b *permBaselineBuilder) groupGrantRowsForUser(ctx context.Context, u *models.User, groupGrantsByGroup map[uint][]*models.GroupRole, now time.Time) ([]PermissionBaselineRow, error) {
+// groupIDs is u's membership, pre-resolved by the caller from one
+// deployment-wide ListAllUserGroupMemberships query (#G44) instead of a
+// per-user GetUserGroups call — see GetPermissionBaseline's doc for why.
+func (b *permBaselineBuilder) groupGrantRowsForUser(ctx context.Context, u *models.User, groupIDs []uint, groupGrantsByGroup map[uint][]*models.GroupRole, now time.Time) ([]PermissionBaselineRow, error) {
 	var rows []PermissionBaselineRow
-	groups, err := b.k.storage.GetUserGroups(ctx, u.ID)
-	if err != nil {
-		return nil, fmt.Errorf("permission baseline: get groups for user %d: %w", u.ID, err)
-	}
-	for _, g := range groups {
-		for _, grant := range groupGrantsByGroup[g.ID] {
+	for _, groupID := range groupIDs {
+		for _, grant := range groupGrantsByGroup[groupID] {
 			name, err := b.roleName(ctx, grant.RoleID)
 			if err != nil {
-				return nil, fmt.Errorf("permission baseline: get role %d (group %d): %w", grant.RoleID, g.ID, err)
+				return nil, fmt.Errorf("permission baseline: get role %d (group %d): %w", grant.RoleID, groupID, err)
 			}
 			perms, err := b.rolePermNames(ctx, grant.RoleID)
 			if err != nil {
-				return nil, fmt.Errorf("permission baseline: get permissions for role %d (group %d): %w", grant.RoleID, g.ID, err)
+				return nil, fmt.Errorf("permission baseline: get permissions for role %d (group %d): %w", grant.RoleID, groupID, err)
 			}
 			scope := scopeLabel(grant.ProjectID, grant.EnvironmentID)
 			expired := grantExpired(grant.ExpiresAt, now)
@@ -202,15 +201,14 @@ func (b *permBaselineBuilder) groupGrantRowsForUser(ctx context.Context, u *mode
 // than dropped. Each row's Scope reflects the grant's real (project, environment)
 // pair, not just its project.
 //
-// #G44: groupGrantRowsForUser below still runs one GetUserGroups call PER
-// USER — a genuine N+1 whose cost scales with the deployment's own user
-// count, not with any caller-controlled input. Fixing #G25's scope/expiry gap
-// replaced the FORMER per-GROUP GetGroupRoles call with one deployment-wide
-// ListAllGroupRoleGrants query below, but the per-user group-MEMBERSHIP
-// lookup remains. Unlike this group's other members, there's no bound to add
-// here that wouldn't just silently drop users from a compliance/audit report;
-// the real fix is restructuring to batch-load every user's group membership in
-// one or two queries up front. Left unfixed — see REMEDIATION-STATUS.md G44.
+// #G44: group-inherited grant resolution used to run one GetUserGroups call
+// PER USER — a genuine N+1 whose cost scaled with the deployment's own user
+// count, not with any caller-controlled input (unlike this group's other
+// members, there was no bound that wouldn't just silently drop users from a
+// compliance/audit report). Fixed by batch-loading every user's group
+// membership in one ListAllUserGroupMemberships query up front (step 2
+// below), mirroring the ListAllGroupRoleGrants batch-load this function
+// already did for #G25.
 func (k *KeyorixCore) GetPermissionBaseline(ctx context.Context) (*PermissionBaseline, error) {
 	// 1. Load all users, INCLUDING soft-deleted ones (no filter otherwise — we
 	//    want every principal that ever held a grant). See the #G25 doc above:
@@ -240,6 +238,17 @@ func (k *KeyorixCore) GetPermissionBaseline(ctx context.Context) (*PermissionBas
 		groupGrantsByGroup[g.GroupID] = append(groupGrantsByGroup[g.GroupID], g)
 	}
 
+	// One deployment-wide user→group membership query (#G44), pre-grouped by
+	// UserID, instead of one GetUserGroups call per user below.
+	allMemberships, err := k.storage.ListAllUserGroupMemberships(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("permission baseline: list user group memberships: %w", err)
+	}
+	groupIDsByUser := make(map[uint][]uint, len(users))
+	for _, m := range allMemberships {
+		groupIDsByUser[m.UserID] = append(groupIDsByUser[m.UserID], m.GroupID)
+	}
+
 	// Build quick lookup map (direct-grant path only — the group-inherited path
 	// already has the full *models.User in hand from `users`).
 	userByID := make(map[uint]*userBaseline, len(users))
@@ -262,7 +271,7 @@ func (k *KeyorixCore) GetPermissionBaseline(ctx context.Context) (*PermissionBas
 
 	// 4. Group-inherited grants.
 	for _, u := range users {
-		groupRows, err := b.groupGrantRowsForUser(ctx, u, groupGrantsByGroup, now)
+		groupRows, err := b.groupGrantRowsForUser(ctx, u, groupIDsByUser[u.ID], groupGrantsByGroup, now)
 		if err != nil {
 			return nil, err
 		}
