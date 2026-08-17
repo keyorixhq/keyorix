@@ -10,7 +10,8 @@ import (
 )
 
 type fakeGCP struct {
-	existing  []string // current user-managed key names
+	existing  []string                   // current user-managed key names (all enabled, no ValidAfterTime)
+	existingK []gcpServiceAccountKeyInfo // takes precedence over existing when non-nil, for tests needing Disabled/ValidAfterTime
 	newName   string
 	newJSON   string
 	createErr error
@@ -18,8 +19,15 @@ type fakeGCP struct {
 	deleted   []string
 }
 
-func (f *fakeGCP) ListKeyNames(_ context.Context, _ string) ([]string, error) {
-	return append([]string(nil), f.existing...), nil
+func (f *fakeGCP) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
+	if f.existingK != nil {
+		return append([]gcpServiceAccountKeyInfo(nil), f.existingK...), nil
+	}
+	keys := make([]gcpServiceAccountKeyInfo, len(f.existing))
+	for i, name := range f.existing {
+		keys[i] = gcpServiceAccountKeyInfo{Name: name}
+	}
+	return keys, nil
 }
 func (f *fakeGCP) CreateKey(_ context.Context, saName string) (string, string, error) {
 	if f.createErr != nil {
@@ -77,6 +85,48 @@ func TestGCPSA_GenerateUpstream_FreesSlotAtLimit(t *testing.T) {
 	require.NoError(t, err)
 	// All prior keys deleted (one to free the slot, the rest after create).
 	assert.Len(t, fake.deleted, gcpServiceAccountMaxKeys)
+}
+
+func TestEvictableServiceAccountKey_PrefersDisabledOverEnabled(t *testing.T) {
+	keys := []gcpServiceAccountKeyInfo{
+		{Name: "k/enabled-oldest", Disabled: false, ValidAfterTime: "2020-01-01T00:00:00Z"},
+		{Name: "k/disabled", Disabled: true, ValidAfterTime: "2025-01-01T00:00:00Z"},
+		{Name: "k/enabled-newest", Disabled: false, ValidAfterTime: "2026-01-01T00:00:00Z"},
+	}
+	// The naive prior[0] behavior this replaces would have evicted "k/enabled-oldest"
+	// (whatever GCP's unspecified list ordering happened to return first) — a
+	// different, WRONG answer from the disabled key, proving this test actually
+	// distinguishes correct from incorrect eviction selection.
+	assert.Equal(t, "k/disabled", evictableServiceAccountKey(keys))
+}
+
+func TestEvictableServiceAccountKey_PrefersOldestWhenAllEnabled(t *testing.T) {
+	keys := []gcpServiceAccountKeyInfo{
+		{Name: "k/newest", Disabled: false, ValidAfterTime: "2026-01-01T00:00:00Z"},
+		{Name: "k/oldest", Disabled: false, ValidAfterTime: "2020-01-01T00:00:00Z"},
+		{Name: "k/middle", Disabled: false, ValidAfterTime: "2023-01-01T00:00:00Z"},
+	}
+	assert.Equal(t, "k/oldest", evictableServiceAccountKey(keys))
+}
+
+func TestGCPSA_GenerateUpstream_FreesSlotAtLimit_PrefersDisabledKey(t *testing.T) {
+	existingK := make([]gcpServiceAccountKeyInfo, gcpServiceAccountMaxKeys)
+	for i := range existingK {
+		existingK[i] = gcpServiceAccountKeyInfo{
+			Name:           "k/OLD" + string(rune('A'+i)),
+			ValidAfterTime: "2020-01-01T00:00:00Z",
+		}
+	}
+	// The one disabled key sorts last by name/order, so a prior[0]-style eviction
+	// would never pick it — only the disabled-first preference does.
+	existingK[len(existingK)-1].Disabled = true
+	wantEvicted := existingK[len(existingK)-1].Name
+
+	fake := &fakeGCP{existingK: existingK, newName: "k/NEW", newJSON: `{"k":"v"}`}
+	_, err := gcpWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app@p.iam")
+	require.NoError(t, err)
+	require.NotEmpty(t, fake.deleted)
+	assert.Equal(t, wantEvicted, fake.deleted[0], "the disabled key must be freed first, not prior[0]")
 }
 
 func TestGCPSA_GenerateUpstream_Errors(t *testing.T) {

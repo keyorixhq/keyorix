@@ -231,8 +231,12 @@ type fakeGCPDeleteErr struct {
 	deleted   []string
 }
 
-func (f *fakeGCPDeleteErr) ListKeyNames(_ context.Context, _ string) ([]string, error) {
-	return append([]string(nil), f.existing...), nil
+func (f *fakeGCPDeleteErr) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
+	keys := make([]gcpServiceAccountKeyInfo, len(f.existing))
+	for i, name := range f.existing {
+		keys[i] = gcpServiceAccountKeyInfo{Name: name}
+	}
+	return keys, nil
 }
 func (f *fakeGCPDeleteErr) CreateKey(_ context.Context, saName string) (string, string, error) {
 	return f.newName, f.newJSON, nil
@@ -286,7 +290,7 @@ func TestGCP_GenerateUpstream_ListError(t *testing.T) {
 
 type listErrGCP struct{}
 
-func (f *listErrGCP) ListKeyNames(_ context.Context, _ string) ([]string, error) {
+func (f *listErrGCP) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
 	return nil, errors.New("list failed")
 }
 func (f *listErrGCP) CreateKey(_ context.Context, _ string) (string, string, error) {
@@ -306,7 +310,7 @@ func TestGCP_GenerateUpstream_EmptyKeyJSON(t *testing.T) {
 
 type emptyKeyGCP struct{}
 
-func (f *emptyKeyGCP) ListKeyNames(_ context.Context, _ string) ([]string, error) {
+func (f *emptyKeyGCP) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
 	return nil, nil
 }
 func (f *emptyKeyGCP) CreateKey(_ context.Context, _ string) (string, string, error) {
@@ -331,8 +335,12 @@ func TestGCP_GenerateUpstream_FreesSlot_DeleteFails(t *testing.T) {
 
 type slotFreeErrGCP struct{ existing []string }
 
-func (f *slotFreeErrGCP) ListKeyNames(_ context.Context, _ string) ([]string, error) {
-	return append([]string(nil), f.existing...), nil
+func (f *slotFreeErrGCP) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
+	keys := make([]gcpServiceAccountKeyInfo, len(f.existing))
+	for i, name := range f.existing {
+		keys[i] = gcpServiceAccountKeyInfo{Name: name}
+	}
+	return keys, nil
 }
 func (f *slotFreeErrGCP) CreateKey(_ context.Context, _ string) (string, string, error) {
 	return "k/NEW", `{"k":"v"}`, nil
