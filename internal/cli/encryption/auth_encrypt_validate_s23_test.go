@@ -31,25 +31,6 @@ import (
 
 // ── validate helpers: verbose=true with ONLY encrypted rows (no unmigrated) ──
 
-// TestValidateAPITokens_S23_VerboseNoUnmigrated calls validateAPITokens with
-// verbose=true when ALL tokens are encrypted (zero unmigrated).
-func TestValidateAPITokens_S23_VerboseNoUnmigrated(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	// Insert a single fully-encrypted API token with token set to NULL
-	// to satisfy the unique constraint on the token column.
-	enc, meta, err := ae.EncryptAPIToken("s23-api-tok-only", uint(0))
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(
-		`INSERT INTO api_tokens (client_id, token, encrypted_token, token_metadata, revoked) VALUES (?, NULL, ?, ?, false)`,
-		uint(20), enc, meta,
-	).Error)
-
-	n, err := validateAPITokens(db, ae, true /* verbose */)
-	require.NoError(t, err)
-	assert.Zero(t, n, "zero unmigrated rows expected")
-}
-
 // TestValidatePasswordResetTokens_S23_VerboseNoUnmigrated calls
 // validatePasswordResetTokens with verbose=true when ALL reset tokens are
 // encrypted (zero unmigrated).
@@ -85,28 +66,6 @@ func brokenAuthEnc(t *testing.T, db *gorm.DB) *encryption.AuthEncryption {
 	}
 	// Return an uninitialized AuthEncryption so Encrypt* calls will fail.
 	return encryption.NewAuthEncryption(cfg, dir, db)
-}
-
-// TestMigrateAPITokens_S23_EncryptError drives the "failed to encrypt API token"
-// error path inside migrateAPITokens by providing a broken authEnc.
-func TestMigrateAPITokens_S23_EncryptError(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "apitoks_err.db")
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.APIToken{}))
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
-
-	require.NoError(t, db.Create(&models.APIToken{ClientID: 1, Token: "plain-api-s23"}).Error)
-
-	ae := brokenAuthEnc(t, db)
-	err = migrateAPITokens(db, ae, false /* dryRun */)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to encrypt API token")
 }
 
 // TestMigratePasswordResetTokens_S23_EncryptError drives the "failed to
@@ -217,10 +176,12 @@ func TestRunValidateAuthEncryption_S23_UnmigratedRows(t *testing.T) {
 	ae := encryption.NewAuthEncryption(encCfg, dir, db)
 	require.NoError(t, ae.Initialize("validate-s23-unmigrated"))
 
-	// Insert unmigrated (plaintext-only) rows.
-	require.NoError(t, db.Create(&models.APIClient{
-		Name: "plain-s23", ClientID: "plain-client-s23",
-		ClientSecret: "plaintext-secret-s23", IsActive: true,
+	// Insert an unmigrated (plaintext-only) row. password_resets is the only
+	// table runValidateAuthEncryption still inspects for unmigrated rows —
+	// api_clients/api_tokens columns hold a SHA-256 hash, never plaintext, so
+	// they're deliberately excluded (see auth_encryption_validate.go).
+	require.NoError(t, db.Create(&models.PasswordReset{
+		UserID: 1, Token: "plaintext-reset-s23",
 	}).Error)
 
 	if sqlDB, err := db.DB(); err == nil {
@@ -329,21 +290,6 @@ func TestRunMigrateAuthData_S23_DryRunConfigPath(t *testing.T) {
 }
 
 // ── validate helpers: decrypt-error paths ────────────────────────────────────
-
-// TestValidateAPITokens_S23_DecryptError drives the "failed to decrypt API
-// token" branch in validateAPITokens.
-func TestValidateAPITokens_S23_DecryptError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	require.NoError(t, db.Exec(
-		`INSERT INTO api_tokens (client_id, token, encrypted_token, token_metadata, revoked) VALUES (?, NULL, ?, ?, false)`,
-		uint(55), `{"data":"bm90cmVhbA==","metadata":{}}`, `{}`,
-	).Error)
-
-	_, err := validateAPITokens(db, ae, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decrypt API token")
-}
 
 // TestValidatePasswordResetTokens_S23_DecryptError drives the "failed to decrypt
 // password reset token" branch in validatePasswordResetTokens.

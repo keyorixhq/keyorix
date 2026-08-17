@@ -113,7 +113,11 @@ var campaignOpenCmd = &cobra.Command{
 			return err
 		}
 		printCampaignDegradedWarning(out.Campaign)
-		fmt.Printf("Opened campaign %d (%q) for project %d — %s.\n", out.Campaign.ID, out.Campaign.Name, cProject, progressStr(out.Progress))
+		// #G69: Campaign.Name is operator-chosen display text that the server
+		// echoes back verbatim in every subsequent list/show/close response
+		// — %q alone escapes Go string-literal syntax, not terminal control
+		// bytes, so it's sanitized the same as every other free-text field.
+		fmt.Printf("Opened campaign %d (%q) for project %d — %s.\n", out.Campaign.ID, common.SanitizeForTerminal(out.Campaign.Name), cProject, progressStr(out.Progress))
 		fmt.Printf("Review items: keyorix access-review campaign show --project-id %d --campaign-id %d\n", cProject, out.Campaign.ID)
 		return nil
 	},
@@ -156,7 +160,7 @@ var campaignListCmd = &cobra.Command{
 				state += "*"
 				anyDegraded = true
 			}
-			fmt.Printf("%-5d %-8s %-28s %s\n", c.Campaign.ID, state, truncate(c.Campaign.Name, 28), progressStr(c.Progress))
+			fmt.Printf("%-5d %-8s %-28s %s\n", c.Campaign.ID, state, truncate(common.SanitizeForTerminal(c.Campaign.Name), 28), progressStr(c.Progress))
 		}
 		if anyDegraded {
 			fmt.Println("\n(* = degraded snapshot; run `campaign show` on it for details)")
@@ -185,7 +189,7 @@ var campaignShowCmd = &cobra.Command{
 		if err := c.Get(context.Background(), campaignBase(cProject)+"/"+strconv.Itoa(cCampaign), &out); err != nil {
 			return err
 		}
-		fmt.Printf("Campaign %d (%q) — %s — %s\n\n", out.Campaign.ID, out.Campaign.Name, out.Campaign.State, progressStr(out.Progress))
+		fmt.Printf("Campaign %d (%q) — %s — %s\n\n", out.Campaign.ID, common.SanitizeForTerminal(out.Campaign.Name), out.Campaign.State, progressStr(out.Progress))
 		printCampaignDegradedWarning(out.Campaign)
 		if len(out.Items) == 0 {
 			fmt.Println("No items.")
@@ -193,13 +197,17 @@ var campaignShowCmd = &cobra.Command{
 		}
 		fmt.Printf("%-6s %-10s %-13s %-22s %-7s %-11s %s\n", "ITEM", "DECISION", "SOURCE", "PRINCIPAL", "ACCESS", "LAST-USED", "DETAIL")
 		for _, it := range out.Items {
-			principal := it.PrincipalName
+			// #G69: principal name/email/role name/secret name are all
+			// attacker-controlled free text — a reviewed principal must not be
+			// able to hide or spoof their own recertification row via a
+			// terminal escape sequence embedded in any of them.
+			principal := common.SanitizeForTerminal(it.PrincipalName)
 			if it.PrincipalType == "user" && it.Email != "" {
-				principal = fmt.Sprintf("%s <%s>", it.PrincipalName, it.Email)
+				principal = fmt.Sprintf("%s <%s>", principal, common.SanitizeForTerminal(it.Email))
 			}
-			detail := "secret=" + it.SecretName
+			detail := "secret=" + common.SanitizeForTerminal(it.SecretName)
 			if it.Source == "role" {
-				detail = "role=" + it.RoleName
+				detail = "role=" + common.SanitizeForTerminal(it.RoleName)
 			}
 			fmt.Printf("%-6d %-10s %-13s %-22s %-7s %-11s %s\n", it.ID, it.Decision, it.Source, truncate(principal, 22), it.AccessLevel, lastUsedLabel(it.PrincipalType, it.LastUsedAt), detail)
 		}

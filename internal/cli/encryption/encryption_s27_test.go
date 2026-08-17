@@ -8,9 +8,9 @@
 //     runRotateAuthEncryption: success path after Rotate (best-effort via real config)
 //
 //   - auth_encryption_migrate.go:
-//     migrateAPIClients:          "failed to update client" DB error branch
-//     migrateAPITokens:           "failed to update API token" DB error branch
 //     migratePasswordResetTokens: "failed to update password reset token" DB error branch
+//     (migrateAPIClients/migrateAPITokens were removed entirely — see
+//     auth_encryption_migrate.go — so their former coverage here was removed too)
 //
 //   - encryption.go:
 //     runInit/runStatus/runValidate/runFixPerms/runRotate/runUpgradeAAD:
@@ -291,63 +291,15 @@ func TestFixPermsWithConfig_S27_ServiceInitFails(t *testing.T) {
 	}
 }
 
-// ── migrateAPIClients: "failed to update client" DB error branch ─────────────
+// ── migratePasswordResetTokens: "failed to update password reset token" DB error branch ─────
 //
-// Strategy: insert plaintext rows, then install a BEFORE UPDATE trigger that
+// Strategy: insert a plaintext row, then install a BEFORE UPDATE trigger that
 // raises an error (SQLite RAISE(ABORT, ...)) so the SELECT succeeds and
 // returns in-memory rows, but the subsequent UPDATE call fails with
-// "triggered abort".
-
-// TestMigrateAPIClients_S27_UpdateFails exercises the
-// "failed to update client %s" error branch inside migrateAPIClients by
-// installing a SQLite trigger that aborts every UPDATE on api_clients.
-func TestMigrateAPIClients_S27_UpdateFails(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "migrate_update_err.db")
-	ae, db := setupMigrateValidateTestAt(t, dir, dbPath)
-
-	// Insert a plaintext client so the migration query finds it.
-	require.NoError(t, db.Create(&models.APIClient{
-		Name:         "s27-update-fail",
-		ClientID:     "s27-client-update",
-		ClientSecret: "plaintext-s27",
-		IsActive:     true,
-	}).Error)
-
-	// Install a trigger that aborts every UPDATE on api_clients.
-	require.NoError(t, db.Exec(
-		`CREATE TRIGGER abort_api_clients_update BEFORE UPDATE ON api_clients BEGIN
-			SELECT RAISE(ABORT, 'trigger: update aborted for test');
-		END`,
-	).Error)
-
-	err := migrateAPIClients(db, ae, false /* dryRun */)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to update client")
-}
-
-// TestMigrateAPITokens_S27_UpdateFails exercises the
-// "failed to update API token %d" error branch inside migrateAPITokens.
-func TestMigrateAPITokens_S27_UpdateFails(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "migrate_api_update_err.db")
-	ae, db := setupMigrateValidateTestAt(t, dir, dbPath)
-
-	require.NoError(t, db.Create(&models.APIToken{
-		ClientID: 1,
-		Token:    "s27-api-plain",
-	}).Error)
-
-	require.NoError(t, db.Exec(
-		`CREATE TRIGGER abort_api_tokens_update BEFORE UPDATE ON api_tokens BEGIN
-			SELECT RAISE(ABORT, 'trigger: update aborted for test');
-		END`,
-	).Error)
-
-	err := migrateAPITokens(db, ae, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to update API token")
-}
+// "triggered abort". (This section originally also covered
+// migrateAPIClients/migrateAPITokens; both were removed entirely since
+// client_secret/token hold a SHA-256 hash, never plaintext — see
+// auth_encryption_migrate.go.)
 
 // TestMigratePasswordResetTokens_S27_UpdateFails exercises the
 // "failed to update password reset token %d" error branch.

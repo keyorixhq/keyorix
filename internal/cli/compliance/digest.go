@@ -3,6 +3,7 @@ package compliance
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
@@ -49,11 +50,28 @@ immediate broadcast to the configured notification channels with --send.`,
 		if err := c.Get(context.Background(), "/api/v1/compliance/digest", &d); err != nil {
 			return err
 		}
-		fmt.Println(d.Title)
+		// #G69: title/body are server-rendered today, but this is auditor-
+		// facing evidence output and any future free text folded into the
+		// digest (event descriptions, control names, etc.) must not be able
+		// to embed terminal escape sequences that overwrite or hide prior
+		// output. Body sanitizes line-by-line rather than as a single blob so
+		// its intentional multi-line formatting survives.
+		fmt.Println(common.SanitizeForTerminal(d.Title))
 		fmt.Println()
-		fmt.Print(d.Body)
+		fmt.Print(sanitizeDigestBody(d.Body))
 		return nil
 	},
+}
+
+// sanitizeDigestBody applies common.SanitizeForTerminal per line so the
+// digest body's intentional newlines (formatting, not attacker-controlled)
+// survive while any CR/ANSI/other control bytes within a line are stripped.
+func sanitizeDigestBody(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		lines[i] = common.SanitizeForTerminal(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func init() {

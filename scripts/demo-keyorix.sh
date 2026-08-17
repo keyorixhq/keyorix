@@ -60,15 +60,23 @@ if [[ -n "$KEYORIX_TOKEN" ]]; then
     DEMO_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/keyorix-demo.XXXXXX")
     RESPONSE_FILE="$DEMO_TMP_DIR/keyorix-demo-user.json"
     HEADER_FILE="$DEMO_TMP_DIR/auth.header"
+    BODY_FILE="$DEMO_TMP_DIR/keyorix-demo-user-body.json"
+    # Generate the demo user's password at runtime rather than hardcoding one:
+    # a fixed literal here is easy to copy-paste into a real deployment by
+    # someone following this script as a tutorial. Printed below so the
+    # operator can still log in as this user.
+    DEMO_USER_PASSWORD=$(head -c 24 /dev/urandom | base64)
     (umask 077 && printf 'Authorization: Bearer %s\n' "$KEYORIX_TOKEN" > "$HEADER_FILE")
+    (umask 077 && printf '{"username":"demo","email":"demo@keyorix.com","password":"%s","display_name":"Demo User"}' "$DEMO_USER_PASSWORD" > "$BODY_FILE")
     HTTP_CODE=$(curl -s -o "$RESPONSE_FILE" -w "%{http_code}" \
         -X POST "$SERVER/api/v1/users" \
         -H @"$HEADER_FILE" \
         -H "Content-Type: application/json" \
-        -d '{"username":"demo","email":"demo@keyorix.com","password":"Demo#Pass!2026","display_name":"Demo User"}')
-    rm -f "$HEADER_FILE"
+        --data @"$BODY_FILE")
+    rm -f "$HEADER_FILE" "$BODY_FILE"
     if [[ "$HTTP_CODE" = "200" ]] || [[ "$HTTP_CODE" = "201" ]]; then
         demo_success "Created demo user demo@keyorix.com (viewer role)"
+        demo_info "Demo user password: $DEMO_USER_PASSWORD (save it — needed to log in as this user)"
     elif [[ "$HTTP_CODE" = "409" ]]; then
         demo_info "Demo user demo@keyorix.com already exists — skipping"
     else

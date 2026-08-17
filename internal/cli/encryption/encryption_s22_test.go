@@ -189,45 +189,38 @@ locale:
 func TestRunMigrateAuthData_S22_DryRunWithRows(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	// Insert rows for the three migrated tables so the "Found N … to migrate"
-	// lines fire. Sessions are intentionally excluded — session_token is a
-	// hash, never plaintext, so migrateSessions was removed (see
-	// auth_encryption_migrate.go).
-	require.NoError(t, db.Create(&models.APIClient{Name: "x", ClientID: "c1", ClientSecret: "plain", IsActive: true}).Error)
-	require.NoError(t, db.Create(&models.APIToken{ClientID: 1, Token: "api"}).Error)
+	// Insert a row for the one remaining migrated table so the "Found N … to
+	// migrate" line fires. Sessions, API clients, and API tokens are
+	// intentionally excluded — their plaintext-looking columns actually hold a
+	// SHA-256 hash, never plaintext, so migrateSessions/migrateAPIClients/
+	// migrateAPITokens were all removed (see auth_encryption_migrate.go).
 	require.NoError(t, db.Create(&models.PasswordReset{UserID: 1, Token: "rst"}).Error)
 
-	require.NoError(t, migrateAPIClients(db, ae, true))
-	require.NoError(t, migrateAPITokens(db, ae, true))
 	require.NoError(t, migratePasswordResetTokens(db, ae, true))
 
-	// Rows must be untouched (dry-run must not write encrypted values).
-	var client models.APIClient
-	require.NoError(t, db.First(&client).Error)
-	assert.Equal(t, "plain", client.ClientSecret)
-	assert.Empty(t, client.EncryptedClientSecret)
+	// Row must be untouched (dry-run must not write encrypted values).
+	var reset models.PasswordReset
+	require.NoError(t, db.First(&reset).Error)
+	assert.Equal(t, "rst", reset.Token)
+	assert.Empty(t, reset.EncryptedToken)
 }
 
 // TestRunMigrateAuthData_S22_NonDryRunWithAllTables exercises the non-dry-run
-// path of all four migrate helpers when each table has at least one row.
-// This is distinct from TestMigrateAuthData_ClearsPlaintextColumns which only
-// checks the post-state — here we drive through the encrypt+update path for
-// all four tables in one pass and verify the final encrypted state.
+// path of the remaining migrate helper. This is distinct from
+// TestMigrateAuthData_ClearsPlaintextColumns which only checks the
+// post-state — here we drive through the encrypt+update path and verify the
+// final encrypted state.
 func TestRunMigrateAuthData_S22_NonDryRunWithAllTables(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	require.NoError(t, db.Create(&models.APIClient{Name: "a", ClientID: "cli-s22", ClientSecret: "secret-s22", IsActive: true}).Error)
-	require.NoError(t, db.Create(&models.APIToken{ClientID: 1, Token: "tok-s22"}).Error)
 	require.NoError(t, db.Create(&models.PasswordReset{UserID: 10, Token: "reset-s22"}).Error)
 
-	require.NoError(t, migrateAPIClients(db, ae, false))
-	require.NoError(t, migrateAPITokens(db, ae, false))
 	require.NoError(t, migratePasswordResetTokens(db, ae, false))
 
-	var c models.APIClient
-	require.NoError(t, db.Where("client_id = ?", "cli-s22").First(&c).Error)
-	assert.Empty(t, c.ClientSecret)
-	assert.NotEmpty(t, c.EncryptedClientSecret)
+	var r models.PasswordReset
+	require.NoError(t, db.Where("user_id = ?", 10).First(&r).Error)
+	assert.Empty(t, r.Token)
+	assert.NotEmpty(t, r.EncryptedToken)
 }
 
 // ── runValidateAuthEncryption: unmigrated>0 error return ─────────────────
@@ -239,22 +232,13 @@ func TestRunMigrateAuthData_S22_NonDryRunWithAllTables(t *testing.T) {
 func TestRunValidateAuthEncryption_S22_UnmigratedReturnsError(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	// Insert one unmigrated row in each of the three validated tables. Sessions
-	// are intentionally excluded — validateSessions was removed since
-	// session_token is a hash, never plaintext (see auth_encryption_validate.go).
-	require.NoError(t, db.Create(&models.APIClient{Name: "u1", ClientID: "um1", ClientSecret: "pt1", IsActive: true}).Error)
-	require.NoError(t, db.Create(&models.APIToken{ClientID: 2, Token: "ptapi"}).Error)
+	// Insert one unmigrated row in the one remaining validated table. Sessions,
+	// API clients, and API tokens are intentionally excluded — validateSessions/
+	// validateAPIClients/validateAPITokens were all removed since their columns
+	// hold a hash, never plaintext (see auth_encryption_validate.go).
 	require.NoError(t, db.Create(&models.PasswordReset{UserID: 99, Token: "ptreset"}).Error)
 
-	n, err := validateAPIClients(db, ae, false)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-
-	n, err = validateAPITokens(db, ae, false)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-
-	n, err = validatePasswordResetTokens(db, ae, false)
+	n, err := validatePasswordResetTokens(db, ae, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 }
@@ -291,52 +275,11 @@ locale:
 // decryptable) blob while leaving the plaintext column empty. When the
 // validate helper tries to decrypt it, the DecryptXxx call must fail, driving
 // the decrypt-error branch.
-func tamperAPIClientRow(t *testing.T, db *gorm.DB) models.APIClient {
-	t.Helper()
-	c := models.APIClient{
-		Name:                  "tamper",
-		ClientID:              "tamper-client",
-		EncryptedClientSecret: []byte("not-valid-ciphertext"),
-		IsActive:              true,
-	}
-	require.NoError(t, db.Create(&c).Error)
-	return c
-}
-
-func tamperAPITokenRow(t *testing.T, db *gorm.DB) models.APIToken {
-	t.Helper()
-	tok := models.APIToken{ClientID: 7, EncryptedToken: []byte("not-valid-ciphertext")}
-	require.NoError(t, db.Create(&tok).Error)
-	return tok
-}
-
 func tamperPasswordResetRow(t *testing.T, db *gorm.DB) models.PasswordReset {
 	t.Helper()
 	r := models.PasswordReset{UserID: 77, EncryptedToken: []byte("not-valid-ciphertext")}
 	require.NoError(t, db.Create(&r).Error)
 	return r
-}
-
-// TestValidateAPIClients_S22_DecryptError drives the DecryptClientSecret
-// error branch in validateAPIClients: an invalid ciphertext in the encrypted
-// column causes the helper to return a non-nil error.
-func TestValidateAPIClients_S22_DecryptError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	tamperAPIClientRow(t, db)
-
-	_, err := validateAPIClients(db, ae, false)
-	require.Error(t, err, "decrypt error must propagate")
-	assert.Contains(t, err.Error(), "tamper-client")
-}
-
-// TestValidateAPITokens_S22_DecryptError drives the DecryptAPIToken error
-// branch in validateAPITokens.
-func TestValidateAPITokens_S22_DecryptError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	tamperAPITokenRow(t, db)
-
-	_, err := validateAPITokens(db, ae, false)
-	require.Error(t, err, "decrypt error must propagate")
 }
 
 // TestValidatePasswordResetTokens_S22_DecryptError drives the
@@ -347,17 +290,6 @@ func TestValidatePasswordResetTokens_S22_DecryptError(t *testing.T) {
 
 	_, err := validatePasswordResetTokens(db, ae, false)
 	require.Error(t, err, "decrypt error must propagate")
-}
-
-// TestValidateAPIClients_S22_VerboseDecryptError exercises the verbose path
-// for validateAPIClients when an encrypted row is present and decryption fails,
-// confirming the error is returned even in verbose mode.
-func TestValidateAPIClients_S22_VerboseDecryptError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	tamperAPIClientRow(t, db)
-
-	_, err := validateAPIClients(db, ae, true)
-	require.Error(t, err)
 }
 
 // ── findMigrateBackups: directory-entry IsDir skip ────────────────────────
@@ -489,35 +421,39 @@ func TestMigrateProviderCleanupWithConfig_S22_ConfirmedDeletesBackup(t *testing.
 	assert.True(t, os.IsNotExist(statErr), "backup file must be deleted after confirmed cleanup")
 }
 
-// ── migrateAPIClients dry-run isolation ──────────────────────────────────
+// ── migratePasswordResetTokens dry-run isolation ──────────────────────────
 
-// TestMigrateAPIClients_S22_DryRunIsolated verifies the dryRun=true early-
-// return in migrateAPIClients in isolation (separate from the combined table
-// test in auth_encryption_cli_test.go).
-func TestMigrateAPIClients_S22_DryRunIsolated(t *testing.T) {
+// TestMigratePasswordResetTokens_S22_DryRunIsolated verifies the dryRun=true
+// early-return in migratePasswordResetTokens in isolation (separate from the
+// combined table test in auth_encryption_cli_test.go). (Originally written
+// against migrateAPIClients; api_clients was removed from this migration path
+// since client_secret is a hash, never plaintext — password_resets is the one
+// remaining table with a genuine legacy plaintext column.)
+func TestMigratePasswordResetTokens_S22_DryRunIsolated(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
-	require.NoError(t, db.Create(&models.APIClient{
-		Name:         "dry-s22",
-		ClientID:     "dry-client-s22",
-		ClientSecret: "dry-plain-s22",
-		IsActive:     true,
+	require.NoError(t, db.Create(&models.PasswordReset{
+		UserID: 22,
+		Token:  "dry-plain-s22",
 	}).Error)
 
-	require.NoError(t, migrateAPIClients(db, ae, true))
+	require.NoError(t, migratePasswordResetTokens(db, ae, true))
 
-	var got models.APIClient
-	require.NoError(t, db.Where("client_id = ?", "dry-client-s22").First(&got).Error)
-	assert.Equal(t, "dry-plain-s22", got.ClientSecret, "dry-run must not modify the row")
-	assert.Empty(t, got.EncryptedClientSecret)
+	var got models.PasswordReset
+	require.NoError(t, db.Where("user_id = ?", 22).First(&got).Error)
+	assert.Equal(t, "dry-plain-s22", got.Token, "dry-run must not modify the row")
+	assert.Empty(t, got.EncryptedToken)
 }
 
-// ── validateAPIClients: empty encrypted set, non-verbose ─────────────────
+// ── validatePasswordResetTokens: empty encrypted set, non-verbose ────────
 
-// TestValidateAPIClients_S22_EmptyEncryptedNonVerbose verifies validateAPIClients
-// with no encrypted rows and no unmigrated rows (the quiet, no-output path).
-func TestValidateAPIClients_S22_EmptyEncryptedNonVerbose(t *testing.T) {
+// TestValidatePasswordResetTokens_S22_EmptyEncryptedNonVerbose verifies
+// validatePasswordResetTokens with no encrypted rows and no unmigrated rows
+// (the quiet, no-output path). (Originally written against validateAPIClients;
+// api_clients was removed from this validate path since client_secret is a
+// hash, never plaintext.)
+func TestValidatePasswordResetTokens_S22_EmptyEncryptedNonVerbose(t *testing.T) {
 	ae, db := getSharedS3Fixture(t)
-	n, err := validateAPIClients(db, ae, false)
+	n, err := validatePasswordResetTokens(db, ae, false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 }

@@ -50,12 +50,6 @@ func validateAuthEncryptionWithConfig(cfg *config.Config, verbose bool) error {
 
 	var unmigrated int
 
-	n, err := validateAPIClients(db, authEnc, verbose)
-	if err != nil {
-		return fmt.Errorf("API client validation failed: %w", err)
-	}
-	unmigrated += n
-
 	// Sessions are deliberately not validated here — see the comment in
 	// auth_encryption_migrate.go's runMigrateAuthData for why: session_token
 	// stores a SHA-256 hash, never plaintext, so there is no "unmigrated
@@ -63,14 +57,23 @@ func validateAuthEncryptionWithConfig(cfg *config.Config, verbose bool) error {
 	// queried "session_token != ''" (true for every live session) and reported
 	// every one of them as needing migration — a permanent false positive that
 	// would fail this command on any deployment with active sessions.
+	//
+	// API clients and API tokens are ALSO deliberately not validated here, for
+	// the identical reason — this was missed when the sessions fix above landed.
+	// Per models.APIClient.ClientSecret and models.APIToken.Token (see
+	// internal/storage/models/models.go), both columns hold a SHA-256 HASH of
+	// the credential, never plaintext. A prior validateAPIClients/
+	// validateAPITokens queried "client_secret != ''"/"token != ''" (true for
+	// every row, since the column always holds a hash) and reported every one
+	// as needing migration — the same permanent false positive validateSessions
+	// had, funneling operators toward running the destructive
+	// 'auth-encryption migrate' command (see auth_encryption_migrate.go's
+	// removed migrateAPIClients/migrateAPITokens for why that's destructive:
+	// it nulls the row's only stored credential-verification data). See git
+	// history for the removed validateAPIClients/validateAPITokens if this ever
+	// needs revisiting.
 
-	n, err = validateAPITokens(db, authEnc, verbose)
-	if err != nil {
-		return fmt.Errorf("API token validation failed: %w", err)
-	}
-	unmigrated += n
-
-	n, err = validatePasswordResetTokens(db, authEnc, verbose)
+	n, err := validatePasswordResetTokens(db, authEnc, verbose)
 	if err != nil {
 		return fmt.Errorf("password reset token validation failed: %w", err)
 	}
@@ -90,69 +93,6 @@ func validateAuthEncryptionWithConfig(cfg *config.Config, verbose bool) error {
 
 	fmt.Println("✅ All authentication encryption validation checks passed")
 	return nil
-}
-
-// validateAPIClients decrypts every already-encrypted API client row (proving
-// the current keys work), then separately reports and counts rows that still
-// hold a plaintext client_secret with no Encrypted* counterpart — those are
-// invisible to the decrypt check above since it only ever queries
-// "encrypted_client_secret IS NOT NULL".
-func validateAPIClients(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose bool) (int, error) {
-	var clients []models.APIClient
-	if err := db.Where("encrypted_client_secret IS NOT NULL").Find(&clients).Error; err != nil {
-		return 0, err
-	}
-	if verbose {
-		fmt.Printf("🔑 Validating %d encrypted API clients...\n", len(clients))
-	}
-	for _, client := range clients {
-		if _, err := authEnc.DecryptClientSecret(client.EncryptedClientSecret, []byte(client.ClientSecretMetadata)); err != nil {
-			return 0, fmt.Errorf("failed to decrypt client secret for client %s: %w", client.ClientID, err)
-		}
-		if verbose {
-			fmt.Printf("  ✅ Client %s: OK\n", client.ClientID)
-		}
-	}
-
-	var unmigrated []models.APIClient
-	if err := db.Where("client_secret != '' AND client_secret IS NOT NULL AND encrypted_client_secret IS NULL").Find(&unmigrated).Error; err != nil {
-		return 0, err
-	}
-	for _, client := range unmigrated {
-		fmt.Printf("  ⚠️  Client %s: plaintext client_secret with no encrypted counterpart — needs migration\n", client.ClientID)
-	}
-	return len(unmigrated), nil
-}
-
-func validateAPITokens(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose bool) (int, error) {
-	var tokens []models.APIToken
-	if err := db.Where("encrypted_token IS NOT NULL").Find(&tokens).Error; err != nil {
-		return 0, err
-	}
-	if verbose {
-		fmt.Printf("🎟️  Validating %d encrypted API tokens...\n", len(tokens))
-	}
-	for _, token := range tokens {
-		var validateTokenUserID uint
-		if token.UserID != nil {
-			validateTokenUserID = *token.UserID
-		}
-		if _, err := authEnc.DecryptAPIToken(token.EncryptedToken, []byte(token.TokenMetadata), validateTokenUserID); err != nil {
-			return 0, fmt.Errorf("failed to decrypt API token %d: %w", token.ID, err)
-		}
-		if verbose {
-			fmt.Printf("  ✅ API Token %d: OK\n", token.ID)
-		}
-	}
-
-	var unmigrated []models.APIToken
-	if err := db.Where("token != '' AND token IS NOT NULL AND encrypted_token IS NULL").Find(&unmigrated).Error; err != nil {
-		return 0, err
-	}
-	for _, token := range unmigrated {
-		fmt.Printf("  ⚠️  API Token %d: plaintext token with no encrypted counterpart — needs migration\n", token.ID)
-	}
-	return len(unmigrated), nil
 }
 
 func validatePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose bool) (int, error) {

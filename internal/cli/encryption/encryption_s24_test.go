@@ -7,9 +7,10 @@
 //     upgradeAADWithConfig password OK → storage.OpenGormDB fails
 //     validateWithConfig enabled → ValidateKeyFiles error path
 //   - shamir_split.go:       ssOutDir != "" → commitment.hex symlink → write error
-//   - auth_encryption_migrate.go: migrateAPIClients encrypt error (broken authEnc)
-//   - auth_encryption_validate.go: verbose=true paths for tokens/resets
-//     with unmigrated rows
+//   - auth_encryption_validate.go: verbose=true paths for password reset tokens
+//     with unmigrated rows (validateAPIClients/validateAPITokens were removed
+//     entirely — see auth_encryption_validate.go — so their former coverage
+//     here was removed too)
 //   - migrate_provider.go:   copyFile src read OK but dst dir fsync fails (non-existent dir)
 //     migrateProviderWithConfig → oldSvc.Initialize fails
 package encryption
@@ -216,31 +217,6 @@ func TestShamirSplit_S24_CommitmentSymlinkRejected(t *testing.T) {
 // encrypted-row path together with unmigrated rows so the full function body
 // executes in one call.
 
-// TestValidateAPITokens_S24_VerboseWithUnmigrated calls validateAPITokens with
-// verbose=true when the DB contains both an encrypted token and a plaintext-only
-// (unmigrated) token.
-func TestValidateAPITokens_S24_VerboseWithUnmigrated(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	encTok, encMeta, err := ae.EncryptAPIToken("s24-api-token", uint(0))
-	require.NoError(t, err)
-	require.NoError(t, db.Create(&models.APIToken{
-		ClientID:       10,
-		Token:          "",
-		EncryptedToken: encTok,
-		TokenMetadata:  encMeta,
-	}).Error)
-
-	require.NoError(t, db.Create(&models.APIToken{
-		ClientID: 11,
-		Token:    "plaintext-unmigrated-s24",
-	}).Error)
-
-	n, err := validateAPITokens(db, ae, true /* verbose */)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n, "one unmigrated API token must be flagged")
-}
-
 // TestValidatePasswordResetTokens_S24_VerboseWithUnmigrated calls
 // validatePasswordResetTokens with verbose=true when the DB contains both an
 // encrypted reset token and a plaintext-only (unmigrated) reset token.
@@ -264,34 +240,6 @@ func TestValidatePasswordResetTokens_S24_VerboseWithUnmigrated(t *testing.T) {
 	n, err := validatePasswordResetTokens(db, ae, true /* verbose */)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "one unmigrated reset token must be flagged")
-}
-
-// TestValidateAPIClients_S24_VerboseWithUnmigrated calls validateAPIClients
-// with verbose=true when the DB contains both an encrypted client and a
-// plaintext-only (unmigrated) client.
-func TestValidateAPIClients_S24_VerboseWithUnmigrated(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	encSec, encMeta, err := ae.EncryptClientSecret("s24-client-secret")
-	require.NoError(t, err)
-	require.NoError(t, db.Create(&models.APIClient{
-		Name:                  "enc-s24",
-		ClientID:              "enc-client-s24",
-		IsActive:              true,
-		EncryptedClientSecret: encSec,
-		ClientSecretMetadata:  models.JSON(encMeta),
-	}).Error)
-
-	require.NoError(t, db.Create(&models.APIClient{
-		Name:         "plain-s24",
-		ClientID:     "plain-client-s24",
-		ClientSecret: "plaintext-unmigrated-s24",
-		IsActive:     true,
-	}).Error)
-
-	n, err := validateAPIClients(db, ae, true /* verbose */)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n, "one unmigrated API client must be flagged")
 }
 
 // ── migrateProviderWithConfig: oldSvc.Initialize fails ──────────────────────

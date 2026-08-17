@@ -94,6 +94,46 @@ func TestCleanComponentPath(t *testing.T) {
 	}
 }
 
+// TestIsUnsafeCleanComponentPath_PostCleanAbsoluteRejected proves the
+// defense-in-depth check added to cleanComponentPath: the RESULT of
+// path.Clean(filepath.ToSlash(p)) must itself be re-checked for absoluteness,
+// not just the raw input string.
+//
+// On this platform (and on Linux), filepath.ToSlash is a no-op — the OS path
+// separator already is "/" — so there is no raw input string p that satisfies
+// !path.IsAbs(p) && !strings.HasPrefix(p, "/") yet still cleans to a value
+// starting with "/"; empirically, path.Clean never turns a relative path into
+// a rooted one. The gap is real only on a platform whose separator differs
+// from "/" (e.g. Windows): a raw UNC-style component name such as
+// `\\server\share\evil` does not start with "/", so it sails past the
+// pre-clean checks in cleanComponentPath, but filepath.ToSlash converts the
+// backslashes to forward slashes there, and path.Clean("//server/share/evil")
+// collapses the doubled slash to a single leading "/" — exactly the shape
+// this test exercises directly against isUnsafeCleanComponentPath, the
+// extracted post-clean check, so the regression is caught on every platform
+// this test runs on rather than only on Windows.
+func TestIsUnsafeCleanComponentPath_PostCleanAbsoluteRejected(t *testing.T) {
+	cases := []struct {
+		name   string
+		clean  string
+		unsafe bool
+	}{
+		{"post-clean absolute (simulated Windows UNC bypass)", "/server/share/evil", true},
+		{"post-clean absolute root", "/", true},
+		{"post-clean absolute simple", "/etc/passwd", true},
+		{"dot", ".", true},
+		{"dot-dot", "..", true},
+		{"dot-dot prefix", "../escape", true},
+		{"ordinary relative path", "valid/path.txt", false},
+		{"ordinary single segment", "single.txt", false},
+	}
+	for _, c := range cases {
+		if got := isUnsafeCleanComponentPath(c.clean); got != c.unsafe {
+			t.Errorf("isUnsafeCleanComponentPath(%q) = %v, want %v", c.clean, got, c.unsafe)
+		}
+	}
+}
+
 // TestParseVersion_EdgeCases covers non-standard version strings.
 func TestParseVersion_EdgeCases(t *testing.T) {
 	// Negative component.

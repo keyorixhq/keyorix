@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -296,7 +297,15 @@ func loginWithCredentials(endpoint, username, password string, timeout time.Dura
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+		// The response body is server-controlled (a malicious or compromised
+		// KEYORIX_SERVER endpoint) and reaches this operator's terminal verbatim
+		// via the wrapping "login failed: %w" in runConnect — the same threat
+		// model as #G69 (see common.SanitizeForTerminal). Sanitize control/ANSI
+		// bytes and cap the length so a hostile response can't inject terminal
+		// escape sequences or flood the terminal, while still surfacing enough
+		// of the server's message (e.g. "invalid credentials") to be useful.
+		excerpt := truncate(common.SanitizeForTerminal(string(respBody)), 300)
+		return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, excerpt)
 	}
 
 	var result struct {
@@ -312,6 +321,15 @@ func loginWithCredentials(endpoint, username, password string, timeout time.Dura
 	}
 
 	return result.Data.Token, nil
+}
+
+// truncate shortens s to at most n runes, appending "…" when cut.
+func truncate(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n-1]) + "…"
 }
 
 func testServerConnection(endpoint, apiKey string, timeout time.Duration) error {

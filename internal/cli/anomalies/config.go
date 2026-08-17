@@ -111,6 +111,33 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 }
 
 func runConfigSetRemote(rc *common.RemoteClient, cmd *cobra.Command) error {
+	// NOTE on the GET-then-PUT race (unsynchronized read-modify-write):
+	//
+	// This is a full-replace update: we GET the current config, patch only the
+	// flags the caller passed on the CLI, and PUT the whole object back. If two
+	// "anomaly config set" invocations (or any other future writer of this
+	// endpoint) run concurrently, the later PUT can silently clobber the
+	// earlier one's change based on its own stale GET — a classic lost-update
+	// race. There is currently no server-side primitive to close this window:
+	// AnomalyConfigRecord has no version/ETag column, UpdateAnomalyConfig
+	// (internal/core/anomaly_config.go) unconditionally stamps UpdatedAt with
+	// time.Now() on every call, and LocalStorage.SaveAnomalyConfig
+	// (internal/storage/store/local_anomaly_config.go) does an unconditional
+	// GORM Save — there is no compare-and-swap to build a conditional PUT on.
+	//
+	// Adding real optimistic concurrency (a version field + migration +
+	// conditional UPDATE ... WHERE version = ? threaded through the storage
+	// interface, both storage backends, the core layer, and the HTTP handler)
+	// is out of scope for this CLI-hygiene pass, and this isn't a security
+	// boundary — anomaly-config is an infrequently-touched operator knob, not
+	// a control an attacker can leverage by winning the race. If concurrent
+	// operators updating this config becomes a real operational problem,
+	// revisit with a proper version/ETag column on AnomalyConfigRecord.
+	//
+	// The window itself is already minimal: everything between the GET and
+	// the PUT below is pure in-memory flag application and JSON marshaling —
+	// no I/O, no unrelated work — so there is nothing further to trim here.
+	//
 	// Fetch the current config so we can do a partial update (only changed flags).
 	var resp anomalyConfigResponse
 	if err := rc.Get(context.Background(), anomalyConfigPath, &resp); err != nil {
