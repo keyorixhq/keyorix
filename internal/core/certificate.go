@@ -99,7 +99,7 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 		DaysUntilExpiry:    int(cert.NotAfter.Sub(now).Hours() / 24),
 		IsExpired:          now.After(cert.NotAfter),
 		IsCA:               cert.IsCA,
-		SelfSigned:         cert.Subject.String() == cert.Issuer.String(),
+		SelfSigned:         isSelfSigned(cert),
 		DNSNames:           cert.DNSNames,
 		SignatureAlgorithm: cert.SignatureAlgorithm.String(),
 		PublicKeyAlgorithm: cert.PublicKeyAlgorithm.String(),
@@ -136,6 +136,38 @@ func (c *KeyorixCore) refreshCertNotAfterCache(ctx context.Context, secret *mode
 	} else {
 		_ = c.storage.SetSecretCertNotAfter(ctx, secret.ID, nil)
 	}
+}
+
+// isSelfSigned reports whether cert's signature cryptographically validates against
+// cert's OWN public key — the actual definition of self-signed: the certificate was
+// signed by the private key corresponding to its own subject public key.
+//
+// #CORE-CERT-003: this replaces a prior `cert.Subject.String() == cert.Issuer.String()`
+// comparison, which only compared the RENDERED RDN strings. That heuristic was
+// spoofable in both directions: a certificate manually constructed with reordered or
+// otherwise mismatched RDN attribute encoding could evade the check despite being
+// genuinely self-signed, and — the more consequential direction, since this field feeds
+// an operator-facing PKI-hygiene signal per ADR-054/056 — a CA-issued certificate whose
+// Issuer happens to render identically to its Subject (matching CN/org by coincidence,
+// or a crafted cert) would be misreported as self-signed even though a different key
+// signed it, producing a false sense of assurance.
+//
+// cert.CheckSignatureFrom(cert) is deliberately NOT used here: it additionally enforces
+// RFC 5280 CA constraints (BasicConstraints/KeyUsage) on the "parent" argument, which is
+// cert itself in a self-check. Those constraints reject the common case of a self-signed
+// LEAF certificate (IsCA: false — most self-signed TLS/service certs never set the CA
+// bit), which would make a genuinely self-signed leaf spuriously report as NOT
+// self-signed. cert.CheckSignature verifies the raw TBS-certificate signature against
+// cert's own public key directly, with no CA/BasicConstraints/KeyUsage involved — the
+// right primitive for "did this certificate sign itself."
+//
+// An error (e.g. an unsupported/weak signature algorithm the stdlib refuses to verify)
+// means self-signed status cannot be cryptographically confirmed. We fail closed to
+// false (not self-signed) rather than assume it is: the whole point of this field is an
+// accurate hygiene signal, and an unverified claim of "self-signed" would itself be a
+// false assurance.
+func isSelfSigned(cert *x509.Certificate) bool {
+	return cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature) == nil
 }
 
 // maxCertBlocks bounds how many CERTIFICATE blocks we parse from a single value, so a
