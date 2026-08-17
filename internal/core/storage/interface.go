@@ -898,6 +898,15 @@ type Storage interface {
 	// (RFC 7644). Returns the not-found error when no user carries that external id.
 	GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error)
 	GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error)
+	// ListAllUserGroupMemberships returns every user_groups row in the
+	// deployment, unfiltered by project scope (#G44) — the batch-load
+	// counterpart to GetUserGroups: GetPermissionBaseline uses this to load
+	// every user's group membership in one query instead of one GetUserGroups
+	// call per user, a genuine N+1 whose cost scales with the deployment's own
+	// user count. Preserves GetUserGroups' exact per-user multiplicity (a user
+	// with both a global and a project-scoped membership row for the same
+	// group yields two rows here too, matching GetUserGroups' unfiltered JOIN).
+	ListAllUserGroupMemberships(ctx context.Context) ([]UserGroupMembership, error)
 
 	// Password history (ADR-025 history_count). AddPasswordHistory records a
 	// bcrypt hash; RecentPasswordHashes returns the most recent `limit` hashes
@@ -1996,6 +2005,13 @@ type RoleAssignment struct {
 	RoleID        uint   `json:"role_id"`
 	ProjectID     uint   `json:"project_id"`
 	EnvironmentID uint   `json:"environment_id"`
+}
+
+// UserGroupMembership is one user→group membership row, as returned by
+// ListAllUserGroupMemberships.
+type UserGroupMembership struct {
+	UserID  uint `json:"user_id"`
+	GroupID uint `json:"group_id"`
 }
 
 // GroupRoleGrant is a role assigned to a group together with the grant's optional

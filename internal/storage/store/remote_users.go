@@ -821,6 +821,15 @@ func (rs *RemoteStorage) GetUserGroups(ctx context.Context, userID uint) ([]*mod
 	return groups, nil
 }
 
+// ListAllUserGroupMemberships is not available in remote mode: its only
+// caller (GetPermissionBaseline, #G44) already can't run remotely either —
+// ListAllUserRoleGrants/ListAllGroupRoleGrants above are both
+// remoteUnsupported for the same reason (a deployment-wide unfiltered export,
+// not a per-request query the hub can answer through a spoke).
+func (rs *RemoteStorage) ListAllUserGroupMemberships(_ context.Context) ([]storage.UserGroupMembership, error) {
+	return nil, remoteUnsupported("ListAllUserGroupMemberships")
+}
+
 // --- Groups ---
 
 // CreateGroup creates a new group via POST /api/v1/system/groups — a raw

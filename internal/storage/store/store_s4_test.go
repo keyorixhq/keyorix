@@ -528,6 +528,13 @@ func TestGroup_UserMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, groups, 1)
 
+	// ListAllUserGroupMemberships (#G44 batch-load counterpart of GetUserGroups).
+	memberships, err := ls.ListAllUserGroupMemberships(ctx)
+	require.NoError(t, err)
+	require.Len(t, memberships, 1)
+	assert.Equal(t, u.ID, memberships[0].UserID)
+	assert.Equal(t, g.ID, memberships[0].GroupID)
+
 	// RemoveUserFromGroup (global: projectID=0).
 	err = ls.RemoveUserFromGroup(ctx, u.ID, g.ID, 0)
 	require.NoError(t, err)
