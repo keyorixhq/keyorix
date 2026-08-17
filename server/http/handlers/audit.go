@@ -464,3 +464,56 @@ func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Reque
 	}
 	sendSuccess(w, resp, "audit checkpoint written")
 }
+
+// MigrateAuditChainEncoding handles POST /api/v1/audit/migrate-chain-encoding —
+// a one-time, operator-triggered re-derivation of entry_hash/prev_hash for
+// every chained audit_events row under the current hash encoding (see
+// internal/core/audit_chain_migrate.go's doc comment for why this exists and
+// why it is deliberately NOT automatic). Privileged (system.write, same bar
+// as /checkpoint): this rewrites the one dataset whose entire purpose is
+// tamper evidence.
+//
+// ?dry_run=true (the default when the query param is absent) computes and
+// returns the result WITHOUT persisting anything, so an operator can preview
+// row/anchor counts before committing. A real run requires the query param
+// set explicitly to "false" — there is no way to trigger a real run by
+// omission or typo, only by deliberately opting out of the safe default.
+//
+// The caller is responsible for ensuring no other process can reach this
+// server's audit_events table for the duration of a real run (stop the
+// server's OTHER instances if load-balanced, or run during a maintenance
+// window) — this endpoint's own transaction only serializes against this
+// process's own LogAuditEvent path, not an entirely separate connection.
+func (h *AuditHandler) MigrateAuditChainEncoding(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+
+	dryRun := r.URL.Query().Get("dry_run") != "false"
+
+	result, err := h.coreService.MigrateAuditChainEncoding(r.Context(), userCtx.UserID, dryRun)
+	if err != nil {
+		log.Printf("Error migrating audit chain encoding: %v", err)
+		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"dry_run":                dryRun,
+		"rows_migrated":          result.RowsMigrated,
+		"unchained_rows_skipped": result.UnchainedRowsSkipped,
+		"head_id":                result.HeadID,
+		"head_hash":              result.HeadHash,
+	}
+	if result.AnchorRowID != 0 {
+		resp["anchor_row_id"] = result.AnchorRowID
+		resp["anchor_new_entry_hash"] = result.AnchorNewEntryHash
+	}
+	msg := "audit chain encoding migration preview (dry run — nothing was written; re-run with ?dry_run=false to apply)"
+	if !dryRun {
+		msg = "audit chain encoding migration applied"
+	}
+	sendSuccess(w, resp, msg)
+}

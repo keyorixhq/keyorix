@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"time"
 
@@ -257,6 +258,113 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context, anchor *storage.Au
 	result.HeadID = headID
 	return result, nil
 }
+
+// MigrateAuditChainEncoding re-derives entry_hash/prev_hash for every chained
+// audit_events row under computeAuditEntryHash's current encoding, in one
+// transaction spanning the whole migration (holding the same cross-process
+// exclusivity LogAuditEvent uses for its own append, so no concurrently
+// appended row can interleave against a partially-migrated chain). See the
+// storage.Storage interface doc for the full contract, including why callers
+// must still ensure no other process reaches this database concurrently.
+func (ls *LocalStorage) MigrateAuditChainEncoding(ctx context.Context, dryRun bool, anchor *storage.AuditChainAnchor) (*storage.AuditChainMigrationResult, error) {
+	result := &storage.AuditChainMigrationResult{}
+
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
+				return err
+			}
+		}
+
+		prevHash := auditGenesisHash
+		started := false
+		var lastID uint
+		firstBatch := true
+		firstChainedID := uint(0)
+		firstChainedNewHash := ""
+		anchorApplies := false
+
+		for {
+			var batch []*models.AuditEvent
+			if err := tx.
+				Where("id > ?", lastID).
+				Order("id ASC").
+				Limit(auditChainVerifyBatch).
+				Find(&batch).Error; err != nil {
+				return err
+			}
+			if len(batch) == 0 {
+				break
+			}
+			if firstBatch {
+				firstBatch = false
+				// Mirror VerifyAuditChain's exact applicability rule: only seed from
+				// the anchor if the earliest row that WOULD start the chain (first
+				// non-empty-entry_hash row) currently carries a non-genesis
+				// prev_hash — i.e. a prior purge genuinely moved the chain start.
+				for _, e := range batch {
+					if e.EntryHash == "" {
+						continue
+					}
+					if anchor != nil && e.PrevHash != auditGenesisHash {
+						prevHash = anchor.PrevHash
+						anchorApplies = true
+					}
+					break
+				}
+			}
+			for _, e := range batch {
+				if !started {
+					if e.EntryHash == "" {
+						result.UnchainedRowsSkipped++
+						continue
+					}
+					started = true
+					firstChainedID = e.ID
+				}
+				newHash := computeAuditEntryHash(e, prevHash)
+				if e.ID == firstChainedID {
+					firstChainedNewHash = newHash
+				}
+				if e.PrevHash != prevHash || e.EntryHash != newHash {
+					if err := tx.Model(&models.AuditEvent{}).Where("id = ?", e.ID).
+						Updates(map[string]interface{}{"prev_hash": prevHash, "entry_hash": newHash}).Error; err != nil {
+						return err
+					}
+				}
+				prevHash = newHash
+				result.HeadID = e.ID
+				result.RowsMigrated++
+			}
+			lastID = batch[len(batch)-1].ID
+			if len(batch) < auditChainVerifyBatch {
+				break
+			}
+		}
+
+		result.HeadHash = prevHash
+		if anchorApplies && firstChainedID != 0 {
+			// The earliest migrated row is the anchor's row; the caller must
+			// re-sign the anchor with this row's newly computed entry_hash (its
+			// PrevHash is unchanged — it represents an already-purged predecessor
+			// that cannot be recomputed under any encoding).
+			result.AnchorRowID = firstChainedID
+			result.AnchorNewEntryHash = firstChainedNewHash
+		}
+		if dryRun {
+			return errAuditMigrationDryRun
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errAuditMigrationDryRun) {
+		return nil, err
+	}
+	return result, nil
+}
+
+// errAuditMigrationDryRun is a sentinel used to force MigrateAuditChainEncoding's
+// transaction to roll back after computing (but never persisting) its result.
+var errAuditMigrationDryRun = errors.New("audit chain migration dry run")
 
 // verifyBatchEvents processes one page of audit events against the running hash chain.
 // Returns the new prevHash, the last verified headID, the updated started flag, and
