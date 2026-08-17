@@ -164,7 +164,7 @@ func TestRemoteStorageSetupToken_Supersede_RealServer(t *testing.T) {
 		buildActiveSetupToken(now, "hash-supersede-other", core.SetupPurposePasswordResetLink, "other@example.com"))
 	require.NoError(t, err)
 
-	require.NoError(t, downstream.Storage().SupersedeActiveSetupTokens(ctx, core.SetupPurposePasswordResetLink, "reset@example.com"))
+	require.NoError(t, downstream.Storage().SupersedeActiveSetupTokens(ctx, core.SetupPurposePasswordResetLink, "reset@example.com", nil))
 
 	s1, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-supersede-1")
 	require.NoError(t, err)
@@ -177,6 +177,69 @@ func TestRemoteStorageSetupToken_Supersede_RealServer(t *testing.T) {
 	other, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-supersede-other")
 	require.NoError(t, err)
 	assert.Equal(t, core.SetupTokenActive, other.State, "a different subject's active token must be untouched")
+}
+
+// TestRemoteStorageSetupToken_SupersedeProjectScoped_RealServer is the
+// CORE-INVITATIONS-003 end-to-end regression: over storage.type: remote, a
+// project-scoped supersede (as InviteToProjectWithLink/ResendInvitationLink now
+// issue) must not cross the HTTP hop as an unscoped one — an unrelated project's
+// invite must not invalidate a different project's still-pending invite to the same
+// email, while a same-project reissue still supersedes.
+func TestRemoteStorageSetupToken_SupersedeProjectScoped_RealServer(t *testing.T) {
+	upstream, downstream := newUpstreamDownstreamForSetupTokens(t)
+	ctx := context.Background()
+	now := time.Now()
+	const email = "victim@example.com"
+
+	invA, err := upstream.Storage().CreateProjectInvitation(ctx, &models.ProjectInvitation{
+		ProjectID: 101, Email: email, Role: "project_developer", State: core.InvitationPending,
+	})
+	require.NoError(t, err)
+	invB, err := upstream.Storage().CreateProjectInvitation(ctx, &models.ProjectInvitation{
+		ProjectID: 202, Email: email, Role: "project_viewer", State: core.InvitationPending,
+	})
+	require.NoError(t, err)
+
+	tokA := buildActiveSetupToken(now, "hash-proj-a-1", core.SetupPurposeInvitationAccept, email)
+	tokA.InvitationID = &invA.ID
+	_, err = downstream.Storage().CreateSetupToken(ctx, tokA)
+	require.NoError(t, err)
+
+	// Project B's admin invites the same email to project B — the pre-issuance
+	// supersede is scoped to project B only.
+	projectB := invB.ProjectID
+	require.NoError(t, downstream.Storage().SupersedeActiveSetupTokens(ctx, core.SetupPurposeInvitationAccept, email, &projectB))
+	tokB := buildActiveSetupToken(now, "hash-proj-b-1", core.SetupPurposeInvitationAccept, email)
+	tokB.InvitationID = &invB.ID
+	_, err = downstream.Storage().CreateSetupToken(ctx, tokB)
+	require.NoError(t, err)
+
+	sA, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-proj-a-1")
+	require.NoError(t, err)
+	assert.Equal(t, core.SetupTokenActive, sA.State, "project B's invite must not supersede project A's pending link")
+
+	sB1, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-proj-b-1")
+	require.NoError(t, err)
+	assert.Equal(t, core.SetupTokenActive, sB1.State)
+
+	// A same-project (B) reissue must still supersede project B's own prior link.
+	require.NoError(t, downstream.Storage().SupersedeActiveSetupTokens(ctx, core.SetupPurposeInvitationAccept, email, &projectB))
+	tokB2 := buildActiveSetupToken(now, "hash-proj-b-2", core.SetupPurposeInvitationAccept, email)
+	tokB2.InvitationID = &invB.ID
+	_, err = downstream.Storage().CreateSetupToken(ctx, tokB2)
+	require.NoError(t, err)
+
+	sB1Reloaded, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-proj-b-1")
+	require.NoError(t, err)
+	assert.Equal(t, core.SetupTokenSuperseded, sB1Reloaded.State, "a same-project reissue must still supersede the project's own prior link")
+
+	sB2, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-proj-b-2")
+	require.NoError(t, err)
+	assert.Equal(t, core.SetupTokenActive, sB2.State)
+
+	sAFinal, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-proj-a-1")
+	require.NoError(t, err)
+	assert.Equal(t, core.SetupTokenActive, sAFinal.State, "project A's link must remain untouched throughout")
 }
 
 // TestRemoteStorageSetupToken_Expire_RealServer proves MarkSetupTokenExpired's

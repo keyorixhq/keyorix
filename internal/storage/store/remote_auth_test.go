@@ -319,8 +319,30 @@ func TestRemoteStorage_SupersedeActiveSetupTokens(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	err = rs.SupersedeActiveSetupTokens(context.Background(), "account_setup", "user@example.com")
+	err = rs.SupersedeActiveSetupTokens(context.Background(), "account_setup", "user@example.com", nil)
 	require.NoError(t, err)
+}
+
+// TestRemoteStorage_SupersedeActiveSetupTokens_ForwardsProjectID proves the
+// project_id scoping parameter (CORE-INVITATIONS-003) crosses the HTTP hop rather
+// than being silently dropped by RemoteStorage.
+func TestRemoteStorage_SupersedeActiveSetupTokens_ForwardsProjectID(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/system/setup-tokens/supersede", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		_, _ = w.Write(apiOK(nil))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	projectID := uint(42)
+	err = rs.SupersedeActiveSetupTokens(context.Background(), "invitation_accept", "user@example.com", &projectID)
+	require.NoError(t, err)
+	assert.Equal(t, float64(42), gotBody["project_id"], "project_id must be forwarded on the wire")
 }
 
 func TestRemoteStorage_SupersedeActiveSetupTokens_Error(t *testing.T) {
@@ -336,7 +358,7 @@ func TestRemoteStorage_SupersedeActiveSetupTokens_Error(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	err = rs.SupersedeActiveSetupTokens(context.Background(), "account_setup", "user@example.com")
+	err = rs.SupersedeActiveSetupTokens(context.Background(), "account_setup", "user@example.com", nil)
 	assert.Error(t, err)
 }
 

@@ -141,16 +141,28 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // adding an actor or per-invitation dimension keeps initial invites and resends of the
 // same target subject to one combined rate, matching how ResendInvitationLink already
 // treats every pending invite to the same email as one throttled subject.
+//
+// The SEPARATE pre-issuance supersede (IssueSetupToken's "kill the old link" step) is,
+// unlike the throttle above, scoped to THIS project via SupersedeProjectID
+// (CORE-INVITATIONS-003): without it, any admin holding roles.assign in some unrelated
+// project B could invite the same target email to project B and, as a side effect,
+// silently invalidate project A's still-pending invite link — a cross-project
+// interference project B's admin has no authority to cause and no visibility into.
+// Scoping the supersede (but deliberately NOT the throttle, which stays per (purpose,
+// email) globally — see above) preserves the SMTP-abuse ceiling while eliminating that
+// cross-project side effect. A genuine same-project resend/re-invite still supersedes
+// the prior pending invite for that project, exactly as before.
 func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy)
 	if err != nil {
 		return nil, nil, err
 	}
 	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
-		Purpose:      SetupPurposeInvitationAccept,
-		SubjectEmail: email,
-		InvitationID: &inv.ID,
-		CreatedBy:    invitedBy,
+		Purpose:            SetupPurposeInvitationAccept,
+		SubjectEmail:       email,
+		InvitationID:       &inv.ID,
+		CreatedBy:          invitedBy,
+		SupersedeProjectID: &projectID,
 	}, "", fmt.Sprintf("%s on project %d", role, projectID))
 	if err != nil {
 		return inv, nil, err
@@ -250,6 +262,13 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 // Throttled per (purpose, email) via provisionSetupLinkThrottled for the same reason
 // as InviteToProjectWithLink (#345): the users.write-gated global-invite endpoint is
 // otherwise an equally loop-callable unbounded-SMTP vector.
+//
+// Unlike InviteToProjectWithLink, SupersedeProjectID is intentionally left nil: a
+// global invite (ProjectID 0) has no single project to scope the pre-issuance
+// supersede to, so it keeps the original (purpose, email)-only scope — it still
+// supersedes a prior pending global invite to the same address, and, as before, a
+// prior PROJECT-scoped invite to that address (there is no narrower boundary to draw
+// here; CORE-INVITATIONS-003 is specifically about project-vs-project interference).
 func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy)
 	if err != nil {
@@ -361,7 +380,10 @@ func (c *KeyorixCore) revokeAssignmentGrants(ctx context.Context, inv *models.Pr
 }
 
 // ResendInvitationLink reissues the accept link for a still-pending invitation
-// (superseding the prior token) and re-delivers it. Throttled per ADR-028.
+// (superseding the prior token) and re-delivers it. Throttled per ADR-028. The
+// caller is already verified to be authorized within projectID (below), and the
+// supersede itself is scoped to that same project (CORE-INVITATIONS-003) — a resend
+// here can only ever kill this project's own prior link for the address.
 func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invitationID, actorID uint) (*ProvisionSetupResult, error) {
 	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
 	if err != nil {
@@ -383,10 +405,11 @@ func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invit
 		return nil, fmt.Errorf("only a pending invitation can be resent (state is %s)", inv.State)
 	}
 	return c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
-		Purpose:      SetupPurposeInvitationAccept,
-		SubjectEmail: inv.Email,
-		InvitationID: &inv.ID,
-		CreatedBy:    actorID,
+		Purpose:            SetupPurposeInvitationAccept,
+		SubjectEmail:       inv.Email,
+		InvitationID:       &inv.ID,
+		CreatedBy:          actorID,
+		SupersedeProjectID: &inv.ProjectID,
 	}, "", fmt.Sprintf("%s on project %d", inv.Role, inv.ProjectID))
 }
 

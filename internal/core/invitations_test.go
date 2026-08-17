@@ -436,7 +436,7 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
 		Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
-	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com").Return(nil)
+	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com", ptr(uint(1))).Return(nil)
 	store.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 	// First invite: a zero prior count on both windows, so it succeeds and mints a
@@ -479,7 +479,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 2}, nil)
 	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
 		Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
-	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "c@d.com").Return(nil)
+	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "c@d.com", (*uint)(nil)).Return(nil)
 	store.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()

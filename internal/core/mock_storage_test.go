@@ -1600,8 +1600,8 @@ func (m *MockStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*mo
 	return args.Get(0).(*models.SetupToken), args.Error(1)
 }
 
-func (m *MockStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error {
-	args := m.Called(ctx, purpose, email)
+func (m *MockStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string, projectID *uint) error {
+	args := m.Called(ctx, purpose, email, projectID)
 	return args.Error(0)
 }
 
