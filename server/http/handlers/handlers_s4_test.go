@@ -683,10 +683,10 @@ func TestConnectHandler_ListConnectors_Unauthorized(t *testing.T) {
 
 func TestConnectHandler_GetSecret_Unauthorized(t *testing.T) {
 	h := NewConnectHandler(newHandlerCore(t))
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/", nil),
+	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil),
 		map[string]string{"connector": "vault", "ref": "secret/foo"})
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -7348,17 +7348,18 @@ func TestConnectHandler_ListConnectors_HappyPath(t *testing.T) {
 
 func TestConnectHandler_GetSecret_MissingRef(t *testing.T) {
 	h := newConnectHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "name", "myconn"))
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{}`)), "name", "myconn"))
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestConnectHandler_GetSecret_UnknownConnector(t *testing.T) {
 	h := newConnectHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/?ref=myref", nil), "name", "unknownconn"))
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"ref":"myref"}`)), "name", "unknownconn"))
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	// Unknown connector → error response (not 401)
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)

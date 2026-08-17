@@ -38,13 +38,14 @@ describe('connectApi.listConnectors', () => {
 // ── readSecret ────────────────────────────────────────────────────────────────
 
 describe('connectApi.readSecret', () => {
-    it('GETs the secret with a URL-encoded connector and the ref param', async () => {
+    it('POSTs the ref in the request body, not the URL, with a URL-encoded connector', async () => {
         const secret = { connector: 'vault/prod', ref: 'db/password', value: 'hunter2' };
-        mock.get.mockResolvedValueOnce({ data: { data: secret } });
+        mock.post.mockResolvedValueOnce({ data: { data: secret } });
         const result = await connectApi.readSecret('vault/prod', 'db/password');
-        expect(mock.get).toHaveBeenCalledWith('/api/v1/connect/vault%2Fprod/secret', {
-            params: { ref: 'db/password' },
+        expect(mock.post).toHaveBeenCalledWith('/api/v1/connect/vault%2Fprod/secret:read', {
+            ref: 'db/password',
         });
+        expect(mock.get).not.toHaveBeenCalled();
         expect(result).toEqual(secret);
     });
 });

@@ -7,6 +7,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -56,17 +57,31 @@ func (h *ConnectHandler) ListConnectors(w http.ResponseWriter, r *http.Request) 
 	sendSuccess(w, map[string]interface{}{"connectors": h.coreService.ConnectConnectorNames()}, "")
 }
 
-// GetSecret proxies a read-through of ?ref=… from the named connector.
-func (h *ConnectHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
+// ReadSecret proxies a read-through of the named connector. ref is taken from the
+// JSON request body, not a query-string parameter: a ref names the secret's exact
+// path/identifier inside the external store (e.g. a Vault mount path or AWS secret
+// name), and a GET query string is routinely captured in infrastructure access logs
+// (reverse proxies, TLS-terminating middleboxes, CDN/load-balancer log pipelines) in
+// a way a POST body normally is not — someone with read access to those logs but no
+// connect.read grant inside Keyorix could otherwise passively harvest every ref
+// operators query.
+func (h *ConnectHandler) ReadSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	name := chi.URLParam(r, "name")
-	ref := r.URL.Query().Get("ref")
+	var body struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		sendError(w, "InvalidBody", "invalid JSON request body", http.StatusBadRequest, nil)
+		return
+	}
+	ref := body.Ref
 	if ref == "" {
-		sendError(w, "InvalidParameter", "ref query parameter is required", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", "ref is required in the request body", http.StatusBadRequest, nil)
 		return
 	}
 	value, err := h.coreService.ReadFederatedSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), name, ref)

