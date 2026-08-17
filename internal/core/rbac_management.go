@@ -384,6 +384,12 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 				return err
 			}
 			c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
+			// Evict the auth cache so a just-revoked role stops authorizing on the
+			// very next request instead of the up-to-30s positive-cache window every
+			// other credential-lifecycle event in this package already closes
+			// (password change, suspend/deactivate/delete, PAT revoke,
+			// machine-identity suspend/revoke).
+			c.evictUserSessionCache(ctx, userID)
 			return nil
 		}
 	}
@@ -391,6 +397,7 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
+	c.evictUserSessionCache(ctx, userID)
 	return nil
 }
 

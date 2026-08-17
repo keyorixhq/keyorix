@@ -230,6 +230,8 @@ func TestRemoveRoleFromUser_Success(t *testing.T) {
 	// RemoveUserRole: adminIDs is empty → calls RemoveRole
 	ms.On("RemoveRole", mock.Anything, uint(5), uint(3), mock.AnythingOfType("storage.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	// evictUserSessionCache: evicts the removed-role user's cached sessions.
+	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(5)).Return([]string{}, nil)
 	c := NewKeyorixCore(ms)
 	err := c.RemoveRoleFromUser(context.Background(), "alice@example.com", "viewer")
 	require.NoError(t, err)

@@ -186,6 +186,8 @@ func TestRevokeSystemRoleGrant_Success(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
 	ms.On("RemoveRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	// evictUserSessionCache: evicts the removed-role user's cached sessions.
+	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(1)).Return([]string{}, nil)
 	c := NewKeyorixCore(ms)
 	inv := &models.ProjectInvitation{SystemRole: "viewer"}
 	c.revokeSystemRoleGrant(context.Background(), inv, 1)
