@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -212,7 +213,22 @@ func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, 
 	// the eviction into the core so gRPC callers (which have no HTTP middleware
 	// reference) get the same guarantee automatically (#r124).
 	if to == MachineSuspended || to == MachineRevoked {
-		if hashes, herr := c.MachineTokenHashes(ctx, id); herr == nil {
+		hashes, herr := c.MachineTokenHashes(ctx, id)
+		if herr != nil {
+			// CMI-3: one immediate retry before giving up — a missed eviction here
+			// is not just defence-in-depth for gRPC-originated transitions (unlike
+			// the HTTP handler, server/grpc/services/machine_identity_service.go's
+			// TransitionMachineIdentity has no independent fallback eviction), so
+			// it's worth absorbing a single transient storage blip.
+			hashes, herr = c.MachineTokenHashes(ctx, id)
+		}
+		if herr != nil {
+			// Give up rather than block the already-committed state transition on
+			// storage retries, but a silently-missed eviction here leaves revoked/
+			// suspended credentials live in the shared auth cache for up to
+			// validTokenTTL (30s) — that must be visible to operators, not swallowed.
+			log.Printf("SECURITY: machine identity %d: failed to evict credentials from the auth cache after transition to %q: %v — tokens may remain valid for up to validTokenTTL", id, to, herr)
+		} else {
 			c.invalidateTokenCache(hashes...)
 		}
 	}
