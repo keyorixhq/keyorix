@@ -1000,6 +1000,9 @@ func TestDeprovisionSCIMGroup_StorageError(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
+	// guardLastProjectAdminGroupDelete (core-project-members.json#3) runs next;
+	// no group role assignments in this fixture, so it's a no-op too.
+	ms.On("ListGroupRoleAssignments", mock.Anything, uint(10)).Return([]storage.RoleAssignment{}, nil)
 	ms.On("DeleteGroup", mock.Anything, uint(10)).Return(errors.New("not found"))
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
@@ -1012,6 +1015,7 @@ func TestDeprovisionSCIMGroup_Success(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
+	ms.On("ListGroupRoleAssignments", mock.Anything, uint(10)).Return([]storage.RoleAssignment{}, nil)
 	ms.On("DeleteGroup", mock.Anything, uint(10)).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)

@@ -76,8 +76,9 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 
 // DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics. It
 // refuses to delete a group holding the install's last global-admin-conferring
-// role grant (#107; see guardLastGlobalAdminGroupDelete) — deleting a group
-// cascades to remove every role grant it holds.
+// role grant (#107; see guardLastGlobalAdminGroupDelete) OR any project's last
+// roles.assign-conferring grant (see guardLastProjectAdminGroupDelete) —
+// deleting a group cascades to remove every role grant it holds, at every scope.
 func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
@@ -87,6 +88,9 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
+		return err
+	}
+	if err := c.guardLastProjectAdminGroupDelete(ctx, id); err != nil {
 		return err
 	}
 	if err := c.storage.DeleteGroup(ctx, id); err != nil {
@@ -255,12 +259,17 @@ func (c *KeyorixCore) AddUserToGroupGlobal(ctx context.Context, actorID, userID,
 // RemoveUserFromGroup removes a user from a group at the given projectID scope.
 // See AddUserToGroup for actorID semantics. It refuses to remove a user whose
 // global admin-tier authority comes solely from this group's role grant when no
-// other admin route remains (#107; see guardLastGlobalAdminMembership).
+// other admin route remains (#107; see guardLastGlobalAdminMembership), OR whose
+// removal would leave some project this group administers with no roles.assign
+// holder (see guardLastProjectAdminGroupMembership).
 func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
 	if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
+		return err
+	}
+	if err := c.guardLastProjectAdminGroupMembership(ctx, userID, groupID); err != nil {
 		return err
 	}
 	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID, projectID); err != nil {
