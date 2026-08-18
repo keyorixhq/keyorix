@@ -838,6 +838,25 @@ func (rs *RemoteStorage) GetProject(ctx context.Context, id uint) (*models.Proje
 	return decodeProjectResponse(resp.Data)
 }
 
+// GetProjectByName resolves a project by name via GET
+// /api/v1/system/projects/by-name/{name} (ADR-082 branch 2's boot-time connector
+// resolution) — a real, DB-backed lookup on the upstream server, not a stub. Backlog
+// #527 already fixed exactly this failure shape once for ConnectRefGrant: a
+// RemoteStorage primitive with no server endpoint to call at all made every
+// Keyorix Connect federated read fail closed on every storage.type: remote node
+// with Connect configured. This follows the same #510 setup-token-proxy pattern.
+func (rs *RemoteStorage) GetProjectByName(ctx context.Context, name string) (*models.Project, error) {
+	path := "/api/v1/system/projects/by-name/" + url.PathEscape(name)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get project by name: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get project by name failed: %s", resp.Error.Error())
+	}
+	return decodeProjectResponse(resp.Data)
+}
+
 // UpdateProject updates an existing project via PUT /api/v1/system/projects/{id}.
 func (rs *RemoteStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
 	path := fmt.Sprintf("/api/v1/system/projects/%d", project.ID)

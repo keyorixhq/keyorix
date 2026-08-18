@@ -1166,27 +1166,42 @@ with no connectors the `/connect` endpoints are not served.
 ```yaml
 connect:
   enabled: true
+  # allow_unscoped is a temporary, deployment-wide escape hatch (ADR-082): with it
+  # unset (the default), any connector below with no scope: fails server boot. Set
+  # it true only while migrating an existing config — every connector missing scope:
+  # then logs a WARN, every boot, until you set scope: on it and remove this flag.
+  allow_unscoped: false
   connectors:
     - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
       type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager | azure-key-vault | vault
       region: eu-west-1         # AWS region (aws-secrets-manager)
+      scope: project             # project | platform (ADR-082) — required
+      project: payments          # Keyorix project name (not ID) that owns this connector;
+                                  # required when scope is "project", omit when "platform"
       allowed_refs:             # optional prefix allowlist — a ref must match one
         - keyorix/              # (defense-in-depth on top of the backend's IAM scope)
     - name: prod-gcp
       type: gcp-secret-manager  # ref is the version resource name (creds from ADC)
       project_id: my-proj       # recommended: pins the connector to one GCP project (#431);
                                  # a ref naming a different project is rejected before the backend call
+                                 # (a GCP project ID — unrelated to Keyorix's own project: below)
+      scope: project
+      project: payments
       allowed_refs:
         - projects/my-proj/secrets/keyorix-
     - name: prod-azure
       type: azure-key-vault     # ref is the secret name (or name/version); creds from DefaultAzureCredential
       address: https://myvault.vault.azure.net/   # the Key Vault URL
+      scope: project
+      project: payments
       allowed_refs:
         - keyorix-
-    - name: prod-vault
+    - name: shared-vault
       type: vault               # ref is the read path; KV v2 is unwrapped
       address: https://vault.example.com:8200
       token_env: VAULT_TOKEN    # env var holding the Vault token (default VAULT_TOKEN)
+      scope: platform           # org-wide connector — no project:; requires the caller
+                                 # to hold connect.platform.use in addition to connect.read
       allowed_refs:
         - secret/data/keyorix/
 ```

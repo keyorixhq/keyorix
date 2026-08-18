@@ -399,7 +399,7 @@ func TestInitializeCoreService_Connect_UnknownType(t *testing.T) {
 	cfg.Connect = config.ConnectConfig{
 		Enabled: true,
 		Connectors: []config.ConnectorConfig{
-			{Name: "c1", Type: "unknown-type"},
+			{Name: "c1", Type: "unknown-type", Scope: "project", Project: "payments"},
 		},
 	}
 
@@ -417,9 +417,9 @@ func TestInitializeCoreService_Connect_KnownTypes(t *testing.T) {
 	cfg.Connect = config.ConnectConfig{
 		Enabled: true,
 		Connectors: []config.ConnectorConfig{
-			{Name: "aws", Type: "aws-secrets-manager", AllowedRefs: []string{"prod/*"}},
-			{Name: "gcp", Type: "gcp-secret-manager", ProjectID: "my-proj", AllowedRefs: []string{"prod/*"}},
-			{Name: "vault", Type: "vault", Address: "http://vault:8200", AllowedRefs: []string{"prod/*"}},
+			{Name: "aws", Type: "aws-secrets-manager", AllowedRefs: []string{"prod/*"}, Scope: "project", Project: "payments"},
+			{Name: "gcp", Type: "gcp-secret-manager", ProjectID: "my-proj", AllowedRefs: []string{"prod/*"}, Scope: "project", Project: "payments"},
+			{Name: "vault", Type: "vault", Address: "http://vault:8200", AllowedRefs: []string{"prod/*"}, Scope: "platform"},
 		},
 	}
 
@@ -437,7 +437,7 @@ func TestInitializeCoreService_Connect_GCP_NoProjectID(t *testing.T) {
 	cfg.Connect = config.ConnectConfig{
 		Enabled: true,
 		Connectors: []config.ConnectorConfig{
-			{Name: "gcp-noproj", Type: "gcp-secret-manager", ProjectID: "", AllowedRefs: []string{"prod/*"}},
+			{Name: "gcp-noproj", Type: "gcp-secret-manager", ProjectID: "", AllowedRefs: []string{"prod/*"}, Scope: "project", Project: "payments"},
 		},
 	}
 
@@ -455,7 +455,7 @@ func TestInitializeCoreService_Connect_AzureKeyVault(t *testing.T) {
 	cfg.Connect = config.ConnectConfig{
 		Enabled: true,
 		Connectors: []config.ConnectorConfig{
-			{Name: "azure-kv", Type: "azure-key-vault", Address: "https://vault.vault.azure.net", AllowedRefs: []string{"prod/*"}},
+			{Name: "azure-kv", Type: "azure-key-vault", Address: "https://vault.vault.azure.net", AllowedRefs: []string{"prod/*"}, Scope: "project", Project: "payments"},
 		},
 	}
 

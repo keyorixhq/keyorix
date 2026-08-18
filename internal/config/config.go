@@ -167,6 +167,13 @@ func (c *Config) LicenseGrace() time.Duration {
 type ConnectConfig struct {
 	Enabled    bool              `yaml:"enabled"`
 	Connectors []ConnectorConfig `yaml:"connectors"`
+	// AllowUnscoped is the single deployment-wide escape hatch (ADR-082 §C) that lets
+	// the server boot despite one or more connectors missing scope. Every boot under
+	// this flag logs a WARN naming each unscoped connector (server/main.go, not here —
+	// Validate() itself never logs). Default false: a missing scope fails boot. Does
+	// NOT rescue an unrecognized scope value or the project/platform contradiction
+	// checks — those always fail boot regardless of this flag.
+	AllowUnscoped bool `yaml:"allow_unscoped"`
 }
 
 // ConnectorConfig describes one external-store connector. Name is the API path key
@@ -189,6 +196,7 @@ type ConnectorConfig struct {
 	// the ambient ADC identity it runs under) address secrets in ANY project that
 	// identity can reach, relying solely on AllowedRefs to scope reach. Strongly
 	// recommended; left empty only for backward compatibility with an existing config.
+	// Unrelated to Project below — this is a GCP-side identifier, Project is Keyorix's.
 	ProjectID string `yaml:"project_id"`
 	// TokenEnv names the environment variable holding the backend token for type
 	// "vault" (default "VAULT_TOKEN"). The token is read from the environment, never
@@ -200,6 +208,30 @@ type ConnectorConfig struct {
 	// empty list places no restriction here — the backend IAM scope is then the only
 	// bound, so prefer setting both.
 	AllowedRefs []string `yaml:"allowed_refs"`
+	// Scope declares this connector's tenant boundary (ADR-082): "project" (owned by
+	// exactly one Keyorix project — requires Project) or "platform" (org-wide; requires
+	// the connect.platform.use permission at authorization time, must NOT set Project).
+	// Required: a missing value fails boot unless ConnectConfig.AllowUnscoped is set; an
+	// unrecognized value (anything other than "project"/"platform") always fails boot,
+	// AllowUnscoped does not rescue it.
+	Scope string `yaml:"scope"`
+	// Project names the Keyorix project that owns this connector, by NAME — not a
+	// numeric ID. A numeric project ID differs per deployment (the same logical project
+	// has a different row ID in every install's database), which would break config
+	// portability across environments and air-gap bundles; a name travels with the
+	// config unchanged. Required when Scope is "project"; must be empty when Scope is
+	// "platform" (a platform connector is not owned by any single project — setting
+	// both is a contradiction, and fails boot). This branch only checks presence — the
+	// name is resolved to a real project ID at boot in a later branch (ADR-082 §A/§D);
+	// an unresolvable name fails boot at that point, not here.
+	Project string `yaml:"project"`
+	// Environment optionally further scopes a "project"-scoped connector to one
+	// environment within Project, by name. Reserved (ADR-082 §G): accepted and stored,
+	// but NOT enforced — every environment within Project is currently treated
+	// identically for authorization purposes regardless of this field. Enforcement
+	// semantics are a real design question deferred to a follow-up ADR, not decided
+	// here.
+	Environment string `yaml:"environment"`
 }
 
 // PasswordPolicyConfig mirrors the password rules from ADR-025: synchronous
@@ -1910,6 +1942,56 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return fmt.Errorf("unsupported fallback language: %s. Supported languages: en, ru, es, fr, de", c.Locale.FallbackLanguage)
 	}
 
+	if err := validateConnectScopes(c.Connect); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateConnectScopes enforces ADR-082 §B/§C on cfg.Connect.Connectors — pure
+// config-shape validation, no DB/network access, no logging (Validate() never logs;
+// the allow_unscoped WARNs are emitted where the connectors are actually wired,
+// server/main.go, matching this codebase's existing log-at-the-point-of-use style).
+// Every check aggregates across ALL offending connectors into one error naming each
+// by config name, rather than failing on (and hiding) the first one found — an
+// operator fixing config should not have to restart-and-discover connectors one at a
+// time. Checks run in this order, each independent of the others by construction
+// (a connector can only land in one bucket): unrecognized scope (never rescued by
+// AllowUnscoped — a typo is not "intentionally unscoped"), missing scope (rescued by
+// AllowUnscoped), scope "project" without a Project name, scope "platform" with a
+// Project name set (a platform connector is not owned by any single project).
+func validateConnectScopes(cc ConnectConfig) error {
+	var missing, invalid, projectNeedsProject, platformRejectsProject []string
+	for _, connector := range cc.Connectors {
+		switch connector.Scope {
+		case "":
+			missing = append(missing, connector.Name)
+		case "project":
+			if connector.Project == "" {
+				projectNeedsProject = append(projectNeedsProject, connector.Name)
+			}
+		case "platform":
+			if connector.Project != "" {
+				platformRejectsProject = append(platformRejectsProject, connector.Name)
+			}
+		default:
+			invalid = append(invalid, connector.Name)
+		}
+	}
+
+	if len(invalid) > 0 {
+		return fmt.Errorf("connect: connector(s) with unrecognized scope (must be \"project\" or \"platform\"): %s", strings.Join(invalid, ", "))
+	}
+	if len(missing) > 0 && !cc.AllowUnscoped {
+		return fmt.Errorf("connect: connector(s) missing required \"scope\" (must be \"project\" or \"platform\"; set connect.allow_unscoped: true to boot anyway — ADR-082): %s", strings.Join(missing, ", "))
+	}
+	if len(projectNeedsProject) > 0 {
+		return fmt.Errorf("connect: connector(s) with scope \"project\" missing required \"project\": %s", strings.Join(projectNeedsProject, ", "))
+	}
+	if len(platformRejectsProject) > 0 {
+		return fmt.Errorf("connect: connector(s) with scope \"platform\" must not set \"project\" (a platform connector is not owned by any single project): %s", strings.Join(platformRejectsProject, ", "))
+	}
 	return nil
 }
 

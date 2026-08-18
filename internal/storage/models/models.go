@@ -586,6 +586,32 @@ type ConnectRefGrant struct {
 	CreatedAt time.Time
 }
 
+// ConnectorProjectBinding pins a Connect connector (ADR-082) to the Keyorix project
+// it resolved to at first boot, BY ID — not by name, and never re-resolved by name on
+// a later boot. Project.Name's own doc comment establishes that a project's name is
+// mutable and a soft-deleted project's name is freed for reuse; re-resolving a
+// connector's configured `project:` name against live Project rows on every boot
+// would let an ordinary project rename (or a delete-and-recreate under the same name)
+// silently reassign which project owns a connector, with no config change and no
+// operator awareness. Pinning by ID and treating any later name mismatch as a boot
+// failure (see the resolution logic in server/main.go) makes that reassignment a
+// deliberate, visible operator action instead.
+type ConnectorProjectBinding struct {
+	ID uint `gorm:"primaryKey"`
+	// Connector is the connector's config name (ConnectorConfig.Name) — one binding
+	// per connector.
+	Connector string `gorm:"not null;uniqueIndex"`
+	// ProjectID is the Keyorix project this connector is bound to, resolved once at
+	// first boot and never re-derived from ProjectName afterward.
+	ProjectID uint `gorm:"not null"`
+	// ProjectName is a SNAPSHOT of the project's name at the moment of binding — used
+	// only to detect a rename on a later boot (compare against the CURRENT name of the
+	// project at ProjectID); it is never itself re-resolved to find a project.
+	ProjectName string `gorm:"not null"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type Group struct {
 	ID uint `gorm:"primaryKey"`
 	// Name uniqueness is enforced by a PARTIAL unique index (name WHERE deleted_at

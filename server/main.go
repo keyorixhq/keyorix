@@ -561,6 +561,23 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 
 	// Wire Keyorix Connect (ADR-043) read-through federation if enabled.
 	if cc := cfg.Connect; cc.Enabled && len(cc.Connectors) > 0 {
+		// ADR-082 §C: cfg.Validate() already refused to boot with a missing/invalid
+		// connector scope unless connect.allow_unscoped is set — Validate() itself never
+		// logs (internal/config/validateConnectScopes), so if we're here under that flag,
+		// warn loudly, per connector and once as a summary, at the point the connectors
+		// are actually wired.
+		if cc.AllowUnscoped {
+			var unscoped []string
+			for _, cn := range cc.Connectors {
+				if cn.Scope == "" {
+					unscoped = append(unscoped, cn.Name)
+					log.Printf("Keyorix Connect: connector %q has no scope configured and is booting under connect.allow_unscoped — set scope: project or scope: platform (ADR-082)", cn.Name)
+				}
+			}
+			if len(unscoped) > 0 {
+				log.Printf("Keyorix Connect: %d connector(s) booted unscoped under connect.allow_unscoped — this is a temporary escape hatch; set an explicit scope on each before removing it (ADR-082)", len(unscoped))
+			}
+		}
 		var connectors []connect.Connector
 		for _, cn := range cc.Connectors {
 			switch cn.Type {
