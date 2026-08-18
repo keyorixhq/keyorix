@@ -16,7 +16,12 @@ import (
 )
 
 // connectRBACCore builds a core backed by a real (in-memory) store so per-reference
-// grants and role assignments actually resolve through the enforcement path.
+// grants and role assignments actually resolve through the enforcement path. Every
+// connector is wired as scope: platform by default (ADR-082) — a platform
+// connector passes ownership for any caller in this branch, matching this suite's
+// pre-ADR-082 assumption that any connect.read holder can reach a configured test
+// connector; ownership-specific behavior is covered separately
+// (connect_ownership_test.go).
 func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -26,10 +31,17 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.ConnectRefGrant{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{},
+		&models.ConnectorProjectBinding{},
+		&models.Permission{}, &models.RolePermission{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
+		ownership := make(map[string]ConnectOwnership, len(conns))
+		for _, conn := range conns {
+			ownership[conn.Name()] = ConnectOwnership{Scope: "platform"}
+		}
+		c.SetConnectOwnership(ownership)
 	}
 	return c, db
 }
@@ -38,6 +50,21 @@ func seedRoleForUser(t *testing.T, db *gorm.DB, userID, roleID uint, name string
 	t.Helper()
 	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: name}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: roleID}).Error)
+}
+
+// seedConnectPlatformUsePermission grants roleID the connect.platform.use
+// permission (ADR-082 branch 4). Every connectRBACCore-based test defaults its
+// connectors to scope: platform, and a platform-scope read now requires this
+// permission — call this wherever a test's role is meant to actually reach a
+// platform connector (i.e. it is exercising something OTHER than the
+// platform-permission gate itself, such as ADR-045 ref-grant behavior). Each
+// test gets its own in-memory DB (connectRBACCore), so there's no cross-test
+// collision creating the same permission name twice.
+func seedConnectPlatformUsePermission(t *testing.T, db *gorm.DB, roleID uint) {
+	t.Helper()
+	perm := models.Permission{Name: "connect.platform.use", Description: "test", Resource: "connect", Action: "platform.use"}
+	require.NoError(t, db.Create(&perm).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: roleID, PermissionID: perm.ID}).Error)
 }
 
 func seedGrant(t *testing.T, c *KeyorixCore, roleID uint, connector, prefix string) {
@@ -57,6 +84,7 @@ func seedGrantExpiring(t *testing.T, c *KeyorixCore, roleID uint, connector, pre
 func TestConnectRefRBAC_NoGrantsAllows(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "reader")
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045, not the platform gate
 	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "anything/at/all")
 	require.NoError(t, err)
 	assert.Equal(t, "v", val)
@@ -67,6 +95,7 @@ func TestConnectRefRBAC_NoGrantsAllows(t *testing.T) {
 func TestConnectRefRBAC_PrefixScopes(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "metrics-reader")
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045, not the platform gate
 	seedGrant(t, c, 5, "aws", "metrics/")
 
 	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
@@ -83,7 +112,8 @@ func TestConnectRefRBAC_PrefixScopes(t *testing.T) {
 func TestConnectRefRBAC_RoleMismatchDenied(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "reader")
-	seedGrant(t, c, 9, "aws", "metrics/") // granted to role 9, not the user's role 5
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: role 5 must reach the ref-grant check to prove the ROLE mismatch, not the platform gate, is what denies it
+	seedGrant(t, c, 9, "aws", "metrics/")      // granted to role 9, not the user's role 5
 
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
 	require.Error(t, err)
@@ -94,6 +124,7 @@ func TestConnectRefRBAC_RoleMismatchDenied(t *testing.T) {
 func TestConnectRefRBAC_EmptyPrefixAllowsAll(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "broad-reader")
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045, not the platform gate
 	seedGrant(t, c, 5, "aws", "")
 
 	for _, ref := range []string{"metrics/x", "db/y", "anything"} {
@@ -110,7 +141,8 @@ func TestConnectRefRBAC_OtherConnectorUnaffected(t *testing.T) {
 		fakeConnector{name: "gcp", val: "g"},
 	)
 	seedRoleForUser(t, db, 1, 5, "reader")
-	seedGrant(t, c, 5, "aws", "metrics/") // scopes aws only
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045, not the platform gate — covers both connectors, gcp included
+	seedGrant(t, c, 5, "aws", "metrics/")      // scopes aws only
 
 	// gcp has no grants → unaffected.
 	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "gcp", "projects/p/secrets/x/versions/latest")
@@ -129,7 +161,8 @@ func TestConnectRefRBAC_MultiRoleUnion(t *testing.T) {
 	require.NoError(t, db.Create(&models.Role{ID: 6, Name: "db"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 5}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 6}).Error)
-	seedGrant(t, c, 6, "aws", "db/") // only the db role grants db/
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045 role-union matching, not the platform gate — either held role suffices for platform.use
+	seedGrant(t, c, 6, "aws", "db/")           // only the db role grants db/
 
 	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "db/password")
 	require.NoError(t, err)
@@ -142,6 +175,7 @@ func TestConnectRefRBAC_MachineIdentityRoles(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	require.NoError(t, db.Create(&models.Role{ID: 7, Name: "ci-metrics"}).Error)
 	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 42, RoleID: 7}).Error)
+	seedConnectPlatformUsePermission(t, db, 7) // ADR-082 branch 4: this test is about ADR-045, not the platform gate
 	seedGrant(t, c, 7, "aws", "metrics/")
 	ctx := context.Background()
 
@@ -155,10 +189,15 @@ func TestConnectRefRBAC_MachineIdentityRoles(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not permitted")
 
-	// A different machine with no matching role → denied (deny-by-default).
+	// A different machine holds NO role at all — including no connect.platform.use —
+	// so it is now denied at the platform-permission gate itself (ADR-082 branch 4),
+	// before ever reaching the per-ref grant check this test otherwise exercises. It
+	// is still "deny-by-default", just via an earlier gate than the sibling assertion
+	// above; the opaque unknown-connector shape is deliberate (ADR-082 §H), so this
+	// no longer asserts "not permitted" specifically.
 	_, err = c.ReadFederatedSecret(ctx, ActorTypeMachine, 99, "aws", "metrics/qps")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not permitted")
+	assert.ErrorIs(t, err, ErrConnectUnknownConnector)
 }
 
 // A grant for a role the caller holds only VIA GROUP MEMBERSHIP must authorize them —
@@ -172,6 +211,7 @@ func TestConnectRefRBAC_GroupDerivedRole(t *testing.T) {
 	require.NoError(t, db.Create(&models.Group{ID: 3, Name: "analytics"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 3}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 3, RoleID: 5}).Error)
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045 group-derived role resolution, not the platform gate — scopedRoleIDs unions group-derived roles the same way for both checks
 	seedGrant(t, c, 5, "aws", "metrics/")
 
 	// The user reaches the grant through their group-derived role.
@@ -189,7 +229,8 @@ func TestConnectRefRBAC_GroupDerivedRole(t *testing.T) {
 func TestConnectRefRBAC_GlobPatterns(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "reader")
-	seedGrant(t, c, 5, "aws", "prod/*/db") // exactly one segment between prod/ and /db
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045 glob matching, not the platform gate
+	seedGrant(t, c, 5, "aws", "prod/*/db")     // exactly one segment between prod/ and /db
 	ctx := context.Background()
 
 	val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "prod/eu/db")
@@ -239,6 +280,7 @@ func TestRefMatches(t *testing.T) {
 func TestConnectRefRBAC_CrossTenantTraversalDenied(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "vault", val: "myapp-secret"})
 	seedRoleForUser(t, db, 1, 5, "myapp-reader")
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045/#326 traversal handling, not the platform gate
 	seedGrant(t, c, 5, "vault", "secret/data/myapp/")
 	ctx := context.Background()
 
@@ -259,6 +301,7 @@ func TestConnectRefRBAC_CrossTenantTraversalDenied(t *testing.T) {
 func TestConnectRefRBAC_ExpiredGrantDenied(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "temp-reader")
+	seedConnectPlatformUsePermission(t, db, 5)                                  // ADR-082 branch 4: this test is about ADR-045 grant expiry, not the platform gate
 	seedGrantExpiring(t, c, 5, "aws", "metrics/", time.Now().Add(-time.Minute)) // already expired
 	ctx := context.Background()
 
@@ -275,6 +318,7 @@ func TestConnectRefRBAC_ExpiredGrantDenied(t *testing.T) {
 func TestConnectRefRBAC_UnexpiredGrantAllowed(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "temp-reader")
+	seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045 grant expiry, not the platform gate
 	seedGrantExpiring(t, c, 5, "aws", "metrics/", time.Now().Add(time.Hour))
 
 	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
@@ -283,6 +327,9 @@ func TestConnectRefRBAC_UnexpiredGrantAllowed(t *testing.T) {
 }
 
 // CreateConnectRefGrant plumbs an optional expiresAt through to the persisted grant.
+// ADR-082 branch 4: unaffected by the connect.platform.use gate — this test never
+// calls ReadFederatedSecret/connectOwnershipSatisfied at all, only the grant-
+// management path.
 func TestCreateConnectRefGrant_PersistsExpiresAt(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	require.NoError(t, db.Create(&models.Role{ID: 5, Name: "temp-reader"}).Error)
@@ -313,6 +360,17 @@ func TestConnectRefRBAC_MachineIdentityProjectScopedRole(t *testing.T) {
 	// Granted to the machine ONLY at project 10 — deliberately no global grant.
 	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 42, RoleID: 7, ProjectID: 10}).Error)
 	seedGrant(t, c, 7, "aws", "metrics/")
+	// ADR-082 branch 4: connect.platform.use is checked at Scope{} (global) —
+	// intentionally: a platform connector is install-wide, so a purely
+	// project-scoped grant of the permission (like role 7 above, deliberately) is
+	// a category error and correctly does NOT satisfy it. This test's whole point
+	// is proving role 7's PROJECT-scoped grant is honoured for the ref-grant
+	// check specifically, so platform.use is granted here via a SEPARATE role
+	// held at the true global scope, decoupled from role 7 — not by making role 7
+	// global, which would defeat the test.
+	require.NoError(t, db.Create(&models.Role{ID: 21, Name: "platform-access"}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 42, RoleID: 21}).Error)
+	seedConnectPlatformUsePermission(t, db, 21)
 	ctx := context.Background()
 
 	val, err := c.ReadFederatedSecret(ctx, ActorTypeMachine, 42, "aws", "metrics/qps")
@@ -327,6 +385,8 @@ func TestConnectRefRBAC_MachineIdentityProjectScopedRole(t *testing.T) {
 // actorRoleIDs (G33's detection_idea): a machine identity's project-scoped role
 // grant must resolve into the SAME role-ID set as an equivalent human user
 // holding the identical role at the identical project scope.
+// ADR-082 branch 4: unaffected — calls actorRoleIDs directly, never reaching
+// connectOwnershipSatisfied/the platform gate.
 func TestActorRoleIDs_MachineMatchesEquivalentUser_ProjectScoped(t *testing.T) {
 	c, db := connectRBACCore(t)
 	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "proj-a"}).Error)
@@ -344,6 +404,8 @@ func TestActorRoleIDs_MachineMatchesEquivalentUser_ProjectScoped(t *testing.T) {
 	assert.Equal(t, userRoles, machineRoles, "a machine identity holding the same project-scoped role as a human user must resolve to an identical role-ID set")
 }
 
+// ADR-082 branch 4: unaffected — calls connectRefAllowed directly, never
+// reaching connectOwnershipSatisfied/the platform gate.
 func TestConnectRefAllowed_Direct(t *testing.T) {
 	c, db := connectRBACCore(t)
 	seedRoleForUser(t, db, 1, 5, "reader")

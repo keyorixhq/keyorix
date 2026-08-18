@@ -81,6 +81,40 @@ func TestBootstrapSeedsTwoTierRoleCatalog(t *testing.T) {
 	}
 }
 
+// TestBootstrapGrantsConnectPlatformUseToAdminRoles proves a fresh install's
+// seeded admin/system_admin roles hold connect.platform.use (ADR-082 branch 4)
+// via ordinary BootstrapSystem seeding — no reconcile pass needed on first
+// boot. Roles without connect.read at all (editor/viewer/etc.) must not hold
+// it either (least privilege — mirrors connect.read's own baseline).
+func TestBootstrapGrantsConnectPlatformUseToAdminRoles(t *testing.T) {
+	c, _ := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"admin", "system_admin"} {
+		role, err := c.storage.GetRoleByName(ctx, name)
+		require.NoError(t, err)
+		perms, err := c.storage.GetRolePermissions(ctx, role.ID)
+		require.NoError(t, err)
+		var has bool
+		for _, p := range perms {
+			if p.Name == "connect.platform.use" {
+				has = true
+			}
+		}
+		assert.Truef(t, has, "role %q must hold connect.platform.use on a fresh install", name)
+	}
+
+	for _, name := range []string{"editor", "viewer", "system_auditor", "system_viewer", "project_admin"} {
+		role, err := c.storage.GetRoleByName(ctx, name)
+		require.NoError(t, err)
+		perms, err := c.storage.GetRolePermissions(ctx, role.ID)
+		require.NoError(t, err)
+		for _, p := range perms {
+			assert.NotEqualf(t, "connect.platform.use", p.Name, "role %q must not hold connect.platform.use (least privilege — it doesn't hold connect.read either)", name)
+		}
+	}
+}
+
 // #227: system.write's catalog description must name its full real footprint —
 // audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and
 // admin job triggers — not just the legacy service-account/API-token routes

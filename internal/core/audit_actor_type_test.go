@@ -61,7 +61,7 @@ func TestWriteAuditEventFailed_StampsActorTypeFromContext(t *testing.T) {
 	})).Return(nil)
 
 	ctx := WithActorType(context.Background(), ActorTypeSystem)
-	c.writeAuditEventFailed(ctx, "auth.login_failed", nil, "1.2.3.4", "x")
+	c.writeAuditEventFailed(ctx, "auth.login_failed", nil, nil, "1.2.3.4", "x")
 
 	store.AssertExpectations(t)
 	if got != ActorTypeSystem {

@@ -83,6 +83,12 @@ var defaultPermissions = []bootstrapPermissionDef{
 	// explicitly bundled into their role.
 	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", "system", "write"},
 	{"connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
+	// ADR-082 branch 4: narrows scope: platform connector reads, which connect.read
+	// alone permitted for any holder through branch 3 (an interim fail-open, marked
+	// by a TODO). Distinct from connect.read (which still gates the whole Connect
+	// surface, project-scoped connectors included) — this only narrows the
+	// platform-scoped subset.
+	{"connect.platform.use", "Read secrets from platform-scoped Keyorix Connect connectors (ADR-082 §B/§H)", "connect", "platform.use"},
 }
 
 // adminPermissions lists the permission names granted to the admin role.
@@ -91,7 +97,7 @@ var adminPermissions = []string{
 	permUsersRead, "users.write", "users.delete",
 	permRolesRead, "roles.write", permRolesAssign,
 	permAuditRead, permSystemRead, "system.write",
-	"connect.read",
+	"connect.read", "connect.platform.use",
 }
 
 // editorPermissions lists the permission names granted to the editor role.

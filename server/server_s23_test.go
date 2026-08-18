@@ -241,8 +241,7 @@ func TestInitializeCoreService_S23_VaultDefaultTokenEnv(t *testing.T) {
 				Address:     "http://vault.example.com:8200",
 				TokenEnv:    "", // empty → code substitutes "VAULT_TOKEN"
 				AllowedRefs: []string{"prod/*"},
-				Scope:       "project",
-				Project:     "payments",
+				Scope:       "platform",
 			},
 		},
 	}

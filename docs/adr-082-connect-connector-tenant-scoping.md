@@ -11,15 +11,25 @@ what is deliberately deferred to implementation-phase follow-up work.
 
 Four separate branches, one logical change each:
 
-1. Config schema (`scope`, `project`, `environment`, `connect.allow_unscoped`)
-   and boot validation (C).
+1. Config schema (`scope`, `project`, `environment`) and boot validation (C).
+   (`connect.allow_unscoped` was part of the original schema; removed by
+   amendment — see (C).)
 2. Ownership enforcement (E) and `ListConnectors` filtering.
 3. Audit changes (H) — the three-way decision reason, the switch to
    `writeAuditEventFull`, `AuditEvent.ProjectID` population.
 4. The new `connect.platform.use` permission (B) and its addition to
    `adminPermissions`.
 
-**No branch has been started as of this ADR's acceptance.**
+**All four branches are implemented.** Branch 3 (H) also closes issue
+#1477's audit half: every `ConnectorProjectBinding` write is now audited, not
+only the `connect.secret_read` path. Branch 4 adds `connect.platform.use`
+(B) and gates it as a TERMINAL deny with no `ConnectRefGrant` delegation
+fallback (E) — a deliberate fork from the `scope: project` ownership-miss
+path, not a later revision toward consistency with it. See (E) and (H) below
+for the full, as-implemented design (the text in those sections reflects
+what shipped, superseding the plan-time description that preceded it, most
+notably (E)'s diagram, which originally said a platform-permission denial
+fell through to delegation — it does not).
 
 ## Context
 
@@ -143,9 +153,8 @@ GCP one's boot-warning-only enforcement gap is out of scope for this ADR
 
 Connectors remain pure server configuration, exactly as today. Each
 connector config entry gains a required `scope` field (see (B)) and an
-optional `project` reference (a Keyorix project's numeric ID or unique
-name, config-file-resolvable at boot the same way every other
-config-time reference in this codebase is — implementation detail).
+optional `project` reference — a Keyorix project's **name**, not a numeric
+ID (see the subsection immediately below for why).
 
 **Explicitly decided: no DB table mirrors connector metadata.** There is no
 runtime connector-management API today (creating/updating a connector
@@ -156,6 +165,44 @@ connectors by the same bare name string it already uses; nothing about this
 ADR requires a stable numeric connector ID. **Revisit only if/when runtime
 connector CRUD ships** — that is the point at which a DB-backed identity
 would earn its keep, not before.
+
+#### A.1 Project names are mutable and freed on soft-delete — why `project:` pins by ID, once, and a rename is a deliberate boot failure
+
+Verified directly against the schema and the update path, not assumed:
+`Project.Name` (`models.go:9-17`) carries no immutability — `UpdateProject`
+(`catalog.go:120,132`) directly reassigns `project.Name = name` with no
+restriction — and its own doc comment states explicitly that uniqueness is
+enforced by a **partial** index, `LOWER(name) WHERE deleted_at IS NULL`,
+"so a soft-deleted project's name is still freed for reuse." Both facts
+combine into a real risk: if a connector's ownership were re-resolved by
+name on every boot, an ordinary project rename — or a delete-and-recreate
+under the same name, by a different admin, for an unrelated reason — would
+silently reassign which project owns a connector, with no config change and
+no operator awareness that Connect was affected at all.
+
+**The fix: `project:` names the project by string, but is resolved to a
+numeric project ID exactly ONCE — at the first boot after a connector is
+configured — and pinned via a new persisted row,
+`ConnectorProjectBinding` (`connector`, `project_id`, `project_name`).
+Every later boot resolves by the STORED ID, never by re-reading the config's
+`project:` name against live `Project` rows.** If the bound project's
+CURRENT name (looked up by the stored ID) no longer matches the name
+recorded in the binding at first-boot time, boot fails, naming both the
+stored and current name — this is a **deliberate** boot failure, not a
+silent reassignment: a rename that happened between boots is exactly the
+ambiguous case (intentional relabeling vs. an unrelated project stealing the
+name) this ADR refuses to resolve automatically. The same applies if the
+bound project no longer exists (deleted). There is no operator-facing
+binding-management surface in this branch (out of scope, see below); the
+remediation path today is to remove the stale `connector_project_bindings`
+row (a direct DB action) once the rename is confirmed intentional, then
+restart — a real if unpolished escape hatch, not a dead end.
+
+This mirrors, at a smaller scale, the same "explicit value required,
+absence/ambiguity denies" shape (C) already establishes for `scope` itself
+— a `project:` name is a human-friendly config-time label, not a security
+identifier; the security identifier is the persisted numeric ID it resolves
+to once, not the string re-derived from it on every boot.
 
 ### B. `scope: project | platform` — exactly two values, no third state
 
@@ -187,26 +234,64 @@ There is no `legacy_unscoped` value and no phased default-flip release (a
 real revision from the prior draft of this ADR, per direct instruction).
 Instead:
 
-### C. Missing `scope` fails boot; the only escape hatch is explicit and per-deployment, not per-connector
+### C. Missing `scope` fails boot, unconditionally — no escape hatch
 
 A connector config entry with no `scope` key **fails server boot**, with an
 error naming every offending connector by its config-file name (not just
 the first one found — an operator fixing config should not have to
-restart-and-discover connectors one at a time).
+restart-and-discover connectors one at a time). There is no per-connector
+opt-out and no deployment-wide bypass of any kind — absence of `scope` is a
+hard failure, full stop. This is the same "explicit value required, absence
+denies" shape already established in this codebase (most recently
+ADR-076's `POD_NAMESPACE` hard-fail-on-empty).
 
-The only way to boot anyway is a single, explicit, deployment-wide config
-flag: `connect.allow_unscoped: true`. When set, boot proceeds, but **every**
-connector missing a `scope` emits a `WARN`-level log line naming it, at
-every boot, for as long as the flag stays set. There is no per-connector
-opt-out and no silent variant — `connect.allow_unscoped` unset (the
-default) means absence of `scope` is a hard failure, full stop. This is the
-same "explicit value required, absence denies" shape already established in
-this codebase (most recently ADR-076's `POD_NAMESPACE` hard-fail-on-empty),
-simplified here to a single boot-time gate rather than a phased migration
-because — unlike ADR-076's operator RBAC default, which had to preserve a
-*running* cluster's existing behavior across an upgrade — Connect connector
-config is edited and the server restarted as one atomic operator action;
-there is no live-traffic window a phased flip would need to protect.
+**Amended: the original design here included a single, explicit,
+deployment-wide escape hatch, `connect.allow_unscoped: true` — removed.**
+When set, boot proceeded, and every connector still missing a `scope`
+emitted a `WARN`-level log line naming it, at every boot, for as long as
+the flag stayed set. On implementation and verification (branch 2, ownership
+enforcement), this turned out not to be an escape hatch at all: an unscoped
+connector has no entry in the ownership map `connectOwnershipSatisfied` (§E)
+consults, and that function's own missing-entry-denies rule — the same rule
+that makes a connector absent from the map deny for every caller rather than
+silently allow or silently skip — applied to it exactly as it would to any
+other connector with no ownership data. The flag let the *server* boot, but
+every *read* against an unscoped connector was denied regardless (unless a
+caller separately held an unrelated `ConnectRefGrant`, ADR-045's delegation
+mechanism, which an operator mid-migration would have no particular reason
+to have configured). The WARN it produced was accurate but misleading in
+effect: it read as "this still works, fix it soon," when the true state was
+"this doesn't work at all, and nothing here will tell you that until a read
+fails." A flag that defers a failure from boot time to read time, silently,
+is not a migration aid — it just moves where the operator discovers the
+problem, later and less legibly (a `502`, not a boot-time error naming the
+connector). The actual migration path — this ADR's own boot-fail-with-an-
+aggregated-list-of-every-offending-connector — already tells an operator
+exactly what to fix in one pass, and fixing it (adding `scope:` to a
+connector entry) takes minutes; there was nothing here worth an escape
+hatch for.
+
+Removing the flag also removes the one exemption the boot-time key-set
+consistency check (§E) carried: with `resolveConnectorOwnership` no longer
+skipping any connector (there is no longer an "expected to have no
+ownership entry" case), a connector present in `connect.Manager` but absent
+from the resolved ownership map — for any reason, including what used to be
+the deliberately-unscoped case — is now, unconditionally, a boot-failing
+key-set mismatch. This closes a real gap the removed exemption was
+carrying, not obviously connected to `allow_unscoped` itself: the mismatch
+check's fail-closed guarantee no longer depends on `cfg.Validate()` having
+already run and enforced "empty scope implies the flag was set" as an
+external precondition it trusted rather than re-verified — a future code
+path reaching either function without that precondition (a refactor, a new
+call site, a test) can no longer be silently misread as "legitimately
+unscoped."
+
+This is simplified to a single, unconditional boot-time gate rather than a
+phased migration because — unlike ADR-076's operator RBAC default, which
+had to preserve a *running* cluster's existing behavior across an upgrade
+— Connect connector config is edited and the server restarted as one
+atomic operator action; there is no live-traffic window a phased flip
+would need to protect.
 
 ### D. Ownership is derived server-side from role assignments. No new request parameter, no proto change, no signature change.
 
@@ -377,9 +462,12 @@ admin-*named* role globally (unaffected by this ADR either way), now
 extended consistently to Connect ownership specifically.
 
 ```
-connect.read granted?                                    → no:  deny
+connect.read granted?                                    → no:  deny (reason: connect_disabled / unknown_connector)
 connector.scope == platform?
-  → yes: connect.platform.use granted?  → yes: allow (reason: capability)  → no: fall through to delegation check below
+  → yes: connect.platform.use granted (checked at Scope{}, global)?
+      → yes: allow (reason: platform_scope)
+      → no:  TERMINAL deny (reason: platform_permission_denied) — no
+             ConnectRefGrant fallback; see below for why
 connector.scope == project?
   → caller's RAW scope set (GetUserRoleScopes/GetMachineRoleScopes,
     including any {0,0} entry) contains connector.project?
@@ -388,8 +476,51 @@ connector.scope == project?
     role grant, any role name — see above)?
                                                           → yes: allow (reason: global_scope)
 matching ConnectRefGrant for one of the caller's roles?  → yes: allow (reason: delegation)
-                                                          → else: deny
+                                                          → no:  deny (reason: ownership_denied /
+                                                                 delegation_denied)
 ```
+
+**A denied `connect.platform.use` check is TERMINAL — it does NOT fall
+through to `ConnectRefGrant` delegation, unlike an ordinary `scope: project`
+ownership miss (this ADR's own earlier draft of this diagram said it did;
+corrected here on implementation, not a later change of mind — see "Out of
+scope"/(H) history).** This is a deliberate fork, not an oversight, and must
+not later be "reconciled" toward consistency with the project-scope path.
+Two independent reasons, both load-bearing:
+
+1. **A `ConnectRefGrant` targeting a `platform`-scope connector's name would
+   not be narrowing access — it would be granting it.** `ConnectRefGrant`
+   is keyed on role + connector name + ref-prefix alone; it has no concept
+   of the connector's `scope`, and nothing in `CreateConnectRefGrant`
+   currently rejects creating one against a platform connector (a known,
+   separately-tracked gap — see the issue filed alongside this branch: such
+   a grant is dead configuration under this design, consulted by nothing).
+   If a platform-scope ownership miss fell through to the SAME delegation
+   check a project-scope miss does, then any principal able to create a
+   `ConnectRefGrant` (an ordinary RBAC-gated management action, not itself
+   gated on `connect.platform.use`) could hand any other principal read
+   access to a platform-wide connector, entirely bypassing
+   `connect.platform.use`. For a project-scoped connector this isn't a
+   bypass — delegation is explicitly scoped to ONE connector's ONE
+   project, a narrower grant than project ownership itself would confer.
+   For a platform connector there is no narrower boundary below "the whole
+   connector" for a grant to sit inside of — delegation and the permission
+   it would be bypassing would cover the exact same surface.
+2. **A platform connector has no owning project for "delegation" to be
+   relative to.** `ConnectOwnership.ProjectID` is meaningless when
+   `Scope == "platform"` (its own doc comment says so); `ConnectRefGrant`
+   delegation (F) is conceptually "an explicit administrator-authorized
+   exception to a project-ownership boundary a caller doesn't otherwise
+   clear" — there is no such boundary here for an exception to be relative
+   to.
+
+`ConnectReadableConnectorNames` (`ListConnectors`) applies the identical
+terminal rule via the same per-connector loop, not a separate branch: a
+caller lacking `connect.platform.use` never reaches the delegation-fallback
+check for a platform connector there either — otherwise a
+(dead-configuration) `ConnectRefGrant` against a platform connector's name
+could make it appear in discovery for a caller whose actual read would
+always be denied, the exact leak this whole section exists to prevent.
 
 - **`ListConnectors` filters**: unchanged in shape from the prior draft —
   the returned list contains only connectors the caller can reach under
@@ -418,10 +549,14 @@ matching ConnectRefGrant for one of the caller's roles?  → yes: allow (reason:
   bypass wherever it's granted, but **not** the ownership wildcard outside
   that scope. This decoupling is deliberate, not a bug — see the two
   paragraphs above.
-- **Audit records which gate authorized the read**, as a distinct
-  decision reason per branch of the flowchart above: `project_membership`,
-  `global_scope`, or `delegation` (exact string tokens are an
-  implementation detail, not a design axis — see "Out of scope" and (H)).
+- **Audit records which gate authorized (or denied) the read**, as a
+  distinct decision reason per branch of the flowchart above: allow —
+  `project_membership`, `global_scope`, `platform_scope`, `delegation`;
+  deny — `connect_disabled`, `unknown_connector`, `ref_not_permitted`,
+  `ownership_denied`, `delegation_denied`, `platform_permission_denied`,
+  `backend_error` (exact string tokens are an implementation detail, not a
+  design axis — see "Out of scope" and (H) for the full closed set and its
+  fixed `reason=<value>` format).
   A read authorized via the *permission-check* bypass (step 1/2 above)
   does not by itself change which ownership reason gets recorded — the
   reason names the gate that resolved ownership, not whether `connect.read`
@@ -439,6 +574,24 @@ matching ConnectRefGrant for one of the caller's roles?  → yes: allow (reason:
   own name — e.g. `TestConnectOwnership_ZeroScopeEntryMustSurvive` — so a
   future removal fails with a message pointing at this ADR's design, not a
   silently-discovered production authorization regression.
+- **A read denied by ownership (with no matching `ConnectRefGrant`
+  delegation) returns the exact same shape as an unknown connector**
+  (`ErrConnectUnknownConnector` — `502`/HTTP, `codes.FailedPrecondition`/
+  gRPC, same message text) — a deliberate choice, not an oversight.
+  `ListConnectors` already omits a connector the caller cannot reach from
+  discovery (E); returning a distinguishable "exists, but you can't read
+  it" response on the single-connector read path would let a caller probe
+  for a connector's existence by trying names one at a time, defeating that
+  omission. **This costs operator debuggability**: a caller who genuinely
+  mistyped a connector name and a caller who is correctly denied ownership
+  see an identical error, so a legitimate misconfiguration (a typo in
+  `connector:`) cannot be distinguished from a correct denial by the
+  response alone. The audit event (branch 3) is the intended remedy for
+  this: the three-way decision reason (`project_membership` /
+  `global_scope` / `delegation`) never populated on a genuine denial is
+  visible to whoever can read the audit trail (an operator debugging their
+  own misconfiguration, or a security reviewer), even though it is
+  invisible to the caller who received the response.
 
 ### F. `ConnectRefGrant` (ADR-045) retained unchanged as the cross-project delegation path
 
@@ -470,28 +623,129 @@ so:
   control — the doc/config comments for this key must say "reserved,
   not yet enforced" plainly, not merely omit mention of enforcement.
 
-### H. Audit surface: switch to `writeAuditEventFull`, populate the connector's owning project, record which gate authorized the read
+### H. Audit surface: switch to `writeAuditEventFull`/`writeAuditEventFailed`, populate the connector's owning project, record which gate decided the outcome, audit every write to `ConnectorProjectBinding`
 
-Every Connect audit event (`connect.secret_read`, success and denial alike)
-switches from `writeAuditEvent` to `writeAuditEventFull`, populating the
-existing `AuditEvent.ProjectID` column with the connector's **owning**
-project (from its config `scope`/`project`) — zero schema change, this
-column already exists and is simply unpopulated by Connect today. A
-successful read additionally carries a distinct, greppable decision-reason
-marker naming which gate in (E)'s order actually resolved ownership:
-`project_membership` (caller is a genuine member of the connector's owning
-project), `global_scope` (caller's scope set carried the `{0,0}`
-global-scope wildcard entry — (E), any role name), or `delegation` (caller
-had no ownership claim at all, resolved instead via a matching
-`ConnectRefGrant`) — exact
-string tokens are an implementation detail, not a design axis. This makes a
-cross-project delegation read, and an admin reaching a connector they are
-not a genuine member of, both distinguishable from an ordinary same-project
-read in an audit review, rather than all three being indistinguishable
-successful reads. This mirrors the numeric-at-storage, resolved-at-export-layer
-split already established for `impersonated_by`/`acting_as` (numeric FK at
-the `AuditEvent` row, resolved to an email string only at the HTTP
-export/API layer) — the same convention, not a new one.
+Every Connect audit event on the read path (`connect.secret_read` — every
+outcome, allow or deny, including the two paths that were silent through
+branch 2: `connect.read` disabled and a genuinely unknown connector) is
+written with `AuditEvent.ProjectID` populated to the connector's **owning**
+project (from its config `scope`/`project`; `nil` for a `scope: platform`
+connector, since `ProjectID` is meaningless there) — zero schema change,
+this column already existed and was simply unpopulated by Connect before
+this branch. `writeAuditEventFailed` was extended with a `projectID`
+parameter (previously it took none) to make this possible for deny events;
+this touched 6 pre-existing non-Connect call sites
+(`auth.login_failed`, risk-exception approval denial ×2, legal-hold
+place/lift denial ×2, compliance-digest broadcast failure), all mechanically
+updated to pass `nil` — none of those events carry project context.
+
+**Success is `true` only for the read that actually returned a value.**
+Every other outcome — the two RBAC denials (E)'s call order can reach,
+`connect.read` disabled, unknown connector, and a failed upstream call to
+the connector's backend — is written with `Success: false`.
+
+**Decision reason: a fixed `reason=<value>` token, closed set, at a
+consistent position in every event's `Description`.** There is no
+structured, enum-typed column for this on `AuditEvent` — none exists today
+(verified directly against the model, not assumed), and the design that
+would have been the closest precedent (ADR-075's "closed `key_source`
+enum") was never actually implemented under that name anywhere in the
+codebase; see the issue filed alongside this branch for that specific
+drift. Given that, the token goes into free-text `Description`, using the
+SAME fixed format at every one of the seven call sites below, specifically
+so a future structured column is a parse-and-backfill against this closed
+set, not a rewrite:
+
+Allow (`Success: true`):
+- `project_membership` — caller holds a role scoped to the connector's
+  owning project specifically.
+- `global_scope` — caller holds a role at the true global (`{0,0}`) scope,
+  which wildcards every project-scoped connector (E), regardless of role
+  name.
+- `platform_scope` — the connector itself is `scope: platform` and the
+  caller holds `connect.platform.use` (branch 4; checked at `Scope{}`,
+  global — a platform connector has no owning project to check a
+  project-scoped grant against).
+- `delegation` — caller had no ownership claim at all on the connector's
+  project, resolved instead via a matching `ConnectRefGrant` (F). Never
+  reached for a `scope: platform` connector — see below.
+
+Deny (`Success: false`):
+- `connect_disabled` — no `connect.Manager` configured at all.
+- `unknown_connector` — the named connector does not exist in config.
+- `ref_not_permitted` — caller IS owned, but a `ConnectRefGrant` scoped to
+  this connector exists and none of the caller's roles hold a grant
+  matching the requested ref (ADR-045, unchanged).
+- `ownership_denied` — caller is NOT owned (`scope: project`), and the
+  connector has ZERO `ConnectRefGrant`s configured at all — no delegation
+  path exists.
+- `delegation_denied` — caller is NOT owned (`scope: project`); the
+  connector DOES have `ConnectRefGrant`(s), but none matched this caller's
+  roles/ref.
+- `platform_permission_denied` — connector is `scope: platform` and the
+  caller lacks `connect.platform.use` (branch 4). **Terminal** — unlike
+  `ownership_denied`/`delegation_denied`, this reason never falls through
+  to a `ConnectRefGrant` delegation attempt; see (E)'s "TERMINAL deny" note
+  for the full reasoning (a delegation fallback here would be a
+  `connect.platform.use` bypass, not a narrowing — `ConnectRefGrant` has no
+  concept of connector `scope` at all). This fork between the two `scope`
+  values' deny handling is deliberate and permanent — do not "reconcile"
+  `platform_permission_denied` toward `ownership_denied`/
+  `delegation_denied`'s delegation-fallback behavior later; they are
+  answering structurally different questions (project membership vs. a
+  global capability grant for an install-wide resource).
+- `backend_error` — ownership (or delegation) was satisfied, but the
+  upstream connector call itself failed (network, credentials, etc.); the
+  raw upstream error is logged server-side only, never persisted into the
+  audit trail (backlog #116, pre-existing G50 protection, unchanged).
+
+`ownership_denied` and `delegation_denied` are the SAME code branch in
+`ReadFederatedSecret` — (E) still returns the identical
+`ErrConnectUnknownConnector` shape to the caller for both, deliberately
+(existence-hiding, per (E)'s own rationale) — but the audit event
+distinguishes them, because this is the only place an operator can learn
+which gate actually closed. This is the concrete case this branch exists
+for: an admin reaching a connector they are not a genuine member of, and a
+cross-project delegation read, and a hard deny, are all indistinguishable
+to the caller by design, but are fully distinguishable in an audit review.
+
+This mirrors the numeric-at-storage, resolved-at-export-layer split already
+established for `impersonated_by`/`acting_as` (numeric FK at the
+`AuditEvent` row, resolved to an email string only at the HTTP export/API
+layer) — the same convention, not a new one.
+
+**`ConnectRefGrant` management events** (`connect.ref_grant_create`,
+`connect.ref_grant_delete`) also switch to `writeAuditEventFull`, populating
+`ProjectID` from the grant's connector's owning project (looked up the same
+way; for delete, via a best-effort `ListConnectRefGrants` scan by id before
+the delete call, since the storage interface has no fetch-by-id or
+delete-returning-row primitive and adding one is out of scope here).
+
+**`ListConnectors` discovery filtering is deliberately NOT audited** — a
+caller listing connectors and having some silently omitted (E) is
+high-volume, low-signal, and would make a routine discovery poll into an
+audit write. Any actual attempt to read a hidden connector is already
+captured by the `connect.secret_read` deny path above; that is the
+meaningful signal, not the list operation itself.
+
+**`ConnectorProjectBinding` writes are audited at both call sites**
+(closing issue #1477's audit half): the boot-time first-resolution write in
+`server/main.go`'s `resolveConnectorOwnership`, and the RemoteStorage proxy
+write in `CreateConnectorProjectBindingProxy`
+(`server/http/handlers/connector_project_bindings_proxy.go`). Both use a new
+event type, `connect.project_binding_create`, and are actored as `"system"`
+(`core.ActorTypeSystem`) — neither call site has a human session or
+machine-identity principal behind it: the boot-time write is unattended, and
+the proxy endpoint is reached only by a node-credential/`system.write`
+caller. `#1477`'s wording named only the proxy write; this branch covers
+both, because the binding is an authorization input (it feeds
+`core.ConnectOwnership`, and from there `connectOwnershipSatisfied`)
+regardless of which door the write comes through, and the boot-time path is
+the more consequential of the two since nothing is watching it interactively.
+A failure to persist the audit event does NOT fail the boot or the request —
+the binding itself already persisted — but is logged loudly
+(`SECURITY`-prefixed), matching `emitAudit`'s own convention for a failed
+audit write.
 
 ### I. ADR-045 is explicitly amended, not silently superseded
 
@@ -568,6 +822,11 @@ design, with (D) added.)
 - Web UI / CLI surfaces for viewing a connector's `scope`/`project` or the
   boot-time unscoped-connector warning list — follow mechanically from
   (A)-(C) once shipped, not a design question this ADR resolves.
+- An operator-facing `ConnectorProjectBinding` management surface (view/
+  clear a stale binding after a confirmed intentional project rename — see
+  (A.1)). The remediation path today is a direct DB action (remove the
+  stale `connector_project_bindings` row, then restart); a proper admin
+  surface for this is a real follow-up, not decided or built here.
 - Regenerating the gRPC proto is **not needed** — (D) explicitly keeps the
   wire shape unchanged.
 - **Splitting "read across all projects" from "administer all projects"
@@ -631,16 +890,17 @@ repository's existing versioning (`v0.91.0` is current at time of writing;
 `v0.92.0` is the earliest this could ship in, not a fixed commitment ahead
 of implementation). Any existing deployment with `connect.enabled: true`
 and one or more configured connectors **will fail to boot** after upgrading
-unless every connector gains an explicit `scope`, or the deployment sets
-`connect.allow_unscoped: true` as an explicit, intentional stopgap (with the
-every-boot `WARN` noise that implies). This requires a **`BREAKING`**-labeled
+unless every connector gains an explicit `scope` — **there is no bypass**
+(C, amended): the original `connect.allow_unscoped` stopgap is removed,
+since it never actually restored a connector's usability, only deferred the
+failure from boot time to read time. This requires a **`BREAKING`**-labeled
 CHANGELOG entry for that release — the same handling ADR-076 gave its own
 default-scope change (that ADR's Consequences section: "Two separate
 CHANGELOG entries, not one" — `BREAKING` for the behavior change itself).
 The entry must state the required pre-upgrade config change plainly, not
 just "review your config" (ADR-076's own precedent for what counts as
-adequate here), and must name the exact new keys (`scope`, `project`,
-`connect.allow_unscoped`) an operator needs to act on.
+adequate here), and must name the exact new keys (`scope`, `project`) an
+operator needs to act on.
 
 **Why config-only was chosen over a DB mirror.** Stated directly in (A):
 there is no runtime connector-CRUD capability today, so a DB row would add

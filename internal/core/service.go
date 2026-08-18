@@ -242,6 +242,15 @@ type KeyorixCore struct {
 	// connectManager proxies read-through federation to external secret stores
 	// (ADR-043). nil = Keyorix Connect disabled. Set via SetConnectManager.
 	connectManager *connect.Manager
+	// connectOwnership maps each configured connector's name to its resolved
+	// tenant-scoping data (ADR-082 §A/§E) — built in the same boot pass as
+	// connectManager, from the same config, by server/main.go, then set via
+	// SetConnectOwnership. Deliberately NOT part of *connect.Manager/the Connector
+	// interface (internal/connect stays a pure backend-read abstraction with no
+	// ownership concept) — see ADR-082's Decision (D) for the option analysis. A
+	// connector name absent from this map is denied ownership, never silently
+	// skipped or treated as owned — see connectOwnershipSatisfied.
+	connectOwnership map[string]ConnectOwnership
 	// rotationManager holds the backend rotation executors (ADR-047) that apply a new
 	// credential to an upstream system during rotation. nil = no backends configured.
 	rotationManager *rotation.Manager

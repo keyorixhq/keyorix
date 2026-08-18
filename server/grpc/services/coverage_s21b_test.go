@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -509,6 +510,7 @@ func newFailingConnectService(t *testing.T) *ConnectGRPCService {
 	t.Cleanup(h.Cleanup)
 	h.AssignUserRole(t, 1, 1, nil)
 	h.CoreService.SetConnectManager(connect.NewManager([]connect.Connector{errConnector{}}))
+	h.CoreService.SetConnectOwnership(map[string]core.ConnectOwnership{"failing": {Scope: "platform"}})
 	return NewConnectService(h.CoreService)
 }
 

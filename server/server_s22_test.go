@@ -237,8 +237,7 @@ func TestInitializeCoreService_S22_VaultCustomTokenEnv(t *testing.T) {
 				Address:     "http://vault.example.com:8200",
 				TokenEnv:    customEnv,
 				AllowedRefs: []string{"prod/*"},
-				Scope:       "project",
-				Project:     "payments",
+				Scope:       "platform",
 			},
 		},
 	}

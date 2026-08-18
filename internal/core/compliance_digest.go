@@ -127,7 +127,7 @@ func (c *KeyorixCore) SendComplianceDigest(ctx context.Context, actorID uint) (b
 	}
 	if !attempted {
 		log.Printf("compliance digest: notification channel(s) configured but none accepted the broadcast (e.g. email-only with no broadcast destination) — digest was NOT delivered")
-		c.writeAuditEventFailed(auditCtx, EventComplianceDigestSent, userID, "", "compliance digest broadcast attempted but no configured channel could accept it")
+		c.writeAuditEventFailed(auditCtx, EventComplianceDigestSent, userID, nil, "", "compliance digest broadcast attempted but no configured channel could accept it")
 		return false, nil
 	}
 	c.writeAuditEvent(auditCtx, EventComplianceDigestSent, userID, nil, "compliance digest broadcast to notification channels")
