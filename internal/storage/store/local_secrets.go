@@ -146,6 +146,24 @@ func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Projec
 	return &project, nil
 }
 
+// GetProjectByName resolves a project by name, case-insensitively — matching
+// ensureProjectNameIndex's LOWER(name) partial unique index exactly, so this can
+// never resolve two different rows for names differing only in case. GORM's
+// soft-delete scoping (Project.DeletedAt) already excludes a soft-deleted project
+// from this query without an explicit deleted_at clause, consistent with a deleted
+// project's name being freed for reuse (see Project.Name's own doc comment) — this
+// must never resolve a name to a row that no longer legitimately holds it.
+func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*models.Project, error) {
+	var project models.Project
+	if err := ls.db.WithContext(ctx).Where("LOWER(name) = LOWER(?)", name).First(&project).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("project not found")
+		}
+		return nil, fmt.Errorf("failed to get project by name: %w", err)
+	}
+	return &project, nil
+}
+
 func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
 	if err := ls.db.WithContext(ctx).Save(project).Error; err != nil {
 		if isDuplicateProjectNameViolation(err) {

@@ -1353,6 +1353,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
 			r.Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
 
+			// Connect connector→project ID binding storage-primitive proxy (ADR-082
+			// branch 2). Same rationale and pattern as the connect-grants block above
+			// (backlog #527): boot-time connector resolution (server/main.go) treats
+			// any error from these primitives as an unresolvable connector and fails
+			// boot, so RemoteStorage needs a real endpoint here, not a stub.
+			r.Get("/connector-project-bindings/{connector}", authHandler.GetConnectorProjectBindingProxy)
+			r.Post("/connector-project-bindings", authHandler.CreateConnectorProjectBindingProxy)
+
 			// SSO login-state storage-primitive proxy (#521). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateSSOLoginState/ConsumeSSOLoginState to THIS server's real storage
@@ -1955,6 +1963,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// "/projects/{id}/environments/{envId}/copy-secrets" vs
 			// "/projects/{projectId}/environments/{id}/restore" routes already do.
 			r.Get("/projects/with-counts", catalogHandler.ListProjectsWithCountsProxy)
+			// /projects/by-name/{name} (ADR-082 branch 2): a static "by-name" segment
+			// ahead of the {id} wildcard below, same precedence pattern as
+			// "with-counts" above — boot-time connector resolution (server/main.go)
+			// resolves a connector's configured project: name against this route on a
+			// storage.type: remote node.
+			r.Get("/projects/by-name/{name}", catalogHandler.GetProjectByNameProxy)
 			r.Get(pathProjects, catalogHandler.ListProjectsProxy)
 			r.Get(pathProjectsID, catalogHandler.GetProjectProxy)
 			r.Put(pathProjectsID, catalogHandler.UpdateProjectProxy)

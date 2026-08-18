@@ -952,6 +952,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	loginAttemptExists := tableExists(db, "login_attempts")
 	auditCkptExists := tableExists(db, "audit_checkpoints")
 	connectRefGrantExists := tableExists(db, "connect_ref_grants")
+	connectorProjectBindingsExists := tableExists(db, "connector_project_bindings")
 	groupsExists := tableExists(db, "groups")
 	secretACLExists := tableExists(db, "secret_acls")
 	scheduleExists := tableExists(db, "secret_access_schedules")
@@ -1095,6 +1096,16 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !connectRefGrantExists {
 		if err := db.AutoMigrate(&models.ConnectRefGrant{}); err != nil {
 			return fmt.Errorf("failed to migrate connect_ref_grants table: %w", err)
+		}
+	}
+
+	// Create connector_project_bindings if missing (ADR-082 branch 2, additive, safe
+	// on existing DBs) — pins each Connect connector to the Keyorix project it
+	// resolved to at first boot, by ID, so a later project rename can't silently
+	// reassign ownership (see ConnectorProjectBinding's own doc comment).
+	if !connectorProjectBindingsExists {
+		if err := db.AutoMigrate(&models.ConnectorProjectBinding{}); err != nil {
+			return fmt.Errorf("failed to migrate connector_project_bindings table: %w", err)
 		}
 	}
 
