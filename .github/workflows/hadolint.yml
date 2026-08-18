@@ -5,7 +5,8 @@ on:
     branches: [main]
     paths-ignore: ['**/*.md', 'docs/**']
   pull_request:
-    branches: [main]
+    # See ci.yml's own comment: also covers stacked-PR review chains.
+    branches: [main, 'adr082/**', 'feat/**', 'fix/**']
     paths-ignore: ['**/*.md', 'docs/**']
   schedule:
     - cron: '26 12 * * 5'

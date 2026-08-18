@@ -5,7 +5,11 @@ on:
     branches: [main]
     paths-ignore: ['**/*.md', 'docs/**']
   pull_request:
-    branches: [main]
+    # See ci.yml's own comment: also covers stacked-PR review chains. Note:
+    # SonarCloud's new-code baseline comparison is tuned for a main-targeted
+    # PR; a PR targeting a feature branch still runs the scan, but the
+    # "new code since" comparison point may be less meaningful mid-stack.
+    branches: [main, 'adr082/**', 'feat/**', 'fix/**']
     paths-ignore: ['**/*.md', 'docs/**']
 
 permissions: {}
