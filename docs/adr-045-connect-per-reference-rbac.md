@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted.
+Accepted. **Amended by ADR-082** (connector tenant/project scoping,
+**Accepted**): Connect gains a per-connector ownership boundary evaluated
+*before* the per-reference grant mechanism this ADR defines — see this
+document's Context section below, and ADR-082 for the full design. The
+per-reference grant mechanism itself (its schema, matching rules,
+enforcement point, and audit events) is unchanged by that amendment; only
+the "Connect is a global surface" framing this ADR was reasoned under no
+longer holds unqualified.
 
 ## Context
 
@@ -54,11 +61,22 @@ Enforcement lives in the core layer (`ReadFederatedSecret`), so it protects **ev
 transport uniformly — HTTP and the gRPC `ConnectService` alike. The caller's roles are
 resolved exactly as canonical authorization resolves them, so the per-reference policy
 is consistent with the rest of RBAC: a user's **effective** roles — direct assignments
-**plus group-derived roles** — and, for a machine identity, its `machine_identity_roles`
-(at global scope, since Connect is a global surface). Resolving only direct roles would
-wrongly deny a user whose granted role comes via a group even though `connect.read`
-itself honors it. **Group-based scoping therefore works out of the box**: grant a
-ref-prefix to a role and manage who holds it through group membership.
+**plus group-derived roles** — and, for a machine identity, its `machine_identity_roles`.
+Resolving only direct roles would wrongly deny a user whose granted role comes via a
+group even though `connect.read` itself honors it. **Group-based scoping therefore
+works out of the box**: grant a ref-prefix to a role and manage who holds it through
+group membership.
+
+**Amendment (ADR-082, Accepted):** the phrase this replaced — "at global scope, since
+Connect is a global surface" — no longer holds unqualified. `connect.read` itself
+remains a single global permission (unchanged), but a federated read is additionally
+gated by a per-connector ownership check (project membership, a global-scoped role's
+all-projects reach, or a `platform`-scoped connector plus the new
+`connect.platform.use` permission) evaluated *before* this ADR's per-reference grant is
+consulted. This ADR's own grant mechanism — schema, glob/prefix matching, enforcement
+point, audit events — is unchanged; it runs as the explicit cross-project/cross-boundary
+delegation path (ADR-082 §F) rather than the only control beyond the coarse global
+permission. See ADR-082 for the full authorization order.
 
 ## The deny-by-default footgun (documented)
 
