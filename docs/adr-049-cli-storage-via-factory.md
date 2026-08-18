@@ -5,6 +5,17 @@
 Accepted. (ADR-048 was assigned to the CGO-free SQLite driver decision; this
 decision took the next free number.)
 
+**Partially superseded by ADR-083** (`storage.type: remote` is CLI/client mode
+only, **Accepted**): this ADR's own Decision — CLI commands must obtain
+storage via the shared factory — is unaffected and remains in force. What
+ADR-083 retires is a *later* assumption, never actually decided here, that
+grew up around this ADR number in code comments: that `storage.type: remote`
+also supports "a full downstream Keyorix server." This ADR never made that
+claim (re-read above — it is scoped entirely to CLI subcommands bypassing the
+factory); ADR-083 is the explicit, formal retirement of that assumption
+wherever it was informally anchored to this ADR number. See ADR-083 for the
+investigation.
+
 ## Context
 
 Keyorix has a single storage seam: `storage.NewStorageFactory().CreateStorage(cfg)`

@@ -155,6 +155,77 @@ func TestValidate_AcceptsExplicitAllowedOrigins(t *testing.T) {
 // everywhere downstream — in a multi-replica HA deployment intending shared
 // Postgres/remote storage, that produces per-replica split-brain SQLite
 // instances with no operator-visible signal. Validate must reject it clearly.
+// ADR-083: storage.type: remote is a CLI/client mode only — it cannot back a
+// server that serves HTTP or gRPC API routes, since RemoteStorage never
+// implements the RBAC primitives AuthorizePrincipal needs (GetUserRoleIDsAt,
+// GetUserGroupRoleIDsAt, RoleSetHasPermission), so every permission check would
+// fail closed for every caller.
+func TestValidate_RejectsRemoteStorageWithHTTPEnabled(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = "remote"
+	c.Server.HTTP.Enabled = true
+	c.Server.HTTP.Port = "8080"
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "storage.type: remote")
+	require.Contains(t, err.Error(), "ADR-083")
+}
+
+func TestValidate_RejectsRemoteStorageWithGRPCEnabled(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = "remote"
+	c.Server.GRPC.Enabled = true
+	c.Server.GRPC.Port = "9090"
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "storage.type: remote")
+	require.Contains(t, err.Error(), "ADR-083")
+}
+
+func TestValidate_RejectsRemoteStorageWithBothHTTPAndGRPCEnabled(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = "remote"
+	c.Server.HTTP.Enabled = true
+	c.Server.HTTP.Port = "8080"
+	c.Server.GRPC.Enabled = true
+	c.Server.GRPC.Port = "9090"
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "storage.type: remote")
+}
+
+// The CLI/client case must still validate cleanly: storage.type: remote with
+// NEITHER server enabled is exactly what a CLI in client mode looks like.
+func TestValidate_AcceptsRemoteStorageWithNoServerEnabled(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = "remote"
+	err := c.Validate()
+	require.NoError(t, err)
+}
+
+// A validation change here must be scoped to storage.type: remote specifically —
+// local/postgres storage with servers enabled is the ordinary, fully-supported
+// deployment shape and must remain unaffected.
+func TestValidate_AcceptsLocalAndPostgresStorageWithServersEnabled(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = "local"
+	c.Storage.Database.Path = "/tmp/keyorix.db"
+	c.Server.HTTP.Enabled = true
+	c.Server.HTTP.Port = "8080"
+	c.Server.GRPC.Enabled = true
+	c.Server.GRPC.Port = "9090"
+	require.NoError(t, c.Validate())
+
+	c2 := &Config{}
+	c2.Storage.Type = "postgres"
+	c2.Storage.Database.DSN = "postgres://user:pass@localhost/db"
+	c2.Server.HTTP.Enabled = true
+	c2.Server.HTTP.Port = "8080"
+	c2.Server.GRPC.Enabled = true
+	c2.Server.GRPC.Port = "9090"
+	require.NoError(t, c2.Validate())
+}
+
 func TestValidate_RejectsUnknownStorageType(t *testing.T) {
 	c := &Config{}
 	c.Storage.Type = "postgres_typo"
