@@ -120,6 +120,17 @@ func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
 	}
 }
 
+// evictUserSessionCache evicts every one of the user's active sessions from the HTTP
+// auth cache WITHOUT deleting the sessions themselves — unlike
+// deleteSessionsForUserAndEvict, the user stays logged in. Used after a permission
+// change (e.g. role removal) where the goal is only to force the NEXT request to
+// re-resolve the user's permissions from storage instead of serving a stale,
+// positively-cached authorization decision for up to validTokenTTL.
+func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
+	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	c.invalidateTokenCache(hashes...)
+}
+
 // deleteSessionsForUserAndEvict deletes all of the user's sessions except keepID and
 // evicts the deleted sessions from the HTTP auth cache, so a revoked session stops
 // authenticating on the very NEXT request rather than lingering for the positive-cache

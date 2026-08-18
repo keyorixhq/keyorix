@@ -557,6 +557,8 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+		// evictUserSessionCache: evicts the removed-role user's cached sessions.
+		store.On("ListSessionTokenHashesForUser", mock.Anything, uint(7)).Return([]string{}, nil)
 
 		c.syncSSORoles(context.Background(), p, 7, raw)
 
