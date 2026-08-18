@@ -69,6 +69,8 @@ func TestReadFederatedSecret_AuditReasons_Allow(t *testing.T) {
 	t.Run("platform_scope", func(t *testing.T) {
 		c, db := connectRBACCore(t, fakeConnector{name: "shared-vault", val: "v"})
 		c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
+		seedRoleForUser(t, db, 999, 50, "platform-caller")
+		seedConnectPlatformUsePermission(t, db, 50) // ADR-082 branch 4: platform scope now requires this
 
 		val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 999, "shared-vault", "ref")
 		require.NoError(t, err)
@@ -191,6 +193,8 @@ func TestReadFederatedSecret_AuditReasons_Deny(t *testing.T) {
 	t.Run("backend_error", func(t *testing.T) {
 		c, db := connectRBACCore(t, fakeConnector{name: "shared-vault", err: assert.AnError})
 		c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
+		seedRoleForUser(t, db, 1, 50, "platform-caller")
+		seedConnectPlatformUsePermission(t, db, 50) // ADR-082 branch 4: must clear the platform gate to reach the backend call and fail there instead
 
 		_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "shared-vault", "ref")
 		require.Error(t, err)

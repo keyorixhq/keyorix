@@ -82,6 +82,54 @@ func TestReconcileRBAC_AddsNewPermissionToBaselineRoles(t *testing.T) {
 	assert.False(t, roleHasPerm(t, c, "system_viewer", "connect.read"))
 }
 
+// seedOldCatalogWithoutPlatformUse mirrors seedOldCatalog but simulates an
+// install seeded BEFORE connect.platform.use existed (ADR-082 branch 4) — the
+// same precedent connect.read's own reconcile test (above) established for the
+// previous new permission.
+func seedOldCatalogWithoutPlatformUse(t *testing.T, c *KeyorixCore, db *gorm.DB) {
+	t.Helper()
+	ctx := context.Background()
+	for _, def := range defaultPermissions {
+		if def.Name == "connect.platform.use" {
+			continue
+		}
+		_, err := c.storage.CreatePermission(ctx, &models.Permission{Name: def.Name, Description: def.Description, Resource: def.Resource, Action: def.Action})
+		require.NoError(t, err)
+	}
+	for _, rdef := range defaultRoles {
+		role, err := c.storage.CreateRole(ctx, &models.Role{Name: rdef.Name, Description: rdef.Description})
+		require.NoError(t, err)
+		for _, permName := range rdef.Permissions {
+			if permName == "connect.platform.use" {
+				continue
+			}
+			var p models.Permission
+			require.NoError(t, db.Where("name = ?", permName).First(&p).Error)
+			require.NoError(t, c.storage.AssignPermissionToRole(ctx, role.ID, p.ID))
+		}
+	}
+}
+
+// TestReconcileRBAC_AddsConnectPlatformUseToBaselineRoles mirrors
+// TestReconcileRBAC_AddsNewPermissionToBaselineRoles for connect.platform.use
+// specifically (ADR-082 branch 4): a pre-existing admin/system_admin role row
+// gains it on the next reconcile pass, with no manual migration, exactly like
+// connect.read did when it was added.
+func TestReconcileRBAC_AddsConnectPlatformUseToBaselineRoles(t *testing.T) {
+	c, db := newRBACReconcileCore(t)
+	seedOldCatalogWithoutPlatformUse(t, c, db)
+	ctx := context.Background()
+
+	require.False(t, roleHasPerm(t, c, "admin", "connect.platform.use"))
+
+	require.NoError(t, c.ReconcileRBACPermissions(ctx))
+
+	assert.True(t, roleHasPerm(t, c, "admin", "connect.platform.use"))
+	assert.True(t, roleHasPerm(t, c, "system_admin", "connect.platform.use"))
+	assert.False(t, roleHasPerm(t, c, "viewer", "connect.platform.use"))
+	assert.False(t, roleHasPerm(t, c, "editor", "connect.platform.use"), "editor holds no connect.read either — least privilege")
+}
+
 func TestReconcileRBAC_DoesNotClobberExistingGrants(t *testing.T) {
 	c, db := newRBACReconcileCore(t)
 	seedOldCatalog(t, c, db)

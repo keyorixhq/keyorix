@@ -21,6 +21,10 @@ func TestConnectRefRBAC_NoAdminBypass(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 
 	// User 1 is a GLOBAL super_admin — the role that bypasses core RBAC.
+	// ADR-082 branch 4: no explicit connect.platform.use grant is needed here —
+	// super_admin's role-NAME bypass (roleSetContainsAdmin) satisfies ANY
+	// permission check, this new one included, exactly like the connect.read
+	// precondition check just below already demonstrates.
 	seedRoleForUser(t, db, 1, 1, "super_admin")
 	// The connector is ref-scoped, but only for a DIFFERENT role (reader = role 2).
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "reader"}).Error)

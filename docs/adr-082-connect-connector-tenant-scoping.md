@@ -20,11 +20,16 @@ Four separate branches, one logical change each:
 4. The new `connect.platform.use` permission (B) and its addition to
    `adminPermissions`.
 
-**Branches 1-3 are implemented; branch 4 (`connect.platform.use`) is not
-started.** Branch 3 (H) also closes issue #1477's audit half: every
-`ConnectorProjectBinding` write is now audited, not only the `connect.secret_read`
-path — see (H) below for the full, as-implemented design (the text below
-reflects what shipped, superseding the plan-time description that preceded it).
+**All four branches are implemented.** Branch 3 (H) also closes issue
+#1477's audit half: every `ConnectorProjectBinding` write is now audited, not
+only the `connect.secret_read` path. Branch 4 adds `connect.platform.use`
+(B) and gates it as a TERMINAL deny with no `ConnectRefGrant` delegation
+fallback (E) — a deliberate fork from the `scope: project` ownership-miss
+path, not a later revision toward consistency with it. See (E) and (H) below
+for the full, as-implemented design (the text in those sections reflects
+what shipped, superseding the plan-time description that preceded it, most
+notably (E)'s diagram, which originally said a platform-permission denial
+fell through to delegation — it does not).
 
 ## Context
 
@@ -457,9 +462,12 @@ admin-*named* role globally (unaffected by this ADR either way), now
 extended consistently to Connect ownership specifically.
 
 ```
-connect.read granted?                                    → no:  deny
+connect.read granted?                                    → no:  deny (reason: connect_disabled / unknown_connector)
 connector.scope == platform?
-  → yes: connect.platform.use granted?  → yes: allow (reason: capability)  → no: fall through to delegation check below
+  → yes: connect.platform.use granted (checked at Scope{}, global)?
+      → yes: allow (reason: platform_scope)
+      → no:  TERMINAL deny (reason: platform_permission_denied) — no
+             ConnectRefGrant fallback; see below for why
 connector.scope == project?
   → caller's RAW scope set (GetUserRoleScopes/GetMachineRoleScopes,
     including any {0,0} entry) contains connector.project?
@@ -468,8 +476,51 @@ connector.scope == project?
     role grant, any role name — see above)?
                                                           → yes: allow (reason: global_scope)
 matching ConnectRefGrant for one of the caller's roles?  → yes: allow (reason: delegation)
-                                                          → else: deny
+                                                          → no:  deny (reason: ownership_denied /
+                                                                 delegation_denied)
 ```
+
+**A denied `connect.platform.use` check is TERMINAL — it does NOT fall
+through to `ConnectRefGrant` delegation, unlike an ordinary `scope: project`
+ownership miss (this ADR's own earlier draft of this diagram said it did;
+corrected here on implementation, not a later change of mind — see "Out of
+scope"/(H) history).** This is a deliberate fork, not an oversight, and must
+not later be "reconciled" toward consistency with the project-scope path.
+Two independent reasons, both load-bearing:
+
+1. **A `ConnectRefGrant` targeting a `platform`-scope connector's name would
+   not be narrowing access — it would be granting it.** `ConnectRefGrant`
+   is keyed on role + connector name + ref-prefix alone; it has no concept
+   of the connector's `scope`, and nothing in `CreateConnectRefGrant`
+   currently rejects creating one against a platform connector (a known,
+   separately-tracked gap — see the issue filed alongside this branch: such
+   a grant is dead configuration under this design, consulted by nothing).
+   If a platform-scope ownership miss fell through to the SAME delegation
+   check a project-scope miss does, then any principal able to create a
+   `ConnectRefGrant` (an ordinary RBAC-gated management action, not itself
+   gated on `connect.platform.use`) could hand any other principal read
+   access to a platform-wide connector, entirely bypassing
+   `connect.platform.use`. For a project-scoped connector this isn't a
+   bypass — delegation is explicitly scoped to ONE connector's ONE
+   project, a narrower grant than project ownership itself would confer.
+   For a platform connector there is no narrower boundary below "the whole
+   connector" for a grant to sit inside of — delegation and the permission
+   it would be bypassing would cover the exact same surface.
+2. **A platform connector has no owning project for "delegation" to be
+   relative to.** `ConnectOwnership.ProjectID` is meaningless when
+   `Scope == "platform"` (its own doc comment says so); `ConnectRefGrant`
+   delegation (F) is conceptually "an explicit administrator-authorized
+   exception to a project-ownership boundary a caller doesn't otherwise
+   clear" — there is no such boundary here for an exception to be relative
+   to.
+
+`ConnectReadableConnectorNames` (`ListConnectors`) applies the identical
+terminal rule via the same per-connector loop, not a separate branch: a
+caller lacking `connect.platform.use` never reaches the delegation-fallback
+check for a platform connector there either — otherwise a
+(dead-configuration) `ConnectRefGrant` against a platform connector's name
+could make it appear in discovery for a caller whose actual read would
+always be denied, the exact leak this whole section exists to prevent.
 
 - **`ListConnectors` filters**: unchanged in shape from the prior draft —
   the returned list contains only connectors the caller can reach under
@@ -498,10 +549,14 @@ matching ConnectRefGrant for one of the caller's roles?  → yes: allow (reason:
   bypass wherever it's granted, but **not** the ownership wildcard outside
   that scope. This decoupling is deliberate, not a bug — see the two
   paragraphs above.
-- **Audit records which gate authorized the read**, as a distinct
-  decision reason per branch of the flowchart above: `project_membership`,
-  `global_scope`, or `delegation` (exact string tokens are an
-  implementation detail, not a design axis — see "Out of scope" and (H)).
+- **Audit records which gate authorized (or denied) the read**, as a
+  distinct decision reason per branch of the flowchart above: allow —
+  `project_membership`, `global_scope`, `platform_scope`, `delegation`;
+  deny — `connect_disabled`, `unknown_connector`, `ref_not_permitted`,
+  `ownership_denied`, `delegation_denied`, `platform_permission_denied`,
+  `backend_error` (exact string tokens are an implementation detail, not a
+  design axis — see "Out of scope" and (H) for the full closed set and its
+  fixed `reason=<value>` format).
   A read authorized via the *permission-check* bypass (step 1/2 above)
   does not by itself change which ownership reason gets recorded — the
   reason names the gate that resolved ownership, not whether `connect.read`
@@ -607,11 +662,13 @@ Allow (`Success: true`):
 - `global_scope` — caller holds a role at the true global (`{0,0}`) scope,
   which wildcards every project-scoped connector (E), regardless of role
   name.
-- `platform_scope` — the connector itself is `scope: platform`; ownership
-  passes for any `connect.read` holder (branch 4's `connect.platform.use`
-  narrows this further, not yet implemented).
+- `platform_scope` — the connector itself is `scope: platform` and the
+  caller holds `connect.platform.use` (branch 4; checked at `Scope{}`,
+  global — a platform connector has no owning project to check a
+  project-scoped grant against).
 - `delegation` — caller had no ownership claim at all on the connector's
-  project, resolved instead via a matching `ConnectRefGrant` (F).
+  project, resolved instead via a matching `ConnectRefGrant` (F). Never
+  reached for a `scope: platform` connector — see below.
 
 Deny (`Success: false`):
 - `connect_disabled` — no `connect.Manager` configured at all.
@@ -619,10 +676,24 @@ Deny (`Success: false`):
 - `ref_not_permitted` — caller IS owned, but a `ConnectRefGrant` scoped to
   this connector exists and none of the caller's roles hold a grant
   matching the requested ref (ADR-045, unchanged).
-- `ownership_denied` — caller is NOT owned, and the connector has ZERO
-  `ConnectRefGrant`s configured at all — no delegation path exists.
-- `delegation_denied` — caller is NOT owned; the connector DOES have
-  `ConnectRefGrant`(s), but none matched this caller's roles/ref.
+- `ownership_denied` — caller is NOT owned (`scope: project`), and the
+  connector has ZERO `ConnectRefGrant`s configured at all — no delegation
+  path exists.
+- `delegation_denied` — caller is NOT owned (`scope: project`); the
+  connector DOES have `ConnectRefGrant`(s), but none matched this caller's
+  roles/ref.
+- `platform_permission_denied` — connector is `scope: platform` and the
+  caller lacks `connect.platform.use` (branch 4). **Terminal** — unlike
+  `ownership_denied`/`delegation_denied`, this reason never falls through
+  to a `ConnectRefGrant` delegation attempt; see (E)'s "TERMINAL deny" note
+  for the full reasoning (a delegation fallback here would be a
+  `connect.platform.use` bypass, not a narrowing — `ConnectRefGrant` has no
+  concept of connector `scope` at all). This fork between the two `scope`
+  values' deny handling is deliberate and permanent — do not "reconcile"
+  `platform_permission_denied` toward `ownership_denied`/
+  `delegation_denied`'s delegation-fallback behavior later; they are
+  answering structurally different questions (project membership vs. a
+  global capability grant for an install-wide resource).
 - `backend_error` — ownership (or delegation) was satisfied, but the
   upstream connector call itself failed (network, credentials, etc.); the
   raw upstream error is logged server-side only, never persisted into the

@@ -101,16 +101,32 @@ func TestConnectOwnership_ReadFederatedSecret(t *testing.T) {
 	}
 }
 
-// TestConnectOwnership_PlatformConnectorAnyCaller proves a platform-scoped
-// connector passes ownership for any caller in THIS branch — TODO(ADR-082 branch
-// 4) is the connect.platform.use gate; until then any connect.read holder (the
-// transport layer's job, not this function's) reaches it, even with zero roles.
-func TestConnectOwnership_PlatformConnectorAnyCaller(t *testing.T) {
+// TestConnectOwnership_PlatformConnectorRequiresPlatformUse supersedes the
+// pre-branch-4 "any connect.read holder reaches it" behavior this test used to
+// assert (its own prior docstring named this as the TODO(ADR-082 branch 4) gap
+// explicitly). Now: a caller with zero roles — including no connect.platform.use
+// — is denied, terminally (no ConnectRefGrant delegation fallback; see
+// connectDenyReasonPlatformPermissionDenied).
+func TestConnectOwnership_PlatformConnectorRequiresPlatformUse(t *testing.T) {
 	c, _ := connectRBACCore(t, fakeConnector{name: "shared-vault", val: "shared-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
 
-	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 999, "shared-vault", "ref")
-	require.NoError(t, err, "a platform-scoped connector must pass ownership for any caller in this branch")
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 999, "shared-vault", "ref")
+	require.Error(t, err, "a platform-scoped connector must now deny a caller with no connect.platform.use grant")
+	assert.ErrorIs(t, err, ErrConnectUnknownConnector, "the denial must reuse the opaque unknown-connector shape (ADR-082)")
+}
+
+// TestConnectOwnership_PlatformConnectorAllowsHolderOfPlatformUse is the allow
+// counterpart: a caller who DOES hold connect.platform.use reaches the platform
+// connector, same as any other allow path.
+func TestConnectOwnership_PlatformConnectorAllowsHolderOfPlatformUse(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "shared-vault", val: "shared-secret"})
+	c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
+	seedRoleForUser(t, db, 1, 10, "platform-caller")
+	seedConnectPlatformUsePermission(t, db, 10)
+
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "shared-vault", "ref")
+	require.NoError(t, err)
 	assert.Equal(t, "shared-secret", val)
 }
 
@@ -256,6 +272,41 @@ func TestConnectReadableConnectorNames_GlobalScopedCallerSeesAll(t *testing.T) {
 	names, err := c.ConnectReadableConnectorNames(context.Background(), ActorTypeUser, 2)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"aws-payments", "aws-billing"}, names, "a global-scoped caller must see every project-scoped connector via the {0,0} wildcard")
+}
+
+// TestConnectReadableConnectorNames_PlatformFilteredWithoutPlatformUse proves
+// ListConnectors filtering (ADR-082 branch 4) via the SAME per-connector filter
+// ReadFederatedSecret uses (connectOwnershipSatisfied) — no separate branch: a
+// caller lacking connect.platform.use sees a platform connector disappear from
+// discovery, exactly like ReadFederatedSecret would deny an actual read of it.
+func TestConnectReadableConnectorNames_PlatformFilteredWithoutPlatformUse(t *testing.T) {
+	c, db := connectRBACCore(t,
+		fakeConnector{name: "shared-vault", val: "v1"},
+		fakeConnector{name: "aws-payments", val: "v2"},
+	)
+	c.SetConnectOwnership(map[string]ConnectOwnership{
+		"shared-vault": {Scope: "platform"},
+		"aws-payments": {Scope: "project", ProjectID: 42},
+	})
+	seedRoleForUserAtProject(t, db, 1, 10, "payments-member", 42) // no connect.platform.use
+
+	names, err := c.ConnectReadableConnectorNames(context.Background(), ActorTypeUser, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"aws-payments"}, names, "the platform connector must be filtered out without connect.platform.use, even though the project connector (a genuine ownership match) is still visible")
+}
+
+// TestConnectReadableConnectorNames_PlatformVisibleWithPlatformUse is the allow
+// counterpart: a caller holding connect.platform.use sees the platform
+// connector in discovery too.
+func TestConnectReadableConnectorNames_PlatformVisibleWithPlatformUse(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "shared-vault", val: "v1"})
+	c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
+	seedRoleForUser(t, db, 1, 10, "platform-caller")
+	seedConnectPlatformUsePermission(t, db, 10)
+
+	names, err := c.ConnectReadableConnectorNames(context.Background(), ActorTypeUser, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shared-vault"}, names)
 }
 
 // seedRoleForUserAtProject mirrors seedRoleForUser (connect_rbac_test.go) but
