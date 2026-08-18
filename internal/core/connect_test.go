@@ -24,6 +24,11 @@ func (f fakeConnector) GetSecret(_ context.Context, _ string) (string, error) {
 	return f.val, f.err
 }
 
+// connectTestCore wires every connector as scope: platform by default (ADR-082) —
+// a platform connector passes ownership for any caller in this branch, matching
+// this suite's pre-ADR-082 assumption that any caller can reach a configured test
+// connector. Tests that specifically exercise ownership/scope behavior use their
+// own setup (see connect_ownership_test.go) instead of this helper.
 func connectTestCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *MockStorage) {
 	t.Helper()
 	ms := new(MockStorage)
@@ -31,6 +36,11 @@ func connectTestCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *M
 	c := &KeyorixCore{storage: ms}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
+		ownership := make(map[string]ConnectOwnership, len(conns))
+		for _, conn := range conns {
+			ownership[conn.Name()] = ConnectOwnership{Scope: "platform"}
+		}
+		c.SetConnectOwnership(ownership)
 	}
 	return c, ms
 }
@@ -84,6 +94,7 @@ func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 	})).Return(nil)
 	c := &KeyorixCore{storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{fakeConnector{name: "aws", val: "v"}}))
+	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
 
 	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeMachine, 42, "aws", "ref")
 	require.NoError(t, err)
@@ -105,6 +116,7 @@ func TestReadFederatedSecret_UserAuditedAsUser(t *testing.T) {
 	})).Return(nil)
 	c := &KeyorixCore{storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{fakeConnector{name: "aws", val: "v"}}))
+	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
 
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 7, "aws", "ref")
 	require.NoError(t, err)
@@ -159,6 +171,7 @@ func TestReadFederatedSecret_AuditDescriptionRedactsRawUpstreamError(t *testing.
 	c.SetConnectManager(connect.NewManager([]connect.Connector{
 		fakeConnector{name: "aws", err: rawUpstreamErr},
 	}))
+	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
 
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", ref)
 	require.Error(t, err)

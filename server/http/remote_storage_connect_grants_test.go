@@ -159,6 +159,7 @@ func TestReadFederatedSecret_RemoteStorage_NoGrantsSucceeds_RealServer(t *testin
 	downstream.SetConnectManager(connect.NewManager([]connect.Connector{
 		fakeConnectGrantsConnector{name: "aws", val: "v3ry-secret"},
 	}))
+	downstream.SetConnectOwnership(map[string]core.ConnectOwnership{"aws": {Scope: "platform"}})
 	require.True(t, downstream.ConnectEnabled())
 
 	val, err := downstream.ReadFederatedSecret(context.Background(), core.ActorTypeUser, 1, "aws", "prod/db")
@@ -182,6 +183,7 @@ func TestReadFederatedSecret_RemoteStorage_PerRefEnforcement_RealServer(t *testi
 	downstream.SetConnectManager(connect.NewManager([]connect.Connector{
 		fakeConnectGrantsConnector{name: "aws", val: "v3ry-secret"},
 	}))
+	downstream.SetConnectOwnership(map[string]core.ConnectOwnership{"aws": {Scope: "platform"}})
 
 	project, err := upstream.CreateProject(ctx, "Connect Grants Test Project", "")
 	require.NoError(t, err)

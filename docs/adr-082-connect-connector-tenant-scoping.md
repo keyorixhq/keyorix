@@ -143,9 +143,8 @@ GCP one's boot-warning-only enforcement gap is out of scope for this ADR
 
 Connectors remain pure server configuration, exactly as today. Each
 connector config entry gains a required `scope` field (see (B)) and an
-optional `project` reference (a Keyorix project's numeric ID or unique
-name, config-file-resolvable at boot the same way every other
-config-time reference in this codebase is — implementation detail).
+optional `project` reference — a Keyorix project's **name**, not a numeric
+ID (see the subsection immediately below for why).
 
 **Explicitly decided: no DB table mirrors connector metadata.** There is no
 runtime connector-management API today (creating/updating a connector
@@ -156,6 +155,44 @@ connectors by the same bare name string it already uses; nothing about this
 ADR requires a stable numeric connector ID. **Revisit only if/when runtime
 connector CRUD ships** — that is the point at which a DB-backed identity
 would earn its keep, not before.
+
+#### A.1 Project names are mutable and freed on soft-delete — why `project:` pins by ID, once, and a rename is a deliberate boot failure
+
+Verified directly against the schema and the update path, not assumed:
+`Project.Name` (`models.go:9-17`) carries no immutability — `UpdateProject`
+(`catalog.go:120,132`) directly reassigns `project.Name = name` with no
+restriction — and its own doc comment states explicitly that uniqueness is
+enforced by a **partial** index, `LOWER(name) WHERE deleted_at IS NULL`,
+"so a soft-deleted project's name is still freed for reuse." Both facts
+combine into a real risk: if a connector's ownership were re-resolved by
+name on every boot, an ordinary project rename — or a delete-and-recreate
+under the same name, by a different admin, for an unrelated reason — would
+silently reassign which project owns a connector, with no config change and
+no operator awareness that Connect was affected at all.
+
+**The fix: `project:` names the project by string, but is resolved to a
+numeric project ID exactly ONCE — at the first boot after a connector is
+configured — and pinned via a new persisted row,
+`ConnectorProjectBinding` (`connector`, `project_id`, `project_name`).
+Every later boot resolves by the STORED ID, never by re-reading the config's
+`project:` name against live `Project` rows.** If the bound project's
+CURRENT name (looked up by the stored ID) no longer matches the name
+recorded in the binding at first-boot time, boot fails, naming both the
+stored and current name — this is a **deliberate** boot failure, not a
+silent reassignment: a rename that happened between boots is exactly the
+ambiguous case (intentional relabeling vs. an unrelated project stealing the
+name) this ADR refuses to resolve automatically. The same applies if the
+bound project no longer exists (deleted). There is no operator-facing
+binding-management surface in this branch (out of scope, see below); the
+remediation path today is to remove the stale `connector_project_bindings`
+row (a direct DB action) once the rename is confirmed intentional, then
+restart — a real if unpolished escape hatch, not a dead end.
+
+This mirrors, at a smaller scale, the same "explicit value required,
+absence/ambiguity denies" shape (C) already establishes for `scope` itself
+— a `project:` name is a human-friendly config-time label, not a security
+identifier; the security identifier is the persisted numeric ID it resolves
+to once, not the string re-derived from it on every boot.
 
 ### B. `scope: project | platform` — exactly two values, no third state
 
@@ -439,6 +476,24 @@ matching ConnectRefGrant for one of the caller's roles?  → yes: allow (reason:
   own name — e.g. `TestConnectOwnership_ZeroScopeEntryMustSurvive` — so a
   future removal fails with a message pointing at this ADR's design, not a
   silently-discovered production authorization regression.
+- **A read denied by ownership (with no matching `ConnectRefGrant`
+  delegation) returns the exact same shape as an unknown connector**
+  (`ErrConnectUnknownConnector` — `502`/HTTP, `codes.FailedPrecondition`/
+  gRPC, same message text) — a deliberate choice, not an oversight.
+  `ListConnectors` already omits a connector the caller cannot reach from
+  discovery (E); returning a distinguishable "exists, but you can't read
+  it" response on the single-connector read path would let a caller probe
+  for a connector's existence by trying names one at a time, defeating that
+  omission. **This costs operator debuggability**: a caller who genuinely
+  mistyped a connector name and a caller who is correctly denied ownership
+  see an identical error, so a legitimate misconfiguration (a typo in
+  `connector:`) cannot be distinguished from a correct denial by the
+  response alone. The audit event (branch 3) is the intended remedy for
+  this: the three-way decision reason (`project_membership` /
+  `global_scope` / `delegation`) never populated on a genuine denial is
+  visible to whoever can read the audit trail (an operator debugging their
+  own misconfiguration, or a security reviewer), even though it is
+  invisible to the caller who received the response.
 
 ### F. `ConnectRefGrant` (ADR-045) retained unchanged as the cross-project delegation path
 
@@ -568,6 +623,11 @@ design, with (D) added.)
 - Web UI / CLI surfaces for viewing a connector's `scope`/`project` or the
   boot-time unscoped-connector warning list — follow mechanically from
   (A)-(C) once shipped, not a design question this ADR resolves.
+- An operator-facing `ConnectorProjectBinding` management surface (view/
+  clear a stale binding after a confirmed intentional project rename — see
+  (A.1)). The remediation path today is a direct DB action (remove the
+  stale `connector_project_bindings` row, then restart); a proper admin
+  surface for this is a real follow-up, not decided or built here.
 - Regenerating the gRPC proto is **not needed** — (D) explicitly keeps the
   wire shape unchanged.
 - **Splitting "read across all projects" from "administer all projects"

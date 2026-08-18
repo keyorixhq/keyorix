@@ -31,17 +31,127 @@ func (c *KeyorixCore) SetConnectManager(m *connect.Manager) {
 	c.connectManager = m
 }
 
+// ConnectOwnership is one connector's resolved tenant-scoping data (ADR-082 §A),
+// built by server/main.go's boot-time resolution and set via SetConnectOwnership —
+// see connectManager's own doc comment for why this lives here rather than on
+// *connect.Manager or the Connector interface. Exported so server/main.go (a
+// different package) can construct it.
+type ConnectOwnership struct {
+	// Scope is "project" or "platform" (ADR-082 §B) — boot validation
+	// (internal/config.validateConnectScopes) already guarantees no other value
+	// reaches here.
+	Scope string
+	// ProjectID is the connector's owning Keyorix project, resolved via the
+	// connector→project binding (ADR-082, ConnectorProjectBinding). Meaningless
+	// (zero) when Scope is "platform".
+	ProjectID uint
+}
+
+// SetConnectOwnership wires each connector's resolved tenant-scoping data
+// (ADR-082), built in the same boot pass as SetConnectManager's *connect.Manager,
+// from the same config. Must be called with an ownership entry for EVERY connector
+// name SetConnectManager was given — server/main.go enforces this key-set match at
+// boot (a mismatch fails boot, aggregated) before either setter is called, so this
+// is a precondition, not something re-checked here.
+func (c *KeyorixCore) SetConnectOwnership(ownership map[string]ConnectOwnership) {
+	c.connectOwnership = ownership
+}
+
 // ConnectEnabled reports whether any external-store connector is configured.
 func (c *KeyorixCore) ConnectEnabled() bool {
 	return c.connectManager != nil && len(c.connectManager.Names()) > 0
 }
 
-// ConnectConnectorNames lists the configured connector names (for discovery).
+// ConnectConnectorNames lists every configured connector name, unfiltered — used
+// internally by boot-time resolution (server/main.go) and tests. Caller-facing
+// discovery (HTTP/gRPC ListConnectors) must use ConnectReadableConnectorNames
+// instead (ADR-082 §E): this method does not filter by ownership, and would leak
+// the existence of connectors the caller cannot reach.
 func (c *KeyorixCore) ConnectConnectorNames() []string {
 	if c.connectManager == nil {
 		return nil
 	}
 	return c.connectManager.Names()
+}
+
+// ConnectReadableConnectorNames lists the configured connectors the caller can
+// actually reach (ADR-082 §E) — the caller-facing discovery surface for both HTTP
+// and gRPC ListConnectors, so both transports filter identically through this one
+// core method rather than duplicating the ownership comparison per transport. A
+// connector the caller cannot reach is omitted entirely, not merely marked
+// unreachable — the existing behavior for a caller with no readable connectors at
+// all is an empty list, not an error.
+func (c *KeyorixCore) ConnectReadableConnectorNames(ctx context.Context, actorType string, principalID uint) ([]string, error) {
+	if c.connectManager == nil {
+		return nil, nil
+	}
+	var readable []string
+	for _, name := range c.connectManager.Names() {
+		owned, err := c.connectOwnershipSatisfied(ctx, actorType, principalID, name)
+		if err != nil {
+			return nil, err
+		}
+		if owned {
+			readable = append(readable, name)
+			continue
+		}
+		// Not owned — a connector reachable only via an explicit ConnectRefGrant
+		// still belongs in discovery; ReadSecret still applies the ref-prefix match
+		// per-read. actorRoleIDs (not connectRefGrantDelegates) is the right check
+		// here: delegation for LISTING purposes only needs "does the caller hold a
+		// role with ANY grant on this connector," not a specific ref match.
+		delegated, err := c.connectorHasAnyDelegationForActor(ctx, actorType, principalID, name)
+		if err != nil {
+			return nil, err
+		}
+		if delegated {
+			readable = append(readable, name)
+		}
+	}
+	return readable, nil
+}
+
+// connectOwnershipSatisfied reports whether principalID owns the connector's
+// project (ADR-082 §E) — the same comparison every caller's ownership check runs
+// through, admin included: a global-scoped role's {0,0} entry (see below) is a
+// wildcard in the INPUT, not a different code path. A connector absent from
+// connectOwnership is denied, never silently skipped or treated as owned (a
+// structural invariant server/main.go's boot-time key-set check exists to
+// guarantee never happens in a correctly-booted server; this is the runtime
+// backstop).
+func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType string, principalID uint, connectorName string) (bool, error) {
+	owner, ok := c.connectOwnership[connectorName]
+	if !ok {
+		return false, nil
+	}
+	if owner.Scope == "platform" {
+		// TODO(ADR-082 branch 4): gate platform connectors on connect.platform.use,
+		// not connect.read alone. Every caller who reaches this function has
+		// already cleared connect.read (checked by the transport layer before
+		// ReadFederatedSecret/ConnectReadableConnectorNames is ever called), so this
+		// is a deliberate interim "any connect.read holder" pass-through, not an
+		// oversight.
+		return true, nil
+	}
+	// scope == "project": raw scope set, NOT GetReadableScopes (D) — the {0,0}
+	// global entry must survive so the loop below can match it as the wildcard
+	// (E), not be stripped before comparison.
+	var scopes []Scope
+	var err error
+	if actorType == ActorTypeMachine {
+		scopes, err = c.storage.GetMachineRoleScopes(ctx, principalID)
+	} else {
+		scopes, err = c.storage.GetUserRoleScopes(ctx, principalID)
+	}
+	if err != nil {
+		return false, fmt.Errorf("connect ownership: enumerate role scopes: %w", err)
+	}
+	for _, sc := range scopes {
+		if sc.ProjectID == owner.ProjectID || sc.ProjectID == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ReadFederatedSecret proxies a read of ref from the named external-store connector
@@ -64,17 +174,46 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 	ctx = WithActorType(ctx, actorType)
 	uid := principalID
 
-	// Per-reference RBAC (ADR-045): once a connector has any ref-grant, the read is
-	// permitted only if one of the caller's roles holds a matching grant. A connector
-	// with no grants is governed solely by connect.read + allowed_refs (unchanged).
-	allowed, err := c.connectRefAllowed(ctx, actorType, principalID, connectorName, ref)
+	// ADR-082 §E authorization order: connect.read (enforced by the transport layer
+	// before this function is ever called) → ownership → ConnectRefGrant delegation
+	// → deny. No audit call on either branch below — audit is branch 3 (ADR-082);
+	// this branch's denials are deliberately unaudited, same as ADR-082 itself notes.
+	owned, err := c.connectOwnershipSatisfied(ctx, actorType, principalID, connectorName)
 	if err != nil {
 		return "", err
 	}
-	if !allowed {
-		c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
-			fmt.Sprintf("federated read DENIED by per-reference policy: connector %q (%s) ref %q", connectorName, conn.Type(), ref))
-		return "", fmt.Errorf("ref %q %w %q", ref, ErrConnectRefNotPermitted, connectorName)
+	if owned {
+		// Per-reference RBAC (ADR-045): once a connector has any ref-grant, the read
+		// is permitted only if one of the caller's roles holds a matching grant. A
+		// connector with no grants is governed solely by connect.read + allowed_refs
+		// (unchanged) — this still applies to an OWNED caller exactly as it did
+		// before ownership existed; ownership does not bypass ADR-045's own
+		// per-ref narrowing.
+		allowed, err := c.connectRefAllowed(ctx, actorType, principalID, connectorName, ref)
+		if err != nil {
+			return "", err
+		}
+		if !allowed {
+			c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
+				fmt.Sprintf("federated read DENIED by per-reference policy: connector %q (%s) ref %q", connectorName, conn.Type(), ref))
+			return "", fmt.Errorf("ref %q %w %q", ref, ErrConnectRefNotPermitted, connectorName)
+		}
+	} else {
+		// Not owned — ConnectRefGrant is the explicit cross-project delegation path
+		// (ADR-082 §F). connectRefGrantDelegates (unlike connectRefAllowed) treats
+		// "no grants configured" as "no delegation," not "allow": that shortcut only
+		// makes sense for an already-owned caller.
+		delegated, err := c.connectRefGrantDelegates(ctx, actorType, principalID, connectorName, ref)
+		if err != nil {
+			return "", err
+		}
+		if !delegated {
+			// Ownership denied and no delegation grant: reuse the unknown-connector
+			// shape (ADR-082) — do not confirm this connector's existence to a caller
+			// who cannot reach it. ListConnectors already omits it from discovery;
+			// this keeps the single-connector read path consistent with that.
+			return "", fmt.Errorf("%w %q", ErrConnectUnknownConnector, connectorName)
+		}
 	}
 
 	value, err := conn.GetSecret(ctx, ref)
@@ -164,6 +303,66 @@ func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, p
 	now := time.Now()
 	for _, g := range grants {
 		if roleSet[g.RoleID] && connectGrantActive(g, now) && refMatches(g.RefPrefix, ref) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// connectRefGrantDelegates reports whether principalID may read ref from
+// connectorName via an explicit ConnectRefGrant (ADR-082 §F), for a caller who did
+// NOT satisfy ownership (connectOwnershipSatisfied). This is deliberately a
+// SEPARATE function from connectRefAllowed, not a modified version of it: for an
+// OWNED caller, connectRefAllowed's "no grants configured on this connector" case
+// correctly means "no additional per-ref narrowing — allow" (ADR-045's original,
+// unchanged semantics). For a NOT-owned caller, "no grants configured" means there
+// is no delegation path at all — the opposite polarity. Reusing connectRefAllowed
+// for both would either wrongly grant a non-owned caller access to every
+// grant-less connector, or wrongly narrow an owned caller's existing access;
+// ConnectRefGrant's own schema, matching rules (refMatches), and expiry logic
+// (connectGrantActive) are unchanged (ADR-082) — only which caller populations
+// reach this delegation check is new.
+func (c *KeyorixCore) connectRefGrantDelegates(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (bool, error) {
+	grants, err := c.storage.ListConnectRefGrantsByConnector(ctx, connectorName)
+	if err != nil {
+		return false, fmt.Errorf("connect ref-grant lookup: %w", err)
+	}
+	if len(grants) == 0 {
+		return false, nil // no delegation grant configured — no delegation path
+	}
+	roleSet, err := c.actorRoleIDs(ctx, actorType, principalID)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now()
+	for _, g := range grants {
+		if roleSet[g.RoleID] && connectGrantActive(g, now) && refMatches(g.RefPrefix, ref) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// connectorHasAnyDelegationForActor reports whether principalID holds a role with
+// ANY active ConnectRefGrant on connectorName, regardless of ref prefix — used only
+// by ConnectReadableConnectorNames (listing), where there is no specific ref to
+// match against; a per-read call still applies the exact ref-prefix match via
+// connectRefGrantDelegates.
+func (c *KeyorixCore) connectorHasAnyDelegationForActor(ctx context.Context, actorType string, principalID uint, connectorName string) (bool, error) {
+	grants, err := c.storage.ListConnectRefGrantsByConnector(ctx, connectorName)
+	if err != nil {
+		return false, fmt.Errorf("connect ref-grant lookup: %w", err)
+	}
+	if len(grants) == 0 {
+		return false, nil
+	}
+	roleSet, err := c.actorRoleIDs(ctx, actorType, principalID)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now()
+	for _, g := range grants {
+		if roleSet[g.RoleID] && connectGrantActive(g, now) {
 			return true, nil
 		}
 	}

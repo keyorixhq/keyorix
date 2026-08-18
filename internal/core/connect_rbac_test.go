@@ -16,7 +16,12 @@ import (
 )
 
 // connectRBACCore builds a core backed by a real (in-memory) store so per-reference
-// grants and role assignments actually resolve through the enforcement path.
+// grants and role assignments actually resolve through the enforcement path. Every
+// connector is wired as scope: platform by default (ADR-082) — a platform
+// connector passes ownership for any caller in this branch, matching this suite's
+// pre-ADR-082 assumption that any connect.read holder can reach a configured test
+// connector; ownership-specific behavior is covered separately
+// (connect_ownership_test.go).
 func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -26,10 +31,16 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.ConnectRefGrant{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{},
+		&models.ConnectorProjectBinding{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
+		ownership := make(map[string]ConnectOwnership, len(conns))
+		for _, conn := range conns {
+			ownership[conn.Name()] = ConnectOwnership{Scope: "platform"}
+		}
+		c.SetConnectOwnership(ownership)
 	}
 	return c, db
 }

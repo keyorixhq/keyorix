@@ -38,6 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -451,6 +452,7 @@ func TestConnect_GetSecret_UnknownConnector_S13(t *testing.T) {
 func TestConnect_GetSecret_SpoofedUnsafeErrorIsSanitized_G50(t *testing.T) {
 	cs, _ := freshCoreS12WithAdmin(t)
 	cs.SetConnectManager(connect.NewManager([]connect.Connector{fakeSpoofConnector{name: "spoof"}}))
+	cs.SetConnectOwnership(map[string]core.ConnectOwnership{"spoof": {Scope: "platform"}})
 	h := NewConnectHandler(cs)
 
 	req := withUserCtx(withChiParam(

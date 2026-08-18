@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -1719,6 +1720,22 @@ func (m *MockStorage) CreateConnectRefGrant(_ context.Context, grant *models.Con
 }
 func (m *MockStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
 	return nil
+}
+
+// ADR-082 branch 2: connector project-binding storage — core enforcement is tested
+// against real SQLite (connect_rbac_test.go, connect_ownership_test.go), so these
+// mock stubs just satisfy the interface. GetProjectByName/GetConnectorProjectBinding
+// default to "not found" (the substring convention every caller of these checks
+// against) rather than a zero value, since a zero-value *models.Project/
+// *models.ConnectorProjectBinding would misrepresent a real, resolvable result.
+func (m *MockStorage) GetProjectByName(_ context.Context, _ string) (*models.Project, error) {
+	return nil, fmt.Errorf("project not found")
+}
+func (m *MockStorage) GetConnectorProjectBinding(_ context.Context, _ string) (*models.ConnectorProjectBinding, error) {
+	return nil, fmt.Errorf("connector project binding not found")
+}
+func (m *MockStorage) CreateConnectorProjectBinding(_ context.Context, binding *models.ConnectorProjectBinding) (*models.ConnectorProjectBinding, error) {
+	return binding, nil
 }
 
 // Group-Role assignments

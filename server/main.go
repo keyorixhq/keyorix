@@ -42,6 +42,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
@@ -53,6 +54,7 @@ import (
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/startup"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -615,7 +617,32 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			}
 		}
 		if len(connectors) > 0 {
-			coreService.SetConnectManager(connect.NewManager(connectors))
+			mgr := connect.NewManager(connectors)
+
+			// ADR-082 branch 2: resolve each connector's tenant-scoping data (project
+			// binding for scope: project; nothing to resolve for scope: platform)
+			// BEFORE wiring the manager in, so a resolution failure blocks boot
+			// entirely rather than leaving Connect half-wired.
+			ownership, err := resolveConnectorOwnership(context.Background(), coreService.Storage(), cc.Connectors)
+			if err != nil {
+				log.Fatalf("Keyorix Connect: %v", err)
+			}
+
+			// Defense-in-depth: ownership was resolved from the FULL cc.Connectors
+			// config, but mgr was built only from connectors the type-switch above
+			// actually recognized (an unrecognized type is skipped with a WARN, not a
+			// hard failure — the `default` case above). If a connector's ownership
+			// resolved successfully but it never made it into mgr (e.g. an
+			// unrecognized type), or vice versa, that is a key-set mismatch this ADR
+			// requires to fail boot loudly rather than silently deny (a missing
+			// ownership entry, connectOwnershipSatisfied's own fallback) or silently
+			// skip ownership entirely (a connector with no check at all).
+			if mismatch := connectOwnershipKeySetMismatch(mgr.Names(), ownership, cc.Connectors); len(mismatch) > 0 {
+				log.Fatalf("Keyorix Connect: connector(s) present in config but whose manager/ownership resolution disagree on which connectors exist — this must never happen in a correctly-booted server; investigate before proceeding (ADR-082): %s", strings.Join(mismatch, ", "))
+			}
+
+			coreService.SetConnectManager(mgr)
+			coreService.SetConnectOwnership(ownership)
 			log.Printf("Keyorix Connect enabled (%d connector(s))", len(connectors))
 		}
 	}
@@ -914,6 +941,129 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	return coreService, encSvc, nil
+}
+
+// isNotFoundStorageErr reports whether err is a "not found"-substring error, the
+// convention every LocalStorage/RemoteStorage Get* method in this codebase uses
+// (see local_secrets.go's GetProject, project_catalog_proxy.go's
+// isProjectNotFound).
+func isNotFoundStorageErr(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+// resolveConnectorOwnership resolves each connector's tenant-scoping data
+// (ADR-082 §A/§E) from its config entry. A "platform"-scoped connector needs no
+// resolution. A "project"-scoped connector's project: name is pinned to a real
+// Keyorix project ID via ConnectorProjectBinding, never re-resolved by name on a
+// later boot — see that model's own doc comment for why (project names are
+// mutable and a soft-deleted project's name is freed for reuse, so re-resolving
+// by name every boot would let an ordinary rename silently reassign ownership):
+//
+//   - First boot for a connector (no binding row yet): resolve config's project:
+//     name to a project via storage.GetProjectByName, persist the binding.
+//   - A later boot (binding row exists): resolve the project by the STORED ID
+//     (storage.GetProject), never by name. If that project no longer exists
+//     (deleted), or its CURRENT name no longer matches the name recorded in the
+//     binding at first-boot time, this fails boot — a rename or delete is
+//     something server/main.go treats as requiring deliberate operator action,
+//     not something to silently follow or silently ignore.
+//
+// Every problem across every connector is collected into ONE aggregated error
+// (branch 1's validateConnectScopes style), naming each offending connector and
+// its specific reason, rather than failing on the first one found.
+func resolveConnectorOwnership(ctx context.Context, st corestorage.Storage, connectors []config.ConnectorConfig) (map[string]core.ConnectOwnership, error) {
+	ownership := make(map[string]core.ConnectOwnership, len(connectors))
+	var problems []string
+	for _, cn := range connectors {
+		if cn.Scope == "platform" {
+			ownership[cn.Name] = core.ConnectOwnership{Scope: "platform"}
+			continue
+		}
+		// cn.Scope == "project" here: internal/config.validateConnectScopes already
+		// guaranteed no other value reached boot (or allow_unscoped let an empty
+		// scope through, in which case there is nothing to resolve — an unscoped
+		// connector gets no ownership entry at all, which is exactly the deny-by-
+		// default behavior connectOwnershipSatisfied's missing-entry case wants).
+		if cn.Scope == "" {
+			continue
+		}
+		binding, err := st.GetConnectorProjectBinding(ctx, cn.Name)
+		switch {
+		case err != nil && isNotFoundStorageErr(err):
+			// First boot for this connector: resolve name -> ID, persist.
+			project, perr := st.GetProjectByName(ctx, cn.Project)
+			if perr != nil {
+				problems = append(problems, fmt.Sprintf("%s: project %q not found: %v", cn.Name, cn.Project, perr))
+				continue
+			}
+			created, cerr := st.CreateConnectorProjectBinding(ctx, &models.ConnectorProjectBinding{
+				Connector:   cn.Name,
+				ProjectID:   project.ID,
+				ProjectName: project.Name,
+			})
+			if cerr != nil {
+				problems = append(problems, fmt.Sprintf("%s: failed to persist project binding: %v", cn.Name, cerr))
+				continue
+			}
+			ownership[cn.Name] = core.ConnectOwnership{Scope: "project", ProjectID: created.ProjectID}
+		case err != nil:
+			problems = append(problems, fmt.Sprintf("%s: %v", cn.Name, err))
+		default:
+			// Binding exists: resolve by the stored ID, never by name.
+			project, perr := st.GetProject(ctx, binding.ProjectID)
+			if perr != nil {
+				problems = append(problems, fmt.Sprintf("%s: bound to project id %d, which no longer exists (deleted?): %v", cn.Name, binding.ProjectID, perr))
+				continue
+			}
+			if project.Name != binding.ProjectName {
+				problems = append(problems, fmt.Sprintf(
+					"%s: bound project (id %d) was renamed from %q to %q since this connector was first configured — this is a deliberate boot failure (ADR-082), not a silent reassignment; if the rename was intentional, update connect.connectors[].project to %q and clear the stale connector_project_bindings row for %q before restarting",
+					cn.Name, binding.ProjectID, binding.ProjectName, project.Name, project.Name, cn.Name))
+				continue
+			}
+			ownership[cn.Name] = core.ConnectOwnership{Scope: "project", ProjectID: binding.ProjectID}
+		}
+	}
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("connector(s) with unresolvable project binding: %s", strings.Join(problems, "; "))
+	}
+	return ownership, nil
+}
+
+// connectOwnershipKeySetMismatch returns every connector name whose presence in
+// connect.Manager (builtNames) and in the resolved ownership map disagree, EXCEPT
+// for the one expected, legitimate disagreement: a connector booted with an empty
+// scope under connect.allow_unscoped (ADR-082 §C) is deliberately never given an
+// ownership entry (resolveConnectorOwnership skips it — connectOwnershipSatisfied
+// then denies it by default, exactly like any other absent entry), while it IS
+// still built into the manager (allow_unscoped only bypasses the boot-validation
+// gate, not connector wiring). connectors carries the full config so this can tell
+// that expected case apart from a genuine divergence — e.g. an unrecognized
+// connector Type, which resolves ownership successfully but never makes it into
+// the manager.
+func connectOwnershipKeySetMismatch(builtNames []string, ownership map[string]core.ConnectOwnership, connectors []config.ConnectorConfig) []string {
+	built := make(map[string]bool, len(builtNames))
+	for _, name := range builtNames {
+		built[name] = true
+	}
+	expectedUnscoped := make(map[string]bool)
+	for _, cn := range connectors {
+		if cn.Scope == "" {
+			expectedUnscoped[cn.Name] = true
+		}
+	}
+	var mismatch []string
+	for name := range built {
+		if _, ok := ownership[name]; !ok && !expectedUnscoped[name] {
+			mismatch = append(mismatch, name)
+		}
+	}
+	for name := range ownership {
+		if !built[name] {
+			mismatch = append(mismatch, name)
+		}
+	}
+	return mismatch
 }
 
 // cmpOr returns a if non-empty, else b (a tiny local helper to avoid a new import).

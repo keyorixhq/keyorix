@@ -47,13 +47,22 @@ func NewConnectHandler(coreService *core.KeyorixCore) *ConnectHandler {
 	return &ConnectHandler{coreService: coreService}
 }
 
-// ListConnectors returns the configured connector names (discovery).
+// ListConnectors returns the connector names the caller can reach (ADR-082 §E) —
+// discovery is filtered by ownership so a caller never sees a connector name they
+// cannot subsequently read.
 func (h *ConnectHandler) ListConnectors(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"connectors": h.coreService.ConnectConnectorNames()}, "")
+	names, err := h.coreService.ConnectReadableConnectorNames(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID())
+	if err != nil {
+		log.Printf("Error listing readable connectors: %v", err)
+		sendError(w, "ConnectError", clientSafe(err), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"connectors": names}, "")
 }
 
 // GetSecret proxies a read-through of ?ref=… from the named connector.
