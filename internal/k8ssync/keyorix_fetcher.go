@@ -49,14 +49,25 @@ const maxResponseBodyBytes = 10 << 20 // 10MiB
 // the single project its token belongs to (a MachineIdentity, and so its token, is
 // always scoped to exactly one project), so a same-named secret in a DIFFERENT
 // project can never be resolved instead (#Bug1).
+// envCacheTTL bounds how long a resolved environment name->id mapping is trusted
+// before resolveEnvironmentID forces a fresh lookup, even on a cache HIT. Without
+// this, a renamed-then-reused environment name (e.g. "production" moved from id 5
+// to a new id 7) would resolve to the stale id for the remaining process lifetime —
+// silently, since the stale id typically still exists and is still readable. This
+// bounds that drift window without adding per-lookup network overhead for the
+// common case of an unchanged environment.
+const envCacheTTL = 10 * time.Minute
+
 type KeyorixFetcher struct {
 	baseURL   string
 	token     string
 	projectID uint
 	hc        *http.Client
+	now       func() time.Time // overridden in tests; real clock otherwise
 
-	mu        sync.Mutex
-	envByName map[string]uint // environment name -> id, within projectID; lazily populated
+	mu          sync.Mutex
+	envByName   map[string]uint // environment name -> id, within projectID; lazily populated
+	envCachedAt time.Time       // when envByName was last (re)populated
 }
 
 // NewKeyorixFetcher builds a fetcher for the given Keyorix base URL (e.g.
@@ -69,6 +80,7 @@ func NewKeyorixFetcher(baseURL, token string, projectID uint) *KeyorixFetcher {
 		token:     token,
 		projectID: projectID,
 		hc:        &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
+		now:       time.Now,
 	}
 }
 
@@ -191,7 +203,7 @@ func (f *KeyorixFetcher) resolveEnvironmentID(ctx context.Context, name string) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if f.envByName != nil {
+	if f.envByName != nil && f.now().Sub(f.envCachedAt) < envCacheTTL {
 		if id, ok := f.envByName[name]; ok {
 			return id, nil
 		}
@@ -223,6 +235,7 @@ func (f *KeyorixFetcher) loadEnvironmentsLocked(ctx context.Context) error {
 		m[e.Name] = e.ID
 	}
 	f.envByName = m
+	f.envCachedAt = f.now()
 	return nil
 }
 

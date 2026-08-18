@@ -69,6 +69,17 @@ type IssueSetupTokenRequest struct {
 	SubjectUserID *uint  // nil until an account exists (e.g. invitation by email)
 	InvitationID  *uint  // set for purpose = invitation_accept
 	CreatedBy     uint   // issuing admin/inviter; 0 for self-service reset
+
+	// SupersedeProjectID additionally scopes the pre-issuance supersede (see
+	// IssueSetupToken below) to a single project's own invitations, instead of every
+	// active token for (Purpose, SubjectEmail) across every project
+	// (CORE-INVITATIONS-003). Project-scoped invite/resend call sites
+	// (InviteToProjectWithLink, ResendInvitationLink) set this to their ProjectID so an
+	// admin in one project can never silently invalidate a different project's still-
+	// pending invite to the same address. Left nil for flows with no project dimension
+	// (InviteGlobalWithLink, account_setup, password_reset_link), which keep the
+	// original (Purpose, SubjectEmail)-only supersede scope.
+	SupersedeProjectID *uint
 }
 
 // IssueSetupTokenResult carries the freshly minted token plus its one-time plaintext.
@@ -91,8 +102,10 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 	}
 
 	// Supersede any prior active token for this subject+purpose first, so the old
-	// link dies the instant the new one is issued (safe "resend").
-	if err := c.storage.SupersedeActiveSetupTokens(ctx, req.Purpose, email); err != nil {
+	// link dies the instant the new one is issued (safe "resend"). SupersedeProjectID,
+	// when set, additionally confines this to the issuing project's own invitations
+	// (CORE-INVITATIONS-003) rather than every project's.
+	if err := c.storage.SupersedeActiveSetupTokens(ctx, req.Purpose, email, req.SupersedeProjectID); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 

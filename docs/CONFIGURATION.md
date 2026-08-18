@@ -108,6 +108,13 @@ storage:
 section of the client config. Remote TLS verification is **on by default** —
 an omitted `tls_verify` does not disable certificate checks.
 
+**`type: remote` is a CLI/client mode only.** It cannot back a running Keyorix
+server: `Config.Validate()` refuses to boot when `storage.type: remote` is
+combined with `server.http.enabled` or `server.grpc.enabled` (ADR-083) — none
+of RemoteStorage's RBAC primitives are implemented, so every permission check
+on every route would fail closed for every caller. Use `type: local` or
+`type: postgres` for a deployed server.
+
 ---
 
 ## Encryption & KEK providers

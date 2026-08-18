@@ -68,10 +68,25 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
+	// PM-008: this general-purpose, roles.assign-gated endpoint deliberately does
+	// NOT accept idp_resolved from the request body. In ValidationModeIDP,
+	// InviteMember starts a membership straight at `provisioned` (skipping
+	// invited/identity_verified) when idpResolved is true — that's supposed to
+	// be a guarantee that the identity was actually vouched for by the
+	// configured IdP. Any project_admin holding roles.assign can call this
+	// endpoint, so a client-supplied bool here would let them assert IdP
+	// resolution for anyone, defeating the mode's purpose while leaving an
+	// audit trail indistinguishable from a genuinely IdP-resolved invite. The
+	// only trustworthy signal is the actual SSO/JIT-provisioning code path
+	// (internal/core/sso.go) that validates the IdP's signed assertion itself —
+	// that path, if and when it starts project onboarding, should call
+	// core.InviteMember directly with a real server-derived idpResolved,
+	// bypassing this HTTP endpoint entirely. A legacy client that still sends
+	// "idp_resolved" in the JSON body is unaffected: the field decodes into
+	// nothing and is silently ignored, same as any other unknown field.
 	var body struct {
-		UserID      uint   `json:"user_id"`
-		Role        string `json:"role"`
-		IDPResolved bool   `json:"idp_resolved"`
+		UserID uint   `json:"user_id"`
+		Role   string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
@@ -81,7 +96,8 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "user_id and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.InviteMember(r.Context(), uint(id), body.UserID, body.Role, actor.UserID, body.IDPResolved)
+	const idpResolvedNotAcceptedFromClient = false
+	m, err := h.coreService.InviteMember(r.Context(), uint(id), body.UserID, body.Role, actor.UserID, idpResolvedNotAcceptedFromClient)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

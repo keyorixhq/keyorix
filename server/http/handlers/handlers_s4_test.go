@@ -683,10 +683,10 @@ func TestConnectHandler_ListConnectors_Unauthorized(t *testing.T) {
 
 func TestConnectHandler_GetSecret_Unauthorized(t *testing.T) {
 	h := NewConnectHandler(newHandlerCore(t))
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/", nil),
+	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil),
 		map[string]string{"connector": "vault", "ref": "secret/foo"})
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -7348,17 +7348,18 @@ func TestConnectHandler_ListConnectors_HappyPath(t *testing.T) {
 
 func TestConnectHandler_GetSecret_MissingRef(t *testing.T) {
 	h := newConnectHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "name", "myconn"))
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{}`)), "name", "myconn"))
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestConnectHandler_GetSecret_UnknownConnector(t *testing.T) {
 	h := newConnectHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/?ref=myref", nil), "name", "unknownconn"))
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"ref":"myref"}`)), "name", "unknownconn"))
 	w := httptest.NewRecorder()
-	h.GetSecret(w, req)
+	h.ReadSecret(w, req)
 	// Unknown connector → error response (not 401)
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
@@ -9189,12 +9190,21 @@ func TestSecretHandler_GetSecretValueByRef_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+// TestSecretHandler_GetSecretValueByRef_MissingRef covers the handler's
+// defensive branch: ref resolution now happens exactly once, in
+// middleware.RequireScopedSecretRefPermission, which pins the resolved secret
+// on the request context before dispatch (see core-secret-ref-4 /
+// server/middleware/auth_s24_test.go for the 400/404 coverage of the
+// middleware's own resolution — including a missing "ref" param, which
+// ParseSecretRef treats as invalid format). A direct handler call that
+// bypasses the middleware, as this test does, never gets that context value,
+// so the handler must 500 rather than fall back to resolving the ref itself.
 func TestSecretHandler_GetSecretValueByRef_MissingRef(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	w := httptest.NewRecorder()
 	h.GetSecretValueByRef(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestSecretHandler_GetSecretValueByRef_NotFound(t *testing.T) {
@@ -9202,8 +9212,8 @@ func TestSecretHandler_GetSecretValueByRef_NotFound(t *testing.T) {
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?ref=projects/1/environments/1/secrets/nope", nil))
 	w := httptest.NewRecorder()
 	h.GetSecretValueByRef(w, req)
-	// secret not found → error
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	// no resolved secret pinned on context (middleware bypassed) → 500
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // ── sso.go: CompleteSSO ───────────────────────────────────────────────────────

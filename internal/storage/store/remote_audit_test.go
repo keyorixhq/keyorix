@@ -251,6 +251,15 @@ func TestRemoteStorage_VerifyAuditChain_Unsupported(t *testing.T) {
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }
 
+func TestRemoteStorage_MigrateAuditChainEncoding_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	require.NoError(t, err)
+
+	_, err = rs.MigrateAuditChainEncoding(context.Background(), true, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not available in remote mode")
+}
+
 // --- CreateAuditCheckpoint (unsupported) ---
 
 func TestRemoteStorage_CreateAuditCheckpoint_Unsupported(t *testing.T) {

@@ -26,7 +26,7 @@ func TestIssueSetupToken(t *testing.T) {
 		anyAudit(ms)
 
 		var captured *models.SetupToken
-		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "new@acme.io").Return(nil)
+		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "new@acme.io", (*uint)(nil)).Return(nil)
 		ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*models.SetupToken) }).
 			Return(&models.SetupToken{ID: 1}, nil)
@@ -43,7 +43,7 @@ func TestIssueSetupToken(t *testing.T) {
 		assert.NotEqual(t, res.PlainToken, captured.TokenHash, "plaintext is never stored")
 		assert.Equal(t, "new@acme.io", captured.SubjectEmail)
 		assert.Equal(t, SetupTokenActive, captured.State)
-		ms.AssertCalled(t, "SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "new@acme.io")
+		ms.AssertCalled(t, "SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "new@acme.io", (*uint)(nil))
 	})
 
 	t.Run("applies the default TTL when none is configured", func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestIssueSetupToken(t *testing.T) {
 		c.now = func() time.Time { return fixed }
 		anyAudit(ms)
 		var captured *models.SetupToken
-		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "a@b.io").Return(nil)
+		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "a@b.io", (*uint)(nil)).Return(nil)
 		ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*models.SetupToken) }).
 			Return(&models.SetupToken{ID: 2}, nil)
@@ -71,7 +71,7 @@ func TestIssueSetupToken(t *testing.T) {
 		c.SetSetupTokenTTL(2 * time.Hour)
 		anyAudit(ms)
 		var captured *models.SetupToken
-		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "a@b.io").Return(nil)
+		ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "a@b.io", (*uint)(nil)).Return(nil)
 		ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*models.SetupToken) }).
 			Return(&models.SetupToken{ID: 2}, nil)

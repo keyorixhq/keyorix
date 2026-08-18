@@ -16,7 +16,7 @@ func TestCommandWiring(t *testing.T) {
 	for _, sub := range AuditCmd.Commands() {
 		names[sub.Name()] = true
 	}
-	for _, want := range []string{"verify", "export", "checkpoint", "logs"} {
+	for _, want := range []string{"verify", "export", "checkpoint", "logs", "migrate-chain-encoding"} {
 		assert.True(t, names[want], "missing subcommand %q", want)
 	}
 	assert.NotNil(t, verifyCmd.Flags().Lookup("json"), "verify missing --json")

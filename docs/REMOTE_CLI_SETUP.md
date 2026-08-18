@@ -8,6 +8,11 @@ The Keyorix CLI supports two storage modes:
 - **Local Mode**: Stores secrets in a local SQLite database (default)
 - **Remote Mode**: Connects to a remote Keyorix server via HTTP API
 
+Remote Mode (`storage.type: remote`) is a **CLI/client mode only** — it cannot
+back a running Keyorix server (`server.http.enabled`/`server.grpc.enabled`
+both refuse to boot on it, ADR-083). It is exclusively for the CLI process
+itself delegating its storage to a real server it talks to over the API.
+
 ## Quick Start
 
 ### 1. Check Current Status
@@ -72,7 +77,7 @@ storage:
 > **`storage.remote.api_key` should be an admin-tier user credential (a PAT or
 > session token)** — the SAME kind of credential `keyorix connect <server>` uses,
 > just held by whatever principal you dedicate to running the sync. `storage:
-> {type: "remote"}` makes the CLI (or a full downstream Keyorix server) delegate
+> {type: "remote"}` is a **CLI/client mode only** — it makes the CLI delegate
 > its ENTIRE storage backend to the target server over HTTP, including several
 > administrative primitives (invitations, access requests, dynamic-secret configs,
 > groups, machine identities, and more) that have no ordinary REST route and are

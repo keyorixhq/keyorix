@@ -30,6 +30,18 @@ const defaultDynamicTTL = 1 * time.Hour
 // SetDynamicMaxLeaseTTL, e.g. in tests that construct KeyorixCore directly).
 const defaultMaxLeaseTTL = 90 * 24 * time.Hour
 
+// maxDynamicTTLSeconds bounds a raw seconds value (ttl_seconds override) before it's
+// multiplied into a time.Duration (mirrors MaxInactiveDays' overflow guard in
+// inactivity_suspend.go). time.Duration is an int64 count of nanoseconds, so
+// time.Duration(seconds) * time.Second overflows for seconds beyond roughly 2^63/1e9
+// (~9.22e9s); a caller-supplied ttl_seconds above that wraps around to an arbitrary —
+// possibly NEGATIVE — Duration that neither the per-config MaxTTLSeconds nor the
+// install-wide ceiling clamp below can catch (both are plain ">" comparisons against a
+// positive max, so a negative wrapped value sails through both). 100 years in seconds
+// is comfortably below the overflow threshold while still far beyond any legitimate
+// lease TTL, matching the generous-headroom style of MaxInactiveDays.
+const maxDynamicTTLSeconds = 100 * 365 * 24 * 3600
+
 // isPrivateIP reports whether ip is disallowed as an admin-DSN target — the
 // canonical private/loopback/link-local/IMDS/CGNAT check, shared (via
 // netutil.IsPrivateOrLinkLocal) with every other backend-infrastructure dial
@@ -148,6 +160,21 @@ func validateAdminDSNHost(adminDSN string) error {
 		}
 		return nil
 	}
+	// net.ParseIP does not accept RFC 4007 zone-ID syntax (e.g. "fe80::1%eth0"), so a
+	// zone-qualified link-local IPv6 literal isn't recognised as a literal IP above and
+	// would otherwise fall straight through to net.LookupHost — which errors on a
+	// zone-qualified address (it isn't a valid DNS query), landing in the "unresolvable,
+	// skip validation" branch below and silently bypassing the blocklist for exactly the
+	// fe80::/10 addresses it names. Strip the zone and retry as a literal IP first.
+	if zoneHost, _, hasZone := strings.Cut(host, "%"); hasZone {
+		if ip := net.ParseIP(zoneHost); ip != nil {
+			if isPrivateIP(ip) {
+				return fmt.Errorf("admin_dsn host %q is a private or link-local address; "+
+					"set dynamic_secrets.allow_private_network_targets: true to allow private-network backends", host)
+			}
+			return nil
+		}
+	}
 	addrs, err := net.LookupHost(host)
 	if err != nil {
 		return nil // unresolvable at register time — actual connection fails at issue time
@@ -198,6 +225,20 @@ type IssuedLease struct {
 func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *CreateDynamicSecretConfigRequest) (*models.DynamicSecretConfig, error) {
 	if err := validateCreateDynamicSecretConfigRequest(req); err != nil {
 		return nil, err
+	}
+	// Verify the environment belongs to the stated project — same cross-reference
+	// check CreateSecret already applies (secrets.go), and for the same reason:
+	// without it, a project-admin on project A could bind a dynamic-secret config
+	// whose EnvironmentID points at project B's environment. Downstream reads/leases
+	// stay keyed off the config's own stored ProjectID (not the environment's), so
+	// this wasn't a cross-project value leak, but it's real reference confusion — a
+	// config an operator believes is scoped to (A, envX) is actually associated with
+	// an environment that belongs to a project the creator may have no visibility
+	// into at all.
+	if env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID); err != nil {
+		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+	} else if env.ProjectID != req.ProjectID {
+		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
 	}
 	if _, err := c.dynamicEngine(req.BackendType); err != nil {
 		return nil, err
@@ -258,6 +299,17 @@ func validateCreateDynamicSecretConfigRequest(req *CreateDynamicSecretConfigRequ
 	}
 	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
 		return fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
+	}
+	// Sibling of dynamicTTL's override bound: DefaultTTLSeconds/MaxTTLSeconds are also
+	// multiplied by time.Second (in dynamicTTL's clamp and RenewLease's per-lease hardCap
+	// computation) with no upper bound otherwise, so an oversized value set here at
+	// config-create time would overflow int64 nanoseconds just the same as an oversized
+	// caller-supplied ttl_seconds override does. Reject both at the door.
+	if req.DefaultTTLSeconds > maxDynamicTTLSeconds {
+		return fmt.Errorf("default_ttl_seconds (%d) exceeds the maximum of %d seconds", req.DefaultTTLSeconds, maxDynamicTTLSeconds)
+	}
+	if req.MaxTTLSeconds > maxDynamicTTLSeconds {
+		return fmt.Errorf("max_ttl_seconds (%d) exceeds the maximum of %d seconds", req.MaxTTLSeconds, maxDynamicTTLSeconds)
 	}
 	if !IsValidClassification(req.Classification) {
 		return fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
@@ -492,7 +544,10 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	if err != nil {
 		return nil, err
 	}
-	ttl := c.dynamicTTL(cfg, ttlSeconds)
+	ttl, err := c.dynamicTTL(cfg, ttlSeconds)
+	if err != nil {
+		return nil, err
+	}
 
 	// Logged BEFORE the mint (not after) so the breadcrumb survives a crash during or
 	// immediately after engine.Issue — see the crash-orphan note on IssueLease's doc
@@ -768,10 +823,21 @@ func (c *KeyorixCore) requireLiveProjectAndEnvironment(ctx context.Context, proj
 // left with MaxTTLSeconds=0 combined with a caller-supplied override would otherwise
 // mint a credential valid for however long the caller asked, with nothing to stop a
 // 100-year lease).
-func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) time.Duration {
+//
+// override is caller-supplied (HTTP JSON body / gRPC field ttl_seconds) with no upper
+// bound applied before it reaches here, so it's checked against maxDynamicTTLSeconds
+// BEFORE the multiplication below: time.Duration(override) * time.Second overflows
+// int64 nanoseconds for large enough override, wrapping to an arbitrary — possibly
+// NEGATIVE — Duration that the MaxTTLSeconds/install-ceiling clamps further down
+// cannot catch (both are plain "ttl > max" comparisons, which a negative ttl never
+// satisfies), producing an ExpiresAt in the past instead of a rejected request.
+func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) (time.Duration, error) {
 	ttl := defaultDynamicTTL
 	switch {
 	case override > 0:
+		if override > maxDynamicTTLSeconds {
+			return 0, fmt.Errorf("ttl_seconds (%d) exceeds the maximum of %d seconds", override, maxDynamicTTLSeconds)
+		}
 		ttl = time.Duration(override) * time.Second
 	case cfg.DefaultTTLSeconds > 0:
 		ttl = time.Duration(cfg.DefaultTTLSeconds) * time.Second
@@ -788,7 +854,7 @@ func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) 
 	if ttl > installMax {
 		ttl = installMax
 	}
-	return ttl
+	return ttl, nil
 }
 
 // RenewLease extends an active lease's expiry by ttlSeconds (or the config
@@ -833,7 +899,11 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if eng, eerr := c.dynamicEngine(cfg.BackendType); eerr == nil && eng.IsEphemeralBackend() {
 		return time.Time{}, fmt.Errorf("the %s backend mints self-expiring credentials that cannot be renewed; issue a new lease instead", cfg.BackendType)
 	}
-	newExpiry := c.now().Add(c.dynamicTTL(cfg, ttlSeconds))
+	renewTTL, err := c.dynamicTTL(cfg, ttlSeconds)
+	if err != nil {
+		return time.Time{}, err
+	}
+	newExpiry := c.now().Add(renewTTL)
 	// Never let renewal push total lifetime past the config's max-TTL ceiling.
 	if cfg.MaxTTLSeconds > 0 {
 		if hardCap := lease.IssuedAt.Add(time.Duration(cfg.MaxTTLSeconds) * time.Second); newExpiry.After(hardCap) {

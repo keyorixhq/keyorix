@@ -149,7 +149,7 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                                 >
                                     {secret}
                                 </code>
-                                {uri && (
+                                {uri && /^otpauth:\/\//i.test(uri) && (
                                     <a
                                         href={uri}
                                         className="mt-1 inline-block text-xs"

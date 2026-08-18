@@ -186,6 +186,53 @@ func TestSCIM_ReplaceUserAllowsGenuinelyManagedAccount(t *testing.T) {
 	assert.Equal(t, "Bob Updated", u.DisplayName)
 }
 
+// TestSCIM_ReplaceUser_OmittedDisplayNamePreservesExisting is the scim-07 regression:
+// ReplaceUser always passed a non-nil *string to UpdateSCIMUser even when the PUT body
+// omitted both displayName and name.formatted (p.displayName() then returns ""), and
+// scimUpdateUserTx applied it unconditionally — unlike the email field two lines below
+// it, which explicitly skips an empty value. Any PUT lacking displayName (e.g. a
+// minimal/misconfigured IdP payload) silently blanked the stored value on every sync.
+// The fix mirrors the email guard: an empty displayName must leave the existing value
+// untouched.
+func TestSCIM_ReplaceUser_OmittedDisplayNamePreservesExisting(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Create(&models.User{
+		ID: 1, Username: "bob", Email: "bob@corp.com", DisplayName: "Bob Existing",
+		IsActive: true, AccountState: core.AccountActive, ExternalID: "okta|bob",
+	}).Error)
+
+	// No displayName and no name.formatted in the payload.
+	body := `{"userName":"bob@corp.com","emails":[{"value":"bob@corp.com","primary":true}]}`
+	w := httptest.NewRecorder()
+	h.ReplaceUser(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Users/1", bytes.NewReader([]byte(body))), "1"))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var u models.User
+	require.NoError(t, db.First(&u, 1).Error)
+	assert.Equal(t, "Bob Existing", u.DisplayName, "a PUT that omits displayName must not blank the existing value")
+}
+
+// TestSCIM_ReplaceUser_SuppliedDisplayNameStillUpdates is the positive control for the
+// scim-07 fix: a PUT that DOES supply a displayName must still update it, confirming the
+// empty-value guard didn't turn into a blanket refusal to ever update the field (mirrors
+// TestSCIM_ReplaceUserAllowsGenuinelyManagedAccount above).
+func TestSCIM_ReplaceUser_SuppliedDisplayNameStillUpdates(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Create(&models.User{
+		ID: 1, Username: "bob", Email: "bob@corp.com", DisplayName: "Bob Existing",
+		IsActive: true, AccountState: core.AccountActive, ExternalID: "okta|bob",
+	}).Error)
+
+	body := `{"userName":"bob@corp.com","displayName":"Bob New","emails":[{"value":"bob@corp.com","primary":true}]}`
+	w := httptest.NewRecorder()
+	h.ReplaceUser(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Users/1", bytes.NewReader([]byte(body))), "1"))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var u models.User
+	require.NoError(t, db.First(&u, 1).Error)
+	assert.Equal(t, "Bob New", u.DisplayName, "a PUT that supplies displayName must still update it")
+}
+
 // TestSCIM_ListFilterDoesNotLeakNativeAccount pins the "List adoption" half of
 // #120: a userName-filter query (the IdP's reconciliation lookup) must not surface a
 // NATIVE account by email match — doing so would leak its numeric SCIM resource id

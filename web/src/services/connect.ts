@@ -25,9 +25,13 @@ export const connectApi = {
         return (response.data.data?.connectors ?? []) as string[];
     },
 
+    // ref is sent in the POST body, not a query-string parameter: a GET query is
+    // routinely captured by infrastructure access-log pipelines (reverse proxies,
+    // TLS-terminating middleboxes, CDNs) in a way a POST body normally is not, and
+    // ref names the secret's exact path/identifier inside the external store.
     async readSecret(connector: string, ref: string): Promise<FederatedSecret> {
-        const response = await apiClient.get(`/api/v1/connect/${encodeURIComponent(connector)}/secret`, {
-            params: { ref },
+        const response = await apiClient.post(`/api/v1/connect/${encodeURIComponent(connector)}/secret:read`, {
+            ref,
         });
         return response.data.data as FederatedSecret;
     },

@@ -16,6 +16,20 @@ All notable changes to Keyorix are documented here. This project follows
   config-schema/boot-validation part of ADR-082 only; connector ownership is not yet
   enforced on the read path (a later change) — see
   `docs/adr-082-connect-connector-tenant-scoping.md`.
+- **BREAKING (targeting v0.92.0): `storage.type: remote` combined with
+  `server.http.enabled` or `server.grpc.enabled` no longer boots (ADR-083)** —
+  `storage.type: remote` is a CLI/client mode only; RemoteStorage never
+  implemented the RBAC primitives a server needs to check ANY permission for
+  ANY caller (`GetUserRoleIDsAt`, `GetUserGroupRoleIDsAt`, `RoleSetHasPermission`
+  are all unconditional "not supported" stubs), so a server booted this way
+  could never actually serve a permission-gated request — every request to
+  every RBAC-gated route failed closed. If you were relying on this
+  combination to run a "downstream Keyorix server" against `storage.type:
+  remote`, it never functioned for ordinary API traffic; switch that
+  deployment to `storage.type: local` or `storage.type: postgres`. The CLI's
+  own client mode (`keyorix connect <server>`, or `storage.type: remote` in
+  `~/.keyorix/cli.yaml` with no server enabled) is unaffected — see
+  `docs/adr-083-remote-storage-cli-only.md`.
 - **BREAKING: keyorix-operator default RBAC/watch scope narrowed to own-namespace-only
   (ADR-076)** — an unmodified `helm install deploy/helm/keyorix-operator` now binds a
   namespace-scoped `RoleBinding` in its own release namespace and watches only that

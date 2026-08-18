@@ -20,7 +20,7 @@ func newRBACManagementCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.User{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}, &models.SoDPolicy{},
+		&models.Project{}, &models.Environment{}, &models.SoDPolicy{}, &models.Session{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
@@ -110,4 +110,34 @@ func TestRemovePermissionFromRole_NoSelfPermissionRequired(t *testing.T) {
 
 	const actor = uint(9) // holds nothing
 	require.NoError(t, c.RemovePermissionFromRole(ctx, actor, 1, 1))
+}
+
+// RemoveUserRole must evict the target user's cached sessions from the HTTP auth
+// cache, matching every other credential-lifecycle event in this package (password
+// change, suspend/deactivate/delete, PAT revoke, machine-identity suspend/revoke) —
+// otherwise a just-revoked role keeps authorizing requests for up to the positive
+// auth-cache TTL. Unlike those stronger events, the user's sessions themselves must
+// NOT be deleted (they stay logged in; only the cached authorization decision is
+// forced to re-resolve from storage on the next request).
+func TestRemoveUserRole_EvictsSessionCacheWithoutLoggingOut(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
+
+	const userID = uint(9)
+	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: 1, ProjectID: 5}).Error)
+	require.NoError(t, db.Create(&models.Session{UserID: userID, SessionToken: "session-hash-a"}).Error)
+	require.NoError(t, db.Create(&models.Session{UserID: userID, SessionToken: "session-hash-b"}).Error)
+
+	var evicted []string
+	c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
+	require.NoError(t, c.RemoveUserRole(ctx, 0, userID, 1, Scope{ProjectID: 5}))
+
+	assert.ElementsMatch(t, []string{"session-hash-a", "session-hash-b"}, evicted,
+		"every one of the user's session hashes must be evicted from the auth cache")
+
+	var remaining int64
+	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", userID).Count(&remaining).Error)
+	assert.Equal(t, int64(2), remaining, "sessions must NOT be deleted — the user stays logged in")
 }

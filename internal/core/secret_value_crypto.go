@@ -14,8 +14,10 @@
 //
 // Fail-closed is the governing rule for a security product: an encryption failure on
 // write is surfaced, never silently downgraded to a plaintext write; and a row whose
-// own metadata marks it encrypted is never returned as if it were plaintext when no
-// key is available to decrypt it.
+// own metadata marks it encrypted — or whose metadata is malformed/ambiguous rather
+// than the confirmed-empty plaintext marker — is never returned as if it were
+// plaintext when no key is available (or no algorithm can be determined) to decrypt
+// it.
 package core
 
 import (
@@ -53,14 +55,27 @@ func (c *KeyorixCore) encryptVersionValue(secret *models.SecretNode, value []byt
 //   - Encrypted row (metadata carries an algorithm): it MUST be decrypted with a wired
 //     encryptor. If none is available, this errors rather than handing back ciphertext
 //     as though it were plaintext.
-//   - Plaintext row (empty "{}" metadata — written while encryption was disabled):
-//     returned as-is.
+//   - Plaintext row (empty "{}"/nil metadata — written while encryption was
+//     disabled): returned as-is.
+//   - Ambiguous row (metadata fails to parse, or parses but has no usable
+//     "algorithm"): this can only happen via data corruption — every current writer
+//     sets EncryptedValue and EncryptionMetadata together — but if it does, we cannot
+//     tell whether EncryptedValue is real ciphertext or plaintext, so this errors
+//     rather than guessing.
 //
 // The AAD is reconstructed from the row's identity exactly as encryptVersionValue
 // bound it, so a transplanted ciphertext fails authentication.
 func (c *KeyorixCore) decryptVersionValue(secret *models.SecretNode, version *models.SecretVersion) ([]byte, error) {
-	if !versionIsEncrypted(version.EncryptionMetadata) {
+	switch versionMetadataStatus(version.EncryptionMetadata) {
+	case metadataPlaintext:
 		return version.EncryptedValue, nil
+	case metadataAmbiguous:
+		// The metadata is neither the confirmed-plaintext empty marker nor a
+		// well-formed encrypted envelope. We cannot tell whether EncryptedValue
+		// holds real ciphertext or plaintext, so we refuse to guess — handing back
+		// the raw bytes here would risk leaking ciphertext (or corrupting a
+		// genuine plaintext value) as if it were the secret's real value.
+		return nil, fmt.Errorf("secret version %d has malformed encryption metadata; refusing to guess whether it is plaintext", version.ID)
 	}
 	if c.secretValueEncryptor == nil {
 		return nil, fmt.Errorf("secret version %d is encrypted at rest but no encryption key is available to decrypt it — refusing to return raw ciphertext (check storage.encryption / KEYORIX_MASTER_PASSWORD)", version.ID)
@@ -73,20 +88,55 @@ func (c *KeyorixCore) decryptVersionValue(secret *models.SecretNode, version *mo
 	return plaintext, nil
 }
 
-// versionIsEncrypted reports whether a stored version's EncryptionMetadata marks it as
-// encrypted at rest. Encrypted rows carry a non-empty AES-256-GCM envelope metadata
-// (Algorithm set); plaintext rows carry empty "{}" metadata. Malformed/empty metadata
-// is treated as plaintext — the fail-closed direction, since a genuinely encrypted
-// blob will then fail to parse as plaintext downstream rather than leak.
-func versionIsEncrypted(meta models.JSON) bool {
+// metadataStatus classifies a stored version's EncryptionMetadata for routing in
+// decryptVersionValue. There are three distinct states, and they must NOT be
+// collapsed into a single bool: only metadataPlaintext is safe to read verbatim.
+type metadataStatus int
+
+const (
+	// metadataPlaintext: the confirmed plaintext marker — metadata is nil/empty
+	// (exactly "{}" or len==0). Written by the current code path only when
+	// encryption is disabled. Safe to return EncryptedValue as-is.
+	metadataPlaintext metadataStatus = iota
+	// metadataEncrypted: well-formed JSON with a non-empty "algorithm" field.
+	// Must be decrypted with a wired encryptor; decryptVersionValue errors if
+	// none is available rather than returning ciphertext.
+	metadataEncrypted
+	// metadataAmbiguous: metadata that is neither of the above — JSON that fails
+	// to parse at all, or well-formed JSON whose "algorithm" field is empty or
+	// absent. This can only arise from data corruption (the two columns are
+	// always written together today), but if it does, EncryptedValue's true
+	// nature is unknown and must NOT be treated as plaintext.
+	metadataAmbiguous
+)
+
+// versionMetadataStatus classifies a stored version's EncryptionMetadata into one of
+// the three metadataStatus states described above. Only a genuinely empty object
+// (nil/len==0 bytes, or a well-formed "{}" with no fields at all) is treated as
+// confirmed plaintext. Anything that fails to parse as JSON, or parses but carries a
+// non-empty object without a usable "algorithm" field, is ambiguous and must fail
+// closed in decryptVersionValue rather than being silently treated as plaintext.
+func versionMetadataStatus(meta models.JSON) metadataStatus {
 	if len(meta) == 0 {
-		return false
+		return metadataPlaintext
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(meta, &fields); err != nil {
+		// Not a valid JSON object at all (garbage bytes, truncated JSON, etc).
+		return metadataAmbiguous
+	}
+	if len(fields) == 0 {
+		// Exactly "{}" (or equivalent empty object) — the intended plaintext marker.
+		return metadataPlaintext
 	}
 	var m struct {
 		Algorithm string `json:"algorithm"`
 	}
 	if err := json.Unmarshal(meta, &m); err != nil {
-		return false
+		return metadataAmbiguous
 	}
-	return m.Algorithm != ""
+	if m.Algorithm == "" {
+		return metadataAmbiguous
+	}
+	return metadataEncrypted
 }

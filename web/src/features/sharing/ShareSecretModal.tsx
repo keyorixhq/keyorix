@@ -22,7 +22,7 @@ interface UserOption {
     email: string;
 }
 
-const PERMISSION_OPTIONS = [
+const ALL_PERMISSION_OPTIONS = [
     { value: 'read', label: 'Read Only' },
     { value: 'write', label: 'Read & Write' },
 ];
@@ -63,6 +63,14 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const shareSecret = useShareSecret(secret.id);
+
+    // UX-only signal, not a security boundary: only offer 'write' as a grantable
+    // permission when the sharer themselves currently holds write on this secret.
+    // The server must still independently enforce this invariant — this list is
+    // just what the form presents, not what the API accepts.
+    const permissionOptions = ALL_PERMISSION_OPTIONS.filter(
+        (opt) => opt.value !== 'write' || secret.permissions.includes('write')
+    );
 
     // Search users as query changes
     useEffect(() => {
@@ -266,7 +274,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
                         id="permission-select"
                         value={permission}
                         onChange={(e) => setPermission(e.target.value as 'read' | 'write')}
-                        options={PERMISSION_OPTIONS}
+                        options={permissionOptions}
                         disabled={shareSecret.isPending || success}
                     />
                 </div>

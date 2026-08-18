@@ -137,13 +137,28 @@ func cleanComponentPath(p string) (string, error) {
 		return "", fmt.Errorf("bundle: absolute component path %q", p)
 	}
 	clean := path.Clean(filepath.ToSlash(p))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+	if isUnsafeCleanComponentPath(clean) {
 		return "", fmt.Errorf("bundle: component path escapes the bundle: %q", p)
 	}
 	if clean == manifestName || clean == sigName {
 		return "", fmt.Errorf("bundle: component path %q collides with a reserved name", p)
 	}
 	return clean, nil
+}
+
+// isUnsafeCleanComponentPath re-checks an already-cleaned, forward-slash path for
+// escape/absolute shapes. It is split out from cleanComponentPath so the check can be
+// exercised directly with an already-cleaned value (see bundle_extra_test.go): the
+// pre-clean checks above operate on the raw input string, but filepath.ToSlash is
+// OS-specific — on a platform whose separator differs from "/" (e.g. Windows), a raw
+// path using that separator (a UNC path like `\\server\share\evil`) is not caught by
+// the raw-string checks, yet can become absolute-looking (leading "/") once ToSlash +
+// path.Clean run. That conversion never happens on Unix (ToSlash is a no-op there), so
+// this branch is effectively Windows-only today — re-validating the cleaned value here
+// closes the gap regardless of which platform produced it, and regardless of whether a
+// future caller re-validates the joined path the way safeJoin does.
+func isUnsafeCleanComponentPath(clean string) bool {
+	return clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/")
 }
 
 // BuildManifest walks srcDir and pins every regular file (by relative path) with its

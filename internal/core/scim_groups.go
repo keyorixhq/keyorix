@@ -198,10 +198,16 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
 	// applying any of them, so a PATCH that would strip the install's last route
 	// to global-admin authority is refused atomically — see
-	// applyGroupMembershipChanges's identical precheck-then-apply shape.
+	// applyGroupMembershipChanges's identical precheck-then-apply shape. Also
+	// checked against guardLastProjectAdminGroupMembership (core-project-
+	// members.json#3) so a removal can't strip a project's last roles.assign
+	// holder either — SCIM group management previously only saw the global case.
 	toRemove := filterNonZero(removeIDs)
 	for _, id := range toRemove {
 		if err := c.guardLastGlobalAdminMembership(ctx, id, groupID); err != nil {
+			return nil, err
+		}
+		if err := c.guardLastProjectAdminGroupMembership(ctx, id, groupID); err != nil {
 			return nil, err
 		}
 	}
@@ -277,13 +283,18 @@ func filterNonZero(ids []uint) []uint {
 
 // applyGroupMembershipChanges applies the add/remove sets computed by the
 // caller. Every removal is checked against guardLastGlobalAdminMembership
-// (#G02) BEFORE any storage write happens, so a SCIM PUT that would strip the
-// install's last route to global-admin authority is refused atomically — not
-// applied member-by-member with some removals already committed.
+// (#G02) and guardLastProjectAdminGroupMembership (core-project-members.json#3)
+// BEFORE any storage write happens, so a SCIM PUT that would strip the
+// install's last route to global-admin authority, or a project's last
+// roles.assign holder, is refused atomically — not applied member-by-member
+// with some removals already committed.
 func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint) error {
 	for _, u := range current {
 		if !want[u.ID] {
 			if err := c.guardLastGlobalAdminMembership(ctx, u.ID, groupID); err != nil {
+				return err
+			}
+			if err := c.guardLastProjectAdminGroupMembership(ctx, u.ID, groupID); err != nil {
 				return err
 			}
 		}
@@ -301,10 +312,15 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 
 // DeprovisionSCIMGroup handles a SCIM DELETE — removes the group (membership links
 // go with it). Refuses to delete a group holding the install's last
-// global-admin-conferring role grant (guardLastGlobalAdminGroupDelete, #G02) —
-// the same guard the native DeleteGroup already applies.
+// global-admin-conferring role grant (guardLastGlobalAdminGroupDelete, #G02) or
+// any project's last roles.assign-conferring grant
+// (guardLastProjectAdminGroupDelete, core-project-members.json#3) — the same
+// guards the native DeleteGroup already applies.
 func (c *KeyorixCore) DeprovisionSCIMGroup(ctx context.Context, actorID, groupID uint) error {
 	if err := c.guardLastGlobalAdminGroupDelete(ctx, groupID); err != nil {
+		return err
+	}
+	if err := c.guardLastProjectAdminGroupDelete(ctx, groupID); err != nil {
 		return err
 	}
 	// Storage-direct: the SCIM path emits scim.group_deprovisioned below, not the

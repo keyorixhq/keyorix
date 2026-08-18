@@ -175,6 +175,14 @@ func (rs *RemoteStorage) VerifyAuditChain(_ context.Context, _ *storage.AuditCha
 	return nil, fmt.Errorf("VerifyAuditChain not available in remote mode")
 }
 
+// MigrateAuditChainEncoding is not available in remote mode: a spoke has no
+// direct access to the hub's audit_events table, and this migration must hold
+// an exclusive, whole-migration lock only the actual database owner can take.
+// Run this against the primary/hub server's own storage backend directly.
+func (rs *RemoteStorage) MigrateAuditChainEncoding(_ context.Context, _ bool, _ *storage.AuditChainAnchor) (*storage.AuditChainMigrationResult, error) {
+	return nil, fmt.Errorf("MigrateAuditChainEncoding not available in remote mode — run it against the primary server directly")
+}
+
 // GetSecretReadCounts is server-side only; read aggregation runs against the
 // local audit table and is never proxied over a remote HTTP call.
 func (rs *RemoteStorage) GetSecretReadCounts(_ context.Context, _ uint, _, _ time.Time, _ int) ([]storage.SecretReadEntry, error) {

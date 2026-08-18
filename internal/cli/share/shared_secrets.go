@@ -41,6 +41,20 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 	}
 	service := core.NewKeyorixCore(st)
 
+	// cli-connect-007 (info, deliberate — not a bug): same as the remote branch
+	// above, --user-id is not checked against the invoking operator here either
+	// — ListSharedSecrets (internal/core/sharing_query.go) takes a bare userID
+	// with no caller/actor parameter at all. Intentional: embedded/local mode
+	// has no authenticated-user concept (share/remote.go:7-9), so an embedded
+	// admin can query any user's shared secrets. The residual risk is if
+	// embedded mode is ever pointed at a genuinely shared/multi-tenant backend
+	// (the scenario common.go's InitializeCoreService warning already
+	// contemplates for the cli-connect-004/#G67 ResolveActorID fix) — then this
+	// becomes an unrestricted enumeration surface. If that deployment shape ever
+	// becomes real, route this through common.ResolveActorID() and an
+	// actor-aware, permission-checked core variant, consistent with how
+	// group_shares.go's ListGroupShares call was hardened in #G10.
+	//
 	// Call service
 	ctx := context.Background()
 	secrets, err := service.ListSharedSecrets(ctx, sharedSecretsUserID)

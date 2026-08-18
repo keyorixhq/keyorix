@@ -145,6 +145,11 @@ type contextKey string
 const (
 	userContextKey        contextKey = "user"
 	coreServiceContextKey contextKey = "coreService"
+	// resolvedSecretRefContextKey carries the *models.SecretNode resolved by
+	// RequireScopedSecretRefPermission through to the handler, so a by-ref
+	// value read reuses that ONE resolution instead of resolving the ref by
+	// name a second time. See WithResolvedSecretRef / GetResolvedSecretRefFromContext.
+	resolvedSecretRefContextKey contextKey = "resolvedSecretRef"
 
 	// TTL for valid token cache entries (session is trusted for this window).
 	validTokenTTL = 30 * time.Second
@@ -281,6 +286,28 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	validatedAt := time.Now()
 	userCtx, err := validateToken(r.Context(), validator, token)
 	if err != nil {
+		// #G-transient: a TRANSIENT infrastructure failure (DB timeout, connection
+		// error, context deadline exceeded during the underlying lookup) says
+		// nothing about whether this token/credential is actually valid — it must
+		// not be treated the same as a genuinely bad token. validateToken's
+		// underlying validators (ValidateSessionToken/ValidatePATToken/
+		// ValidateMachineToken/ValidateOIDCToken) collapse every storage error into
+		// an opaque message before it reaches here (deliberately — the detailed
+		// reason must never leak to an unauthenticated caller), so the request's
+		// OWN context is the only reliable transient-vs-permanent signal available
+		// at this layer: if it was canceled or hit its deadline while validation
+		// was in flight, that — not credential invalidity — is almost certainly
+		// why validation failed. See isTransientValidationError.
+		if isTransientValidationError(r.Context(), err) {
+			// Do NOT negative-cache: a stale "invalid" entry would keep rejecting
+			// this same token for up to invalidTokenTTL even after the backend
+			// recovers. Do NOT count against the per-IP brute-force budget either:
+			// many legitimate callers sharing one NAT/egress IP retrying during a
+			// shared blip would otherwise trip tokenAuthFailureBurst and start
+			// getting 429'd once the backend is already healthy again.
+			serviceUnavailableResponse(w, "authentication temporarily unavailable, please retry")
+			return
+		}
 		// Cache the negative result so subsequent retries skip the DB.
 		cacheSet(key, tokenCacheEntry{userCtx: nil, expiresAt: time.Now().Add(invalidTokenTTL)})
 		// Rate-limit by source IP: after tokenAuthFailureBurst failures the IP is
@@ -318,6 +345,26 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 		coreService.TouchMachineTokenLastUsed(r.Context(), userCtx.machineCredID)
 	}
 	next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
+}
+
+// isTransientValidationError reports whether a validateToken failure reflects a
+// transient infrastructure problem (the caller's context was canceled or hit its
+// deadline while validation was in flight) rather than the credential itself
+// being invalid. ctx is checked directly — not just err — because the storage
+// layer's own errors are deliberately opaque by the time they reach this
+// package (ValidateSessionToken/ValidatePATToken/ValidateMachineToken collapse
+// every lookup failure, including a DB timeout or connection error, into a
+// generic message so the specific reason never leaks to an unauthenticated
+// caller). A context that was canceled or ran out of time during that lookup is
+// therefore the one reliable signal available here that the failure was ours
+// (or the client's, disconnecting mid-request), not the token's. errors.Is is
+// still checked against err too, in case a future/alternate validator
+// implementation does propagate a wrapped context error.
+func isTransientValidationError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // serveAuthCacheHit handles the fast-path cache hit. #146 originally re-fetched
@@ -496,6 +543,70 @@ func handleScopedSecretPermissionRequest(next http.Handler, w http.ResponseWrite
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 	allowed, err := cs.AuthorizeSecretPrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secretID, permission)
 	finishScopedPermissionRequest(next, w, r, cs, scope, allowed, err)
+}
+
+// RequireScopedSecretRefPermission is RequireScopedPermission specialized for
+// the by-reference value read (GET .../secrets/value?ref=project/environment/name).
+//
+// core.ResolveSecretRef carries no snapshot/version guarantee: project name
+// uniqueness is enforced only while a project is not soft-deleted, so a
+// soft-deleted project's name is free for a brand-new project to reuse. If
+// this middleware resolved the ref to compute the authorization scope and the
+// handler independently resolved the SAME ref string again by name, a
+// delete-and-recreate landing between the two calls could legitimately
+// resolve them to secrets in two DIFFERENT projects — authorizing against one
+// project's scope and then reading a secret from another. This middleware
+// closes that window structurally: it resolves the ref EXACTLY ONCE, and pins
+// the resolved *models.SecretNode on the request context
+// (GetResolvedSecretRefFromContext) so the handler consumes that same
+// resolution rather than calling ResolveSecretRef again.
+func RequireScopedSecretRefPermission(permission string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleScopedSecretRefPermissionRequest(next, w, r, permission)
+		})
+	}
+}
+
+func handleScopedSecretRefPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, permission string) {
+	userCtx, cs, ok := requireUserAndCore(w, r)
+	if !ok {
+		return
+	}
+	secret, err := cs.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
+	if err != nil {
+		resolveErr := errTargetNotFound
+		if errors.Is(err, core.ErrSecretRefInvalid) {
+			resolveErr = errInvalidTarget
+		}
+		handleScopeResolutionError(w, r, cs, userCtx, permission, resolveErr)
+		return
+	}
+	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+	allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, scope)
+	// Pin the resolution on the request context BEFORE dispatch, regardless of
+	// the authorize outcome (finishScopedPermissionRequest still gates on
+	// allowed/err below) — this is the ONLY resolution of this ref for the
+	// entire request; the handler must reuse it rather than resolve again.
+	r = r.WithContext(WithResolvedSecretRef(r.Context(), secret))
+	finishScopedPermissionRequest(next, w, r, cs, scope, allowed, err)
+}
+
+// WithResolvedSecretRef stores a secret resolved by ref on ctx, for
+// RequireScopedSecretRefPermission to hand off to its downstream handler (and
+// for tests to simulate that hand-off without going through the middleware).
+func WithResolvedSecretRef(ctx context.Context, secret *models.SecretNode) context.Context {
+	return context.WithValue(ctx, resolvedSecretRefContextKey, secret)
+}
+
+// GetResolvedSecretRefFromContext retrieves the secret resolved by
+// RequireScopedSecretRefPermission from the request context. Returns nil if no
+// ref resolution ran (e.g. the route isn't wired through that middleware).
+func GetResolvedSecretRefFromContext(ctx context.Context) *models.SecretNode {
+	if secret, ok := ctx.Value(resolvedSecretRefContextKey).(*models.SecretNode); ok {
+		return secret
+	}
+	return nil
 }
 
 // requireUserAndCore fetches the authenticated user and core service from the
@@ -695,22 +806,6 @@ func ScopeFromSecretParam(param string) ScopeResolver {
 		}
 		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
 	}
-}
-
-// ScopeFromRefQuery resolves scope from a "?ref=project/environment/name" query param,
-// for the by-reference value read. It locates the referenced secret (no value read, no
-// read-count side effect) and returns its project/environment scope, so the standard
-// scoped-permission gate authorizes the caller against the secret's real scope — a
-// caller scoped to another project is denied exactly as for the by-id route.
-func ScopeFromRefQuery(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
-	secret, err := cs.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
-	if err != nil {
-		if errors.Is(err, core.ErrSecretRefInvalid) {
-			return core.Scope{}, errInvalidTarget
-		}
-		return core.Scope{}, errTargetNotFound
-	}
-	return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
 }
 
 // ScopeFromDeletedSecretParam resolves the scope of a secret that may be
@@ -1137,6 +1232,20 @@ func tooManyRequestsResponse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "RateLimited", "message": message, "code": http.StatusTooManyRequests,
+	})
+}
+
+// serviceUnavailableResponse sends a 503 Service Unavailable response for a
+// transient failure (e.g. a storage-layer hiccup during token validation, see
+// isTransientValidationError) that the caller should simply retry, as opposed
+// to a 401 which tells the caller its credential itself is bad. Retry-After is
+// short — this is meant for a brief infrastructure blip, not a sustained outage.
+func serviceUnavailableResponse(w http.ResponseWriter, message string) {
+	w.Header().Set(hdrContentType, mimeJSON)
+	w.Header().Set("Retry-After", "2")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "ServiceUnavailable", "message": message, "code": http.StatusServiceUnavailable,
 	})
 }
 

@@ -249,14 +249,20 @@ func TestGetCoreServiceFromContext_WithNilValue(t *testing.T) {
 	}
 }
 
-// --- ScopeFromRefQuery ---
+// --- GetResolvedSecretRefFromContext ---
 
-// TestScopeFromRefQuery_MissingRef returns errTargetNotFound for an empty ref.
-func TestScopeFromRefQuery_MissingRef(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/?ref=", nil)
-	_, err := ScopeFromRefQuery(req, nil)
-	if err == nil {
-		t.Error("expected error for missing ref, got nil")
+// TestGetResolvedSecretRefFromContext_WithNilValue confirms nil is returned
+// when the key exists with a non-*models.SecretNode value — mirroring
+// GetCoreServiceFromContext_WithNilValue above. Ref-resolution behavior
+// (invalid format / not found) is covered end to end at the middleware level
+// by TestRequireScopedSecretRefPermission_* in auth_s24_test.go, now that
+// RequireScopedSecretRefPermission resolves the ref exactly once instead of
+// exposing a standalone ScopeFromRefQuery resolver.
+func TestGetResolvedSecretRefFromContext_WithNilValue(t *testing.T) {
+	ctx := context.WithValue(context.Background(), resolvedSecretRefContextKey, "wrong type")
+	got := GetResolvedSecretRefFromContext(ctx)
+	if got != nil {
+		t.Errorf("expected nil for wrong type, got %v", got)
 	}
 }
 

@@ -222,13 +222,23 @@ func TestGetSecret_IncludeValue_UserPath_S10(t *testing.T) {
 }
 
 // ── GetSecretValueByRef: success path (isolated DB) ──────────────────────────
+//
+// GetSecretValueByRef no longer resolves the "ref" query param itself — that
+// now happens exactly once, in middleware.RequireScopedSecretRefPermission,
+// which pins the resolved secret on the request context before dispatch (see
+// core-secret-ref-4). These tests simulate that hand-off directly, exactly as
+// the middleware would, via customMiddleware.WithResolvedSecretRef.
 
 func TestGetSecretValueByRef_Success_MachineIdentity_S10(t *testing.T) {
 	h, projName, envName, _ := seedS10Secret(t, "s10-proj-ref", "s10-ref-secret")
 
 	ref := fmt.Sprintf("%s/%s/%s", projName, envName, "s10-ref-secret")
+	secret, err := h.coreService.ResolveSecretRef(context.Background(), ref)
+	require.NoError(t, err)
+
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/by-ref?ref="+ref, nil)
 	r = withMachineCtxS10(r)
+	r = r.WithContext(customMiddleware.WithResolvedSecretRef(r.Context(), secret))
 	w := httptest.NewRecorder()
 
 	h.GetSecretValueByRef(w, r)
@@ -244,8 +254,12 @@ func TestGetSecretValueByRef_UserPath_S10(t *testing.T) {
 	h, projName, envName, _ := seedS10Secret(t, "s10-proj-userref", "s10-userref-secret")
 
 	ref := fmt.Sprintf("%s/%s/%s", projName, envName, "s10-userref-secret")
+	secret, err := h.coreService.ResolveSecretRef(context.Background(), ref)
+	require.NoError(t, err)
+
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/by-ref?ref="+ref, nil)
 	r = withUserCtx(r)
+	r = r.WithContext(customMiddleware.WithResolvedSecretRef(r.Context(), secret))
 	w := httptest.NewRecorder()
 
 	h.GetSecretValueByRef(w, r)

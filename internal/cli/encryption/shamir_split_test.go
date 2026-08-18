@@ -1,7 +1,9 @@
 package encryption
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,4 +40,58 @@ func TestShamirSplit_WritesSharesWithSecurePermissions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "%s must be 0600", path)
 	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns everything
+// written to it, so tests can assert on the operator-facing warning independently
+// of the (separately captured) stdout share output.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	fn()
+	require.NoError(t, w.Close())
+	os.Stderr = old
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+	return buf.String()
+}
+
+// cli-encryption-005: printing Shamir shares to stdout (the default, no --out-dir)
+// must be preceded by a loud warning on stderr — each share is genuine key material
+// below the configured threshold, and stdout alone may end up in scrollback, a
+// tmux/screen log, a session recorder, or a CI log. The warning goes to stderr (not
+// stdout) specifically so it survives even when the operator pipes/redirects stdout
+// away from the terminal.
+func TestShamirSplit_WarnsOnStderrWhenPrintingSharesToStdout(t *testing.T) {
+	ssShares, ssThreshold, ssOutDir = 5, 3, ""
+
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			require.NoError(t, shamirSplitCmd.RunE(shamirSplitCmd, nil))
+		})
+	})
+
+	assert.Contains(t, stderr, "WARNING", "must warn loudly before printing shares to stdout")
+	assert.Contains(t, stderr, "stdout")
+	assert.Contains(t, stderr, "--out-dir", "warning must recommend the safer alternative")
+	assert.Contains(t, stdout, "share 1:", "shares must still print to stdout (unchanged default behavior)")
+	assert.NotContains(t, stdout, "WARNING", "the warning itself must not land on stdout")
+}
+
+// The warning is specific to the stdout path — writing shares to --out-dir doesn't
+// put key material on the terminal, so no stderr warning should fire.
+func TestShamirSplit_NoStderrWarningWhenWritingToOutDir(t *testing.T) {
+	dir := t.TempDir()
+	ssShares, ssThreshold, ssOutDir = 5, 3, dir
+
+	stderr := captureStderr(t, func() {
+		require.NoError(t, shamirSplitCmd.RunE(shamirSplitCmd, nil))
+	})
+
+	assert.Empty(t, stderr, "no stdout-specific warning should print when shares are written to --out-dir")
 }

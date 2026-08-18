@@ -58,6 +58,40 @@ func TestFetchSecretsRemote(t *testing.T) {
 	assert.Equal(t, map[string]string{"DB_PASSWORD": "s3cr3t"}, got)
 }
 
+// TestFetchSecretsRemote_CollisionAborts is the regression test for the toEnvKey
+// collision finding: two DIFFERENT secret names ("my-secret" and "my_secret") both
+// sanitize to the same env var key (MY_SECRET) via toEnvKey. Before this fix the
+// second one processed would silently overwrite the first in the returned map with
+// no indication anything was dropped. Assert fetchSecretsRemote now returns an
+// error naming both colliding secrets instead of silently picking a winner.
+func TestFetchSecretsRemote_CollisionAborts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"projects":[{"id":1,"name":"web"}]}}`))
+		case "/api/v1/projects/1/environments":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"environments":[{"id":2,"name":"dev"}]}}`))
+		case "/api/v1/secrets":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[{"id":9,"name":"my-secret"},{"id":10,"name":"my_secret"}]}}`))
+		case "/api/v1/secrets/9":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"value":"first"}}`))
+		case "/api/v1/secrets/10":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"value":"second"}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	got, err := fetchSecretsRemote(context.Background(), srv.URL, "tok", "web", "dev")
+	require.Error(t, err, "colliding secret names must abort the fetch, not silently overwrite one")
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "my-secret")
+	assert.Contains(t, err.Error(), "my_secret")
+	assert.Contains(t, err.Error(), "MY_SECRET")
+}
+
 func TestFetchSecretsRemote_ProjectNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"success":true,"data":{"projects":[]}}`))
@@ -151,4 +185,74 @@ func TestFetchSecretsEmbedded(t *testing.T) {
 	_, err = fetchSecretsEmbedded(ctx, "ghost", "dev")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestFetchSecretsEmbedded_CollisionAborts mirrors TestFetchSecretsRemote_
+// CollisionAborts for the embedded (local core service) path: two distinct secret
+// names that sanitize to the same toEnvKey output must abort fetchSecretsEmbedded
+// with a clear error rather than silently dropping one of them from the child
+// process's environment.
+func TestFetchSecretsEmbedded_CollisionAborts(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	require.NoError(t, config.Save(cfgPath, &config.Config{
+		Locale:  config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+		Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: filepath.Join(dir, "s2.db")}},
+	}))
+	t.Setenv("KEYORIX_CONFIG_PATH", cfgPath)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	ctx := context.Background()
+	svc, err := common.InitializeCoreService()
+	require.NoError(t, err)
+	project, err := svc.CreateProjectWithEnvs(ctx, "web", "", []string{"dev"})
+	require.NoError(t, err)
+	envs, err := svc.ListEnvironmentsByProject(ctx, project.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, envs)
+	_, err = svc.CreateSecret(ctx, &core.CreateSecretRequest{
+		Name: "my-secret", Value: []byte("first"), ProjectID: project.ID,
+		EnvironmentID: envs[0].ID, Type: "password", CreatedBy: "test",
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateSecret(ctx, &core.CreateSecretRequest{
+		Name: "my_secret", Value: []byte("second"), ProjectID: project.ID,
+		EnvironmentID: envs[0].ID, Type: "password", CreatedBy: "test",
+	})
+	require.NoError(t, err)
+
+	got, err := fetchSecretsEmbedded(ctx, "web", "dev")
+	require.Error(t, err, "colliding secret names must abort the fetch, not silently overwrite one")
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "my-secret")
+	assert.Contains(t, err.Error(), "my_secret")
+	assert.Contains(t, err.Error(), "MY_SECRET")
+}
+
+// TestSetEnvKey_CollisionDetection unit-tests the shared collision-detection helper
+// directly: the same secret name is idempotent (re-processing it, e.g. across a
+// pagination boundary, must not itself trip the collision check), while two
+// DIFFERENT names sanitizing to the same key must error.
+func TestSetEnvKey_CollisionDetection(t *testing.T) {
+	result := make(map[string]string)
+	sources := make(map[string]string)
+
+	require.NoError(t, setEnvKey(result, sources, "my-secret", "first"))
+	assert.Equal(t, "first", result["MY_SECRET"])
+
+	// Same name again (e.g. seen twice) must not be treated as a collision.
+	require.NoError(t, setEnvKey(result, sources, "my-secret", "first-updated"))
+	assert.Equal(t, "first-updated", result["MY_SECRET"])
+
+	err := setEnvKey(result, sources, "my_secret", "second")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "my-secret")
+	assert.Contains(t, err.Error(), "my_secret")
+	assert.Contains(t, err.Error(), "MY_SECRET")
+	// The original value must be left untouched — the second secret is rejected,
+	// not silently applied before erroring.
+	assert.Equal(t, "first-updated", result["MY_SECRET"])
 }

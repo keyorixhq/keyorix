@@ -253,6 +253,15 @@ func TestSecretTemplateHandler_Apply_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+func TestSecretTemplateHandler_Apply_InvalidClassification(t *testing.T) {
+	h := newSecretTemplateTestHandler(t)
+	body := bytes.NewBufferString(`{"classification":"ULTRA_SECRET"}`)
+	req := stChiID(httptest.NewRequest(http.MethodPost, "/", body), "1")
+	w := httptest.NewRecorder()
+	h.Apply(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestSecretTemplateHandler_Apply_Success(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
 	cw := httptest.NewRecorder()

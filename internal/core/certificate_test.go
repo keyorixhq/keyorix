@@ -172,6 +172,65 @@ func TestInspectCertificate(t *testing.T) {
 	assert.Equal(t, "4242", info.SerialNumber)
 }
 
+// TestInspectCertificateCAIssuedWithMatchingSubjectIssuerString guards #CORE-CERT-003:
+// SelfSigned used to be `cert.Subject.String() == cert.Issuer.String()`, a naive RDN
+// string comparison. Here the CA and the leaf are given the IDENTICAL pkix.Name, so
+// their rendered Subject/Issuer strings are byte-for-byte equal — exactly what the old
+// check looked at — but the leaf is signed with the CA's private key, not its own: it is
+// genuinely CA-issued, not self-signed. The cryptographic check (signature verified
+// against the leaf's OWN public key) must correctly report SelfSigned:false, where the
+// old string comparison would have wrongly reported true.
+func TestInspectCertificateCAIssuedWithMatchingSubjectIssuerString(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	c, db := newCertCore(t, now)
+
+	sharedName := pkix.Name{CommonName: "shared-name.example.com"}
+
+	caPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               sharedName,
+		NotBefore:             now.Add(-365 * 24 * time.Hour),
+		NotAfter:              now.Add(365 * 24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caPriv.PublicKey, caPriv)
+	require.NoError(t, err)
+	caCert, err := x509.ParseCertificate(caDER)
+	require.NoError(t, err)
+
+	leafPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	leafTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      sharedName, // identical to the CA's Subject → rendered strings match
+		NotBefore:    now.Add(-30 * 24 * time.Hour),
+		NotAfter:     now.Add(60 * 24 * time.Hour),
+	}
+	// Signed by the CA's key (caPriv), NOT the leaf's own key — genuinely CA-issued.
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, caCert, &leafPriv.PublicKey, caPriv)
+	require.NoError(t, err)
+
+	// Sanity check the test setup actually exercises the regression: the old naive
+	// check's inputs really must be equal, or this test proves nothing.
+	parsedLeaf, err := x509.ParseCertificate(leafDER)
+	require.NoError(t, err)
+	require.Equal(t, parsedLeaf.Issuer.String(), parsedLeaf.Subject.String(),
+		"test setup: Subject/Issuer strings must render identically")
+
+	leafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+	mkCertSecret(t, db, 1, "ca-issued-matching-strings", "active", leafPEM)
+
+	info, err := c.InspectCertificate(ctx, 9, 1)
+	require.NoError(t, err)
+	assert.False(t, info.SelfSigned,
+		"signature does not verify against the leaf's own key — must not be reported self-signed despite matching Subject/Issuer strings")
+}
+
 func TestInspectCertificateExpired(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)

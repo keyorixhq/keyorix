@@ -46,7 +46,15 @@ func clientIPFromRequest(r *http.Request, trusted []*net.IPNet) string {
 	// a trusted proxy — the client as seen by the trusted edge. Stopping at the first
 	// untrusted hop from the right means a spoofed leftmost (client-prepended) entry is
 	// ignored, so the client cannot claim an arbitrary source IP.
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+	//
+	// r.Header.Get returns only the FIRST occurrence of a header name; net/http does not
+	// fold duplicate header lines for arbitrary headers the way RFC 7230 §3.2.2 requires
+	// recipients to. Most proxies comma-fold X-Forwarded-For into a single header line, but
+	// one that instead appends its own hop via Header.Add (a second, separate line) would
+	// have its trusted hop silently dropped by Get, leaving only the attacker-controlled
+	// line. Use Header.Values and join every occurrence with "," first, so the walk below
+	// always sees the full chain regardless of how the proxy emitted it.
+	if xff := strings.TrimSpace(strings.Join(r.Header.Values("X-Forwarded-For"), ",")); xff != "" {
 		parts := strings.Split(xff, ",")
 		for i := len(parts) - 1; i >= 0; i-- {
 			hop := strings.TrimSpace(parts[i])
@@ -63,8 +71,19 @@ func clientIPFromRequest(r *http.Request, trusted []*net.IPNet) string {
 	// no chain, so its anti-spoof guarantee depends entirely on the trusted proxy
 	// OVERWRITING it (not passing a client-supplied value through). Preferring the XFF
 	// walk above avoids trusting a possibly-passed-through X-Real-IP whenever XFF exists.
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" && net.ParseIP(xri) != nil {
-		return xri
+	//
+	// X-Real-IP is a single-address header, not a comma-separated list, so unlike XFF we
+	// can't join multiple occurrences and parse the result as one IP. But it's subject to
+	// the same Header.Get first-occurrence pitfall: a trusted proxy that appends its own
+	// X-Real-IP via Header.Add (rather than overwriting a client-supplied one) leaves its
+	// trusted value as the LAST header line, with the client's own value first. Walk the
+	// occurrences from the last back to the first and take the first one that parses as a
+	// valid IP, so the proxy-appended hop wins over anything the client sent.
+	xriValues := r.Header.Values("X-Real-IP")
+	for i := len(xriValues) - 1; i >= 0; i-- {
+		if xri := strings.TrimSpace(xriValues[i]); xri != "" && net.ParseIP(xri) != nil {
+			return xri
+		}
 	}
 	return ""
 }

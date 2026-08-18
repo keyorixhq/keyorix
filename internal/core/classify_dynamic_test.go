@@ -15,7 +15,7 @@ func makeDynConfig(t *testing.T, c *KeyorixCore, name, classification string) ui
 	cfg, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 		Name:           name,
 		ProjectID:      1,
-		EnvironmentID:  1,
+		EnvironmentID:  2,
 		BackendType:    "postgres",
 		AdminDSN:       "postgres://admin:pw@db.example.com/db",
 		Classification: classification,
@@ -36,7 +36,7 @@ func TestCreateDynamicSecretConfig_WithClassification(t *testing.T) {
 
 	// Invalid level is rejected at create.
 	_, err = c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
-		Name: "bad", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres",
+		Name: "bad", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
 		AdminDSN: "postgres://x", Classification: "top-secret", CreatedBy: "admin",
 		ActorID: testAdminActorID,
 	})

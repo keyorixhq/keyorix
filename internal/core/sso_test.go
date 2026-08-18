@@ -557,6 +557,8 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+		// evictUserSessionCache: evicts the removed-role user's cached sessions.
+		store.On("ListSessionTokenHashesForUser", mock.Anything, uint(7)).Return([]string{}, nil)
 
 		c.syncSSORoles(context.Background(), p, 7, raw)
 
@@ -758,6 +760,72 @@ func TestCompleteSSO_PasswordExpiredGateError(t *testing.T) {
 	assert.ErrorContains(t, err, "password expiry")
 	assert.Nil(t, session)
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSSO_LockedAccountSkipsGroupRoleSync pins CORE-OIDC-04: a currently
+// brute-force-locked account must not have its native group memberships / mapped
+// role grants reconciled from the IdP assertion — and no reconciliation audit
+// written — when the login is about to be refused for that lock anyway. Before the
+// fix, group/role sync ran BEFORE the loginLocked check, so a locked account's
+// state (and audit trail) was mutated on every SSO attempt even though the
+// function went on to reject the login a few lines later. The id_token here
+// asserts a brand-new group that WOULD be added if reconciliation ran.
+func TestCompleteSSO_LockedAccountSkipsGroupRoleSync(t *testing.T) {
+	c, store, key, p := ssoTestCore(t)
+	c.loginLockout = LoginLockoutPolicy{
+		Enabled: true, MaxAttempts: 5, Window: time.Hour,
+		BaseCooldown: time.Minute, MaxCooldown: time.Hour,
+	}
+	p.GroupSync = true
+	p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
+
+	lockedUntil := time.Now().Add(10 * time.Minute)
+	lockedUser := &models.User{
+		ID: 66, IsActive: true, AccountState: "active",
+		LoginLockedUntil: &lockedUntil, LoginLockoutCount: 1,
+	}
+
+	const testNonce = "nonce-locked"
+	idToken := signToken(t, key, "kid-1", jwt.MapClaims{
+		"iss":            "https://idp.test",
+		"aud":            "client-1",
+		"sub":            "okta|66",
+		"email":          "locked@x.io",
+		"email_verified": true,
+		"nonce":          testNonce,
+		"groups":         []string{"keyorix-admins"}, // would be added/mapped if reconciled
+		"exp":            time.Now().Add(time.Hour).Unix(),
+	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body := fmt.Sprintf(`{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer ts.Close()
+	p.OAuth.Endpoint.TokenURL = ts.URL
+
+	store.On("ConsumeSSOLoginState", mock.Anything, "state-locked").Return(
+		&models.SSOLoginState{Provider: "okta", Nonce: testNonce, ReturnTo: "/dash", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|66").Return(lockedUser, nil)
+
+	session, _, _, err := c.CompleteSSO(context.Background(), "okta", "auth-code", "state-locked", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "temporarily locked")
+	assert.Nil(t, session)
+
+	// Group/role reconciliation must never even start (which also means no
+	// AddUserToGroup/AssignRole/LogAuditEvent for the sync).
+	store.AssertNotCalled(t, "ListGroups", mock.Anything)
+	store.AssertNotCalled(t, "GetUserGroups", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	// The account's own lockout state must be left untouched too — the login was
+	// refused, so nothing about the account (including its lock) should be cleared.
+	assert.Equal(t, 1, lockedUser.LoginLockoutCount)
+	assert.NotNil(t, lockedUser.LoginLockedUntil)
 }
 
 func TestSanitizeReturnTo(t *testing.T) {

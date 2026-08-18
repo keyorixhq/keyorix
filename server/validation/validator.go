@@ -321,6 +321,12 @@ func (v *Validator) validateMax(field reflect.Value, param string) error {
 	return nil
 }
 
+// emailRegex matches the email format accepted by validateEmail. Compiled
+// once at package init (like identifierRegex below) instead of per-call,
+// since Validate is invoked by many concurrent goroutines against a single
+// shared *Validator on every request that carries an `email` field.
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
 // validateEmail validates email format
 func (v *Validator) validateEmail(field reflect.Value) error {
 	resolved, ok := derefForRule(field)
@@ -337,13 +343,16 @@ func (v *Validator) validateEmail(field reflect.Value) error {
 		return nil
 	}
 
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 	if !emailRegex.MatchString(email) {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
 	}
 
 	return nil
 }
+
+// urlRegex matches the URL format accepted by validateURL. Compiled once at
+// package init instead of per-call (see emailRegex).
+var urlRegex = regexp.MustCompile(`^https?://[^\s/$.?#].[^\s]*$`)
 
 // validateURL validates URL format
 func (v *Validator) validateURL(field reflect.Value) error {
@@ -361,13 +370,16 @@ func (v *Validator) validateURL(field reflect.Value) error {
 		return nil
 	}
 
-	urlRegex := regexp.MustCompile(`^https?://[^\s/$.?#].[^\s]*$`)
 	if !urlRegex.MatchString(url) {
 		return fmt.Errorf("%s: must be a valid URL", i18n.T("ErrorValidation", nil))
 	}
 
 	return nil
 }
+
+// alphaRegex matches the alphabetic-only charset accepted by validateAlpha.
+// Compiled once at package init instead of per-call (see emailRegex).
+var alphaRegex = regexp.MustCompile(`^[a-zA-Z]+$`)
 
 // validateAlpha validates alphabetic characters only
 func (v *Validator) validateAlpha(field reflect.Value) error {
@@ -385,13 +397,17 @@ func (v *Validator) validateAlpha(field reflect.Value) error {
 		return nil
 	}
 
-	alphaRegex := regexp.MustCompile(`^[a-zA-Z]+$`)
 	if !alphaRegex.MatchString(str) {
 		return fmt.Errorf("%s: must contain only alphabetic characters", i18n.T("ErrorValidation", nil))
 	}
 
 	return nil
 }
+
+// alphaNumRegex matches the alphanumeric-only charset accepted by
+// validateAlphaNum. Compiled once at package init instead of per-call (see
+// emailRegex).
+var alphaNumRegex = regexp.MustCompile(`^[a-zA-Z0-9]+$`)
 
 // validateAlphaNum validates alphanumeric characters only
 func (v *Validator) validateAlphaNum(field reflect.Value) error {
@@ -409,13 +425,16 @@ func (v *Validator) validateAlphaNum(field reflect.Value) error {
 		return nil
 	}
 
-	alphaNumRegex := regexp.MustCompile(`^[a-zA-Z0-9]+$`)
 	if !alphaNumRegex.MatchString(str) {
 		return fmt.Errorf("%s: must contain only alphanumeric characters", i18n.T("ErrorValidation", nil))
 	}
 
 	return nil
 }
+
+// numericRegex matches the numeric-only charset accepted by validateNumeric.
+// Compiled once at package init instead of per-call (see emailRegex).
+var numericRegex = regexp.MustCompile(`^[0-9]+$`)
 
 // validateNumeric validates numeric characters only
 func (v *Validator) validateNumeric(field reflect.Value) error {
@@ -433,7 +452,6 @@ func (v *Validator) validateNumeric(field reflect.Value) error {
 		return nil
 	}
 
-	numericRegex := regexp.MustCompile(`^[0-9]+$`)
 	if !numericRegex.MatchString(str) {
 		return fmt.Errorf("%s: must contain only numeric characters", i18n.T("ErrorValidation", nil))
 	}

@@ -6,30 +6,20 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
-
-// authS24DBSeq makes each in-memory DB unique within the process, so that
-// repeated invocations of the same test (go test -count=N) don't attach to a
-// live leftover DB from a prior iteration.
-var authS24DBSeq atomic.Int64
 
 // ── validateToken branches ────────────────────────────────────────────────────
 
@@ -190,47 +180,159 @@ func TestPruneLocked_TimeBasedSweep(t *testing.T) {
 	assert.False(t, stillThere, "pruneLocked time-based sweep must remove expired entries")
 }
 
-// ── ScopeFromRefQuery — ErrSecretRefInvalid branch ───────────────────────────
+// ── RequireScopedSecretRefPermission — ErrSecretRefInvalid / not-found branches ──
+//
+// RequireScopedSecretRefPermission (and handleScopedSecretRefPermissionRequest)
+// replaced the old standalone ScopeFromRefQuery resolver: it now resolves a
+// "?ref=project/environment/name" query param EXACTLY ONCE per request and pins
+// the result on the request context (GetResolvedSecretRefFromContext) instead of
+// letting the handler resolve the same ref again by name — see the doc comment
+// on RequireScopedSecretRefPermission in auth.go for the TOCTOU this closes.
 
-// TestScopeFromRefQuery_InvalidRefFormat verifies that a malformed ref string
-// (not "project/environment/name") returns errInvalidTarget (400 BadRequest),
-// not errTargetNotFound (404).
-func TestScopeFromRefQuery_InvalidRefFormat(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:scopeRefInvalid_%d?mode=memory&cache=shared", authS24DBSeq.Add(1))), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.Project{}, &models.Environment{}, &models.SecretNode{},
-	))
+// TestRequireScopedSecretRefPermission_InvalidRefFormat verifies that a
+// malformed ref string (not "project/environment/name") 400s, not 404s.
+func TestRequireScopedSecretRefPermission_InvalidRefFormat(t *testing.T) {
+	db := newScopedTestDB(t)
+	seedAdmin(t, db, 1)
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
 
 	// A ref with only one segment is invalid (needs "proj/env/name").
-	req := httptest.NewRequest(http.MethodGet, "/?ref=onlyone", nil)
-	_, err = ScopeFromRefQuery(req, cs)
-	assert.ErrorIs(t, err, errInvalidTarget,
-		"a malformed ref must return errInvalidTarget, not errTargetNotFound")
+	req := makeRequest(t, http.MethodGet, "/secrets/value?ref=onlyone", nil, userCtx, cs)
+	rec := httptest.NewRecorder()
+	nextCalled := false
+	handleScopedSecretRefPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	}), rec, req, "secrets.read")
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"a malformed ref must 400, not 404")
+	assert.False(t, nextCalled, "next must not run on a resolution failure")
 }
 
-// TestScopeFromRefQuery_NotFound verifies that a well-formed ref that points to
-// a non-existent secret returns errTargetNotFound.
-func TestScopeFromRefQuery_NotFound(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:scopeRefNotFound_%d?mode=memory&cache=shared", authS24DBSeq.Add(1))), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.Project{}, &models.Environment{}, &models.SecretNode{},
-	))
+// TestRequireScopedSecretRefPermission_NotFound verifies that a well-formed ref
+// pointing to a non-existent secret 404s (this admin test user holds the
+// permission globally, so handleScopeResolutionError takes the "reveal" branch).
+func TestRequireScopedSecretRefPermission_NotFound(t *testing.T) {
+	db := newScopedTestDB(t)
+	seedAdmin(t, db, 1)
 	// Seed minimal project + environment so the ref can be parsed but the secret
 	// lookup fails (no matching name).
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "myproject"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
-
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
 
-	req := httptest.NewRequest(http.MethodGet, "/?ref=myproject/prod/missing-secret", nil)
-	_, err = ScopeFromRefQuery(req, cs)
-	assert.ErrorIs(t, err, errTargetNotFound,
-		"a valid-format ref for a missing secret must return errTargetNotFound")
+	req := makeRequest(t, http.MethodGet, "/secrets/value?ref=myproject/prod/missing-secret", nil, userCtx, cs)
+	rec := httptest.NewRecorder()
+	nextCalled := false
+	handleScopedSecretRefPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	}), rec, req, "secrets.read")
+
+	assert.Equal(t, http.StatusNotFound, rec.Code,
+		"a valid-format ref for a missing secret must 404")
+	assert.False(t, nextCalled, "next must not run on a resolution failure")
+}
+
+// TestRequireScopedSecretRefPermission_PinsResolvedSecretOnContext proves the
+// context hand-off itself: on a successful authorization, the exact
+// *models.SecretNode resolved by the middleware is retrievable from the next
+// handler's request context via GetResolvedSecretRefFromContext.
+func TestRequireScopedSecretRefPermission_PinsResolvedSecretOnContext(t *testing.T) {
+	db := newScopedTestDB(t)
+	seedAdmin(t, db, 1)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, ProjectID: 1, EnvironmentID: 1, Name: "db"}).Error)
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
+
+	req := makeRequest(t, http.MethodGet, "/secrets/value?ref=proj/prod/db", nil, userCtx, cs)
+	rec := httptest.NewRecorder()
+	var pinned *models.SecretNode
+	handleScopedSecretRefPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pinned = GetResolvedSecretRefFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}), rec, req, "secrets.read")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, pinned, "the handler must see the resolved secret on its request context")
+	assert.Equal(t, uint(1), pinned.ID)
+	assert.Equal(t, uint(1), pinned.ProjectID)
+	assert.Equal(t, uint(1), pinned.EnvironmentID)
+}
+
+// TestRequireScopedSecretRefPermission_SingleResolutionSurvivesRename is the
+// TOCTOU regression test for core-secret-ref-4: it reproduces the exact race
+// the old two-resolution flow was vulnerable to — a project soft-delete plus a
+// same-named recreate landing between the authorization-scope resolution and
+// the value-read resolution — and proves the fix makes the two "reads" of the
+// resolved secret (the context pin, checked both immediately and again after
+// the race) agree, because there is structurally only ONE resolution call for
+// the whole request. It also independently confirms the race is real: an
+// UNRELATED, fresh call to ResolveSecretRef with the identical ref string
+// AFTER the rename lands on the NEW project — exactly the divergence the old
+// GetSecretValueByRef code path would have handed back to the caller as "the"
+// secret to read, despite authorization having been decided against the OLD
+// project.
+func TestRequireScopedSecretRefPermission_SingleResolutionSurvivesRename(t *testing.T) {
+	db := newScopedTestDB(t)
+	seedAdmin(t, db, 1)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "race-proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, ProjectID: 1, EnvironmentID: 1, Name: "db"}).Error)
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
+	ref := "race-proj/prod/db"
+
+	req := makeRequest(t, http.MethodGet, "/secrets/value?ref="+ref, nil, userCtx, cs)
+	rec := httptest.NewRecorder()
+	var pinnedBeforeRace, pinnedAfterRace *models.SecretNode
+	var staleReResolution *models.SecretNode
+
+	handleScopedSecretRefPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This is the ONE resolution the request ever performs — captured
+		// before simulating anything, exactly as the real handler would read
+		// it via middleware.GetResolvedSecretRefFromContext.
+		pinnedBeforeRace = GetResolvedSecretRefFromContext(r.Context())
+
+		// Simulate the race: soft-delete the original project and create a
+		// brand-new project with the SAME name (name uniqueness is only
+		// enforced while deleted_at IS NULL, so this is legal), with its own
+		// environment/secret rows also named "prod"/"db".
+		require.NoError(t, db.Delete(&models.Project{}, 1).Error)
+		require.NoError(t, db.Create(&models.Project{ID: 2, Name: "race-proj"}).Error)
+		require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "prod"}).Error)
+		require.NoError(t, db.Create(&models.SecretNode{ID: 2, ProjectID: 2, EnvironmentID: 2, Name: "db"}).Error)
+
+		// Prove the race is real: an independent resolution of the identical
+		// ref string, performed now, lands on the NEW project — this is what
+		// the pre-fix GetSecretValueByRef's second ResolveSecretRef call would
+		// have returned instead of the secret actually authorized against.
+		var err error
+		staleReResolution, err = cs.ResolveSecretRef(r.Context(), ref)
+		require.NoError(t, err)
+
+		// The fixed handler never makes that second call — it reads the SAME
+		// context value again, which must still be the pre-race resolution.
+		pinnedAfterRace = GetResolvedSecretRefFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}), rec, req, "secrets.read")
+
+	require.NotNil(t, pinnedBeforeRace)
+	require.NotNil(t, staleReResolution)
+	require.NotNil(t, pinnedAfterRace)
+
+	assert.Equal(t, uint(1), pinnedBeforeRace.ProjectID, "authorization was decided against project 1")
+	assert.Equal(t, uint(2), staleReResolution.ProjectID,
+		"a second by-name resolution after the race diverges onto project 2 — confirming the race is real")
+	assert.Same(t, pinnedBeforeRace, pinnedAfterRace,
+		"the context-pinned resolution must be the exact same value throughout the request, unaffected by the race")
+	assert.Equal(t, uint(1), pinnedAfterRace.ProjectID,
+		"the handler must still act on project 1's secret — the one authorization was actually decided against")
 }
 
 // ── hostOnly — bare IP (no port) branch ─────────────────────────────────────

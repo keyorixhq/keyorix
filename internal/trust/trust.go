@@ -84,7 +84,8 @@ func (r *KeyRegistry) Add(purpose Purpose, keyID string, pub ed25519.PublicKey) 
 	if len(pub) != ed25519.PublicKeySize {
 		return fmt.Errorf("trust: bad public key size %d (want %d)", len(pub), ed25519.PublicKeySize)
 	}
-	if strings.TrimSpace(keyID) == "" {
+	keyID = strings.TrimSpace(keyID)
+	if keyID == "" {
 		return fmt.Errorf("trust: key-id is required")
 	}
 	r.mu.Lock()
@@ -164,14 +165,18 @@ func parseKeySpec(spec string) (map[string]ed25519.PublicKey, error) {
 		if len(kv) != 2 || strings.TrimSpace(kv[0]) == "" {
 			return nil, fmt.Errorf("trust: bad key spec %q (want keyID=base64)", part)
 		}
+		keyID := strings.TrimSpace(kv[0])
+		if _, dup := out[keyID]; dup {
+			return nil, fmt.Errorf("trust: duplicate key-id %q in spec", keyID)
+		}
 		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(kv[1]))
 		if err != nil {
-			return nil, fmt.Errorf("trust: key %q: decode: %w", kv[0], err)
+			return nil, fmt.Errorf("trust: key %q: decode: %w", keyID, err)
 		}
 		if len(raw) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf("trust: key %q: bad size %d", kv[0], len(raw))
+			return nil, fmt.Errorf("trust: key %q: bad size %d", keyID, len(raw))
 		}
-		out[strings.TrimSpace(kv[0])] = ed25519.PublicKey(raw)
+		out[keyID] = ed25519.PublicKey(raw)
 	}
 	return out, nil
 }

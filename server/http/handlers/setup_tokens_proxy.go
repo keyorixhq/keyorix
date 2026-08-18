@@ -202,16 +202,21 @@ func (h *AuthHandler) GetSetupTokenByHashProxy(w http.ResponseWriter, r *http.Re
 }
 
 // setupTokenSupersedeBody is the wire body for POST
-// /api/v1/system/setup-tokens/supersede.
+// /api/v1/system/setup-tokens/supersede. ProjectID is optional (omitted/nil for
+// callers with no project dimension — global invites, account_setup,
+// password_reset_link); when present it restricts the flip to that project's own
+// invitations (CORE-INVITATIONS-003).
 type setupTokenSupersedeBody struct {
 	Purpose      string `json:"purpose"`
 	SubjectEmail string `json:"subject_email"`
+	ProjectID    *uint  `json:"project_id,omitempty"`
 }
 
 // SupersedeSetupTokensProxy handles POST /api/v1/system/setup-tokens/supersede. It
 // performs the SAME `WHERE purpose = ? AND subject_email = ? AND state = 'active'`
-// bulk UPDATE local_auth.go's own SupersedeActiveSetupTokens does — a reissue kills
-// every prior active link for the same (purpose, email) atomically.
+// bulk UPDATE (optionally further restricted to ProjectID's own invitations)
+// local_auth.go's own SupersedeActiveSetupTokens does — a reissue kills every prior
+// active link for the same (purpose, email[, project]) atomically.
 func (h *AuthHandler) SupersedeSetupTokensProxy(w http.ResponseWriter, r *http.Request) {
 	var body setupTokenSupersedeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -222,7 +227,7 @@ func (h *AuthHandler) SupersedeSetupTokensProxy(w http.ResponseWriter, r *http.R
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "purpose and subject_email are required")
 		return
 	}
-	if err := h.coreService.Storage().SupersedeActiveSetupTokens(r.Context(), body.Purpose, body.SubjectEmail); err != nil {
+	if err := h.coreService.Storage().SupersedeActiveSetupTokens(r.Context(), body.Purpose, body.SubjectEmail, body.ProjectID); err != nil {
 		log.Printf("setup-tokens proxy: supersede failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

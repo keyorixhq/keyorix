@@ -51,12 +51,9 @@ func migrateAuthDataWithConfig(cfg *config.Config, dryRun bool) error {
 		fmt.Println("🔄 Migrating authentication data to encrypted storage...")
 	}
 
-	if err := migrateAPIClients(db, authEnc, dryRun); err != nil {
-		return fmt.Errorf("failed to migrate API clients: %w", err)
-	}
-	// Sessions are deliberately NOT run through this migration. Unlike
-	// api_clients/api_tokens/password_resets, sessions.session_token has NEVER
-	// stored a plaintext value: store.CreateSession/RotateSession (see
+	// Sessions are deliberately NOT run through this migration. Unlike (at the
+	// time) api_clients/api_tokens/password_resets, sessions.session_token has
+	// NEVER stored a plaintext value: store.CreateSession/RotateSession (see
 	// internal/storage/store/local_auth.go) hash the token with SHA-256 before
 	// writing it, and GetSession/GetSessionAny look sessions up by recomputing
 	// that hash and matching it against this same column. There is no plaintext
@@ -72,9 +69,29 @@ func migrateAuthDataWithConfig(cfg *config.Config, dryRun bool) error {
 	// mass-invalidated every logged-in user's session while the CLI reported
 	// success. See git history for the removed migrateSessions/validateSessions
 	// (the latter had the identical false premise) if this ever needs revisiting.
-	if err := migrateAPITokens(db, authEnc, dryRun); err != nil {
-		return fmt.Errorf("failed to migrate API tokens: %w", err)
-	}
+	//
+	// API clients and API tokens are ALSO not run through this migration, for
+	// the identical reason — this was missed when the sessions fix above landed.
+	// Per models.APIClient.ClientSecret and models.APIToken.Token (see
+	// internal/storage/models/models.go), both columns hold a SHA-256 HASH of
+	// the credential, never plaintext — the credential is shown once at
+	// creation and never persisted in recoverable form. (The issuance/auth
+	// routes for these credential types were themselves removed in an earlier
+	// finding; see git history around #131 — but that's incidental: the columns
+	// were never plaintext even while those routes existed.)
+	//
+	// migrateAPIClients/migrateAPITokens used to match on "client_secret != ''"
+	// / "token != ''" — true for every row, since the column always holds a
+	// hash — "encrypted" that hash value as if it were a real secret, and then
+	// set the column to NULL in the same UPDATE. For any pre-existing row (e.g.
+	// carried forward from an older database predating #131's route removal),
+	// that NULL permanently destroyed the only stored credential-verification
+	// data for the row, with the CLI reporting success. There was never a
+	// plaintext state for this migration to move out of either column — the
+	// same false premise validateSessions had, and the same one
+	// validateAPIClients/validateAPITokens (see auth_encryption_validate.go)
+	// shared. See git history for the removed migrateAPIClients/migrateAPITokens
+	// if this ever needs revisiting.
 	if err := migratePasswordResetTokens(db, authEnc, dryRun); err != nil {
 		return fmt.Errorf("failed to migrate password reset tokens: %w", err)
 	}
@@ -83,69 +100,6 @@ func migrateAuthDataWithConfig(cfg *config.Config, dryRun bool) error {
 		fmt.Println("✅ Dry run completed. Use without --dry-run to perform actual migration")
 	} else {
 		fmt.Println("✅ Authentication data migration completed successfully")
-	}
-	return nil
-}
-
-func migrateAPIClients(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun bool) error {
-	var clients []models.APIClient
-	if err := db.Where("client_secret != '' AND encrypted_client_secret IS NULL").Find(&clients).Error; err != nil {
-		return err
-	}
-	fmt.Printf("🔑 Found %d API clients to migrate\n", len(clients))
-	if dryRun {
-		return nil
-	}
-	for _, client := range clients {
-		enc, meta, err := authEnc.EncryptClientSecret(client.ClientSecret)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt client secret for client %s: %w", client.ClientID, err)
-		}
-		// Clear the plaintext column in the same update that writes the encrypted
-		// value — leaving it populated after a "successful" migration defeats the
-		// point: the #278 compromise surface (a readable plaintext column) would
-		// still be sitting right next to its encrypted replacement. NULL, not "",
-		// since a second migrated row with "" would collide with any unique index
-		// on the column; NULL is exempt from uniqueness checks on every backend
-		// this CLI targets (sqlite/postgres).
-		if err := db.Model(&client).Updates(map[string]interface{}{
-			"encrypted_client_secret": enc,
-			"client_secret_metadata":  meta,
-			"client_secret":           nil,
-		}).Error; err != nil {
-			return fmt.Errorf("failed to update client %s: %w", client.ClientID, err)
-		}
-	}
-	return nil
-}
-
-func migrateAPITokens(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun bool) error {
-	var tokens []models.APIToken
-	if err := db.Where("token != '' AND encrypted_token IS NULL").Find(&tokens).Error; err != nil {
-		return err
-	}
-	fmt.Printf("🎟️  Found %d API tokens to migrate\n", len(tokens))
-	if dryRun {
-		return nil
-	}
-	for _, token := range tokens {
-		var migrateTokenUserID uint
-		if token.UserID != nil {
-			migrateTokenUserID = *token.UserID
-		}
-		enc, meta, err := authEnc.EncryptAPIToken(token.Token, migrateTokenUserID)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt API token %d: %w", token.ID, err)
-		}
-		// See migrateAPIClients for why the plaintext column is cleared (set to
-		// NULL, not "") in the same update as the encrypted write.
-		if err := db.Model(&token).Updates(map[string]interface{}{
-			"encrypted_token": enc,
-			"token_metadata":  meta,
-			"token":           nil,
-		}).Error; err != nil {
-			return fmt.Errorf("failed to update API token %d: %w", token.ID, err)
-		}
 	}
 	return nil
 }
@@ -164,8 +118,16 @@ func migratePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption,
 		if err != nil {
 			return fmt.Errorf("failed to encrypt password reset token %d: %w", reset.ID, err)
 		}
-		// See migrateAPIClients for why the plaintext column is cleared (set to
-		// NULL, not "") in the same update as the encrypted write.
+		// The plaintext column is cleared (set to NULL, not "") in the same update
+		// as the encrypted write: leaving it populated after a "successful"
+		// migration defeats the point (a readable plaintext column sitting right
+		// next to its encrypted replacement), and NULL — not "" — avoids colliding
+		// with the unique index on this column when a second row is migrated (NULL
+		// is exempt from uniqueness checks on every backend this CLI targets).
+		// Unlike this column, password_resets.token is a genuine legacy plaintext
+		// column (see models.PasswordReset), not a hash — see the comment above
+		// this function's call site for why api_clients/api_tokens/sessions are
+		// deliberately excluded from this migration.
 		if err := db.Model(&reset).Updates(map[string]interface{}{
 			"encrypted_token": enc,
 			"token_metadata":  meta,

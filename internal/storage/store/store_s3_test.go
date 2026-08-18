@@ -93,8 +93,9 @@ func TestSetupToken_SupersedeActiveTokens(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Supersede all active tokens for this (purpose, email).
-	require.NoError(t, ls.SupersedeActiveSetupTokens(ctx, "invitation_accept", "bob@example.com"))
+	// Supersede all active tokens for this (purpose, email) — unscoped (projectID nil),
+	// the behavior account_setup/password_reset_link/global invites still rely on.
+	require.NoError(t, ls.SupersedeActiveSetupTokens(ctx, "invitation_accept", "bob@example.com", nil))
 
 	// Both tokens should now be superseded.
 	for _, hash := range []string{"h1", "h2"} {
@@ -102,6 +103,74 @@ func TestSetupToken_SupersedeActiveTokens(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "superseded", got.State)
 	}
+}
+
+// TestSetupToken_SupersedeActiveTokens_ProjectScoped is the CORE-INVITATIONS-003
+// regression test: an admin issuing a project-scoped invitation_accept setup token
+// for one project must NOT silently invalidate a different project's still-pending
+// invite to the same email address, while a genuine re-invite/resend WITHIN the same
+// project must still supersede the prior link (the SMTP-abuse throttle's underlying
+// invariant — same-project reissue kills the old link — is preserved).
+func TestSetupToken_SupersedeActiveTokens_ProjectScoped(t *testing.T) {
+	ctx := context.Background()
+	ls := newStoreS3(t, "setup_tokens_proj_"+t.Name(), &models.SetupToken{}, &models.ProjectInvitation{})
+	exp := time.Now().Add(time.Hour)
+	const email = "victim@example.com"
+
+	// Project A's pending invitation + its accept-link token.
+	invA, err := ls.CreateProjectInvitation(ctx, &models.ProjectInvitation{
+		ProjectID: 1, Email: email, Role: "project_developer", State: "pending",
+	})
+	require.NoError(t, err)
+	_, err = ls.CreateSetupToken(ctx, &models.SetupToken{
+		TokenHash: "tok-a-1", Purpose: "invitation_accept", SubjectEmail: email,
+		InvitationID: &invA.ID, State: "active", ExpiresAt: exp,
+	})
+	require.NoError(t, err)
+
+	// Project B's admin — wholly unrelated to project A — invites the SAME email to
+	// project B. Pre-fix, this unconditionally superseded project A's still-pending
+	// link as an unintended side effect; the supersede call is now scoped to project B.
+	invB, err := ls.CreateProjectInvitation(ctx, &models.ProjectInvitation{
+		ProjectID: 2, Email: email, Role: "project_viewer", State: "pending",
+	})
+	require.NoError(t, err)
+	projectB := uint(2)
+	require.NoError(t, ls.SupersedeActiveSetupTokens(ctx, "invitation_accept", email, &projectB))
+	_, err = ls.CreateSetupToken(ctx, &models.SetupToken{
+		TokenHash: "tok-b-1", Purpose: "invitation_accept", SubjectEmail: email,
+		InvitationID: &invB.ID, State: "active", ExpiresAt: exp,
+	})
+	require.NoError(t, err)
+
+	// Both tokens remain active: project B's invite must not have touched project A's.
+	reloadedA, err := ls.GetSetupTokenByHash(ctx, "tok-a-1")
+	require.NoError(t, err)
+	assert.Equal(t, "active", reloadedA.State, "an unrelated project's invite must not supersede this project's pending link")
+	reloadedB, err := ls.GetSetupTokenByHash(ctx, "tok-b-1")
+	require.NoError(t, err)
+	assert.Equal(t, "active", reloadedB.State)
+
+	// A THIRD invite to the SAME project (B) + SAME email — e.g. a resend — must still
+	// supersede the prior link for that project: the per-project throttle invariant
+	// holds even though the cross-project one no longer fires.
+	require.NoError(t, ls.SupersedeActiveSetupTokens(ctx, "invitation_accept", email, &projectB))
+	_, err = ls.CreateSetupToken(ctx, &models.SetupToken{
+		TokenHash: "tok-b-2", Purpose: "invitation_accept", SubjectEmail: email,
+		InvitationID: &invB.ID, State: "active", ExpiresAt: exp,
+	})
+	require.NoError(t, err)
+
+	reloadedB1, err := ls.GetSetupTokenByHash(ctx, "tok-b-1")
+	require.NoError(t, err)
+	assert.Equal(t, "superseded", reloadedB1.State, "a same-project reissue must still supersede the project's own prior link")
+	reloadedB2, err := ls.GetSetupTokenByHash(ctx, "tok-b-2")
+	require.NoError(t, err)
+	assert.Equal(t, "active", reloadedB2.State)
+	// Project A's token is still untouched by project B's second (same-project) reissue.
+	reloadedAFinal, err := ls.GetSetupTokenByHash(ctx, "tok-a-1")
+	require.NoError(t, err)
+	assert.Equal(t, "active", reloadedAFinal.State)
 }
 
 func TestSetupToken_MarkConsumed(t *testing.T) {

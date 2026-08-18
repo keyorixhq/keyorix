@@ -27,6 +27,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -237,6 +240,43 @@ func TestInviteMember_MissingFields_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.InviteMember(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestInviteMember_IDPResolved_ClientCannotBypassVerification_S13 — PM-008
+// regression: InviteMember's HTTP body no longer has an idp_resolved field, so
+// a legacy client that still sends `"idp_resolved":true` must have it silently
+// ignored (unknown JSON field), not smuggled through to core.InviteMember. In
+// ValidationModeIDP that field controls whether a new membership starts at
+// `provisioned` (skipping invited/identity_verified) — only the real
+// SSO/JIT-provisioning path may assert that, never a client-supplied bool on
+// this general-purpose, roles.assign-gated endpoint. Assert the resulting
+// membership lands at `invited`, exactly as an untrusted invite should.
+func TestInviteMember_IDPResolved_ClientCannotBypassVerification_S13(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreS12WithAdmin(t)
+	cs.SetMembershipValidationMode(core.ValidationModeIDP)
+	h := NewCatalogHandler(cs)
+
+	role := &models.Role{Name: "pm008-viewer-s13", Description: "viewer"}
+	require.NoError(t, db.Create(role).Error)
+	targetUser := &models.User{Username: "pm008target_s13", Email: "pm008target_s13@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(targetUser).Error)
+
+	proj, err := cs.CreateProject(context.Background(), "pm008-idp-trust-s13", "")
+	require.NoError(t, err)
+
+	body := fmt.Sprintf(`{"user_id":%d,"role":"pm008-viewer-s13","idp_resolved":true}`, targetUser.ID)
+	r := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))),
+		"id", fmt.Sprintf("%d", proj.ID))
+	w := httptest.NewRecorder()
+	h.InviteMember(w, r)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	memberships, err := cs.ListProjectMemberships(context.Background(), proj.ID)
+	require.NoError(t, err)
+	require.Len(t, memberships, 1)
+	assert.Equal(t, core.MembershipInvited, memberships[0].State,
+		"a client-supplied idp_resolved must not bypass invited/identity_verified in idp mode")
 }
 
 // TestTransitionMembership_BadProjectID_S13 — non-numeric project ID → 400.

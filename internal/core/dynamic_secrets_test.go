@@ -233,10 +233,13 @@ func TestDynamicSecrets_CreateConfig_DifferentScopeAllowed(t *testing.T) {
 	})
 	assert.NoError(t, err, "the same name in a different environment must succeed")
 
-	// Different project, same environment ID + name.
+	// Different project, same name — with its OWN environment (an environment ID
+	// belongs to exactly one project; reusing project 1's EnvironmentID 2 here would
+	// itself be the reference-confusion case CreateDynamicSecretConfig now rejects).
 	require.NoError(t, db.Create(&models.Project{ID: 4, Name: "dyn-test-project-2"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 5, ProjectID: 4, Name: "dyn-test-env-3"}).Error)
 	_, err = c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
-		Name: "app-db", ProjectID: 4, EnvironmentID: 2, BackendType: "postgres",
+		Name: "app-db", ProjectID: 4, EnvironmentID: 5, BackendType: "postgres",
 		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
 	})
 	assert.NoError(t, err, "the same name in a different project must succeed")
@@ -247,6 +250,43 @@ func TestDynamicSecrets_CreateConfig_DifferentScopeAllowed(t *testing.T) {
 		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
 	})
 	assert.NoError(t, err, "a different name in the same project/environment must succeed")
+}
+
+// TestDynamicSecrets_CreateConfig_RejectsCrossProjectEnvironment pins the fix for
+// the reference-confusion follow-up: EnvironmentID 2 belongs to project 1, so a
+// request naming a DIFFERENT project (4) with that same EnvironmentID must be
+// rejected, not silently accepted with a config whose stored ProjectID and actual
+// environment disagree about which project the config belongs to.
+func TestDynamicSecrets_CreateConfig_RejectsCrossProjectEnvironment(t *testing.T) {
+	c, db, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Project{ID: 4, Name: "dyn-test-project-2"}).Error)
+
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "cross-project-cfg", ProjectID: 4, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	require.Error(t, err, "an environment belonging to a different project must be rejected")
+	assert.Contains(t, err.Error(), "does not belong to project")
+
+	configs, err := c.storage.ListDynamicSecretConfigs(ctx, 4, 2)
+	require.NoError(t, err)
+	assert.Empty(t, configs, "no config must have been created")
+}
+
+// TestDynamicSecrets_CreateConfig_RejectsUnknownEnvironment pins the sibling case:
+// an EnvironmentID with no backing row at all must also be rejected, not just a
+// mismatched one.
+func TestDynamicSecrets_CreateConfig_RejectsUnknownEnvironment(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "nonexistent-env-cfg", ProjectID: 1, EnvironmentID: 999999, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
@@ -271,7 +311,7 @@ func TestDynamicSecrets_AdminDSNTransplantBetweenConfigsFailsToDecrypt(t *testin
 	ctx := context.Background()
 	cfgA := mkConfig(t, c, ctx)
 	cfgB, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
-		Name: "other-db", ProjectID: 1, BackendType: "postgres",
+		Name: "other-db", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
 		AdminDSN:          "postgres://admin:different@other-db.internal:5432/app",
 		DefaultTTLSeconds: 3600,
 		ActorID:           testAdminActorID,
@@ -524,7 +564,7 @@ func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
 	c, _, _, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
-		Name: "capped", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		Name: "capped", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		DefaultTTLSeconds: 600, MaxTTLSeconds: 1800, ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
@@ -533,6 +573,65 @@ func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
 	issued, err := c.IssueLease(ctx, cfg.ID, 3600, 7)
 	require.NoError(t, err)
 	assert.Equal(t, fixed.Add(30*time.Minute), issued.ExpiresAt, "issue TTL must be clamped to max_ttl_seconds")
+}
+
+// A caller-supplied ttl_seconds large enough to overflow int64 nanoseconds when
+// multiplied by time.Second must be rejected outright, not silently wrapped into an
+// arbitrary (possibly negative) Duration that would mint a credential with an
+// ExpiresAt in the past. 20_000_000_000 seconds (~634 years) comfortably exceeds the
+// ~9.22e9s int64-nanosecond overflow threshold.
+func TestDynamicSecrets_IssueRejectsOverflowingTTLSeconds(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "overflow-guard", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		ActorID: testAdminActorID,
+	})
+	require.NoError(t, err)
+
+	_, err = c.IssueLease(ctx, cfg.ID, 20_000_000_000, 7)
+	require.Error(t, err, "an overflowing ttl_seconds must be rejected, not silently wrapped into a negative Duration")
+	assert.Contains(t, err.Error(), "exceeds the maximum")
+}
+
+// The same overflow guard applies to RenewLease's ttlSeconds parameter.
+func TestDynamicSecrets_RenewRejectsOverflowingTTLSeconds(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "renew-overflow-guard", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 600, ActorID: testAdminActorID,
+	})
+	require.NoError(t, err)
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	_, err = c.RenewLease(ctx, issued.LeaseID, 20_000_000_000, 7)
+	require.Error(t, err, "an overflowing renewal ttl_seconds must be rejected, not silently wrapped into a negative Duration")
+	assert.Contains(t, err.Error(), "exceeds the maximum")
+}
+
+// Setting an oversized default_ttl_seconds/max_ttl_seconds at config-create time must
+// also be rejected — both are multiplied by time.Second the same way a caller-supplied
+// override is (in dynamicTTL's clamp and RenewLease's per-lease hardCap), so they carry
+// the identical int64-nanosecond overflow risk.
+func TestDynamicSecrets_CreateRejectsOverflowingConfigTTLFields(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "bad-default", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 20_000_000_000, ActorID: testAdminActorID,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds the maximum")
+
+	_, err = c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "bad-max", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		MaxTTLSeconds: 20_000_000_000, ActorID: testAdminActorID,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds the maximum")
 }
 
 // #97: an install-wide ceiling must clamp a lease's TTL even when the config's own
@@ -544,7 +643,7 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
 	c.SetDynamicMaxLeaseTTL(2 * time.Hour)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
-		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		Name: "unbounded", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		ActorID: testAdminActorID,
 		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
 	})
@@ -563,7 +662,7 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLDefaultsWhenUnset(t *testing.T) {
 	// SetDynamicMaxLeaseTTL is never called — dynamicMaxLeaseTTL stays its zero value.
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
-		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		Name: "unbounded", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
@@ -664,7 +763,7 @@ func TestDynamicSecrets_RevokeEffectiveEphemeralBackendAuditsAsGenuineRevoke(t *
 func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
 	c, _, _, _ := newDynamicTestCore(t)
 	_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
-		Name: "bad", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		Name: "bad", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		DefaultTTLSeconds: 3600, MaxTTLSeconds: 600, ActorID: testAdminActorID,
 	})
 	require.Error(t, err)
@@ -679,7 +778,7 @@ func TestDynamicSecrets_RenewRespectsInstallWideMaxLeaseTTL(t *testing.T) {
 	c.SetDynamicMaxLeaseTTL(20 * time.Minute)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
-		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		Name: "unbounded", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		DefaultTTLSeconds: 300, // no MaxTTLSeconds — per-config ceiling unset
 		ActorID:           testAdminActorID,
 	})
@@ -699,7 +798,7 @@ func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {
 	c, _, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
-		Name: "renewable", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		Name: "renewable", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		DefaultTTLSeconds: 600, MaxTTLSeconds: 1200, // 10m default, 20m hard cap
 		ActorID: testAdminActorID,
 	})
@@ -885,12 +984,14 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "real-factory-project"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 1, Name: "real-factory-env"}).Error)
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
 
 	for _, backend := range []string{"postgres", "mysql", "mongodb", "redis"} {
 		_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
-			Name: backend + "-cfg", ProjectID: 1, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/",
+			Name: backend + "-cfg", ProjectID: 1, EnvironmentID: 2, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/",
 			ActorID: testAdminActorID,
 		})
 		require.NoError(t, err, "backend %s must be accepted", backend)

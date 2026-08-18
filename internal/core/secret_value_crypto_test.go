@@ -63,7 +63,7 @@ func TestSecretValue_EncryptedRoundTrip(t *testing.T) {
 	version, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
 	require.NoError(t, err)
 	assert.False(t, bytes.Equal(version.EncryptedValue, []byte(plaintext)), "must be ciphertext at rest")
-	assert.True(t, versionIsEncrypted(version.EncryptionMetadata), "metadata must mark the row encrypted")
+	assert.Equal(t, metadataEncrypted, versionMetadataStatus(version.EncryptionMetadata), "metadata must mark the row encrypted")
 
 	got, err := c.GetSecretValue(ctx, secret.ID)
 	require.NoError(t, err)
@@ -129,4 +129,72 @@ func TestSecretValue_PlaintextRowStillReadable(t *testing.T) {
 	got, err := c.decryptVersionValue(secret, plaintextRow)
 	require.NoError(t, err)
 	assert.Equal(t, "legacy-plaintext", string(got))
+}
+
+// TestSecretValue_MalformedMetadataFailsClosed proves that EncryptionMetadata which
+// fails to parse as JSON at all (garbage/truncated bytes — e.g. from a corrupted
+// column or inconsistent backup restore) is treated as ambiguous, not plaintext:
+// decryptVersionValue must error rather than silently returning EncryptedValue as if
+// it were the secret's real value.
+func TestSecretValue_MalformedMetadataFailsClosed(t *testing.T) {
+	c, projectID, _ := newEncryptedCore(t)
+
+	secret := &models.SecretNode{ID: 43, ProjectID: projectID}
+	corruptedRow := &models.SecretVersion{
+		SecretNodeID:       secret.ID,
+		VersionNumber:      1,
+		EncryptedValue:     []byte("possibly-real-ciphertext-bytes"),
+		EncryptionMetadata: models.JSON(`{not valid json`),
+	}
+
+	assert.Equal(t, metadataAmbiguous, versionMetadataStatus(corruptedRow.EncryptionMetadata))
+
+	got, err := c.decryptVersionValue(secret, corruptedRow)
+	require.Error(t, err, "unparseable metadata must fail closed, not be treated as plaintext")
+	assert.Nil(t, got)
+	assert.NotEqual(t, "possibly-real-ciphertext-bytes", string(got))
+}
+
+// TestSecretValue_MissingAlgorithmFailsClosed proves that well-formed JSON metadata
+// which is NOT the confirmed-empty "{}" plaintext marker, but also carries no (or an
+// empty) "algorithm" field, is treated as ambiguous rather than plaintext.
+// decryptVersionValue must error instead of silently returning EncryptedValue.
+func TestSecretValue_MissingAlgorithmFailsClosed(t *testing.T) {
+	c, projectID, _ := newEncryptedCore(t)
+
+	testCases := []struct {
+		name string
+		meta models.JSON
+	}{
+		{"empty algorithm field", models.JSON(`{"algorithm":""}`)},
+		{"other fields, no algorithm", models.JSON(`{"nonce":"abc123"}`)},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			secret := &models.SecretNode{ID: 44, ProjectID: projectID}
+			row := &models.SecretVersion{
+				SecretNodeID:       secret.ID,
+				VersionNumber:      1,
+				EncryptedValue:     []byte("possibly-real-ciphertext-bytes"),
+				EncryptionMetadata: tc.meta,
+			}
+
+			assert.Equal(t, metadataAmbiguous, versionMetadataStatus(row.EncryptionMetadata))
+
+			got, err := c.decryptVersionValue(secret, row)
+			require.Error(t, err, "metadata with no usable algorithm must fail closed")
+			assert.Nil(t, got)
+		})
+	}
+}
+
+// TestSecretValue_EmptyObjectMetadataIsPlaintext is the non-regression check for the
+// intended plaintext marker: an exact "{}" object (the shape the current write path
+// always produces when encryption is disabled) must still be classified as confirmed
+// plaintext and returned verbatim.
+func TestSecretValue_EmptyObjectMetadataIsPlaintext(t *testing.T) {
+	assert.Equal(t, metadataPlaintext, versionMetadataStatus(models.JSON("{}")))
+	assert.Equal(t, metadataPlaintext, versionMetadataStatus(nil))
+	assert.Equal(t, metadataPlaintext, versionMetadataStatus(models.JSON("")))
 }

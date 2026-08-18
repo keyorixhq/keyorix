@@ -43,7 +43,7 @@ const secret: Secret = {
     shareCount: 0,
     lastModified: '2026-06-17T00:00:00Z',
     owner: 'alice',
-    permissions: [],
+    permissions: ['read', 'write'],
     metadata: {},
     tags: [],
     classification: 'confidential',
@@ -223,6 +223,22 @@ describe('ShareSecretModal submission + lifecycle', () => {
         await waitFor(() => expect(mockMutate).toHaveBeenCalled());
         const [payload] = mockMutate.mock.calls[0];
         expect(payload.permission).toBe('write');
+    });
+
+    it('only offers Read Only when the sharer lacks write on the secret', () => {
+        const readOnlySecret: Secret = { ...secret, permissions: ['read'] };
+        render(<ShareSecretModal secret={readOnlySecret} isOpen onClose={() => {}} />);
+        const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
+        const optionLabels = Array.from(select.options).map((o) => o.textContent);
+        expect(optionLabels).toEqual(['Read Only']);
+        expect(optionLabels).not.toContain('Read & Write');
+    });
+
+    it('offers Read & Write when the sharer holds write on the secret', () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
+        const optionLabels = Array.from(select.options).map((o) => o.textContent);
+        expect(optionLabels).toContain('Read & Write');
     });
 
     it('shows a success message, calls onSuccess, and auto-closes after a delay', async () => {

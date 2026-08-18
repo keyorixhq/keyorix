@@ -3,6 +3,7 @@ package connect
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +94,56 @@ func TestLoginWithCredentials_BadStatus(t *testing.T) {
 
 	_, err := loginWithCredentials(srv.URL, "alice", "wrong", 5*time.Second)
 	require.Error(t, err)
+}
+
+// TestLoginWithCredentials_SanitizesResponseBodyOnFailure is the regression test
+// for the threat model in #G69/common.SanitizeForTerminal: a malicious or
+// compromised KEYORIX_SERVER endpoint could embed ANSI/control-sequence
+// terminal-injection payloads in its login-failure response body. That body
+// reaches the operator's terminal verbatim via loginWithCredentials's returned
+// error (wrapped by runConnect's "login failed: %w" and printed by cobra), so
+// it must be stripped of control/escape bytes before it ever gets there.
+func TestLoginWithCredentials_SanitizesResponseBodyOnFailure(t *testing.T) {
+	// A representative hostile payload: ANSI color escape, BEL, CR, LF mixed in
+	// with a plausible human-readable error message.
+	payload := "invalid credentials\x1b[31;1m\x07\r\nnested \x1b[2Jscreen-clear attempt"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+
+	_, err := loginWithCredentials(srv.URL, "alice", "wrong", 5*time.Second)
+	require.Error(t, err)
+
+	msg := err.Error()
+	// No raw control/escape bytes must reach the returned error (and therefore
+	// the terminal): ESC, BEL, CR, LF are all stripped.
+	assert.NotContains(t, msg, "\x1b")
+	assert.NotContains(t, msg, "\x07")
+	assert.NotContains(t, msg, "\r")
+	assert.NotContains(t, msg, "\n")
+	// The human-readable portions of the server's message are still surfaced —
+	// this isn't a blanket "hide everything" fix, just a sanitize-before-echo one.
+	assert.Contains(t, msg, "invalid credentials")
+	assert.Contains(t, msg, "screen-clear attempt")
+}
+
+// TestLoginWithCredentials_TruncatesLongResponseBodyOnFailure guards against a
+// hostile or misbehaving server flooding the operator's terminal with an
+// oversized error response.
+func TestLoginWithCredentials_TruncatesLongResponseBodyOnFailure(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(long))
+	}))
+	defer srv.Close()
+
+	_, err := loginWithCredentials(srv.URL, "alice", "wrong", 5*time.Second)
+	require.Error(t, err)
+	assert.Less(t, len(err.Error()), 400, "error message should be bounded, not carry the full 5000-byte body")
+	assert.Contains(t, err.Error(), "…", "truncated excerpt should be marked with an ellipsis")
 }
 
 func TestTestServerConnection(t *testing.T) {

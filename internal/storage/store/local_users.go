@@ -400,6 +400,20 @@ func (ls *LocalStorage) GetUserGroups(ctx context.Context, userID uint) ([]*mode
 	return groups, nil
 }
 
+// ListAllUserGroupMemberships returns every user_groups row in the
+// deployment, unfiltered by project scope — see the storage.Storage interface
+// doc (#G44) for why this exists alongside GetUserGroups.
+func (ls *LocalStorage) ListAllUserGroupMemberships(ctx context.Context) ([]storage.UserGroupMembership, error) {
+	var rows []storage.UserGroupMembership
+	err := ls.db.WithContext(ctx).Model(&models.UserGroup{}).
+		Select("user_id", "group_id").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}
+
 // --- Groups ---
 
 func (ls *LocalStorage) CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {

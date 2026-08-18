@@ -41,6 +41,11 @@ replaced with underscores before becoming an env var key:
   db-password  →  DB_PASSWORD
   api.endpoint →  API_ENDPOINT
 
+If two different secret names collide onto the same env var key after this
+conversion (e.g. "my-secret" and "my_secret" both becoming MY_SECRET), the
+command aborts with an error instead of silently letting one overwrite the
+other — rename one of the secrets to resolve the collision.
+
 Authentication:
   • Session tokens written by 'keyorix auth login' are used automatically
     when the CLI is in client mode.
@@ -161,6 +166,7 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 	// silently missing environment variables.
 	const pageSize = 500
 	result := make(map[string]string)
+	envKeySources := make(map[string]string)
 	for page := 1; ; page++ {
 		secrets, _, err := svc.ListSecrets(ctx, &coreStorage.SecretFilter{
 			ProjectID:     &projectID,
@@ -177,7 +183,9 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 				fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
 				continue
 			}
-			result[toEnvKey(s.Name)] = string(val)
+			if err := setEnvKey(result, envKeySources, s.Name, string(val)); err != nil {
+				return nil, err
+			}
 		}
 		if len(secrets) < pageSize {
 			break
@@ -254,6 +262,7 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 	// process, silently truncating or failing the launch instead of a clear error.
 	const maxRunInjectedSecrets = 2000
 	result := make(map[string]string)
+	envKeySources := make(map[string]string)
 	for page := 1; ; page++ {
 		listPath := fmt.Sprintf(
 			"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=%d&page=%d",
@@ -280,7 +289,9 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 				fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
 				continue
 			}
-			result[toEnvKey(s.Name)] = secretBody.Value
+			if err := setEnvKey(result, envKeySources, s.Name, secretBody.Value); err != nil {
+				return nil, err
+			}
 		}
 		if len(secretsBody.Secrets) < pageSize {
 			break
@@ -303,6 +314,26 @@ func toEnvKey(name string) string {
 		}
 	}
 	return b.String()
+}
+
+// setEnvKey records secret name's value under its toEnvKey-derived key in result,
+// tracking which secret name produced each key in envKeySources so a collision can
+// be detected. Two DIFFERENT secret names can sanitize to the SAME env var key
+// (e.g. "my-secret" and "my_secret" both become MY_SECRET) — without this check the
+// second secret processed would silently overwrite the first in result, and the
+// operator would have no indication that one of their two secrets never actually
+// reached the child process's environment (which could read the WRONG secret's
+// value under an expected variable name). Matches this codebase's fail-closed-on-
+// ambiguity convention (see the dangerousEnvVarNames / maxRunInjectedSecrets guards
+// above): abort the whole run rather than silently picking a winner.
+func setEnvKey(result map[string]string, envKeySources map[string]string, name, value string) error {
+	key := toEnvKey(name)
+	if existing, ok := envKeySources[key]; ok && existing != name {
+		return fmt.Errorf("secrets %q and %q both sanitize to the same environment variable %q — 'keyorix run' refuses to continue since one of them would silently be dropped from the child process's environment; rename one of the secrets to avoid the collision", existing, name, key)
+	}
+	envKeySources[key] = name
+	result[key] = value
+	return nil
 }
 
 // dangerousEnvVarNames names environment variables that affect dynamic-linker,

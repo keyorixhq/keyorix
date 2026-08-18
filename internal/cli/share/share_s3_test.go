@@ -332,6 +332,10 @@ func TestRunGroupShares_PrintsTable(t *testing.T) {
 	t.Chdir(dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
+	// #G66: runGroupShares now has a remote-client branch like every other
+	// share command — isolate it from any real ~/.keyorix/cli.yaml on the
+	// machine running the test, so this stays a local-mode test.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)

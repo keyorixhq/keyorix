@@ -83,6 +83,8 @@ func TestRunGroupShares_LocalModeStorageError(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
+	// #G66: isolate from any real ~/.keyorix/cli.yaml so this stays local-mode.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	origID := groupSharesGroupID
 	defer func() { groupSharesGroupID = origID }()
 	groupSharesGroupID = 1
@@ -189,6 +191,8 @@ func TestRunGroupShares_EmptyResult(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
+	// #G66: isolate from any real ~/.keyorix/cli.yaml so this stays local-mode.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	orig := groupSharesGroupID
 	defer func() { groupSharesGroupID = orig }()
 	groupSharesGroupID = 1

@@ -1,6 +1,8 @@
 // Package compliance provides `keyorix compliance` — the deployment's controls-
 // posture report for auditors (ISO 27001 / SOC 2 / NIS2 / DORA). Talks to
-// GET /api/v1/compliance/posture (gated by system.read).
+// GET /api/v1/compliance/posture (gated by audit.read, not the system_viewer
+// baseline system.read — same disclosure-family calibration as the other
+// /compliance/* endpoints; see server/http/router.go).
 package compliance
 
 import (

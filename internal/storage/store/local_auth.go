@@ -374,11 +374,22 @@ func (ls *LocalStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*
 }
 
 // SupersedeActiveSetupTokens flips every active token for (purpose, email) to
-// superseded so a reissue kills the prior link atomically.
-func (ls *LocalStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error {
-	return ls.db.WithContext(ctx).Model(&models.SetupToken{}).
-		Where("purpose = ? AND subject_email = ? AND state = ?", purpose, email, "active").
-		Update("state", "superseded").Error
+// superseded so a reissue kills the prior link atomically. When projectID is
+// non-nil, the flip is additionally restricted to tokens whose InvitationID
+// belongs to that project (a subquery against project_invitations) — this is
+// how a project-scoped invitation_accept reissue is kept from superseding a
+// different project's still-pending invite to the same address
+// (CORE-INVITATIONS-003). A nil projectID keeps the original unscoped
+// (purpose, email) behavior for callers with no project dimension (global
+// invites, account_setup, password_reset_link).
+func (ls *LocalStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string, projectID *uint) error {
+	q := ls.db.WithContext(ctx).Model(&models.SetupToken{}).
+		Where("purpose = ? AND subject_email = ? AND state = ?", purpose, email, "active")
+	if projectID != nil {
+		q = q.Where("invitation_id IN (?)",
+			ls.db.Model(&models.ProjectInvitation{}).Select("id").Where("project_id = ?", *projectID))
+	}
+	return q.Update("state", "superseded").Error
 }
 
 // MarkSetupTokenConsumed transitions active → consumed only if still active. The

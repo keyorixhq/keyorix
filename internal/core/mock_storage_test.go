@@ -1008,6 +1008,14 @@ func (m *MockStorage) GetUserGroups(ctx context.Context, userID uint) ([]*models
 	return args.Get(0).([]*models.Group), args.Error(1)
 }
 
+func (m *MockStorage) ListAllUserGroupMemberships(ctx context.Context) ([]storage.UserGroupMembership, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.UserGroupMembership), args.Error(1)
+}
+
 func (m *MockStorage) AddPasswordHistory(ctx context.Context, userID uint, hash string, at time.Time) error {
 	args := m.Called(ctx, userID, hash, at)
 	return args.Error(0)
@@ -1314,6 +1322,14 @@ func (m *MockStorage) VerifyAuditChain(ctx context.Context, anchor *storage.Audi
 	return args.Get(0).(*storage.AuditChainVerification), args.Error(1)
 }
 
+func (m *MockStorage) MigrateAuditChainEncoding(ctx context.Context, dryRun bool, anchor *storage.AuditChainAnchor) (*storage.AuditChainMigrationResult, error) {
+	args := m.Called(ctx, dryRun, anchor)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*storage.AuditChainMigrationResult), args.Error(1)
+}
+
 func (m *MockStorage) CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error {
 	args := m.Called(ctx, cp)
 	return args.Error(0)
@@ -1600,8 +1616,8 @@ func (m *MockStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*mo
 	return args.Get(0).(*models.SetupToken), args.Error(1)
 }
 
-func (m *MockStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error {
-	args := m.Called(ctx, purpose, email)
+func (m *MockStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string, projectID *uint) error {
+	args := m.Called(ctx, purpose, email, projectID)
 	return args.Error(0)
 }
 

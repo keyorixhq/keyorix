@@ -357,6 +357,27 @@ func SecureDeleteFile(path string) error {
 	return SyncDir(filepath.Dir(path))
 }
 
+// unixOctalMode renders m in conventional Unix chmod notation (e.g. "4600" for
+// setuid+rw-------), rather than Go's raw %o formatting of os.FileMode, which
+// packs the special bits far above bit 8 and prints as a number no operator
+// would recognize (e.g. "40000600").
+func unixOctalMode(m os.FileMode) string {
+	special := 0
+	if m&os.ModeSetuid != 0 {
+		special |= 4
+	}
+	if m&os.ModeSetgid != 0 {
+		special |= 2
+	}
+	if m&os.ModeSticky != 0 {
+		special |= 1
+	}
+	if special == 0 {
+		return fmt.Sprintf("%o", m.Perm())
+	}
+	return fmt.Sprintf("%o%03o", special, m.Perm())
+}
+
 // FixFilePerms verifies file permissions and ownership.
 // If autofix=true, it will attempt to correct any mismatches.
 func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cognitive complexity 33, suppress go:S3776
@@ -403,10 +424,17 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cogn
 			continue
 		}
 
-		// Check permissions
+		// Check permissions. info.Mode().Perm() masks to only the low 9 rwx bits,
+		// silently dropping any setuid/setgid/sticky bits — a file whose low 9 bits
+		// already match f.Mode but ALSO carries one of those special bits would
+		// otherwise compare equal and never get chmod'd, leaving the special bit in
+		// place through a pass whose entire purpose is to lock these files down.
+		// Check for it explicitly so it's caught (and, via the unconditional
+		// file.Chmod(f.Mode) below, cleared — f.Mode never carries these bits itself).
 		actualMode := info.Mode().Perm()
-		if actualMode != f.Mode {
-			msg := fmt.Sprintf("File %s has mode %o but expected %o", f.Path, actualMode, f.Mode)
+		hasSpecialBits := info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0
+		if actualMode != f.Mode || hasSpecialBits {
+			msg := fmt.Sprintf("File %s has mode %s but expected %o", f.Path, unixOctalMode(info.Mode()), f.Mode)
 			hasWarnings = true
 			if autofix {
 				if err := file.Chmod(f.Mode); err != nil {

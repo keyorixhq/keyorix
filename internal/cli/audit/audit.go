@@ -58,6 +58,8 @@ var (
 	searchUntil        string
 	searchLimit        int
 	searchOffset       int
+
+	flagMigrateConfirm bool
 )
 
 func init() {
@@ -90,7 +92,10 @@ func init() {
 	searchCmd.Flags().IntVar(&searchLimit, "limit", 100, "Max results (1–1000)")
 	searchCmd.Flags().IntVar(&searchOffset, "offset", 0, "Pagination offset")
 
-	AuditCmd.AddCommand(verifyCmd, exportCmd, checkpointCmd, logsCmd, searchCmd)
+	migrateChainCmd.Flags().BoolVar(&flagMigrateConfirm, "confirm", false,
+		"Apply the migration for real. Without this flag, the command only previews what would change — nothing is written.")
+
+	AuditCmd.AddCommand(verifyCmd, exportCmd, checkpointCmd, logsCmd, searchCmd, migrateChainCmd)
 }
 
 func client() (*common.RemoteClient, error) {
@@ -363,6 +368,73 @@ verify (broken, or a prior signed checkpoint proves a truncation).`,
 	},
 }
 
+// migrateChainResult mirrors the /audit/migrate-chain-encoding payload.
+type migrateChainResult struct {
+	DryRun               bool   `json:"dry_run"`
+	RowsMigrated         int64  `json:"rows_migrated"`
+	UnchainedRowsSkipped int64  `json:"unchained_rows_skipped"`
+	HeadID               uint   `json:"head_id"`
+	HeadHash             string `json:"head_hash"`
+	AnchorRowID          uint   `json:"anchor_row_id,omitempty"`
+	AnchorNewEntryHash   string `json:"anchor_new_entry_hash,omitempty"`
+}
+
+var migrateChainCmd = &cobra.Command{
+	Use:   "migrate-chain-encoding",
+	Short: "One-time re-derivation of the audit hash chain under the current encoding",
+	Long: `Re-derives entry_hash/prev_hash for every chained audit_events row under the
+server's current hash encoding. This closes a breaking hash-format change: any
+deployment with pre-existing chained audit rows will otherwise see 'audit verify'
+report the chain broken starting at the first pre-upgrade row, indistinguishable
+from tampering.
+
+SAFETY: without --confirm this only PREVIEWS what would change — nothing is
+written. Review the preview's row count before re-running with --confirm.
+
+This rewrites the tamper-evidence dataset itself. Before running with --confirm:
+  - Stop all other server instances (or otherwise ensure nothing else is writing
+    audit events) for the duration of the run — a concurrently appended event
+    can be hashed against a partially-migrated chain otherwise.
+  - Prefer running during a maintenance window.
+  - Consider taking a database backup first.
+
+Requires system.write (same privilege bar as 'audit checkpoint').`,
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		c, err := client()
+		if err != nil {
+			return err
+		}
+		path := "/api/v1/audit/migrate-chain-encoding?dry_run=true"
+		if flagMigrateConfirm {
+			path = "/api/v1/audit/migrate-chain-encoding?dry_run=false"
+		}
+		var out migrateChainResult
+		if err := c.Post(context.Background(), path, nil, &out); err != nil {
+			return err
+		}
+
+		if out.DryRun {
+			fmt.Println("DRY RUN — nothing was written. Re-run with --confirm to apply.")
+		} else {
+			fmt.Println("Audit chain encoding migration applied:")
+		}
+		fmt.Printf("  rows migrated:          %d\n", out.RowsMigrated)
+		fmt.Printf("  unchained rows skipped: %d\n", out.UnchainedRowsSkipped)
+		fmt.Printf("  new head id:            %d\n", out.HeadID)
+		fmt.Printf("  new head hash:          %s\n", out.HeadHash)
+		if out.AnchorRowID != 0 {
+			fmt.Printf("  retention anchor row:   %d (re-signed with the migrated entry_hash)\n", out.AnchorRowID)
+		}
+		if out.DryRun {
+			fmt.Println("\nRun 'keyorix audit migrate-chain-encoding --confirm' to apply.")
+		} else {
+			fmt.Println("\nRun 'keyorix audit verify' to confirm the chain now verifies end to end.")
+		}
+		return nil
+	},
+}
+
 // logEntry mirrors one row of the /audit/logs payload.
 type logEntry struct {
 	ID             uint   `json:"id"`
@@ -455,13 +527,15 @@ func printAuditLogTable(logs []logEntry, total int64) {
 		if e.Impersonation && e.ImpersonatedBy != "" {
 			actor = e.ImpersonatedBy + "→" + e.Actor
 		}
-		// #G69: actor and description are attacker-controlled free text (a
-		// username, or a description built from user-supplied metadata) — a
-		// reviewing operator must not have their terminal spoofed/hidden by
-		// the very row they're trying to audit.
+		// #G69: actor, event type, and description are all attacker-
+		// controlled or attacker-influenced free text (a username, an event
+		// type derived from a client-supplied action string, or a
+		// description built from user-supplied metadata) — a reviewing
+		// operator must not have their terminal spoofed/hidden by the very
+		// row they're trying to audit.
 		fmt.Printf("%-6d %-20s %-16s %-9s %-22s %s\n",
 			e.ID, shortTime(e.Timestamp), truncate(common.SanitizeForTerminal(actor), 16), e.ActorType,
-			truncate(e.EventType, 22), common.SanitizeForTerminal(e.Description))
+			truncate(common.SanitizeForTerminal(e.EventType), 22), common.SanitizeForTerminal(e.Description))
 	}
 	fmt.Printf("\nShowing %d of %d total event(s).\n", len(logs), total)
 }
@@ -605,11 +679,12 @@ func buildAuditSearchQuery() (url.Values, error) {
 func printAuditSearchTable(events []searchEvent, total int64) {
 	fmt.Printf("%-6s %-20s %-9s %-22s %-15s %s\n", "ID", "TIME", "KIND", "EVENT", "IP", "DESCRIPTION")
 	for _, e := range events {
-		// #G69: description is attacker-controlled free text — see
+		// #G69: event type, IP address, and description are all attacker-
+		// controlled or attacker-influenced free text — see
 		// printAuditLogTable's identical guard above.
 		fmt.Printf("%-6d %-20s %-9s %-22s %-15s %s\n",
 			e.ID, shortTime(e.EventTime), truncate(e.ActorType, 9),
-			truncate(e.EventType, 22), truncate(e.IPAddress, 15), common.SanitizeForTerminal(e.Description))
+			truncate(common.SanitizeForTerminal(e.EventType), 22), truncate(common.SanitizeForTerminal(e.IPAddress), 15), common.SanitizeForTerminal(e.Description))
 	}
 	fmt.Printf("\nShowing %d of %d total event(s).\n", len(events), total)
 }

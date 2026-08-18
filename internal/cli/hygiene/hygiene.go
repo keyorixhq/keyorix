@@ -79,8 +79,11 @@ func printRollup(r *rollup) {
 	fmt.Printf("\nProjects with debt (%d):\n", len(r.Projects))
 	fmt.Printf("%-6s %-22s %-9s %-7s %-9s %-9s %s\n", "ID", "NAME", "ORPHANED", "UNUSED", "EXPIRING", "STALE-MI", "ROT-OVERDUE")
 	for _, p := range r.Projects {
+		// #G69: ProjectName is attacker-controlled free text — a crafted
+		// project name must not be able to embed terminal escape sequences
+		// that overwrite or hide rows in this deployment-wide rollup.
 		fmt.Printf("%-6d %-22s %-9d %-7d %-9d %-9d %d\n",
-			p.ProjectID, p.ProjectName, p.OrphanedSecrets, p.UnusedSecrets,
+			p.ProjectID, common.SanitizeForTerminal(p.ProjectName), p.OrphanedSecrets, p.UnusedSecrets,
 			p.ExpiringSecrets, p.StaleMachineIdentities, p.RotationOverdue)
 	}
 }

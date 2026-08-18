@@ -296,8 +296,12 @@ type fakeGCPMixedDelete struct {
 	deleted  []string
 }
 
-func (f *fakeGCPMixedDelete) ListKeyNames(_ context.Context, _ string) ([]string, error) {
-	return append([]string(nil), f.existing...), nil
+func (f *fakeGCPMixedDelete) ListKeys(_ context.Context, _ string) ([]gcpServiceAccountKeyInfo, error) {
+	keys := make([]gcpServiceAccountKeyInfo, len(f.existing))
+	for i, name := range f.existing {
+		keys[i] = gcpServiceAccountKeyInfo{Name: name}
+	}
+	return keys, nil
 }
 func (f *fakeGCPMixedDelete) CreateKey(_ context.Context, _ string) (string, string, error) {
 	return f.newName, f.newJSON, nil
