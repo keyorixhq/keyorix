@@ -8,10 +8,12 @@ import (
 )
 
 // TestValidateConnectScopes covers ADR-082 §B/§C boot validation: missing/
-// unrecognized scope, the project/platform contradiction checks, both
-// allow_unscoped states, and valid project/platform entries. Each failure
-// case asserts the aggregated error names every offending connector, not
-// just the first one found.
+// unrecognized scope, the project/platform contradiction checks, and valid
+// project/platform entries. There is no escape hatch (amended — the original
+// connect.allow_unscoped flag was removed: it let the server boot, but an
+// unscoped connector still denied on every read, so it never restored actual
+// usability). Each failure case asserts the aggregated error names every
+// offending connector, not just the first one found.
 func TestValidateConnectScopes(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -55,17 +57,6 @@ func TestValidateConnectScopes(t *testing.T) {
 			wantNames: []string{"bad1", "bad2"},
 		},
 		{
-			name: "unrecognized scope is NOT rescued by allow_unscoped",
-			cc: ConnectConfig{
-				AllowUnscoped: true,
-				Connectors: []ConnectorConfig{
-					{Name: "typo", Type: "vault", Scope: "projekt"},
-				},
-			},
-			wantErr:   true,
-			wantNames: []string{"typo"},
-		},
-		{
 			name: "scope project without project name fails boot",
 			cc: ConnectConfig{Connectors: []ConnectorConfig{
 				{Name: "noproj", Type: "vault", Scope: "project"},
@@ -99,28 +90,6 @@ func TestValidateConnectScopes(t *testing.T) {
 			}},
 			wantErr:   true,
 			wantNames: []string{"bad1", "bad2"},
-		},
-		{
-			name: "missing scope rescued by allow_unscoped: true",
-			cc: ConnectConfig{
-				AllowUnscoped: true,
-				Connectors: []ConnectorConfig{
-					{Name: "c1", Type: "vault"},
-					{Name: "c2", Type: "aws-secrets-manager"},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "missing scope NOT rescued when allow_unscoped is false (default)",
-			cc: ConnectConfig{
-				AllowUnscoped: false,
-				Connectors: []ConnectorConfig{
-					{Name: "c1", Type: "vault"},
-				},
-			},
-			wantErr:   true,
-			wantNames: []string{"c1"},
 		},
 		{
 			name:    "no connectors is valid",
@@ -196,5 +165,4 @@ func TestValidate_ConnectScopesWired(t *testing.T) {
 	err := c.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unscoped-connector")
-	assert.Contains(t, err.Error(), "allow_unscoped")
 }

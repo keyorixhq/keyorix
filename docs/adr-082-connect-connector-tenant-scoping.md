@@ -11,8 +11,9 @@ what is deliberately deferred to implementation-phase follow-up work.
 
 Four separate branches, one logical change each:
 
-1. Config schema (`scope`, `project`, `environment`, `connect.allow_unscoped`)
-   and boot validation (C).
+1. Config schema (`scope`, `project`, `environment`) and boot validation (C).
+   (`connect.allow_unscoped` was part of the original schema; removed by
+   amendment — see (C).)
 2. Ownership enforcement (E) and `ListConnectors` filtering.
 3. Audit changes (H) — the three-way decision reason, the switch to
    `writeAuditEventFull`, `AuditEvent.ProjectID` population.
@@ -224,26 +225,64 @@ There is no `legacy_unscoped` value and no phased default-flip release (a
 real revision from the prior draft of this ADR, per direct instruction).
 Instead:
 
-### C. Missing `scope` fails boot; the only escape hatch is explicit and per-deployment, not per-connector
+### C. Missing `scope` fails boot, unconditionally — no escape hatch
 
 A connector config entry with no `scope` key **fails server boot**, with an
 error naming every offending connector by its config-file name (not just
 the first one found — an operator fixing config should not have to
-restart-and-discover connectors one at a time).
+restart-and-discover connectors one at a time). There is no per-connector
+opt-out and no deployment-wide bypass of any kind — absence of `scope` is a
+hard failure, full stop. This is the same "explicit value required, absence
+denies" shape already established in this codebase (most recently
+ADR-076's `POD_NAMESPACE` hard-fail-on-empty).
 
-The only way to boot anyway is a single, explicit, deployment-wide config
-flag: `connect.allow_unscoped: true`. When set, boot proceeds, but **every**
-connector missing a `scope` emits a `WARN`-level log line naming it, at
-every boot, for as long as the flag stays set. There is no per-connector
-opt-out and no silent variant — `connect.allow_unscoped` unset (the
-default) means absence of `scope` is a hard failure, full stop. This is the
-same "explicit value required, absence denies" shape already established in
-this codebase (most recently ADR-076's `POD_NAMESPACE` hard-fail-on-empty),
-simplified here to a single boot-time gate rather than a phased migration
-because — unlike ADR-076's operator RBAC default, which had to preserve a
-*running* cluster's existing behavior across an upgrade — Connect connector
-config is edited and the server restarted as one atomic operator action;
-there is no live-traffic window a phased flip would need to protect.
+**Amended: the original design here included a single, explicit,
+deployment-wide escape hatch, `connect.allow_unscoped: true` — removed.**
+When set, boot proceeded, and every connector still missing a `scope`
+emitted a `WARN`-level log line naming it, at every boot, for as long as
+the flag stayed set. On implementation and verification (branch 2, ownership
+enforcement), this turned out not to be an escape hatch at all: an unscoped
+connector has no entry in the ownership map `connectOwnershipSatisfied` (§E)
+consults, and that function's own missing-entry-denies rule — the same rule
+that makes a connector absent from the map deny for every caller rather than
+silently allow or silently skip — applied to it exactly as it would to any
+other connector with no ownership data. The flag let the *server* boot, but
+every *read* against an unscoped connector was denied regardless (unless a
+caller separately held an unrelated `ConnectRefGrant`, ADR-045's delegation
+mechanism, which an operator mid-migration would have no particular reason
+to have configured). The WARN it produced was accurate but misleading in
+effect: it read as "this still works, fix it soon," when the true state was
+"this doesn't work at all, and nothing here will tell you that until a read
+fails." A flag that defers a failure from boot time to read time, silently,
+is not a migration aid — it just moves where the operator discovers the
+problem, later and less legibly (a `502`, not a boot-time error naming the
+connector). The actual migration path — this ADR's own boot-fail-with-an-
+aggregated-list-of-every-offending-connector — already tells an operator
+exactly what to fix in one pass, and fixing it (adding `scope:` to a
+connector entry) takes minutes; there was nothing here worth an escape
+hatch for.
+
+Removing the flag also removes the one exemption the boot-time key-set
+consistency check (§E) carried: with `resolveConnectorOwnership` no longer
+skipping any connector (there is no longer an "expected to have no
+ownership entry" case), a connector present in `connect.Manager` but absent
+from the resolved ownership map — for any reason, including what used to be
+the deliberately-unscoped case — is now, unconditionally, a boot-failing
+key-set mismatch. This closes a real gap the removed exemption was
+carrying, not obviously connected to `allow_unscoped` itself: the mismatch
+check's fail-closed guarantee no longer depends on `cfg.Validate()` having
+already run and enforced "empty scope implies the flag was set" as an
+external precondition it trusted rather than re-verified — a future code
+path reaching either function without that precondition (a refactor, a new
+call site, a test) can no longer be silently misread as "legitimately
+unscoped."
+
+This is simplified to a single, unconditional boot-time gate rather than a
+phased migration because — unlike ADR-076's operator RBAC default, which
+had to preserve a *running* cluster's existing behavior across an upgrade
+— Connect connector config is edited and the server restarted as one
+atomic operator action; there is no live-traffic window a phased flip
+would need to protect.
 
 ### D. Ownership is derived server-side from role assignments. No new request parameter, no proto change, no signature change.
 
@@ -691,16 +730,17 @@ repository's existing versioning (`v0.91.0` is current at time of writing;
 `v0.92.0` is the earliest this could ship in, not a fixed commitment ahead
 of implementation). Any existing deployment with `connect.enabled: true`
 and one or more configured connectors **will fail to boot** after upgrading
-unless every connector gains an explicit `scope`, or the deployment sets
-`connect.allow_unscoped: true` as an explicit, intentional stopgap (with the
-every-boot `WARN` noise that implies). This requires a **`BREAKING`**-labeled
+unless every connector gains an explicit `scope` — **there is no bypass**
+(C, amended): the original `connect.allow_unscoped` stopgap is removed,
+since it never actually restored a connector's usability, only deferred the
+failure from boot time to read time. This requires a **`BREAKING`**-labeled
 CHANGELOG entry for that release — the same handling ADR-076 gave its own
 default-scope change (that ADR's Consequences section: "Two separate
 CHANGELOG entries, not one" — `BREAKING` for the behavior change itself).
 The entry must state the required pre-upgrade config change plainly, not
 just "review your config" (ADR-076's own precedent for what counts as
-adequate here), and must name the exact new keys (`scope`, `project`,
-`connect.allow_unscoped`) an operator needs to act on.
+adequate here), and must name the exact new keys (`scope`, `project`) an
+operator needs to act on.
 
 **Why config-only was chosen over a DB mirror.** Stated directly in (A):
 there is no runtime connector-CRUD capability today, so a DB row would add

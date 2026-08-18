@@ -163,29 +163,25 @@ func TestResolveConnectorOwnership_PlatformNeedsNoResolution(t *testing.T) {
 }
 
 // TestConnectOwnershipKeySetMismatch_DetectsGenuineDivergence proves a connector
-// present in the manager but absent from ownership (or vice versa) — WITHOUT the
-// legitimate allow_unscoped exception — is reported as a mismatch.
+// present in the manager but absent from ownership (or vice versa) is reported
+// as a mismatch.
 func TestConnectOwnershipKeySetMismatch_DetectsGenuineDivergence(t *testing.T) {
 	ownership := map[string]core.ConnectOwnership{
 		"aws": {Scope: "project", ProjectID: 1},
 	}
-	connectors := []config.ConnectorConfig{
-		{Name: "aws", Scope: "project", Project: "payments"},
-		{Name: "gcp", Scope: "project", Project: "payments"}, // built, but ownership resolution never ran for it in this test
-	}
-	mismatch := connectOwnershipKeySetMismatch([]string{"aws", "gcp"}, ownership, connectors)
+	mismatch := connectOwnershipKeySetMismatch([]string{"aws", "gcp"}, ownership)
 	assert.Equal(t, []string{"gcp"}, mismatch)
 }
 
-// TestConnectOwnershipKeySetMismatch_AllowsExpectedUnscopedGap proves the ONE
-// legitimate divergence — a connector booted with an empty scope under
-// connect.allow_unscoped is built into the manager but deliberately never given
-// an ownership entry — is NOT reported as a mismatch.
-func TestConnectOwnershipKeySetMismatch_AllowsExpectedUnscopedGap(t *testing.T) {
-	ownership := map[string]core.ConnectOwnership{} // resolveConnectorOwnership skips empty-scope connectors
-	connectors := []config.ConnectorConfig{
-		{Name: "unscoped-aws", Scope: ""}, // booted under connect.allow_unscoped
-	}
-	mismatch := connectOwnershipKeySetMismatch([]string{"unscoped-aws"}, ownership, connectors)
-	assert.Empty(t, mismatch, "a connector booted unscoped under allow_unscoped must not be reported as a key-set mismatch")
+// TestConnectOwnershipKeySetMismatch_NoExemptionForAnyDivergence is the
+// regression guard for the connect.allow_unscoped removal (ADR-082 §C,
+// amended): a connector that WOULD have been exempted under the old
+// scope-based exemption (an empty Scope, built into the manager but absent
+// from ownership) is now reported as a mismatch like any other divergence —
+// resolveConnectorOwnership no longer skips any connector, and the mismatch
+// check no longer accepts a connectors argument to special-case one.
+func TestConnectOwnershipKeySetMismatch_NoExemptionForAnyDivergence(t *testing.T) {
+	ownership := map[string]core.ConnectOwnership{} // empty: nothing resolved for "aws"
+	mismatch := connectOwnershipKeySetMismatch([]string{"aws"}, ownership)
+	assert.Equal(t, []string{"aws"}, mismatch, "with allow_unscoped removed, there is no exemption — any divergence, including what used to be the unscoped case, must be reported")
 }

@@ -564,22 +564,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// Wire Keyorix Connect (ADR-043) read-through federation if enabled.
 	if cc := cfg.Connect; cc.Enabled && len(cc.Connectors) > 0 {
 		// ADR-082 §C: cfg.Validate() already refused to boot with a missing/invalid
-		// connector scope unless connect.allow_unscoped is set — Validate() itself never
-		// logs (internal/config/validateConnectScopes), so if we're here under that flag,
-		// warn loudly, per connector and once as a summary, at the point the connectors
-		// are actually wired.
-		if cc.AllowUnscoped {
-			var unscoped []string
-			for _, cn := range cc.Connectors {
-				if cn.Scope == "" {
-					unscoped = append(unscoped, cn.Name)
-					log.Printf("Keyorix Connect: connector %q has no scope configured and is booting under connect.allow_unscoped — set scope: project or scope: platform (ADR-082)", cn.Name)
-				}
-			}
-			if len(unscoped) > 0 {
-				log.Printf("Keyorix Connect: %d connector(s) booted unscoped under connect.allow_unscoped — this is a temporary escape hatch; set an explicit scope on each before removing it (ADR-082)", len(unscoped))
-			}
-		}
+		// connector scope — unconditionally, no deployment-wide escape hatch (amended:
+		// the original connect.allow_unscoped flag let the server boot, but an unscoped
+		// connector still denied on every read via connectOwnershipSatisfied's
+		// missing-entry-denies rule, so it never restored actual usability — only
+		// deferred the failure from "boot" to "every subsequent read," with a WARN an
+		// operator could easily miss. Adding scope: to a connector takes minutes; there
+		// is nothing for this migration path to bypass.
 		var connectors []connect.Connector
 		for _, cn := range cc.Connectors {
 			switch cn.Type {
@@ -636,8 +627,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			// unrecognized type), or vice versa, that is a key-set mismatch this ADR
 			// requires to fail boot loudly rather than silently deny (a missing
 			// ownership entry, connectOwnershipSatisfied's own fallback) or silently
-			// skip ownership entirely (a connector with no check at all).
-			if mismatch := connectOwnershipKeySetMismatch(mgr.Names(), ownership, cc.Connectors); len(mismatch) > 0 {
+			// skip ownership entirely (a connector with no check at all). No exemption
+			// of any kind (amended — the prior allow_unscoped-linked exemption is
+			// removed along with the flag): every divergence between the two sets is
+			// reported.
+			if mismatch := connectOwnershipKeySetMismatch(mgr.Names(), ownership); len(mismatch) > 0 {
 				log.Fatalf("Keyorix Connect: connector(s) present in config but whose manager/ownership resolution disagree on which connectors exist — this must never happen in a correctly-booted server; investigate before proceeding (ADR-082): %s", strings.Join(mismatch, ", "))
 			}
 
@@ -980,13 +974,9 @@ func resolveConnectorOwnership(ctx context.Context, st corestorage.Storage, conn
 			continue
 		}
 		// cn.Scope == "project" here: internal/config.validateConnectScopes already
-		// guaranteed no other value reached boot (or allow_unscoped let an empty
-		// scope through, in which case there is nothing to resolve — an unscoped
-		// connector gets no ownership entry at all, which is exactly the deny-by-
-		// default behavior connectOwnershipSatisfied's missing-entry case wants).
-		if cn.Scope == "" {
-			continue
-		}
+		// guaranteed no other value reached boot (amended — there is no longer an
+		// allow_unscoped bypass; a missing or unrecognized scope always fails boot
+		// before this function is ever reached).
 		binding, err := st.GetConnectorProjectBinding(ctx, cn.Name)
 		switch {
 		case err != nil && isNotFoundStorageErr(err):
@@ -1031,30 +1021,21 @@ func resolveConnectorOwnership(ctx context.Context, st corestorage.Storage, conn
 }
 
 // connectOwnershipKeySetMismatch returns every connector name whose presence in
-// connect.Manager (builtNames) and in the resolved ownership map disagree, EXCEPT
-// for the one expected, legitimate disagreement: a connector booted with an empty
-// scope under connect.allow_unscoped (ADR-082 §C) is deliberately never given an
-// ownership entry (resolveConnectorOwnership skips it — connectOwnershipSatisfied
-// then denies it by default, exactly like any other absent entry), while it IS
-// still built into the manager (allow_unscoped only bypasses the boot-validation
-// gate, not connector wiring). connectors carries the full config so this can tell
-// that expected case apart from a genuine divergence — e.g. an unrecognized
-// connector Type, which resolves ownership successfully but never makes it into
-// the manager.
-func connectOwnershipKeySetMismatch(builtNames []string, ownership map[string]core.ConnectOwnership, connectors []config.ConnectorConfig) []string {
+// connect.Manager (builtNames) and in the resolved ownership map disagree — no
+// exemption of any kind (amended: the prior connect.allow_unscoped-linked
+// exemption is removed along with the flag, since resolveConnectorOwnership no
+// longer skips any connector). A connector present in one set but not the other
+// must never happen in a correctly-booted server (e.g. an unrecognized connector
+// Type, which resolves ownership successfully but never makes it into the
+// manager) — every divergence is reported.
+func connectOwnershipKeySetMismatch(builtNames []string, ownership map[string]core.ConnectOwnership) []string {
 	built := make(map[string]bool, len(builtNames))
 	for _, name := range builtNames {
 		built[name] = true
 	}
-	expectedUnscoped := make(map[string]bool)
-	for _, cn := range connectors {
-		if cn.Scope == "" {
-			expectedUnscoped[cn.Name] = true
-		}
-	}
 	var mismatch []string
 	for name := range built {
-		if _, ok := ownership[name]; !ok && !expectedUnscoped[name] {
+		if _, ok := ownership[name]; !ok {
 			mismatch = append(mismatch, name)
 		}
 	}

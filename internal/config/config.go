@@ -167,13 +167,6 @@ func (c *Config) LicenseGrace() time.Duration {
 type ConnectConfig struct {
 	Enabled    bool              `yaml:"enabled"`
 	Connectors []ConnectorConfig `yaml:"connectors"`
-	// AllowUnscoped is the single deployment-wide escape hatch (ADR-082 §C) that lets
-	// the server boot despite one or more connectors missing scope. Every boot under
-	// this flag logs a WARN naming each unscoped connector (server/main.go, not here —
-	// Validate() itself never logs). Default false: a missing scope fails boot. Does
-	// NOT rescue an unrecognized scope value or the project/platform contradiction
-	// checks — those always fail boot regardless of this flag.
-	AllowUnscoped bool `yaml:"allow_unscoped"`
 }
 
 // ConnectorConfig describes one external-store connector. Name is the API path key
@@ -211,9 +204,10 @@ type ConnectorConfig struct {
 	// Scope declares this connector's tenant boundary (ADR-082): "project" (owned by
 	// exactly one Keyorix project — requires Project) or "platform" (org-wide; requires
 	// the connect.platform.use permission at authorization time, must NOT set Project).
-	// Required: a missing value fails boot unless ConnectConfig.AllowUnscoped is set; an
-	// unrecognized value (anything other than "project"/"platform") always fails boot,
-	// AllowUnscoped does not rescue it.
+	// Required, unconditionally: a missing or unrecognized value (anything other than
+	// "project"/"platform") always fails boot. There is no escape hatch — an operator
+	// migrating an existing config adds scope: to every connector before upgrading; see
+	// ADR-082 §C for why that boot-fail-loud requirement has no deployment-wide bypass.
 	Scope string `yaml:"scope"`
 	// Project names the Keyorix project that owns this connector, by NAME — not a
 	// numeric ID. A numeric project ID differs per deployment (the same logical project
@@ -1947,17 +1941,17 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 }
 
 // validateConnectScopes enforces ADR-082 §B/§C on cfg.Connect.Connectors — pure
-// config-shape validation, no DB/network access, no logging (Validate() never logs;
-// the allow_unscoped WARNs are emitted where the connectors are actually wired,
-// server/main.go, matching this codebase's existing log-at-the-point-of-use style).
-// Every check aggregates across ALL offending connectors into one error naming each
-// by config name, rather than failing on (and hiding) the first one found — an
-// operator fixing config should not have to restart-and-discover connectors one at a
-// time. Checks run in this order, each independent of the others by construction
-// (a connector can only land in one bucket): unrecognized scope (never rescued by
-// AllowUnscoped — a typo is not "intentionally unscoped"), missing scope (rescued by
-// AllowUnscoped), scope "project" without a Project name, scope "platform" with a
-// Project name set (a platform connector is not owned by any single project).
+// config-shape validation, no DB/network access, no logging. Every check aggregates
+// across ALL offending connectors into one error naming each by config name, rather
+// than failing on (and hiding) the first one found — an operator fixing config
+// should not have to restart-and-discover connectors one at a time. There is no
+// deployment-wide escape hatch (ADR-082 §C, amended): a missing scope fails boot
+// unconditionally, the same as an unrecognized value — the migration path for an
+// existing deployment is to add scope: to every connector, not to opt out of the
+// check. Checks run in this order, each independent of the others by construction
+// (a connector can only land in one bucket): unrecognized scope, missing scope,
+// scope "project" without a Project name, scope "platform" with a Project name set
+// (a platform connector is not owned by any single project).
 func validateConnectScopes(cc ConnectConfig) error {
 	var missing, invalid, projectNeedsProject, platformRejectsProject []string
 	for _, connector := range cc.Connectors {
@@ -1980,8 +1974,8 @@ func validateConnectScopes(cc ConnectConfig) error {
 	if len(invalid) > 0 {
 		return fmt.Errorf("connect: connector(s) with unrecognized scope (must be \"project\" or \"platform\"): %s", strings.Join(invalid, ", "))
 	}
-	if len(missing) > 0 && !cc.AllowUnscoped {
-		return fmt.Errorf("connect: connector(s) missing required \"scope\" (must be \"project\" or \"platform\"; set connect.allow_unscoped: true to boot anyway — ADR-082): %s", strings.Join(missing, ", "))
+	if len(missing) > 0 {
+		return fmt.Errorf("connect: connector(s) missing required \"scope\" (must be \"project\" or \"platform\" — ADR-082, no exceptions): %s", strings.Join(missing, ", "))
 	}
 	if len(projectNeedsProject) > 0 {
 		return fmt.Errorf("connect: connector(s) with scope \"project\" missing required \"project\": %s", strings.Join(projectNeedsProject, ", "))
