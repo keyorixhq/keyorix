@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -485,15 +486,36 @@ func TestGetProjectRotationOrder_BadID_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestGetProjectRotationOrder_HappyPath_S13 — project with no secrets → empty order.
+// TestGetProjectRotationOrder_HappyPath_S13 — a real, live project with no
+// secrets → empty order, 200. Uses a fresh isolated core (rather than the
+// shared newSecretHandlerS4 DB) so it can create its own real Project row: a
+// scoped role binding survives project soft-delete, so the handler now
+// re-checks project liveness before returning data, and a bare hardcoded
+// project ID with no backing row would 404.
 func TestGetProjectRotationOrder_HappyPath_S13(t *testing.T) {
 	t.Parallel()
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
+	cs := freshCoreS12(t)
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+	proj, err := cs.Storage().CreateProject(context.Background(), &models.Project{Name: "proj-rotorder-happy-s13"})
+	require.NoError(t, err)
+
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", strconv.FormatUint(uint64(proj.ID), 10)))
 	w := httptest.NewRecorder()
 	h.GetProjectRotationOrder(w, req)
-	// no project means storage returns empty slice → 200
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestGetProjectRotationOrder_ProjectNotFound_S13 pins the project-liveness fix
+// itself: a role binding scoped to a project ID with no backing row (or a
+// soft-deleted one) must 404, not silently return an empty order.
+func TestGetProjectRotationOrder_ProjectNotFound_S13(t *testing.T) {
+	t.Parallel()
+	h := newSecretHandlerS4(t)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999"))
+	w := httptest.NewRecorder()
+	h.GetProjectRotationOrder(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestGetProjectRotationPlan_BadID_S13 — non-numeric id → 400.
@@ -506,14 +528,31 @@ func TestGetProjectRotationPlan_BadID_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestGetProjectRotationPlan_HappyPath_S13 — no secrets in project → 200.
+// TestGetProjectRotationPlan_HappyPath_S13 — a real, live project with no
+// secrets → 200. See TestGetProjectRotationOrder_HappyPath_S13 for why this
+// needs a real backing Project row now.
 func TestGetProjectRotationPlan_HappyPath_S13(t *testing.T) {
 	t.Parallel()
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
+	cs := freshCoreS12(t)
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+	proj, err := cs.Storage().CreateProject(context.Background(), &models.Project{Name: "proj-rotplan-happy-s13"})
+	require.NoError(t, err)
+
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", strconv.FormatUint(uint64(proj.ID), 10)))
 	w := httptest.NewRecorder()
 	h.GetProjectRotationPlan(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestGetProjectRotationPlan_ProjectNotFound_S13 — see the Order twin above.
+func TestGetProjectRotationPlan_ProjectNotFound_S13(t *testing.T) {
+	t.Parallel()
+	h := newSecretHandlerS4(t)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999"))
+	w := httptest.NewRecorder()
+	h.GetProjectRotationPlan(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestGetDeploymentRotationPlan_HappyPath_S13 — empty DB → 200.

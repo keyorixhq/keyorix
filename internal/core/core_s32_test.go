@@ -90,6 +90,10 @@ func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
+	// guardLastProjectAdminGroupMembership (core-project-members.json#3) precheck
+	// for user 1's removal — no group role assignments in this fixture, so it's a
+	// no-op too.
+	ms.On("ListGroupRoleAssignments", mock.Anything, uint(10)).Return([]storage.RoleAssignment{}, nil)
 	// user 1 is in current but NOT in want → RemoveUserFromGroup (global: projectID=0).
 	ms.On("RemoveUserFromGroup", mock.Anything, uint(1), uint(10), uint(0)).Return(nil)
 	// user 2 is in current AND in want → no-op.

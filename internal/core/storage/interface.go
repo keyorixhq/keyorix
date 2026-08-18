@@ -898,6 +898,15 @@ type Storage interface {
 	// (RFC 7644). Returns the not-found error when no user carries that external id.
 	GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error)
 	GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error)
+	// ListAllUserGroupMemberships returns every user_groups row in the
+	// deployment, unfiltered by project scope (#G44) — the batch-load
+	// counterpart to GetUserGroups: GetPermissionBaseline uses this to load
+	// every user's group membership in one query instead of one GetUserGroups
+	// call per user, a genuine N+1 whose cost scales with the deployment's own
+	// user count. Preserves GetUserGroups' exact per-user multiplicity (a user
+	// with both a global and a project-scoped membership row for the same
+	// group yields two rows here too, matching GetUserGroups' unfiltered JOIN).
+	ListAllUserGroupMemberships(ctx context.Context) ([]UserGroupMembership, error)
 
 	// Password history (ADR-025 history_count). AddPasswordHistory records a
 	// bcrypt hash; RecentPasswordHashes returns the most recent `limit` hashes
@@ -1191,6 +1200,34 @@ type Storage interface {
 	// that already starts at genesis (the purge only removed the legacy
 	// unchained prefix, or the table is now empty) ignores a non-nil anchor.
 	VerifyAuditChain(ctx context.Context, anchor *AuditChainAnchor) (*AuditChainVerification, error)
+	// MigrateAuditChainEncoding re-derives entry_hash/prev_hash for every chained
+	// audit_events row, in ascending id order, under computeAuditEntryHash's
+	// current (length-prefixed) encoding — closing the gap left when that
+	// encoding replaced the prior NUL-delimited one (a breaking, non-content-
+	// preserving hash-format change; see computeAuditEntryHash's doc comment).
+	// The unchained legacy prefix (pre-ADR-029 rows with an empty entry_hash) is
+	// left untouched.
+	//
+	// anchor has EXACTLY the same meaning and applicability rule as
+	// VerifyAuditChain's own anchor parameter: when non-nil AND the earliest
+	// chained row's CURRENTLY STORED prev_hash is not auditGenesisHash (a prior
+	// sanctioned retention purge moved the chain start), the walk seeds from
+	// anchor.PrevHash instead of genesis. The caller MUST have already
+	// authenticated anchor; this layer trusts it literally.
+	//
+	// Holds the same cross-process exclusivity LogAuditEvent uses (Postgres
+	// advisory lock; SQLite's own single-writer semantics) for the ENTIRE
+	// migration, in one transaction — not just per batch — so no concurrently
+	// appended row can be hashed against a partially-migrated chain. Callers
+	// MUST ensure no other process can reach this database's audit_events table
+	// for the duration (this transaction only prevents concurrent writes
+	// THROUGH this same storage backend's own LogAuditEvent path, not from an
+	// entirely separate process/connection pool bypassing it).
+	//
+	// dryRun computes and returns the same result WITHOUT persisting anything
+	// (the transaction is rolled back), so an operator can preview row/anchor
+	// counts before committing.
+	MigrateAuditChainEncoding(ctx context.Context, dryRun bool, anchor *AuditChainAnchor) (*AuditChainMigrationResult, error)
 	// CreateAuditCheckpoint appends a signed checkpoint of the chain head (ADR-029).
 	CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error
 	// UpdateAuditCheckpointAnchor stores the external-notary anchor (RFC 3161 token,
@@ -1905,6 +1942,27 @@ type AuditChainAnchor struct {
 	EntryHash string
 }
 
+// AuditChainMigrationResult reports the outcome of MigrateAuditChainEncoding.
+type AuditChainMigrationResult struct {
+	// RowsMigrated is the number of chained rows whose entry_hash/prev_hash
+	// were (or, under dry-run, would be) rewritten.
+	RowsMigrated int64
+	// UnchainedRowsSkipped is the legacy pre-ADR-029 prefix left untouched.
+	UnchainedRowsSkipped int64
+	// HeadID/HeadHash are the migrated chain's final row id and its newly
+	// computed entry_hash (auditGenesisHash-derived if RowsMigrated is 0).
+	HeadID   uint
+	HeadHash string
+	// AnchorRowID/AnchorNewEntryHash are set when the earliest migrated row's
+	// id matches the anchor the caller seeded this call with (seedPrevHash
+	// came from a real retention anchor, not genesis) — the caller must re-sign
+	// and persist an updated anchor for AnchorRowID using AnchorNewEntryHash
+	// (its PrevHash is unchanged; it represents an already-purged predecessor
+	// that cannot be recomputed). Zero/empty when no anchor applies.
+	AnchorRowID        uint
+	AnchorNewEntryHash string
+}
+
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when
 // the secret has never been read.
 type UnusedSecretStat struct {
@@ -1947,6 +2005,13 @@ type RoleAssignment struct {
 	RoleID        uint   `json:"role_id"`
 	ProjectID     uint   `json:"project_id"`
 	EnvironmentID uint   `json:"environment_id"`
+}
+
+// UserGroupMembership is one user→group membership row, as returned by
+// ListAllUserGroupMemberships.
+type UserGroupMembership struct {
+	UserID  uint `json:"user_id"`
+	GroupID uint `json:"group_id"`
 }
 
 // GroupRoleGrant is a role assigned to a group together with the grant's optional

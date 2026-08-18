@@ -245,3 +245,125 @@ func (c *KeyorixCore) resolveProjectAdminHolders(ctx context.Context, targetID u
 	}
 	return c.filterActiveHolders(ctx, holders)
 }
+
+// guardLastProjectAdminGroupDelete is guardLastProjectAdmin's group-deletion
+// counterpart (findings-core/core-project-members.json#3): generalizes
+// guardLastGlobalAdminGroupDelete (#107, global scope only) to every PROJECT
+// scope the group holds a roles.assign-granting role at. Deleting a group
+// cascades to remove EVERY role grant it holds — if one of those grants is a
+// project's last roles.assign holder, deleting the group leaves that project
+// ungoverned (no one able to manage its membership), a gap the global-only
+// guard cannot see.
+func (c *KeyorixCore) guardLastProjectAdminGroupDelete(ctx context.Context, groupID uint) error {
+	projectIDs, err := c.projectAdminScopesHeldByGroup(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	for projectID := range projectIDs {
+		if err := c.guardProjectAdminSurvivesGroupChange(ctx, projectID, func(a storage.RoleAssignment) bool {
+			return a.PrincipalType == "group" && a.PrincipalID == groupID
+		}, nil); err != nil {
+			return fmt.Errorf("refusing to delete group %d: %w", groupID, err)
+		}
+	}
+	return nil
+}
+
+// guardLastProjectAdminGroupMembership is guardLastProjectAdmin's group-
+// membership-removal counterpart (findings-core/core-project-members.json#3):
+// refuses to remove userID from groupID when groupID's project-scoped
+// roles.assign grant is userID's only remaining route to administering that
+// project and no other holder survives either. Unlike a group deletion, the
+// group's own grant row survives a membership removal — only that one
+// member's derived authority through THIS group disappears.
+func (c *KeyorixCore) guardLastProjectAdminGroupMembership(ctx context.Context, userID, groupID uint) error {
+	projectIDs, err := c.projectAdminScopesHeldByGroup(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	for projectID := range projectIDs {
+		if err := c.guardProjectAdminSurvivesGroupChange(ctx, projectID, nil, func(gID, uID uint) bool {
+			return gID == groupID && uID == userID
+		}); err != nil {
+			return fmt.Errorf("refusing to remove user %d from group %d: %w", userID, groupID, err)
+		}
+	}
+	return nil
+}
+
+// projectAdminScopesHeldByGroup returns the project IDs at which groupID
+// holds a project-level (environment_id = 0) role granting roles.assign —
+// every project whose governance depends, at least in part, on this group.
+// A group with no such grant anywhere returns an empty set, so the group-path
+// project-admin guards above are a cheap no-op for the common case (most
+// groups never hold project-admin authority at all).
+func (c *KeyorixCore) projectAdminScopesHeldByGroup(ctx context.Context, groupID uint) (map[uint]bool, error) {
+	assignments, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve group role assignments: %w", err)
+	}
+	checked := make(map[uint]bool, len(assignments))
+	projectIDs := make(map[uint]bool)
+	for _, a := range assignments {
+		if a.EnvironmentID != 0 || a.ProjectID == 0 {
+			continue // not a project-level grant; the global scope has its own guard
+		}
+		hasAssign, ok := checked[a.RoleID]
+		if !ok {
+			var herr error
+			hasAssign, herr = c.storage.RoleSetHasPermission(ctx, []uint{a.RoleID}, permRolesAssign)
+			if herr != nil {
+				return nil, herr
+			}
+			checked[a.RoleID] = hasAssign
+		}
+		if hasAssign {
+			projectIDs[a.ProjectID] = true
+		}
+	}
+	return projectIDs, nil
+}
+
+// guardProjectAdminSurvivesGroupChange checks whether projectID still has a
+// live roles.assign holder after the given group-scoped exclusion — a grant
+// removal (group deletion) or one member's derived authority (membership
+// removal). Reuses resolveGlobalAdminHolders (internal/core/authz.go)
+// verbatim for the group-expansion/exclusion/active-filtering machinery;
+// despite its name that function is scope-agnostic — it only cares which
+// assignment rows are passed in and which role IDs count as "admin". Here the
+// admin-role test is "does this role carry roles.assign" (a permission
+// check, since project administration isn't tied to a specific role name),
+// not the fixed install-admin role-ID set the global guards use.
+func (c *KeyorixCore) guardProjectAdminSurvivesGroupChange(ctx context.Context, projectID uint, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) error {
+	all, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to check project %d administrators: %w", projectID, err)
+	}
+	projectLevel := make([]storage.RoleAssignment, 0, len(all))
+	assignAdminIDs := make(map[uint]bool)
+	checked := make(map[uint]bool, len(all))
+	for _, a := range all {
+		if a.EnvironmentID != 0 {
+			continue // not project-level; can't administer /projects/{id}/members
+		}
+		projectLevel = append(projectLevel, a)
+		hasAssign, ok := checked[a.RoleID]
+		if !ok {
+			var herr error
+			hasAssign, herr = c.storage.RoleSetHasPermission(ctx, []uint{a.RoleID}, permRolesAssign)
+			if herr != nil {
+				return herr
+			}
+			checked[a.RoleID] = hasAssign
+		}
+		assignAdminIDs[a.RoleID] = hasAssign
+	}
+	holders, err := c.resolveGlobalAdminHolders(ctx, assignAdminIDs, projectLevel, excludeAssignment, excludeMember)
+	if err != nil {
+		return fmt.Errorf("failed to check project %d administrators: %w", projectID, err)
+	}
+	if len(holders) == 0 {
+		return fmt.Errorf("project %d's last administrative role grant would be lost, leaving no roles.assign holder", projectID)
+	}
+	return nil
+}

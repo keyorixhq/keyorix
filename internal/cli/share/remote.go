@@ -76,6 +76,32 @@ func runListRemote(rc *common.RemoteClient, secretID uint) error {
 	return nil
 }
 
+// runGroupSharesRemote lists shares granted TO a group via
+// GET /api/v1/groups/{id}/shares (#G66 — the embedded path previously ran
+// unconditionally, silently ignoring a connected server; there was no
+// remote-mode branch or server endpoint for this command at all).
+func runGroupSharesRemote(rc *common.RemoteClient, groupID uint) error {
+	var resp struct {
+		Shares []models.ShareRecord `json:"shares"`
+	}
+	if err := rc.Get(context.Background(), fmt.Sprintf("/api/v1/groups/%d/shares", groupID), &resp); err != nil {
+		return fmt.Errorf("failed to list group shares: %w", err)
+	}
+	if len(resp.Shares) == 0 {
+		fmt.Println("No shares found for this group.")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tSECRET ID\tOWNER ID\tGROUP ID\tPERMISSION\tCREATED AT") //nolint:errcheck
+	for _, share := range resp.Shares {
+		fmt.Fprintf(w, "%d\t%d\t%d\t%d\t%s\t%s\n", //nolint:errcheck
+			share.ID, share.SecretID, share.OwnerID, share.RecipientID,
+			share.Permission, share.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+	_ = w.Flush() // #nosec G104
+	return nil
+}
+
 func runRevokeRemote(rc *common.RemoteClient, shareID uint) error {
 	if err := rc.Delete(context.Background(), fmt.Sprintf("/api/v1/shares/%d", shareID)); err != nil {
 		return fmt.Errorf("failed to revoke share: %w", err)

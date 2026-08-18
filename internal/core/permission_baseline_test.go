@@ -37,6 +37,7 @@ func TestGetPermissionBaseline_Empty(t *testing.T) {
 		Return([]*models.User{}, int64(0), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
 	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return([]stg.UserGroupMembership{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
@@ -58,7 +59,7 @@ func TestGetPermissionBaseline_DirectGrant_GlobalScope(t *testing.T) {
 	store.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "Admin"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(5)).
 		Return([]*models.Permission{{Name: "secrets.read"}, {Name: "secrets.write"}}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(10)).Return([]*models.Group{}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return([]stg.UserGroupMembership{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
@@ -89,7 +90,7 @@ func TestGetPermissionBaseline_DirectGrant_ProjectScope(t *testing.T) {
 	store.On("GetRole", mock.Anything, uint(7)).Return(&models.Role{ID: 7, Name: "Viewer"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(7)).
 		Return([]*models.Permission{{Name: "secrets.read"}}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(11)).Return([]*models.Group{}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return([]stg.UserGroupMembership{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
@@ -115,7 +116,7 @@ func TestGetPermissionBaseline_DirectGrant_EnvironmentScope(t *testing.T) {
 	store.On("GetRole", mock.Anything, uint(7)).Return(&models.Role{ID: 7, Name: "Viewer"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(7)).
 		Return([]*models.Permission{{Name: "secrets.read"}}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(15)).Return([]*models.Group{}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return([]stg.UserGroupMembership{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
@@ -129,14 +130,14 @@ func TestGetPermissionBaseline_GroupInheritedGrant(t *testing.T) {
 	ctx := context.Background()
 
 	user := &models.User{ID: 12, Username: "carol", Email: "carol@example.com"}
-	group := &models.Group{ID: 20}
 	groupGrant := &models.GroupRole{GroupID: 20, RoleID: 9}
 
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{user}, int64(1), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
 	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{groupGrant}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(12)).Return([]*models.Group{group}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).
+		Return([]stg.UserGroupMembership{{UserID: 12, GroupID: 20}}, nil)
 	store.On("GetRole", mock.Anything, uint(9)).Return(&models.Role{ID: 9, Name: "Operator"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(9)).
 		Return([]*models.Permission{{Name: "audit.read"}}, nil)
@@ -162,14 +163,14 @@ func TestGetPermissionBaseline_GroupInheritedGrant_EnvironmentScope(t *testing.T
 	ctx := context.Background()
 
 	user := &models.User{ID: 16, Username: "grace", Email: "grace@example.com"}
-	group := &models.Group{ID: 21}
 	groupGrant := &models.GroupRole{GroupID: 21, RoleID: 9, ProjectID: 5, EnvironmentID: 2}
 
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{user}, int64(1), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
 	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{groupGrant}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(16)).Return([]*models.Group{group}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).
+		Return([]stg.UserGroupMembership{{UserID: 16, GroupID: 21}}, nil)
 	store.On("GetRole", mock.Anything, uint(9)).Return(&models.Role{ID: 9, Name: "Operator"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(9)).
 		Return([]*models.Permission{{Name: "audit.read"}}, nil)
@@ -198,14 +199,16 @@ func TestGetPermissionBaseline_RolePermissionsCached(t *testing.T) {
 	store.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "Admin"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(5)).
 		Return([]*models.Permission{{Name: "secrets.read"}}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(13)).Return([]*models.Group{}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(14)).Return([]*models.Group{}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return([]stg.UserGroupMembership{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
 	assert.Len(t, baseline.Rows, 2)
 	// GetRolePermissions should have been called exactly once for the cached role.
 	store.AssertNumberOfCalls(t, "GetRolePermissions", 1)
+	// #G44: ListAllUserGroupMemberships must be called exactly once — the whole
+	// point of the batch-load fix is NOT one GetUserGroups call per user.
+	store.AssertNumberOfCalls(t, "ListAllUserGroupMemberships", 1)
 }
 
 func TestGetPermissionBaseline_SkipsGrantsForMissingUsers(t *testing.T) {
@@ -223,6 +226,7 @@ func TestGetPermissionBaseline_SkipsGrantsForMissingUsers(t *testing.T) {
 		Return([]*models.User{}, int64(0), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{grant}, nil)
 	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return([]stg.UserGroupMembership{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
@@ -268,6 +272,68 @@ func TestGetPermissionBaseline_ListGroupGrantsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestGetPermissionBaseline_ListUserGroupMembershipsError(t *testing.T) {
+	store := new(MockStorage)
+	c := newBaselineCore(store)
+	ctx := context.Background()
+
+	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
+		Return([]*models.User{}, int64(0), nil)
+	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return(nil, errors.New("membership error"))
+
+	_, err := c.GetPermissionBaseline(ctx)
+	require.Error(t, err)
+}
+
+// TestGetPermissionBaseline_BatchLoadsMembershipOnceForManyUsers is the
+// regression test for #G44: group-inherited grant resolution used to call
+// GetUserGroups once PER USER. With three users — one in two admin-conferring
+// groups, one in a single group, one in no group at all — ListAllUserGroupMemberships
+// must be called exactly ONCE (not three times), and each user's rows must
+// still resolve to exactly their own group memberships, not another user's.
+func TestGetPermissionBaseline_BatchLoadsMembershipOnceForManyUsers(t *testing.T) {
+	store := new(MockStorage)
+	c := newBaselineCore(store)
+	ctx := context.Background()
+
+	userMultiGroup := &models.User{ID: 60, Username: "multi", Email: "multi@example.com"}
+	userOneGroup := &models.User{ID: 61, Username: "one", Email: "one@example.com"}
+	userNoGroup := &models.User{ID: 62, Username: "none", Email: "none@example.com"}
+
+	groupGrantA := &models.GroupRole{GroupID: 70, RoleID: 90}
+	groupGrantB := &models.GroupRole{GroupID: 71, RoleID: 91}
+
+	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
+		Return([]*models.User{userMultiGroup, userOneGroup, userNoGroup}, int64(3), nil)
+	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{groupGrantA, groupGrantB}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).Return([]stg.UserGroupMembership{
+		{UserID: 60, GroupID: 70},
+		{UserID: 60, GroupID: 71},
+		{UserID: 61, GroupID: 70},
+	}, nil)
+	store.On("GetRole", mock.Anything, uint(90)).Return(&models.Role{ID: 90, Name: "RoleA"}, nil)
+	store.On("GetRolePermissions", mock.Anything, uint(90)).
+		Return([]*models.Permission{{Name: "perm.a"}}, nil)
+	store.On("GetRole", mock.Anything, uint(91)).Return(&models.Role{ID: 91, Name: "RoleB"}, nil)
+	store.On("GetRolePermissions", mock.Anything, uint(91)).
+		Return([]*models.Permission{{Name: "perm.b"}}, nil)
+
+	baseline, err := c.GetPermissionBaseline(ctx)
+	require.NoError(t, err)
+	store.AssertNumberOfCalls(t, "ListAllUserGroupMemberships", 1)
+
+	rowsByUser := make(map[uint][]PermissionBaselineRow)
+	for _, row := range baseline.Rows {
+		rowsByUser[row.UserID] = append(rowsByUser[row.UserID], row)
+	}
+	require.Len(t, rowsByUser[60], 2, "user in two groups gets both groups' rows")
+	require.Len(t, rowsByUser[61], 1, "user in one group gets only that group's row")
+	assert.Empty(t, rowsByUser[62], "user in no group gets no group-inherited rows")
+}
+
 func TestScopeLabel(t *testing.T) {
 	assert.Equal(t, "global", scopeLabel(0, 0))
 	assert.Equal(t, "project:7", scopeLabel(7, 0))
@@ -304,7 +370,6 @@ func TestGetPermissionBaseline_G25Regression(t *testing.T) {
 	directGrantA := &models.UserRole{UserID: 30, RoleID: 40} // permanent, global
 	directGrantB := &models.UserRole{UserID: 31, RoleID: 40, ExpiresAt: &pastExpiry}
 
-	groupG := &models.Group{ID: 50}
 	groupGrant := &models.GroupRole{GroupID: 50, RoleID: 41, ProjectID: 6, EnvironmentID: 8}
 
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
@@ -320,9 +385,8 @@ func TestGetPermissionBaseline_G25Regression(t *testing.T) {
 	store.On("GetRolePermissions", mock.Anything, uint(41)).
 		Return([]*models.Permission{{Name: "audit.read"}}, nil)
 
-	store.On("GetUserGroups", mock.Anything, uint(30)).Return([]*models.Group{}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(31)).Return([]*models.Group{}, nil)
-	store.On("GetUserGroups", mock.Anything, uint(32)).Return([]*models.Group{groupG}, nil)
+	store.On("ListAllUserGroupMemberships", mock.Anything).
+		Return([]stg.UserGroupMembership{{UserID: 32, GroupID: 50}}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)

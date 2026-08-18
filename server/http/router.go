@@ -935,6 +935,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Secrets a group can reach via shares — reveals secret names, so it needs
 			// secrets.read on top of the group-level users.read above.
 			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}/shared-secrets", shareHandler.ListGroupSharedSecrets)
+			// Share grants made TO the group (owner/secret IDs, not resolved secret
+			// content) — same sensitivity tier as shared-secrets above, same gate.
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}/shares", shareHandler.ListGroupShares)
 			// Adding/removing a group member confers (or revokes) every role the group
 			// holds — the same blast radius as a role grant, so gate on roles.assign
 			// (matching the group's role-grant routes below), not users.read.
@@ -1032,6 +1035,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Writing a checkpoint is a privileged integrity-control action — gate it
 			// above the group's audit.read with system.write (admin-level).
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/checkpoint", auditHandler.WriteAuditCheckpoint)
+			// A one-time, operator-triggered migration of the audit hash chain's
+			// encoding (see internal/core/audit_chain_migrate.go) — same privilege
+			// bar as /checkpoint: it rewrites the tamper-evidence dataset itself.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/migrate-chain-encoding", auditHandler.MigrateAuditChainEncoding)
 			// ANOMALY-04: anomaly alerts expose SecretName/AccessedBy/IPAddress — raise
 			// the gate above the group's audit.read so the base viewer/system_viewer role
 			// cannot enumerate them and check whether their own access patterns were flagged.

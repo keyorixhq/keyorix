@@ -1820,7 +1820,9 @@ func TestWriteDotenv_QuotedValue_S8(t *testing.T) {
 	var buf bytes.Buffer
 	err := writeDotenv(&buf, secrets)
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), `"val with spaces"`)
+	// Single-quoted, not double-quoted — see writeDotenv's doc comment: double
+	// quotes don't suppress $()/backtick command substitution.
+	assert.Contains(t, buf.String(), `'val with spaces'`)
 }
 
 // ─── runImport: remote path with doImport (skip-existing) ────────────────────
