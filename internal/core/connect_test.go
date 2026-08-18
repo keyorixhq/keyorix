@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
@@ -24,15 +25,18 @@ func (f fakeConnector) GetSecret(_ context.Context, _ string) (string, error) {
 	return f.val, f.err
 }
 
-// connectTestCore wires every connector as scope: platform by default (ADR-082) —
-// a platform connector passes ownership for any caller in this branch, matching
-// this suite's pre-ADR-082 assumption that any caller can reach a configured test
-// connector. Tests that specifically exercise ownership/scope behavior use their
-// own setup (see connect_ownership_test.go) instead of this helper.
-func connectTestCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *MockStorage) {
+// connectTestCore wires every connector as scope: platform by default (ADR-082).
+// platformUseGranted controls whether principal 1 (the actor every test in this
+// file reads as) genuinely holds connect.platform.use (ADR-082 branch 4) — see
+// stubConnectPlatformUseCheckUser's own doc comment for why this is a real,
+// fixture-driven check and not a blanket allow. Tests that specifically exercise
+// ownership/scope behavior use their own setup (see connect_ownership_test.go)
+// instead of this helper.
+func connectTestCore(t *testing.T, platformUseGranted bool, conns ...connect.Connector) (*KeyorixCore, *MockStorage) {
 	t.Helper()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	stubConnectPlatformUseCheckUser(ms, 1, platformUseGranted)
 	c := &KeyorixCore{storage: ms}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
@@ -45,8 +49,39 @@ func connectTestCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *M
 	return c, ms
 }
 
+// stubConnectPlatformUseCheckUser configures ms so AuthorizePrincipal's
+// connect.platform.use check (ADR-082 branch 4, ActorTypeUser path) resolves
+// deterministically to granted for principalID — NOT a blanket "always
+// authorize" stub. Only RoleSetHasPermission's return value depends on
+// granted; every other call in the chain (GetUserRoleIDsAt,
+// GetUserGroupRoleIDsAt, the four GetRoleByName admin-bypass lookups) resolves
+// to "the principal holds one arbitrary non-admin role" — the same shape a
+// real fixture (a seeded role with, or without, the permission granted) would
+// produce, so a test declaring granted=false genuinely exercises a deny, not a
+// mock that happens to always say yes.
+func stubConnectPlatformUseCheckUser(ms *MockStorage, principalID uint, granted bool) {
+	const testRoleID = 9001
+	ms.On("GetUserRoleIDsAt", mock.Anything, principalID, mock.Anything).Return([]uint{testRoleID}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, principalID, mock.Anything).Return([]uint{}, nil)
+	for _, name := range adminRoleNames {
+		ms.On("GetRoleByName", mock.Anything, name).Return((*models.Role)(nil), errNotFoundStub)
+	}
+	ms.On("RoleSetHasPermission", mock.Anything, []uint{testRoleID}, "connect.platform.use").Return(granted, nil)
+}
+
+// stubConnectPlatformUseCheckMachine is stubConnectPlatformUseCheckUser's
+// machine-identity counterpart — the machine path (AuthorizePrincipal) has no
+// admin-role bypass at all, so it needs fewer stubs.
+func stubConnectPlatformUseCheckMachine(ms *MockStorage, principalID uint, granted bool) {
+	const testRoleID = 9002
+	ms.On("GetMachineRoleIDsAt", mock.Anything, principalID, mock.Anything).Return([]uint{testRoleID}, nil)
+	ms.On("RoleSetHasPermission", mock.Anything, []uint{testRoleID}, "connect.platform.use").Return(granted, nil)
+}
+
+var errNotFoundStub = errors.New("not found (test stub)")
+
 func TestReadFederatedSecret_Success(t *testing.T) {
-	c, ms := connectTestCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
+	c, ms := connectTestCore(t, true, fakeConnector{name: "aws", val: "v3ry-secret"})
 	require.True(t, c.ConnectEnabled())
 
 	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "prod/db")
@@ -56,8 +91,28 @@ func TestReadFederatedSecret_Success(t *testing.T) {
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 }
 
+// TestReadFederatedSecret_PlatformUseDeniedByMockFixture proves
+// stubConnectPlatformUseCheckUser genuinely drives a deny, not a rubber-stamped
+// allow: granted=false on a real platform connector (unlike
+// TestReadFederatedSecret_UnknownConnector, where the connector itself doesn't
+// exist) must produce a terminal deny with the platform-specific reason.
+func TestReadFederatedSecret_PlatformUseDeniedByMockFixture(t *testing.T) {
+	c, ms := connectTestCore(t, false, fakeConnector{name: "aws", val: "v3ry-secret"})
+
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "prod/db")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConnectUnknownConnector)
+
+	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return strings.Contains(e.Description, "reason=platform_permission_denied")
+	}))
+}
+
 func TestReadFederatedSecret_UnknownConnector(t *testing.T) {
-	c, _ := connectTestCore(t, fakeConnector{name: "aws", val: "x"})
+	// granted=false: the requested connector "nope" doesn't exist, so this never
+	// even reaches the platform-permission check — using false here (not true)
+	// proves that, since a wrongly-reached check would deny for the wrong reason.
+	c, _ := connectTestCore(t, false, fakeConnector{name: "aws", val: "x"})
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "nope", "ref")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown connector")
@@ -76,7 +131,7 @@ func TestReadFederatedSecret_DisabledWhenNoManager(t *testing.T) {
 }
 
 func TestReadFederatedSecret_BackendErrorAudited(t *testing.T) {
-	c, ms := connectTestCore(t, fakeConnector{name: "aws", err: errors.New("AccessDenied")})
+	c, ms := connectTestCore(t, true, fakeConnector{name: "aws", err: errors.New("AccessDenied")})
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
 	// A failed read is still audited (with FAILED in the description).
@@ -96,6 +151,7 @@ func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 		got = e
 		return true
 	})).Return(nil)
+	stubConnectPlatformUseCheckMachine(ms, 42, true)
 	c := &KeyorixCore{storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{fakeConnector{name: "aws", val: "v"}}))
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
@@ -118,6 +174,7 @@ func TestReadFederatedSecret_UserAuditedAsUser(t *testing.T) {
 		got = e
 		return true
 	})).Return(nil)
+	stubConnectPlatformUseCheckUser(ms, 7, true)
 	c := &KeyorixCore{storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{fakeConnector{name: "aws", val: "v"}}))
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
@@ -141,7 +198,9 @@ func TestConnectErrors_AreTypedSentinels(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectDisabled)
 
-	c2, _ := connectTestCore(t, fakeConnector{name: "aws"})
+	// granted=false: c2 is only used below for unknown-connector and
+	// CreateConnectRefGrant checks, never a successful "aws" platform read.
+	c2, _ := connectTestCore(t, false, fakeConnector{name: "aws"})
 	_, err = c2.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "nope", "ref")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectUnknownConnector)
@@ -173,6 +232,7 @@ func TestReadFederatedSecret_AuditDescriptionRedactsRawUpstreamError(t *testing.
 		got = e
 		return true
 	})).Return(nil)
+	stubConnectPlatformUseCheckUser(ms, 1, true)
 	c := &KeyorixCore{storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{
 		fakeConnector{name: "aws", err: rawUpstreamErr},

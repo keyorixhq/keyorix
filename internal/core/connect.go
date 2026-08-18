@@ -78,7 +78,18 @@ const (
 	// same opaque unknown-connector shape either way, so the audit trail is
 	// the only place an operator can learn which gate closed.
 	connectDenyReasonDelegationDenied = "delegation_denied"
-	connectDenyReasonBackendError     = "backend_error"
+	// connectDenyReasonPlatformPermissionDenied: connector is scope: platform,
+	// but the caller lacks connect.platform.use (ADR-082 branch 4). Deliberately
+	// terminal — does NOT fall through to ConnectRefGrant delegation the way a
+	// project-scope ownership miss does. See connectOwnershipSatisfied's
+	// platform branch and ADR-082 §H: ConnectRefGrant is keyed on role +
+	// connector name + ref-prefix alone, with no scope awareness, so treating it
+	// as a fallback here would let anyone able to create a grant against a
+	// platform connector's name bypass connect.platform.use for anyone else —
+	// that would be a bypass, not a narrowing. This fork is deliberate; do not
+	// "reconcile" it toward the project-scope delegation path later.
+	connectDenyReasonPlatformPermissionDenied = "platform_permission_denied"
+	connectDenyReasonBackendError             = "backend_error"
 	// connectAllowReasonDelegation: caller is not owned, but an explicit
 	// ConnectRefGrant covering their role and this ref allows the read
 	// (ADR-082 §F).
@@ -168,6 +179,21 @@ func (c *KeyorixCore) ConnectReadableConnectorNames(ctx context.Context, actorTy
 			readable = append(readable, name)
 			continue
 		}
+		if c.connectOwnership[name].Scope == "platform" {
+			// ADR-082 branch 4: a platform-scope caller who lacks connect.platform.use
+			// is a TERMINAL deny in ReadFederatedSecret — it never attempts
+			// ConnectRefGrant delegation for platform scope (see
+			// connectDenyReasonPlatformPermissionDenied's doc comment for why a
+			// delegation fallback there would be a bypass). Discovery must agree: the
+			// delegation-fallback branch below exists for project-scope connectors,
+			// where it's true that ReadFederatedSecret would also honor it — reaching
+			// it for a platform connector here would show a connector in ListConnectors
+			// that an actual read will always deny, the exact leak ADR-082 §E exists to
+			// prevent. (A ConnectRefGrant CAN currently be created against a platform
+			// connector's name regardless — that's dead configuration, not a live
+			// delegation path; see the issue filed alongside this branch.)
+			continue
+		}
 		// Not owned — a connector reachable only via an explicit ConnectRefGrant
 		// still belongs in discovery; ReadSecret still applies the ref-prefix match
 		// per-read. actorRoleIDs (not connectRefGrantDelegates) is the right check
@@ -203,12 +229,22 @@ func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType s
 		return false, "", nil
 	}
 	if owner.Scope == "platform" {
-		// TODO(ADR-082 branch 4): gate platform connectors on connect.platform.use,
-		// not connect.read alone. Every caller who reaches this function has
-		// already cleared connect.read (checked by the transport layer before
-		// ReadFederatedSecret/ConnectReadableConnectorNames is ever called), so this
-		// is a deliberate interim "any connect.read holder" pass-through, not an
-		// oversight.
+		// ADR-082 branch 4: platform connectors need connect.platform.use, not just
+		// connect.read (which the transport layer already enforced before this
+		// function was ever called, and which still gates the whole Connect surface
+		// — connect.read alone was only ever a fail-open interim for platform scope
+		// specifically, through branch 3). Checked at Scope{} (global), matching
+		// connect.read's own scope — a platform connector has no owning project to
+		// check against. A denial here is terminal, not a fall-through to
+		// ConnectRefGrant delegation — see connectDenyReasonPlatformPermissionDenied
+		// and ADR-082 §H for why.
+		allowed, err := c.AuthorizePrincipal(ctx, actorType, principalID, "connect.platform.use", Scope{})
+		if err != nil {
+			return false, "", fmt.Errorf("connect ownership: check connect.platform.use: %w", err)
+		}
+		if !allowed {
+			return false, "", nil
+		}
 		return true, ConnectOwnershipReasonPlatformScope, nil
 	}
 	// scope == "project": raw scope set, NOT GetReadableScopes (D) — the {0,0}
@@ -277,7 +313,8 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 		return "", err
 	}
 	var allowReason ConnectOwnershipReason
-	if owned {
+	switch {
+	case owned:
 		allowReason = ownReason
 		// Per-reference RBAC (ADR-045): once a connector has any ref-grant, the read
 		// is permitted only if one of the caller's roles holds a matching grant. A
@@ -294,8 +331,19 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 				fmt.Sprintf("federated read DENIED by per-reference policy: connector %q (%s) ref %q reason=%s", connectorName, conn.Type(), ref, connectDenyReasonRefNotPermitted))
 			return "", fmt.Errorf("ref %q %w %q", ref, ErrConnectRefNotPermitted, connectorName)
 		}
-	} else {
-		// Not owned — ConnectRefGrant is the explicit cross-project delegation path
+	case owner.Scope == "platform":
+		// ADR-082 branch 4: caller lacks connect.platform.use. TERMINAL — no
+		// ConnectRefGrant delegation attempt, deliberately (see
+		// connectDenyReasonPlatformPermissionDenied's doc comment). This is its own
+		// case, not folded into the not-owned/delegation branch below, precisely so
+		// it never reaches connectRefGrantDelegates.
+		c.writeAuditEventFailed(ctx, EventConnectSecretRead, &uid, projectID, "",
+			fmt.Sprintf("federated read DENIED: connector %q (%s) ref %q reason=%s", connectorName, conn.Type(), ref, connectDenyReasonPlatformPermissionDenied))
+		return "", fmt.Errorf("%w %q", ErrConnectUnknownConnector, connectorName)
+	default:
+		// Not owned, project scope (or a connector absent from the ownership map
+		// entirely — the structural-invariant edge case, unchanged from before this
+		// branch) — ConnectRefGrant is the explicit cross-project delegation path
 		// (ADR-082 §F). connectRefGrantDelegates (unlike connectRefAllowed) treats
 		// "no grants configured" as "no delegation," not "allow": that shortcut only
 		// makes sense for an already-owned caller.
