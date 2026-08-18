@@ -652,7 +652,7 @@ would have been the closest precedent (ADR-075's "closed `key_source`
 enum") was never actually implemented under that name anywhere in the
 codebase; see the issue filed alongside this branch for that specific
 drift. Given that, the token goes into free-text `Description`, using the
-SAME fixed format at every one of the eight call sites below, specifically
+SAME fixed format at every one of the seven call sites below, specifically
 so a future structured column is a parse-and-backfill against this closed
 set, not a rewrite:
 
