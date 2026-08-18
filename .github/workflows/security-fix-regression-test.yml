@@ -2,7 +2,8 @@ name: Security Fix Regression Test
 
 on:
   pull_request:
-    branches: [main]
+    # See ci.yml's own comment: also covers stacked-PR review chains.
+    branches: [main, 'adr082/**', 'feat/**', 'fix/**']
 
 # Read-only: this job only inspects PR metadata and the diff already in the
 # PR, it never needs to write anything.

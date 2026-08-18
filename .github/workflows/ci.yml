@@ -4,7 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # main plus the stacked-PR branch conventions used for multi-PR review
+    # chains (each PR in a stack targets its predecessor's branch, not main
+    # directly, until it's that PR's turn to land) — without these, a PR
+    # based on a sibling feature branch never triggers CI at all.
+    branches: [main, 'adr082/**', 'feat/**', 'fix/**']
 
 # Workflow-level default: zero permissions. No job here writes to the repo,
 # comments on PRs, or publishes anything — a compromised dependency/action in
