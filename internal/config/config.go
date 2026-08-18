@@ -1871,6 +1871,9 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 	switch c.Storage.Type {
 	case "remote":
 		// remote storage uses its own connection — no local DB config required
+		if err := validateRemoteStorageNotServer(c); err != nil {
+			return err
+		}
 	case "postgres", "postgresql":
 		db := c.Storage.Database
 		if db.DSN == "" && (db.Host == "" || db.Name == "" || db.User == "") {
@@ -1907,6 +1910,26 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return fmt.Errorf("unsupported fallback language: %s. Supported languages: en, ru, es, fr, de", c.Locale.FallbackLanguage)
 	}
 
+	return nil
+}
+
+// validateRemoteStorageNotServer enforces ADR-083: storage.type: remote is a
+// CLI/client mode only — it delegates the ENTIRE storage backend to an upstream
+// server over HTTP, and RemoteStorage never implements the primitives
+// AuthorizePrincipal needs to resolve a permission for ANY caller (GetUserRoleIDsAt,
+// GetUserGroupRoleIDsAt, RoleSetHasPermission are all hard "not supported in
+// remote storage" stubs). A process with server.http.enabled or
+// server.grpc.enabled registers the full RequirePermission-gated route set
+// regardless of storage backend — on storage.type: remote, every one of those
+// checks would fail closed, for every permission, for every caller, making the
+// combination a broken feature, not a smaller one. See ADR-083 for the full
+// investigation (which supersedes ADR-049's "downstream Keyorix server" framing)
+// before ever considering lifting this gate.
+func validateRemoteStorageNotServer(c *Config) error {
+	if c.Server.HTTP.Enabled || c.Server.GRPC.Enabled {
+		return fmt.Errorf("storage.type: remote cannot back a server with server.http.enabled or server.grpc.enabled: " +
+			"remote storage is a CLI/client mode only, not a deployable server backend — see ADR-083")
+	}
 	return nil
 }
 
