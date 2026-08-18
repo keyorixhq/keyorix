@@ -64,11 +64,15 @@ func TestReadFederatedSecret_UnknownConnector(t *testing.T) {
 }
 
 func TestReadFederatedSecret_DisabledWhenNoManager(t *testing.T) {
-	c := &KeyorixCore{storage: new(MockStorage)}
+	ms := new(MockStorage)
+	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	c := &KeyorixCore{storage: ms}
 	assert.False(t, c.ConnectEnabled())
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not enabled")
+	// ADR-082 branch 3: the disabled path is now audited too (previously silent).
+	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 }
 
 func TestReadFederatedSecret_BackendErrorAudited(t *testing.T) {
@@ -130,7 +134,9 @@ func TestReadFederatedSecret_UserAuditedAsUser(t *testing.T) {
 // what lets the HTTP layer's isSafeConnectError classify safe vs. unsafe errors by
 // type instead of by substring-matching err.Error() against caller-influenced text.
 func TestConnectErrors_AreTypedSentinels(t *testing.T) {
-	c := &KeyorixCore{storage: new(MockStorage)}
+	ms := new(MockStorage)
+	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	c := &KeyorixCore{storage: ms}
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectDisabled)

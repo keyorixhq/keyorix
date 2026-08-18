@@ -16,7 +16,8 @@ import (
 )
 
 // EventConnectSecretRead is audited on every federated read (success or failure is
-// distinguished by the description).
+// distinguished by Success and by the description's reason= token — see
+// ConnectOwnershipReason and the deny-path reason constants below).
 const EventConnectSecretRead = "connect.secret_read"
 
 // Per-reference grant management events (ADR-045).
@@ -24,6 +25,78 @@ const (
 	EventConnectRefGrantCreate = "connect.ref_grant_create"
 	EventConnectRefGrantDelete = "connect.ref_grant_delete"
 )
+
+// EventConnectorProjectBindingCreate is audited on every persisted
+// ConnectorProjectBinding write (ADR-082 branch 3, issue #1477's audit half) —
+// both the boot-time first-resolution write (server/main.go's
+// resolveConnectorOwnership) and the RemoteStorage proxy write
+// (server/http/handlers/connector_project_bindings_proxy.go's
+// CreateConnectorProjectBindingProxy). The binding is an authorization input
+// (it feeds connectOwnershipSatisfied) regardless of which door the write comes
+// through, so both call sites use the same event type.
+const EventConnectorProjectBindingCreate = "connect.project_binding_create" // #nosec G101 -- audit event type, not a credential
+
+// ConnectOwnershipReason and the deny-path reason values below form ONE closed
+// set (ADR-082 §E) that appears as a "reason=<value>" token at a fixed position
+// in every ReadFederatedSecret audit Description — allow and deny outcomes
+// alike. There is no structured column for this (AuditEvent has none, and
+// ADR-075's "closed key_source enum" describing one was never actually
+// implemented — see backlog issue filed alongside this branch), so the fixed
+// token format is what keeps this parseable, and what makes a future
+// structured column a parse-and-backfill rather than a rewrite.
+type ConnectOwnershipReason string
+
+const (
+	// ConnectOwnershipReasonProjectMembership: caller holds a role scoped to
+	// the connector's owning project specifically.
+	ConnectOwnershipReasonProjectMembership ConnectOwnershipReason = "project_membership"
+	// ConnectOwnershipReasonGlobalScope: caller holds a role at the true
+	// global ({0,0}) scope, which wildcards every project-scoped connector.
+	ConnectOwnershipReasonGlobalScope ConnectOwnershipReason = "global_scope"
+	// ConnectOwnershipReasonPlatformScope: the connector itself is
+	// platform-scoped (ADR-082 §B) — ownership passes for any connect.read
+	// holder, independent of the caller's role scopes (TODO ADR-082 branch 4:
+	// connect.platform.use narrows this).
+	ConnectOwnershipReasonPlatformScope ConnectOwnershipReason = "platform_scope"
+)
+
+// Deny-path reason values (ADR-082 §E), same closed set / same token
+// convention as ConnectOwnershipReason above, kept as plain strings rather
+// than folded into ConnectOwnershipReason since they describe a DENIAL, not an
+// ownership outcome connectOwnershipSatisfied itself produces.
+const (
+	connectDenyReasonDisabled         = "connect_disabled"
+	connectDenyReasonUnknownConnector = "unknown_connector"
+	connectDenyReasonRefNotPermitted  = "ref_not_permitted"
+	// connectDenyReasonOwnershipDenied: caller is not owned AND the connector
+	// has no ConnectRefGrant at all — no delegation path exists.
+	connectDenyReasonOwnershipDenied = "ownership_denied"
+	// connectDenyReasonDelegationDenied: caller is not owned; the connector
+	// DOES have ConnectRefGrant(s), but none matched this caller's roles/ref.
+	// Distinguishing this from connectDenyReasonOwnershipDenied is the reason
+	// this audit event exists at all (ADR-082): the HTTP/gRPC response is the
+	// same opaque unknown-connector shape either way, so the audit trail is
+	// the only place an operator can learn which gate closed.
+	connectDenyReasonDelegationDenied = "delegation_denied"
+	connectDenyReasonBackendError     = "backend_error"
+	// connectAllowReasonDelegation: caller is not owned, but an explicit
+	// ConnectRefGrant covering their role and this ref allows the read
+	// (ADR-082 §F).
+	connectAllowReasonDelegation = "delegation"
+)
+
+// connectAuditProjectID returns the connector's owning project for the audit
+// trail, or nil when the connector is platform-scoped (ADR-082: ProjectID is
+// meaningless there — see ConnectOwnership's own doc comment) or has no
+// ownership entry at all (e.g. an unknown connector, audited before any
+// ownership lookup is possible).
+func connectAuditProjectID(owner ConnectOwnership) *uint {
+	if owner.Scope != "project" || owner.ProjectID == 0 {
+		return nil
+	}
+	p := owner.ProjectID
+	return &p
+}
 
 // SetConnectManager wires the configured external-store connectors (ADR-043). nil
 // (the default) leaves Keyorix Connect disabled.
@@ -87,7 +160,7 @@ func (c *KeyorixCore) ConnectReadableConnectorNames(ctx context.Context, actorTy
 	}
 	var readable []string
 	for _, name := range c.connectManager.Names() {
-		owned, err := c.connectOwnershipSatisfied(ctx, actorType, principalID, name)
+		owned, _, err := c.connectOwnershipSatisfied(ctx, actorType, principalID, name)
 		if err != nil {
 			return nil, err
 		}
@@ -119,10 +192,15 @@ func (c *KeyorixCore) ConnectReadableConnectorNames(ctx context.Context, actorTy
 // structural invariant server/main.go's boot-time key-set check exists to
 // guarantee never happens in a correctly-booted server; this is the runtime
 // backstop).
-func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType string, principalID uint, connectorName string) (bool, error) {
+// The second return value names WHICH check satisfied ownership (meaningless
+// when the first return is false) — ADR-082 branch 3 needs this for the audit
+// trail's three-way allow reason. It is a named type, not a string, precisely
+// so the string formatting stays at the audit call site (ReadFederatedSecret),
+// not here: this function reports a fact, not a description.
+func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType string, principalID uint, connectorName string) (bool, ConnectOwnershipReason, error) {
 	owner, ok := c.connectOwnership[connectorName]
 	if !ok {
-		return false, nil
+		return false, "", nil
 	}
 	if owner.Scope == "platform" {
 		// TODO(ADR-082 branch 4): gate platform connectors on connect.platform.use,
@@ -131,7 +209,7 @@ func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType s
 		// ReadFederatedSecret/ConnectReadableConnectorNames is ever called), so this
 		// is a deliberate interim "any connect.read holder" pass-through, not an
 		// oversight.
-		return true, nil
+		return true, ConnectOwnershipReasonPlatformScope, nil
 	}
 	// scope == "project": raw scope set, NOT GetReadableScopes (D) — the {0,0}
 	// global entry must survive so the loop below can match it as the wildcard
@@ -144,14 +222,17 @@ func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType s
 		scopes, err = c.storage.GetUserRoleScopes(ctx, principalID)
 	}
 	if err != nil {
-		return false, fmt.Errorf("connect ownership: enumerate role scopes: %w", err)
+		return false, "", fmt.Errorf("connect ownership: enumerate role scopes: %w", err)
 	}
 	for _, sc := range scopes {
-		if sc.ProjectID == owner.ProjectID || sc.ProjectID == 0 {
-			return true, nil
+		if sc.ProjectID == owner.ProjectID {
+			return true, ConnectOwnershipReasonProjectMembership, nil
+		}
+		if sc.ProjectID == 0 {
+			return true, ConnectOwnershipReasonGlobalScope, nil
 		}
 	}
-	return false, nil
+	return false, "", nil
 }
 
 // ReadFederatedSecret proxies a read of ref from the named external-store connector
@@ -164,25 +245,40 @@ func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType s
 // function with an untagged context, not silently default to "user". The value is
 // returned to the caller and never persisted.
 func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (string, error) {
+	ctx = WithActorType(ctx, actorType)
+	uid := principalID
+
 	if c.connectManager == nil {
+		c.writeAuditEventFailed(ctx, EventConnectSecretRead, &uid, nil, "",
+			fmt.Sprintf("federated read DENIED: connect is disabled ref %q reason=%s", ref, connectDenyReasonDisabled))
 		return "", ErrConnectDisabled
 	}
 	conn, ok := c.connectManager.Get(connectorName)
 	if !ok {
+		c.writeAuditEventFailed(ctx, EventConnectSecretRead, &uid, nil, "",
+			fmt.Sprintf("federated read DENIED: unknown connector %q ref %q reason=%s", connectorName, ref, connectDenyReasonUnknownConnector))
 		return "", fmt.Errorf("%w %q", ErrConnectUnknownConnector, connectorName)
 	}
-	ctx = WithActorType(ctx, actorType)
-	uid := principalID
+	// Every outcome below (allow or deny) is for a KNOWN connector, so its owning
+	// project (nil for platform scope) is the audit ProjectID throughout —
+	// resolved once here rather than per-branch. This is a direct map read on the
+	// SAME connectOwnership data connectOwnershipSatisfied consults below, not a
+	// second authorization decision.
+	owner := c.connectOwnership[connectorName]
+	projectID := connectAuditProjectID(owner)
 
 	// ADR-082 §E authorization order: connect.read (enforced by the transport layer
 	// before this function is ever called) → ownership → ConnectRefGrant delegation
-	// → deny. No audit call on either branch below — audit is branch 3 (ADR-082);
-	// this branch's denials are deliberately unaudited, same as ADR-082 itself notes.
-	owned, err := c.connectOwnershipSatisfied(ctx, actorType, principalID, connectorName)
+	// → deny. Every branch below is now audited (ADR-082 branch 3) — the deny
+	// branches were deliberately unaudited through branch 2; that gap is what this
+	// branch closes.
+	owned, ownReason, err := c.connectOwnershipSatisfied(ctx, actorType, principalID, connectorName)
 	if err != nil {
 		return "", err
 	}
+	var allowReason ConnectOwnershipReason
 	if owned {
+		allowReason = ownReason
 		// Per-reference RBAC (ADR-045): once a connector has any ref-grant, the read
 		// is permitted only if one of the caller's roles holds a matching grant. A
 		// connector with no grants is governed solely by connect.read + allowed_refs
@@ -194,8 +290,8 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 			return "", err
 		}
 		if !allowed {
-			c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
-				fmt.Sprintf("federated read DENIED by per-reference policy: connector %q (%s) ref %q", connectorName, conn.Type(), ref))
+			c.writeAuditEventFailed(ctx, EventConnectSecretRead, &uid, projectID, "",
+				fmt.Sprintf("federated read DENIED by per-reference policy: connector %q (%s) ref %q reason=%s", connectorName, conn.Type(), ref, connectDenyReasonRefNotPermitted))
 			return "", fmt.Errorf("ref %q %w %q", ref, ErrConnectRefNotPermitted, connectorName)
 		}
 	} else {
@@ -203,17 +299,26 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 		// (ADR-082 §F). connectRefGrantDelegates (unlike connectRefAllowed) treats
 		// "no grants configured" as "no delegation," not "allow": that shortcut only
 		// makes sense for an already-owned caller.
-		delegated, err := c.connectRefGrantDelegates(ctx, actorType, principalID, connectorName, ref)
+		delegated, hasGrants, err := c.connectRefGrantDelegates(ctx, actorType, principalID, connectorName, ref)
 		if err != nil {
 			return "", err
 		}
 		if !delegated {
 			// Ownership denied and no delegation grant: reuse the unknown-connector
-			// shape (ADR-082) — do not confirm this connector's existence to a caller
-			// who cannot reach it. ListConnectors already omits it from discovery;
-			// this keeps the single-connector read path consistent with that.
+			// shape in the RETURNED ERROR (ADR-082) — do not confirm this connector's
+			// existence to a caller who cannot reach it. The audit event is the only
+			// place the real reason is recorded; it distinguishes "no grants at all"
+			// from "grants exist, none matched" (the two denial reasons ADR-082
+			// branch 3 requires), which the opaque response deliberately does not.
+			reason := connectDenyReasonOwnershipDenied
+			if hasGrants {
+				reason = connectDenyReasonDelegationDenied
+			}
+			c.writeAuditEventFailed(ctx, EventConnectSecretRead, &uid, projectID, "",
+				fmt.Sprintf("federated read DENIED: connector %q (%s) ref %q reason=%s", connectorName, conn.Type(), ref, reason))
 			return "", fmt.Errorf("%w %q", ErrConnectUnknownConnector, connectorName)
 		}
+		allowReason = connectAllowReasonDelegation
 	}
 
 	value, err := conn.GetSecret(ctx, ref)
@@ -225,12 +330,12 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 		// HTTP layer separately applies clientSafe()/isSafeConnectError to what it
 		// returns to the caller.
 		log.Printf("federated read failed via connector %q (%s) ref %q: %v", connectorName, conn.Type(), ref, err)
-		c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
-			fmt.Sprintf("federated read FAILED via connector %q (%s) ref %q: an internal error occurred; see server logs", connectorName, conn.Type(), ref))
+		c.writeAuditEventFailed(ctx, EventConnectSecretRead, &uid, projectID, "",
+			fmt.Sprintf("federated read FAILED via connector %q (%s) ref %q: an internal error occurred; see server logs reason=%s", connectorName, conn.Type(), ref, connectDenyReasonBackendError))
 		return "", err
 	}
-	c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
-		fmt.Sprintf("federated read via connector %q (%s) ref %q", connectorName, conn.Type(), ref))
+	c.writeAuditEventFull(ctx, EventConnectSecretRead, &uid, nil, projectID, "",
+		fmt.Sprintf("federated read via connector %q (%s) ref %q reason=%s", connectorName, conn.Type(), ref, allowReason))
 	return value, nil
 }
 
@@ -266,18 +371,32 @@ func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID
 		return nil, err
 	}
 	uid := actorID
-	c.writeAuditEvent(ctx, EventConnectRefGrantCreate, &uid, nil,
+	c.writeAuditEventFull(ctx, EventConnectRefGrantCreate, &uid, nil, connectAuditProjectID(c.connectOwnership[connectorName]), "",
 		fmt.Sprintf("connect ref-grant: role %d may read ref-prefix %q on connector %q", roleID, refPrefix, connectorName))
 	return g, nil
 }
 
 // DeleteConnectRefGrant removes a per-reference grant by id. Audited.
 func (c *KeyorixCore) DeleteConnectRefGrant(ctx context.Context, actorID, id uint) error {
+	// Best-effort lookup of the grant's connector (for the audit ProjectID) BEFORE
+	// deleting — the storage interface has no fetch-by-id or delete-returning-row
+	// primitive, and adding one is out of scope here (ADR-082 branch 3 must not
+	// change ConnectRefGrant's own storage shape). If this lookup fails or finds
+	// nothing, the event is still written, just without a ProjectID.
+	var projectID *uint
+	if grants, gerr := c.storage.ListConnectRefGrants(ctx); gerr == nil {
+		for _, g := range grants {
+			if g.ID == id {
+				projectID = connectAuditProjectID(c.connectOwnership[g.Connector])
+				break
+			}
+		}
+	}
 	if err := c.storage.DeleteConnectRefGrant(ctx, id); err != nil {
 		return err
 	}
 	uid := actorID
-	c.writeAuditEvent(ctx, EventConnectRefGrantDelete, &uid, nil,
+	c.writeAuditEventFull(ctx, EventConnectRefGrantDelete, &uid, nil, projectID, "",
 		fmt.Sprintf("connect ref-grant %d deleted", id))
 	return nil
 }
@@ -322,25 +441,30 @@ func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, p
 // ConnectRefGrant's own schema, matching rules (refMatches), and expiry logic
 // (connectGrantActive) are unchanged (ADR-082) — only which caller populations
 // reach this delegation check is new.
-func (c *KeyorixCore) connectRefGrantDelegates(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (bool, error) {
+// The second return value reports whether the connector had ANY ConnectRefGrant
+// configured at all (regardless of whether one matched) — ADR-082 branch 3
+// needs this to distinguish the audit trail's two deny reasons
+// (connectDenyReasonOwnershipDenied vs connectDenyReasonDelegationDenied),
+// which a bare "delegated bool" cannot.
+func (c *KeyorixCore) connectRefGrantDelegates(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (bool, bool, error) {
 	grants, err := c.storage.ListConnectRefGrantsByConnector(ctx, connectorName)
 	if err != nil {
-		return false, fmt.Errorf("connect ref-grant lookup: %w", err)
+		return false, false, fmt.Errorf("connect ref-grant lookup: %w", err)
 	}
 	if len(grants) == 0 {
-		return false, nil // no delegation grant configured — no delegation path
+		return false, false, nil // no delegation grant configured — no delegation path
 	}
 	roleSet, err := c.actorRoleIDs(ctx, actorType, principalID)
 	if err != nil {
-		return false, err
+		return false, true, err
 	}
 	now := time.Now()
 	for _, g := range grants {
 		if roleSet[g.RoleID] && connectGrantActive(g, now) && refMatches(g.RefPrefix, ref) {
-			return true, nil
+			return true, true, nil
 		}
 	}
-	return false, nil
+	return false, true, nil
 }
 
 // connectorHasAnyDelegationForActor reports whether principalID holds a role with

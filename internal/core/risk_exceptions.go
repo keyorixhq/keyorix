@@ -232,7 +232,7 @@ func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID, id uint
 		return fmt.Errorf("risk exception %d is already approved", id)
 	}
 	if actorID == e.CreatedBy {
-		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), "",
+		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil, "",
 			fmt.Sprintf("risk exception %d approval DENIED: creator %d cannot self-approve", id, actorID))
 		return fmt.Errorf("the exception's creator cannot approve it (dual control); a different system.write holder must approve")
 	}
@@ -242,7 +242,7 @@ func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID, id uint
 	// different approver reviews it — a stale or bogus reference must not be
 	// rubber-stamped either.
 	if err := c.validateSoDReferenceIsLiveViolation(ctx, e.Category, e.Reference); err != nil {
-		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), "",
+		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil, "",
 			fmt.Sprintf("risk exception %d approval DENIED: %v", id, err))
 		return err
 	}

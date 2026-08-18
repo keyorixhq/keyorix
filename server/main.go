@@ -995,6 +995,7 @@ func resolveConnectorOwnership(ctx context.Context, st corestorage.Storage, conn
 				problems = append(problems, fmt.Sprintf("%s: failed to persist project binding: %v", cn.Name, cerr))
 				continue
 			}
+			auditConnectorProjectBindingCreate(ctx, st, created, "boot-time first resolution")
 			ownership[cn.Name] = core.ConnectOwnership{Scope: "project", ProjectID: created.ProjectID}
 		case err != nil:
 			problems = append(problems, fmt.Sprintf("%s: %v", cn.Name, err))
@@ -1018,6 +1019,33 @@ func resolveConnectorOwnership(ctx context.Context, st corestorage.Storage, conn
 		return nil, fmt.Errorf("connector(s) with unresolvable project binding: %s", strings.Join(problems, "; "))
 	}
 	return ownership, nil
+}
+
+// auditConnectorProjectBindingCreate records a ConnectorProjectBinding write
+// (ADR-082 branch 3, issue #1477's audit half): the binding is an
+// authorization input (it feeds core.ConnectOwnership, and from there
+// connectOwnershipSatisfied) regardless of which door the write comes through,
+// so the unattended boot-time path here uses the SAME event type as the
+// RemoteStorage proxy's write (server/http/handlers/connector_project_bindings_proxy.go).
+// source distinguishes the two call sites in the Description. A logging
+// failure here does not fail boot — the binding itself already persisted
+// successfully — but is surfaced loudly (SECURITY-prefixed, matching
+// internal/core's own emitAudit convention) since a silently-dropped audit
+// write for an authorization-input change is exactly the kind of gap this
+// branch exists to close.
+func auditConnectorProjectBindingCreate(ctx context.Context, st corestorage.Storage, b *models.ConnectorProjectBinding, source string) {
+	t := true
+	event := &models.AuditEvent{
+		EventType:   core.EventConnectorProjectBindingCreate,
+		ProjectID:   &b.ProjectID,
+		Description: fmt.Sprintf("connector project binding created (%s): connector %q bound to project %q (id %d)", source, b.Connector, b.ProjectName, b.ProjectID),
+		Success:     &t,
+		EventTime:   time.Now(),
+		ActorType:   core.ActorTypeSystem,
+	}
+	if err := st.LogAuditEvent(ctx, event); err != nil {
+		log.Printf("SECURITY: failed to persist audit event %q for connector %q: %v", core.EventConnectorProjectBindingCreate, b.Connector, err)
+	}
 }
 
 // connectOwnershipKeySetMismatch returns every connector name whose presence in

@@ -24,7 +24,7 @@ func connectOwnershipResolutionStorage(t *testing.T) (*store.LocalStorage, *gorm
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.ConnectorProjectBinding{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.ConnectorProjectBinding{}, &models.AuditEvent{}))
 	return store.NewLocalStorage(db), db
 }
 
@@ -49,6 +49,18 @@ func TestResolveConnectorOwnership_FirstBootResolvesAndPersists(t *testing.T) {
 	require.NoError(t, db.Where("connector = ?", "aws").First(&binding).Error)
 	assert.Equal(t, project.ID, binding.ProjectID)
 	assert.Equal(t, "payments", binding.ProjectName)
+
+	// ADR-082 branch 3 / issue #1477's audit half: the boot-time first-resolution
+	// write is itself an authorization-input change and must be audited, same as
+	// the RemoteStorage proxy's equivalent write.
+	var event models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", core.EventConnectorProjectBindingCreate).First(&event).Error)
+	require.NotNil(t, event.ProjectID)
+	assert.Equal(t, project.ID, *event.ProjectID)
+	assert.True(t, *event.Success)
+	assert.Equal(t, core.ActorTypeSystem, event.ActorType)
+	assert.Contains(t, event.Description, "aws")
+	assert.Contains(t, event.Description, "payments")
 }
 
 // TestResolveConnectorOwnership_SubsequentBootResolvesByStoredID proves a later

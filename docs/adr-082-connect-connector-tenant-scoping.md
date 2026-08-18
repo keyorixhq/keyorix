@@ -20,7 +20,11 @@ Four separate branches, one logical change each:
 4. The new `connect.platform.use` permission (B) and its addition to
    `adminPermissions`.
 
-**No branch has been started as of this ADR's acceptance.**
+**Branches 1-3 are implemented; branch 4 (`connect.platform.use`) is not
+started.** Branch 3 (H) also closes issue #1477's audit half: every
+`ConnectorProjectBinding` write is now audited, not only the `connect.secret_read`
+path — see (H) below for the full, as-implemented design (the text below
+reflects what shipped, superseding the plan-time description that preceded it).
 
 ## Context
 
@@ -564,28 +568,113 @@ so:
   control — the doc/config comments for this key must say "reserved,
   not yet enforced" plainly, not merely omit mention of enforcement.
 
-### H. Audit surface: switch to `writeAuditEventFull`, populate the connector's owning project, record which gate authorized the read
+### H. Audit surface: switch to `writeAuditEventFull`/`writeAuditEventFailed`, populate the connector's owning project, record which gate decided the outcome, audit every write to `ConnectorProjectBinding`
 
-Every Connect audit event (`connect.secret_read`, success and denial alike)
-switches from `writeAuditEvent` to `writeAuditEventFull`, populating the
-existing `AuditEvent.ProjectID` column with the connector's **owning**
-project (from its config `scope`/`project`) — zero schema change, this
-column already exists and is simply unpopulated by Connect today. A
-successful read additionally carries a distinct, greppable decision-reason
-marker naming which gate in (E)'s order actually resolved ownership:
-`project_membership` (caller is a genuine member of the connector's owning
-project), `global_scope` (caller's scope set carried the `{0,0}`
-global-scope wildcard entry — (E), any role name), or `delegation` (caller
-had no ownership claim at all, resolved instead via a matching
-`ConnectRefGrant`) — exact
-string tokens are an implementation detail, not a design axis. This makes a
-cross-project delegation read, and an admin reaching a connector they are
-not a genuine member of, both distinguishable from an ordinary same-project
-read in an audit review, rather than all three being indistinguishable
-successful reads. This mirrors the numeric-at-storage, resolved-at-export-layer
-split already established for `impersonated_by`/`acting_as` (numeric FK at
-the `AuditEvent` row, resolved to an email string only at the HTTP
-export/API layer) — the same convention, not a new one.
+Every Connect audit event on the read path (`connect.secret_read` — every
+outcome, allow or deny, including the two paths that were silent through
+branch 2: `connect.read` disabled and a genuinely unknown connector) is
+written with `AuditEvent.ProjectID` populated to the connector's **owning**
+project (from its config `scope`/`project`; `nil` for a `scope: platform`
+connector, since `ProjectID` is meaningless there) — zero schema change,
+this column already existed and was simply unpopulated by Connect before
+this branch. `writeAuditEventFailed` was extended with a `projectID`
+parameter (previously it took none) to make this possible for deny events;
+this touched 6 pre-existing non-Connect call sites
+(`auth.login_failed`, risk-exception approval denial ×2, legal-hold
+place/lift denial ×2, compliance-digest broadcast failure), all mechanically
+updated to pass `nil` — none of those events carry project context.
+
+**Success is `true` only for the read that actually returned a value.**
+Every other outcome — the two RBAC denials (E)'s call order can reach,
+`connect.read` disabled, unknown connector, and a failed upstream call to
+the connector's backend — is written with `Success: false`.
+
+**Decision reason: a fixed `reason=<value>` token, closed set, at a
+consistent position in every event's `Description`.** There is no
+structured, enum-typed column for this on `AuditEvent` — none exists today
+(verified directly against the model, not assumed), and the design that
+would have been the closest precedent (ADR-075's "closed `key_source`
+enum") was never actually implemented under that name anywhere in the
+codebase; see the issue filed alongside this branch for that specific
+drift. Given that, the token goes into free-text `Description`, using the
+SAME fixed format at every one of the eight call sites below, specifically
+so a future structured column is a parse-and-backfill against this closed
+set, not a rewrite:
+
+Allow (`Success: true`):
+- `project_membership` — caller holds a role scoped to the connector's
+  owning project specifically.
+- `global_scope` — caller holds a role at the true global (`{0,0}`) scope,
+  which wildcards every project-scoped connector (E), regardless of role
+  name.
+- `platform_scope` — the connector itself is `scope: platform`; ownership
+  passes for any `connect.read` holder (branch 4's `connect.platform.use`
+  narrows this further, not yet implemented).
+- `delegation` — caller had no ownership claim at all on the connector's
+  project, resolved instead via a matching `ConnectRefGrant` (F).
+
+Deny (`Success: false`):
+- `connect_disabled` — no `connect.Manager` configured at all.
+- `unknown_connector` — the named connector does not exist in config.
+- `ref_not_permitted` — caller IS owned, but a `ConnectRefGrant` scoped to
+  this connector exists and none of the caller's roles hold a grant
+  matching the requested ref (ADR-045, unchanged).
+- `ownership_denied` — caller is NOT owned, and the connector has ZERO
+  `ConnectRefGrant`s configured at all — no delegation path exists.
+- `delegation_denied` — caller is NOT owned; the connector DOES have
+  `ConnectRefGrant`(s), but none matched this caller's roles/ref.
+- `backend_error` — ownership (or delegation) was satisfied, but the
+  upstream connector call itself failed (network, credentials, etc.); the
+  raw upstream error is logged server-side only, never persisted into the
+  audit trail (backlog #116, pre-existing G50 protection, unchanged).
+
+`ownership_denied` and `delegation_denied` are the SAME code branch in
+`ReadFederatedSecret` — (E) still returns the identical
+`ErrConnectUnknownConnector` shape to the caller for both, deliberately
+(existence-hiding, per (E)'s own rationale) — but the audit event
+distinguishes them, because this is the only place an operator can learn
+which gate actually closed. This is the concrete case this branch exists
+for: an admin reaching a connector they are not a genuine member of, and a
+cross-project delegation read, and a hard deny, are all indistinguishable
+to the caller by design, but are fully distinguishable in an audit review.
+
+This mirrors the numeric-at-storage, resolved-at-export-layer split already
+established for `impersonated_by`/`acting_as` (numeric FK at the
+`AuditEvent` row, resolved to an email string only at the HTTP export/API
+layer) — the same convention, not a new one.
+
+**`ConnectRefGrant` management events** (`connect.ref_grant_create`,
+`connect.ref_grant_delete`) also switch to `writeAuditEventFull`, populating
+`ProjectID` from the grant's connector's owning project (looked up the same
+way; for delete, via a best-effort `ListConnectRefGrants` scan by id before
+the delete call, since the storage interface has no fetch-by-id or
+delete-returning-row primitive and adding one is out of scope here).
+
+**`ListConnectors` discovery filtering is deliberately NOT audited** — a
+caller listing connectors and having some silently omitted (E) is
+high-volume, low-signal, and would make a routine discovery poll into an
+audit write. Any actual attempt to read a hidden connector is already
+captured by the `connect.secret_read` deny path above; that is the
+meaningful signal, not the list operation itself.
+
+**`ConnectorProjectBinding` writes are audited at both call sites**
+(closing issue #1477's audit half): the boot-time first-resolution write in
+`server/main.go`'s `resolveConnectorOwnership`, and the RemoteStorage proxy
+write in `CreateConnectorProjectBindingProxy`
+(`server/http/handlers/connector_project_bindings_proxy.go`). Both use a new
+event type, `connect.project_binding_create`, and are actored as `"system"`
+(`core.ActorTypeSystem`) — neither call site has a human session or
+machine-identity principal behind it: the boot-time write is unattended, and
+the proxy endpoint is reached only by a node-credential/`system.write`
+caller. `#1477`'s wording named only the proxy write; this branch covers
+both, because the binding is an authorization input (it feeds
+`core.ConnectOwnership`, and from there `connectOwnershipSatisfied`)
+regardless of which door the write comes through, and the boot-time path is
+the more consequential of the two since nothing is watching it interactively.
+A failure to persist the audit event does NOT fail the boot or the request —
+the binding itself already persisted — but is logged loudly
+(`SECURITY`-prefixed), matching `emitAudit`'s own convention for a failed
+audit write.
 
 ### I. ADR-045 is explicitly amended, not silently superseded
 
