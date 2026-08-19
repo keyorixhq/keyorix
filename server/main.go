@@ -658,6 +658,17 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			coreService.SetConnectManager(mgr)
 			coreService.SetConnectOwnership(ownership)
 			log.Printf("Keyorix Connect enabled (%d connector(s))", len(connectors))
+
+			// #1477/#1479: warn-only consistency check, run here because this is the
+			// only place in the system that sees both config (ownership, resolved
+			// just above) and DB rows (ConnectRefGrant, ConnectorProjectBinding)
+			// together — the create-time checks (CreateConnectRefGrant,
+			// CreateConnectorProjectBindingProxy) each structurally cannot see this:
+			// a grant/binding valid when created can still drift out of sync with a
+			// LATER config edit. Neither condition this checks is a security risk —
+			// a dead ref-grant or an orphaned binding both already fail closed/are
+			// simply unused, no over-permission — so this warns, never fails boot.
+			warnConnectConfigDrift(context.Background(), coreService.Storage(), ownership)
 		}
 	}
 
@@ -1093,6 +1104,55 @@ func connectOwnershipKeySetMismatch(builtNames []string, ownership map[string]co
 		}
 	}
 	return mismatch
+}
+
+// warnConnectConfigDrift performs two READ-ONLY, warn-only consistency checks
+// after Connect's boot-time wiring (ownership) is resolved — #1477/#1479's
+// boot-time drift detection. This is the only place in the system that sees
+// both config (ownership, resolved from cfg.Connect.Connectors just before
+// this is called) and DB rows (ConnectRefGrant, ConnectorProjectBinding)
+// together, which is why it closes what the create-time checks
+// (CreateConnectRefGrant, CreateConnectorProjectBindingProxy) structurally
+// cannot: a config edit AFTER a grant/binding already exists. Neither
+// condition here is a security risk — a dead ref-grant already denies
+// nothing extra (ReadFederatedSecret's platform branch is a terminal deny
+// regardless of any grant), and an orphaned binding is simply unused, not
+// over-permissive — so this warns, aggregated in ADR-082's own established
+// style (one summary line naming every offender), and never fails boot.
+// Scoped to when Connect's boot-wiring actually runs (cc.Enabled with at
+// least one recognized connector) — a fully-disabled Connect config with
+// leftover rows from a PRIOR enabled state is not covered; that is a
+// narrower, separate case than the config-edit drift this targets.
+func warnConnectConfigDrift(ctx context.Context, st corestorage.Storage, ownership map[string]core.ConnectOwnership) {
+	if grants, err := st.ListConnectRefGrants(ctx); err != nil {
+		log.Printf("Keyorix Connect: boot-time drift check: failed to list ref-grants: %v", err)
+	} else {
+		var dead []string
+		for _, g := range grants {
+			if ownership[g.Connector].Scope == "platform" {
+				dead = append(dead, fmt.Sprintf("grant %d (connector %q)", g.ID, g.Connector))
+			}
+		}
+		if len(dead) > 0 {
+			log.Printf("Keyorix Connect: WARNING: %d ConnectRefGrant(s) are dead configuration — bound to a connector that now resolves to scope: platform, a terminal deny that never consults ref-grant delegation (ADR-082): %s",
+				len(dead), strings.Join(dead, ", "))
+		}
+	}
+
+	if bindings, err := st.ListConnectorProjectBindings(ctx); err != nil {
+		log.Printf("Keyorix Connect: boot-time drift check: failed to list connector project bindings: %v", err)
+	} else {
+		var orphaned []string
+		for _, b := range bindings {
+			if _, ok := ownership[b.Connector]; !ok {
+				orphaned = append(orphaned, fmt.Sprintf("%s (bound to project %q)", b.Connector, b.ProjectName))
+			}
+		}
+		if len(orphaned) > 0 {
+			log.Printf("Keyorix Connect: WARNING: %d connector project binding(s) reference a connector no longer in cfg.Connect.Connectors — orphaned by a removed or renamed connector: %s",
+				len(orphaned), strings.Join(orphaned, ", "))
+		}
+	}
 }
 
 // cmpOr returns a if non-empty, else b (a tiny local helper to avoid a new import).

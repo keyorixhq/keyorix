@@ -39,3 +39,14 @@ func (ls *LocalStorage) CreateConnectorProjectBinding(ctx context.Context, bindi
 	}
 	return binding, nil
 }
+
+// ListConnectorProjectBindings returns every persisted binding row, unfiltered
+// (#1477's orphan-detection direction — see the boot-time consistency warning
+// in server/main.go, the only caller).
+func (ls *LocalStorage) ListConnectorProjectBindings(ctx context.Context) ([]*models.ConnectorProjectBinding, error) {
+	var bindings []*models.ConnectorProjectBinding
+	if err := ls.db.WithContext(ctx).Find(&bindings).Error; err != nil {
+		return nil, fmt.Errorf("failed to list connector project bindings: %w", err)
+	}
+	return bindings, nil
+}

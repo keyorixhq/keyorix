@@ -7,7 +7,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -196,4 +198,81 @@ func TestConnectOwnershipKeySetMismatch_NoExemptionForAnyDivergence(t *testing.T
 	ownership := map[string]core.ConnectOwnership{} // empty: nothing resolved for "aws"
 	mismatch := connectOwnershipKeySetMismatch([]string{"aws"}, ownership)
 	assert.Equal(t, []string{"aws"}, mismatch, "with allow_unscoped removed, there is no exemption — any divergence, including what used to be the unscoped case, must be reported")
+}
+
+// captureLog redirects the standard logger to a buffer for the duration of the
+// test, restoring the original writer on cleanup — matches the convention
+// already established in transport_tls_test.go for asserting on warn-only log
+// output.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(orig) })
+	return &buf
+}
+
+// TestWarnConnectConfigDrift_DeadRefGrant is #1479's boot-time half: a
+// ConnectRefGrant created while its connector was scope: project (or
+// pre-dating any scope requirement) becomes dead configuration if the config
+// is later edited to scope: platform — create-time refusal (CreateConnectRefGrant)
+// cannot catch this, since the grant already existed before the edit. Proves
+// the warning fires, names the connector, and — critically — does not fail
+// boot (no panic, no error return; warnConnectConfigDrift has no error return
+// at all, this test would simply not compile if it acquired one unexpectedly).
+func TestWarnConnectConfigDrift_DeadRefGrant(t *testing.T) {
+	st, db := connectOwnershipResolutionStorage(t)
+	require.NoError(t, db.AutoMigrate(&models.ConnectRefGrant{}))
+	require.NoError(t, db.Create(&models.ConnectRefGrant{RoleID: 5, Connector: "aws", RefPrefix: "metrics/"}).Error)
+
+	buf := captureLog(t)
+	warnConnectConfigDrift(context.Background(), st, map[string]core.ConnectOwnership{
+		"aws": {Scope: "platform"},
+	})
+
+	assert.Contains(t, buf.String(), "aws")
+	assert.Contains(t, buf.String(), "dead configuration")
+}
+
+// TestWarnConnectConfigDrift_OrphanedBinding is #1477's boot-time half: a
+// ConnectorProjectBinding row whose connector name is no longer in
+// cfg.Connect.Connectors (removed, or renamed in config) — neither side of
+// connectOwnershipKeySetMismatch enumerates DB rows, so this is the only
+// check that catches it. Proves the warning fires and names the orphaned
+// connector.
+func TestWarnConnectConfigDrift_OrphanedBinding(t *testing.T) {
+	st, db := connectOwnershipResolutionStorage(t)
+	require.NoError(t, db.Create(&models.ConnectorProjectBinding{
+		Connector: "decommissioned", ProjectID: 1, ProjectName: "payments",
+	}).Error)
+
+	buf := captureLog(t)
+	// ownership has no entry for "decommissioned" — matching a config that no
+	// longer lists it at all.
+	warnConnectConfigDrift(context.Background(), st, map[string]core.ConnectOwnership{
+		"aws": {Scope: "platform"},
+	})
+
+	assert.Contains(t, buf.String(), "decommissioned")
+	assert.Contains(t, buf.String(), "orphaned")
+}
+
+// TestWarnConnectConfigDrift_NoFalsePositives confirms a healthy state — a
+// ref-grant against a still-project-scoped connector, a binding whose
+// connector is still configured — produces neither warning.
+func TestWarnConnectConfigDrift_NoFalsePositives(t *testing.T) {
+	st, db := connectOwnershipResolutionStorage(t)
+	require.NoError(t, db.AutoMigrate(&models.ConnectRefGrant{}))
+	require.NoError(t, db.Create(&models.ConnectRefGrant{RoleID: 5, Connector: "aws", RefPrefix: "metrics/"}).Error)
+	require.NoError(t, db.Create(&models.ConnectorProjectBinding{
+		Connector: "aws", ProjectID: 1, ProjectName: "payments",
+	}).Error)
+
+	buf := captureLog(t)
+	warnConnectConfigDrift(context.Background(), st, map[string]core.ConnectOwnership{
+		"aws": {Scope: "project", ProjectID: 1},
+	})
+
+	assert.Empty(t, buf.String(), "a healthy grant/binding state must not produce any drift warning")
 }
