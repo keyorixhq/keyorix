@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -90,11 +91,12 @@ func TestAuthorize_PATRestriction(t *testing.T) {
 		// Context carries the restriction, so match on Anything for ctx.
 		ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), scope).Return([]uint{10}, nil)
 		ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), scope).Return([]uint{}, nil)
-		// Not an admin role set — every admin-name lookup misses.
-		ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError)
-		ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError)
-		ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
-		ms.On("GetRoleByName", mock.Anything, "project_admin").Return(nil, assert.AnError)
+		// Not an admin role set — every admin-name lookup misses (not found, not a
+		// genuine storage error — roleSetContainsAdmin distinguishes the two).
+		ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
+		ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
+		ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
+		ms.On("GetRoleByName", mock.Anything, "project_admin").Return(nil, errors.New("not found"))
 		ms.On("RoleSetHasPermission", mock.Anything, []uint{10}, "secrets.read").Return(true, nil)
 
 		rctx := WithPATRestriction(ctx, &PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: 5})
@@ -109,10 +111,10 @@ func TestAuthorize_PATRestriction(t *testing.T) {
 		scope := storage.Scope{ProjectID: 5}
 		ms.On("GetUserRoleIDsAt", ctx, uint(1), scope).Return([]uint{10}, nil)
 		ms.On("GetUserGroupRoleIDsAt", ctx, uint(1), scope).Return([]uint{}, nil)
-		ms.On("GetRoleByName", ctx, "super_admin").Return(nil, assert.AnError)
-		ms.On("GetRoleByName", ctx, "admin").Return(nil, assert.AnError)
-		ms.On("GetRoleByName", ctx, "system_admin").Return(nil, assert.AnError)
-		ms.On("GetRoleByName", ctx, "project_admin").Return(nil, assert.AnError)
+		ms.On("GetRoleByName", ctx, "super_admin").Return(nil, errors.New("not found"))
+		ms.On("GetRoleByName", ctx, "admin").Return(nil, errors.New("not found"))
+		ms.On("GetRoleByName", ctx, "system_admin").Return(nil, errors.New("not found"))
+		ms.On("GetRoleByName", ctx, "project_admin").Return(nil, errors.New("not found"))
 		ms.On("RoleSetHasPermission", ctx, []uint{10}, "secrets.write").Return(true, nil)
 
 		allowed, err := c.Authorize(ctx, 1, "secrets.write", Scope{ProjectID: 5})

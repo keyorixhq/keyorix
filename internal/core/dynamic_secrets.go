@@ -322,7 +322,11 @@ func (c *KeyorixCore) requireDynamicSecretAdminAuthority(ctx context.Context, ac
 	if err != nil {
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
-	if !c.roleSetContainsAdmin(ctx, ids) {
+	containsAdmin, err := c.roleSetContainsAdmin(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !containsAdmin {
 		return fmt.Errorf("binding a dynamic-secret backend requires admin authority on this project")
 	}
 	return nil

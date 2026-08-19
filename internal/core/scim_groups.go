@@ -224,8 +224,10 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 
 // scimGroupConfersAdmin reports whether membership in groupID grants an admin role, so
 // the SCIM group-sync paths can refuse to add members to it. Fails CLOSED (treats the
-// group as admin-bearing) on a lookup error, so an inability to verify never opens the
-// privilege grant.
+// group as admin-bearing) on a lookup error — either GetGroupRoles' own, or a genuine
+// roleSetContainsAdmin resolution error (#G17-style: a lookup failure must not be
+// indistinguishable from a legitimate negative result) — so an inability to verify
+// never opens the privilege grant.
 func (c *KeyorixCore) scimGroupConfersAdmin(ctx context.Context, groupID uint) bool {
 	roles, err := c.storage.GetGroupRoles(ctx, groupID)
 	if err != nil {
@@ -235,7 +237,11 @@ func (c *KeyorixCore) scimGroupConfersAdmin(ctx context.Context, groupID uint) b
 	for _, r := range roles {
 		ids = append(ids, r.ID)
 	}
-	return c.roleSetContainsAdmin(ctx, ids)
+	containsAdmin, err := c.roleSetContainsAdmin(ctx, ids)
+	if err != nil {
+		return true
+	}
+	return containsAdmin
 }
 
 func buildSCIMMemberMaps(memberIDs []uint, current []*models.User) (want, have map[uint]bool) {
