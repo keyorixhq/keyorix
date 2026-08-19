@@ -99,6 +99,18 @@ type connectorProjectBindingCreateBody struct {
 // /api/v1/system/connector-project-bindings. The caller (the downstream server's
 // own boot-time resolution) has already resolved the connector's project: name to
 // an ID; this is a raw persist, no re-resolution.
+//
+// #1477: validates project_id against this hub's own storage — a live project
+// row is exactly what the binding will reference, so a nonexistent ID is
+// rejected rather than silently persisted. Deliberately does NOT validate that
+// connector exists in any config: the connector belongs to the CALLING
+// (downstream) node's cfg.Connect.Connectors, not this hub's own — this hub has
+// no way to see that config, and threading its own config in here would
+// validate against the wrong deployment's connector list, worse than not
+// validating at all. The boot-time consistency warning next to
+// connectOwnershipKeySetMismatch (server/main.go) is the only place in the
+// system that sees both config and DB rows together, and closes the orphaned-
+// binding direction this handler structurally cannot.
 func (h *AuthHandler) CreateConnectorProjectBindingProxy(w http.ResponseWriter, r *http.Request) {
 	var body connectorProjectBindingCreateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -107,6 +119,15 @@ func (h *AuthHandler) CreateConnectorProjectBindingProxy(w http.ResponseWriter, 
 	}
 	if body.Connector == "" || body.ProjectID == 0 || body.ProjectName == "" {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "connector, project_id, and project_name are required")
+		return
+	}
+	if _, err := h.coreService.Storage().GetProject(r.Context(), body.ProjectID); err != nil {
+		if isProjectNotFound(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errProjectNotFound)
+			return
+		}
+		log.Printf("connector-project-bindings proxy: project lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
 	created, err := h.coreService.Storage().CreateConnectorProjectBinding(r.Context(), &models.ConnectorProjectBinding{
