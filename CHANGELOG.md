@@ -32,6 +32,20 @@ All notable changes to Keyorix are documented here. This project follows
   own client mode (`keyorix connect <server>`, or `storage.type: remote` in
   `~/.keyorix/cli.yaml` with no server enabled) is unaffected — see
   `docs/adr-083-remote-storage-cli-only.md`.
+- **BREAKING (targeting v0.92.0): GCP KMS `kms_encryption_context` AAD wire format
+  changed (crypto-gcpkms-01)** — `encContextAAD`'s canonicalisation of
+  `kms_encryption_context` switched from an unescaped `"key=value\n"` join (where
+  adversarial `=`/`\n` content in a key or value could let two structurally
+  different context maps serialise to identical AdditionalAuthenticatedData,
+  undermining the cross-install isolation the feature exists to provide) to a
+  length-prefixed encoding that cannot collide. **Only installs configuring
+  `kms_encryption_context` with a GCP KMS key provider are affected** — a KEK
+  wrapped under the old AAD bytes will fail to decrypt after upgrading, since the
+  new AAD no longer matches what it was wrapped under. To re-wrap: temporarily set
+  `kms_allow_context_fallback: true`, run `keyorix encryption migrate-provider
+  --to-kms-encryption-context=...` to re-wrap the KEK under the new AAD encoding,
+  then **disable `kms_allow_context_fallback` again** (leaving it enabled makes
+  the AAD binding advisory rather than enforced).
 - **BREAKING: keyorix-operator default RBAC/watch scope narrowed to own-namespace-only
   (ADR-076)** — an unmodified `helm install deploy/helm/keyorix-operator` now binds a
   namespace-scoped `RoleBinding` in its own release namespace and watches only that

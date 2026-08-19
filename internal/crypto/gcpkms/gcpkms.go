@@ -8,11 +8,11 @@ package gcpkms
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"log"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -93,9 +93,16 @@ func New(ctx context.Context, keyName string, encContext map[string]string, allo
 	return &client{kms: c, keyName: keyName, aad: encContextAAD(encContext), allowFallback: allowFallback}, nil
 }
 
-// encContextAAD canonicalises an encryption-context map into deterministic bytes
-// (sorted key=value lines) for use as GCP AdditionalAuthenticatedData. Returns nil for
-// an empty map so the no-binding path is byte-identical to the prior behaviour.
+// encContextAAD canonicalises an encryption-context map into deterministic,
+// unambiguous bytes for use as GCP AdditionalAuthenticatedData. Returns nil for an
+// empty map so the no-binding path is byte-identical to the prior behaviour.
+//
+// Each sorted (key, value) pair is written as a length-prefixed field
+// (uvarint(len(s)) || s) with no separator byte between fields, so the encoding is
+// injective over the sequence of strings: unlike a "key=value\n" join, no key or
+// value content (including literal '=' or '\n' bytes) can shift a byte to look
+// like it belongs to a neighbouring field, so two structurally different maps can
+// never serialise to the same bytes. See TestEncContextAAD_NoCollisionOnAdversarialInput.
 func encContextAAD(m map[string]string) []byte {
 	if len(m) == 0 {
 		return nil
@@ -105,14 +112,25 @@ func encContextAAD(m map[string]string) []byte {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var b strings.Builder
+
+	// Upper bound: 2 fields per entry, each up to binary.MaxVarintLen64 prefix
+	// bytes plus its content.
+	size := 0
 	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(m[k])
-		b.WriteByte('\n')
+		size += binary.MaxVarintLen64 + len(k) + binary.MaxVarintLen64 + len(m[k])
 	}
-	return []byte(b.String())
+	buf := make([]byte, 0, size)
+	var lenBuf [binary.MaxVarintLen64]byte
+	writeField := func(s string) {
+		n := binary.PutUvarint(lenBuf[:], uint64(len(s)))
+		buf = append(buf, lenBuf[:n]...)
+		buf = append(buf, s...)
+	}
+	for _, k := range keys {
+		writeField(k)
+		writeField(m[k])
+	}
+	return buf
 }
 
 // crc32cSum computes the CRC32C (Castagnoli) checksum GCP KMS's Encrypt/Decrypt

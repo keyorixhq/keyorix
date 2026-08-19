@@ -178,6 +178,40 @@ func TestEncContextAAD_DeterministicAndEmpty(t *testing.T) {
 	}
 }
 
+// crypto-gcpkms-01: the old "key=value\n" join let two structurally different
+// maps collide on the key/value boundary — e.g. {"a=b":"c"} and {"a":"b=c"} both
+// produced "a=b=c\n". The length-prefixed encoding must not have that property.
+func TestEncContextAAD_NoCollisionOnAdversarialInput(t *testing.T) {
+	cases := []map[string]string{
+		{"a=b": "c"},
+		{"a": "b=c"},
+		{"a\nb": "c"},
+		{"a": "b\nc"},
+		{"a=": "=b"},
+		{"": "a=b"},
+		{"a=b": ""},
+		{"k": "v\n=extra"},
+	}
+	seen := make(map[string][]int) // encoded bytes -> indices of cases producing them
+	for i, m := range cases {
+		enc := string(encContextAAD(m))
+		seen[enc] = append(seen[enc], i)
+	}
+	for enc, idxs := range seen {
+		if len(idxs) > 1 {
+			t.Fatalf("distinct maps at indices %v collided to the same AAD %q", idxs, enc)
+		}
+	}
+
+	// The two maps from the original finding, spelled out explicitly.
+	a := encContextAAD(map[string]string{"a=b": "c"})
+	b := encContextAAD(map[string]string{"a": "b=c"})
+	if bytes.Equal(a, b) {
+		t.Fatalf("known-collision pair {%q:%q} and {%q:%q} must not produce equal AAD, got %q for both",
+			"a=b", "c", "a", "b=c", a)
+	}
+}
+
 // crypto-gcpkms-02: Encrypt must populate PlaintextCrc32C (and the AAD checksum
 // when AAD is set) on the outgoing request.
 func TestGCPKMS_Encrypt_PopulatesRequestChecksums(t *testing.T) {
