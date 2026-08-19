@@ -18,6 +18,18 @@ All notable changes to Keyorix are documented here. This project follows
   as of this same change: a caller must be a member of the connector's owning
   project (or hold a matching `ConnectRefGrant`) to read through it — see
   `docs/adr-082-connect-connector-tenant-scoping.md`.
+- **BREAKING (targeting v0.92.0): a Keyorix Connect connector with an unrecognized
+  `type` now fails boot instead of booting with that connector silently skipped
+  (#1476)** — previously, `server/main.go`'s Connect-wiring loop logged a warning
+  and continued for any `connect.connectors` entry whose `type` didn't match one
+  of the four recognized backends (`aws-secrets-manager`, `gcp-secret-manager`,
+  `azure-key-vault`, `vault`), so a typo'd or removed connector type produced a
+  deployment that looked healthy but silently had one fewer working connector
+  than configured. `type` is now validated at config-load time, before boot
+  reaches the connector-wiring loop, and aggregates every offending connector
+  into one error. **If you have a connector with a misspelled or unsupported
+  `type`, fix it before upgrading** — this is the same fail-open shape ADR-082
+  closed for a missing/invalid connector `scope` above.
 - **BREAKING (targeting v0.92.0): `storage.type: remote` combined with
   `server.http.enabled` or `server.grpc.enabled` no longer boots (ADR-083)** —
   `storage.type: remote` is a CLI/client mode only; RemoteStorage never

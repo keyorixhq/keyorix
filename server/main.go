@@ -613,7 +613,18 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 				}
 				connectors = append(connectors, vc)
 			default:
-				log.Printf("Keyorix Connect: skipping connector %q with unknown type %q", cn.Name, cn.Type)
+				// #1476: unreachable via a config that passed cfg.Validate() —
+				// validateConnectTypes (internal/config/config.go) already refused
+				// to boot with a connector Type outside connect.KnownTypes, before
+				// this function is ever reached (see the cfg.Validate() call at the
+				// top of initializeCoreService). Fail loud rather than silently
+				// skip if this is somehow reached anyway (e.g. a future caller of
+				// this loop that bypasses Validate()) — the old behavior let a
+				// misconfigured connector boot invisibly, the same fail-open shape
+				// ADR-082 closed for scope. See
+				// server/connector_type_registry_test.go for the test keeping this
+				// switch's case set and connect.KnownTypes from drifting apart.
+				log.Fatalf("Keyorix Connect: connector %q has unrecognized type %q (must be one of %s) — this should have been caught by cfg.Validate()", cn.Name, cn.Type, strings.Join(connect.KnownTypes, ", "))
 			}
 		}
 		if len(connectors) > 0 {

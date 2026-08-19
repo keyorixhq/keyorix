@@ -391,8 +391,12 @@ func TestInitializeCoreService_RotationBackend_Various(t *testing.T) {
 	}
 }
 
-// ── initializeCoreService — Connect (unknown type skipped) ───────────────────
+// ── initializeCoreService — Connect (unknown type rejected) ──────────────────
 
+// #1476: an unknown connector Type used to be silently skipped (this test's
+// own name and assertion, until this change, encoded exactly that now-obsolete
+// behavior) — the same fail-open shape ADR-082 closed for scope. It now fails
+// cfg.Validate() before initializeCoreService reaches its Connect-wiring loop.
 func TestInitializeCoreService_Connect_UnknownType(t *testing.T) {
 	initI18n(t)
 	cfg := newMinimalCfg(t)
@@ -404,8 +408,8 @@ func TestInitializeCoreService_Connect_UnknownType(t *testing.T) {
 	}
 
 	_, _, err := initializeCoreService(cfg)
-	if err != nil {
-		t.Fatalf("initializeCoreService with unknown connector type: %v", err)
+	if err == nil {
+		t.Fatal("expected initializeCoreService to refuse to boot with an unrecognized connector type")
 	}
 }
 
