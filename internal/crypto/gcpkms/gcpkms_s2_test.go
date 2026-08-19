@@ -141,16 +141,27 @@ func TestDecrypt_KMSError_IsPrefixed(t *testing.T) {
 	assert.ErrorIs(t, err, kmsErr)
 }
 
-// TestEncContextAAD_SingleEntry verifies the canonical form for a single-entry map.
+// TestEncContextAAD_SingleEntry verifies the canonical form for a single-entry
+// map: a uvarint length prefix followed by the raw bytes, for the key then the
+// value, with no separator byte (crypto-gcpkms-01 — a "key=value\n" join with no
+// escaping let adversarial '='/'\n' content in a key or value collide across
+// structurally different maps; see TestEncContextAAD_NoCollisionOnAdversarialInput).
 func TestEncContextAAD_SingleEntry(t *testing.T) {
 	got := encContextAAD(map[string]string{"env": "production"})
-	assert.Equal(t, []byte("env=production\n"), got)
+	want := []byte{3, 'e', 'n', 'v', 10, 'p', 'r', 'o', 'd', 'u', 'c', 't', 'i', 'o', 'n'}
+	assert.Equal(t, want, got)
 }
 
-// TestEncContextAAD_MultipleEntries verifies that output is sorted by key.
+// TestEncContextAAD_MultipleEntries verifies that output is sorted by key, with
+// each (key, value) pair length-prefixed as above.
 func TestEncContextAAD_MultipleEntries(t *testing.T) {
 	got := encContextAAD(map[string]string{"z": "last", "a": "first", "m": "middle"})
-	assert.Equal(t, []byte("a=first\nm=middle\nz=last\n"), got)
+	want := []byte{
+		1, 'a', 5, 'f', 'i', 'r', 's', 't',
+		1, 'm', 6, 'm', 'i', 'd', 'd', 'l', 'e',
+		1, 'z', 4, 'l', 'a', 's', 't',
+	}
+	assert.Equal(t, want, got)
 }
 
 // TestEncrypt_NoAAD_SuccessPath exercises Encrypt with no AAD (the aad branch

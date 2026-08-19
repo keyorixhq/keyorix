@@ -94,7 +94,35 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 	if mp, ok := provider.(*crypto.MultiKeyProvider); ok {
 		mp.SetDowngradeHook(s.auditKeyProviderDowngrade)
 	}
+	s.wireKMSAuditSink(provider)
 	return provider, nil
+}
+
+// wireKMSAuditSink connects this Service's audit sink (if any) to a directly-
+// configured KMS-backed key provider's underlying client, so a security-relevant
+// runtime event the client itself detects (currently just gcpkms's AAD-fallback
+// decrypt, see gcpkms.AuditSink / gcpkms.EventGCPKMSAADFallback) is recorded as a
+// queryable audit event, not just a log line — mirroring auditKeyProviderDowngrade's
+// wiring for MultiKeyProvider fallback-chain downgrades just above. Only wires the
+// single, non-fallback-chain case: a KMS provider nested inside a Fallbacks chain
+// is not reachable here since MultiKeyProvider does not expose its member
+// providers, and that gap is no worse than the pre-existing log-only behavior.
+func (s *Service) wireKMSAuditSink(provider crypto.KeyProvider) {
+	kp, ok := provider.(*crypto.KMSKeyProvider)
+	if !ok {
+		return
+	}
+	sinkable, ok := kp.Client().(interface{ SetAuditSink(gcpkms.AuditSink) })
+	if !ok {
+		return
+	}
+	s.auditSinkMu.RLock()
+	sink := s.auditSink
+	s.auditSinkMu.RUnlock()
+	if sink == nil {
+		return
+	}
+	sinkable.SetAuditSink(gcpkms.AuditSink(sink))
 }
 
 // NewKeyProviderFromConfig builds the KEK source described by an EncryptionConfig
