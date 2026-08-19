@@ -2,9 +2,14 @@
 
 ## Status
 
-**Proposed.** This ADR records the decision on *what mechanism* should
+**Accepted.** This ADR records the decision on *what mechanism* should
 replace name-based admin-role recognition. It makes **no code changes** —
-implementation is deferred to its own follow-up work once this is accepted.
+implementation is deferred to its own follow-up work now that this is
+accepted. Two verifications (immutability of the proposed column;
+fail-closed behavior at all six call sites) were run before acceptance —
+see "Verification" below. Two issues independently surfaced by that work
+are filed and tracked separately (`#1496`, `#1497`), not blocking
+acceptance here.
 
 ## Context
 
@@ -169,7 +174,13 @@ assumed:
   This is the load-bearing safety property"* (preserving operator
   customizations). Reconcile therefore provides **no ongoing guarantee**
   that `admin`/`system_admin` hold every canonical permission — only a
-  one-time top-up for permissions genuinely new to the catalog.
+  one-time top-up for permissions genuinely new to the catalog. Filed as
+  its own issue, independent of this ADR: `#1496` (reconcile is
+  additive-on-create only, not convergent — flags that ADR-082 branch 4's
+  upgrade story for `connect.platform.use` depended on the case that holds
+  today, newly-created permissions, and that reasoning should not be
+  reused for a future permission addition without checking which case it's
+  in).
 - Compared `adminPermissions` (`auth_bootstrap.go:95-101`, 14 entries)
   against `defaultPermissions` (`auth_bootstrap.go:47-92`, 14 entries)
   directly: they match exactly, today. But this is coincidental
@@ -182,7 +193,9 @@ assumed:
   would be created in the catalog but never granted to admin, and reconcile
   has no mechanism to catch that omission; it isn't reconciling against
   `defaultPermissions`, it's reconciling `admin`'s grants against `admin`'s
-  own declared list.
+  own declared list. Filed as its own issue: `#1497` (a small table test
+  asserting the two lists agree, so a future divergence fails CI instead
+  of shipping silently).
 - Reconcile runs synchronously, once, in `initializeCoreService`, before
   any listener starts serving requests — no live authorization decision
   races an in-progress reconcile. But it is explicitly best-effort: a
@@ -261,6 +274,111 @@ left untouched by this decision:
   role to new users, explicitly best-effort. On lookup failure they silently
   assign no role at all — the failure direction is *under*-privileged, not
   a bypass. Not the same risk shape as the roles this ADR addresses.
+
+## Verification
+
+Two checks were run, read-only, before accepting this ADR.
+
+### 1. Immutability: what stops `bypasses_permission_checks` being set post-migration?
+
+Both GORM write paths `models.Role` goes through write the **entire passed
+struct**, not a whitelisted subset: `LocalStorage.CreateRole` calls
+`db.Create(role)`, `LocalStorage.UpdateRole` calls `db.Save(role)`. Neither
+the storage layer nor GORM itself provides any column-level protection —
+whatever is set on the Go struct persists. Safety today is entirely a
+property of what *callers* put into that struct, not of any structural
+guarantee. Traced every write path:
+
+- **`RBACHandler.UpdateRole`** (`server/http/handlers/rbac.go:289`): decodes
+  the request into a separate `UpdateRoleRequest` DTO, fetches `role` fresh
+  via `GetRole(id)`, and copies across only `role.Description` before
+  `.Save()`. A hypothetical `BypassesPermissionChecks` field on `models.Role`
+  would carry through unchanged from the DB fetch — safe, but only because
+  the handler happens to copy one named field, not because anything stops
+  it from copying more.
+- **`RoleGRPCService.UpdateRole`** (`server/grpc/services/role_service.go:102`):
+  identical shape — `GetRoleWithPermissions` fetches fresh, only
+  `role.Description` is set from the protobuf request before `.Save()`.
+- **`RBACHandler.CreateRole`** (`server/http/handlers/rbac.go:132`): builds
+  a fresh `&models.Role{Name: req.Name, Description: req.Description}`
+  literal — any unlisted field, including a new column, is Go's zero value
+  (`false` for a bool). Safe by construction.
+- **`/system` proxy routes**: no route registered under `/system` touches
+  `models.Role`'s own columns today (checked every `Post`/`Put`/`Patch`/
+  `Delete` registration in `router.go`). The RBAC-shaped proxy routes there
+  (`/system/rbac/assign-role-with-expiry`, `/system/machine-identities/{id}/
+  roles/{roleId}`, etc.) all write to *assignment* tables (`user_roles`/
+  `group_roles`), never to `Role` itself. But `/system` is demonstrably not
+  read-only for authorization-adjacent state: `CreateConnectorProjectBindingProxy`
+  (`server/http/handlers/connector_project_bindings_proxy.go:102`, `#1477`)
+  already writes a fresh row into `ConnectorProjectBinding` — a table that
+  feeds `core.ConnectOwnership` (an authorization input) — via exactly the
+  same safe pattern: a narrow wire DTO (`connectorProjectBindingCreateBody`,
+  3 fields) decoded into an explicit struct literal, never a raw model
+  passthrough. This is real precedent that a future `/system` proxy for
+  `Role` is plausible, not hypothetical — and that the established,
+  currently-safe convention for building one is exactly the pattern above.
+- **SCIM** (`internal/core/scim.go`): never constructs or writes a
+  `models.Role` — its only `Role`-adjacent call is the `GetRoleByName`
+  lookup for the `system_viewer` best-effort assignment (out of scope,
+  above).
+
+**Conclusion: every current write path is safe, but only by convention, not
+by structure.** `db.Save`/`db.Create`'s full-struct-write semantics mean
+nothing stops a *future* handler — including a future `/system` proxy,
+which `#1477` establishes as a real category of route — from decoding a
+wider request shape and copying an extra field across, the same way
+`.Description` is copied today. **Implementation must not treat "no
+handler exposes it today" as sufficient.** The mutation path for
+`bypasses_permission_checks` must be a dedicated, narrow function (not
+`UpdateRole`'s general path), and ideally not reachable through the general
+role-management API at all — this is recorded as a requirement in
+Consequences below, not resolved here.
+
+### 2. Fail-closed: is the zero value safe at all six call sites?
+
+**Not uniformly** — this needed to be checked per site, not assumed, and
+the answer has a real asymmetry that must carry into implementation.
+
+`roleSetContainsAdmin` today has no error return at all: any
+`GetRoleByName` failure — including a genuine transient storage error, not
+just "this deployment never seeded that role" — is silently swallowed
+(`continue`) and indistinguishable from a true "not admin" result. Traced
+what that means at each site:
+
+| Site | On `roleSetContainsAdmin` returning `false` (correctly, or via a swallowed resolution error) |
+|---|---|
+| `authz.go:229` `Authorize` | Falls through to a real `RoleSetHasPermission` check — no bypass, correctly evaluated. **Safe.** |
+| `authz.go:247` `principalHasScopedPermission` | Same shape. **Safe.** |
+| `authz.go:328` `IsGlobalAdmin` | Caller falls back to scope-filtered (subset) listing. **Safe** (worst case: an actual admin sees a filtered view). |
+| `authz.go:379` `requireGlobalAdminToReinstateAdminRoles` | `if !containsAdmin { return nil }` — **skips the ceiling check and allows the reinstatement.** If the roleIDs *being reinstated* truly contain an admin-tier role but resolution silently failed, this wrongly permits resurrecting an admin-conferring grant without verifying the actor is a global admin. **Unsafe direction.** |
+| `authz.go:453` `requireMachinePrivilegeCeiling` | Same shape as 379 — `false` skips the ceiling check and allows machine-token issuance without verifying actor authority. **Unsafe direction.** |
+| `dynamic_secrets.go:325` `requireDynamicSecretAdminAuthority` | `if !containsAdmin { return error }` — denies the bind. **Safe** (worst case: a legitimate project_admin is wrongly refused). |
+
+Sites `379` and `453` ask a different question than the other four — not
+"does the caller get a bypass" but "does *this role set* (the one being
+reinstated, or a machine's full role list) contain an admin-tier role, so
+the ceiling check should fire" — and for that question, a false negative
+from a swallowed resolution error is the dangerous direction, not the safe
+one. **This is a property of the current name-based implementation
+already**, not something the structural-flag redesign introduces — traced
+`GetRoleByName`'s two error branches (`ErrorRoleNotFound` and
+`ErrorRetrievalFailed`) and confirmed `roleSetContainsAdmin`'s `continue`
+does not distinguish them today.
+
+This does not change the recommendation — a structural flag is no less
+safe on this axis than the current name lookup, and is strictly better on
+the two failure modes this ADR exists to close. But **implementation must
+not carry the current silent-`continue` pattern forward unexamined at
+sites 379 and 453.** The redefined resolution should surface a genuine
+storage error to those two callers (e.g. `roleSetContainsAdmin` returning
+`(bool, error)`, with 379/453 treating a non-nil error as "assume the set
+may contain an admin role" — fail toward requiring the ceiling check, not
+away from it) rather than silently defaulting to "no admin role found" the
+way today's implementation does for all six sites uniformly. Left to
+implementation; not itself filed as a separate issue since it is
+implementation guidance for this ADR's own follow-up, not an independent
+defect.
 
 ## Consequences
 
