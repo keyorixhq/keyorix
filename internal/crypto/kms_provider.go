@@ -45,6 +45,13 @@ func NewKMSKeyProvider(client KMSClient, name, baseDir, wrappedKeyPath string) *
 
 func (p *KMSKeyProvider) Name() string { return p.name }
 
+// Client returns the underlying KMSClient this provider wraps, so a caller that
+// needs backend-specific behavior unavailable through the KeyProvider interface
+// (e.g. wiring an audit sink onto a *gcpkms client for its AAD-fallback event, see
+// encryption.Service.wireKMSAuditSink) can type-assert it to the concrete
+// backend's client type.
+func (p *KMSKeyProvider) Client() KMSClient { return p.client }
+
 func (p *KMSKeyProvider) KEK() ([]byte, error) {
 	if p.client == nil {
 		return nil, fmt.Errorf("%s key provider: no KMS client configured", p.name)
