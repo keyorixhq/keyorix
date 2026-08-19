@@ -5,11 +5,19 @@
 **Accepted.** This ADR records the decision on *what mechanism* should
 replace name-based admin-role recognition. It makes **no code changes** —
 implementation is deferred to its own follow-up work now that this is
-accepted. Two verifications (immutability of the proposed column;
-fail-closed behavior at all six call sites) were run before acceptance —
-see "Verification" below. Two issues independently surfaced by that work
-are filed and tracked separately (`#1496`, `#1497`), not blocking
-acceptance here.
+accepted, and depends on one prerequisite that has already landed. Two
+verifications (immutability of the proposed column; fail-closed behavior
+at all call sites) were run before acceptance — see "Verification" below.
+The fail-closed verification surfaced a genuine defect
+(`roleSetContainsAdmin` silently swallowed real storage errors, not just
+"role not seeded", at two call sites where that's the dangerous direction)
+that was fixed separately, own branch/own commit, independent of this
+ADR's structural-flag decision:
+`fix-1494-role-set-contains-admin-error-swallow`. **Implementation of this
+ADR should be built on top of that branch**, not from `main` directly —
+see "Prerequisite" in Verification §2. Two further issues independently
+surfaced by the investigation are filed and tracked separately (`#1496`,
+`#1497`), not blocking acceptance here.
 
 ## Context
 
@@ -329,22 +337,49 @@ nothing stops a *future* handler — including a future `/system` proxy,
 which `#1477` establishes as a real category of route — from decoding a
 wider request shape and copying an extra field across, the same way
 `.Description` is copied today. **Implementation must not treat "no
-handler exposes it today" as sufficient.** The mutation path for
-`bypasses_permission_checks` must be a dedicated, narrow function (not
-`UpdateRole`'s general path), and ideally not reachable through the general
-role-management API at all — this is recorded as a requirement in
-Consequences below, not resolved here.
+handler exposes it today" as sufficient.**
+
+**Decided: there is no runtime mutation path for `bypasses_permission_checks`
+at all.** "A dedicated, narrow function" was considered and rejected as the
+answer here — it still leaves the next person to implement one, and a
+dedicated-but-existing function is exactly as reachable as a general one the
+moment something calls it. The column is written in exactly two places:
+the one-time migration that adds it (see Migration below) and role seeding
+(`defaultRoles`/`BootstrapSystem`). `CreateRole` and `UpdateRole` — HTTP,
+gRPC, and any future transport — never accept it from a request DTO, and no
+`/system` proxy writes it, now or later. If a genuinely new admin-tier role
+is ever needed post-migration (a custom bypassing role, not one of the four
+seeded ones), that is its own decision with its own ADR — evaluating
+exactly the risk this ADR exists to close for a *new* case — not a field
+exposed on a role-management form.
+
+The reasoning this rests on: a flag any handler can set is a mutable bool
+replacing a mutable string. `roleSetContainsAdmin`'s original defect was
+never really about *strings* — it was that the property "this role
+bypasses permission checks" was reachable through the same general-purpose
+mutation surface as a role's ordinary metadata. Naming that property
+`bypasses_permission_checks` and making it a `bool` closes the specific
+failure modes in Context (rename drops it, name reuse gains it), but a
+`bool` sitting on the same struct, written by the same `db.Save` full-write
+path, reopens an equivalent hole the moment any handler — including one
+added long after this ADR is forgotten — copies it across from a request.
+No runtime mutation path is the only version of this decision that doesn't
+depend on every future contributor remembering why.
 
 ### 2. Fail-closed: is the zero value safe at all six call sites?
 
 **Not uniformly** — this needed to be checked per site, not assumed, and
-the answer has a real asymmetry that must carry into implementation.
+the answer had a real asymmetry. **This is now fixed, on its own branch,
+independent of this ADR** — see "Prerequisite" below; the analysis is kept
+here because the same asymmetry applies to whatever `roleSetContainsAdmin`
+becomes under this ADR's decision, and the fix branch is what closed it for
+the current name-based implementation.
 
-`roleSetContainsAdmin` today has no error return at all: any
-`GetRoleByName` failure — including a genuine transient storage error, not
-just "this deployment never seeded that role" — is silently swallowed
-(`continue`) and indistinguishable from a true "not admin" result. Traced
-what that means at each site:
+`roleSetContainsAdmin` had no error return at all: any `GetRoleByName`
+failure — including a genuine transient storage error, not just "this
+deployment never seeded that role" — was silently swallowed (`continue`)
+and indistinguishable from a true "not admin" result. Traced what that
+meant at each site:
 
 | Site | On `roleSetContainsAdmin` returning `false` (correctly, or via a swallowed resolution error) |
 |---|---|
@@ -360,42 +395,63 @@ Sites `379` and `453` ask a different question than the other four — not
 reinstated, or a machine's full role list) contain an admin-tier role, so
 the ceiling check should fire" — and for that question, a false negative
 from a swallowed resolution error is the dangerous direction, not the safe
-one. **This is a property of the current name-based implementation
-already**, not something the structural-flag redesign introduces — traced
+one. **This was a property of the name-based implementation itself**, not
+something the structural-flag redesign would have introduced — traced
 `GetRoleByName`'s two error branches (`ErrorRoleNotFound` and
 `ErrorRetrievalFailed`) and confirmed `roleSetContainsAdmin`'s `continue`
-does not distinguish them today.
+did not distinguish them.
 
-This does not change the recommendation — a structural flag is no less
-safe on this axis than the current name lookup, and is strictly better on
-the two failure modes this ADR exists to close. But **implementation must
-not carry the current silent-`continue` pattern forward unexamined at
-sites 379 and 453.** The redefined resolution should surface a genuine
-storage error to those two callers (e.g. `roleSetContainsAdmin` returning
-`(bool, error)`, with 379/453 treating a non-nil error as "assume the set
-may contain an admin role" — fail toward requiring the ceiling check, not
-away from it) rather than silently defaulting to "no admin role found" the
-way today's implementation does for all six sites uniformly. Left to
-implementation; not itself filed as a separate issue since it is
-implementation guidance for this ADR's own follow-up, not an independent
-defect.
+**Precedent: this is the exact shape of #G17** (`enforceProjectMFA`/
+`ProjectMFABlocked`, `server/grpc/services/conversions.go` and
+`server/middleware/auth.go`, commit `10371788`) — a `ProjectRequiresMFA`
+lookup error used to fall through to "not blocked", silently treating the
+caller as MFA-compliant regardless of the project's real policy. G17's fix
+is the pattern this ADR's fail-closed fix mirrors exactly: distinguish a
+genuine resolution error (propagate, fail closed) from "not found"
+(kept, not an error condition — the target genuinely doesn't exist/isn't
+seeded, and treating it as one would mask the caller's own not-found
+handling, not add security). A lookup error on a security-relevant path
+must never be indistinguishable from a legitimate negative result, or a
+caller can trigger the same lookup error to bypass whatever the error
+would otherwise have blocked.
+
+**Prerequisite for implementation:** the error-swallowing fix landed on
+branch `fix-1494-role-set-contains-admin-error-swallow`, own commit,
+independent of the structural-flag work this ADR decides. It changes
+`roleSetContainsAdmin` to `(bool, error)`, distinguishing `GetRoleByName`'s
+"not found" (kept, same meaning) from any other error (propagated), and
+updates every call site to fail closed on that error — sites 379/453 now
+deny (return the wrapped error) instead of silently skipping the ceiling
+check. It also corrected the site count this ADR scoped from Stage-1: the
+original investigation found six call sites (`authz.go`,
+`dynamic_secrets.go`); the fix branch found two more once the build broke
+on the new signature — `invitations.go`'s `requireAdminAuthorityAt` (same
+safe polarity as `requireDynamicSecretAdminAuthority`) and
+`scim_groups.go`'s `scimGroupConfersAdmin` (already fails closed on its
+own `GetGroupRoles` error; extended identically to a `roleSetContainsAdmin`
+error). **Eight call sites total, not six.** Implementation of this ADR's
+structural flag should merge or rebase onto that branch — rewriting
+`roleSetContainsAdmin` to resolve by flag instead of name is most of the
+same call-site surface, and doing it before the flag work avoids touching
+every site twice.
 
 ## Consequences
 
-- `roleSetContainsAdmin`'s six call sites change from up to four
-  `GetRoleByName` calls to an ID-based lookup of the resolved role set's
-  flag — no behavior change at any of them beyond closing the two silent
-  failure modes described above.
-- `Role`'s mutation surface (`CreateRole`/`UpdateRole`) needs a decision, in
-  implementation, about who may set or clear `bypasses_permission_checks`
-  and through what path — almost certainly not the general role-management
-  API, to avoid reopening the "customer role acquires the property" failure
-  mode through a different door. Not decided here.
+- `roleSetContainsAdmin`'s eight call sites (see "Prerequisite" above)
+  change from up to four `GetRoleByName` calls to an ID-based lookup of the
+  resolved role set's flag — no behavior change at any of them beyond
+  closing the two silent failure modes described in Context.
+- `bypasses_permission_checks` has **no runtime mutation path** —
+  `CreateRole`/`UpdateRole` (HTTP, gRPC, any future transport) never accept
+  it from a request DTO, and no `/system` proxy writes it. It is written
+  only by the one-time migration and by role seeding. A future need for a
+  new bypassing role is a separate decision with its own ADR, not an
+  implementation detail of this one. This is decided, not left open.
 - `installAdminRoleIDSet` can be simplified to a scope-aware flag query,
   removing one of the two hand-maintained name lists entirely.
-- Implementation is its own follow-up: schema migration, the flag-setting
-  policy, `roleSetContainsAdmin`'s rewrite, and `installAdminRoleIDSet`'s
-  simplification, each independently testable against the existing
-  `TestAuthorizeTwoTierScopes`-style scope assertions plus new tests for
-  the two failure modes this ADR closes (rename drops bypass; name reuse
-  gains it).
+- Implementation is its own follow-up, built on top of the prerequisite
+  fail-closed fix: schema migration, `roleSetContainsAdmin`'s rewrite to
+  resolve by flag, and `installAdminRoleIDSet`'s simplification, each
+  independently testable against the existing `TestAuthorizeTwoTierScopes`-
+  style scope assertions plus the fail-closed tests the prerequisite branch
+  already added.
