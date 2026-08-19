@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -60,8 +61,20 @@ func (c *KeyorixCore) GetRoleWithPermissions(ctx context.Context, roleID uint) (
 // — matching how roles.write itself is gated (RequirePermission always resolves to
 // ScopeGlobal). c.Authorize already includes the admin-role bypass, so a genuine
 // global admin is unaffected.
+//
+// #1500: mutating a built-in role's permission set stays PERMITTED here, on
+// purpose. ADR-044's "Alternatives considered" already rejected making RBAC
+// permission changes converge/refuse against operator intent — the same
+// reasoning applies to bundling a permission into a built-in role directly:
+// operators must retain authority to widen (or narrow, see
+// RemovePermissionFromRole below) a built-in role's grants. Do NOT add an
+// IsBuiltinRole guard here — that would be exactly the "fix" ADR-044 already
+// considered and declined. What changes is visibility: the audit event and
+// log warning below let an operator/reviewer SEE that a built-in role's
+// authorization baseline moved, without blocking the move.
 func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleID, permissionID uint) error {
-	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
 	perm, err := c.storage.GetPermission(ctx, permissionID)
@@ -84,20 +97,43 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 	if err := c.storage.AssignPermissionToRole(ctx, roleID, permissionID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	c.LogPermissionAssigned(ctx, actorID, roleID, permissionID)
+	builtinTarget := IsBuiltinRole(role.Name)
+	if builtinTarget {
+		log.Printf("SECURITY: permission %q (id %d) added to built-in role %q (id %d) by actor %d — permitted by design (ADR-044); operator authority over a built-in role's permission set is deliberate, not a bug",
+			perm.Name, permissionID, role.Name, roleID, actorID)
+	}
+	c.LogPermissionAssigned(ctx, actorID, roleID, permissionID, builtinTarget)
 	return nil
 }
 
 // RemovePermissionFromRole verifies the role exists, removes the permission, and
 // records an RBAC audit event. actorID is the acting principal (0 = none).
+//
+// #1500: mutating a built-in role's permission set stays PERMITTED here, on
+// purpose — see the identical note on AssignPermissionToRole above. Removing a
+// permission from a built-in role must not be refused; only made visible.
 func (c *KeyorixCore) RemovePermissionFromRole(ctx context.Context, actorID, roleID, permissionID uint) error {
-	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
 	if err := c.storage.RemovePermissionFromRole(ctx, roleID, permissionID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	c.LogPermissionRemoved(ctx, actorID, roleID, permissionID)
+	builtinTarget := IsBuiltinRole(role.Name)
+	if builtinTarget {
+		// A best-effort name lookup purely for the log line's readability — unlike
+		// AssignPermissionToRole, the permission is never otherwise fetched on this
+		// path, so this query only runs in the (rare) built-in-target case rather
+		// than on every call.
+		permName := fmt.Sprintf("id %d", permissionID)
+		if perm, perr := c.storage.GetPermission(ctx, permissionID); perr == nil {
+			permName = fmt.Sprintf("%q (id %d)", perm.Name, permissionID)
+		}
+		log.Printf("SECURITY: permission %s removed from built-in role %q (id %d) by actor %d — permitted by design (ADR-044); operator authority over a built-in role's permission set is deliberate, not a bug",
+			permName, role.Name, roleID, actorID)
+	}
+	c.LogPermissionRemoved(ctx, actorID, roleID, permissionID, builtinTarget)
 	return nil
 }
 

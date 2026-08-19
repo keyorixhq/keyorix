@@ -42,15 +42,38 @@ var rbacAuditEventTypes = []string{
 	EventGroupMemberAdded, EventGroupMemberRemoved,
 }
 
+// reasonBuiltinRoleTarget is a fixed reason= token appended to a
+// permission.assigned/permission.removed event's Description when the target
+// role is a built-in (IsBuiltinRole) — #1500. Reuses ADR-082 §H's convention
+// (docs/adr-082-connect-connector-tenant-scoping.md): a closed-set free-text
+// token at a consistent position in Description, so an operator can learn
+// something the API response itself doesn't distinguish (here: whether the
+// permission change just landed on a built-in role's authorization
+// baseline). ADR-044 already establishes that this stays PERMITTED, not
+// refused — ONLY the visibility changes; see the call sites in
+// rbac_management.go for the full reasoning. Unlike §H's Connect events,
+// this event ALSO carries the same signal as a structured field
+// (rbacAuditDetail.BuiltinRoleTarget below) because rbacAuditDetail already
+// existed here — §H used free text only because no structured field was
+// available for Connect events at the time, and named the day a structured
+// column exists as the point this would become "parse-and-backfill, not a
+// rewrite"; rbacAuditDetail's JSON Diff is exactly that column already, so
+// there is no reason to wait.
+const reasonBuiltinRoleTarget = "builtin_role_target"
+
 // rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
 // carrying the target/role/scope that the generic AuditEvent row cannot.
 type rbacAuditDetail struct {
-	TargetUserID  uint `json:"target_user_id,omitempty"`
-	GroupID       uint `json:"group_id,omitempty"`
-	RoleID        uint `json:"role_id"`
-	PermissionID  uint `json:"permission_id,omitempty"`
-	ProjectID     uint `json:"project_id,omitempty"`
-	EnvironmentID uint `json:"environment_id,omitempty"`
+	TargetUserID uint `json:"target_user_id,omitempty"`
+	GroupID      uint `json:"group_id,omitempty"`
+	RoleID       uint `json:"role_id"`
+	PermissionID uint `json:"permission_id,omitempty"`
+	// BuiltinRoleTarget is true when RoleID identifies a built-in role
+	// (IsBuiltinRole) — #1500. Set only by logPermissionChange today; see
+	// reasonBuiltinRoleTarget above for the parallel Description token.
+	BuiltinRoleTarget bool `json:"builtin_role_target,omitempty"`
+	ProjectID         uint `json:"project_id,omitempty"`
+	EnvironmentID     uint `json:"environment_id,omitempty"`
 }
 
 // LogRoleAssigned / LogRoleRemoved record an RBAC change. actorID is the user who
@@ -115,20 +138,27 @@ func (c *KeyorixCore) logGroupMemberChange(ctx context.Context, eventType, verb 
 }
 
 // LogPermissionAssigned / LogPermissionRemoved record a permission granted to /
-// removed from a role. See LogRoleAssigned for actorID semantics.
-func (c *KeyorixCore) LogPermissionAssigned(ctx context.Context, actorID, roleID, permissionID uint) {
-	c.logPermissionChange(ctx, EventPermissionAdded, "granted to role", actorID, roleID, permissionID)
+// removed from a role. See LogRoleAssigned for actorID semantics. builtinTarget
+// is true when roleID identifies a built-in role (IsBuiltinRole) — #1500; it
+// does not change whether the event is written, only what it carries (see
+// reasonBuiltinRoleTarget).
+func (c *KeyorixCore) LogPermissionAssigned(ctx context.Context, actorID, roleID, permissionID uint, builtinTarget bool) {
+	c.logPermissionChange(ctx, EventPermissionAdded, "granted to role", actorID, roleID, permissionID, builtinTarget)
 }
 
-func (c *KeyorixCore) LogPermissionRemoved(ctx context.Context, actorID, roleID, permissionID uint) {
-	c.logPermissionChange(ctx, EventPermissionRemoved, "removed from role", actorID, roleID, permissionID)
+func (c *KeyorixCore) LogPermissionRemoved(ctx context.Context, actorID, roleID, permissionID uint, builtinTarget bool) {
+	c.logPermissionChange(ctx, EventPermissionRemoved, "removed from role", actorID, roleID, permissionID, builtinTarget)
 }
 
-func (c *KeyorixCore) logPermissionChange(ctx context.Context, eventType, verb string, actorID, roleID, permissionID uint) {
+func (c *KeyorixCore) logPermissionChange(ctx context.Context, eventType, verb string, actorID, roleID, permissionID uint, builtinTarget bool) {
 	desc := fmt.Sprintf("permission %d %s %d", permissionID, verb, roleID)
+	if builtinTarget {
+		desc = fmt.Sprintf("%s reason=%s", desc, reasonBuiltinRoleTarget)
+	}
 	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{
-		RoleID:       roleID,
-		PermissionID: permissionID,
+		RoleID:            roleID,
+		PermissionID:      permissionID,
+		BuiltinRoleTarget: builtinTarget,
 	})
 }
 

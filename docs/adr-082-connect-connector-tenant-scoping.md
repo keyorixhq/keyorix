@@ -747,6 +747,22 @@ the binding itself already persisted — but is logged loudly
 (`SECURITY`-prefixed), matching `emitAudit`'s own convention for a failed
 audit write.
 
+**Convention reused outside Connect (#1500):** `internal/core/audit.go`'s
+`permission.assigned`/`permission.removed` events (RBAC, unrelated to
+Connect) adopt this same closed-set `reason=<value>` token at the same
+Description position, via `reasonBuiltinRoleTarget = "builtin_role_target"`,
+to flag that the permission change landed on a built-in role
+(`IsBuiltinRole`) — ADR-044 permits this and it stays permitted; the token
+only makes it visible. Recorded here so both conventions stay in the same
+place and don't drift apart (e.g. a future call site using `reason:` with a
+colon, or a mid-string position, instead of matching this one). Unlike the
+events above, this one ALSO sets a structured boolean
+(`rbacAuditDetail.BuiltinRoleTarget`) alongside the free-text token, since
+`rbacAuditDetail` already existed as a structured Diff payload for RBAC
+events — the "parse-and-backfill" target this section anticipated already
+exists for this call site, so there was no reason to carry the signal in
+free text only.
+
 ### I. ADR-045 is explicitly amended, not silently superseded
 
 `docs/adr-045-connect-per-reference-rbac.md` gains an "Amended by ADR-082"
