@@ -166,3 +166,120 @@ func TestValidate_ConnectScopesWired(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unscoped-connector")
 }
+
+// TestValidateConnectTypes covers #1476 boot validation: a connector's Type
+// must be one of connect.KnownTypes. Mirrors TestValidateConnectScopes's own
+// structure and aggregation-assertion style — every failure case asserts the
+// aggregated error names every offending connector, not just the first.
+func TestValidateConnectTypes(t *testing.T) {
+	tests := []struct {
+		name      string
+		cc        ConnectConfig
+		wantErr   bool
+		wantNames []string // every name that must appear in the error message
+	}{
+		{
+			name: "unrecognized type, single connector, fails boot",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "c1", Type: "aws-secrets-mangler", Scope: "platform"}, // typo
+			}},
+			wantErr:   true,
+			wantNames: []string{"c1"},
+		},
+		{
+			name: "unrecognized type, multiple connectors, aggregated in one error",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "c1", Type: "bogus-type-1", Scope: "platform"},
+				{Name: "c2", Type: "bogus-type-2", Scope: "platform"},
+				{Name: "c3", Type: "vault", Scope: "platform"}, // valid — must not appear
+			}},
+			wantErr:   true,
+			wantNames: []string{"c1", "c2"},
+		},
+		{
+			name: "empty type fails boot",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "no-type", Scope: "platform"},
+			}},
+			wantErr:   true,
+			wantNames: []string{"no-type"},
+		},
+		{
+			name:    "no connectors is valid",
+			cc:      ConnectConfig{},
+			wantErr: false,
+		},
+		{
+			name: "every recognized type is valid",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "aws", Type: "aws-secrets-manager", Scope: "platform"},
+				{Name: "gcp", Type: "gcp-secret-manager", Scope: "platform"},
+				{Name: "azure", Type: "azure-key-vault", Scope: "platform"},
+				{Name: "vault", Type: "vault", Scope: "platform"},
+			}},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConnectTypes(tt.cc)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			for _, name := range tt.wantNames {
+				assert.Contains(t, err.Error(), name, "error must name every offending connector")
+			}
+		})
+	}
+}
+
+// TestValidateConnectTypes_ValidEntriesExcludedFromAggregation mirrors
+// TestValidateConnectScopes_ValidEntriesExcludedFromAggregation: a
+// recognized-type connector never appears in another connector's failure
+// message.
+func TestValidateConnectTypes_ValidEntriesExcludedFromAggregation(t *testing.T) {
+	cc := ConnectConfig{Connectors: []ConnectorConfig{
+		{Name: "broken", Type: "bogus-type", Scope: "platform"},
+		{Name: "fine", Type: "vault", Scope: "platform"},
+	}}
+	err := validateConnectTypes(cc)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "broken")
+	assert.NotContains(t, err.Error(), "fine")
+}
+
+// TestValidate_ConnectTypesWired confirms Config.Validate() itself surfaces a
+// connector type error — not just the unexported helper in isolation — so the
+// boot path actually enforces #1476.
+func TestValidate_ConnectTypesWired(t *testing.T) {
+	c := &Config{
+		Storage: StorageConfig{Type: "remote"}, // skip local DB path requirement
+		Connect: ConnectConfig{Connectors: []ConnectorConfig{
+			{Name: "mistyped-connector", Type: "aws-secrets-mangler", Scope: "platform"},
+		}},
+	}
+	err := c.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mistyped-connector")
+}
+
+// TestValidate_ConnectTypesRunsBeforeScopes confirms validateConnectTypes runs
+// before validateConnectScopes in Config.Validate() (see that function's own
+// comment for why: an unrecognized type is more fundamental than a scope-shape
+// issue on a connector Keyorix would never construct). A connector with BOTH
+// an unrecognized type AND a missing scope must surface the type error, not
+// the scope error.
+func TestValidate_ConnectTypesRunsBeforeScopes(t *testing.T) {
+	c := &Config{
+		Storage: StorageConfig{Type: "remote"},
+		Connect: ConnectConfig{Connectors: []ConnectorConfig{
+			{Name: "doubly-broken", Type: "bogus-type"}, // no Type match AND no Scope
+		}},
+	}
+	err := c.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unrecognized type", "expected the type error to surface first, got: %v", err)
+}

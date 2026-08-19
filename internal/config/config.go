@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"gopkg.in/yaml.v3"
@@ -1936,10 +1937,46 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return fmt.Errorf("unsupported fallback language: %s. Supported languages: en, ru, es, fr, de", c.Locale.FallbackLanguage)
 	}
 
+	if err := validateConnectTypes(c.Connect); err != nil {
+		return err
+	}
+
 	if err := validateConnectScopes(c.Connect); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// validateConnectTypes enforces #1476: every cfg.Connect.Connectors entry's Type
+// must be one of connect.KnownTypes, the single source of truth for recognized
+// connector types (see that var's own doc comment for why server/main.go's
+// dispatch switch stays a literal switch rather than deriving from this list, and
+// how the two are kept from drifting apart). Runs BEFORE validateConnectScopes:
+// an unrecognized type is a more fundamental problem than a scope-shape issue on
+// a connector Keyorix would never actually construct. Aggregates every offending
+// connector into one error, mirroring validateConnectScopes's own aggregation —
+// an operator fixing config should not have to restart-and-discover connectors
+// one at a time.
+//
+// This closes the same fail-open shape ADR-082 closed for scope: server/main.go's
+// Connect-wiring switch used to silently skip (log.Printf, keep booting) a
+// connector whose Type matched no case label — see the v0.92.0 CHANGELOG entry.
+func validateConnectTypes(cc ConnectConfig) error {
+	known := make(map[string]bool, len(connect.KnownTypes))
+	for _, t := range connect.KnownTypes {
+		known[t] = true
+	}
+	var invalid []string
+	for _, connector := range cc.Connectors {
+		if !known[connector.Type] {
+			invalid = append(invalid, fmt.Sprintf("%s (type: %q)", connector.Name, connector.Type))
+		}
+	}
+	if len(invalid) > 0 {
+		return fmt.Errorf("connect: connector(s) with unrecognized type (must be one of %s): %s",
+			strings.Join(connect.KnownTypes, ", "), strings.Join(invalid, ", "))
+	}
 	return nil
 }
 

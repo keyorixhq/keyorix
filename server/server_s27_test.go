@@ -37,6 +37,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -754,12 +755,26 @@ func TestStartHTTPServer_S27_AutoCertTLS(t *testing.T) {
 				TLS: config.TLSConfig{
 					Enabled:  true,
 					AutoCert: true, // createTLSConfig returns nil,nil → TLSConfig=nil
+					// #1475: cfg.Validate() (now enforced by initializeCoreService)
+					// requires at least one domain when AutoCert is set. Never
+					// resolved here — the test cancels before any real ACME
+					// handshake — so a placeholder satisfies Validate() without
+					// touching what this test actually exercises (createTLSConfig's
+					// nil,nil AutoCert return, verified below via TLSConfig).
+					Domains: []string{"s27-autocert-tls.test.invalid"},
 				},
 			},
 		},
 	}
 
 	coreService := mustInitCoreService(t, cfg)
+
+	// #1475: confirm this fixture's placeholder Domains didn't change what the
+	// test actually exercises — AutoCert must still make createTLSConfig return a
+	// nil *tls.Config, independent of Domains being set.
+	if tlsCfg, err := createTLSConfig(cfg); err != nil || tlsCfg != nil {
+		t.Fatalf("createTLSConfig with AutoCert must still return (nil, nil), got (%v, %v)", tlsCfg, err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel so the server exits immediately after <-ctx.Done()
@@ -1056,12 +1071,29 @@ func TestStartHTTPServer_S27_AutoCertBadCipher(t *testing.T) {
 					Enabled:        true,
 					AutoCert:       true,
 					AllowedCiphers: []string{"INVALID_CIPHER_XYZ_S27"}, // not a recognised cipher suite
+					// #1475: cfg.Validate() (now enforced by initializeCoreService)
+					// requires at least one domain when AutoCert is set. Validate()
+					// never inspects AllowedCiphers, so this placeholder only
+					// satisfies the domains check — buildAutoCertTLSConfig still
+					// fails at applyTLSHardening's cipher-suite resolution, BEFORE
+					// domains/HostWhitelist ever matter (verified below), for the
+					// same reason as before.
+					Domains: []string{"s27-autocert-badcipher.test.invalid"},
 				},
 			},
 		},
 	}
 
 	coreService := mustInitCoreService(t, cfg)
+
+	// #1475: confirm this fixture's placeholder Domains didn't change what the
+	// test actually exercises — the invalid cipher name must still make
+	// buildAutoCertTLSConfig fail at cipher-suite resolution.
+	if _, err := buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains, cfg.Server.HTTP.TLS); err == nil {
+		t.Fatal("buildAutoCertTLSConfig must still fail for an unrecognised cipher suite name")
+	} else if !strings.Contains(err.Error(), "invalid TLS configuration") {
+		t.Fatalf("expected a cipher-resolution error, got: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(200*time.Millisecond, cancel)

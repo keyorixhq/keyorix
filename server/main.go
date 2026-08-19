@@ -293,6 +293,15 @@ func loadCertPool(path string) (*x509.CertPool, error) {
 }
 
 func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.Service, error) { // NOSONAR -- cognitive complexity 159, suppress go:S3776
+	// #1475: mirrors main()'s own cfg.Validate() call above — a test or any other
+	// caller that builds a *config.Config by hand and skips straight to this
+	// function bypassed schema/sanity validation entirely, letting fixtures encode
+	// configs production boot would refuse (e.g. autocert enabled with no domains).
+	// Enforcing it here means "this function accepted the config" is only ever true
+	// for a config production would actually boot with.
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("invalid configuration: %w", err)
+	}
 	// Use storage factory to support SQLite, PostgreSQL, and remote storage
 	factory := appstorage.NewStorageFactory()
 	store, err := factory.CreateStorage(cfg)
@@ -604,7 +613,18 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 				}
 				connectors = append(connectors, vc)
 			default:
-				log.Printf("Keyorix Connect: skipping connector %q with unknown type %q", cn.Name, cn.Type)
+				// #1476: unreachable via a config that passed cfg.Validate() —
+				// validateConnectTypes (internal/config/config.go) already refused
+				// to boot with a connector Type outside connect.KnownTypes, before
+				// this function is ever reached (see the cfg.Validate() call at the
+				// top of initializeCoreService). Fail loud rather than silently
+				// skip if this is somehow reached anyway (e.g. a future caller of
+				// this loop that bypasses Validate()) — the old behavior let a
+				// misconfigured connector boot invisibly, the same fail-open shape
+				// ADR-082 closed for scope. See
+				// server/connector_type_registry_test.go for the test keeping this
+				// switch's case set and connect.KnownTypes from drifting apart.
+				log.Fatalf("Keyorix Connect: connector %q has unrecognized type %q (must be one of %s) — this should have been caught by cfg.Validate()", cn.Name, cn.Type, strings.Join(connect.KnownTypes, ", "))
 			}
 		}
 		if len(connectors) > 0 {
