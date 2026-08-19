@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -112,19 +112,6 @@ func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project,
 
 func (m *MockStorage) UpdateProject(_ context.Context, project *models.Project) (*models.Project, error) {
 	return project, nil
-}
-
-func (m *MockStorage) GetProjectByName(ctx context.Context, name string) (*models.Project, error) {
-	for _, c := range m.ExpectedCalls {
-		if c.Method == "GetProjectByName" {
-			args := m.Called(ctx, name)
-			if args.Get(0) == nil {
-				return nil, args.Error(1)
-			}
-			return args.Get(0).(*models.Project), args.Error(1)
-		}
-	}
-	return nil, errors.New("project not found")
 }
 
 func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
@@ -1751,10 +1738,17 @@ func (m *MockStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
 	return nil
 }
 
-// Keyorix Connect connector->project bindings (ADR-082) — core enforcement is
-// tested against real SQLite, so these mock stubs just satisfy the interface.
+// ADR-082 branch 2: connector project-binding storage — core enforcement is tested
+// against real SQLite (connect_rbac_test.go, connect_ownership_test.go), so these
+// mock stubs just satisfy the interface. GetProjectByName/GetConnectorProjectBinding
+// default to "not found" (the substring convention every caller of these checks
+// against) rather than a zero value, since a zero-value *models.Project/
+// *models.ConnectorProjectBinding would misrepresent a real, resolvable result.
+func (m *MockStorage) GetProjectByName(_ context.Context, _ string) (*models.Project, error) {
+	return nil, fmt.Errorf("project not found")
+}
 func (m *MockStorage) GetConnectorProjectBinding(_ context.Context, _ string) (*models.ConnectorProjectBinding, error) {
-	return nil, errors.New("connector project binding not found")
+	return nil, fmt.Errorf("connector project binding not found")
 }
 func (m *MockStorage) CreateConnectorProjectBinding(_ context.Context, binding *models.ConnectorProjectBinding) (*models.ConnectorProjectBinding, error) {
 	return binding, nil

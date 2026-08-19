@@ -10,11 +10,13 @@ All notable changes to Keyorix are documented here. This project follows
   `scope: project` or `scope: platform` (ADR-082)** — an existing deployment with
   `connect.enabled: true` and one or more configured connectors **will fail to boot**
   after upgrading unless every connector in `connect.connectors` gains an explicit
-  `scope:` (and `project:` when `scope: project`). Set `connect.allow_unscoped: true`
-  as a temporary, deployment-wide stopgap to boot anyway — every connector still
-  missing `scope:` then logs a `WARN` on every boot until it's fixed. This is the
-  config-schema/boot-validation part of ADR-082 only; connector ownership is not yet
-  enforced on the read path (a later change) — see
+  `scope:` (and `project:` when `scope: project`). **There is no escape hatch and no
+  deployment-wide bypass** — adding `scope:` to an existing connector takes minutes,
+  and an unscoped connector would deny every read anyway once ownership enforcement
+  evaluates it (see below), so a bypass would only defer the failure from boot time
+  to read time, not restore access. Connector ownership is enforced on the read path
+  as of this same change: a caller must be a member of the connector's owning
+  project (or hold a matching `ConnectRefGrant`) to read through it — see
   `docs/adr-082-connect-connector-tenant-scoping.md`.
 - **BREAKING (targeting v0.92.0): `storage.type: remote` combined with
   `server.http.enabled` or `server.grpc.enabled` no longer boots (ADR-083)** —

@@ -1166,11 +1166,11 @@ with no connectors the `/connect` endpoints are not served.
 ```yaml
 connect:
   enabled: true
-  # allow_unscoped is a temporary, deployment-wide escape hatch (ADR-082): with it
-  # unset (the default), any connector below with no scope: fails server boot. Set
-  # it true only while migrating an existing config — every connector missing scope:
-  # then logs a WARN, every boot, until you set scope: on it and remove this flag.
-  allow_unscoped: false
+  # Every connector below MUST declare scope: — a missing or unrecognized value
+  # fails server boot unconditionally (ADR-082). There is no escape hatch: adding
+  # scope: to an existing connector takes minutes, and an unscoped connector would
+  # deny every read anyway (ownership has no entry for it), so a bypass would only
+  # defer the failure from "boot" to "every read," not actually restore access.
   connectors:
     - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
       type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager | azure-key-vault | vault

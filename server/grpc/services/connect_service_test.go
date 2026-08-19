@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,7 @@ func newConnectService(t *testing.T) *ConnectGRPCService {
 	h.CoreService.SetConnectManager(connect.NewManager([]connect.Connector{
 		fakeConnector{name: "aws", value: "s3cr3t"},
 	}))
+	h.CoreService.SetConnectOwnership(map[string]core.ConnectOwnership{"aws": {Scope: "platform"}})
 	return NewConnectService(h.CoreService)
 }
 

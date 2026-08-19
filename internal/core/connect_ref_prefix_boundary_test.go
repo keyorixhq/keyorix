@@ -56,7 +56,8 @@ func TestConnectRefRBAC_SegmentBoundaryEnforced(t *testing.T) {
 	t.Run("bare prefix does not leak into the sibling namespace", func(t *testing.T) {
 		c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 		seedRoleForUser(t, db, 1, 5, "prod-reader")
-		seedGrant(t, c, 5, "aws", "prod") // bare prefix — NO trailing slash
+		seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045/#326 boundary matching, not the platform gate
+		seedGrant(t, c, 5, "aws", "prod")          // bare prefix — NO trailing slash
 
 		val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "prod/db")
 		require.NoError(t, err)
@@ -71,7 +72,8 @@ func TestConnectRefRBAC_SegmentBoundaryEnforced(t *testing.T) {
 	t.Run("trailing-slash prefix confines the grant", func(t *testing.T) {
 		c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 		seedRoleForUser(t, db, 1, 5, "prod-reader")
-		seedGrant(t, c, 5, "aws", "prod/") // safe form — trailing slash
+		seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045/#326 boundary matching, not the platform gate
+		seedGrant(t, c, 5, "aws", "prod/")         // safe form — trailing slash
 
 		val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "prod/db")
 		require.NoError(t, err)
@@ -86,7 +88,8 @@ func TestConnectRefRBAC_SegmentBoundaryEnforced(t *testing.T) {
 	t.Run("exact ref match on the bare prefix is permitted", func(t *testing.T) {
 		c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 		seedRoleForUser(t, db, 1, 5, "prod-reader")
-		seedGrant(t, c, 5, "aws", "prod/db") // exact ref as prefix
+		seedConnectPlatformUsePermission(t, db, 5) // ADR-082 branch 4: this test is about ADR-045/#326 boundary matching, not the platform gate
+		seedGrant(t, c, 5, "aws", "prod/db")       // exact ref as prefix
 
 		val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "prod/db")
 		require.NoError(t, err)

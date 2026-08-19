@@ -27,7 +27,9 @@ func NewConnectService(coreService *core.KeyorixCore) *ConnectGRPCService {
 	return &ConnectGRPCService{core: coreService}
 }
 
-// ListConnectors returns the configured connector names.
+// ListConnectors returns the connector names the caller can reach (ADR-082 §E) —
+// discovery is filtered by ownership so a caller never sees a connector name they
+// cannot subsequently read.
 func (s *ConnectGRPCService) ListConnectors(ctx context.Context, _ *emptypb.Empty) (*pb.ConnectorList, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
@@ -36,7 +38,12 @@ func (s *ConnectGRPCService) ListConnectors(ctx context.Context, _ *emptypb.Empt
 	if err := authorizeGlobal(ctx, s.core, actor, "connect.read"); err != nil {
 		return nil, err
 	}
-	return &pb.ConnectorList{Connectors: s.core.ConnectConnectorNames()}, nil
+	names, err := s.core.ConnectReadableConnectorNames(ctx, actor.ActorKind(), actor.PrincipalID())
+	if err != nil {
+		log.Printf("Error listing readable connectors: %v", err)
+		return nil, status.Error(codes.Internal, clientSafe(err))
+	}
+	return &pb.ConnectorList{Connectors: names}, nil
 }
 
 // ReadSecret proxies a read-through of a secret's current value from a connector.

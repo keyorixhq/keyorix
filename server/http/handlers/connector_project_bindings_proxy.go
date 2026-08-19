@@ -24,12 +24,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -116,6 +118,26 @@ func (h *AuthHandler) CreateConnectorProjectBindingProxy(w http.ResponseWriter, 
 		log.Printf("connector-project-bindings proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
+	}
+	// ADR-082 branch 3 / issue #1477's audit half: this write is an authorization
+	// input (it feeds core.ConnectOwnership downstream), so it's audited the same
+	// way as the boot-time first-resolution write (server/main.go's
+	// resolveConnectorOwnership) — same event type, same "system" actor type,
+	// since this endpoint is reached only by node-credential/system.write callers,
+	// never a human session. A logging failure here does not fail the request —
+	// the binding already persisted — but is surfaced loudly, matching
+	// internal/core's own emitAudit convention for a failed audit write.
+	t := true
+	auditEvent := &models.AuditEvent{
+		EventType:   core.EventConnectorProjectBindingCreate,
+		ProjectID:   &created.ProjectID,
+		Description: fmt.Sprintf("connector project binding created (remote proxy): connector %q bound to project %q (id %d)", created.Connector, created.ProjectName, created.ProjectID),
+		Success:     &t,
+		EventTime:   time.Now(),
+		ActorType:   core.ActorTypeSystem,
+	}
+	if aerr := h.coreService.Storage().LogAuditEvent(r.Context(), auditEvent); aerr != nil {
+		log.Printf("SECURITY: failed to persist audit event %q for connector %q: %v", core.EventConnectorProjectBindingCreate, created.Connector, aerr)
 	}
 	writeRemoteAPISuccess(w, newConnectorProjectBindingProxyWire(created))
 }

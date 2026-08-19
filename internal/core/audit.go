@@ -207,12 +207,16 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 	c.emitAudit(ctx, event)
 }
 
-// writeAuditEventFailed persists a failed audit event (Success=false).
-func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType string, userID *uint, ip string, description string) {
+// writeAuditEventFailed persists a failed audit event (Success=false), with
+// project context — added for ADR-082 branch 3, whose Connect deny-path events
+// need both Success=false and a populated ProjectID (the connector's owning
+// project), which no prior helper supported simultaneously.
+func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType string, userID *uint, projectID *uint, ip string, description string) {
 	f := false
 	event := &models.AuditEvent{
 		EventType:   eventType,
 		UserID:      userID,
+		ProjectID:   projectID,
 		IPAddress:   ip,
 		Description: sanitizeAuditText(description),
 		Success:     &f,
@@ -366,7 +370,7 @@ func (c *KeyorixCore) LogAuthLogin(ctx context.Context, userID uint, username, i
 
 // LogAuthFailure writes an auth.login_failed audit event (Success=false).
 func (c *KeyorixCore) LogAuthFailure(ctx context.Context, username, ip string) {
-	c.writeAuditEventFailed(ctx, "auth.login_failed", nil, ip,
+	c.writeAuditEventFailed(ctx, "auth.login_failed", nil, nil, ip,
 		fmt.Sprintf("Failed login attempt for username: %s", username))
 }
 
