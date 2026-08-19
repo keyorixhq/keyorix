@@ -1753,6 +1753,9 @@ func (m *MockStorage) GetConnectorProjectBinding(_ context.Context, _ string) (*
 func (m *MockStorage) CreateConnectorProjectBinding(_ context.Context, binding *models.ConnectorProjectBinding) (*models.ConnectorProjectBinding, error) {
 	return binding, nil
 }
+func (m *MockStorage) ListConnectorProjectBindings(_ context.Context) ([]*models.ConnectorProjectBinding, error) {
+	return nil, nil
+}
 
 // Group-Role assignments
 

@@ -395,7 +395,10 @@ func (c *KeyorixCore) ListConnectRefGrants(ctx context.Context) ([]*models.Conne
 // CreateConnectRefGrant adds a per-reference grant (ADR-045): role roleID may read any
 // ref under refPrefix ("" = all) on connectorName. The connector must be configured —
 // scoping a non-existent (typo'd) connector is rejected so an operator can't believe
-// they restricted a connector that is in fact still unscoped. expiresAt makes the
+// they restricted a connector that is in fact still unscoped. A platform-scoped
+// connector is also rejected (#1479): its ownership check is a terminal deny in
+// ReadFederatedSecret, so a grant against it would never be consulted — see
+// ErrConnectRefGrantAgainstPlatformConnector's own doc comment. expiresAt makes the
 // grant time-bound (nil = permanent), mirroring UserRole.ExpiresAt / ShareRecord.
 // ExpiresAt — a Connect grant is otherwise permanent with no way to make it JIT.
 // Audited.
@@ -405,6 +408,9 @@ func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID
 	}
 	if _, ok := c.connectManager.Get(connectorName); !ok {
 		return nil, fmt.Errorf("%w %q", ErrConnectUnknownConnector, connectorName)
+	}
+	if c.connectOwnership[connectorName].Scope == "platform" {
+		return nil, fmt.Errorf("%w %q", ErrConnectRefGrantAgainstPlatformConnector, connectorName)
 	}
 	if roleID == 0 {
 		return nil, ErrConnectRoleRequired

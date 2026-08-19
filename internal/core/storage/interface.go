@@ -1054,6 +1054,12 @@ type Storage interface {
 	// resolution (ADR-082): the connector name, the resolved project ID, and the
 	// project's name at resolution time (for later rename detection).
 	CreateConnectorProjectBinding(ctx context.Context, binding *models.ConnectorProjectBinding) (*models.ConnectorProjectBinding, error)
+	// ListConnectorProjectBindings returns every persisted connector→project
+	// binding row (#1477's orphan-detection direction: a binding whose connector
+	// name is no longer in cfg.Connect.Connectors). Boot-time-diagnostic only —
+	// GetConnectorProjectBinding/CreateConnectorProjectBinding cover the
+	// per-connector resolution path this does not participate in.
+	ListConnectorProjectBindings(ctx context.Context) ([]*models.ConnectorProjectBinding, error)
 
 	// Group-Role assignments. Assign/Remove bind a role to a group at the given
 	// Scope (zero Scope = global).

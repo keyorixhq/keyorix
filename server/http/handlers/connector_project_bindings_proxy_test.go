@@ -25,7 +25,7 @@ func newConnectorProjectBindingProxyHandler(t *testing.T) (*AuthHandler, *gorm.D
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.ConnectorProjectBinding{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.ConnectorProjectBinding{}, &models.AuditEvent{}, &models.Project{}))
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
 	return NewAuthHandler(cs, false), db
 }
@@ -39,6 +39,7 @@ func newConnectorProjectBindingProxyHandler(t *testing.T) (*AuthHandler, *gorm.D
 // system.write caller, never a human session.
 func TestCreateConnectorProjectBindingProxy_Audited(t *testing.T) {
 	h, db := newConnectorProjectBindingProxyHandler(t)
+	require.NoError(t, db.Create(&models.Project{ID: 7, Name: "payments"}).Error)
 
 	body, err := json.Marshal(map[string]any{
 		"connector":    "aws",
@@ -70,6 +71,7 @@ func TestCreateConnectorProjectBindingProxy_Audited(t *testing.T) {
 // actually persisted.
 func TestCreateConnectorProjectBindingProxy_StorageFailureStillReturnsError(t *testing.T) {
 	h, db := newConnectorProjectBindingProxyHandler(t)
+	require.NoError(t, db.Create(&models.Project{ID: 7, Name: "payments"}).Error)
 
 	body, err := json.Marshal(map[string]any{
 		"connector":    "aws",
@@ -93,4 +95,34 @@ func TestCreateConnectorProjectBindingProxy_StorageFailureStillReturnsError(t *t
 	var count int64
 	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", core.EventConnectorProjectBindingCreate).Count(&count).Error)
 	assert.EqualValues(t, 1, count, "only the successful create should be audited, not the failed duplicate attempt")
+}
+
+// TestCreateConnectorProjectBindingProxy_RejectsNonexistentProject is #1477's
+// fix: project_id must resolve to a live project row in THIS hub's own
+// storage — a binding referencing a project that doesn't exist here would
+// persist as silently-broken configuration. Deliberately does not test
+// connector-name validation (see the handler's own doc comment for why that's
+// not meaningfully possible at this layer).
+func TestCreateConnectorProjectBindingProxy_RejectsNonexistentProject(t *testing.T) {
+	h, db := newConnectorProjectBindingProxyHandler(t)
+	// No project 7 created — the binding's project_id must not resolve.
+
+	body, err := json.Marshal(map[string]any{
+		"connector":    "aws",
+		"project_id":   7,
+		"project_name": "payments",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/connector-project-bindings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateConnectorProjectBindingProxy(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+
+	var count int64
+	require.NoError(t, db.Model(&models.ConnectorProjectBinding{}).Count(&count).Error)
+	assert.EqualValues(t, 0, count, "no binding should be persisted for a project that doesn't exist")
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", core.EventConnectorProjectBindingCreate).Count(&count).Error)
+	assert.EqualValues(t, 0, count, "a rejected create must not be audited as a successful binding write")
 }

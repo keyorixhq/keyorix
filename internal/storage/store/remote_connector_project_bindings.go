@@ -74,6 +74,17 @@ func (rs *RemoteStorage) GetConnectorProjectBinding(ctx context.Context, connect
 	return wire.toModel(), nil
 }
 
+// ListConnectorProjectBindings is not supported in remote storage: it backs
+// only the boot-time orphan-detection warning (server/main.go), a diagnostic
+// that runs against the resolving server's OWN storage — the same "a server
+// on storage.type: remote never reaches this code" reasoning ADR-083
+// established for the RBAC primitives this mirrors (see remote_rbac.go),
+// not the #527 "would fail boot" failure shape Get/CreateConnectorProjectBinding
+// above are real implementations to avoid.
+func (rs *RemoteStorage) ListConnectorProjectBindings(_ context.Context) ([]*models.ConnectorProjectBinding, error) {
+	return nil, remoteUnsupported("ListConnectorProjectBindings")
+}
+
 // CreateConnectorProjectBinding persists a connector's first-boot project
 // resolution via POST /api/v1/system/connector-project-bindings.
 func (rs *RemoteStorage) CreateConnectorProjectBinding(ctx context.Context, binding *models.ConnectorProjectBinding) (*models.ConnectorProjectBinding, error) {

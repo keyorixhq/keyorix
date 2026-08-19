@@ -73,6 +73,7 @@ func isSafeConnectError(msg string) bool {
 		"keyorix connect is not enabled",
 		"unknown connector",
 		"a role is required for a connect ref-grant",
+		"connector is platform-scoped",
 		"is not permitted for your roles on connector",
 	} {
 		if strings.Contains(msg, marker) {
