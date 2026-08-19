@@ -293,6 +293,15 @@ func loadCertPool(path string) (*x509.CertPool, error) {
 }
 
 func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.Service, error) { // NOSONAR -- cognitive complexity 159, suppress go:S3776
+	// #1475: mirrors main()'s own cfg.Validate() call above — a test or any other
+	// caller that builds a *config.Config by hand and skips straight to this
+	// function bypassed schema/sanity validation entirely, letting fixtures encode
+	// configs production boot would refuse (e.g. autocert enabled with no domains).
+	// Enforcing it here means "this function accepted the config" is only ever true
+	// for a config production would actually boot with.
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("invalid configuration: %w", err)
+	}
 	// Use storage factory to support SQLite, PostgreSQL, and remote storage
 	factory := appstorage.NewStorageFactory()
 	store, err := factory.CreateStorage(cfg)
