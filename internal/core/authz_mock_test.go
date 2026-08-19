@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -16,10 +15,14 @@ func stubAuthorizedPrincipal(ms *MockStorage, actorID uint, scope Scope, perm st
 	const roleID = uint(10)
 	ms.On("GetUserRoleIDsAt", mock.Anything, actorID, scope).Return([]uint{roleID}, nil).Maybe()
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, actorID, scope).Return([]uint{}, nil).Maybe()
-	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError).Maybe()
-	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError).Maybe()
-	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError).Maybe()
-	ms.On("GetRoleByName", mock.Anything, "project_admin").Return(nil, assert.AnError).Maybe()
+	// "not found", not a generic error: roleSetContainsAdmin distinguishes a genuine
+	// storage error (propagated, fails closed) from a role simply not being seeded in
+	// this deployment (skipped, checks the next admin-tier name) — see #G17. This stub
+	// means "none of the four admin-tier roles are seeded/held", not "storage is down".
+	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found")).Maybe()
+	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found")).Maybe()
+	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found")).Maybe()
+	ms.On("GetRoleByName", mock.Anything, "project_admin").Return(nil, errors.New("not found")).Maybe()
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{roleID}, perm).Return(true, nil).Maybe()
 }
 

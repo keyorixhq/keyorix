@@ -226,7 +226,11 @@ func (c *KeyorixCore) Authorize(ctx context.Context, userID uint, permission str
 	if len(roleIDs) == 0 {
 		return false, nil
 	}
-	if c.roleSetContainsAdmin(ctx, roleIDs) {
+	containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
+	if err != nil {
+		return false, err
+	}
+	if containsAdmin {
 		return true, nil
 	}
 	return c.storage.RoleSetHasPermission(ctx, roleIDs, permission)
@@ -244,7 +248,11 @@ func (c *KeyorixCore) principalHasScopedPermission(ctx context.Context, userID u
 	if len(roleIDs) == 0 {
 		return false, nil
 	}
-	if c.roleSetContainsAdmin(ctx, roleIDs) {
+	containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
+	if err != nil {
+		return false, err
+	}
+	if containsAdmin {
 		return true, nil
 	}
 	return c.storage.RoleSetHasPermission(ctx, roleIDs, permission)
@@ -325,7 +333,7 @@ func (c *KeyorixCore) IsGlobalAdmin(ctx context.Context, userID uint) (bool, err
 	if err != nil {
 		return false, err
 	}
-	return c.roleSetContainsAdmin(ctx, roleIDs), nil
+	return c.roleSetContainsAdmin(ctx, roleIDs)
 }
 
 // scopedRoleIDs returns the de-duplicated set of role IDs that apply to userID
@@ -342,10 +350,21 @@ func (c *KeyorixCore) scopedRoleIDs(ctx context.Context, userID uint, scope Scop
 	return dedupeUints(append(direct, viaGroups...)), nil
 }
 
-// roleSetContainsAdmin reports whether any role ID in the set is an admin role.
-func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) bool { // nosemgrep: keyorix-unbounded-bulk-slice-param -- roleIDs is a principal's resolved current role set (scopedRoleIDs/GetUserRoleIDsAt), not a raw client-supplied array; every call site passes an internally-computed list
+// roleSetContainsAdmin reports whether any role ID in the set is an admin
+// role. Fails closed on a genuine resolution error: a GetRoleByName failure
+// that is NOT "not found" (a transient storage error, a cancelled context) is
+// returned to the caller rather than silently treated as "no admin role
+// found" here — #G17 (enforceProjectMFA/ProjectMFABlocked,
+// server/grpc/services/conversions.go and server/middleware/auth.go) is the
+// precedent this mirrors: a lookup error on a security-relevant path must not
+// be indistinguishable from a legitimate negative result, or a caller can
+// trigger the same lookup error to silently bypass whatever the error would
+// otherwise have blocked. "Role not seeded in this deployment" (the NotFound
+// case) is not an error condition here and keeps its current meaning — every
+// other admin-tier name is still checked.
+func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) (bool, error) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- roleIDs is a principal's resolved current role set (scopedRoleIDs/GetUserRoleIDsAt), not a raw client-supplied array; every call site passes an internally-computed list
 	if len(roleIDs) == 0 {
-		return false
+		return false, nil
 	}
 	idSet := make(map[uint]struct{}, len(roleIDs))
 	for _, id := range roleIDs {
@@ -354,13 +373,16 @@ func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) 
 	for _, name := range adminRoleNames {
 		role, err := c.storage.GetRoleByName(ctx, name)
 		if err != nil {
-			continue // role not seeded in this deployment
+			if strings.Contains(err.Error(), "not found") {
+				continue // role not seeded in this deployment
+			}
+			return false, err
 		}
 		if _, ok := idSet[role.ID]; ok {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // requireGlobalAdminToReinstateAdminRoles refuses to reinstate roleIDs unless
@@ -376,7 +398,11 @@ func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) 
 // (e.g. an incident-response revocation), the same escalation-by-proxy shape
 // requireAuthorityForRole closes for direct grants.
 func (c *KeyorixCore) requireGlobalAdminToReinstateAdminRoles(ctx context.Context, actorID uint, roleIDs []uint, objectDesc string) error {
-	if !c.roleSetContainsAdmin(ctx, roleIDs) {
+	containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
+	if err != nil {
+		return fmt.Errorf("failed to resolve role authority: %w", err)
+	}
+	if !containsAdmin {
 		return nil
 	}
 	isAdmin, err := c.IsGlobalAdmin(ctx, actorID)
@@ -450,7 +476,11 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorI
 	for i, r := range roles {
 		roleIDs[i] = r.ID
 	}
-	if !c.roleSetContainsAdmin(ctx, roleIDs) {
+	containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
+	if err != nil {
+		return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+	}
+	if !containsAdmin {
 		return nil
 	}
 	isAdmin, err := c.IsGlobalAdmin(ctx, actorID)

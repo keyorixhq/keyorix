@@ -79,7 +79,11 @@ func (c *KeyorixCore) requireAdminAuthorityAt(ctx context.Context, actorID, proj
 	if err != nil {
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
-	if !c.roleSetContainsAdmin(ctx, ids) {
+	containsAdmin, err := c.roleSetContainsAdmin(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !containsAdmin {
 		return fmt.Errorf("admin authority is required")
 	}
 	return nil
