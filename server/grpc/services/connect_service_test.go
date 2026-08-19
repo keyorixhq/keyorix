@@ -114,6 +114,11 @@ func TestConnectService_RefGrants_CRUD(t *testing.T) {
 	svc := newConnectService(t)
 	ctx := authCtx(1, "admin", "roles.write")
 
+	// #1479: newConnectService wires "aws" as Scope: "platform", which
+	// CreateConnectRefGrant now refuses — this test is about ref-grant CRUD,
+	// not connector scope, so override to "project" here.
+	svc.core.SetConnectOwnership(map[string]core.ConnectOwnership{"aws": {Scope: "project", ProjectID: 1}})
+
 	// Empty to start.
 	list, err := svc.ListRefGrants(ctx, &emptypb.Empty{})
 	require.NoError(t, err)

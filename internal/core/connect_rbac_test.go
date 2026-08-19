@@ -329,9 +329,15 @@ func TestConnectRefRBAC_UnexpiredGrantAllowed(t *testing.T) {
 // CreateConnectRefGrant plumbs an optional expiresAt through to the persisted grant.
 // ADR-082 branch 4: unaffected by the connect.platform.use gate — this test never
 // calls ReadFederatedSecret/connectOwnershipSatisfied at all, only the grant-
-// management path.
+// management path. #1479: connectRBACCore defaults every connector to
+// Scope: "platform", which CreateConnectRefGrant now refuses — override to
+// "project" here since this test is about expiresAt plumbing, not scope, and
+// a platform-scoped grant would be rejected before reaching the code this
+// test actually exercises.
 func TestCreateConnectRefGrant_PersistsExpiresAt(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "proj-a"}).Error)
+	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 10}})
 	require.NoError(t, db.Create(&models.Role{ID: 5, Name: "temp-reader"}).Error)
 	exp := time.Now().Add(time.Hour).Truncate(time.Second)
 
@@ -344,6 +350,42 @@ func TestCreateConnectRefGrant_PersistsExpiresAt(t *testing.T) {
 	g2, err := c.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "db/", nil)
 	require.NoError(t, err)
 	assert.Nil(t, g2.ExpiresAt)
+}
+
+// TestCreateConnectRefGrant_RefusesAgainstPlatformConnector is #1479's fix:
+// a platform-scoped connector's ownership check is a terminal deny in
+// ReadFederatedSecret (connectOwnershipSatisfied never falls through to
+// ConnectRefGrant delegation for one), so a grant created against one would
+// be dead configuration — accepted, listed, never once consulted by a read.
+// connectRBACCore's default wiring (every connector scope: platform) is
+// exactly the case this test needs, no override required.
+func TestCreateConnectRefGrant_RefusesAgainstPlatformConnector(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	require.NoError(t, db.Create(&models.Role{ID: 5, Name: "temp-reader"}).Error)
+
+	g, err := c.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "metrics/", nil)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrConnectRefGrantAgainstPlatformConnector)
+	assert.Nil(t, g)
+
+	grants, err := c.storage.ListConnectRefGrants(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, grants, "a refused grant must not be persisted")
+}
+
+// TestCreateConnectRefGrant_StillAllowedAgainstProjectConnector confirms the
+// #1479 fix is scope-specific, not a blanket new restriction: a project-scoped
+// connector's ConnectRefGrant creation is unaffected.
+func TestCreateConnectRefGrant_StillAllowedAgainstProjectConnector(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "proj-a"}).Error)
+	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 10}})
+	require.NoError(t, db.Create(&models.Role{ID: 5, Name: "temp-reader"}).Error)
+
+	g, err := c.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "metrics/", nil)
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Equal(t, "aws", g.Connector)
 }
 
 // G33: a machine identity's ConnectRefGrant-referenced role held ONLY at a

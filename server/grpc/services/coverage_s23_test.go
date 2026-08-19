@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
@@ -528,6 +529,11 @@ func TestDeleteRefGrant_Success_S23(t *testing.T) {
 	// newConnectService seeds the "aws" fake connector so CreateRefGrant can validate it.
 	svc := newConnectService(t)
 	adminCtxConn := authCtx(1, "admin", "connect.read", "roles.read", "roles.write")
+
+	// #1479: newConnectService wires "aws" as Scope: "platform", which
+	// CreateConnectRefGrant now refuses — this test is about delete, not
+	// connector scope, so override to "project" here.
+	svc.core.SetConnectOwnership(map[string]core.ConnectOwnership{"aws": {Scope: "project", ProjectID: 1}})
 
 	// Create a grant so we can delete it.
 	g, err := svc.CreateRefGrant(adminCtxConn, &pb.CreateConnectRefGrantRequest{

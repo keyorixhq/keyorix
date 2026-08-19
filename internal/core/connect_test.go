@@ -205,6 +205,11 @@ func TestConnectErrors_AreTypedSentinels(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectUnknownConnector)
 
+	// #1479: connectTestCore defaults every connector to Scope: "platform",
+	// which CreateConnectRefGrant now refuses before ever reaching the
+	// roleID==0 check below — override to "project" so this assertion still
+	// isolates the roleID check it's actually testing.
+	c2.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 1}})
 	_, err = c2.CreateConnectRefGrant(context.Background(), 1, 0, "aws", "", nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectRoleRequired)
@@ -212,6 +217,14 @@ func TestConnectErrors_AreTypedSentinels(t *testing.T) {
 	_, err = c2.CreateConnectRefGrant(context.Background(), 1, 5, "nope", "", nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectUnknownConnector)
+
+	_, err = c2.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "", nil)
+	require.NoError(t, err, "a project-scoped connector must still allow grant creation")
+
+	c2.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
+	_, err = c2.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "", nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConnectRefGrantAgainstPlatformConnector)
 }
 
 // TestReadFederatedSecret_AuditDescriptionRedactsRawUpstreamError is the G50

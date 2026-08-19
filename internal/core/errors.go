@@ -73,6 +73,18 @@ var (
 	// ErrConnectRoleRequired is returned by CreateConnectRefGrant when roleID is 0.
 	ErrConnectRoleRequired = errors.New("a role is required for a connect ref-grant")
 
+	// ErrConnectRefGrantAgainstPlatformConnector is returned by
+	// CreateConnectRefGrant (#1479) when connectorName is platform-scoped
+	// (ADR-082 §B). A platform connector's ownership check is a TERMINAL deny in
+	// ReadFederatedSecret — a caller who lacks connect.platform.use never falls
+	// through to ConnectRefGrant delegation, deliberately (see
+	// connectOwnershipSatisfied and connectDenyReasonPlatformPermissionDenied).
+	// A grant created against one would be accepted, listed, and never once
+	// consulted by any read — dead configuration that looks live. Refused at
+	// creation, matching the sibling "connector must be configured" check one
+	// line above it.
+	ErrConnectRefGrantAgainstPlatformConnector = errors.New("connector is platform-scoped; platform connectors are a terminal deny under ADR-082 and a ref-grant against one would never take effect")
+
 	// ErrConnectRefNotPermitted is returned by ReadFederatedSecret when the
 	// per-reference RBAC policy (ADR-045) denies the read. These four Connect
 	// sentinels exist so the HTTP layer (isSafeConnectError) can classify its own

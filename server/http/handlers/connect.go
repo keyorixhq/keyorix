@@ -21,10 +21,11 @@ import (
 // isSafeConnectError reports whether err is one of the small set of
 // deliberately-crafted, safe sentinel errors core.ReadFederatedSecret /
 // CreateConnectRefGrant / DeleteConnectRefGrant themselves produce (an
-// unknown/disabled connector, a missing role, or a per-reference policy
-// denial). This checks err's type via errors.Is against the core package's
-// sentinels rather than substring-matching err.Error(): connectorName and ref
-// are caller-controlled and, if an upstream connector (e.g. Vault) happened to
+// unknown/disabled connector, a missing role, a platform-scoped connector
+// rejected at grant creation (#1479), or a per-reference policy denial). This
+// checks err's type via errors.Is against the core package's sentinels rather
+// than substring-matching err.Error(): connectorName and ref are
+// caller-controlled and, if an upstream connector (e.g. Vault) happened to
 // echo either back in its own raw error text, a substring match against the
 // message could be spoofed into passing as "safe" and leaking that raw text
 // to the client (backlog #116). Anything that doesn't match one of these
@@ -35,6 +36,7 @@ func isSafeConnectError(err error) bool {
 	return errors.Is(err, core.ErrConnectDisabled) ||
 		errors.Is(err, core.ErrConnectUnknownConnector) ||
 		errors.Is(err, core.ErrConnectRoleRequired) ||
+		errors.Is(err, core.ErrConnectRefGrantAgainstPlatformConnector) ||
 		errors.Is(err, core.ErrConnectRefNotPermitted)
 }
 
