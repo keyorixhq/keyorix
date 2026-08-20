@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -9,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -110,6 +113,112 @@ func TestRemovePermissionFromRole_NoSelfPermissionRequired(t *testing.T) {
 
 	const actor = uint(9) // holds nothing
 	require.NoError(t, c.RemovePermissionFromRole(ctx, actor, 1, 1))
+}
+
+// lastRBACEventDetail fetches the most recent audit event of the given type
+// and decodes its structured Diff, for asserting on rbacAuditDetail fields
+// (unexported, but this test file is in package core) that ListRBACAuditLogs
+// doesn't currently surface — #1500's BuiltinRoleTarget among them.
+func lastRBACEventDetail(t *testing.T, c *KeyorixCore, eventType string) (*models.AuditEvent, rbacAuditDetail) {
+	t.Helper()
+	events, _, err := c.storage.GetAuditLogs(context.Background(), &storage.AuditFilter{
+		Actions: []string{eventType}, Page: 1, PageSize: 50,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, events, "expected at least one %s event", eventType)
+	event := events[0]
+	var detail rbacAuditDetail
+	require.NoError(t, json.Unmarshal([]byte(event.Diff), &detail))
+	return event, detail
+}
+
+// #1500: removing a permission from a built-in role stays PERMITTED (ADR-044) —
+// this only asserts the operation succeeds and its audit event carries the
+// distinct built-in signal, not that it's refused.
+func TestRemovePermissionFromRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error) // builtin
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+
+	logOutput := captureLog(t, func() {
+		require.NoError(t, c.RemovePermissionFromRole(ctx, 9, 1, 1))
+	})
+
+	event, detail := lastRBACEventDetail(t, c, EventPermissionRemoved)
+	assert.Contains(t, event.Description, "reason=builtin_role_target")
+	assert.True(t, detail.BuiltinRoleTarget)
+	assert.Equal(t, uint(1), detail.RoleID)
+	assert.Equal(t, uint(1), detail.PermissionID)
+
+	assert.Contains(t, logOutput, "SECURITY", "expected a log warning naming the role and permission")
+	assert.Contains(t, logOutput, "admin", "log warning must name the built-in role")
+	assert.Contains(t, logOutput, "system.write", "log warning must name the permission")
+}
+
+// A non-built-in role produces the ordinary event: no reason= token, no
+// structured flag, no SECURITY log line.
+func TestRemovePermissionFromRole_NonBuiltinRole_NoSignal(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+
+	logOutput := captureLog(t, func() {
+		require.NoError(t, c.RemovePermissionFromRole(ctx, 9, 1, 1))
+	})
+
+	event, detail := lastRBACEventDetail(t, c, EventPermissionRemoved)
+	assert.NotContains(t, event.Description, "reason=")
+	assert.False(t, detail.BuiltinRoleTarget)
+	assert.Empty(t, strings.TrimSpace(logOutput), "no SECURITY warning expected for a non-built-in target")
+}
+
+// #1500: assigning a permission to a built-in role also stays PERMITTED and
+// must carry the same signal — the inverse of RemovePermissionFromRole above.
+func TestAssignPermissionToRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error) // builtin
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
+	// Actor must already hold the permission (#169) — make them a global admin.
+	const actor = uint(9)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actor, RoleID: 1}).Error)
+
+	logOutput := captureLog(t, func() {
+		require.NoError(t, c.AssignPermissionToRole(ctx, actor, 1, 1))
+	})
+
+	event, detail := lastRBACEventDetail(t, c, EventPermissionAdded)
+	assert.Contains(t, event.Description, "reason=builtin_role_target")
+	assert.True(t, detail.BuiltinRoleTarget)
+
+	assert.Contains(t, logOutput, "SECURITY")
+	assert.Contains(t, logOutput, "admin")
+	assert.Contains(t, logOutput, "system.write")
+}
+
+// A non-built-in role produces the ordinary event on assignment too.
+func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "holder"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
+	const holder = uint(9)
+	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 2}).Error)
+
+	logOutput := captureLog(t, func() {
+		require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1))
+	})
+
+	event, detail := lastRBACEventDetail(t, c, EventPermissionAdded)
+	assert.NotContains(t, event.Description, "reason=")
+	assert.False(t, detail.BuiltinRoleTarget)
+	assert.Empty(t, strings.TrimSpace(logOutput), "no SECURITY warning expected for a non-built-in target")
 }
 
 // RemoveUserRole must evict the target user's cached sessions from the HTTP auth
