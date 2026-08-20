@@ -194,9 +194,9 @@ var g81TimeColumnPattern = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_.]*)\s*(>=
 // sibling CertNotAfter on a different model) — see the Stage 1 report for how
 // these were found (a suffix-only grep misses them).
 var g81ExplicitTimeLikeColumns = map[string]bool{
-	"expiration":       true,
+	"expiration":         true,
 	"login_locked_until": true,
-	"cert_not_after":   true,
+	"cert_not_after":     true,
 }
 
 func g81TimeLikeColumn(col string) bool {

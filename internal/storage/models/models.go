@@ -358,8 +358,8 @@ type User struct {
 	// targeting.
 	Email        string
 	DisplayName  string
-	PasswordHash string     `json:"-"`
-	IsActive     bool       `gorm:"default:true"`
+	PasswordHash string `json:"-"`
+	IsActive     bool   `gorm:"default:true"`
 	// LastLoginAt is stamped on each successful auth.login; nil = never logged in.
 	// G81: range-queried (ListInactiveUsers, ListUsers/InactiveSince) against a
 	// UTC bound (dashboard.go), so a local-zone value here silently mismatches on
