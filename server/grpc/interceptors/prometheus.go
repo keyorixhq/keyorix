@@ -17,9 +17,25 @@ import (
 type grpcCollector struct {
 	requests *prometheus.Desc
 	duration *prometheus.Desc
+	// target is the *Metrics this collector reports — grpcMetrics in
+	// production (see newGRPCCollector), an injected per-test instance in
+	// tests (see newGRPCCollectorFor). #1504.
+	target *Metrics
 }
 
+// newGRPCCollector returns a collector reporting the shared, process-wide
+// grpcMetrics singleton — the only variant production code (RegisterPrometheusMetrics)
+// uses.
 func newGRPCCollector() *grpcCollector {
+	return newGRPCCollectorFor(grpcMetrics)
+}
+
+// newGRPCCollectorFor returns a collector reporting target instead of the
+// package-level grpcMetrics singleton — the injection seam #1504 added so
+// tests can scrape a fully isolated *Metrics instance instead of racing
+// other tests to reset/read the shared global. Unexported: production always
+// goes through newGRPCCollector above.
+func newGRPCCollectorFor(target *Metrics) *grpcCollector {
 	return &grpcCollector{
 		requests: prometheus.NewDesc(
 			"keyorix_grpc_requests_total",
@@ -31,6 +47,7 @@ func newGRPCCollector() *grpcCollector {
 			"Cumulative gRPC unary handler time in seconds; divide its rate by the request rate for average latency.",
 			nil, nil,
 		),
+		target: target,
 	}
 }
 
@@ -40,7 +57,7 @@ func (c *grpcCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *grpcCollector) Collect(ch chan<- prometheus.Metric) {
-	m := GetGRPCMetrics()
+	m := loadMetrics(c.target)
 	ch <- prometheus.MustNewConstMetric(c.requests, prometheus.CounterValue, float64(m.SuccessRequests), "success")
 	ch <- prometheus.MustNewConstMetric(c.requests, prometheus.CounterValue, float64(m.ErrorRequests), "error")
 	ch <- prometheus.MustNewConstMetric(c.duration, prometheus.CounterValue, float64(m.TotalDuration)/1e9)
