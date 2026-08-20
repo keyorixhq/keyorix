@@ -165,6 +165,12 @@ func (ls *LocalStorage) distinctUsersByProject(ctx context.Context, projectIDs [
 // SecretWrites / SecretRotations / UniqueUsers / MachineReads aggregations
 // and merges them into one map keyed by project ID.
 func (ls *LocalStorage) billingCountsByProject(ctx context.Context, from, to time.Time, projectIDs []uint) (map[uint]*billingCounts, error) {
+	// G81 (third recurrence, read side): normalize internally rather than trusting
+	// the caller — see GetAuditLogs. GenerateBillingReport already normalizes
+	// today, but every event_time comparison below would otherwise silently
+	// depend on that staying true forever.
+	from, to = from.UTC(), to.UTC()
+
 	secretCounts, err := ls.countByProject(ctx, "secret_nodes",
 		"project_id IN ? AND is_secret = ? AND deleted_at IS NULL", projectIDs, true)
 	if err != nil {
