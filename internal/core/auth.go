@@ -272,8 +272,14 @@ const maxSessionsPerUser = 25
 // RecordLogin stamps the user's last_login_at to the current time. Best-effort:
 // the login handler calls this in a goroutine after a successful authentication,
 // so a storage error here must never fail the login itself.
+//
+// G81: normalized to UTC here explicitly rather than via a models.User BeforeSave
+// hook — UpdateLastLogin's sole write path (local_users.go, UpdateColumn) bypasses
+// all model hooks, so a hook would be silently ineffective (see the doc comment on
+// User.LastLoginAt). Mirrors local_mfa_stepup.go's explicit-normalization fix for
+// MFAStepupToken's ON CONFLICT path, which has the same hook-bypass shape.
 func (c *KeyorixCore) RecordLogin(ctx context.Context, userID uint) error {
-	return c.storage.UpdateLastLogin(ctx, userID, c.now())
+	return c.storage.UpdateLastLogin(ctx, userID, c.now().UTC())
 }
 
 // Logout invalidates the session identified by token.

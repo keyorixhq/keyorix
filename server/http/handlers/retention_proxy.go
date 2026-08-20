@@ -62,11 +62,26 @@
 // canonical one — see dynamic_secrets_proxy.go's ListExpiredActiveLeasesProxy for
 // the full empirical writeup of the resulting bug (a genuinely-expired row silently
 // excluded because two different UTC-offset TEXT representations sort
-// lexicographically out of instant order). Every decoded timestamp below is
-// therefore converted with .Local() before being handed to storage.Storage, so its
-// TEXT representation is formatted in the SAME Location this server's own rows were
-// written in — matching the one convention every other time.Time comparison in this
-// codebase already relies on (time.Now(), never time.Now().UTC()).
+// lexicographically out of instant order).
+//
+// G81: this note used to say every decoded timestamp was converted with .Local()
+// to match "the one convention every other time.Time comparison in this codebase
+// already relies on (time.Now(), never time.Now().UTC())" — that convention no
+// longer holds uniformly. The G81 bug-class sweep added BeforeSave hooks that
+// UTC-normalize several of the columns compared here (AnomalyAlert.DetectedAt,
+// AccessReviewCampaign.ClosedAt, BreakGlassActivation.CreatedAt,
+// AccessRequest.ResolvedAt, User.CreatedAt, ShareRecord.ExpiresAt,
+// UserRole/GroupRole.ExpiresAt, DynamicSecretLease.ExpiresAt — see
+// internal/storage/models/models.go), while deleted_at (gorm.DeletedAt, a
+// different type with no BeforeSave hook of its own) is still stamped by GORM's
+// own local NowFunc. decodeRetentionBeforeBody therefore returns the RAW parsed
+// cutoff, unconverted — each call site below explicitly converts it to whichever
+// Location its OWN target column actually uses, via a comment naming that
+// column. Getting this wrong in either direction reproduces the exact bug this
+// note describes; DeleteExpiredRoleGrantsProxy was found broken this way during
+// the sweep (used .Local() against UserRole/GroupRole.ExpiresAt, which has been
+// UTC-hooked since before this sweep started — no existing test's cutoff was
+// tight enough to catch it).
 //
 // Response envelope: like the other proxies, these do NOT use the package's
 // generic sendSuccess/sendError helpers — they construct the exact
@@ -115,6 +130,13 @@ func validateRetentionCutoff(before time.Time) error {
 	return nil
 }
 
+// decodeRetentionBeforeBody returns the RAW parsed cutoff, unconverted. See the
+// package doc's timezone note: callers must convert to whichever Location their
+// specific target column's storage actually uses (.Local() for a gorm.DeletedAt
+// column, still GORM's own local NowFunc; .UTC() for a G81 BeforeSave-hooked
+// time.Time column) — there is no longer one Location every caller here can
+// share, since some columns are hook-normalized to UTC and others (deleted_at)
+// are not.
 func decodeRetentionBeforeBody(w http.ResponseWriter, r *http.Request) (time.Time, bool) {
 	var body retentionBeforeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -129,9 +151,7 @@ func decodeRetentionBeforeBody(w http.ResponseWriter, r *http.Request) (time.Tim
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
 		return time.Time{}, false
 	}
-	// See the package doc's timezone note: re-express in this server's own process
-	// Location before any storage-layer comparison.
-	return body.Before.Local(), true
+	return body.Before, true
 }
 
 // refuseIfLegalHoldActive is #G52: PurgeExpiredSoftDeletes (internal/core/purge.go)
@@ -169,7 +189,9 @@ func (h *SecretHandler) PurgeDeletedSecretsBeforeProxy(w http.ResponseWriter, r 
 	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
 		return
 	}
-	n, err := h.coreService.Storage().PurgeDeletedSecretsBefore(r.Context(), before)
+	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
+	// BeforeSave hook — .Local() to match.
+	n, err := h.coreService.Storage().PurgeDeletedSecretsBefore(r.Context(), before.Local())
 	if err != nil {
 		log.Printf("retention proxy: purge deleted secrets failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -212,11 +234,12 @@ func (h *AuditHandler) DeleteAnomalyAlertsBeforeProxy(w http.ResponseWriter, r *
 			return
 		}
 	}
-	// See the package doc's timezone note. .Local() on an already-zero time.Time
-	// leaves it zero (IsZero() depends only on the represented instant, not the
-	// Location), so DeleteAnomalyAlertsBefore's own "zero disables this clause"
-	// contract is preserved for whichever field the caller left unset.
-	n, err := h.coreService.Storage().DeleteAnomalyAlertsBefore(r.Context(), body.AckBefore.Local(), body.UnackCeiling.Local())
+	// AnomalyAlert.DetectedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
+	// .UTC() on an already-zero time.Time leaves it zero (IsZero() depends only on
+	// the represented instant, not the Location), so DeleteAnomalyAlertsBefore's
+	// own "zero disables this clause" contract is preserved for whichever field
+	// the caller left unset.
+	n, err := h.coreService.Storage().DeleteAnomalyAlertsBefore(r.Context(), body.AckBefore.UTC(), body.UnackCeiling.UTC())
 	if err != nil {
 		log.Printf("retention proxy: purge anomaly alerts failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -239,7 +262,8 @@ func (h *CatalogHandler) DeleteClosedAccessReviewsBeforeProxy(w http.ResponseWri
 	if !ok {
 		return
 	}
-	campaigns, items, err := h.coreService.Storage().DeleteClosedAccessReviewsBefore(r.Context(), before)
+	// AccessReviewCampaign.ClosedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
+	campaigns, items, err := h.coreService.Storage().DeleteClosedAccessReviewsBefore(r.Context(), before.UTC())
 	if err != nil {
 		log.Printf("retention proxy: purge closed access reviews failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -255,7 +279,8 @@ func (h *CatalogHandler) DeleteExpiredBreakGlassBeforeProxy(w http.ResponseWrite
 	if !ok {
 		return
 	}
-	n, err := h.coreService.Storage().DeleteExpiredBreakGlassBefore(r.Context(), before)
+	// BreakGlassActivation.CreatedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
+	n, err := h.coreService.Storage().DeleteExpiredBreakGlassBefore(r.Context(), before.UTC())
 	if err != nil {
 		log.Printf("retention proxy: purge expired break-glass failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -271,7 +296,8 @@ func (h *CatalogHandler) DeleteResolvedAccessRequestsBeforeProxy(w http.Response
 	if !ok {
 		return
 	}
-	requests, approvals, err := h.coreService.Storage().DeleteResolvedAccessRequestsBefore(r.Context(), before)
+	// AccessRequest.ResolvedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
+	requests, approvals, err := h.coreService.Storage().DeleteResolvedAccessRequestsBefore(r.Context(), before.UTC())
 	if err != nil {
 		log.Printf("retention proxy: purge resolved access requests failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -290,7 +316,9 @@ func (h *CatalogHandler) PurgeDeletedProjectsBeforeProxy(w http.ResponseWriter, 
 	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
 		return
 	}
-	n, err := h.coreService.Storage().PurgeDeletedProjectsBefore(r.Context(), before)
+	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
+	// BeforeSave hook — .Local() to match.
+	n, err := h.coreService.Storage().PurgeDeletedProjectsBefore(r.Context(), before.Local())
 	if err != nil {
 		log.Printf("retention proxy: purge deleted projects failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -309,7 +337,9 @@ func (h *CatalogHandler) PurgeDeletedEnvironmentsBeforeProxy(w http.ResponseWrit
 	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
 		return
 	}
-	n, err := h.coreService.Storage().PurgeDeletedEnvironmentsBefore(r.Context(), before)
+	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
+	// BeforeSave hook — .Local() to match.
+	n, err := h.coreService.Storage().PurgeDeletedEnvironmentsBefore(r.Context(), before.Local())
 	if err != nil {
 		log.Printf("retention proxy: purge deleted environments failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -334,7 +364,13 @@ func (h *RBACHandler) DeleteExpiredRoleGrantsProxy(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	removed, err := h.coreService.Storage().DeleteExpiredRoleGrants(r.Context(), before)
+	// UserRole.ExpiresAt / GroupRole.ExpiresAt are G81 BeforeSave-hooked to UTC —
+	// .UTC() to match. This proxy was silently broken before this fix: it has used
+	// .Local() since it was written, mismatching these two models' hooks (already
+	// UTC since before this sweep started) on every deployment not running under
+	// TZ=UTC — no existing test happened to probe a boundary tight enough to catch
+	// it.
+	removed, err := h.coreService.Storage().DeleteExpiredRoleGrants(r.Context(), before.UTC())
 	if err != nil {
 		log.Printf("retention proxy: purge expired role grants failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -365,7 +401,8 @@ func (h *ShareHandler) DeleteExpiredShareRecordsProxy(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	removed, err := h.coreService.Storage().DeleteExpiredShareRecords(r.Context(), before)
+	// ShareRecord.ExpiresAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
+	removed, err := h.coreService.Storage().DeleteExpiredShareRecords(r.Context(), before.UTC())
 	if err != nil {
 		log.Printf("retention proxy: purge expired share records failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -441,7 +478,9 @@ func (h *UserHandler) PurgeDeletedUsersBeforeProxy(w http.ResponseWriter, r *htt
 	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
 		return
 	}
-	n, err := h.coreService.Storage().PurgeDeletedUsersBefore(r.Context(), before)
+	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
+	// BeforeSave hook — .Local() to match.
+	n, err := h.coreService.Storage().PurgeDeletedUsersBefore(r.Context(), before.Local())
 	if err != nil {
 		log.Printf("retention proxy: purge deleted users failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -476,8 +515,8 @@ func (h *UserHandler) ListUsersInStateBeforeProxy(w http.ResponseWriter, r *http
 	// this is a READ (stale-account WARNING report), not a purge, and "list users
 	// who will still be in this state as of tomorrow" is valid usage — no
 	// "not in the future" bound applies (see TestListUsersInStateBeforeProxy_WithUsers_S11).
-	// See the package doc's timezone note.
-	rows, err := h.coreService.Storage().ListUsersInStateBefore(r.Context(), state, before.Local())
+	// User.CreatedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
+	rows, err := h.coreService.Storage().ListUsersInStateBefore(r.Context(), state, before.UTC())
 	if err != nil {
 		log.Printf("retention proxy: list stale users failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

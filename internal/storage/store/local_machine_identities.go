@@ -112,6 +112,8 @@ const machineIdentityStateActive = "active"
 // rollup (#393) instead of fanning out one call per project. A project with no
 // stale machine identities is simply absent from the returned map.
 func (ls *LocalStorage) CountStaleMachineIdentitiesByProject(ctx context.Context, projectIDs []uint, olderThan time.Time) (map[uint]int, error) {
+	// G81 (MachineIdentity.CreatedAt): normalize internally — see GetAuditLogs.
+	olderThan = olderThan.UTC()
 	counts := make(map[uint]int)
 	if len(projectIDs) == 0 {
 		return counts, nil

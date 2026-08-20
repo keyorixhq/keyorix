@@ -666,7 +666,8 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 		query = query.Where("secret_nodes.owner_id = ?", *filter.OwnerID)
 	}
 	if filter.ExpiresBefore != nil {
-		query = query.Where("secret_nodes.expiration IS NOT NULL AND secret_nodes.expiration < ?", *filter.ExpiresBefore)
+		// G81 (SecretNode.Expiration): normalize internally — see GetAuditLogs.
+		query = query.Where("secret_nodes.expiration IS NOT NULL AND secret_nodes.expiration < ?", filter.ExpiresBefore.UTC())
 		// #G24: order soonest-expiring first so a capped PageSize returns the
 		// TRUE most-urgent rows, not an arbitrary unordered slice truncated to
 		// whatever page happened to be returned — callers filtering by expiry
@@ -780,6 +781,8 @@ func (ls *LocalStorage) CountOrphanedSecretsByProject(ctx context.Context, proje
 // single deployment-wide query for the hygiene rollup (#393). A project with no
 // expiring secrets is simply absent from the returned map.
 func (ls *LocalStorage) CountExpiringSecretsByProject(ctx context.Context, projectIDs []uint, expiresBefore time.Time) (map[uint]int, error) {
+	// G81 (SecretNode.Expiration): normalize internally — see GetAuditLogs.
+	expiresBefore = expiresBefore.UTC()
 	counts := make(map[uint]int)
 	if len(projectIDs) == 0 {
 		return counts, nil

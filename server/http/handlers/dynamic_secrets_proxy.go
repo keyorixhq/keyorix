@@ -461,20 +461,23 @@ func (h *DynamicSecretHandler) ListExpiredActiveLeasesProxy(w http.ResponseWrite
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "before must be an RFC3339 timestamp")
 		return
 	}
-	// Reparsing an RFC3339 "Z"-suffixed wire timestamp always yields a UTC
-	// time.Time — but this server's OWN ExpiresAt rows were stored using
-	// whichever timezone its process clock (c.now = time.Now()) runs in, and
 	// GORM's SQLite driver formats a bound time.Time parameter's TEXT
-	// representation using ITS OWN Location, not a canonical one. If this
-	// server's process timezone is not UTC, comparing a UTC-formatted `before`
-	// against locally-formatted stored rows via SQLite's TEXT `<` operator can
-	// silently give the WRONG answer for genuinely-expired rows (verified
-	// empirically: a lease expired exactly 1 hour ago was excluded entirely,
-	// because "07:...+0000" sorts lexicographically before "08:...+0200" even
-	// though the latter is the earlier instant). Convert to Local so this
-	// proxy's comparison matches the SAME convention every other ExpiresAt
-	// comparison in this codebase already uses (time.Now(), never time.Now().UTC()).
-	rows, err := h.coreService.Storage().ListExpiredActiveLeases(r.Context(), before.Local())
+	// representation using ITS OWN Location, not a canonical one, so this bound
+	// must match whatever Location DynamicSecretLease.ExpiresAt is actually
+	// stored in to compare correctly (verified empirically: a lease expired
+	// exactly 1 hour ago was excluded entirely when the two sides' Locations
+	// didn't match, because e.g. "07:...+0000" sorts lexicographically before
+	// "08:...+0200" even though the latter is the earlier instant).
+	//
+	// G81: this used to convert to .Local() on the theory that ExpiresAt was
+	// stored in whatever Location this server's process clock runs in — that was
+	// already wrong by the time this comment was written: DynamicSecretLease has
+	// carried a BeforeSave hook normalizing ExpiresAt to UTC since before the G81
+	// bug-class sweep (internal/storage/models/models.go), so .Local() here
+	// actively reintroduced the exact mismatch this comment otherwise correctly
+	// describes. No existing test's cutoff was tight enough to catch it. Fixed:
+	// .UTC() to match the hook.
+	rows, err := h.coreService.Storage().ListExpiredActiveLeases(r.Context(), before.UTC())
 	if err != nil {
 		log.Printf("dynamic-secrets proxy: list expired leases failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

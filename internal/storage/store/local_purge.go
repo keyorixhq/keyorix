@@ -327,15 +327,19 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 // A zero time.Time for either parameter disables that clause (it matches nothing,
 // rather than being misread as "purge everything before year 1").
 func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore, unackCeiling time.Time) (int64, error) {
+	// G81 (AnomalyAlert.DetectedAt): normalize internally — see GetAuditLogs.
+	// IsZero() is checked before normalizing, since a UTC-converted zero time.Time
+	// is still IsZero() true (Location doesn't affect the zero check) — order
+	// doesn't matter here, but IsZero is checked first for clarity.
 	var conds []string
 	var args []interface{}
 	if !ackBefore.IsZero() {
 		conds = append(conds, "(acknowledged = ? AND detected_at < ?)")
-		args = append(args, true, ackBefore)
+		args = append(args, true, ackBefore.UTC())
 	}
 	if !unackCeiling.IsZero() {
 		conds = append(conds, "(acknowledged = ? AND detected_at < ?)")
-		args = append(args, false, unackCeiling)
+		args = append(args, false, unackCeiling.UTC())
 	}
 	if len(conds) == 0 {
 		return 0, nil
@@ -353,6 +357,8 @@ func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore
 // closed before the cutoff together with their snapshot items, in one transaction.
 // Open campaigns (closed_at IS NULL) are never touched.
 func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
+	// G81 (AccessReviewCampaign.ClosedAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	var campaigns, items int64
 	eligible := "state = ? AND closed_at IS NOT NULL AND closed_at < ?"
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -390,6 +396,8 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 // DeleteExpiredBreakGlassBefore hard-deletes non-active break-glass activations
 // created before the cutoff. Active activations are never purged.
 func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
+	// G81 (BreakGlassActivation.CreatedAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	result := ls.db.WithContext(ctx).
 		Where("state <> ? AND created_at < ?", "active", before).
 		Delete(&models.BreakGlassActivation{})
@@ -403,6 +411,8 @@ func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, befor
 // (resolved_at set, before the cutoff) together with their approval records, in one
 // transaction. Pending requests (resolved_at IS NULL) are never touched.
 func (ls *LocalStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
+	// G81 (AccessRequest.ResolvedAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	var requests, approvals int64
 	eligible := "resolved_at IS NOT NULL AND resolved_at < ?"
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
