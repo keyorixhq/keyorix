@@ -421,10 +421,15 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			query = query.Where("event_type IN ?", filter.Actions)
 		}
 		if filter.StartTime != nil {
-			query = query.Where("event_time >= ?", *filter.StartTime)
+			// G81 (third recurrence, read side): normalize here rather than trusting
+			// every caller to pass UTC, mirroring ListExpiredActiveLeases. event_time
+			// is now always stored in UTC (models.AuditEvent.BeforeSave); a bound in
+			// any other Location denotes the same instant but, on SQLite, compares as
+			// a different string, silently mismatching rows that are actually in range.
+			query = query.Where("event_time >= ?", filter.StartTime.UTC())
 		}
 		if filter.EndTime != nil {
-			query = query.Where("event_time <= ?", *filter.EndTime)
+			query = query.Where("event_time <= ?", filter.EndTime.UTC())
 		}
 		if filter.Success != nil {
 			query = query.Where("success = ?", *filter.Success)
@@ -498,6 +503,8 @@ func (ls *LocalStorage) GetRBACAuditLogs(_ context.Context, _ *storage.RBACAudit
 // Machine-identity reads (actor_type="machine_identity") have no user row — their
 // username column is empty in the result, consistent with the description column.
 func (ls *LocalStorage) GetSecretReadCounts(ctx context.Context, secretID uint, since, until time.Time, limit int) ([]storage.SecretReadEntry, error) {
+	// G81 (third recurrence, read side): normalize internally — see GetAuditLogs.
+	since, until = since.UTC(), until.UTC()
 	type row struct {
 		ActorID       string
 		ActorUsername string
@@ -537,9 +544,10 @@ func (ls *LocalStorage) GetSecretReadCounts(ctx context.Context, secretID uint, 
 // CountImpersonatedActions counts impersonated audit events for actingAs by
 // impersonator since `since`, excluding the impersonation.start/.end markers.
 func (ls *LocalStorage) CountImpersonatedActions(ctx context.Context, actingAs, impersonator uint, since time.Time) (int64, error) {
+	// G81 (third recurrence, read side): normalize internally — see GetAuditLogs.
 	var n int64
 	err := ls.db.WithContext(ctx).Model(&models.AuditEvent{}).
-		Where("impersonation = ? AND acting_as = ? AND impersonated_by = ? AND event_time >= ?", true, actingAs, impersonator, since).
+		Where("impersonation = ? AND acting_as = ? AND impersonated_by = ? AND event_time >= ?", true, actingAs, impersonator, since.UTC()).
 		Where("event_type NOT IN ?", []string{"impersonation.start", "impersonation.end"}).
 		Count(&n).Error
 	return n, err
@@ -627,10 +635,11 @@ func (ls *LocalStorage) MarkAnomalyAlertAlerted(ctx context.Context, id uint) er
 
 // GetDistinctActiveUserIDs returns the IDs of users who have logged in since the given time.
 func (ls *LocalStorage) GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error) {
+	// G81 (third recurrence, read side): normalize internally — see GetAuditLogs.
 	var ids []uint
 	err := ls.db.WithContext(ctx).
 		Model(&models.AuditEvent{}).
-		Where("event_type = ? AND event_time >= ?", "auth.login", since).
+		Where("event_type = ? AND event_time >= ?", "auth.login", since.UTC()).
 		Distinct("user_id").
 		Pluck("user_id", &ids).Error
 	return ids, err

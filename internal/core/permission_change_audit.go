@@ -59,13 +59,24 @@ type PermissionChangeReport struct {
 }
 
 // normPermChangeWindow normalises the since/until/limit parameters, filling in defaults.
+//
+// since/until are also UTC-normalized here (G81, third recurrence, read side)
+// even though GetAuditLogs already normalizes its own filter bounds — a
+// caller-supplied non-zero value skips the defaulting branches below and
+// would otherwise reach GetAuditLogs un-normalized until it, too, is checked.
+// Redundant with GetAuditLogs' own normalization for the default-window case,
+// but correct by construction is cheap here.
 func normPermChangeWindow(since, until time.Time, limit int) (time.Time, time.Time, int) {
-	now := time.Now()
+	now := time.Now().UTC()
 	if since.IsZero() {
 		since = now.Add(-permChangeDefaultWindow)
+	} else {
+		since = since.UTC()
 	}
 	if until.IsZero() {
 		until = now
+	} else {
+		until = until.UTC()
 	}
 	if limit <= 0 {
 		limit = permChangeDefaultLimit

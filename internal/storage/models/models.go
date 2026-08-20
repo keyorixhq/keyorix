@@ -1139,6 +1139,48 @@ type AuditEvent struct {
 	EntryHash string `gorm:"index"`
 }
 
+// BeforeSave normalises EventTime to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 — this
+// is the third recurrence of the same bug class; the other members already
+// carrying this fix are MFAStepupToken, MFAStepUpGrant, UserRole, GroupRole,
+// and DynamicSecretLease, all above in this file). Without it, an EventTime
+// written under one local timezone and a filter bound parsed under another
+// (e.g. a client-supplied RFC3339 "...Z" window against a server process not
+// pinned to TZ=UTC) silently miss each other in GetAuditLogs' event_time >= /
+// <= range query on SQLite — reproduced and fixed by this change, not a
+// theoretical hazard (see g81_audit_event_timezone_test.go).
+//
+// Two facts make this hook safe here, neither obvious from the hook itself:
+//
+//  1. Hash-chain ordering: LogAuditEvent (local_audit_chain.go) computes
+//     EntryHash and assigns it to the event BEFORE calling tx.Create, and
+//     GORM only invokes BeforeSave during Create — so this hook's mutation
+//     happens strictly after the hash for THIS row's own write is already
+//     fixed. That is safe only because computeAuditEntryHash encodes
+//     EventTime as e.EventTime.UnixMicro() (local_audit_chain.go), which is
+//     an absolute instant and therefore location-independent: UTC-normalizing
+//     EventTime here changes its Location but not its UnixMicro() value, so
+//     it changes neither the hash LogAuditEvent already computed for this row
+//     nor the hash VerifyAuditChain recomputes later by re-reading the stored
+//     (already-normalized) EventTime. If EventTime's encoding in
+//     computeAuditEntryHash is ever changed to anything location-dependent
+//     (e.g. a formatted string that varies with Location), this hook would
+//     silently break tamper-evidence for every future write — the two must
+//     be changed together, if ever.
+//
+//  2. Write-funnel coverage: LogAuditEvent is the ONLY path that writes
+//     event_time — unlike MFAStepupToken, no ON CONFLICT/raw-map UPDATE
+//     path bypasses model hooks for audit_events (verified: no such path
+//     exists today). If a future upsert or bulk-write path is added to
+//     audit_events, it must be checked for the same hook-bypass hazard
+//     MFAStepupToken has (see local_mfa_stepup.go's explicit normalization
+//     at its ON CONFLICT call site) and normalize EventTime explicitly if it
+//     bypasses this hook.
+func (e *AuditEvent) BeforeSave(_ *gorm.DB) error {
+	e.EventTime = e.EventTime.UTC()
+	return nil
+}
+
 // AuditCheckpoint is a signed notarisation of the audit hash-chain head
 // (ADR-029). Signature is an HMAC over (ChainedEvents, HeadID, HeadHash,
 // KeyVersion) keyed by a DEK-derived key the database/DBA does not hold, so a
