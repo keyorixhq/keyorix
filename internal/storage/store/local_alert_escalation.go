@@ -74,9 +74,10 @@ func (ls *LocalStorage) DeleteAlertEscalationPolicy(ctx context.Context, id uint
 // ListUnacknowledgedAnomalyAlertsBefore returns unacknowledged AnomalyAlerts whose
 // detected_at is before the given threshold (i.e. older than the threshold time).
 func (ls *LocalStorage) ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error) {
+	// G81 (AnomalyAlert.DetectedAt): normalize internally — see GetAuditLogs.
 	var rows []models.AnomalyAlert
 	err := ls.db.WithContext(ctx).
-		Where("acknowledged = ? AND detected_at < ?", false, threshold).
+		Where("acknowledged = ? AND detected_at < ?", false, threshold.UTC()).
 		Order("detected_at ASC").
 		Find(&rows).Error
 	if err != nil {

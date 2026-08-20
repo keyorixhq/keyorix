@@ -304,6 +304,9 @@ func (ls *LocalStorage) ListUsersInStateBefore(ctx context.Context, state string
 // since threshold: (last_login_at IS NULL AND created_at < threshold) OR
 // (last_login_at < threshold). Ordered by ID ascending for stable pagination.
 func (ls *LocalStorage) ListInactiveUsers(ctx context.Context, threshold time.Time) ([]*models.User, error) {
+	// G81 (User.LastLoginAt, also covers CreatedAt): normalize internally — see
+	// GetAuditLogs.
+	threshold = threshold.UTC()
 	var users []*models.User
 	err := ls.db.WithContext(ctx).
 		Where("(last_login_at IS NULL AND created_at < ?) OR last_login_at < ?", threshold, threshold).
@@ -364,7 +367,8 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 		query = query.Where("created_at > ?", *filter.CreatedAfter)
 	}
 	if filter.InactiveSince != nil {
-		query = query.Where("last_login_at IS NULL OR last_login_at < ?", *filter.InactiveSince)
+		// G81 (User.LastLoginAt): normalize internally — see GetAuditLogs.
+		query = query.Where("last_login_at IS NULL OR last_login_at < ?", filter.InactiveSince.UTC())
 	}
 
 	var total int64

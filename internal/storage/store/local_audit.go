@@ -36,9 +36,10 @@ func (ls *LocalStorage) CreateSecretAccessLog(ctx context.Context, log *models.S
 const maxSecretAccessLogRows = 50_000
 
 func (ls *LocalStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error) {
+	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
 	var logs []models.SecretAccessLog
 	result := ls.db.WithContext(ctx).
-		Where("secret_node_id = ? AND access_time >= ?", secretID, since).
+		Where("secret_node_id = ? AND access_time >= ?", secretID, since.UTC()).
 		Order("access_time DESC").
 		Limit(maxSecretAccessLogRows).
 		Find(&logs)
@@ -52,6 +53,8 @@ func (ls *LocalStorage) ListSecretAccessLogs(ctx context.Context, secretID uint,
 // risk-scoring batch (#409) instead of one such call per candidate secret. A
 // secret absent from the result had zero qualifying reads.
 func (ls *LocalStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretIDs []uint, since time.Time) (map[uint]int, error) {
+	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
+	since = since.UTC()
 	out := make(map[uint]int, len(secretIDs))
 	if len(secretIDs) == 0 {
 		return out, nil
@@ -80,18 +83,16 @@ func (ls *LocalStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretI
 // aggregated in SQL (GROUP BY + MIN), not loaded as full log rows, so this stays cheap
 // regardless of per-secret read volume (#101).
 //
-// The `since` SQL boundary is deliberately coarse (the 30-day baseline window, not the
-// live scan window): a stored AccessTime preserves its writer's local UTC offset as
-// text (e.g. "...+02:00"), rather than being normalised to a single format, so a SQL
-// WHERE boundary that's narrow relative to "now" (same-day/same-hour) compares that text
-// lexicographically against a differently-offset-formatted bound parameter and can
-// silently misclassify rows near the boundary — a real-but-latent issue across this
-// codebase's time-range queries, only ever safe today because every other WHERE
-// boundary here is date-scale (7d/30d), never hour-scale. Callers needing the
-// hour-scale "is this within the live window" distinction must make it in Go against
-// the returned time.Time (which is location-independent to compare), not by pushing a
-// second, narrower bound into this query.
+// G81: this comment previously claimed the WHERE boundary was safe unnormalized because
+// every caller here is date-scale (7d/30d), "never hour-scale" — that claim was false:
+// RunDetection's hour-scale window (minDetectionLookback = time.Hour, anomaly.go) feeds
+// this same query path via ListSecretAccessLogs, using a UTC `now` against an AccessTime
+// written as bare (local) time.Now() — exactly the narrow-relative-to-now mismatch this
+// comment said didn't happen. Fixed properly now: AccessTime is normalized to UTC at
+// write time (models.SecretAccessLog.BeforeSave) and `since` is normalized here, so every
+// caller's WHERE boundary compares like-for-like regardless of scale.
 func (ls *LocalStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {
+	since = since.UTC()
 	type row struct {
 		AccessedBy   string
 		SecretNodeID uint
@@ -192,6 +193,8 @@ func (s *scanTime) parse(str string) error {
 // authorizes against (ScopeFromQuery), so a caller authorized for only one
 // environment cannot receive the whole project's aggregate usage data.
 func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID, environmentID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
+	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
+	since = since.UTC()
 	if limit <= 0 {
 		limit = 10
 	}
@@ -244,6 +247,8 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID, envi
 // for only one environment cannot receive the whole project's aggregate
 // usage data.
 func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
+	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
+	notReadSince = notReadSince.UTC()
 	q := ls.db.WithContext(ctx).
 		Table("secret_nodes AS s").
 		Select("s.id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, MAX(l.access_time) AS last_read").
@@ -291,6 +296,8 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID, environmen
 // per project), so the per-secret query runs as a FROM subquery. A project with no
 // unused secrets is simply absent from the returned map.
 func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, projectIDs []uint, notReadSince time.Time) (map[uint]int, error) {
+	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
+	notReadSince = notReadSince.UTC()
 	counts := make(map[uint]int)
 	if len(projectIDs) == 0 {
 		return counts, nil
@@ -566,7 +573,11 @@ const anomalyDedupWindow = time.Hour
 // window, the insert is skipped and nil is returned — so re-running detection
 // over the same window does not pile up duplicates.
 func (ls *LocalStorage) CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error {
-	cutoff := alert.DetectedAt
+	// G81 (AnomalyAlert.DetectedAt): cutoff derives from alert.DetectedAt as given
+	// by the caller, BEFORE the BeforeSave hook (fired later, inside tx.Create
+	// below) normalizes it — so .UTC() it explicitly here too, defensively,
+	// even though every real caller already passes a UTC value today.
+	cutoff := alert.DetectedAt.UTC()
 	if cutoff.IsZero() {
 		cutoff = time.Now().UTC()
 	}

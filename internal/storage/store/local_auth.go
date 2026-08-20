@@ -325,6 +325,8 @@ const sqlWhereExpiredPAT = "user_id = ? AND revoked = ? AND expires_at IS NOT NU
 // ListExpiredPATsByUser returns all non-revoked PATs for userID whose ExpiresAt is in
 // the past (expired but never explicitly revoked). Ordered newest-created first.
 func (ls *LocalStorage) ListExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]*models.PersonalAccessToken, error) {
+	// G81 (PersonalAccessToken.ExpiresAt): normalize internally — see GetAuditLogs.
+	now = now.UTC()
 	var tokens []*models.PersonalAccessToken
 	if err := ls.db.WithContext(ctx).
 		Where(sqlWhereExpiredPAT, userID, false, now).
@@ -338,6 +340,8 @@ func (ls *LocalStorage) ListExpiredPATsByUser(ctx context.Context, userID uint, 
 // BulkRevokeExpiredPATsByUser revokes every non-revoked, expired PAT belonging to
 // userID and returns their token hashes so the caller can evict them from the auth cache.
 func (ls *LocalStorage) BulkRevokeExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]string, error) {
+	// G81 (PersonalAccessToken.ExpiresAt): normalize internally — see GetAuditLogs.
+	now = now.UTC()
 	var hashes []string
 	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where(sqlWhereExpiredPAT, userID, false, now).

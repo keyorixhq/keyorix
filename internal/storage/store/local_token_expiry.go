@@ -15,9 +15,10 @@ import (
 // the critical-window check inside core.CheckTokenExpiry can catch them too
 // (they are skipped there via the "after now" guard).
 func (ls *LocalStorage) ListExpiringPATs(ctx context.Context, before time.Time) ([]models.PersonalAccessToken, error) {
+	// G81 (PersonalAccessToken.ExpiresAt): normalize internally — see GetAuditLogs.
 	var pats []models.PersonalAccessToken
 	return pats, ls.db.WithContext(ctx).
-		Where("revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", false, before).
+		Where("revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", false, before.UTC()).
 		Find(&pats).Error
 }
 

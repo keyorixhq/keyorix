@@ -15,6 +15,11 @@ func (ls *LocalStorage) RecordLoginAttempt(ctx context.Context, ip string, at ti
 }
 
 func (ls *LocalStorage) CountRecentLoginAttempts(ctx context.Context, ip string, since time.Time) (int64, error) {
+	// G81 (LoginAttempt.AttemptedAt): normalize internally — see GetAuditLogs. A
+	// cross-process write (login_attempts_proxy.go, storage.type: remote) carries
+	// a follower's own local clock across the wire, so this bound can genuinely
+	// diverge from a write's Location, not just drift within one process.
+	since = since.UTC()
 	var n int64
 	if err := ls.db.WithContext(ctx).Model(&models.LoginAttempt{}).
 		Where("ip = ? AND attempted_at > ?", ip, since).Count(&n).Error; err != nil {
@@ -26,6 +31,8 @@ func (ls *LocalStorage) CountRecentLoginAttempts(ctx context.Context, ip string,
 // PruneLoginAttempts deletes attempts older than `before` (past the window) and
 // returns how many were removed.
 func (ls *LocalStorage) PruneLoginAttempts(ctx context.Context, before time.Time) (int64, error) {
+	// G81 (LoginAttempt.AttemptedAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	res := ls.db.WithContext(ctx).Where("attempted_at < ?", before).Delete(&models.LoginAttempt{})
 	return res.RowsAffected, res.Error
 }

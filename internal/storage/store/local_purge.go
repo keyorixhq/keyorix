@@ -327,15 +327,19 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 // A zero time.Time for either parameter disables that clause (it matches nothing,
 // rather than being misread as "purge everything before year 1").
 func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore, unackCeiling time.Time) (int64, error) {
+	// G81 (AnomalyAlert.DetectedAt): normalize internally — see GetAuditLogs.
+	// IsZero() is checked before normalizing, since a UTC-converted zero time.Time
+	// is still IsZero() true (Location doesn't affect the zero check) — order
+	// doesn't matter here, but IsZero is checked first for clarity.
 	var conds []string
 	var args []interface{}
 	if !ackBefore.IsZero() {
 		conds = append(conds, "(acknowledged = ? AND detected_at < ?)")
-		args = append(args, true, ackBefore)
+		args = append(args, true, ackBefore.UTC())
 	}
 	if !unackCeiling.IsZero() {
 		conds = append(conds, "(acknowledged = ? AND detected_at < ?)")
-		args = append(args, false, unackCeiling)
+		args = append(args, false, unackCeiling.UTC())
 	}
 	if len(conds) == 0 {
 		return 0, nil

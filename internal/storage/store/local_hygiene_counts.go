@@ -45,10 +45,15 @@ func (ls *LocalStorage) ListHygieneTrendSnapshots(ctx context.Context, days int)
 // CountStalePATs returns the count of non-revoked, active (not expired) PATs
 // that have not been used since threshold (or never used).
 func (ls *LocalStorage) CountStalePATs(ctx context.Context, threshold time.Time) (int, error) {
+	// G81 (PersonalAccessToken.ExpiresAt): normalize the expires_at bound
+	// internally — see GetAuditLogs. last_used_at (threshold) is intentionally
+	// left as-is: its sole write path (TouchPersonalAccessToken) bypasses model
+	// hooks via UpdateColumn, so it's a separate, currently-latent hazard tracked
+	// in #1507, not fixed here.
 	var count int64
 	err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
 		Where("revoked = ? AND (expires_at IS NULL OR expires_at > ?) AND (last_used_at IS NULL OR last_used_at < ?)",
-			false, time.Now(), threshold).
+			false, time.Now().UTC(), threshold).
 		Count(&count).Error
 	return int(count), err
 }
@@ -56,9 +61,10 @@ func (ls *LocalStorage) CountStalePATs(ctx context.Context, threshold time.Time)
 // CountExpiredPATs returns the count of non-revoked PATs whose ExpiresAt is
 // in the past (expired but never explicitly revoked — token sprawl).
 func (ls *LocalStorage) CountExpiredPATs(ctx context.Context) (int, error) {
+	// G81 (PersonalAccessToken.ExpiresAt): normalize internally — see GetAuditLogs.
 	var count int64
 	err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
-		Where("revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", false, time.Now()).
+		Where("revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", false, time.Now().UTC()).
 		Count(&count).Error
 	return int(count), err
 }

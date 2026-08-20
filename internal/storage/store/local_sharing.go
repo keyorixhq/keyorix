@@ -155,6 +155,8 @@ func (ls *LocalStorage) DeleteShareRecord(ctx context.Context, shareID uint) err
 // audit each. Runs in a transaction so the rows it reports are exactly the rows it
 // removed. Idempotent — a tick that finds nothing removes nothing.
 func (ls *LocalStorage) DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error) {
+	// G81 (ShareRecord.ExpiresAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	var removed []*models.ShareRecord
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where(
@@ -187,7 +189,7 @@ func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) (
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"secret_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		secretID, time.Now(),
+		secretID, time.Now().UTC(),
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -205,7 +207,7 @@ func (ls *LocalStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []u
 	var shares []*models.ShareRecord
 	if err := ls.db.WithContext(ctx).Where(
 		"secret_id IN ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		secretIDs, time.Now(),
+		secretIDs, time.Now().UTC(),
 	).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -218,7 +220,7 @@ func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*m
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		userID, false, time.Now(),
+		userID, false, time.Now().UTC(),
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -233,7 +235,7 @@ func (ls *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		ownerID, time.Now(),
+		ownerID, time.Now().UTC(),
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -246,7 +248,7 @@ func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		groupID, true, time.Now(),
+		groupID, true, time.Now().UTC(),
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -258,7 +260,8 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 	var secrets []*models.SecretNode
 	// Expired (time-bound) shares no longer authorize, so they must not surface in
 	// the "shared with me" listing either — filter them the same way the auth queries do.
-	now := time.Now()
+	// G81 (ShareRecord.ExpiresAt): normalize internally — see GetAuditLogs.
+	now := time.Now().UTC()
 	// store-secret-acl-002: JOIN users ... deleted_at IS NULL mirrors the group query's
 	// user-liveness guard below (and CheckSharePermission's identical direct-share
 	// guard) — a soft-deleted recipient's direct ShareRecord row stays live for
@@ -355,7 +358,8 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 	}
 
 	// Skip expired (time-bound) shares — an expired share grants no permission.
-	now := time.Now()
+	// G81 (ShareRecord.ExpiresAt): normalize internally — see GetAuditLogs.
+	now := time.Now().UTC()
 	// store-secret-acl-002: JOIN users ... deleted_at IS NULL mirrors the group-share
 	// query's user-liveness guard below — a soft-deleted recipient's direct
 	// ShareRecord row stays live for audit/restore, so without this guard a deleted

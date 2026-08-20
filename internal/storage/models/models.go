@@ -320,7 +320,17 @@ type User struct {
 	DisplayName  string
 	PasswordHash string     `json:"-"`
 	IsActive     bool       `gorm:"default:true"`
-	LastLoginAt  *time.Time // stamped on each successful auth.login; nil = never logged in
+	// LastLoginAt is stamped on each successful auth.login; nil = never logged in.
+	// G81: range-queried (ListInactiveUsers, ListUsers/InactiveSince) against a
+	// UTC bound (dashboard.go), so a local-zone value here silently mismatches on
+	// SQLite. NOT covered by a BeforeSave hook — UpdateLastLogin's sole write path
+	// (local_users.go, UpdateColumn) bypasses all model hooks, the same way
+	// MFAStepupToken's ON CONFLICT path did before local_mfa_stepup.go's explicit
+	// call-site fix. Normalized explicitly at auth.go's LoginUser instead (mirrors
+	// that precedent) — a hook here would be silently ineffective, exactly like
+	// the BeforeSave-vs-GORM-NowFunc-ordering no-op documented on
+	// StatsSnapshot.CreatedAt below.
+	LastLoginAt *time.Time
 	// PasswordChangedAt is when the current password was set. Drives max-age
 	// expiry (ADR-025). nil on legacy rows = treat as set at account creation.
 	PasswordChangedAt *time.Time
@@ -461,6 +471,17 @@ type LoginAttempt struct {
 	// `WHERE attempted_at < ?` (the composite's leading ip column can't), keeping the
 	// hourly cleanup an index range delete rather than a full-table scan.
 	AttemptedAt time.Time `gorm:"index:idx_login_attempt_ip_time,priority:2;index:idx_login_attempt_time"`
+}
+
+// BeforeSave normalises AttemptedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 — this is
+// the strongest live case found in the sweep: on a storage.type: remote
+// deployment, login_attempts_proxy.go persists a follower's own locally-timed
+// write on the hub, so the write and read sides can be on genuinely different
+// machines' clocks, not just subject to same-process DST drift).
+func (a *LoginAttempt) BeforeSave(_ *gorm.DB) error {
+	a.AttemptedAt = a.AttemptedAt.UTC()
+	return nil
 }
 
 // WebAuthnCredential is a registered passkey / FIDO2 authenticator (ADR-036).
@@ -732,6 +753,20 @@ type SecretNode struct {
 	ValueStored bool `gorm:"-" json:"-"`
 }
 
+// BeforeSave normalises Expiration to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// Expiration is set from a client-supplied RFC3339 value, see secrets.go, and
+// range-queried against both another client-supplied bound (secrets_list.go's
+// expires_before query param) and several internally-computed cutoffs
+// (dashboard/hygiene/reminder jobs); see local_secrets.go).
+func (s *SecretNode) BeforeSave(_ *gorm.DB) error {
+	if s.Expiration != nil {
+		u := s.Expiration.UTC()
+		s.Expiration = &u
+	}
+	return nil
+}
+
 // SecretDependency is a directed edge in a project's secret dependency graph:
 // the secret DependentSecretID "depends on" DependsOnSecretID — i.e. rotating the
 // dependency may require updating or re-issuing the dependent (e.g. an application
@@ -904,6 +939,18 @@ type SecretAccessLog struct {
 	UserAgent       string
 }
 
+// BeforeSave normalises AccessTime to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 — six
+// store-package functions range-query this column; see local_audit.go).
+// PrincipalSecretFirstSeen's doc comment used to claim this was safe unnormalized
+// because every caller was date-scale — that was false (RunDetection's hour-scale
+// anomaly-detection window compares a UTC bound against this field), which is why
+// this hook exists.
+func (l *SecretAccessLog) BeforeSave(_ *gorm.DB) error {
+	l.AccessTime = l.AccessTime.UTC()
+	return nil
+}
+
 type SecretMetadataHistory struct {
 	ID           uint `gorm:"primaryKey"`
 	SecretNodeID uint
@@ -993,6 +1040,21 @@ type PersonalAccessToken struct {
 	ExpiresAt    *time.Time // nil = never expires
 	Revoked      bool       `gorm:"default:false"`
 	CreatedAt    time.Time
+}
+
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 — ExpiresAt
+// is set from a client-supplied RFC3339 value, see pat_handler.go, and
+// range-queried against server-local bounds; see local_token_expiry.go,
+// local_hygiene_counts.go, local_auth.go). LastUsedAt is deliberately NOT
+// covered here — its sole write path (TouchPersonalAccessToken) bypasses model
+// hooks via UpdateColumn; see #1507.
+func (t *PersonalAccessToken) BeforeSave(_ *gorm.DB) error {
+	if t.ExpiresAt != nil {
+		u := t.ExpiresAt.UTC()
+		t.ExpiresAt = &u
+	}
+	return nil
 }
 
 // SetupToken is the single-use, hashed-at-rest bearer string that lets a brand-new
@@ -1336,6 +1398,19 @@ type ShareRecord struct {
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 — ExpiresAt
+// is set from a client-supplied RFC3339 value, see shares_crud.go, and directly
+// gates JIT secret-access authorization via eight range-query sites in
+// local_sharing.go, all compared against a server-local bound).
+func (s *ShareRecord) BeforeSave(_ *gorm.DB) error {
+	if s.ExpiresAt != nil {
+		u := s.ExpiresAt.UTC()
+		s.ExpiresAt = &u
+	}
+	return nil
+}
+
 type GRPCService struct {
 	Name        string `gorm:"primaryKey"`
 	Version     string
@@ -1406,6 +1481,16 @@ type AnomalyAlert struct {
 	// SIEM forward) so the alerter doesn't re-notify on every scan.
 	Alerted   bool `gorm:"default:false;index"`
 	CreatedAt time.Time
+}
+
+// BeforeSave normalises DetectedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 — DetectedAt
+// is range-queried by the escalation sweep and the retention purge, both of
+// which compare against a bound built independently of the write; see
+// local_alert_escalation.go and local_purge.go).
+func (a *AnomalyAlert) BeforeSave(_ *gorm.DB) error {
+	a.DetectedAt = a.DetectedAt.UTC()
+	return nil
 }
 
 // AnomalyConfigRecord stores runtime-tunable anomaly detection parameters.
