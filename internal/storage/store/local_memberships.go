@@ -100,6 +100,8 @@ func (ls *LocalStorage) GetActiveProjectMembership(ctx context.Context, projectI
 }
 
 func (ls *LocalStorage) ListStaleInvitedMemberships(ctx context.Context, before time.Time) ([]*models.ProjectMembership, error) {
+	// G81 (ProjectMembership.InvitedAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	var rows []*models.ProjectMembership
 	err := ls.db.WithContext(ctx).
 		Where("state = ? AND invited_at < ?", "invited", before).

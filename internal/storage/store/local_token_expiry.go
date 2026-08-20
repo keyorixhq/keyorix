@@ -25,6 +25,8 @@ func (ls *LocalStorage) ListExpiringPATs(ctx context.Context, before time.Time) 
 // ListExpiringMachineCredentials returns every non-revoked MachineIdentityCredential
 // whose ExpiresAt is non-nil and strictly before before.
 func (ls *LocalStorage) ListExpiringMachineCredentials(ctx context.Context, before time.Time) ([]models.MachineIdentityCredential, error) {
+	// G81 (MachineIdentityCredential.ExpiresAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	var creds []models.MachineIdentityCredential
 	return creds, ls.db.WithContext(ctx).
 		Where("revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", false, before).

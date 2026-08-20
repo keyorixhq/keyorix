@@ -418,9 +418,15 @@ func TestRemoteStorageListUsersInStateBefore_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForRetention(t)
 	ctx := context.Background()
 
+	// CreatedAt is set explicitly, matching every real production CreateUser call
+	// site (internal/core/users.go, scim.go, sso.go all set it themselves) — a
+	// User created without it relies on GORM's own auto-timestamp, which (verified
+	// empirically during the G81 sweep, see StatsSnapshot.CreatedAt's doc comment)
+	// a BeforeSave hook cannot reach, since GORM auto-assigns it AFTER BeforeSave
+	// runs.
 	stale, err := upstream.Storage().CreateUser(ctx, &models.User{
 		Username: "stale-invite", Email: "stale-invite@example.com", IsActive: true,
-		AccountState: core.AccountPendingFirstLogin,
+		AccountState: core.AccountPendingFirstLogin, CreatedAt: time.Now(),
 	})
 	require.NoError(t, err)
 

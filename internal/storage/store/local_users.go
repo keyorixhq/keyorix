@@ -288,6 +288,8 @@ func (ls *LocalStorage) UpdateLoginLockoutState(ctx context.Context, id uint, at
 // Legacy rows with an empty account_state normalise to "active" at the read
 // boundary, so they never match a restricted state like pending_first_login.
 func (ls *LocalStorage) ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error) {
+	// G81 (User.CreatedAt): normalize internally — see GetAuditLogs.
+	before = before.UTC()
 	var users []*models.User
 	err := ls.db.WithContext(ctx).
 		Where("account_state = ? AND created_at < ?", state, before).

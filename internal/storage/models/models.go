@@ -91,6 +91,21 @@ type AccessRequest struct {
 	RequiredApprovals int `gorm:"-"`
 }
 
+// BeforeSave normalises ResolvedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one range-query bound (local_purge.go,
+// DeleteResolvedAccessRequestsBefore) both use time.Now()-family, consistently,
+// today). ExpiresAt is never range-queried in SQL (only compared via Go's
+// Location-independent time.Time.Before/After), so it's out of scope for this
+// bug class.
+func (r *AccessRequest) BeforeSave(_ *gorm.DB) error {
+	if r.ResolvedAt != nil {
+		u := r.ResolvedAt.UTC()
+		r.ResolvedAt = &u
+	}
+	return nil
+}
+
 // AccessRequestApproval records one approver's sign-off on an access request, for
 // N-of-M dual control (ISO 27001 A.5.3 / SOX): a request grants the role only once
 // RequiredApprovals distinct approvers (none of them the requester) have approved.
@@ -238,6 +253,18 @@ type BreakGlassActivation struct {
 	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
 }
 
+// BeforeSave normalises CreatedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one range-query bound (local_purge.go,
+// DeleteExpiredBreakGlassBefore) both use time.Now()-family, consistently,
+// today). ExpiresAt is never range-queried in SQL (only compared via Go's
+// Location-independent time.Time.Before/After), so it's out of scope for this
+// bug class.
+func (b *BreakGlassActivation) BeforeSave(_ *gorm.DB) error {
+	b.CreatedAt = b.CreatedAt.UTC()
+	return nil
+}
+
 // AccessReviewCampaign is a periodic access-recertification cycle for a project
 // (ISO 27001 A.5.18 — review at planned intervals). Opening a campaign snapshots
 // the project's current access-review entries into AccessReviewItem rows; reviewers
@@ -272,6 +299,19 @@ type AccessReviewCampaign struct {
 	// (recertification.go) would silently treat a rushed, incomplete force-close as
 	// satisfying a full review cycle and push the next-due date out just as far.
 	ForcedIncomplete bool `gorm:"default:false" json:"forced_incomplete"`
+}
+
+// BeforeSave normalises ClosedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one range-query bound (local_purge.go,
+// DeleteClosedAccessReviewsBefore) both use time.Now()-family, consistently,
+// today).
+func (c *AccessReviewCampaign) BeforeSave(_ *gorm.DB) error {
+	if c.ClosedAt != nil {
+		u := c.ClosedAt.UTC()
+		c.ClosedAt = &u
+	}
+	return nil
 }
 
 // AccessReviewItem is one access grant captured in a campaign at open time, plus
@@ -326,7 +366,7 @@ type User struct {
 	// SQLite. NOT covered by a BeforeSave hook — UpdateLastLogin's sole write path
 	// (local_users.go, UpdateColumn) bypasses all model hooks, the same way
 	// MFAStepupToken's ON CONFLICT path did before local_mfa_stepup.go's explicit
-	// call-site fix. Normalized explicitly at auth.go's LoginUser instead (mirrors
+	// call-site fix. Normalized explicitly at auth.go's RecordLogin instead (mirrors
 	// that precedent) — a hook here would be silently ineffective, exactly like
 	// the BeforeSave-vs-GORM-NowFunc-ordering no-op documented on
 	// StatsSnapshot.CreatedAt below.
@@ -363,6 +403,27 @@ type User struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	DeletedAt           gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+}
+
+// BeforeSave normalises CreatedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one range-query bound
+// (ListUsersInStateBefore, account_state.go) both use c.now(), consistently,
+// today). LastLoginAt is deliberately NOT covered here — see its own doc
+// comment above for why a hook can't reach it.
+//
+// This hook DOES reach CreatedAt for every real CreateUser call site (they all
+// set CreatedAt explicitly — users.go, scim.go, sso.go). But a caller reaching
+// storage.Storage.CreateUser directly without setting CreatedAt hits the same
+// BeforeSave-fires-before-GORM's-auto-timestamp gap documented at length on
+// StatsSnapshot.CreatedAt below: the hook normalizes a zero value, then GORM's
+// own local NowFunc overwrites it moments later, unaffected. Found via exactly
+// that pattern in a test (server/http/remote_storage_retention_test.go) that
+// constructed a User without CreatedAt; fixed there by setting it explicitly,
+// matching every real caller, rather than treated as a hook defect.
+func (u *User) BeforeSave(_ *gorm.DB) error {
+	u.CreatedAt = u.CreatedAt.UTC()
+	return nil
 }
 
 // MFASecret holds a user's TOTP shared secret, encrypted at rest. One row per
@@ -458,6 +519,16 @@ type MFAChallenge struct {
 	CreatedAt time.Time
 }
 
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 — currently
+// latent: write (c.now()) and every range-query bound (c.now(), local_mfa.go)
+// agree today, but both are unnormalized local time, the same recurring risk
+// that motivated the other G81 fixes).
+func (c *MFAChallenge) BeforeSave(_ *gorm.DB) error {
+	c.ExpiresAt = c.ExpiresAt.UTC()
+	return nil
+}
+
 // LoginAttempt records one failed authentication attempt from a client IP, for
 // cluster-wide brute-force rate limiting (ADR-040). Counting rows within the
 // window across all replicas replaces the old per-process in-memory limiter, so
@@ -523,6 +594,15 @@ type WebAuthnSession struct {
 	ExpiresAt time.Time
 	UsedAt    *time.Time
 	CreatedAt time.Time
+}
+
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and every range-query bound (local_webauthn.go) use
+// unnormalized local time, consistently, today).
+func (s *WebAuthnSession) BeforeSave(_ *gorm.DB) error {
+	s.ExpiresAt = s.ExpiresAt.UTC()
+	return nil
 }
 
 // PasswordHistory records prior password hashes per user so the policy can
@@ -1005,6 +1085,23 @@ type Session struct {
 	RotatedAt *time.Time
 }
 
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one live range-query bound (local_auth.go)
+// both use unnormalized local time, consistently, today). LastSeenAt is
+// deliberately NOT covered here — its sole write path (TouchSession) bypasses
+// model hooks via UpdateColumn; see #1507. AbsoluteExpiresAt and
+// ImpersonationStartedAt are never range-queried in SQL (compared only via
+// Go's Location-independent time.Time.Before/After), so they're out of scope
+// for this bug class entirely.
+func (s *Session) BeforeSave(_ *gorm.DB) error {
+	if s.ExpiresAt != nil {
+		u := s.ExpiresAt.UTC()
+		s.ExpiresAt = &u
+	}
+	return nil
+}
+
 // PersonalAccessToken is a long-lived, user-owned bearer credential (ADR-027).
 // Unlike APIToken (service-account / admin-scoped), a PAT is created and managed
 // by the owning user from the My Account page and authenticates API requests AS
@@ -1091,6 +1188,17 @@ type SetupToken struct {
 	CreatedBy  uint
 	CreatedAt  time.Time
 	ConsumedAt *time.Time // nil until consumed
+}
+
+// BeforeSave normalises CreatedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one range-query bound (local_auth.go,
+// CountSetupTokensSince) both use c.now(), consistently, today). ExpiresAt is
+// never range-queried in SQL (only compared via Go's Location-independent
+// time.Time.Before/After), so it's out of scope for this bug class.
+func (t *SetupToken) BeforeSave(_ *gorm.DB) error {
+	t.CreatedAt = t.CreatedAt.UTC()
+	return nil
 }
 
 type PasswordReset struct {
@@ -1282,6 +1390,23 @@ type SystemMetadata struct {
 }
 
 // StatsSnapshot stores daily dashboard stat counts for trend calculation
+// StatsSnapshot deliberately has NO BeforeSave hook, even though CreatedAt is
+// range-queried (local_stats.go, GetPreviousStatsSnapshot: "created_at < ?").
+// CreatedAt here is never explicitly assigned in Go (dashboard.go's write site
+// sets every other field but not CreatedAt) — it's GORM's own auto-populated
+// timestamp column. Empirically verified (G81 bug-class sweep) that BeforeSave
+// fires BEFORE GORM's auto-CreatedAt assignment: a hook here would see and
+// normalize a zero time.Time, then GORM's own NowFunc (default time.Now, local)
+// overwrites it moments later, unaffected by the hook — the exact same silent
+// no-op shape as User.LastLoginAt's UpdateColumn bypass, just via a different
+// mechanism (GORM callback ordering instead of a hook-skipping write path).
+// Currently latent regardless: the write (GORM's local NowFunc) and the one
+// read bound (local_stats.go, bare time.Now()) are both consistently local
+// today. Fixing this properly would require either converting CreatedAt to an
+// explicit Go-side assignment first (so a hook has something to normalize) or
+// configuring the *gorm.DB connection's NowFunc to return UTC globally —
+// deliberately not done here since neither is a per-model BeforeSave hook, and
+// the field is only latent, not live.
 type StatsSnapshot struct {
 	ID                  uint `gorm:"primaryKey;autoIncrement"`
 	UserID              uint `gorm:"index"`
@@ -1553,6 +1678,18 @@ type MachineIdentity struct {
 	Classification string `gorm:"index"`
 }
 
+// BeforeSave normalises CreatedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one range-query bound (local_machine_identities.go,
+// the fallback branch of a NULL-LastSeenAt OR CreatedAt check) both use
+// c.now(), consistently, today). LastSeenAt has no write path anywhere in this
+// codebase today (always NULL in practice), so it carries no live hazard to
+// fix.
+func (m *MachineIdentity) BeforeSave(_ *gorm.DB) error {
+	m.CreatedAt = m.CreatedAt.UTC()
+	return nil
+}
+
 // MachineIdentityCredential is an opaque bearer token a machine identity uses to
 // authenticate (ADR-030), mirroring PersonalAccessToken. Only the SHA-256 hash
 // is stored — the raw `kx_machine_…` token is shown once at issuance. A machine
@@ -1577,6 +1714,22 @@ type MachineIdentityCredential struct {
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
 	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
+}
+
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: every write path computes ExpiresAt server-side via
+// time.Now().AddDate(...), and every range-query bound (local_token_expiry.go,
+// local_hygiene_counts.go) uses k.now(); both unnormalized local time,
+// consistently, today). LastUsedAt is deliberately NOT covered here — its sole
+// write path (TouchMachineIdentityCredential) bypasses model hooks via
+// UpdateColumn; see #1507.
+func (c *MachineIdentityCredential) BeforeSave(_ *gorm.DB) error {
+	if c.ExpiresAt != nil {
+		u := c.ExpiresAt.UTC()
+		c.ExpiresAt = &u
+	}
+	return nil
 }
 
 // MachineIdentityRole grants a role to a machine identity at a project/
@@ -1673,6 +1826,15 @@ type ProjectMembership struct {
 	ActivatedAt *time.Time
 	RevokedAt   *time.Time
 	UpdatedAt   time.Time
+}
+
+// BeforeSave normalises InvitedAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone (G81 —
+// currently latent: write and the one range-query bound
+// (membership_lifecycle.go, same file) both use c.now(), consistently, today).
+func (m *ProjectMembership) BeforeSave(_ *gorm.DB) error {
+	m.InvitedAt = m.InvitedAt.UTC()
+	return nil
 }
 
 // SecretVersionComment is a free-text annotation on a specific secret version,

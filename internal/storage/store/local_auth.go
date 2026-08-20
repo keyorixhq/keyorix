@@ -141,9 +141,10 @@ func (ls *LocalStorage) GetSessionByID(ctx context.Context, id uint) (*models.Se
 
 // ListSessionsByUser returns the user's non-expired sessions, most-recently-seen first.
 func (ls *LocalStorage) ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error) {
+	// G81 (Session.ExpiresAt): normalize internally — see GetAuditLogs.
 	var sessions []*models.Session
 	if err := ls.db.WithContext(ctx).
-		Where("user_id = ? AND (expires_at IS NULL OR expires_at > ?)", userID, time.Now()).
+		Where("user_id = ? AND (expires_at IS NULL OR expires_at > ?)", userID, time.Now().UTC()).
 		Order(sqlOrderCreatedAtDesc).
 		Find(&sessions).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -221,7 +222,8 @@ func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.T
 
 // CleanupExpiredSessions hard-deletes all sessions whose expires_at is in the past.
 func (ls *LocalStorage) CleanupExpiredSessions(ctx context.Context) error {
-	return ls.db.WithContext(ctx).Where("expires_at < ?", time.Now()).Delete(&models.Session{}).Error
+	// G81 (Session.ExpiresAt): normalize internally — see GetAuditLogs.
+	return ls.db.WithContext(ctx).Where("expires_at < ?", time.Now().UTC()).Delete(&models.Session{}).Error
 }
 
 // --- Personal Access Tokens (ADR-027) ---
@@ -419,6 +421,8 @@ func (ls *LocalStorage) MarkSetupTokenExpired(ctx context.Context, id uint) erro
 // CountSetupTokensSince counts tokens minted for (purpose, email) since a cutoff,
 // backing resend throttling and the daily cap.
 func (ls *LocalStorage) CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error) {
+	// G81 (SetupToken.CreatedAt): normalize internally — see GetAuditLogs.
+	since = since.UTC()
 	var n int64
 	if err := ls.db.WithContext(ctx).Model(&models.SetupToken{}).
 		Where("purpose = ? AND subject_email = ? AND created_at >= ?", purpose, email, since).

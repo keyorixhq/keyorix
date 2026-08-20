@@ -107,6 +107,8 @@ func (ls *LocalStorage) CreateMFAChallenge(ctx context.Context, c *models.MFACha
 // GetActiveMFAChallenge returns a valid (unused, unexpired) challenge by hash
 // WITHOUT consuming it. Returns an error if none matched.
 func (ls *LocalStorage) GetActiveMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
+	// G81 (MFAChallenge.ExpiresAt): normalize internally — see GetAuditLogs.
+	now = now.UTC()
 	var ch models.MFAChallenge
 	if err := ls.db.WithContext(ctx).
 		Where("token_hash = ? AND used_at IS NULL AND expires_at > ?", tokenHash, now).
@@ -119,6 +121,8 @@ func (ls *LocalStorage) GetActiveMFAChallenge(ctx context.Context, tokenHash str
 // ConsumeMFAChallenge atomically marks a valid (unused, unexpired) challenge used
 // and returns it. Returns an error if none matched.
 func (ls *LocalStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
+	// G81 (MFAChallenge.ExpiresAt): normalize internally — see GetAuditLogs.
+	now = now.UTC()
 	var ch *models.MFAChallenge
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.MFAChallenge{}).

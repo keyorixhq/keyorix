@@ -154,6 +154,8 @@ func (ls *LocalStorage) CreateWebAuthnSession(ctx context.Context, s *models.Web
 // ConsumeWebAuthnSession atomically marks a valid (unused, unexpired) ceremony
 // session used and returns it. Returns an error if none matched.
 func (ls *LocalStorage) ConsumeWebAuthnSession(ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error) {
+	// G81 (WebAuthnSession.ExpiresAt): normalize internally — see GetAuditLogs.
+	now = now.UTC()
 	var sess *models.WebAuthnSession
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.WebAuthnSession{}).
