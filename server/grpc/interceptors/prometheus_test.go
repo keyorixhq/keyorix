@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -15,14 +14,15 @@ import (
 
 // The collector reports gRPC request outcomes as Prometheus counters, driven by the
 // same atomics the MetricsInterceptor increments.
+//
+// #1504: bound to a fresh, test-local *Metrics (metricsInterceptorFor +
+// newGRPCCollectorFor) instead of resetting and reading the shared
+// package-level grpcMetrics singleton — this test previously hard-reset that
+// global with no isolation contract against metrics_test.go's delta-based
+// test. A per-test instance removes the need to reset anything at all.
 func TestGRPCPrometheusCollector(t *testing.T) {
-	// Reset the package-global counters for a deterministic comparison.
-	atomic.StoreInt64(&grpcMetrics.TotalRequests, 0)
-	atomic.StoreInt64(&grpcMetrics.SuccessRequests, 0)
-	atomic.StoreInt64(&grpcMetrics.ErrorRequests, 0)
-	atomic.StoreInt64(&grpcMetrics.TotalDuration, 0)
-
-	intercept := MetricsInterceptor()
+	target := &Metrics{}
+	intercept := metricsInterceptorFor(target)
 	info := &grpc.UnaryServerInfo{FullMethod: "/keyorix.SecretService/Get"}
 	ok := func(context.Context, interface{}) (interface{}, error) { return "ok", nil }
 	fail := func(context.Context, interface{}) (interface{}, error) { return nil, errors.New("boom") }
@@ -32,7 +32,7 @@ func TestGRPCPrometheusCollector(t *testing.T) {
 	_, _ = intercept(context.Background(), nil, info, fail)
 
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(newGRPCCollector())
+	reg.MustRegister(newGRPCCollectorFor(target))
 
 	expected := `
 # HELP keyorix_grpc_requests_total Total gRPC unary requests, by outcome (success or error).
@@ -53,13 +53,12 @@ keyorix_grpc_requests_total{status="success"} 2
 // *1e9 or +1e9 previously survived because no test asserted this counter's
 // value at all.
 func TestGRPCPrometheusCollector_DurationConvertsNanosecondsToSeconds(t *testing.T) {
-	atomic.StoreInt64(&grpcMetrics.TotalRequests, 0)
-	atomic.StoreInt64(&grpcMetrics.SuccessRequests, 0)
-	atomic.StoreInt64(&grpcMetrics.ErrorRequests, 0)
-	atomic.StoreInt64(&grpcMetrics.TotalDuration, 5_000_000_000) // exactly 5s in ns
+	// #1504: a fresh, test-local *Metrics instead of resetting the shared
+	// grpcMetrics global — see TestGRPCPrometheusCollector's doc comment.
+	target := &Metrics{TotalDuration: 5_000_000_000} // exactly 5s in ns
 
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(newGRPCCollector())
+	reg.MustRegister(newGRPCCollectorFor(target))
 
 	expected := `
 # HELP keyorix_grpc_request_duration_seconds_total Cumulative gRPC unary handler time in seconds; divide its rate by the request rate for average latency.

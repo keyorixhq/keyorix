@@ -10,12 +10,17 @@ import (
 
 // TestMetricsInterceptor_CountsSuccessAndError verifies that the metrics interceptor
 // correctly increments success and error counters, and records total duration.
+//
+// #1504: bound to a fresh, test-local *Metrics via metricsInterceptorFor rather
+// than the shared package-level grpcMetrics singleton (MetricsInterceptor()) —
+// this test previously computed a before/after delta on that global with no
+// isolation contract against prometheus_test.go's two tests, which hard-reset
+// the same global. A per-test instance removes the shared state entirely
+// instead of coping with it, so no delta arithmetic is needed: every count
+// asserted below is this call's own, absolute total.
 func TestMetricsInterceptor_CountsSuccessAndError(t *testing.T) {
-	// Reset global metrics before the test to avoid interference from other tests.
-	// The global is a package-level var; we snapshot it and compare deltas.
-	before := GetGRPCMetrics()
-
-	interceptor := MetricsInterceptor()
+	target := &Metrics{}
+	interceptor := metricsInterceptorFor(target)
 	info := &grpc.UnaryServerInfo{FullMethod: "/keyorix.v1.SecretService/GetSecret"}
 
 	// A successful call.
@@ -36,22 +41,17 @@ func TestMetricsInterceptor_CountsSuccessAndError(t *testing.T) {
 		t.Fatal("expected an error from the interceptor, got nil")
 	}
 
-	after := GetGRPCMetrics()
-	deltaTotal := after.TotalRequests - before.TotalRequests
-	deltaSuccess := after.SuccessRequests - before.SuccessRequests
-	deltaError := after.ErrorRequests - before.ErrorRequests
-
-	if deltaTotal != 2 {
-		t.Errorf("TotalRequests delta = %d, want 2", deltaTotal)
+	if target.TotalRequests != 2 {
+		t.Errorf("TotalRequests = %d, want 2", target.TotalRequests)
 	}
-	if deltaSuccess != 1 {
-		t.Errorf("SuccessRequests delta = %d, want 1", deltaSuccess)
+	if target.SuccessRequests != 1 {
+		t.Errorf("SuccessRequests = %d, want 1", target.SuccessRequests)
 	}
-	if deltaError != 1 {
-		t.Errorf("ErrorRequests delta = %d, want 1", deltaError)
+	if target.ErrorRequests != 1 {
+		t.Errorf("ErrorRequests = %d, want 1", target.ErrorRequests)
 	}
-	if after.TotalDuration <= before.TotalDuration {
-		t.Errorf("TotalDuration should have increased: before=%d, after=%d", before.TotalDuration, after.TotalDuration)
+	if target.TotalDuration <= 0 {
+		t.Errorf("TotalDuration should be positive, got %d", target.TotalDuration)
 	}
 }
 
