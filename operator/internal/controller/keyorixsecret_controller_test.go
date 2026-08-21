@@ -950,6 +950,266 @@ func TestReconcile_RefusesToAdoptSecretOwnedByAnotherCR(t *testing.T) {
 	assert.Equal(t, "other-cr", got.OwnerReferences[0].Name, "ownership must not have moved to the new CR")
 }
 
+// TestNewReconciler_ProducesUsableReconciler covers the constructor's happy path (the
+// error branch — crypto/rand.Read failing — isn't reasonably triggerable without
+// injecting a fake randomness source, and NewReconciler intentionally has none). It
+// checks the returned reconciler wires all four constructor args straight through, and
+// that hashKey is populated with real per-call randomness (#124: a fresh, non-empty key
+// every process start), not a fixed/zero value.
+func TestNewReconciler_ProducesUsableReconciler(t *testing.T) {
+	s := testScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	apiReader := fake.NewClientBuilder().WithScheme(s).Build()
+	allowed := []string{"https://keyorix.internal"}
+
+	r, err := NewReconciler(c, s, apiReader, allowed)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Same(t, s, r.Scheme)
+	assert.Equal(t, allowed, r.AllowedServers)
+	require.Len(t, r.hashKey, 32, "hashKey must be a full 32-byte HMAC key")
+
+	r2, err := NewReconciler(c, s, apiReader, allowed)
+	require.NoError(t, err)
+	assert.NotEqual(t, r.hashKey, r2.hashKey, "each constructed reconciler gets its own fresh random key")
+}
+
+// TestFetcher_DefaultsToRealKeyorixClient covers the production path of fetcher() — when
+// newClient is unset (nil), which is always true outside tests (only test fixtures ever
+// override it) — building a real *keyorix.Client rather than the test seam.
+func TestFetcher_DefaultsToRealKeyorixClient(t *testing.T) {
+	r := &KeyorixSecretReconciler{}
+	f := r.fetcher("https://keyorix.internal", "tok")
+	require.NotNil(t, f)
+	_, ok := f.(*keyorix.Client)
+	assert.True(t, ok, "with no newClient override, fetcher must build the real keyorix.Client")
+}
+
+// TestReconcile_TokenKeyDefaultsToToken covers buildDesired's default for an unset
+// spec.tokenSecretRef.key: it must fall back to the literal key "token" rather than
+// failing to find any key at all.
+func TestReconcile_TokenKeyDefaultsToToken(t *testing.T) {
+	ks := ksFixture()
+	ks.Spec.TokenSecretRef.Key = "" // unset → defaults to "token"
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"), "app/production/api-key": []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ks, tokenSecret())
+
+	_, err := reconcile(t, r)
+	require.NoError(t, err, "an unset tokenSecretRef.key must default to reading the 'token' key")
+
+	var got corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got))
+	assert.Equal(t, []byte("p4ss"), got.Data["DB_PASSWORD"])
+}
+
+// TestReconcile_EmptyTokenValueFails covers buildDesired's guard against a token Secret
+// that carries the expected key but an empty value — distinct from the key being
+// entirely absent (already covered by TestReconcile_MissingTokenSecretFails's sibling
+// paths): an empty bearer token must not be sent to the upstream server as if it were a
+// real credential.
+func TestReconcile_EmptyTokenValueFails(t *testing.T) {
+	emptyToken := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kx-token",
+			Namespace: "app",
+			Labels:    map[string]string{tokenSecretLabel: tokenSecretValue},
+		},
+		Data: map[string][]byte{"token": []byte("")},
+	}
+	r, c := newReconciler(t, &fakeFetcher{}, ksFixture(), emptyToken)
+
+	_, err := reconcile(t, r)
+	require.Error(t, err, "an empty token value must not be used as a bearer credential")
+	assert.Contains(t, err.Error(), "has no key")
+
+	var got corev1.Secret
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got)
+	require.Error(t, err, "no Secret is created when the token value is empty")
+}
+
+// statusUpdateBlockingClient wraps a client.Client but fails every Status().Update call,
+// simulating an API-server error (etcd unavailable, conflict, RBAC drift) while writing
+// the CR's status subresource — used to exercise the error-return branches in fail(),
+// failGone(), and Reconcile's own succeed() call, none of which are reachable by making
+// the underlying fetch/apply fail (those already return before status-write failure can
+// occur) or succeed (succeed()'s own status write must independently be able to fail).
+type statusUpdateBlockingClient struct {
+	client.Client
+}
+
+func (c *statusUpdateBlockingClient) Status() client.SubResourceWriter {
+	return &blockingStatusWriter{SubResourceWriter: c.Client.Status()}
+}
+
+type blockingStatusWriter struct {
+	client.SubResourceWriter
+}
+
+func (w *blockingStatusWriter) Update(_ context.Context, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+	return errors.New("simulated status subresource update failure")
+}
+
+func newStatusBlockedReconciler(t *testing.T, fetcher valueFetcher, objs ...client.Object) (*KeyorixSecretReconciler, client.Client) {
+	t.Helper()
+	s := testScheme(t)
+	inner := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&secretsv1alpha1.KeyorixSecret{}).
+		WithObjects(objs...).
+		Build()
+	blocked := &statusUpdateBlockingClient{Client: inner}
+	return &KeyorixSecretReconciler{
+		Client:         blocked,
+		Scheme:         s,
+		AllowedServers: []string{"https://keyorix.internal"},
+		newClient:      func(_, _ string) valueFetcher { return fetcher },
+		hashKey:        []byte("test-fixture-hmac-key"),
+	}, blocked
+}
+
+// TestReconcile_SucceedStatusUpdateFailureSurfaces covers Reconcile's own error check on
+// succeed()'s return (the branch right after "spec.target.name is mutable..."): when the
+// fetch and apply both succeed but writing the success status back fails, Reconcile must
+// propagate that status-write error instead of silently reporting success.
+func TestReconcile_SucceedStatusUpdateFailureSurfaces(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, _ := newStatusBlockedReconciler(t, fetcher, ksFixture(), tokenSecret())
+
+	_, err := reconcile(t, r)
+	require.Error(t, err, "a status-write failure on an otherwise-successful sync must still be surfaced")
+	assert.Contains(t, err.Error(), "simulated status subresource update failure")
+}
+
+// TestReconcile_FailStatusUpdateFailureSurfaces covers fail()'s own status-write error
+// branch: an ordinary sync failure (a plain fetch error) whose status write ALSO fails
+// must return the status-write error (so the workqueue backs off), not silently drop it.
+func TestReconcile_FailStatusUpdateFailureSurfaces(t *testing.T) {
+	fetcher := &fakeFetcher{failRefs: map[string]bool{"app/production/db-password": true}}
+	r, _ := newStatusBlockedReconciler(t, fetcher, ksFixture(), tokenSecret())
+
+	_, err := reconcile(t, r)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "simulated status subresource update failure",
+		"fail()'s own Status().Update error must be returned, not the original fetch cause")
+}
+
+// TestReconcile_FailGoneStatusUpdateFailureSurfaces is FailStatusUpdateFailureSurfaces's
+// sibling for the confirmed-gone path: failGone()'s own status-write error branch.
+func TestReconcile_FailGoneStatusUpdateFailureSurfaces(t *testing.T) {
+	fetcher := &fakeFetcher{goneRefs: map[string]bool{"app/production/db-password": true}}
+	r, _ := newStatusBlockedReconciler(t, fetcher, ksFixture(), tokenSecret())
+
+	_, err := reconcile(t, r)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "simulated status subresource update failure",
+		"failGone()'s own Status().Update error must be returned, not the original ErrSecretGone cause")
+}
+
+// getErrorClient wraps a client.Client but fails every Get for an object named
+// errorGetName with a plain (non-NotFound) error, simulating a transient API-server
+// error distinct from "the object doesn't exist" — used to exercise wipeTargetSecret's
+// error-propagation branch (client.IgnoreNotFound(err) only swallows NotFound; any other
+// error must still surface as wipeErr).
+type getErrorClient struct {
+	client.Client
+	errorGetName string
+	// active gates when errorGetName starts erroring, so the FIRST reconcile (whose
+	// applySecret also Gets the target Secret, via controllerutil.CreateOrUpdate, to
+	// decide create-vs-update) can still succeed normally; only the LATER
+	// wipeTargetSecret call under test should observe the simulated error.
+	active bool
+}
+
+func (c *getErrorClient) Get(ctx context.Context, key types.NamespacedName, obj client.Object, opts ...client.GetOption) error {
+	if c.active && key.Name == c.errorGetName {
+		return errors.New("simulated transient API error reading target Secret")
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+// TestReconcile_WipeTargetSecretGetErrorSurfacedInStatus covers wipeTargetSecret's other
+// failure branch (besides Delete failing, already pinned by
+// TestReconcile_WipeFailureSurfacedInStatus): the preliminary r.Get(ctx, key, &secret)
+// itself erroring with something other than NotFound (e.g. a transient API-server
+// error). That must be treated the same as a Delete failure — surfaced via the
+// "WipeFailed" status suffix — not swallowed the way a genuine NotFound is.
+func TestReconcile_WipeTargetSecretGetErrorSurfacedInStatus(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	s := testScheme(t)
+	inner := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&secretsv1alpha1.KeyorixSecret{}).
+		WithObjects(ksFixture(), tokenSecret()).
+		Build()
+	erroring := &getErrorClient{Client: inner, errorGetName: "db-creds"}
+	r := &KeyorixSecretReconciler{
+		Client:         erroring,
+		Scheme:         s,
+		AllowedServers: []string{"https://keyorix.internal"},
+		newClient:      func(_, _ string) valueFetcher { return fetcher },
+		hashKey:        []byte("test-fixture-hmac-key"),
+	}
+
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	// Confirmed gone on the next reconcile; wipeTargetSecret's own Get on the target
+	// Secret now fails with a non-NotFound error.
+	erroring.active = true
+	fetcher.goneRefs = map[string]bool{"app/production/db-password": true}
+	_, err = reconcile(t, r)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, keyorix.ErrSecretGone))
+
+	erroring.active = false // let the final status re-read through
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, erroring.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	require.Len(t, ks.Status.Conditions, 1)
+	assert.Equal(t, "UpstreamSecretGoneWipeFailed", ks.Status.Conditions[0].Reason,
+		"a non-NotFound Get error inside wipeTargetSecret must surface the same way a Delete failure does")
+}
+
+// TestSetupWithManager_PropagatesBuildError covers SetupWithManager itself
+// (setupController's thin public wrapper, which discards the built
+// controller.Controller and returns only the error) — everything else in this file
+// exercises setupController directly so it can inspect the built controller, but
+// nothing had called the actual public entrypoint cmd/main.go uses.
+//
+// This deliberately builds the manager with a scheme that does NOT have
+// secretsv1alpha1 registered, so ctrl.NewControllerManagedBy(...).For(&KeyorixSecret{})
+// fails at the GVK lookup — a deterministic, self-contained failure. This is used
+// (rather than a scheme built via testScheme, which WOULD succeed) specifically to
+// avoid controller-runtime's process-global controller-name registry: a second
+// successful build of a "keyorixsecret"-named controller in this same test binary
+// would collide with the one TestSetupController_SetsMaxConcurrentReconciles already
+// registers ("controller with name keyorixsecret already exists"), regardless of test
+// execution order. SetupWithManager's body has no branch of its own — it's a single
+// assign-then-return block — so exercising either outcome (error or success) covers it
+// equally; the error path is the only one that's order-independent here.
+func TestSetupWithManager_PropagatesBuildError(t *testing.T) {
+	s := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(s)) // no secretsv1alpha1 registered
+
+	mgr, err := ctrl.NewManager(&rest.Config{Host: "https://127.0.0.1:1"}, ctrl.Options{
+		Scheme:                 s,
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err, "manager construction must not require a live API server connection")
+
+	r := &KeyorixSecretReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s, hashKey: []byte("test-fixture-hmac-key")}
+	err = r.SetupWithManager(mgr)
+	assert.Error(t, err, "SetupWithManager must propagate setupController's build error, not swallow it")
+}
+
 // SetupWithManager must configure a small, fixed MaxConcurrentReconciles (r143). Without
 // it, controller-runtime's default of exactly 1 means one shared worker services every
 // KeyorixSecret in every namespace cluster-wide — a single slow/malicious CR (large Data

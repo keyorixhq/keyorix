@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -166,4 +167,85 @@ func TestClient_RefusesRedirect(t *testing.T) {
 	_, err := New(redirector.URL, "tok").FetchValue(context.Background(), "a/b/c")
 	require.Error(t, err, "a redirect must be refused, not silently followed")
 	assert.Contains(t, err.Error(), "redirect")
+}
+
+// TestClient_FetchValueMalformedJSONBodyErrors pins that a 200 response whose body is
+// not valid JSON at all (a proxy/gateway mangling the body, a non-JSON error page
+// mistakenly served with a 200 status, etc.) surfaces as a decode error rather than a
+// panic or a silently empty value.
+func TestClient_FetchValueMalformedJSONBodyErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{not valid json`))
+	}))
+	defer srv.Close()
+
+	v, err := New(srv.URL, "tok").FetchValue(context.Background(), "a/b/c")
+	require.Error(t, err)
+	assert.Nil(t, v)
+	assert.Contains(t, err.Error(), "decode response")
+}
+
+// TestClient_FetchValueRejectsInvalidBaseURL pins that FetchValue itself re-validates
+// c.baseURL (not just at construction time) before ever issuing a request — see the
+// validateClientBaseURL doc comment on why this direct read of c.baseURL matters for
+// static analysis. A Client built with a non-https, non-loopback base URL must fail
+// closed instead of sending the bearer token anywhere.
+func TestClient_FetchValueRejectsInvalidBaseURL(t *testing.T) {
+	c := &Client{baseURL: "ftp://example.com", token: "tok", hc: &http.Client{Timeout: time.Second}}
+	v, err := c.FetchValue(context.Background(), "a/b/c")
+	require.Error(t, err)
+	assert.Nil(t, v)
+	assert.Contains(t, err.Error(), "must use https")
+}
+
+// TestValidateClientBaseURL exercises every branch of validateClientBaseURL directly:
+// unparseable URLs, missing hosts, the https-always-ok path, the http-loopback-only
+// exception, and rejection of both non-loopback http and non-http/https schemes.
+func TestValidateClientBaseURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		wantErr string // substring; empty means no error
+	}{
+		{"unparseable URL", "http://example.com/%zz", "invalid base URL"},
+		{"missing host", "not-a-url", "missing a host"},
+		{"missing host, scheme only", "http://", "missing a host"},
+		{"https any host accepted", "https://example.com", ""},
+		{"http loopback hostname accepted", "http://localhost:8080", ""},
+		{"http loopback IP accepted", "http://127.0.0.1:8080", ""},
+		{"http non-loopback host rejected", "http://example.com", "must use https"},
+		{"non-http/https scheme rejected", "ftp://localhost", "must use https"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateClientBaseURL(tc.raw)
+			if tc.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestIsLoopbackHost exercises every branch of isLoopbackHost: the literal "localhost"
+// shortcut, IPv4/IPv6 loopback addresses, a parseable-but-non-loopback IP, and a
+// non-IP, non-"localhost" hostname.
+func TestIsLoopbackHost(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"localhost", true},
+		{"127.0.0.1", true},
+		{"::1", true},
+		{"8.8.8.8", false},
+		{"example.com", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			assert.Equal(t, tc.want, isLoopbackHost(tc.host))
+		})
+	}
 }
