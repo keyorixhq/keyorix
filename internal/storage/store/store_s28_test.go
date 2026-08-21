@@ -1093,22 +1093,24 @@ func TestRemoteStorage_S28_UpdateSecret_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestRemoteStorage_S28_UpdateSecret_NilExpiration covers the else branch of
-// newSecretUpdateWireRequest when Expiration is nil (clear_expiration:true).
+// TestRemoteStorage_S28_UpdateSecret_NilExpiration covers newSecretUpdateWireRequest
+// (G80 Phase 0: a full Go-to-Go SecretNode round trip, see remote_secrets.go) when
+// Expiration is nil — the hub's own default-deny diff (server/http/handlers/
+// secret_update_diff.go) is what now decides this means "clear the expiration," not a
+// client-side clear_expiration flag.
 func TestRemoteStorage_S28_UpdateSecret_NilExpiration(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiOK(map[string]interface{}{"id": 1, "name": "s"}))
 	}))
 	defer srv.Close()
 	rs := newS28Remote(t, srv.URL)
-	// Expiration is nil => newSecretUpdateWireRequest sets clear_expiration=true.
 	result, err := rs.UpdateSecret(context.Background(), &models.SecretNode{ID: 1})
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), result.ID)
 }
 
-// TestRemoteStorage_S28_UpdateSecret_NonNilExpiration covers the if branch of
-// newSecretUpdateWireRequest when Expiration is non-nil.
+// TestRemoteStorage_S28_UpdateSecret_NonNilExpiration is NilExpiration's counterpart
+// with Expiration set.
 func TestRemoteStorage_S28_UpdateSecret_NonNilExpiration(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiOK(map[string]interface{}{"id": 2, "name": "s2"}))
