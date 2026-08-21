@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // populatedKeyorixSecret builds a KeyorixSecret with every slice/pointer field
@@ -104,8 +103,6 @@ func TestKeyorixSecret_DeepCopyObject(t *testing.T) {
 	cp, ok := obj.(*KeyorixSecret)
 	require.True(t, ok, "DeepCopyObject must return a *KeyorixSecret usable via type assertion")
 	assert.Equal(t, orig, cp)
-
-	var _ runtime.Object = obj
 }
 
 func TestKeyorixSecret_DeepCopyInto_ZeroValue_NoPanic(t *testing.T) {
