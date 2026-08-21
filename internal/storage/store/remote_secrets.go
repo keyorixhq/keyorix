@@ -107,6 +107,20 @@ func newSecretCreateWireRequest(secret *models.SecretNode, plaintextValue string
 // existing row via GetSecret, then mutates in place) — so a nil Expiration
 // here unambiguously means "the final state has no expiration," with no
 // separate clear-vs-unchanged flag needed the way the old narrow DTO required.
+//
+// DO NOT "optimize" this back to a named-field/sparse DTO. That is the exact
+// shape of the original bug: a client-chosen subset silently drops whatever
+// field the client didn't think to include, and the hub has no way to tell
+// "the caller wants this field unchanged" from "the caller's DTO never had a
+// slot for it." Sending the full node and diffing hub-side is what makes the
+// allowlist in secret_update_diff.go default-deny instead of default-trust —
+// narrowing the wire shape again would silently defeat that, not just
+// regress performance. No secret VALUE or ciphertext is ever at risk here:
+// ValueStored is gorm:"-"/json:"-" (never serialized — guarded by
+// TestRemoteStorage_UpdateSecret_NeverSerializesValueStored,
+// remote_secrets_test.go) and models.SecretNode itself has no field that
+// carries the encrypted or plaintext value; that lives entirely in a
+// separate SecretVersion row this struct never touches.
 type secretUpdateWireRequest struct {
 	Secret *models.SecretNode `json:"secret"`
 }
