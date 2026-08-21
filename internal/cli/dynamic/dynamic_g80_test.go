@@ -85,7 +85,7 @@ func TestList_G80_ExactOutputFormat(t *testing.T) {
 func TestList_G80_LongNameNotTruncated(t *testing.T) {
 	longName := "this-config-name-is-longer-than-24-characters-wide"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"data":[{"id":1,"name":%q,"backend_type":"mysql","default_ttl_seconds":30,"max_ttl_seconds":60}]}`, longName)))
+		_, _ = fmt.Fprintf(w, `{"data":[{"id":1,"name":%q,"backend_type":"mysql","default_ttl_seconds":30,"max_ttl_seconds":60}]}`, longName)
 	}))
 	defer srv.Close()
 

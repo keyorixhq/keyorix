@@ -156,9 +156,9 @@ func newAuditServiceWithDB(t *testing.T) (*AuditGRPCService, *gorm.DB) {
 // shape core.LogGroupRoleAssigned/LogPermissionAssigned themselves write) via
 // the public core entry points, then read them back through GetRBACAuditLogs.
 func TestAuditService_GetRBACAuditLogs_GroupAndPermissionAndEnvironmentFields(t *testing.T) {
-	svc, db := newAuditServiceWithDB(t)
+	_, db := newAuditServiceWithDB(t)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
-	svc = NewAuditService(c)
+	svc := NewAuditService(c)
 
 	// A group-role grant scoped to a project+environment carries GroupID,
 	// RoleID, ProjectID AND EnvironmentID — none of GetRBACAuditLogs_ReturnsRoleChanges'

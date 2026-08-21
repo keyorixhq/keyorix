@@ -375,8 +375,7 @@ func TestRFC3161_Anchor_NilContext(t *testing.T) {
 	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
 	require.NoError(t, err)
 
-	//lint:ignore SA1012 deliberately nil to exercise the nil-Context guard inside http.NewRequestWithContext
-	_, err = tsa.Anchor(nil, []byte("m"))
+	_, err = tsa.Anchor(nil, []byte("m")) //nolint:staticcheck // SA1012: deliberately nil to exercise the nil-Context guard inside http.NewRequestWithContext
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "new request")
 }

@@ -127,14 +127,14 @@ func TestRunShow_RemoteMode(t *testing.T) {
 	origToken, hadToken := os.LookupEnv("KEYORIX_TOKEN")
 	t.Cleanup(func() {
 		if hadServer {
-			os.Setenv("KEYORIX_SERVER", origServer)
+			_ = os.Setenv("KEYORIX_SERVER", origServer)
 		} else {
-			os.Unsetenv("KEYORIX_SERVER")
+			_ = os.Unsetenv("KEYORIX_SERVER")
 		}
 		if hadToken {
-			os.Setenv("KEYORIX_TOKEN", origToken)
+			_ = os.Setenv("KEYORIX_TOKEN", origToken)
 		} else {
-			os.Unsetenv("KEYORIX_TOKEN")
+			_ = os.Unsetenv("KEYORIX_TOKEN")
 		}
 	})
 	require.NoError(t, os.Setenv("KEYORIX_SERVER", srv.URL))

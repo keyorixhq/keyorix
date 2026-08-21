@@ -197,9 +197,9 @@ func fakeSMTPServer(t *testing.T) (host string, port int) {
 		if acceptErr != nil {
 			return // listener closed by t.Cleanup
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		r := bufio.NewReader(conn)
-		fmt.Fprint(conn, "220 fake.smtp ESMTP ready\r\n")
+		_, _ = fmt.Fprint(conn, "220 fake.smtp ESMTP ready\r\n")
 		for {
 			line, readErr := r.ReadString('\n')
 			if readErr != nil {
@@ -208,11 +208,11 @@ func fakeSMTPServer(t *testing.T) (host string, port int) {
 			line = strings.TrimRight(line, "\r\n")
 			switch {
 			case strings.HasPrefix(line, "EHLO"), strings.HasPrefix(line, "HELO"):
-				fmt.Fprint(conn, "250 fake.smtp Hello\r\n")
+				_, _ = fmt.Fprint(conn, "250 fake.smtp Hello\r\n")
 			case strings.HasPrefix(line, "MAIL FROM"), strings.HasPrefix(line, "RCPT TO"):
-				fmt.Fprint(conn, "250 OK\r\n")
+				_, _ = fmt.Fprint(conn, "250 OK\r\n")
 			case strings.HasPrefix(line, "DATA"):
-				fmt.Fprint(conn, "354 Send data\r\n")
+				_, _ = fmt.Fprint(conn, "354 Send data\r\n")
 				for {
 					dl, dataErr := r.ReadString('\n')
 					if dataErr != nil {
@@ -222,12 +222,12 @@ func fakeSMTPServer(t *testing.T) (host string, port int) {
 						break
 					}
 				}
-				fmt.Fprint(conn, "250 OK: queued\r\n")
+				_, _ = fmt.Fprint(conn, "250 OK: queued\r\n")
 			case strings.HasPrefix(line, "QUIT"):
-				fmt.Fprint(conn, "221 Bye\r\n")
+				_, _ = fmt.Fprint(conn, "221 Bye\r\n")
 				return
 			default:
-				fmt.Fprint(conn, "250 OK\r\n")
+				_, _ = fmt.Fprint(conn, "250 OK\r\n")
 			}
 		}
 	}()

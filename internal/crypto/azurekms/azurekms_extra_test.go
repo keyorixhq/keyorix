@@ -181,9 +181,9 @@ func TestNew_DefaultCredentialError(t *testing.T) {
 	require.NoError(t, os.Setenv(envVar, "not-a-real-credential-type"))
 	defer func() {
 		if hadOrig {
-			os.Setenv(envVar, orig)
+			_ = os.Setenv(envVar, orig)
 		} else {
-			os.Unsetenv(envVar)
+			_ = os.Unsetenv(envVar)
 		}
 	}()
 

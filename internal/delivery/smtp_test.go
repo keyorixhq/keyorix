@@ -133,7 +133,7 @@ func startFakeSMTPServer(t *testing.T) int {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		reader := bufio.NewReader(conn)
 		writeLine := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
