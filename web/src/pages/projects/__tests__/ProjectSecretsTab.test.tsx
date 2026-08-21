@@ -479,6 +479,21 @@ describe('ProjectSecretsTab — view modal share/delete/close wiring', () => {
         expect(screen.queryByText('Detail: db-pass')).not.toBeInTheDocument();
     });
 
+    it("closes the view modal via the Modal chrome's own close button (not the detail view's)", () => {
+        // Distinct from the "Detail Close" test above: this exercises the Modal
+        // component's own `onClose` prop (ProjectSecretsTab.tsx ~line 273), wired to
+        // its built-in dismiss (X) button, rather than SecretDetailView's separate
+        // onClose prop reached via the mocked "Detail Close" button.
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('View db-pass'));
+        expect(screen.getByText('Detail: db-pass')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByText('Detail: db-pass')).not.toBeInTheDocument();
+    });
+
     it('shares a secret from the view modal', () => {
         listState.secrets = secretsFixture;
         render(<ProjectSecretsTab projectId={1} />);
@@ -687,3 +702,13 @@ describe('ProjectSecretsTab — rotate modal extras', () => {
 // dead code given the component's own invariants; a genuine test would need a
 // malformed environment record that also crashes an earlier line, which is not a
 // meaningful case to fabricate.
+//
+// Similarly, the `if (!list.modalData?.secret) return;` guards inside
+// EditSecretModal's and RotateSecretModal's onSubmit (~lines 465 and 624) are
+// defensive dead code under this component's own invariants: `list.openModal(
+// 'edit-secret', …)` / `list.openModal('rotate-secret', …)` are only ever called
+// from row/detail actions that already close over a real `secret`, so `modalData`
+// is guaranteed to carry one whenever those modals can be open and submitted. There
+// is no legitimate UI path — only a synthetic mock of `useProjectSecrets` calling
+// `openModal` with no data, which the app itself never does — that would exercise
+// the early-return branch, so it's left uncovered rather than fabricated.

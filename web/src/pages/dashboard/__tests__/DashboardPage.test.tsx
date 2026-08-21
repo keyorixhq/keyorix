@@ -194,6 +194,18 @@ describe('DashboardPage — operational signals', () => {
         expect(screen.getByText('within 30 days')).toBeInTheDocument();
     });
 
+    it('shows "alert" severity colors in light theme when failed auth attempts are high', () => {
+        useUIStore.setState({ theme: 'light' });
+        mockHooks({ stats: { ...baseStats, failedAuthAttempts24h: 5 } });
+        render(<DashboardPage />);
+        const card = screen.getByText('Failed Auth (24h)').closest('button')!;
+        expect(card).toHaveStyle({
+            backgroundColor: 'rgba(239,68,68,0.06)',
+            borderColor: 'rgba(239,68,68,0.30)',
+            color: '#991b1b',
+        });
+    });
+
     it('shows the expired-count hint when a secret has already expired', () => {
         mockHooks({
             stats: {
@@ -414,6 +426,30 @@ describe('DashboardPage — recent activity edge cases', () => {
         render(<DashboardPage />);
         expect(screen.getByText('carol')).toBeInTheDocument();
         expect(screen.getByText('custom_event')).toBeInTheDocument();
+    });
+});
+
+describe('DashboardPage — greeting by time of day', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('shows "Good morning" before noon', () => {
+        vi.setSystemTime(new Date('2026-01-01T08:00:00'));
+        render(<DashboardPage />);
+        expect(screen.getByText('Good morning')).toBeInTheDocument();
+    });
+
+    it('shows "Good afternoon" between noon and 6pm', () => {
+        vi.setSystemTime(new Date('2026-01-01T14:00:00'));
+        render(<DashboardPage />);
+        expect(screen.getByText('Good afternoon')).toBeInTheDocument();
+    });
+
+    it('shows "Good evening" from 6pm onward', () => {
+        vi.setSystemTime(new Date('2026-01-01T20:00:00'));
+        render(<DashboardPage />);
+        expect(screen.getByText('Good evening')).toBeInTheDocument();
     });
 });
 

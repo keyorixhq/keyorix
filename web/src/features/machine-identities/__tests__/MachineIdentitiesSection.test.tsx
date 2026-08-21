@@ -108,6 +108,17 @@ describe('MachineIdentitiesSection', () => {
         });
     });
 
+    it('clears the name field once creation succeeds', () => {
+        createMutate.mockImplementation((_vars, opts) => opts.onSuccess());
+        render(<MachineIdentitiesSection projectId={3} />);
+        const nameInput = screen.getByPlaceholderText('Machine identity name…') as HTMLInputElement;
+
+        fireEvent.change(nameInput, { target: { value: 'deploy-key' } });
+        fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+        expect(nameInput.value).toBe('');
+    });
+
     it('creates via the Enter key using the chosen identity type', () => {
         render(<MachineIdentitiesSection projectId={3} />);
         const nameInput = screen.getByPlaceholderText('Machine identity name…');
@@ -307,5 +318,74 @@ describe('MachineIdentitiesSection', () => {
 
         expect(confirmSpy).not.toHaveBeenCalled();
         expect(transitionMutate).toHaveBeenCalledWith({ machineId: 2, action: 'activate' }, expect.anything());
+    });
+
+    it('falls back to the raw identityType when it has no known label', () => {
+        identitiesData = [
+            {
+                id: 7,
+                projectId: 3,
+                name: 'mystery-bot',
+                identityType: 'legacy-batch',
+                state: 'active',
+                description: '',
+                classification: '',
+            },
+        ];
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        expect(screen.getByText('legacy-batch')).toBeInTheDocument();
+    });
+
+    it('the admin classification picker falls back to an empty value when classification is unset', () => {
+        identitiesData = [
+            {
+                id: 8,
+                projectId: 3,
+                name: 'unclassified-svc',
+                identityType: 'service',
+                state: 'active',
+                description: '',
+            },
+        ];
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        const picker = screen.getByLabelText('Classification for unclassified-svc') as HTMLSelectElement;
+        expect(picker.value).toBe('');
+    });
+
+    it('the read-only classification badge falls back to unclassified styling when classification is unset', () => {
+        isAdmin = false;
+        identitiesData = [
+            {
+                id: 9,
+                projectId: 3,
+                name: 'unclassified-svc',
+                identityType: 'service',
+                state: 'active',
+                description: '',
+            },
+        ];
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        expect(screen.getByTestId('mi-classification-badge')).toHaveTextContent('Unclassified');
+    });
+
+    it('flags an active identity not seen in 90+ days as stale', () => {
+        identitiesData = [
+            {
+                id: 10,
+                projectId: 3,
+                name: 'dormant-runner',
+                identityType: 'ci',
+                state: 'active',
+                description: '',
+                classification: '',
+                lastSeenAt: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString(),
+            },
+        ];
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        expect(screen.getByTestId('mi-stale-badge')).toBeInTheDocument();
     });
 });

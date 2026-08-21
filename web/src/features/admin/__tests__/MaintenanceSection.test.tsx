@@ -52,11 +52,25 @@ describe('MaintenanceSection', () => {
         expect(await screen.findByText(/Sent 5 rotation reminder\(s\)\./)).toBeInTheDocument();
     });
 
+    it('defaults the rotation-reminders count to 0 when the result omits it', async () => {
+        rotationMutate.mockImplementation((_v, opts) => opts.onSuccess({}));
+        render(<MaintenanceSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Rotation reminders' }));
+        expect(await screen.findByText(/Sent 0 rotation reminder\(s\)\./)).toBeInTheDocument();
+    });
+
     it('runs the expiry-reminders job and surfaces the sent count on success', async () => {
         expiryMutate.mockImplementation((_v, opts) => opts.onSuccess({ sent: 2 }));
         render(<MaintenanceSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Expiry reminders' }));
         expect(await screen.findByText(/Sent 2 expiry reminder\(s\)\./)).toBeInTheDocument();
+    });
+
+    it('defaults the expiry-reminders count to 0 when the result omits it', async () => {
+        expiryMutate.mockImplementation((_v, opts) => opts.onSuccess({}));
+        render(<MaintenanceSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Expiry reminders' }));
+        expect(await screen.findByText(/Sent 0 expiry reminder\(s\)\./)).toBeInTheDocument();
     });
 
     it('surfaces an error message when the expiry-reminders job fails', async () => {

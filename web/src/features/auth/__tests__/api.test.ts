@@ -142,6 +142,38 @@ describe('useAuth session timeout', () => {
         expect(result.current.sessionTimeLeftMs).toBeNull();
     });
 
+    it('resets the deadline and re-arms the timer on user activity', () => {
+        vi.useFakeTimers();
+        storeState.isAuthenticated = true;
+        const { result } = renderHook(() => useAuth(), { wrapper });
+
+        // Enter the warning window.
+        act(() => {
+            vi.advanceTimersByTime(3_300_000);
+        });
+        expect(result.current.sessionTimeLeftMs).not.toBeNull();
+
+        // Activity should reset the deadline (resetDeadline -> schedule), so we
+        // leave the warning window again instead of continuing to count down.
+        act(() => {
+            document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        });
+        expect(result.current.sessionTimeLeftMs).toBeNull();
+
+        // Not enough time has passed since the reset for a new warning/logout.
+        act(() => {
+            vi.advanceTimersByTime(3_300_000);
+        });
+        expect(logout).not.toHaveBeenCalled();
+        expect(result.current.sessionTimeLeftMs).not.toBeNull();
+
+        // Push past the reset deadline to confirm it actually took effect.
+        act(() => {
+            vi.advanceTimersByTime(300_000);
+        });
+        expect(logout).toHaveBeenCalledTimes(1);
+    });
+
     it('clears the pending timeout and removes activity listeners on unmount', () => {
         vi.useFakeTimers();
         storeState.isAuthenticated = true;

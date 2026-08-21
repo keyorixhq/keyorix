@@ -110,6 +110,18 @@ describe('getSystemHealthSeverity', () => {
         };
         expect(getSystemHealthSeverity(metrics, healthySysInfo)).toBe('neutral');
     });
+
+    it('treats a missing sysInfo as connected rather than alerting', () => {
+        // Metrics have loaded but sysInfo hasn't yet — dbConnected should default
+        // to true instead of flashing an alert while sysInfo is still in flight.
+        expect(getSystemHealthSeverity(healthyMetrics, undefined)).toBe('neutral');
+    });
+
+    it('treats a missing metrics object as all-zero rather than throwing', () => {
+        // sysInfo has loaded but metrics hasn't yet — every metrics-derived value
+        // should fall back to 0 via optional chaining instead of throwing.
+        expect(getSystemHealthSeverity(undefined, healthySysInfo)).toBe('neutral');
+    });
 });
 
 describe('HEALTH_STATUS_STYLES', () => {

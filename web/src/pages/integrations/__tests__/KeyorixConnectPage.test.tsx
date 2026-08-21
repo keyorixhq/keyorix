@@ -99,6 +99,31 @@ describe('KeyorixConnectPage', () => {
         await waitFor(() => expect(screen.getByText('s3cr3t')).toBeInTheDocument());
     });
 
+    it('surfaces an error when the re-fetch triggered by re-revealing after a hide fails', async () => {
+        readMutate
+            .mockImplementationOnce((_vars, opts) =>
+                opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' })
+            )
+            .mockImplementationOnce((_vars, opts) =>
+                opts.onError({ response: { data: { message: 're-fetch failed' } } })
+            );
+        render(<KeyorixConnectPage />);
+
+        fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+        fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
+        await waitFor(() => expect(screen.getByText('s3cr3t')).toBeInTheDocument());
+
+        fireEvent.click(screen.getByRole('button', { name: /Hide value/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
+
+        expect(readMutate).toHaveBeenCalledTimes(2);
+        // The failed re-fetch must not flip `revealed` — the toggle stays a
+        // "Reveal" affordance, not a stale/incorrect "Hide".
+        expect(screen.getByRole('button', { name: /Reveal value/i })).toBeInTheDocument();
+        expect(screen.getByText('re-fetch failed')).toBeInTheDocument();
+    });
+
     it('clears the fetched value on unmount without throwing', () => {
         readMutate.mockImplementation((_vars, opts) =>
             opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' })
@@ -261,6 +286,68 @@ describe('KeyorixConnectPage — federated read panel additional coverage', () =
         connectorsState = { data: [], isLoading: false, isError: true };
         render(<KeyorixConnectPage />);
         expect(screen.getByText('Could not load connectors')).toBeInTheDocument();
+    });
+
+    it('defaults to an empty connector when the configured list has no non-empty entries', () => {
+        connectorsState = { data: [''], isLoading: false, isError: false };
+        render(<KeyorixConnectPage />);
+        fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+        fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+        expect(readMutate).toHaveBeenCalledWith({ connector: '', ref: 'prod/db' }, expect.anything());
+    });
+
+    it('ignores a Copy click once Hide has cleared the value back to null', async () => {
+        readMutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' })
+        );
+        render(<KeyorixConnectPage />);
+        fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+        fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
+        await waitFor(() => expect(screen.getByText('s3cr3t')).toBeInTheDocument());
+
+        fireEvent.click(screen.getByRole('button', { name: /Hide value/i }));
+        const callsBeforeClick = vi.mocked(navigator.clipboard.writeText).mock.calls.length;
+
+        const copyButton = screen.getByRole('button', { name: 'Copy value' });
+        expect(copyButton).toBeDisabled();
+        fireEvent.click(copyButton);
+
+        expect(vi.mocked(navigator.clipboard.writeText).mock.calls.length).toBe(callsBeforeClick);
+    });
+
+    it('reverts the copy icon back to clipboard once the copied indicator times out', async () => {
+        readMutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' })
+        );
+        // Fake timers must be active before the Copy click so the 1500ms
+        // reset timer it schedules is itself a fake timer (see the G28 idle
+        // test below for why enabling fake timers afterward wouldn't work).
+        vi.useFakeTimers();
+        try {
+            render(<KeyorixConnectPage />);
+            fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+            fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+
+            const copyButton = screen.getByRole('button', { name: 'Copy value' });
+            const before = copyButton.innerHTML;
+            fireEvent.click(copyButton);
+
+            // copyToClipboard awaits navigator.clipboard.writeText (an already-
+            // resolved mock) before flipping the icon; flush that microtask.
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            expect(navigator.clipboard.writeText).toHaveBeenCalledWith('s3cr3t');
+            expect(copyButton.innerHTML).not.toBe(before);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1500);
+            });
+            expect(copyButton.innerHTML).toBe(before);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('reads from an explicitly selected connector', () => {

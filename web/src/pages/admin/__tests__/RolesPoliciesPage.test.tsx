@@ -186,6 +186,21 @@ describe('RolesPoliciesPage — roles list states', () => {
         fireEvent.mouseEnter(deleteButton);
         expect(deleteButton.style.color).toBe('var(--text-muted)');
     });
+
+    it('skips the hover tint inside the handler itself when the built-in guard is exercised directly', () => {
+        // Browsers (and jsdom) never dispatch mouse events to a `disabled` button, so the
+        // "does not tint" test above never actually runs the `if (!builtIn)` guard body —
+        // it only shows the color was never touched because no event fired at all. Forcing
+        // the DOM node's `disabled` flag off just before dispatching lets the mouseenter
+        // event reach the same onMouseEnter closure (which still reads `builtIn` from the
+        // admin role's render, not from the DOM), genuinely exercising the guard's skip path.
+        render(<RolesPoliciesPage />);
+        const adminCard = getRoleCard('admin');
+        const deleteButton = within(adminCard).getByTitle('Built-in roles cannot be deleted') as HTMLButtonElement;
+        deleteButton.disabled = false;
+        fireEvent.mouseEnter(deleteButton);
+        expect(deleteButton.style.color).toBe('var(--text-muted)');
+    });
 });
 
 describe('RolesPoliciesPage — create role', () => {
@@ -244,6 +259,25 @@ describe('RolesPoliciesPage — create role', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Close' }));
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(createMutate).not.toHaveBeenCalled();
+    });
+
+    it("guards handleCreate against an empty name even if the disabled Create button's disabled state is bypassed", () => {
+        // The Create button's `disabled` prop and handleCreate's own
+        // `if (!formData.name.trim()) return;` guard both derive from the same
+        // `formData.name`, so a normal click can never reach the guard's true branch.
+        // Forcing the disabled attribute off (same rationale as the built-in hover-guard
+        // test above) lets us verify the internal guard independently still protects
+        // against submitting an empty name, in case the disabled wiring ever regresses.
+        render(<RolesPoliciesPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
+
+        const dialog = screen.getByRole('dialog');
+        const createButton = within(dialog).getByRole('button', { name: 'Create' }) as HTMLButtonElement;
+        expect(createButton).toBeDisabled();
+
+        createButton.disabled = false;
+        fireEvent.click(createButton);
         expect(createMutate).not.toHaveBeenCalled();
     });
 });

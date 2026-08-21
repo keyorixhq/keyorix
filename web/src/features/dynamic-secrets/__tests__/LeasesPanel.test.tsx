@@ -322,6 +322,65 @@ describe('LeasesPanel', () => {
         });
     });
 
+    it('dismisses the "Revoke all" partial-failure/success notice via its own dismiss control', () => {
+        leasesData = [{ leaseId: 'lease-1', roleName: 'role', status: 'active' }];
+        revokeAllMutate.mockImplementation((_vars, opts) => opts.onSuccess({ revoked: 1, failed: 0 }));
+
+        render(<LeasesPanel configId={5} canManage />);
+        fireEvent.click(screen.getByRole('button', { name: /revoke all/i }));
+        expect(screen.getByText('Revoked 1 lease(s).')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+        expect(screen.queryByText('Revoked 1 lease(s).')).not.toBeInTheDocument();
+    });
+
+    it('reverts a copy button from "Copied" back to "Copy" after the timeout elapses', async () => {
+        issueMutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({ leaseId: 'lease-copy', username: 'app_user', password: 'super-secret' })
+        );
+        vi.useFakeTimers();
+
+        render(<LeasesPanel configId={5} canManage />);
+        fireEvent.click(screen.getByRole('button', { name: /issue credential/i }));
+
+        const copyButtons = screen.getAllByRole('button', { name: 'Copy' });
+        fireEvent.click(copyButtons[0]);
+        expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(1);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(2000);
+        });
+
+        expect(screen.queryByRole('button', { name: 'Copied' })).not.toBeInTheDocument();
+        expect(screen.getAllByRole('button', { name: 'Copy' })).toHaveLength(2);
+
+        vi.useRealTimers();
+    });
+
+    it('falls back to an empty string for a cloud-credential field whose value is missing', () => {
+        issueMutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({
+                leaseId: 'lease-cloud-missing-field',
+                username: '',
+                password: '',
+                fields: {
+                    access_key_id: 'AKIAEXAMPLE',
+                    secret_access_key: undefined,
+                },
+            })
+        );
+
+        render(<LeasesPanel configId={5} canManage />);
+        fireEvent.click(screen.getByRole('button', { name: /issue credential/i }));
+
+        expect(screen.getByText('Secret access key')).toBeInTheDocument();
+        // The field's value is undefined, so the row falls back to rendering an
+        // empty string rather than throwing or literally showing "undefined".
+        const label = screen.getByText('Secret access key');
+        const row = label.closest('.flex.items-stretch');
+        expect(row?.querySelector('code')).toHaveTextContent('');
+    });
+
     it('closes the credential modal via the close (X) control and via Done', () => {
         issueMutate.mockImplementation((_vars, opts) =>
             opts.onSuccess({ leaseId: 'lease-x', username: 'u', password: 'p' })

@@ -129,6 +129,12 @@ describe('authService.logout', () => {
         mockPost.mockRejectedValueOnce(axiosErr(500, {}));
         await expect(authService.logout()).rejects.toThrow('Logout failed');
     });
+
+    it('rethrows a non-axios error unchanged (e.g. a network-level failure)', async () => {
+        const networkError = new Error('Network Error');
+        mockPost.mockRejectedValueOnce(networkError);
+        await expect(authService.logout()).rejects.toBe(networkError);
+    });
 });
 
 // ── refreshToken ──────────────────────────────────────────────────────────────

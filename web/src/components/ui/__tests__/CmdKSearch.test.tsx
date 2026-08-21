@@ -348,6 +348,27 @@ describe('CmdKSearch', () => {
         await waitFor(() => expect(screen.getByText('NoDescription Project')).toBeInTheDocument());
     });
 
+    it('excludes a non-matching project whose description is undefined (nullish-coalescing fallback evaluated)', async () => {
+        // Zeta's name does not match the query, so the `||` in the filter falls
+        // through to `(p.description ?? '').includes(q)` — and since Zeta has no
+        // `description` field at all, this exercises the `?? ''` fallback branch
+        // itself (as opposed to the earlier "no description" test, where the
+        // name already matches and the description check is short-circuited away).
+        mockUseProjects.mockReturnValue({
+            data: [
+                { id: 1, name: 'Alpha Project', description: 'Core alpha stuff' },
+                { id: 42, name: 'Zeta Project' },
+            ],
+        });
+        render(<CmdKSearch onClose={onClose} />);
+        const input = screen.getByPlaceholderText('Search projects and secrets…');
+
+        await typeAndWaitForSettle(input, 'alpha');
+
+        await waitFor(() => expect(screen.getByText('Alpha Project')).toBeInTheDocument());
+        expect(screen.queryByText('Zeta Project')).not.toBeInTheDocument();
+    });
+
     it('treats a missing secrets payload (no data.data) as an empty result set', async () => {
         mockGet.mockResolvedValue({ data: {} });
 

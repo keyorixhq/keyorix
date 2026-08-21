@@ -132,6 +132,18 @@ describe('StaleAccountsSection', () => {
         expect(screen.getByRole('button', { name: /^revoke$/i })).toBeInTheDocument();
     });
 
+    it('resets the confirm state on successful revoke', () => {
+        suspendMutate.mockImplementation((_id, opts) => opts.onSuccess());
+        render(<StaleAccountsSection />);
+        fireEvent.click(screen.getByRole('button', { name: /^revoke$/i }));
+        fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
+        expect(suspendMutate).toHaveBeenCalledTimes(1);
+        // Back to the initial "Revoke" affordance, confirm/cancel are gone.
+        expect(screen.getByRole('button', { name: /^revoke$/i })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^confirm$/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^cancel$/i })).not.toBeInTheDocument();
+    });
+
     it('surfaces a server error message when revoke fails', async () => {
         suspendMutate.mockImplementation((_id, opts) => opts.onError({ response: { data: { error: 'nope' } } }));
         render(<StaleAccountsSection />);

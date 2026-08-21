@@ -382,6 +382,56 @@ describe('ProjectSettingsTab — promote environment', () => {
         ).toBeInTheDocument();
     });
 
+    it('falls back to the secret id in the skip list when a skipped outcome has no old_name', async () => {
+        mockGet.mockImplementation((url: string) =>
+            url.includes('/secrets/name-conformance')
+                ? Promise.resolve({
+                      data: {
+                          data: {
+                              policy_enabled: true,
+                              total_secrets: 1,
+                              violations: [
+                                  {
+                                      id: 8,
+                                      name: 'db-pass',
+                                      type: 'password',
+                                      reason: 'does not match the required pattern',
+                                  },
+                              ],
+                          },
+                      },
+                  })
+                : Promise.resolve({ data: { data: {} } })
+        );
+        mockPost.mockResolvedValue({
+            data: {
+                data: {
+                    dry_run: false,
+                    renamed: 0,
+                    skipped: 1,
+                    outcomes: [
+                        {
+                            id: 8,
+                            new_name: 'still-bad',
+                            status: 'skipped',
+                            reason: 'secret name does not match the required pattern',
+                        },
+                    ],
+                },
+            },
+        });
+
+        render(<ProjectSettingsTab projectId={1} />);
+
+        fireEvent.change(await screen.findByDisplayValue('db-pass'), { target: { value: 'still-bad' } });
+        fireEvent.click(screen.getByRole('button', { name: /Apply renames/i }));
+
+        // No old_name on the outcome -> the skip list falls back to the secret id.
+        expect(
+            await screen.findByText(/0 secret\(s\), 1 skipped.*Skipped: 8 \(secret name does not match/i)
+        ).toBeInTheDocument();
+    });
+
     it('defaults the rename counts and skip list when the server response omits them', async () => {
         mockGet.mockImplementation((url: string) =>
             url.includes('/secrets/name-conformance')

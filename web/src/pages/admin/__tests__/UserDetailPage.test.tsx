@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, within, waitFor } from '../../../test/test-utils';
+import { render, screen, fireEvent, within, waitFor, act } from '../../../test/test-utils';
 import { UserDetailPage } from '../UserDetailPage';
 
 let userData: Record<string, unknown> | null;
@@ -396,6 +396,16 @@ describe('UserDetailPage — account action confirm flows', () => {
 });
 
 describe('UserDetailPage — resend setup link', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    // Note: copyLink() also guards on `!resentLink?.link_for_admin` before copying, but
+    // ResentLinkPanel applies that exact same check before it ever renders the Copy button
+    // (see ResentLinkPanel in UserDetailPage.tsx) — so that guard's early-return branch can
+    // never actually be reached by clicking through the UI. It isn't exercised here for the
+    // same reason formatDate's catch branch isn't (see the "date formatting" describe above).
+
     it('shows the single-use link panel and lets the admin copy it', async () => {
         resendMutate.mockImplementation((_id, opts) => opts.onSuccess({ link_for_admin: 'https://x/setup/abc' }));
         userData = { ...baseUser, account_state: 'pending_first_login' };
@@ -438,6 +448,25 @@ describe('UserDetailPage — resend setup link', () => {
         await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
         expect(screen.getByText('https://x/setup/abc')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Copied' })).not.toBeInTheDocument();
+    });
+
+    it('reverts the Copy button label back to "Copy" after the timeout elapses', async () => {
+        resendMutate.mockImplementation((_id, opts) => opts.onSuccess({ link_for_admin: 'https://x/setup/abc' }));
+        userData = { ...baseUser, account_state: 'pending_first_login' };
+        vi.useFakeTimers();
+        render(<UserDetailPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'Resend setup link' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(2000);
+        });
+        expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
     });
 });
 

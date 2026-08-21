@@ -97,6 +97,23 @@ describe('OIDCFederationSection — list states', () => {
         expect(screen.getByText('—')).toBeInTheDocument();
     });
 
+    it('falls back to the raw string when date formatting throws', async () => {
+        // toLocaleDateString doesn't throw for merely-unparseable strings (it returns
+        // "Invalid Date"), so force the underlying formatter to throw to exercise
+        // formatDate's defensive catch branch.
+        const toLocaleDateStringSpy = vi.spyOn(Date.prototype, 'toLocaleDateString').mockImplementation(() => {
+            throw new RangeError('Invalid time value');
+        });
+        try {
+            mockGet.mockResolvedValue({ data: { data: [{ ...trustConfig, created_at: 'not-a-real-date' }] } });
+            render(<OIDCFederationSection serviceAccounts={serviceAccounts} />);
+            expect(await screen.findByText('github-deploy')).toBeInTheDocument();
+            expect(screen.getByText('not-a-real-date')).toBeInTheDocument();
+        } finally {
+            toLocaleDateStringSpy.mockRestore();
+        }
+    });
+
     it('falls back to an empty list when the response has no data field', async () => {
         mockGet.mockResolvedValue({ data: {} });
         render(<OIDCFederationSection serviceAccounts={serviceAccounts} />);

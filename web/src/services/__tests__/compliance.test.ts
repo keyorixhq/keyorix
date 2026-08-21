@@ -158,6 +158,12 @@ describe('complianceApi.getControls', () => {
         const matrix = await complianceApi.getControls();
         expect(matrix.generatedAt).toBe('2026-03-01T00:00:00Z');
     });
+
+    it('defaults a control id to an empty string when missing', async () => {
+        mock.get.mockResolvedValueOnce({ data: { data: { controls: [{ name: 'No id control' }] } } });
+        const matrix = await complianceApi.getControls();
+        expect(matrix.controls[0]?.id).toBe('');
+    });
 });
 
 // ── getRiskExceptions ────────────────────────────────────────────────────────
@@ -298,5 +304,11 @@ describe('complianceApi.getSoDViolations', () => {
     it('returns [] when neither wrapper is present', async () => {
         mock.get.mockResolvedValueOnce({ data: {} });
         await expect(complianceApi.getSoDViolations()).resolves.toEqual([]);
+    });
+
+    it('defaults username to an empty string when missing', async () => {
+        mock.get.mockResolvedValueOnce({ data: { data: { violations: [{ policy_name: 'Segregation' }] } } });
+        const violations = await complianceApi.getSoDViolations();
+        expect(violations[0]?.username).toBe('');
     });
 });

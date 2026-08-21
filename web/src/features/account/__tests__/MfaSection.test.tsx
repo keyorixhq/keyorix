@@ -7,6 +7,9 @@ let recoveryStatus: { remaining: number; total: number } | undefined;
 let statusLoading = false;
 let statusError = false;
 let enrollPending = false;
+let activatePending = false;
+let disablePending = false;
+let regeneratePending = false;
 
 const enrollMutate = vi.fn();
 const activateMutate = vi.fn();
@@ -16,9 +19,9 @@ const regenerateMutate = vi.fn();
 vi.mock('../index', () => ({
     useMfaRecoveryStatus: () => ({ data: recoveryStatus, isLoading: statusLoading, isError: statusError }),
     useEnrollMfa: () => ({ mutate: enrollMutate, isPending: enrollPending }),
-    useActivateMfa: () => ({ mutate: activateMutate, isPending: false }),
-    useDisableMfa: () => ({ mutateAsync: disableMutate, isPending: false }),
-    useRegenerateRecoveryCodes: () => ({ mutateAsync: regenerateMutate, isPending: false }),
+    useActivateMfa: () => ({ mutate: activateMutate, isPending: activatePending }),
+    useDisableMfa: () => ({ mutateAsync: disableMutate, isPending: disablePending }),
+    useRegenerateRecoveryCodes: () => ({ mutateAsync: regenerateMutate, isPending: regeneratePending }),
 }));
 
 beforeEach(() => {
@@ -26,6 +29,9 @@ beforeEach(() => {
     statusLoading = false;
     statusError = false;
     enrollPending = false;
+    activatePending = false;
+    disablePending = false;
+    regeneratePending = false;
     enrollMutate.mockReset();
     activateMutate.mockReset();
     disableMutate.mockReset();
@@ -194,6 +200,20 @@ describe('MfaSection enrolment flow', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
         expect(screen.queryByLabelText('6-digit code')).not.toBeInTheDocument();
     });
+
+    it('shows a spinner on the Verify & enable button while activation is pending', () => {
+        activatePending = true;
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+
+        const submitButton = screen.getByRole('button', { name: /verify/i });
+        expect(submitButton).toBeDisabled();
+        expect(submitButton.querySelector('svg.animate-spin')).toBeInTheDocument();
+    });
 });
 
 describe('MfaSection regenerate flow', () => {
@@ -276,6 +296,18 @@ describe('MfaSection disable flow', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
 
         expect(await screen.findByText('Invalid code or password.')).toBeInTheDocument();
+    });
+
+    it('shows a spinner on the confirm button of a ReauthModal while the action is pending', () => {
+        disablePending = true;
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+
+        const confirmButton = screen.getByRole('button', { name: 'Disable 2FA' });
+        expect(confirmButton).toBeDisabled();
+        expect(confirmButton.querySelector('svg.animate-spin')).toBeInTheDocument();
     });
 });
 

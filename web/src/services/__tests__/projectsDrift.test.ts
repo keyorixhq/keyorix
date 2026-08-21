@@ -107,4 +107,16 @@ describe('projectsApi.drift', () => {
         const report = await projectsApi.drift(6);
         expect(report.projectId).toBe(6);
     });
+
+    it('defaults presentIn/missingFrom to [] when a drifted key has neither snake_case nor camelCase variant', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { project_id: 7, drifted_keys: [{ name: 'ORPHAN_KEY', status: 'missing_in_some' }] } },
+        });
+
+        const report = await projectsApi.drift(7);
+
+        expect(report.driftedKeys).toEqual([
+            { name: 'ORPHAN_KEY', presentIn: [], missingFrom: [], status: 'missing_in_some', driftFields: [] },
+        ]);
+    });
 });

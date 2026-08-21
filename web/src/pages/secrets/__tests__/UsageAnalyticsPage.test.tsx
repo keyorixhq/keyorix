@@ -39,6 +39,16 @@ function getSectionCard(headingText: string): HTMLElement {
     return card as HTMLElement;
 }
 
+// COVERAGE NOTE (not a test, no source change made): UsageAnalyticsPage.tsx's
+// unexported `relativeFromNow` helper has a defensive `if (!d) return 'never';`
+// branch (source line 11). Its only call site (line 124) already narrows on
+// `s.last_read` truthiness before invoking the helper — `s.last_read ? \`last read
+// ${relativeFromNow(s.last_read)}\` : 'never read'` — so the helper is never invoked
+// with a falsy argument through the component. The helper also isn't exported, so it
+// can't be unit-tested directly. That branch is structurally unreachable via this
+// component's rendered output, which is why this file's branch coverage tops out at
+// 35/36 (97.22%) rather than 100% even with an otherwise exhaustive suite.
+
 beforeEach(() => {
     mostAccessedMock.mockReset();
     unusedMock.mockReset();

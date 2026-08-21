@@ -212,6 +212,13 @@ describe('AuditLogPage — Anomaly Alerts tab', () => {
         fireEvent.click(screen.getByRole('button', { name: /anomaly alerts/i }));
         expect(screen.getByText('No anomalies detected')).toBeInTheDocument();
     });
+
+    it('shows a spinner while anomalies are loading', () => {
+        mockAnomalies([], true);
+        const { container } = render(<AuditLogPage />);
+        fireEvent.click(screen.getByRole('button', { name: /anomaly alerts/i }));
+        expect(container.querySelector('svg.animate-spin')).toBeInTheDocument();
+    });
 });
 
 describe('AuditLogPage — initial tab from URL', () => {
@@ -382,6 +389,26 @@ describe('AuditLogPage — theme variants', () => {
         render(<AuditLogPage />);
         expect(screen.getByText('alice')).toBeInTheDocument();
     });
+
+    it('applies default severity styling in light theme for an unrecognized severity value', () => {
+        useUIStore.setState({ theme: 'light' });
+        mockAnomalies([
+            {
+                ID: 5,
+                AlertType: 'geo_anomaly',
+                SecretName: 'mystery-key',
+                AccessedBy: 'zoe',
+                IPAddress: '10.0.0.9',
+                Severity: 'unmapped',
+                DetectedAt: '2026-01-05T00:00:00Z',
+                Acknowledged: false,
+                Description: '',
+            },
+        ]);
+        render(<AuditLogPage />);
+        fireEvent.click(screen.getByRole('button', { name: /anomaly alerts/i }));
+        expect(screen.getByText('mystery-key')).toBeInTheDocument();
+    });
 });
 
 describe('AuditLogPage — URL filters', () => {
@@ -534,8 +561,9 @@ describe('AuditLogPage — anomaly table filtering and sorting', () => {
 
     function openAnomalies() {
         mockAnomalies(richAlerts);
-        render(<AuditLogPage />);
+        const utils = render(<AuditLogPage />);
         fireEvent.click(screen.getByRole('button', { name: /anomaly alerts/i }));
+        return utils;
     }
 
     it('renders a "—" for a missing detected-at timestamp and an unrecognized severity with default styling', () => {
@@ -575,11 +603,46 @@ describe('AuditLogPage — anomaly table filtering and sorting', () => {
         fireEvent.click(screen.getByRole('button', { name: /secret/i }));
         fireEvent.click(screen.getByRole('button', { name: /actor/i }));
         fireEvent.click(screen.getByRole('button', { name: /severity/i }));
-        // Toggle the same column twice to flip sort direction.
+        // Toggle the same column twice more to flip sort direction back and forth (desc -> asc -> desc).
+        fireEvent.click(screen.getByRole('button', { name: /severity/i }));
         fireEvent.click(screen.getByRole('button', { name: /severity/i }));
 
         const table = within(screen.getByRole('table'));
         expect(table.getByText('db-password')).toBeInTheDocument();
+    });
+
+    it('sorts by severity when two alerts both have an unrecognized severity value', () => {
+        mockAnomalies([
+            {
+                ID: 10,
+                AlertType: 'geo_anomaly',
+                SecretName: 'first-key',
+                AccessedBy: 'amy',
+                IPAddress: '10.0.0.10',
+                Severity: 'unmapped',
+                DetectedAt: '2026-01-06T00:00:00Z',
+                Acknowledged: false,
+                Description: '',
+            },
+            {
+                ID: 11,
+                AlertType: 'bulk_download',
+                SecretName: 'second-key',
+                AccessedBy: 'ben',
+                IPAddress: '10.0.0.11',
+                Severity: 'unmapped',
+                DetectedAt: '2026-01-07T00:00:00Z',
+                Acknowledged: false,
+                Description: '',
+            },
+        ]);
+        render(<AuditLogPage />);
+        fireEvent.click(screen.getByRole('button', { name: /anomaly alerts/i }));
+        fireEvent.click(screen.getByRole('button', { name: /severity/i }));
+
+        const table = within(screen.getByRole('table'));
+        expect(table.getByText('first-key')).toBeInTheDocument();
+        expect(table.getByText('second-key')).toBeInTheDocument();
     });
 
     it('expands a high-severity row and a low-severity row, then collapses', () => {
@@ -590,5 +653,17 @@ describe('AuditLogPage — anomaly table filtering and sorting', () => {
 
         fireEvent.click(screen.getByText('zeta-key')); // unknown severity -> expand
         expect(screen.getByText('#3')).toBeInTheDocument();
+    });
+
+    it('shows a "—" detected-at and "Acknowledged" status in the expanded detail panel for an acknowledged alert with no detected-at time', () => {
+        const { container } = openAnomalies();
+        // Reveal acknowledged alerts too (bulk_download/api-key is Acknowledged: true, DetectedAt: '').
+        fireEvent.click(screen.getAllByRole('button', { name: 'All' })[1]);
+
+        fireEvent.click(screen.getByText('api-key')); // expand
+
+        const statusSpan = container.querySelector('span.text-emerald-600');
+        expect(statusSpan).toHaveTextContent('Acknowledged');
+        expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);
     });
 });

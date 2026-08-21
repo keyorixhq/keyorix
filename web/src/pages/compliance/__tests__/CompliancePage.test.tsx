@@ -459,7 +459,12 @@ describe('CompliancePage posture panel', () => {
     // a control can never actually reach this component missing one. Forcing a
     // missing key in test data to exercise the fallback instead crashes `refLine`
     // just above (`c.frameworks.iso27001.length` with no guard), which assumes the
-    // same invariant. Left uncovered as defensive-only dead code.
+    // same invariant. Tried excluding the malformed control from the rendered list
+    // by filtering it out on the target framework tab — doesn't help: the panel
+    // mounts with `activeFramework` defaulted to `'all'`, which renders (and calls
+    // refLine on) every control before any tab click, so the crash happens on the
+    // very first render regardless of which framework is later selected. Left
+    // uncovered as defensive-only dead code.
 
     it('uses the warning color for a mid-range per-framework compliance score', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);

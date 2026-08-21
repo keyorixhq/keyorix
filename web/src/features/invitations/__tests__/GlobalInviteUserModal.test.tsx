@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '../../../test/test-utils';
+import { render, screen, fireEvent, act } from '../../../test/test-utils';
 import { GlobalInviteUserModal } from '../GlobalInviteUserModal';
 
 const mutate = vi.fn();
@@ -202,6 +202,69 @@ describe('GlobalInviteUserModal', () => {
 
         expect(screen.getByText(/a setup link was sent to/i)).toBeInTheDocument();
         expect(screen.getByText(/via smtp/i)).toBeInTheDocument();
+    });
+
+    it('Done is a no-op while the invitation is (still) pending, unlike Cancel', () => {
+        // Unlike Cancel, the "Done" button on the success view isn't gated by a
+        // `disabled={invite.isPending}` prop — handleClose's own internal guard is
+        // the only thing standing between a stale in-flight request and a premature
+        // close/reset. Simulate that window by flipping isPending back on after the
+        // success view is already showing.
+        mutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({
+                invitation: { id: 20 },
+                setup_link: {
+                    email: 'carol@x.io',
+                    channel: 'out_of_band',
+                    delivered: false,
+                    link_for_admin: 'https://k/x/done',
+                },
+            })
+        );
+
+        const { rerender } = render(<GlobalInviteUserModal isOpen onClose={onClose} />);
+        fireEvent.change(screen.getByPlaceholderText('jane@example.com'), { target: { value: 'carol@x.io' } });
+        fireEvent.click(screen.getByRole('button', { name: /send invitation/i }));
+
+        expect(screen.getByText('https://k/x/done')).toBeInTheDocument();
+
+        isPending = true;
+        rerender(<GlobalInviteUserModal isOpen onClose={onClose} />);
+        fireEvent.click(screen.getByRole('button', { name: /^done$/i }));
+
+        expect(onClose).not.toHaveBeenCalled();
+        // reset() didn't run either — the success view (and its link) is still shown.
+        expect(screen.getByText('https://k/x/done')).toBeInTheDocument();
+    });
+
+    it('falls back to the server-returned email in the success banner when the field was cleared mid-flight', () => {
+        // The email input has no disabled={invite.isPending} guard, so a user can
+        // clear it while the request is still in flight. sentEmail (derived from the
+        // live input) then goes blank before onSuccess fires, and the banner should
+        // fall back to the email the server echoes back on the created invitation.
+        let onSuccess: ((res: any) => void) | undefined;
+        mutate.mockImplementation((_vars, opts) => {
+            onSuccess = opts.onSuccess;
+        });
+
+        render(<GlobalInviteUserModal isOpen onClose={onClose} />);
+        fireEvent.change(screen.getByPlaceholderText('jane@example.com'), { target: { value: 'carol@x.io' } });
+        fireEvent.click(screen.getByRole('button', { name: /send invitation/i }));
+        fireEvent.change(screen.getByPlaceholderText('jane@example.com'), { target: { value: '' } });
+
+        act(() => {
+            onSuccess?.({
+                invitation: { id: 21 },
+                setup_link: {
+                    email: 'server@x.io',
+                    channel: 'smtp',
+                    delivered: true,
+                    link_for_admin: 'https://k/x/fallback',
+                },
+            });
+        });
+
+        expect(screen.getByText('Invitation created for server@x.io.')).toBeInTheDocument();
     });
 
     it('omits the "via <channel>" clause when no channel is present', () => {
