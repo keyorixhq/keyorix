@@ -12,6 +12,14 @@ const (
 	configFilename = "keyorix.yaml"
 )
 
+// resolveAPIKey is a test seam over common.ResolveAPIKey: production code
+// always uses the real implementation, but tests can stub it to exercise the
+// "API key is required" branch in runLogin without needing a real TTY (the
+// real implementation's interactive prompt uses term.ReadPassword, which
+// requires an actual terminal fd and errors — rather than returning "" — on
+// a pipe or other non-terminal stdin).
+var resolveAPIKey = common.ResolveAPIKey
+
 // AuthCmd represents the auth command
 var AuthCmd = &cobra.Command{
 	Use:   "auth",
@@ -88,7 +96,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// Resolve the API key without ever requiring it on the command line: the
 	// (insecure, warned) --api-key flag if set, else KEYORIX_API_KEY, else an
 	// interactive no-echo prompt.
-	apiKey, err := common.ResolveAPIKey(cmd, true)
+	apiKey, err := resolveAPIKey(cmd, true)
 	if err != nil {
 		return err
 	}

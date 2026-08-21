@@ -177,3 +177,34 @@ func TestKeygen_DirDoesNotExist(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "write private key")
 }
+
+// TestKeygen_PublicKeyWriteFails_AfterPrivateKeySucceeds covers the branch
+// where the private key write succeeds but the public key write fails: a
+// dangling symlink planted only at the public-key path makes
+// SecureWriteFileSync refuse to write through it (O_NOFOLLOW), while the
+// private-key path is untouched and writes normally. The error must be
+// wrapped as "write public key: …", and the already-written private key
+// file must be left in place (the command does not roll it back).
+func TestKeygen_PublicKeyWriteFails_AfterPrivateKeySucceeds(t *testing.T) {
+	resetKeygenVars(t)
+	dir := t.TempDir()
+	outsideTarget := filepath.Join(t.TempDir(), "exfiltrated.public.pem")
+	require.NoError(t, os.Symlink(outsideTarget, filepath.Join(dir, "pub-sym-key.public.pem")))
+
+	keygenPurpose = "update"
+	keygenKeyID = "pub-sym-key"
+	keygenDir = dir
+	keygenForce = false
+
+	err := keygenCmd.RunE(keygenCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write public key")
+
+	_, statErr := os.Stat(outsideTarget)
+	assert.True(t, os.IsNotExist(statErr), "the symlink target must NOT have been created")
+
+	privPath := filepath.Join(dir, "pub-sym-key.private.pem")
+	fi, err := os.Stat(privPath)
+	require.NoError(t, err, "the private key write happens first and must have succeeded")
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+}

@@ -70,6 +70,21 @@ func TestAzure_GenerateUpstream_RemovesPriorSecrets(t *testing.T) {
 	assert.ElementsMatch(t, []string{"kid1", "kid2"}, fake.removed, "all prior secrets removed")
 }
 
+// TestAzureExecutor_ClientRealPath_CredentialError exercises the
+// azidentity.NewDefaultAzureCredential error branch inside
+// AzureAppSecretExecutor.client() when newClient is nil. Setting
+// AZURE_TOKEN_CREDENTIALS to an unrecognized value makes credential construction
+// fail deterministically, without any network I/O.
+func TestAzureExecutor_ClientRealPath_CredentialError(t *testing.T) {
+	t.Setenv("AZURE_TOKEN_CREDENTIALS", "not-a-real-credential-type")
+
+	e := NewAzureAppSecretExecutor("azure-test", nil)
+	cl, err := e.client(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, cl)
+	assert.Contains(t, err.Error(), "azure-app: default credential")
+}
+
 func TestAzure_GenerateUpstream_Errors(t *testing.T) {
 	t.Run("empty ref", func(t *testing.T) {
 		_, err := azureWith(&fakeAzure{}, "app-").GenerateUpstream(context.Background(), "")

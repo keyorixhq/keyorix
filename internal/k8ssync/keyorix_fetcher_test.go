@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,95 @@ func TestParseRef(t *testing.T) {
 		assert.Equal(t, c.env, env)
 		assert.Equal(t, c.name, name)
 	}
+}
+
+// TestRefuseRedirect verifies that the http.Client CheckRedirect hook always errors,
+// so a 3xx from a compromised/misconfigured Keyorix server can never bounce the
+// bearer-token-bearing request onward (CWE-918) — see refuseRedirect's doc comment.
+func TestRefuseRedirect(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://example.com/next", nil)
+	require.NoError(t, err)
+
+	err = refuseRedirect(req, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to follow redirect")
+	assert.Contains(t, err.Error(), "http://example.com/next")
+}
+
+// TestValidateFetcherBaseURL covers every branch: a well-formed https URL (always
+// allowed), a loopback http URL (allowed as a redundant runtime re-check for this
+// package's own httptest-backed tests), a non-loopback http URL (rejected), and two
+// distinct ways a raw string fails to be a well-formed absolute URL at all.
+func TestValidateFetcherBaseURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		wantErr string // "" means no error expected
+	}{
+		{"https always allowed", "https://example.com", ""},
+		{"http loopback IP allowed", "http://127.0.0.1:8080", ""},
+		{"http localhost allowed", "http://localhost:8080", ""},
+		{"http non-loopback host rejected", "http://example.com", "must use https"},
+		{"unparseable url rejected", "http://[::1", "invalid keyorix_url"},
+		{"no host rejected", "not-a-url", "invalid keyorix_url"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateFetcherBaseURL(c.raw)
+			if c.wantErr == "" {
+				assert.NoError(t, err, "raw %q", c.raw)
+				return
+			}
+			require.Error(t, err, "raw %q", c.raw)
+			assert.Contains(t, err.Error(), c.wantErr)
+		})
+	}
+}
+
+// TestIsLoopbackHostname covers all three ways a host can be recognized (or not) as
+// loopback: the literal "localhost", a loopback IP literal, and a non-loopback host
+// (by name or by IP) which must return false.
+func TestIsLoopbackHostname(t *testing.T) {
+	assert.True(t, isLoopbackHostname("localhost"))
+	assert.True(t, isLoopbackHostname("127.0.0.1"))
+	assert.True(t, isLoopbackHostname("::1"))
+	assert.False(t, isLoopbackHostname("example.com"))
+	assert.False(t, isLoopbackHostname("8.8.8.8"))
+}
+
+// TestKeyorixFetcher_InvalidBaseURLRejectedAtRequestTime exercises getJSON's runtime
+// re-validation of f.baseURL: a fetcher built (NewKeyorixFetcher never itself
+// validates baseURL) with an http URL to a non-loopback host must have every request
+// refused at request time, before any network call is attempted.
+func TestKeyorixFetcher_InvalidBaseURLRejectedAtRequestTime(t *testing.T) {
+	f := NewKeyorixFetcher("http://example.com", "tok", 1)
+	_, err := f.Fetch(context.Background(), "production/db-password")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must use https")
+}
+
+// TestKeyorixFetcher_ResolveID_ListSecretsError exercises resolveID's error path when
+// the environment resolves fine but the subsequent, environment-scoped secrets-list
+// call itself fails (a transient 5xx here, distinct from the "not found" case already
+// covered by TestKeyorixFetcher_NotFound).
+func TestKeyorixFetcher_ResolveID_ListSecretsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/environments"):
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"ID":5,"Name":"production"}]}}`))
+		case r.URL.Path == "/api/v1/secrets":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	f := NewKeyorixFetcher(srv.URL, "tok", 1)
+
+	_, err := f.Fetch(context.Background(), "production/db-password")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list secrets in project")
+	assert.Contains(t, err.Error(), "HTTP 500")
 }
 
 // stubSecret is one entry the fake secrets-list endpoint serves.

@@ -27,6 +27,36 @@ func TestSaveEnforcesPermsOnExistingFile(t *testing.T) {
 	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
 }
 
+// TestSaveDefaultsPathWhenEmpty validates that Save("", cfg) writes to
+// appRootDir/keyorix.yaml (mirroring Load's own empty-path default) rather than
+// erroring or requiring the caller to always name a path.
+func TestSaveDefaultsPathWhenEmpty(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	require.NoError(t, Save("", &Config{Environment: "default-path-test"}))
+
+	loaded, err := Load("")
+	require.NoError(t, err)
+	assert.Equal(t, "default-path-test", loaded.Environment)
+}
+
+// TestSaveRejectsPathEscapingBaseDir validates that Save surfaces (wraps) the
+// traversal-guard error from the underlying secure writer instead of silently
+// writing outside appRootDir when given a relative path that escapes it.
+func TestSaveRejectsPathEscapingBaseDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	err := Save("../escape.yaml", &Config{Environment: "should-not-be-written"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to write config file")
+
+	// Confirm nothing was actually written outside dir.
+	_, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escape.yaml"))
+	assert.True(t, os.IsNotExist(statErr), "Save must not write outside its base directory")
+}
+
 // TestSaveHonorsAbsolutePath is the regression test for Save's absolute-path
 // handling: unlike Load (which already special-cases filepath.IsAbs by
 // rooting at the path's own directory), Save used to always join its path arg

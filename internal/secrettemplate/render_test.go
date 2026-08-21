@@ -448,3 +448,85 @@ func TestRenderJSON_PlainValueUnaffectedByEscaping(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
+
+// EscapeYAMLString must fall back to its defensive replacer when yaml.v3 doesn't
+// encode the value as a plain double-quoted scalar: a value containing invalid
+// UTF-8 makes yaml.Marshal emit a `!!binary "...."` tagged scalar instead (since a
+// double-quoted style can't represent arbitrary binary), so the function's
+// quote-stripping fast path (which assumes the marshaled form starts and ends with
+// a bare `"`) doesn't apply. The fallback must still escape the *original* value's
+// quotes/backslashes rather than leak yaml.Marshal's `!!binary` tag or base64 body
+// into the caller's output.
+func TestEscapeYAMLString_FallsBackOnInvalidUTF8(t *testing.T) {
+	// Invalid UTF-8 byte combined with a quote and a backslash in the same value,
+	// so the assertion exercises the replacer's actual escaping behavior rather
+	// than merely "value passed through unchanged".
+	val := "\xc3(\"back\\slash"
+
+	got := EscapeYAMLString(val)
+
+	want := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(val)
+	assert.Equal(t, want, got, "fallback must escape the original value's quotes/backslashes")
+	assert.NotContains(t, got, "!!binary", "must not leak yaml.Marshal's !!binary tag into the escaped output")
+}
+
+// RenderWithOptions must cap total rendered output at MaxOutputBytes: a resolved
+// value large enough on its own to push the cumulative output past the cap must
+// abort the render with an error naming the byte limit, rather than allow Render
+// to be used as a memory-exhaustion amplifier (see MaxOutputBytes doc comment).
+func TestRender_RejectsOutputExceedingMaxBytes(t *testing.T) {
+	huge := strings.Repeat("a", MaxOutputBytes+1)
+	resolve := func(ref string) (string, error) { return huge, nil }
+
+	out, err := Render("${secret:prod/db}", resolve)
+	require.Error(t, err)
+	assert.Empty(t, out, "no partial output on a size-limit abort")
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d", MaxOutputBytes))
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+// A rendered output of exactly MaxOutputBytes (the boundary, not over it) must
+// still succeed — the cap rejects output that exceeds the limit, not output that
+// merely reaches it.
+func TestRender_AllowsOutputAtExactlyMaxBytes(t *testing.T) {
+	exact := strings.Repeat("a", MaxOutputBytes)
+	resolve := func(ref string) (string, error) { return exact, nil }
+
+	out, err := Render("${secret:prod/db}", resolve)
+	require.NoError(t, err)
+	assert.Equal(t, exact, out)
+}
+
+// The MaxOutputBytes cap must also fire when no single resolved value is oversized
+// on its own, but several distinct references' values (plus literal text) sum past
+// the cap across multiple segments — the check runs after every segment write, not
+// just once at the end, so a template with many moderate-sized references can't
+// evade the cap by never naming one giant value.
+func TestRender_RejectsOutputExceedingMaxBytes_AccumulatedAcrossSegments(t *testing.T) {
+	const chunk = MaxOutputBytes / 4
+	value := strings.Repeat("a", chunk+1) // 4 refs * (chunk+1) > MaxOutputBytes
+	resolve := func(ref string) (string, error) { return value, nil }
+
+	tmpl := "${secret:a}${secret:b}${secret:c}${secret:d}"
+	out, err := Render(tmpl, resolve)
+	require.Error(t, err)
+	assert.Empty(t, out, "no partial output on a size-limit abort")
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d", MaxOutputBytes))
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+// The accumulation check must not misfire early: a template whose several segments
+// sum to exactly MaxOutputBytes (never exceeding it at any intermediate step) must
+// still succeed, mirroring TestRender_AllowsOutputAtExactlyMaxBytes for the
+// multi-segment case.
+func TestRender_AllowsOutputAtExactlyMaxBytes_AccumulatedAcrossSegments(t *testing.T) {
+	const chunk = MaxOutputBytes / 4
+	value := strings.Repeat("a", chunk)
+	resolve := func(ref string) (string, error) { return value, nil }
+
+	tmpl := "${secret:a}${secret:b}${secret:c}${secret:d}"
+	out, err := Render(tmpl, resolve)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat(value, 4), out)
+	assert.Len(t, out, MaxOutputBytes)
+}

@@ -68,6 +68,17 @@ func TestActivate_Remote(t *testing.T) {
 	assert.Contains(t, out, `role "break-glass-editor"`)
 }
 
+func TestActivate_RemoteError(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	bgProject, bgJustify, bgTTL = 3, "prod outage #42", "2h"
+	t.Cleanup(func() { bgProject, bgJustify, bgTTL = 0, "", "" })
+
+	err := activateCmd.RunE(nil, nil)
+	require.ErrorContains(t, err, "server returned HTTP 500")
+}
+
 func TestList_Remote(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +103,17 @@ func TestList_Remote(t *testing.T) {
 	})
 }
 
+func TestList_RemoteError(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	bgProject = 3
+	t.Cleanup(func() { bgProject = 0 })
+
+	err := listCmd.RunE(nil, nil)
+	require.ErrorContains(t, err, "server returned HTTP 500")
+}
+
 func TestRevoke_RequiredFlagsAndRemote(t *testing.T) {
 	bgProject, bgActivation = 0, 0
 	require.ErrorContains(t, revokeCmd.RunE(nil, nil), "required")
@@ -104,4 +126,15 @@ func TestRevoke_RequiredFlagsAndRemote(t *testing.T) {
 	t.Cleanup(func() { bgProject, bgActivation = 0, 0 })
 	out := captureStdout(t, func() { require.NoError(t, revokeCmd.RunE(nil, nil)) })
 	assert.Contains(t, out, "Revoked break-glass activation 9 in project 3.")
+}
+
+func TestRevoke_RemoteError(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	bgProject, bgActivation = 3, 9
+	t.Cleanup(func() { bgProject, bgActivation = 0, 0 })
+
+	err := revokeCmd.RunE(nil, nil)
+	require.ErrorContains(t, err, "server returned HTTP 500")
 }

@@ -3,6 +3,7 @@ package encryption
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -280,6 +281,191 @@ func TestMigrateProviderCleanup_RejectsDisabledEncryption(t *testing.T) {
 	err := migrateProviderCleanupWithConfig(cfg, t.TempDir(), false, true)
 	if err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("expected disabled-encryption rejection, got: %v", err)
+	}
+}
+
+// TestMigrateProviderCleanup_SecureDeleteError_SymlinkBackup covers the
+// securefiles.SecureDeleteFile error branch inside migrateProviderCleanupWithConfig:
+// a migrate-backup path that's actually a symlink fails at SecureDeleteFile's
+// O_NOFOLLOW open (ELOOP) rather than being silently "deleted". The symlink's
+// target must exist, or SecureDeleteFile's own initial os.Stat would treat the
+// (broken-link) path as already-gone and return nil instead of an error.
+func TestMigrateProviderCleanup_SecureDeleteError_SymlinkBackup(t *testing.T) {
+	dir := t.TempDir()
+	cfg := enabledLocalCfg()
+	cfg.Storage.Encryption.DEKPath = "dek.key"
+
+	target := filepath.Join(dir, "real-target.txt")
+	if err := os.WriteFile(target, []byte("hi"), 0600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	backupPath := filepath.Join(dir, "dek.key.migrate-backup.1")
+	if err := os.Symlink(target, backupPath); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	err := migrateProviderCleanupWithConfig(cfg, dir, false, true)
+	if err == nil || !strings.Contains(err.Error(), "failed to securely delete") {
+		t.Fatalf("expected a secure-delete failure for the symlinked backup, got: %v", err)
+	}
+}
+
+// TestMigrateProvider_TargetConfigError covers migrateProviderWithConfig's
+// "tgtEnc, err := targetEncryptionConfig(...); if err != nil { return err }"
+// branch: --to-type is set (passing the earlier required-flag gate) but the
+// type-specific fields targetEncryptionConfig itself validates are missing.
+func TestMigrateProvider_TargetConfigError(t *testing.T) {
+	cfg := enabledLocalCfg()
+	err := migrateProviderWithConfig(cfg, migrateOpts{toType: "file"}, true)
+	if err == nil || !strings.Contains(err.Error(), "--to-file-path") {
+		t.Fatalf("expected --to-file-path requirement to propagate, got: %v", err)
+	}
+}
+
+// TestMigrateProvider_RewrapFailsMissingTargetFile drives migrateProviderWithConfig
+// far enough to reach oldSvc.RewrapDEKWithProvider — covering the "re-wrap
+// failed" error-wrap branch — by pointing --to-file-path at a KEK file that
+// doesn't exist. Also confirms the pre-rewrap backup is cleaned up on failure,
+// matching the comment on that branch ("RewrapDEK leaves the active DEK
+// untouched on failure — drop the backup").
+func TestMigrateProvider_RewrapFailsMissingTargetFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "Sup3r-Secret-Passphrase!")
+
+	cfg := enabledLocalCfg()
+	cfg.Storage.Encryption.DEKPath = "dek.key"
+	cfg.Storage.Encryption.SaltPath = "kek.salt"
+
+	missingKEKPath := filepath.Join(dir, "does-not-exist.kek")
+	opts := migrateOpts{toType: "file", toFilePath: missingKEKPath}
+
+	err := migrateProviderWithConfig(cfg, opts, true)
+	if err == nil || !strings.Contains(err.Error(), "re-wrap failed") {
+		t.Fatalf("expected a re-wrap failure, got: %v", err)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(dir, "dek.key.migrate-backup.*"))
+	if len(matches) != 0 {
+		t.Errorf("expected the pre-rewrap backup to be cleaned up on failure, found: %v", matches)
+	}
+}
+
+// TestMigrateProvider_BackupCopyFails_ReadOnlyDir covers migrateProviderWithConfig's
+// "failed to back up current wrapped DEK" branch: copyFile's OpenFile(dst, O_CREATE)
+// fails because the key directory itself has been made read-only. The DEK/salt are
+// pre-provisioned (so oldSvc.Initialize below only needs to READ them, which a
+// read-only-but-executable directory still permits) before the directory is
+// chmod'd, matching TestRotateKEKCommand_RotateFailsOnReadOnlyKeyDir's pattern in
+// rotate_kek_test.go.
+func TestMigrateProvider_BackupCopyFails_ReadOnlyDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a read-only directory doesn't block writes")
+	}
+
+	const passphrase = "Sup3r-Secret-Passphrase!"
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	cfg := enabledLocalCfg()
+	cfg.Storage.Encryption.DEKPath = "dek.key"
+	cfg.Storage.Encryption.SaltPath = "kek.salt"
+
+	setup := encryption.NewService(&cfg.Storage.Encryption, dir)
+	if err := setup.Initialize(passphrase); err != nil {
+		t.Fatalf("provision key material: %v", err)
+	}
+	setup.Shutdown()
+
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	t.Setenv("KEYORIX_MASTER_PASSWORD", passphrase)
+
+	opts := migrateOpts{toType: "env", toEnvVar: "KEYORIX_TARGET_KEK"}
+	err := migrateProviderWithConfig(cfg, opts, true)
+	if err == nil || !strings.Contains(err.Error(), "failed to back up current wrapped DEK") {
+		t.Fatalf("expected a backup-copy failure, got: %v", err)
+	}
+
+	// No migrate-backup file should have been left behind — the copy never
+	// succeeded, so nothing exists to clean up.
+	matches, _ := filepath.Glob(filepath.Join(dir, "dek.key.migrate-backup.*"))
+	if len(matches) != 0 {
+		t.Errorf("expected no migrate-backup file after a failed backup copy, found: %v", matches)
+	}
+}
+
+// TestMigrateProvider_VerifyFailsOnProviderReInitError covers migrateProviderWithConfig's
+// "verification failed (target provider could not open)" branch. The target is an
+// "exec" provider backed by a helper script that succeeds on its first invocation
+// (consumed by RewrapDEKWithProvider re-wrapping the DEK) but fails on its second
+// (consumed by the fresh verifySvc.Initialize call afterward) — deterministic via a
+// counter file, no network/credentials involved. Also confirms the previous wrapped
+// DEK is restored (the backup round-trips back onto the active DEK path) rather than
+// left in the new, re-wrapped state.
+func TestMigrateProvider_VerifyFailsOnProviderReInitError(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	const passphrase = "Sup3r-Secret-Passphrase!"
+	t.Setenv("KEYORIX_MASTER_PASSWORD", passphrase)
+
+	cfg := enabledLocalCfg()
+	cfg.Storage.Encryption.DEKPath = "dek.key"
+	cfg.Storage.Encryption.SaltPath = "kek.salt"
+
+	// Snapshot the active DEK before migration so we can confirm restoreBackup put
+	// it back unchanged after the verify failure below.
+	setup := encryption.NewService(&cfg.Storage.Encryption, dir)
+	if err := setup.Initialize(passphrase); err != nil {
+		t.Fatalf("provision key material: %v", err)
+	}
+	setup.Shutdown()
+	origDEK, err := os.ReadFile(filepath.Join(dir, "dek.key"))
+	if err != nil {
+		t.Fatalf("read original dek.key: %v", err)
+	}
+
+	counterPath := filepath.Join(dir, "counter")
+	scriptPath := filepath.Join(dir, "kek-helper.sh")
+	key := strings.Repeat("ab", 32) // 64 hex chars = 32 raw bytes (KEKSize)
+	script := fmt.Sprintf("#!/bin/sh\n"+
+		"n=$(cat %q 2>/dev/null || echo 0)\n"+
+		"n=$((n+1))\n"+
+		"echo \"$n\" > %q\n"+
+		"if [ \"$n\" -ge 2 ]; then\n"+
+		"  echo \"helper unavailable on second call\" >&2\n"+
+		"  exit 1\n"+
+		"fi\n"+
+		"printf '%%s' %q\n",
+		counterPath, counterPath, key)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write helper script: %v", err)
+	}
+
+	opts := migrateOpts{toType: "exec", toExecCommand: []string{scriptPath}}
+	err = migrateProviderWithConfig(cfg, opts, true)
+	if err == nil || !strings.Contains(err.Error(), "verification failed (target provider could not open)") {
+		t.Fatalf("expected a verify-open failure, got: %v", err)
+	}
+
+	// The helper must actually have run twice — once for the re-wrap, once for the
+	// failed verify — confirming this test reaches the branch it claims to.
+	counterBytes, cerr := os.ReadFile(counterPath)
+	if cerr != nil || strings.TrimSpace(string(counterBytes)) != "2" {
+		t.Fatalf("expected the helper to have been invoked exactly twice, counter file: %q (err=%v)", counterBytes, cerr)
+	}
+
+	gotDEK, rerr := os.ReadFile(filepath.Join(dir, "dek.key"))
+	if rerr != nil {
+		t.Fatalf("read restored dek.key: %v", rerr)
+	}
+	if string(gotDEK) != string(origDEK) {
+		t.Fatalf("expected the previous wrapped DEK to be restored after a failed verify, but it changed")
 	}
 }
 

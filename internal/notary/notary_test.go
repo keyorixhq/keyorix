@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -146,4 +147,97 @@ func TestRFC3161_Anchor_GarbageResponse(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tsa.Anchor(context.Background(), []byte("m"))
 	require.Error(t, err)
+}
+
+// buildTestCert issues a certificate for tmpl, signed by (parentTmpl, parentKey),
+// or self-signed when parentTmpl/parentKey are nil.
+func buildTestCert(t *testing.T, tmpl *x509.Certificate, parentTmpl *x509.Certificate, parentKey crypto.Signer) (*x509.Certificate, *rsa.PrivateKey) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	signParentTmpl, signKey := tmpl, crypto.Signer(key)
+	if parentTmpl != nil {
+		signParentTmpl, signKey = parentTmpl, parentKey
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, signParentTmpl, &key.PublicKey, signKey)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert, key
+}
+
+// TestVerifyReceipt_TrustsChainThroughIntermediateCA exercises the intermediates
+// pool notary.go's VerifyReceipt builds from p7.Certificates (the
+// `for _, c := range p7.Certificates { intermediates.AddCert(c) }` loop): a token
+// whose embedded chain is leaf -> intermediate -> root, where only the ROOT sits
+// in the configured trust anchor, must still verify. TestRFC3161_AnchorAndVerifyRoundTrip
+// only ever exercises a leaf that IS the root (self-signed, directly trusted), so
+// it never actually requires that intermediates pool to do anything; this pins
+// the genuine multi-hop chain-building behavior.
+func TestVerifyReceipt_TrustsChainThroughIntermediateCA(t *testing.T) {
+	fixedTime := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	validity := func(tmpl *x509.Certificate) {
+		tmpl.NotBefore = fixedTime.Add(-365 * 24 * time.Hour)
+		tmpl.NotAfter = fixedTime.Add(3650 * 24 * time.Hour)
+		tmpl.BasicConstraintsValid = true
+	}
+
+	rootTmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Test Root CA"}, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, IsCA: true}
+	validity(rootTmpl)
+	rootCert, rootKey := buildTestCert(t, rootTmpl, nil, nil)
+
+	intTmpl := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "Test Intermediate CA"}, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, IsCA: true}
+	validity(intTmpl)
+	intCert, intKey := buildTestCert(t, intTmpl, rootTmpl, rootKey)
+
+	leafTmpl := &x509.Certificate{SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "Test TSA Leaf"}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping}}
+	validity(leafTmpl)
+	leafCert, leafKey := buildTestCert(t, leafTmpl, intTmpl, intKey)
+
+	msg := []byte("chain verification message")
+	want := sha256.Sum256(msg)
+
+	// The token embeds the leaf AND the intermediate (Certificates: parents),
+	// mirroring what a real TSA operating behind an intermediate CA would send.
+	ts := &timestamp.Timestamp{
+		HashAlgorithm:     crypto.SHA256,
+		HashedMessage:     want[:],
+		Time:              fixedTime,
+		Policy:            asn1.ObjectIdentifier{1, 2, 3, 4, 1},
+		SerialNumber:      big.NewInt(42),
+		Certificates:      []*x509.Certificate{intCert},
+		AddTSACertificate: true,
+	}
+	resp, err := ts.CreateResponseWithOpts(leafCert, leafKey, crypto.SHA256)
+	require.NoError(t, err)
+	parsed, err := timestamp.ParseResponse(resp)
+	require.NoError(t, err)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(rootCert) // only the ROOT is trusted — leaf+intermediate arrive via the token
+
+	at, err := VerifyReceipt(roots, msg, parsed.RawToken)
+	require.NoError(t, err)
+	assert.WithinDuration(t, fixedTime, at, time.Second)
+
+	// Sanity: a token from the SAME leaf but with the intermediate withheld (so no
+	// path from leaf to the trusted root can be built) must fail — confirming the
+	// pass above genuinely depended on the intermediate being embedded, not on
+	// some unrelated path.
+	tsNoChain := &timestamp.Timestamp{
+		HashAlgorithm:     crypto.SHA256,
+		HashedMessage:     want[:],
+		Time:              fixedTime,
+		Policy:            asn1.ObjectIdentifier{1, 2, 3, 4, 1},
+		SerialNumber:      big.NewInt(43),
+		AddTSACertificate: true, // embeds ONLY the leaf, no parents
+	}
+	respNoChain, err := tsNoChain.CreateResponseWithOpts(leafCert, leafKey, crypto.SHA256)
+	require.NoError(t, err)
+	parsedNoChain, err := timestamp.ParseResponse(respNoChain)
+	require.NoError(t, err)
+
+	_, err = VerifyReceipt(roots, msg, parsedNoChain.RawToken)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not trusted")
 }

@@ -55,6 +55,51 @@ func TestMetricsInterceptor_CountsSuccessAndError(t *testing.T) {
 	}
 }
 
+// TestMetricsInterceptor_UsesSharedGlobalSingleton verifies that the production
+// entrypoints — MetricsInterceptor() and GetGRPCMetrics() — are actually wired to
+// the same package-level grpcMetrics singleton, not merely that metricsInterceptorFor
+// and loadMetrics work in isolation (already covered by the test above and by
+// TestGRPCPrometheusCollector). Uses a before/after delta on the shared global
+// rather than resetting it (the global is process-wide and other tests never
+// write to it directly, only through this same pair of functions), so the
+// assertion holds regardless of test execution order.
+func TestMetricsInterceptor_UsesSharedGlobalSingleton(t *testing.T) {
+	before := GetGRPCMetrics()
+
+	interceptor := MetricsInterceptor()
+	info := &grpc.UnaryServerInfo{FullMethod: "/keyorix.v1.SecretService/GetSecret"}
+
+	_, err := interceptor(context.Background(), nil, info,
+		func(_ context.Context, _ interface{}) (interface{}, error) {
+			return "ok", nil
+		})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	_, err = interceptor(context.Background(), nil, info,
+		func(_ context.Context, _ interface{}) (interface{}, error) {
+			return nil, errors.New("fail")
+		})
+	if err == nil {
+		t.Fatal("expected an error from the interceptor, got nil")
+	}
+
+	after := GetGRPCMetrics()
+
+	if after.TotalRequests != before.TotalRequests+2 {
+		t.Errorf("TotalRequests delta = %d, want 2 (MetricsInterceptor must record into the same singleton GetGRPCMetrics reads)", after.TotalRequests-before.TotalRequests)
+	}
+	if after.SuccessRequests != before.SuccessRequests+1 {
+		t.Errorf("SuccessRequests delta = %d, want 1", after.SuccessRequests-before.SuccessRequests)
+	}
+	if after.ErrorRequests != before.ErrorRequests+1 {
+		t.Errorf("ErrorRequests delta = %d, want 1", after.ErrorRequests-before.ErrorRequests)
+	}
+	if after.TotalDuration <= before.TotalDuration {
+		t.Errorf("TotalDuration should have increased, before=%d after=%d", before.TotalDuration, after.TotalDuration)
+	}
+}
+
 // TestMetrics_AverageResponseTime verifies the helper returns 0 when no requests have
 // been recorded.
 func TestMetrics_AverageResponseTime(t *testing.T) {

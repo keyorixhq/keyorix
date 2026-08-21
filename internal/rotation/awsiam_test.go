@@ -59,6 +59,22 @@ func iamWith(fake *fakeIAM, allowed ...string) *AWSIAMExecutor {
 	return e
 }
 
+// TestAWSIAM_Client_LoadDefaultConfigError exercises the awsconfig.LoadDefaultConfig
+// error branch inside AWSIAMExecutor.client() when newClient is nil. Pointing
+// AWS_CONFIG_FILE at a directory (rather than a file) makes the SDK's shared-config
+// read fail deterministically, without any network I/O or real AWS credentials.
+func TestAWSIAM_Client_LoadDefaultConfigError(t *testing.T) {
+	t.Setenv("AWS_SDK_LOAD_CONFIG", "1")
+	t.Setenv("AWS_CONFIG_FILE", t.TempDir())
+
+	e := NewAWSIAMExecutor("aws-test", "us-east-1", nil)
+	// e.newClient is left nil so the real awsconfig.LoadDefaultConfig path runs.
+	cl, err := e.client(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, cl)
+	assert.Contains(t, err.Error(), "aws-iam: load config")
+}
+
 func TestAWSIAM_TypeAndName(t *testing.T) {
 	e := NewAWSIAMExecutor("prod-aws", "", nil)
 	assert.Equal(t, "prod-aws", e.Name())
@@ -120,6 +136,29 @@ func TestAWSIAM_GenerateUpstream_PriorDeleteFailureIsSurfaced(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(partial.Value), &cred))
 	assert.Equal(t, "AKIANEW", cred["access_key_id"])
 	assert.Equal(t, "s3cr3t", cred["secret_access_key"])
+}
+
+// TestAWSIAM_GenerateUpstream_EvictionFallbackToFirstPrior exercises the defensive
+// `if victim == "" { victim = prior[0] }` fallback in GenerateUpstream: when
+// evictableAccessKey returns "" (all its candidate IDs happen to be the empty
+// string — a degenerate value AWS should never actually hand back, but one the
+// code must not crash on), the caller must still pick a concrete victim to evict
+// rather than leaving `victim` empty and calling DeleteAccessKey with a blank id
+// silently succeeding against the wrong "nothing".
+func TestAWSIAM_GenerateUpstream_EvictionFallbackToFirstPrior(t *testing.T) {
+	// Two prior keys, both reporting an empty-string AccessKeyId: evictableAccessKey
+	// still treats a non-nil *string as a candidate (only a nil pointer is skipped),
+	// so with no Inactive key and no CreateDate ordering it settles on "" as the
+	// victim. That drives the fallback: GenerateUpstream must fall back to prior[0]
+	// (also "") rather than leaving victim empty and skipping the eviction call.
+	fake := &fakeIAM{existing: []string{"", ""}, newID: "AKIANEW", newSecret: "x"}
+	v, err := iamWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app")
+	require.NoError(t, err)
+	assert.Contains(t, fake.deleted, "", "the fallback victim (prior[0], the empty id) must actually be deleted, not silently skipped")
+
+	var cred map[string]string
+	require.NoError(t, json.Unmarshal([]byte(v), &cred))
+	assert.Equal(t, "AKIANEW", cred["access_key_id"])
 }
 
 func TestAWSIAM_GenerateUpstream_Errors(t *testing.T) {

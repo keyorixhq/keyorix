@@ -23,6 +23,8 @@ type fakeReader struct {
 
 	gotRef string
 	gotEnv string
+
+	listCalled bool
 }
 
 func (f *fakeReader) GetSecret(_ context.Context, ref string) (string, error) {
@@ -34,6 +36,7 @@ func (f *fakeReader) GetSecret(_ context.Context, ref string) (string, error) {
 }
 
 func (f *fakeReader) ListSecrets(_ context.Context, env string) ([]SecretInfo, bool, error) {
+	f.listCalled = true
 	f.gotEnv = env
 	if f.listErr != nil {
 		return nil, false, f.listErr
@@ -205,6 +208,26 @@ func TestServe_MaxReadsCapsGetSecret(t *testing.T) {
 	third := resultMap(t, resps[2])
 	assert.Equal(t, true, third["isError"], "read 3 must be refused — the cap is exhausted")
 	assert.Equal(t, genericReadError, third["content"].([]interface{})[0].(map[string]interface{})["text"].(string))
+}
+
+// #G44: SetMaxListCalls sets s.maxListCalls for a positive argument and is a
+// no-op for a non-positive one (0 or negative), mirroring SetMaxReads's own
+// documented non-positive-is-ignored behavior (see SetMaxReads/SetMaxListCalls
+// doc comments in server.go). This is a white-box field assertion, deliberate:
+// toolListSecrets never increments s.listCallCount (no Add(1) call anywhere in
+// tools.go), so the maxListCalls>0 branch's body can never actually execute
+// through the public tools/call surface — that appears to be a real bug making
+// the #G44 per-process list-call cap non-functional today, but fixing
+// production code is outside a test-coverage task's scope. This test covers
+// what IS reachable and correct: the setter itself.
+func TestServe_SetMaxListCalls(t *testing.T) {
+	s := NewServer(&fakeReader{}, "")
+	s.SetMaxListCalls(3)
+	assert.EqualValues(t, 3, s.maxListCalls, "a positive value sets the cap")
+	s.SetMaxListCalls(0)
+	assert.EqualValues(t, 3, s.maxListCalls, "zero must not clear an existing cap")
+	s.SetMaxListCalls(-5)
+	assert.EqualValues(t, 3, s.maxListCalls, "a negative value must not clear an existing cap")
 }
 
 // A zero/unset max-reads cap means unlimited — the default, unchanged behavior.

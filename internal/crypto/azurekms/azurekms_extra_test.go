@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestEncodeDecodeEnvelope_RoundTrip verifies the envelope encodes and decodes symmetrically.
@@ -144,6 +147,75 @@ func TestAzureKMS_DecryptCorruptEnvelope(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when the envelope is corrupt")
 	}
+}
+
+// TestValidateKeyVaultHost_UnparsableURL covers the url.Parse error branch
+// inside validateKeyVaultHost, distinct from the "parses fine but wrong
+// scheme/host" cases already covered by TestValidateKeyVaultHost. An invalid
+// percent-encoding is a reliable, deterministic way to make net/url itself
+// fail to parse, independent of anything this package validates.
+func TestValidateKeyVaultHost_UnparsableURL(t *testing.T) {
+	err := validateKeyVaultHost("https://myvault.vault.azure.net/%zz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid vault URL")
+}
+
+// TestParseKeyID_UnparsableURL covers the url.Parse error branch inside
+// parseKeyID, distinct from the "parses fine but the wrong shape" cases
+// already covered by TestParseKeyID. Same invalid-percent-encoding trick as
+// TestValidateKeyVaultHost_UnparsableURL.
+func TestParseKeyID_UnparsableURL(t *testing.T) {
+	_, _, _, err := parseKeyID("https://myvault.vault.azure.net/keys/kek/%zz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid kms_key_id")
+}
+
+// TestNew_DefaultCredentialError covers the azidentity.NewDefaultAzureCredential
+// error branch inside New. AZURE_TOKEN_CREDENTIALS is a documented azidentity
+// env var that, when set to anything other than a recognized credential name
+// (or "dev"/"prod"), makes construction fail deterministically — a reliable
+// way to exercise this branch without needing real/broken Azure credentials.
+func TestNew_DefaultCredentialError(t *testing.T) {
+	const envVar = "AZURE_TOKEN_CREDENTIALS"
+	orig, hadOrig := os.LookupEnv(envVar)
+	require.NoError(t, os.Setenv(envVar, "not-a-real-credential-type"))
+	defer func() {
+		if hadOrig {
+			_ = os.Setenv(envVar, orig)
+		} else {
+			_ = os.Unsetenv(envVar)
+		}
+	}()
+
+	_, err := New(context.Background(), "https://myvault.vault.azure.net/keys/kek")
+	require.Error(t, err, "New must surface a NewDefaultAzureCredential construction error rather than swallow it")
+	assert.Contains(t, err.Error(), "azure-kms: default credential:")
+}
+
+// fakeKeysUnparsableKID returns a WrapKey response whose KID is not a valid
+// key identifier at all (wrong path shape) — modeling an SDK bug or a rogue
+// component in front of Key Vault, distinct from fakeKeysWrongKID (which
+// returns a syntactically valid KID naming a different key).
+type fakeKeysUnparsableKID struct{}
+
+func (f fakeKeysUnparsableKID) WrapKey(_ context.Context, _ string, _ string, params azkeys.KeyOperationParameters, _ *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error) {
+	kid := azkeys.ID("https://vault.vault.azure.net/secrets/not-a-key-path")
+	return azkeys.WrapKeyResponse{KeyOperationResult: azkeys.KeyOperationResult{KID: &kid, Result: params.Value}}, nil
+}
+
+func (f fakeKeysUnparsableKID) UnwrapKey(_ context.Context, _ string, _ string, _ azkeys.KeyOperationParameters, _ *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error) {
+	return azkeys.UnwrapKeyResponse{}, fmt.Errorf("fakeKeysUnparsableKID: UnwrapKey not implemented")
+}
+
+// TestAzureKMS_EncryptRefusesUnparsableKID covers the parseKeyID-error branch
+// inside Encrypt when the wrap response's KID isn't a valid key identifier at
+// all — distinct from TestAzureKMS_EncryptRefusesMismatchedKID, which covers
+// a KID that parses fine but names a different key.
+func TestAzureKMS_EncryptRefusesUnparsableKID(t *testing.T) {
+	c := &client{keys: fakeKeysUnparsableKID{}, keyName: "kek", keyVersion: ""}
+	_, err := c.Encrypt(context.Background(), []byte("kek-material"))
+	require.Error(t, err, "Encrypt must refuse a wrap response whose KID cannot be parsed as a key identifier")
+	assert.Contains(t, err.Error(), "not a valid key identifier")
 }
 
 // TestParseKeyID_AdditionalCases covers path forms not already tested.

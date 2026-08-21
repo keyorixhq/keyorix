@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,6 +95,31 @@ func TestPlaceCmd_ServerError(t *testing.T) {
 	placeReason = "test reason"
 
 	err := placeCmd.RunE(placeCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "403")
+}
+
+// TestLiftCmd_ServerError verifies liftCmd surfaces HTTP errors from the
+// DeleteWithBody call (e.g. the server rejecting the lift), rather than
+// reporting success.
+func TestLiftCmd_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/api/v1/legal-hold", r.URL.Path)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+
+	origR, origY := liftReason, liftYes
+	defer func() { liftReason = origR; liftYes = origY }()
+	liftReason = "test lift reason"
+	liftYes = true
+
+	cmd := &cobra.Command{}
+	err := liftCmd.RunE(cmd, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "403")
 }

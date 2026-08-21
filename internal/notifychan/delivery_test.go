@@ -2,9 +2,11 @@ package notifychan
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,4 +69,22 @@ func TestChatSink_DeliveryFailureLogDoesNotLeakWebhookToken(t *testing.T) {
 	assert.Contains(t, logged, "notifychan:", "sanity: the failure path should still log something")
 	assert.NotContains(t, logged, token, "the webhook's embedded bearer token must never reach the log stream")
 	assert.NotContains(t, logged, "services/T000/B000", "the webhook's path (which carries the token) must never reach the log stream")
+}
+
+// TestDeliverer_EnqueueAfterCloseIsANoOp is the #G63 regression at the deliverer
+// level: close() closes the queue channel, so an enqueue() that raced past the
+// closed check would panic sending on a closed channel. Once close() has
+// returned, every subsequent enqueue() must observe closed==true under the same
+// mutex and return immediately without ever touching the (closed) queue channel
+// or invoking send — not merely "not panic", but genuinely deliver nothing.
+func TestDeliverer_EnqueueAfterCloseIsANoOp(t *testing.T) {
+	var sent atomic.Int32
+	d := newDeliverer("post-close", 4, time.Millisecond, func(_ context.Context, _ core.NotificationEvent) (bool, error) {
+		sent.Add(1)
+		return false, nil
+	})
+	d.close()
+
+	assert.NotPanics(t, func() { d.enqueue(core.NotificationEvent{Type: "after-close"}) })
+	assert.Equal(t, int32(0), sent.Load(), "an event enqueued after close must never reach send")
 }

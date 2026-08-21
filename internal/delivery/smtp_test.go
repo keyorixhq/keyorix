@@ -1,7 +1,9 @@
 package delivery
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"strings"
 	"testing"
 
@@ -113,6 +115,108 @@ func TestSMTPDeliverDegradesOnSendFailure(t *testing.T) {
 	assert.Equal(t, ChannelSMTP, res.Channel)
 	assert.False(t, res.Delivered)
 	assert.Equal(t, "https://keyorix.acme.internal/auth/setup/kx_setup_abc", res.LinkForAdmin)
+}
+
+// startFakeSMTPServer starts a minimal SMTP relay on an ephemeral localhost port
+// that speaks just enough of the protocol (EHLO/MAIL FROM/RCPT TO/DATA/QUIT) to
+// let go-mail complete a real send, letting us exercise DeliverSetupLink's
+// success path (Delivered=true) without a live external relay. It serves exactly
+// one connection and stops on its own once that connection closes or the test ends.
+func startFakeSMTPServer(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		reader := bufio.NewReader(conn)
+		writeLine := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
+		writeLine("220 fake.smtp ESMTP ready")
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			cmd := strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
+				writeLine("250 fake.smtp")
+			case strings.HasPrefix(cmd, "MAIL FROM"):
+				writeLine("250 2.1.0 OK")
+			case strings.HasPrefix(cmd, "RCPT TO"):
+				writeLine("250 2.1.5 OK")
+			case strings.EqualFold(cmd, "NOOP"):
+				// go-mail's checkConn sends NOOP before every send to verify the
+				// connection is still alive; it must succeed or the client reports
+				// "not connected to SMTP server" and never attempts the real send.
+				writeLine("250 2.0.0 OK")
+			case strings.EqualFold(cmd, "DATA"):
+				writeLine("354 End data with <CR><LF>.<CR><LF>")
+				for {
+					dline, derr := reader.ReadString('\n')
+					if derr != nil {
+						return
+					}
+					if strings.TrimSpace(dline) == "." {
+						writeLine("250 2.0.0 OK: queued as fake-id")
+						break
+					}
+				}
+			case strings.EqualFold(cmd, "RSET"):
+				// sendSingleMsg RSETs the session between messages; must succeed.
+				writeLine("250 2.0.0 OK")
+			case strings.EqualFold(cmd, "QUIT"):
+				writeLine("221 2.0.0 Bye")
+				return
+			default:
+				writeLine("500 5.5.2 unrecognized command")
+			}
+		}
+	}()
+
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestSMTPDeliverSucceeds(t *testing.T) {
+	// End-to-end against the fake relay above: a real send that succeeds must
+	// report Delivered=true with no LinkForAdmin fallback (the link only needs
+	// manual relay when sending fails).
+	t.Setenv(EnvAllowInsecureSMTP, "true")
+	port := startFakeSMTPServer(t)
+	d, err := newSMTPDelivery(SMTPSettings{Host: "127.0.0.1", Port: port, From: "k@acme.io", TLS: "none"})
+	require.NoError(t, err)
+
+	res, err := d.DeliverSetupLink(context.Background(), SetupLinkRequest{
+		RecipientEmail: "new@acme.io",
+		Link:           "https://keyorix.acme.internal/auth/setup/kx_setup_ok",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ChannelSMTP, res.Channel)
+	assert.True(t, res.Delivered, "a successful send must report Delivered=true")
+	assert.Empty(t, res.LinkForAdmin, "no manual-relay fallback is needed on a successful send")
+}
+
+func TestSMTPDeliverDegradesOnClientInitFailure(t *testing.T) {
+	// Bypass newSMTPDelivery's validation (which requires Host != "") to construct
+	// an SMTPDelivery whose buildMessage succeeds (From/To don't touch Host) but
+	// whose newClient fails (go-mail's NewClient rejects an empty host with
+	// ErrNoHostname). DeliverSetupLink must still degrade to manual relay rather
+	// than surfacing an error.
+	d := &SMTPDelivery{cfg: SMTPSettings{From: "k@acme.io"}}
+	res, err := d.DeliverSetupLink(context.Background(), SetupLinkRequest{
+		RecipientEmail: "new@acme.io",
+		Link:           "https://keyorix.acme.internal/auth/setup/kx_setup_noclient",
+	})
+	require.NoError(t, err, "client-init failure degrades gracefully, never errors")
+	assert.Equal(t, ChannelSMTP, res.Channel)
+	assert.False(t, res.Delivered)
+	assert.Equal(t, "https://keyorix.acme.internal/auth/setup/kx_setup_noclient", res.LinkForAdmin)
 }
 
 func TestSMTPDeliverRejectsEmptyInput(t *testing.T) {

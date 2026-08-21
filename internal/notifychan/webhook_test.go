@@ -2,6 +2,7 @@ package notifychan
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -85,6 +86,23 @@ func TestWebhookSink_NoTokenOmitsAuthHeader(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Empty(t, auth)
+}
+
+// TestWebhookSink_SendRequestBuildErrorIsPermanent covers send's
+// http.NewRequestWithContext error path. The endpoint is validated once at
+// construction (newWebhook), so the only way to exercise a request-build failure at
+// send time is to bypass the constructor and hand send() a URL that url.Parse itself
+// rejects (a raw control character) — proving the documented contract ("a marshalling
+// error is permanent" extends to any request-construction failure) actually holds,
+// not merely that some error occurs.
+func TestWebhookSink_SendRequestBuildErrorIsPermanent(t *testing.T) {
+	s := &WebhookSink{
+		cfg:    WebhookConfig{Endpoint: "https://example.com/\x7fbad"},
+		client: &http.Client{},
+	}
+	retryable, err := s.send(context.Background(), core.NotificationEvent{UserID: 1, Type: "x"})
+	require.Error(t, err)
+	assert.False(t, retryable, "a malformed request must be treated as permanent, not retried")
 }
 
 func TestNewWebhook_RequiresEndpoint(t *testing.T) {

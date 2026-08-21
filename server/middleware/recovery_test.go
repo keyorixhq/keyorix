@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +73,46 @@ func TestRecovery_RedactsSetupTokenInPanicContextLog(t *testing.T) {
 	logged := buf.String()
 	assert.NotContains(t, logged, token, "the setup token must never reach the panic-context log")
 	assert.Contains(t, logged, "[REDACTED]")
+}
+
+// brokenResponseWriter is an http.ResponseWriter whose Write always fails,
+// simulating a client that disconnects (or a broken transport) right as the
+// panic-recovery response is being written.
+type brokenResponseWriter struct {
+	header http.Header
+}
+
+func (b *brokenResponseWriter) Header() http.Header {
+	if b.header == nil {
+		b.header = make(http.Header)
+	}
+	return b.header
+}
+
+func (b *brokenResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("simulated write failure")
+}
+
+func (b *brokenResponseWriter) WriteHeader(int) {}
+
+// TestRecovery_LogsWhenResponseEncodingFails covers the fallback branch taken
+// when json.Encode of the panic response itself fails to write (e.g. the
+// client already disconnected): Recovery must not panic itself, and must log
+// the encode failure rather than silently dropping it.
+func TestRecovery_LogsWhenResponseEncodingFails(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	panicking := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })
+	w := &brokenResponseWriter{}
+
+	require.NotPanics(t, func() {
+		Recovery()(panicking).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/secrets/1", nil))
+	})
+
+	assert.Contains(t, buf.String(), "Failed to encode panic response")
 }
 
 // TestRecovery_RedactsSSOCallbackQueryInPanicContextLog covers the same gap

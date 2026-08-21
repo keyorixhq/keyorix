@@ -58,6 +58,27 @@ func TestPrincipalRateLimit_EnforcesPerPrincipalBudget(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w2.Code, "a different principal must have an independent budget")
 }
 
+// When Burst is left at its zero value (config omits it), PrincipalRateLimit
+// must fall back to RequestsPerSecond as the burst size, rather than building
+// a limiter with burst 0 (which would reject every request outright).
+func TestPrincipalRateLimit_ZeroBurstFallsBackToRequestsPerSecond(t *testing.T) {
+	mw := PrincipalRateLimit(config.RateLimitConfig{Enabled: true, RequestsPerSecond: 3})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+
+	// Exactly RequestsPerSecond (3) requests must pass as the initial burst.
+	for i := 0; i < 3; i++ {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, newRLRequest(9))
+		require.Equal(t, http.StatusOK, w.Code, "request %d within the fallback burst must pass", i)
+	}
+	// The 4th immediate request must be limited — proving burst was set to 3
+	// (RequestsPerSecond), not left at 0 (which would already have rejected
+	// request 0 above).
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, newRLRequest(9))
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+}
+
 // An unauthenticated request (no UserContext) falls back to an IP-keyed budget
 // rather than panicking or bypassing the limiter entirely.
 func TestPrincipalRateLimit_FallsBackToIPForUnauthenticated(t *testing.T) {

@@ -70,6 +70,22 @@ func TestMySQL_RotateFailsClosedWithoutAllowedRefs(t *testing.T) {
 	assert.False(t, fake.called)
 }
 
+// TestMySQL_ConnRealPath_OpenError exercises the sql.Open error branch in
+// MySQLExecutor.conn() when newConn is nil. A structurally malformed DSN (missing
+// the mandatory slash before the database name) is rejected by the mysql driver's
+// DSN parser at Open time, deterministically and without any network I/O.
+func TestMySQL_ConnRealPath_OpenError(t *testing.T) {
+	e := &MySQLExecutor{
+		name:        "mysql-test",
+		dsn:         "not a valid dsn",
+		allowedRefs: []string{"svc-"},
+	}
+	c, err := e.conn(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, c)
+	assert.Contains(t, err.Error(), "mysql: open")
+}
+
 func TestMySQL_RotateErrors(t *testing.T) {
 	t.Run("empty ref", func(t *testing.T) {
 		fake := &fakeMySQL{}

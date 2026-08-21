@@ -27,3 +27,17 @@ func TestGRPCKeepaliveConfig_GetMinTime(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, GRPCKeepaliveConfig{MinTime: "garbage"}.GetMinTime(), "unparseable falls back")
 	assert.Equal(t, 30*time.Second, GRPCKeepaliveConfig{MinTime: "30s"}.GetMinTime())
 }
+
+// GRPC-008: MaxConnectionAge/MaxConnectionAgeGrace force periodic reconnection so a
+// stream-slot-holding attacker can't pin audit-stream slots indefinitely.
+func TestGRPCKeepaliveConfig_GetMaxConnectionAge(t *testing.T) {
+	assert.Equal(t, time.Hour, GRPCKeepaliveConfig{}.GetMaxConnectionAge(), "default when unset")
+	assert.Equal(t, time.Hour, GRPCKeepaliveConfig{MaxConnectionAge: "garbage"}.GetMaxConnectionAge(), "unparseable falls back")
+	assert.Equal(t, 15*time.Minute, GRPCKeepaliveConfig{MaxConnectionAge: "15m"}.GetMaxConnectionAge())
+}
+
+func TestGRPCKeepaliveConfig_GetMaxConnectionAgeGrace(t *testing.T) {
+	assert.Equal(t, 30*time.Second, GRPCKeepaliveConfig{}.GetMaxConnectionAgeGrace(), "default when unset")
+	assert.Equal(t, 30*time.Second, GRPCKeepaliveConfig{MaxConnectionAgeGrace: "garbage"}.GetMaxConnectionAgeGrace(), "unparseable falls back")
+	assert.Equal(t, 5*time.Second, GRPCKeepaliveConfig{MaxConnectionAgeGrace: "5s"}.GetMaxConnectionAgeGrace())
+}

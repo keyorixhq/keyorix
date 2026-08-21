@@ -134,6 +134,39 @@ func TestClientIP_XForwardedForFoldsMultipleHeaderLines(t *testing.T) {
 	}
 }
 
+func TestClientIP_TrustedPeerNoForwardingHeaders(t *testing.T) {
+	// The peer is trusted, but neither X-Forwarded-For nor X-Real-IP is present
+	// at all — clientIPFromRequest must fall through both branches and return
+	// "" (nothing client-attributable), leaving RemoteAddr as the TCP peer.
+	got := serveAndCaptureRemoteAddr([]string{"10.0.0.0/8"}, "10.1.2.3:443", nil)
+	if got != "10.1.2.3:443" {
+		t.Errorf("RemoteAddr = %q; want the unmodified TCP peer when no forwarding headers are present", got)
+	}
+}
+
+func TestClientIP_TrustedPeerInvalidRealIP(t *testing.T) {
+	// X-Real-IP present but not a parseable IP — must be ignored, falling
+	// through to the final "" return (RemoteAddr left unchanged).
+	got := serveAndCaptureRemoteAddr([]string{"10.0.0.0/8"}, "10.1.2.3:443", map[string]string{
+		"X-Real-IP": "not-an-ip",
+	})
+	if got != "10.1.2.3:443" {
+		t.Errorf("RemoteAddr = %q; want the unmodified TCP peer for an unparseable X-Real-IP", got)
+	}
+}
+
+func TestClientIP_MalformedPeerAddress(t *testing.T) {
+	// A RemoteAddr whose host portion isn't a valid IP at all (e.g. malformed
+	// upstream input) must not match any trusted CIDR — ipInAny's ip == nil
+	// branch — and so forwarding headers are ignored.
+	got := serveAndCaptureRemoteAddr([]string{"10.0.0.0/8"}, "not-an-ip-either:443", map[string]string{
+		"X-Forwarded-For": "203.0.113.9",
+	})
+	if got != "not-an-ip-either:443" {
+		t.Errorf("RemoteAddr = %q; want the unmodified peer when the peer itself doesn't parse as an IP", got)
+	}
+}
+
 func TestClientIP_XRealIPFoldsMultipleHeaderLines(t *testing.T) {
 	// Same scenario for X-Real-IP: the client sends its own X-Real-IP line, and the
 	// trusted proxy appends its own value as a second, separate header line rather than

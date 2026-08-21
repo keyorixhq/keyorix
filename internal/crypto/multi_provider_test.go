@@ -178,6 +178,54 @@ func TestMultiKeyProvider_KEK_NoDowngradeHookWhenPrimarySucceeds(t *testing.T) {
 	assert.False(t, called, "the hook must not fire when the primary itself succeeds — no fallback happened")
 }
 
+// TestMultiKeyProvider_KEK_FailureTierTracking_AffectsDowngradeFromTier covers
+// KEK()'s "if t := ProviderTierOf(p.Name()); t > maxTier { maxTier = t }"
+// branch, which updates the running tier ceiling after a FAILED provider —
+// not just from the primary before the loop starts. It is only observable
+// through its effect on a later downgrade's reported FromTier: the chain is
+// [password (fails), tpm (fails, HIGHER tier than the running ceiling),
+// password (succeeds)]. If the failed tpm step did not raise maxTier, the
+// final downgrade would incorrectly report FromTier=software instead of
+// hardware.
+func TestMultiKeyProvider_KEK_FailureTierTracking_AffectsDowngradeFromTier(t *testing.T) {
+	m, err := crypto.NewMultiKeyProvider([]crypto.KeyProvider{
+		badProvider("password"),  // TierSoftware, fails
+		badProvider("tpm"),       // TierHardware, fails — must raise the tracked ceiling
+		goodProvider("password"), // TierSoftware, succeeds — now a real downgrade
+	})
+	require.NoError(t, err)
+
+	var got *crypto.FallbackDowngrade
+	m.SetDowngradeHook(func(d crypto.FallbackDowngrade) { got = &d })
+
+	key, err := m.KEK()
+	require.NoError(t, err)
+	assert.NotEmpty(t, key)
+	require.NotNil(t, got, "a failed higher-tier provider earlier in the chain must still raise the tracked ceiling")
+	assert.Equal(t, crypto.TierHardware, got.FromTier, "FromTier must reflect the failed tpm provider's tier, not just the primary's")
+	assert.Equal(t, crypto.TierSoftware, got.ToTier)
+}
+
+// TestMultiKeyProvider_KEK_SingleProviderSucceeds_NoMultiLogNoise covers the
+// len(m.providers) > 1 == false branch: with exactly one configured provider,
+// KEK() must still succeed and return its key (the branch only gates a log
+// line, so the meaningful assertion is that a single-provider chain works at
+// all, not just multi-provider chains).
+func TestMultiKeyProvider_KEK_SingleProviderSucceeds_NoMultiLogNoise(t *testing.T) {
+	good := goodProvider("password")
+	m, err := crypto.NewMultiKeyProvider([]crypto.KeyProvider{good})
+	require.NoError(t, err)
+
+	key, err := m.KEK()
+	require.NoError(t, err)
+	assert.Equal(t, good.key, key)
+}
+
+func TestProviderTier_String_UnrecognizedRendersAsUnknown(t *testing.T) {
+	assert.Equal(t, "unknown", crypto.TierUnknown.String())
+	assert.Equal(t, "unknown", crypto.ProviderTier(99).String(), "a tier value with no known case must render as unknown, not zero-value/panic")
+}
+
 func TestMultiKeyProvider_KEK_NoDowngradeHookOnSameTierFallback(t *testing.T) {
 	m, err := crypto.NewMultiKeyProvider([]crypto.KeyProvider{
 		badProvider("aws-kms"), goodProvider("gcp-kms"),

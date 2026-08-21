@@ -246,6 +246,36 @@ func TestBuildCmd_UnwritableOut(t *testing.T) {
 	assert.Contains(t, err.Error(), "create bundle")
 }
 
+// TestBuildCmd_WriteBundleFails exercises the ibundle.WriteBundle error path: --out is
+// pointed at the very component file living under --src. BuildManifest hashes the file's
+// original (non-empty) content and pins its size in the manifest; os.Create(buildOut) then
+// truncates that same file to zero bytes (same path, O_TRUNC) before WriteBundle re-opens it
+// to copy component bytes into the tar stream. The tar writer detects, at Close, that fewer
+// bytes were written than the header's declared size and returns an error, which WriteBundle
+// propagates — a real (if unusual) operator mistake: naming --out the same as a source file.
+func TestBuildCmd_WriteBundleFails(t *testing.T) {
+	resetBuildVars(t)
+
+	pemBytes, _, _ := ed25519KeyPEM(t)
+	keyPath := writeKeyFile(t, pemBytes)
+
+	src := srcDirWithFiles(t, map[string]string{
+		"bin/keyorix": "non-empty original content that will be truncated away",
+	})
+	selfPath := filepath.Join(src, "bin", "keyorix")
+
+	buildSrc = src
+	buildOut = selfPath // same path as the only component file
+	buildVersion = "v0.99.0"
+	buildKeyID = "test-key-2026"
+	buildSignKey = keyPath
+	buildReleased = ""
+
+	err := buildCmd.RunE(buildCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write bundle")
+}
+
 // TestVerifyCmd_VerifyFailsEmptyRegistry exercises verifyCmd.RunE past the
 // os.Open call: a real bundle is opened but the injected registry has no trusted
 // keys, so ibundle.Verify returns a "no trusted keys" error. This covers the

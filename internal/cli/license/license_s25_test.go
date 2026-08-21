@@ -74,6 +74,23 @@ func TestIssue_NoPEMBlock(t *testing.T) {
 	assert.Contains(t, err.Error(), "no PEM block")
 }
 
+// TestIssue_IssueCallFails covers the branch where ilicense.Issue itself returns an
+// error (as opposed to the earlier PEM-parsing failures already covered above) — here
+// by leaving --key-id empty, which Issue rejects even though issueCmd.RunE never
+// validates it itself (that's normally cobra's MarkFlagRequired, bypassed when calling
+// RunE directly in tests).
+func TestIssue_IssueCallFails(t *testing.T) {
+	issueLicensee = "acme"
+	issueNotAfter = time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	issueKeyID = ""
+	issueSignKey = writeSigningKey(t)
+	t.Cleanup(func() { issueLicensee, issueNotAfter, issueKeyID, issueSignKey = "", "", "", "" })
+
+	err := issueCmd.RunE(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key-id is required")
+}
+
 // --- installCmd error paths ---
 
 func TestInstall_MissingTokenFile(t *testing.T) {
@@ -84,6 +101,27 @@ func TestInstall_MissingTokenFile(t *testing.T) {
 	err := installCmd.RunE(nil, []string{filepath.Join(dir, "no-such-file.token")})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read license token")
+}
+
+// TestInstall_WriteFailure covers the branch where the license validates fine (an
+// empty token, same as TestInstall_EmptyTokenBaselineWritesFile) but
+// securefiles.SecureWriteFileSync itself fails — here because --dest's parent
+// directory doesn't exist, so the underlying open(2) of the base directory fails.
+func TestInstall_WriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "empty.token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte(""), 0o600))
+
+	installDest = filepath.Join(dir, "no-such-subdir", "installed.token")
+	installDeployment = ""
+	installGraceHours = 0
+	t.Cleanup(func() { installDest, installDeployment, installGraceHours = "", "", 0 })
+
+	err := installCmd.RunE(nil, []string{tokenFile})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write license")
+	_, statErr := os.Stat(installDest)
+	assert.True(t, os.IsNotExist(statErr), "a failed write must not leave a file behind")
 }
 
 // --- statusCmd error paths ---

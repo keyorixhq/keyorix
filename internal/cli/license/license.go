@@ -22,6 +22,11 @@ const (
 	flagDeploymentID = "deployment-id"
 )
 
+// defaultRegistryFn is the function used to load the trusted key registry for verifying
+// license tokens. It's a var (not a direct call) so tests can inject a failing registry to
+// exercise the "load trusted keys" error path, mirroring internal/cli/bundle's same pattern.
+var defaultRegistryFn = trust.DefaultRegistry
+
 // LicenseCmd is the `keyorix license` command group.
 var LicenseCmd = &cobra.Command{
 	Use:   "license",
@@ -107,7 +112,7 @@ var installCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		reg, err := trust.DefaultRegistry()
+		reg, err := defaultRegistryFn()
 		if err != nil {
 			return fmt.Errorf("load trusted keys: %w", err)
 		}
@@ -143,7 +148,7 @@ var statusCmd = &cobra.Command{
 			}
 			token = t
 		}
-		reg, err := trust.DefaultRegistry()
+		reg, err := defaultRegistryFn()
 		if err != nil {
 			return fmt.Errorf("load trusted keys: %w", err)
 		}

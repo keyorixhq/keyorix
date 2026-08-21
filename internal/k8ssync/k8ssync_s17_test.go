@@ -135,6 +135,21 @@ func TestValidateMapping_EmptyFields(t *testing.T) {
 	}
 }
 
+// TestValidateMapping_InvalidKey exercises the !isK8sSecretKey branch: a key
+// containing a character outside [-._a-zA-Z0-9] (here a slash) must be rejected,
+// even when every other field is valid.
+func TestValidateMapping_InvalidKey(t *testing.T) {
+	m := SecretMapping{
+		Ref:       "prod/db",
+		Namespace: "default",
+		Name:      "my-secret",
+		Key:       "not/a/valid/key",
+	}
+	err := validateMapping(m)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a valid Kubernetes Secret data key")
+}
+
 // TestValidateMapping_InvalidNamespace exercises the !isDNS1123Label branch.
 func TestValidateMapping_InvalidNamespace(t *testing.T) {
 	m := SecretMapping{

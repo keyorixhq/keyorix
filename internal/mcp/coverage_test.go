@@ -306,6 +306,49 @@ func TestListSecrets_NotTruncated(t *testing.T) {
 	assert.NotContains(t, text, "incomplete")
 }
 
+// -- getJSON: request-build failure -------------------------------------------
+
+// TestGetJSON_BuildRequestError covers the http.NewRequestWithContext error
+// branch in getJSON. Every public constructor path (NewKeyorixClient) percent-
+// encodes user input via url.Values.Encode() before it ever reaches getJSON, so
+// this branch is unreachable through the exported API — it's exercised here by
+// constructing the client directly (same package) with a path whose invalid
+// percent-encoding survives to the request-build call.
+func TestGetJSON_BuildRequestError(t *testing.T) {
+	c := &KeyorixClient{baseURL: "http://example.com", token: "tok", hc: http.DefaultClient}
+	var out struct{}
+	err := c.getJSON(context.Background(), "/bad%zz", &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "build request")
+}
+
+// -- toolListSecrets: maxListCalls cap branch --------------------------------
+
+// TestToolListSecrets_MaxListCallsCapReached covers the maxListCalls>0 &&
+// listCallCount>=maxListCalls branch in toolListSecrets (tools.go). As the
+// TestServe_SetMaxListCalls doc comment in server_test.go explains, nothing in
+// tools.go ever increments s.listCallCount, so this branch is unreachable
+// through the public tools/call JSON-RPC surface today (a pre-existing bug,
+// out of scope for a test-coverage task to fix). It IS reachable, and worth
+// covering, as a white-box call directly against the unexported method with
+// listCallCount pre-set to simulate the cap already being exhausted — this
+// asserts the real behavior the cap is supposed to have (refuse the call with
+// the generic error, and never touch the reader) once/if that increment bug
+// is fixed, without touching production code.
+func TestToolListSecrets_MaxListCallsCapReached(t *testing.T) {
+	fr := &fakeReader{list: []SecretInfo{{Ref: "app/prod/db"}}}
+	s := NewServer(fr, "")
+	s.SetMaxListCalls(1)
+	s.listCallCount.Store(1) // simulate the cap already reached
+
+	res := s.toolListSecrets(context.Background(), json.RawMessage(`{}`))
+
+	assert.Equal(t, true, res["isError"], "the call must be refused once the cap is reached")
+	content := res["content"].([]map[string]interface{})
+	assert.Equal(t, genericListError, content[0]["text"], "must return the generic list error, not leak detail")
+	assert.False(t, fr.listCalled, "the reader must never be consulted once the cap has refused the call")
+}
+
 // TestKeyorixClient_ListSecretsTruncated verifies that the KeyorixClient sets
 // the truncated flag when the server returns exactly 100 secrets.
 func TestKeyorixClient_ListSecretsTruncated(t *testing.T) {
