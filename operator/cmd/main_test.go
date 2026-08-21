@@ -1,8 +1,14 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,4 +266,217 @@ func TestMetricsFilterProvider_RequiresMatchingBearerToken(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 		assert.True(t, reached, "a matching bearer token must reach the real metrics handler")
 	})
+}
+
+// mainSubprocessEnv, when set to "1" in the process environment, tells
+// TestMainSubprocessHelper below to actually invoke the real main() instead of skipping --
+// it is only ever set by runMainSubprocess on a forked child, never present in a normal `go
+// test` invocation of this package.
+const mainSubprocessEnv = "KEYORIX_OPERATOR_MAIN_SUBPROCESS"
+
+// mainSubprocessArgsEnv, when set, supplies extra command-line arguments (space-separated --
+// only simple flag forms like "-all-namespaces" are needed here, so no quoting support) for
+// TestMainSubprocessHelper to hand to main() via os.Args. main() reads boolean flags like
+// -all-namespaces only from argv, with no environment-variable equivalent (unlike the string
+// flags, which all default from a KEYORIX_* env var and so need no special argv handling), so
+// this is the only way to drive those flags from runMainSubprocess.
+const mainSubprocessArgsEnv = "KEYORIX_OPERATOR_MAIN_ARGS"
+
+// TestMainSubprocessHelper is not itself a meaningful test of anything: it exists purely so
+// runMainSubprocess can re-exec this same compiled test binary as a child process and have
+// that child run the real, unmodified main() from main.go. This is the standard Go idiom for
+// testing a function that calls os.Exit (see e.g. the os/exec package's own
+// TestHelperProcess pattern) -- main() legitimately calls os.Exit(1) on its fail-closed
+// paths, and calling it in-process would kill the real test binary and lose every other
+// test's result, not just this one's.
+func TestMainSubprocessHelper(t *testing.T) {
+	if os.Getenv(mainSubprocessEnv) != "1" {
+		t.Skip("helper process for runMainSubprocess; not a standalone test")
+	}
+	if extra := os.Getenv(mainSubprocessArgsEnv); extra != "" {
+		// main() defines its flags on the package-level flag.CommandLine and calls
+		// flag.Parse() against os.Args[1:]; testing.Main() already parsed flag.CommandLine
+		// once (for -test.* flags) by the time this test body runs, so main()'s own
+		// StringVar/BoolVar calls need a fresh FlagSet to register into, and os.Args needs
+		// to hold exactly the args main() should see (not the -test.run=... this process
+		// was actually invoked with).
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = append([]string{os.Args[0]}, strings.Fields(extra)...)
+	}
+	main()
+}
+
+// buildSubprocessEnv returns a copy of the current process environment with the given
+// key/value overrides applied. Overridden keys are removed from the inherited environment
+// first, then re-appended -- exec.Cmd does not deduplicate Env entries, and on most libc
+// implementations the FIRST matching entry wins, so simply appending an override after
+// os.Environ() would silently be shadowed by any inherited value of the same key.
+func buildSubprocessEnv(overrides map[string]string) []string {
+	env := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, kv := range os.Environ() {
+		key, _, found := strings.Cut(kv, "=")
+		if found {
+			if _, overridden := overrides[key]; overridden {
+				continue
+			}
+		}
+		env = append(env, kv)
+	}
+	for k, v := range overrides {
+		env = append(env, k+"="+v)
+	}
+	return env
+}
+
+// runMainSubprocess execs this test binary as a child process, restricted (via -test.run) to
+// only run TestMainSubprocessHelper, which in turn invokes the real main(). env supplies the
+// child's environment overrides (see buildSubprocessEnv); mainSubprocessEnv is always added
+// automatically. Returns the child's combined stdout+stderr and its exit code.
+func runMainSubprocess(t *testing.T, env map[string]string) (output string, exitCode int) {
+	t.Helper()
+	overrides := make(map[string]string, len(env)+1)
+	for k, v := range env {
+		overrides[k] = v
+	}
+	overrides[mainSubprocessEnv] = "1"
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestMainSubprocessHelper$")
+	cmd.Env = buildSubprocessEnv(overrides)
+	out, err := cmd.CombinedOutput()
+	output = string(out)
+	if err == nil {
+		return output, 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return output, exitErr.ExitCode()
+	}
+	t.Fatalf("failed to run main() subprocess: %v\noutput:\n%s", err, output)
+	return "", -1
+}
+
+// TestMain_ExitsOnInvalidNamespaceScope drives the real main() through its
+// resolveScope-failure branch (POD_NAMESPACE empty/unset with neither -watch-namespaces nor
+// -all-namespaces set, ADR-076's fail-closed default) end to end: main() must actually stop
+// the process with a non-zero exit and must actually log the failure through its own
+// setupLog.Error call, not just return an error resolveScope-side that main() forgets to
+// act on.
+func TestMain_ExitsOnInvalidNamespaceScope(t *testing.T) {
+	output, exitCode := runMainSubprocess(t, map[string]string{
+		"POD_NAMESPACE":            "",
+		"KEYORIX_WATCH_NAMESPACES": "",
+	})
+	assert.Equal(t, 1, exitCode, "main() must exit(1) when resolveScope fails closed; output:\n%s", output)
+	assert.Contains(t, output, "POD_NAMESPACE",
+		"main() must surface the fail-closed error through its own logging, not swallow it; output:\n%s", output)
+}
+
+// TestMain_LogsWarningsBeforeFailingWithoutClusterCredentials drives main() past namespace
+// scope resolution (a valid POD_NAMESPACE this time) through its -metrics-bearer-token
+// startup WARNING log line and into ctrl.GetConfigOrDie() -- the call that builds the
+// manager's REST config, which in main.go happens before the -allowed-servers list is even
+// parsed, so that warning isn't reachable from this path (it's covered instead by
+// TestResolveScope_* and main.go's own control flow ordering; a genuinely successful manager
+// startup is integration-test territory, out of scope for a unit test). With KUBECONFIG
+// pointed at a nonexistent file, no in-cluster service-account environment, and HOME pointed
+// at an empty temp dir (so there's no ambient $HOME/.kube/config on the machine running the
+// test to fall back to), GetConfigOrDie's own config resolution deterministically fails and
+// calls os.Exit(1) itself -- entirely locally, no network access -- which is what proves
+// main() actually reached that call rather than stopping earlier for an unrelated reason.
+func TestMain_LogsWarningsBeforeFailingWithoutClusterCredentials(t *testing.T) {
+	tmpHome := t.TempDir()
+	output, exitCode := runMainSubprocess(t, map[string]string{
+		"POD_NAMESPACE":            "test-ns",
+		"KEYORIX_WATCH_NAMESPACES": "",
+		"KEYORIX_ALLOWED_SERVERS":  "",
+		"KEYORIX_METRICS_TOKEN":    "",
+		"KUBECONFIG":               filepath.Join(tmpHome, "does-not-exist"),
+		"HOME":                     tmpHome,
+		"KUBERNETES_SERVICE_HOST":  "",
+		"KUBERNETES_SERVICE_PORT":  "",
+	})
+	assert.NotEqual(t, 0, exitCode,
+		"main() must not proceed to mgr.Start() without any cluster credentials; output:\n%s", output)
+	assert.Contains(t, output, "metrics-bearer-token",
+		"the -metrics-bearer-token warning must be logged before manager startup; output:\n%s", output)
+	assert.Contains(t, output, "restricting watched namespaces",
+		"main() must reach and log the resolved namespace scope before attempting manager startup; output:\n%s", output)
+}
+
+// TestMain_LogsAllNamespacesWhenAllNamespacesFlagSet covers the other half of main()'s
+// scope-resolution logging (TestMain_LogsWarningsBeforeFailingWithoutClusterCredentials above
+// only exercises the "restricting watched namespaces" branch): with -all-namespaces passed on
+// argv, main() must log the cluster-wide watch explicitly rather than silently going
+// cluster-wide, per ADR-076 (see resolveScope's own doc comment on why -all-namespaces is the
+// only route there). Reuses the same KUBECONFIG/HOME-isolation trick as the test above to fail
+// deterministically, locally, before mgr.Start() -- once this far, which specific way it later
+// fails is not this test's concern.
+func TestMain_LogsAllNamespacesWhenAllNamespacesFlagSet(t *testing.T) {
+	tmpHome := t.TempDir()
+	output, exitCode := runMainSubprocess(t, map[string]string{
+		"POD_NAMESPACE":            "",
+		"KEYORIX_WATCH_NAMESPACES": "",
+		mainSubprocessArgsEnv:      "-all-namespaces",
+		"KUBECONFIG":               filepath.Join(tmpHome, "does-not-exist"),
+		"HOME":                     tmpHome,
+		"KUBERNETES_SERVICE_HOST":  "",
+		"KUBERNETES_SERVICE_PORT":  "",
+	})
+	assert.NotEqual(t, 0, exitCode,
+		"main() must not proceed to mgr.Start() without any cluster credentials; output:\n%s", output)
+	assert.Contains(t, output, "watching all namespaces",
+		"an explicit -all-namespaces must be logged, not silently applied; output:\n%s", output)
+}
+
+// fakeUnreachableKubeconfig writes a syntactically valid kubeconfig, in dir, that points at a
+// local loopback port nothing listens on. Pointing at 127.0.0.1 (rather than an off-host or
+// DNS-resolved address) means any connection attempt gets an immediate local "connection
+// refused" from the OS -- deterministic and instant, no DNS lookup and no timeout wait, so
+// this is safe to use from a unit test despite exercising a real client-go dial attempt.
+func fakeUnreachableKubeconfig(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "kubeconfig")
+	const content = `apiVersion: v1
+kind: Config
+clusters:
+- name: test
+  cluster:
+    server: https://127.0.0.1:1
+    insecure-skip-tls-verify: true
+contexts:
+- name: test
+  context:
+    cluster: test
+    user: test
+current-context: test
+users:
+- name: test
+  user: {}
+`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+// TestMain_ExitsOnManagerCreationFailure covers main()'s own "unable to start manager" error
+// branch (the one guarding ctrl.NewManager, as opposed to ctrl.GetConfigOrDie's own separate
+// os.Exit(1) exercised by the tests above) -- reachable only when GetConfigOrDie itself
+// succeeds. fakeUnreachableKubeconfig supplies a syntactically valid config so GetConfigOrDie
+// succeeds, but pointed at an address nothing serves, so the manager's own setup (which
+// contacts the API server, e.g. to build its RESTMapper) fails -- deterministically and
+// without a hang, since the target is local loopback (see fakeUnreachableKubeconfig).
+func TestMain_ExitsOnManagerCreationFailure(t *testing.T) {
+	tmpHome := t.TempDir()
+	output, exitCode := runMainSubprocess(t, map[string]string{
+		"POD_NAMESPACE":            "test-ns",
+		"KEYORIX_WATCH_NAMESPACES": "",
+		"KEYORIX_METRICS_TOKEN":    "irrelevant-token",
+		"KUBECONFIG":               fakeUnreachableKubeconfig(t, tmpHome),
+		"HOME":                     tmpHome,
+		"KUBERNETES_SERVICE_HOST":  "",
+		"KUBERNETES_SERVICE_PORT":  "",
+	})
+	assert.Equal(t, 1, exitCode,
+		"main() must exit(1) when ctrl.NewManager itself fails, not just when GetConfigOrDie fails; output:\n%s", output)
+	assert.Contains(t, output, "unable to start manager",
+		"main() must log through its own ctrl.NewManager error branch; output:\n%s", output)
 }
