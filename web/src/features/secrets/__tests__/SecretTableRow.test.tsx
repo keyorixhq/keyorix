@@ -267,4 +267,22 @@ describe('SecretTableRow', () => {
         const badge = screen.getByText('password');
         expect(badge.getAttribute('style')).toContain('rgba(99, 102, 241, 0.15)'); // password's darkBg
     });
+
+    it('uses the dark-theme colors when theme is "system" and the OS prefers dark', () => {
+        vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+        useUIStore.setState({ theme: 'system' });
+        renderRow({ secret: { ...baseSecret, type: 'password' } });
+        const badge = screen.getByText('password');
+        expect(badge.getAttribute('style')).toContain('rgba(99, 102, 241, 0.15)'); // password's darkBg
+        vi.restoreAllMocks();
+    });
+
+    it('uses the light-theme colors when theme is "system" and the OS does not prefer dark', () => {
+        vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false } as MediaQueryList);
+        useUIStore.setState({ theme: 'system' });
+        renderRow({ secret: { ...baseSecret, type: 'password' } });
+        const badge = screen.getByText('password');
+        expect(badge.getAttribute('style')).toContain('rgb(224, 231, 255)'); // password's lightBg (#e0e7ff)
+        vi.restoreAllMocks();
+    });
 });

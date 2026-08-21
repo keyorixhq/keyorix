@@ -180,6 +180,22 @@ describe('SecretDetailView version rollback', () => {
         expect(mockRollbackMutate).not.toHaveBeenCalled();
         confirmSpy.mockRestore();
     });
+
+    it('re-masks a revealed value after a successful rollback', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockRollbackMutate.mockImplementationOnce((_version: number, opts?: { onSuccess?: () => void }) => {
+            opts?.onSuccess?.();
+        });
+        render(<SecretDetailView secret={makeSecret()} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
+        expect(screen.getByRole('button', { name: /^Hide$/i })).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /Roll back/i }));
+
+        expect(screen.getByRole('button', { name: /^Reveal$/i })).toBeInTheDocument();
+        expect(screen.getByText(/Secret value is hidden/i)).toBeInTheDocument();
+        confirmSpy.mockRestore();
+    });
 });
 
 describe('SecretDetailView access list', () => {
@@ -237,6 +253,28 @@ describe('SecretDetailView suspend/resume', () => {
         expect(mockSuspendMutate).not.toHaveBeenCalled();
         confirmSpy.mockRestore();
     });
+
+    it('flips to the Suspended badge after the suspend mutation succeeds', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockSuspendMutate.mockImplementationOnce((_payload: unknown, opts?: { onSuccess?: () => void }) => {
+            opts?.onSuccess?.();
+        });
+        render(<SecretDetailView secret={makeSecret({ status: 'active' })} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Suspend$/i }));
+        expect(screen.getByTestId('suspended-badge')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^Resume$/i })).toBeInTheDocument();
+        confirmSpy.mockRestore();
+    });
+
+    it('flips back to active after the resume mutation succeeds', () => {
+        mockResumeMutate.mockImplementationOnce((_payload: unknown, opts?: { onSuccess?: () => void }) => {
+            opts?.onSuccess?.();
+        });
+        render(<SecretDetailView secret={makeSecret({ status: 'suspended' })} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Resume$/i }));
+        expect(screen.queryByTestId('suspended-badge')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^Suspend$/i })).toBeInTheDocument();
+    });
 });
 
 describe('SecretDetailView recent access', () => {
@@ -272,6 +310,7 @@ describe('SecretDetailView recent access', () => {
         const today = new Date(Date.now() - 60 * 1000).toISOString();
         const yesterday = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
         const fiveDaysAgo = new Date(Date.now() - (5 * 86_400_000 + 3_600_000)).toISOString();
+        const oneMonthAgo = new Date(Date.now() - (45 * 86_400_000 + 3_600_000)).toISOString();
         const threeMonthsAgo = new Date(Date.now() - (90 * 86_400_000 + 3_600_000)).toISOString();
         const oneYearAgo = new Date(Date.now() - (400 * 86_400_000 + 3_600_000)).toISOString();
         const twoYearsAgo = new Date(Date.now() - (800 * 86_400_000 + 3_600_000)).toISOString();
@@ -279,6 +318,7 @@ describe('SecretDetailView recent access', () => {
             { AccessedBy: 'alice', AccessTime: today, Action: 'read', IPAddress: '' },
             { AccessedBy: 'bob', AccessTime: yesterday, Action: 'read', IPAddress: '' },
             { AccessedBy: 'carol', AccessTime: fiveDaysAgo, Action: 'read', IPAddress: '' },
+            { AccessedBy: 'grace', AccessTime: oneMonthAgo, Action: 'read', IPAddress: '' },
             { AccessedBy: 'frank', AccessTime: threeMonthsAgo, Action: 'read', IPAddress: '' },
             { AccessedBy: 'dave', AccessTime: oneYearAgo, Action: 'read', IPAddress: '' },
             { AccessedBy: 'erin', AccessTime: twoYearsAgo, Action: 'read', IPAddress: '' },
@@ -287,6 +327,7 @@ describe('SecretDetailView recent access', () => {
         expect(screen.getByText('today')).toBeInTheDocument();
         expect(screen.getByText('yesterday')).toBeInTheDocument();
         expect(screen.getByText('5 days ago')).toBeInTheDocument();
+        expect(screen.getByText('1 month ago')).toBeInTheDocument();
         expect(screen.getByText('3 months ago')).toBeInTheDocument();
         expect(screen.getByText('1 year ago')).toBeInTheDocument();
         expect(screen.getByText('2 years ago')).toBeInTheDocument();
@@ -432,6 +473,18 @@ describe('SecretDetailView tags', () => {
         expect(setTagsMutate).not.toHaveBeenCalled();
         expect(input.value).toBe('');
     });
+
+    it('clears the tag draft input after the add mutation succeeds', () => {
+        setTagsMutate.mockImplementationOnce((_tags: string[], opts?: { onSuccess?: () => void }) => {
+            opts?.onSuccess?.();
+        });
+        render(<SecretDetailView secret={makeSecret()} />);
+        const input = screen.getByPlaceholderText(/add a tag/i) as HTMLInputElement;
+        fireEvent.change(input, { target: { value: 'web' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(setTagsMutate).toHaveBeenCalledTimes(1);
+        expect(input.value).toBe('');
+    });
 });
 
 describe('SecretDetailView description', () => {
@@ -482,6 +535,21 @@ describe('SecretDetailView description', () => {
         rerender(<SecretDetailView secret={makeSecret()} />);
 
         expect(screen.getByRole('button', { name: /Saving…/i })).toBeInTheDocument();
+    });
+
+    it('clears the draft after the description mutation succeeds', () => {
+        setDescriptionMutate.mockImplementationOnce((_value: string, opts?: { onSuccess?: () => void }) => {
+            opts?.onSuccess?.();
+        });
+        render(<SecretDetailView secret={makeSecret()} />);
+        const box = screen.getByDisplayValue('the prod DB');
+        fireEvent.change(box, { target: { value: 'a saved draft' } });
+        fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+        expect(setDescriptionMutate).toHaveBeenCalledTimes(1);
+        // The mutation's onSuccess clears the draft — back to showing the persisted
+        // description (still mocked as unchanged), and no Save/Cancel buttons.
+        expect(screen.getByDisplayValue('the prod DB')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
     });
 });
 
@@ -697,6 +765,35 @@ describe('SecretDetailView secret value reveal', () => {
 
             expect(screen.queryByText('sup3r-secret')).not.toBeInTheDocument();
             expect(screen.getByText(/Secret value is hidden/i)).toBeInTheDocument();
+        });
+    });
+
+    describe('copy-success reset', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('reverts the "Copied!" label back to "Copy" after the timeout elapses', async () => {
+            mockVersions = [
+                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
+            ];
+            vi.useFakeTimers();
+            render(<SecretDetailView secret={makeSecret()} />);
+
+            fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
+            const copyButtons = screen.getAllByRole('button', { name: /^Copy$/i });
+            await act(async () => {
+                fireEvent.click(copyButtons[copyButtons.length - 1]!);
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            expect(screen.getByText('Copied!')).toBeInTheDocument();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(2000);
+            });
+
+            expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
+            expect(screen.getAllByRole('button', { name: /^Copy$/i })).toHaveLength(2);
         });
     });
 });

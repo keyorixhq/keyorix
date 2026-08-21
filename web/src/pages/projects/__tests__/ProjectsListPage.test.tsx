@@ -420,6 +420,21 @@ describe('ProjectsListPage', () => {
         expect(within(recentSection).getByText('no-date')).toBeInTheDocument();
     });
 
+    it('sorts two projects that both lack an updatedAt without throwing', () => {
+        // With exactly two recent projects, Array.prototype.sort makes a single comparator
+        // call for the pair, so both `a.updatedAt` and `b.updatedAt` are nullish in that one
+        // call — exercising the `?? ''` fallback on both sides of the comparator at once.
+        hookState.projects = [
+            makeProject({ id: 24, name: 'no-date-one', updatedAt: undefined }),
+            makeProject({ id: 25, name: 'no-date-two', updatedAt: undefined }),
+        ];
+        render(<ProjectsListPage />);
+
+        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
+        expect(within(recentSection).getByText('no-date-one')).toBeInTheDocument();
+        expect(within(recentSection).getByText('no-date-two')).toBeInTheDocument();
+    });
+
     it('does not navigate on a non-Enter/Space key, and does not navigate on any key for a deleted row', () => {
         hookState.projects = [
             makeProject({ id: 17, name: 'active-row' }),

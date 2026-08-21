@@ -70,6 +70,18 @@ describe('SessionTimeoutWarning', () => {
         expect(screen.getByText(expected)).toBeInTheDocument();
     });
 
+    it('falls back to 0:00 when sessionTimeLeftMs is undefined despite passing the not-null check', () => {
+        // sessionTimeLeftMs is typed as number | null, but showWarning's
+        // `sessionTimeLeftMs !== null` guard does not exclude `undefined` -
+        // strict inequality treats undefined as not-null, so showWarning can
+        // still trip true. formatTime's `sessionTimeLeftMs ?? 0` fallback is
+        // what keeps the countdown from rendering "NaN:NaN" in that case.
+        setAuth({ sessionTimeLeftMs: undefined });
+        render(<SessionTimeoutWarning />);
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('0:00')).toBeInTheDocument();
+    });
+
     it('updates the displayed countdown when sessionTimeLeftMs ticks down on rerender', () => {
         setAuth({ sessionTimeLeftMs: 65000 });
         const { rerender } = render(<SessionTimeoutWarning />);

@@ -129,6 +129,15 @@ describe('PendingOnboardingSection', () => {
         expect(screen.getByText('user 50')).toBeInTheDocument();
     });
 
+    it('falls back to the raw state string when it has no known label', () => {
+        memberships = [{ id: 1, projectId: 3, userId: 42, role: 'project_developer', state: 'some_unmapped_state' }];
+        render(<PendingOnboardingSection projectId={3} users={users} />);
+
+        expect(screen.getByText('some_unmapped_state')).toBeInTheDocument();
+        // No known next action for an unmapped state — only the revoke button renders.
+        expect(screen.queryByRole('button', { name: /Mark|Activate/ })).not.toBeInTheDocument();
+    });
+
     it('revokes (cancels) an onboarding membership', () => {
         memberships = [
             { id: 1, projectId: 3, userId: 42, role: 'project_developer', state: 'invited', invitedAt: daysAgo(1) },

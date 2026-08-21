@@ -296,6 +296,21 @@ describe('SecretExpiryPage', () => {
         expect(within(rows[0]!).getByText('api_key')).toHaveStyle({ backgroundColor: '#dcfce7', color: '#166534' });
     });
 
+    it('falls back to the "text" type badge style for an unrecognized secret type', async () => {
+        const unknownTypeSecret = makeSecret({
+            id: 8,
+            name: 'mystery-type-secret',
+            type: 'sometype' as unknown as Secret['type'],
+            Expiration: '2024-02-15T00:00:00.000Z',
+        });
+        listMock.mockResolvedValue(listResponse([unknownTypeSecret]));
+        render(<SecretExpiryPage />);
+
+        await screen.findByText('mystery-type-secret');
+        // unrecognized types fall back to TYPE_STYLES.text's label + dark-theme colors
+        expect(screen.getByText('text')).toHaveStyle({ backgroundColor: 'rgba(148,163,184,0.15)', color: '#94a3b8' });
+    });
+
     it('resolves the system theme via matchMedia and uses dark colors when the system prefers dark', async () => {
         useUIStore.setState({ theme: 'system' });
         (window.matchMedia as unknown as ReturnType<typeof vi.fn>).mockReturnValue({

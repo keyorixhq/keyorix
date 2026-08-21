@@ -36,6 +36,15 @@ vi.mock('../../../store/authStore', () => ({
     useAuthStore: () => ({ user: { id: 1 } }),
 }));
 
+// Every real entry in PROJECT_ROLES currently has a matching ROLE_CAPABILITIES
+// entry with at least one granted capability, so RoleLegend's `?? []` and
+// `|| 'No project-level permissions'` fallbacks are otherwise unreachable.
+// Append one extra role name absent from the capability map to exercise them.
+vi.mock('../../../services/projects', async (importOriginal) => {
+    const actual = (await importOriginal()) as object;
+    return { ...actual, PROJECT_ROLES: [...(actual as any).PROJECT_ROLES, 'mystery_role'] };
+});
+
 // The invite flow is owned by features/invitations and covered by its own
 // tests (Phase 1). Here we only verify this tab opens/closes it and passes
 // the right project context — not the modal's internal form behavior.
@@ -444,6 +453,17 @@ describe('ProjectMembersTab', () => {
             // also renders an <option>Admin</option> / <option>Auditor</option>.
             expect(within(legendRoot).getByText('Admin')).toBeInTheDocument();
             expect(within(legendRoot).getByText('Auditor')).toBeInTheDocument();
+        });
+
+        it('falls back to a generic label and "no permissions" copy for a role missing from the capability map', () => {
+            mockMembers([]);
+            render(<ProjectMembersTab projectId={1} />);
+
+            const legendRoot = screen.getByText('Role permissions reference').closest('div')!;
+            fireEvent.click(screen.getByText('Role permissions reference'));
+
+            expect(within(legendRoot).getByText('Mystery_role')).toBeInTheDocument();
+            expect(within(legendRoot).getByText('No project-level permissions')).toBeInTheDocument();
         });
     });
 

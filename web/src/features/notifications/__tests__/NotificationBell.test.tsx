@@ -30,7 +30,7 @@ const baseNotifications = [
 // Mutable so individual tests can swap in different unread counts / notification
 // lists without redefining the whole mock factory (vi.mock factories can't
 // close over per-test locals).
-let mockData: { unread_count: number; notifications: typeof baseNotifications } = {
+let mockData: { unread_count: number; notifications: typeof baseNotifications } | undefined = {
     unread_count: 2,
     notifications: baseNotifications,
 };
@@ -121,6 +121,15 @@ describe('NotificationBell', () => {
         expect(backdrop).not.toBeNull();
         fireEvent.click(backdrop as Element);
         expect(screen.queryByText('Approved')).not.toBeInTheDocument();
+    });
+
+    it('falls back to an empty list and zero unread count when the query has no data yet', () => {
+        mockData = undefined;
+        render(<NotificationBell />);
+        expect(screen.queryByText('2')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Notifications' })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Notifications' }));
+        expect(screen.getByText('You’re all caught up.')).toBeInTheDocument();
     });
 
     it('renders relative time labels for minutes/hours/days-old notifications', () => {

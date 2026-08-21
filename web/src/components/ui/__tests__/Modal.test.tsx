@@ -1,7 +1,11 @@
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { Modal } from '../Modal';
+
+afterEach(() => {
+    vi.useRealTimers();
+});
 
 describe('Modal', () => {
     it('renders nothing visible when isOpen is false', () => {
@@ -83,6 +87,49 @@ describe('Modal', () => {
                 <p>Body</p>
             </Modal>
         );
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('does not close when the overlay is clicked and closeOnOverlayClick is false', () => {
+        const onClose = vi.fn();
+        const { baseElement } = render(
+            <Modal isOpen onClose={onClose} title="Details" closeOnOverlayClick={false}>
+                <p>Body</p>
+            </Modal>
+        );
+        const overlay = baseElement.querySelector('.bg-black\\/40') as HTMLElement;
+        fireEvent.pointerDown(overlay);
+        fireEvent.click(overlay);
+        expect(onClose).not.toHaveBeenCalled();
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    it("suppresses the outside-interaction dismiss once Radix's dismissable layer actually processes it when closeOnOverlayClick is false", async () => {
+        // Radix's DismissableLayer defers attaching its document-level "outside
+        // pointerdown" listener by a setTimeout(0) (to avoid reacting to the same
+        // interaction that opened the dialog), and with a modal Dialog.Content the
+        // pointerdown-outside dismissal itself is deferred again until the
+        // following click. Both hops need real elapsed time to run, so fake timers
+        // + a full pointerdown-then-click sequence are required to actually reach
+        // Modal's onInteractOutside handler (it never fires on a synchronous
+        // fireEvent in the same tick as render).
+        vi.useFakeTimers();
+        const onClose = vi.fn();
+        const { baseElement } = render(
+            <Modal isOpen onClose={onClose} title="Details" closeOnOverlayClick={false}>
+                <p>Body</p>
+            </Modal>
+        );
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        const overlay = baseElement.querySelector('.bg-black\\/40') as HTMLElement;
+        fireEvent.pointerDown(overlay, { button: 0 });
+        fireEvent.click(overlay);
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(onClose).not.toHaveBeenCalled();
         expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
 

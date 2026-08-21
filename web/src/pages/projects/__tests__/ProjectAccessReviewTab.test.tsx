@@ -229,4 +229,57 @@ describe('ProjectAccessReviewTab', () => {
         render(<ProjectAccessReviewTab projectId={1} />);
         expect(screen.getByText('—')).toBeInTheDocument();
     });
+
+    it('falls back to an em dash for a role grant with no role name', () => {
+        const unnamedRoleEntry = {
+            principalType: 'user',
+            principalId: 40,
+            principalName: 'dave',
+            email: 'dave@x.io',
+            source: 'role',
+            roleId: 6,
+            roleName: '',
+            accessLevel: 'read',
+            environmentId: 0,
+        };
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [unnamedRoleEntry] });
+        render(<ProjectAccessReviewTab projectId={1} />);
+        expect(screen.getByText('Role: — (project-wide)')).toBeInTheDocument();
+    });
+
+    it('shows a non-dormant recency badge for a user principal used recently', () => {
+        const recentEntry = {
+            principalType: 'user',
+            principalId: 41,
+            principalName: 'erin',
+            email: 'erin@x.io',
+            source: 'role',
+            roleId: 7,
+            roleName: 'viewer',
+            accessLevel: 'read',
+            environmentId: 0,
+            lastUsedAt: new Date().toISOString(),
+        };
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [recentEntry] });
+        render(<ProjectAccessReviewTab projectId={1} />);
+
+        const badge = screen.getByText('used today');
+        expect(badge).toBeInTheDocument();
+        expect(badge).toHaveAttribute('title', 'Last secret access in this project');
+    });
+
+    it('resets the revoke confirmation after a successful revoke', () => {
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[2]] });
+        mockRevokeMutate.mockImplementationOnce((_decision, opts) => opts.onSuccess());
+        render(<ProjectAccessReviewTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Revoke'));
+        expect(screen.getByText('Confirm')).toBeInTheDocument();
+        fireEvent.click(screen.getByText('Confirm'));
+
+        expect(mockRevokeMutate).toHaveBeenCalledTimes(1);
+        // Confirmation state is cleared, so the row is back to a plain Revoke button.
+        expect(screen.getByText('Revoke')).toBeInTheDocument();
+        expect(screen.queryByText('Confirm')).not.toBeInTheDocument();
+    });
 });

@@ -59,6 +59,13 @@ describe('SSOCompletePage', () => {
         await waitFor(() => expect(mockComplete).toHaveBeenCalledWith('2026-12-31T00:00:00Z', '2027-01-01T00:00:00Z'));
     });
 
+    it('passes undefined for expires_at when the fragment omits it', async () => {
+        window.location.hash = '#return_to=/secrets';
+        render(<SSOCompletePage />);
+        await waitFor(() => expect(mockComplete).toHaveBeenCalledWith(undefined, undefined));
+        await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/secrets', { replace: true }));
+    });
+
     it('redirects to /login with a generic error when completeSSOLogin rejects', async () => {
         mockComplete.mockRejectedValueOnce(new Error('network down'));
         window.location.hash = '#expires_at=2026-12-31T00:00:00Z';

@@ -135,6 +135,33 @@ describe('TransferOwnership', () => {
         consoleErrorSpy.mockRestore();
     });
 
+    it('does not update state from a search that rejects after the query changed (cancelled)', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        let rejectSearch!: (err: unknown) => void;
+        vi.mocked(usersApi.search).mockImplementationOnce(
+            () =>
+                new Promise((_resolve, reject) => {
+                    rejectSearch = reject;
+                })
+        );
+        const { unmount } = render(<TransferOwnership secretId={1} currentOwner="bob" />);
+        fireEvent.click(screen.getByText('Transfer ownership'));
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'a' } });
+
+        // Wait for the 200ms debounce to fire and invoke usersApi.search.
+        await waitFor(() => expect(usersApi.search).toHaveBeenCalledWith('a'));
+
+        // Unmount before the search rejects — the effect cleanup marks it cancelled, so the
+        // catch block's `if (!cancelled)` guard must skip the setResults([]) call.
+        unmount();
+        rejectSearch(new Error('network down'));
+        await Promise.resolve();
+
+        // No "state update on an unmounted component" warning was logged.
+        expect(consoleErrorSpy).not.toHaveBeenCalled();
+        consoleErrorSpy.mockRestore();
+    });
+
     it('shows the pending label while a transfer is in flight', () => {
         mockTransferState = { isPending: true, isError: false, error: null };
         render(<TransferOwnership secretId={1} currentOwner="bob" />);

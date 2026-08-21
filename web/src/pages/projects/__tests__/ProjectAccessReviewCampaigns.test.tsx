@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
-import { ProjectAccessReviewCampaigns } from '../ProjectAccessReviewCampaigns';
+import { ProjectAccessReviewCampaigns, lastUsedInfo } from '../ProjectAccessReviewCampaigns';
 
 const mockUseCampaigns = vi.fn();
 const mockUseCampaign = vi.fn();
@@ -254,5 +254,90 @@ describe('ProjectAccessReviewCampaigns', () => {
         expect(screen.getByText('All items decided')).toBeInTheDocument();
         fireEvent.click(screen.getByText('Close campaign'));
         expect(mockCloseMutate).toHaveBeenCalledWith({ campaignId: 1, force: false }, expect.any(Object));
+    });
+
+    it('toggles the detail panel closed when "Hide" is clicked', () => {
+        mockUseCampaigns.mockReturnValue({ data: campaigns, isLoading: false });
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        fireEvent.click(screen.getByText('Review'));
+        expect(screen.getByText(/alice/)).toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Hide'));
+        expect(screen.queryByText(/alice/)).not.toBeInTheDocument();
+        expect(screen.getByText('Review')).toBeInTheDocument();
+    });
+
+    it('computes a non-today "used Nd ago" label for a principal used several days back', () => {
+        // lastUsedInfo's label isn't rendered in the DOM directly (only its `dormant` flag
+        // drives the " · dormant" suffix), so exercise the exported pure function itself for
+        // the "used Nd ago" / not-dormant branch (5 days is under the 90-day dormancy cutoff).
+        const fiveDaysAgo = new Date(Date.now() - 5 * 86_400_000).toISOString();
+        const info = lastUsedInfo({ principalType: 'user', lastUsedAt: fiveDaysAgo });
+        expect(info).toEqual({ label: 'used 5d ago', dormant: false });
+    });
+
+    it('computes a "used today" label for a principal used moments ago', () => {
+        const info = lastUsedInfo({ principalType: 'user', lastUsedAt: new Date().toISOString() });
+        expect(info).toEqual({ label: 'used today', dormant: false });
+    });
+
+    it('marks a principal dormant once its last use crosses the 90-day cutoff', () => {
+        const ninetyDaysAgo = new Date(Date.now() - 90 * 86_400_000).toISOString();
+        const info = lastUsedInfo({ principalType: 'user', lastUsedAt: ninetyDaysAgo });
+        expect(info).toEqual({ label: 'used 90d ago', dormant: true });
+    });
+
+    it('returns an empty, non-dormant label for group principals (no aggregated last-use)', () => {
+        const info = lastUsedInfo({ principalType: 'group', lastUsedAt: undefined });
+        expect(info).toEqual({ label: '', dormant: false });
+    });
+
+    it('falls back to the role placeholder "—" when a role-sourced item has no role name', () => {
+        mockUseCampaigns.mockReturnValue({ data: campaigns, isLoading: false });
+        mockUseCampaign.mockReturnValue({
+            data: {
+                ...detail,
+                // lastUsedAt is set (recently) so the dormant " · dormant" suffix doesn't get
+                // appended to the same text node, which would break an exact-text match below.
+                items: [
+                    { ...detail.items[0], id: 31, roleName: '', source: 'role', lastUsedAt: new Date().toISOString() },
+                ],
+            },
+            isLoading: false,
+        });
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        fireEvent.click(screen.getByText('Review'));
+        expect(screen.getByText('Role: —')).toBeInTheDocument();
+    });
+
+    it('clears the revoke confirmation once the decision succeeds', () => {
+        mockUseCampaigns.mockReturnValue({ data: campaigns, isLoading: false });
+        mockDecideMutate.mockImplementationOnce((_vars, opts) => opts.onSuccess());
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        fireEvent.click(screen.getByText('Review'));
+
+        fireEvent.click(screen.getByText('Revoke'));
+        fireEvent.click(screen.getByText('Confirm'));
+        // onSuccess cleared confirmItem, so the item is back to its unconfirmed "Revoke" state.
+        expect(screen.queryByText('Confirm')).not.toBeInTheDocument();
+        expect(screen.getByText('Revoke')).toBeInTheDocument();
+    });
+
+    it('falls back to the response message when no error field is present', () => {
+        mockUseCampaigns.mockReturnValue({ data: [], isLoading: false });
+        mockOpenMutate.mockImplementationOnce((_name, opts) =>
+            opts.onError({ response: { data: { message: 'message only' } } })
+        );
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        fireEvent.click(screen.getByText('Open'));
+        expect(screen.getByText('message only')).toBeInTheDocument();
+    });
+
+    it('falls back to the generic "Action failed." message when the error has no details', () => {
+        mockUseCampaigns.mockReturnValue({ data: [], isLoading: false });
+        mockOpenMutate.mockImplementationOnce((_name, opts) => opts.onError({}));
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        fireEvent.click(screen.getByText('Open'));
+        expect(screen.getByText('Action failed.')).toBeInTheDocument();
     });
 });

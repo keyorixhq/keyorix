@@ -81,6 +81,19 @@ describe('InviteToProjectModal', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 
+    it("handleClose is also a no-op while pending via the modal's own close button", () => {
+        // The Cancel button is `disabled` while pending, so clicking it never
+        // actually reaches handleClose's body. Radix's dialog close ("X") button
+        // isn't wired to isPending, so it's the only DOM path that exercises
+        // handleClose's early-return guard during a pending mutation.
+        isPending = true;
+        render(<InviteToProjectModal isOpen onClose={onClose} projectId={3} projectName="mobile-app" />);
+
+        fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
     it('resets fields and closes on a successful submission', () => {
         mutate.mockImplementation((_vars, opts) => opts.onSuccess());
 

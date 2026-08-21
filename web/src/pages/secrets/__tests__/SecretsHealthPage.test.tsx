@@ -283,6 +283,36 @@ describe('SecretsHealthPage', () => {
         expect(screen.getByText('Auto: vault')).toBeInTheDocument();
     });
 
+    it('shows an auto-rotate badge without a backend suffix and a generic tooltip when no backend is set', () => {
+        mockUseSecretsHealth.mockReturnValue(
+            makeHealth({
+                rotation: {
+                    available: true,
+                    pct: 10,
+                    covered: 1,
+                    overdue: 1,
+                    dueSoon: 0,
+                    ok: 0,
+                    items: [
+                        {
+                            policy_id: 1,
+                            secret_id: 1,
+                            secret_name: 'DB_PASSWORD',
+                            status: 'overdue',
+                            days_overdue: 5,
+                            interval_days: 30,
+                            auto_rotate: true,
+                        },
+                    ],
+                },
+            })
+        );
+        render(<SecretsHealthPage />);
+        expect(screen.getByText('Auto')).toBeInTheDocument();
+        expect(screen.queryByText('Auto: vault')).not.toBeInTheDocument();
+        expect(screen.getByTitle('Auto-rotates (Keyorix-generated)')).toBeInTheDocument();
+    });
+
     // ── access card ─────────────────────────────────────────────────────────
 
     it('renders access stats', () => {
@@ -307,6 +337,14 @@ describe('SecretsHealthPage', () => {
         mockUseSecretsHealth.mockReturnValue(makeHealth({ access: { ...baseHealth.access, failedAuth24h: 4 } }));
         render(<SecretsHealthPage />);
         expect(screen.queryByText(/High number of failed auth attempts/)).not.toBeInTheDocument();
+    });
+
+    it('shows an amber dot for inactive users when there are any', () => {
+        mockUseSecretsHealth.mockReturnValue(makeHealth({ access: { ...baseHealth.access, inactiveUsers: 3 } }));
+        render(<SecretsHealthPage />);
+        const inactiveRow = screen.getByText('Inactive users (no login 30d)').closest('div')!;
+        const dot = inactiveRow.querySelector('div')!;
+        expect(dot).toHaveStyle({ backgroundColor: '#f59e0b' });
     });
 
     // ── anomalies card ──────────────────────────────────────────────────────

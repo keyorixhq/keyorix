@@ -32,6 +32,7 @@ vi.mock('../pages/audit/AuditLogPage', () => ({ AuditLogPage: () => <div>Audit L
 vi.mock('../pages/sharing', () => ({ SharingManagementPage: () => <div>Sharing Page</div> }));
 vi.mock('../pages/profile', () => ({ ProfilePage: () => <div>Profile Page</div> }));
 vi.mock('../pages/admin/AdminPage', () => ({ AdminPage: () => <div>Admin Page</div> }));
+vi.mock('../pages/billing/BillingPage', () => ({ BillingPage: () => <div>Billing Page</div> }));
 vi.mock('../pages/admin/UserDetailPage', () => ({ UserDetailPage: () => <div>User Detail</div> }));
 vi.mock('../pages/admin/RolesPoliciesPage', () => ({ RolesPoliciesPage: () => <div>Roles Policies</div> }));
 vi.mock('../pages/admin/GroupsPage', () => ({ GroupsPage: () => <div>Groups Page</div> }));
@@ -49,6 +50,7 @@ vi.mock('../pages/settings/AppearancePage', () => ({ AppearancePage: () => <div>
 vi.mock('../pages/settings/SystemHealthPage', () => ({ SystemHealthPage: () => <div>System Health</div> }));
 vi.mock('../pages/settings/AuthenticationPage', () => ({ AuthenticationPage: () => <div>Authentication</div> }));
 vi.mock('../pages/settings/EncryptionPage', () => ({ EncryptionPage: () => <div>Encryption & Keys</div> }));
+vi.mock('../pages/settings/LicensePage', () => ({ LicensePage: () => <div>License Page</div> }));
 vi.mock('../pages/compliance/CompliancePage', () => ({ CompliancePage: () => <div>Compliance</div> }));
 vi.mock('../pages/integrations/KeyorixConnectPage', () => ({
     KeyorixConnectPage: () => <div>Keyorix Connect</div>,
@@ -154,6 +156,7 @@ describe('App', () => {
         it.each([
             ['/dashboard', 'Dashboard Page'],
             ['/secrets', 'Secrets Page'],
+            ['/secrets/dynamic', 'Dynamic Secrets'],
             ['/profile', 'Profile Page'],
             ['/audit', 'Audit Log'],
             ['/integrations/sdks', 'SDKs & CLI'],
@@ -167,6 +170,7 @@ describe('App', () => {
             ['/settings/appearance', 'Appearance'],
             ['/compliance', 'Compliance'],
             ['/integrations/connect', 'Keyorix Connect'],
+            ['/roadmap', 'Roadmap'],
         ])('renders %s for an authenticated user', async (path, expectedText) => {
             setAuth({ isAuthenticated: true, user: { role: 'user' } });
             renderAt(path);
@@ -187,11 +191,14 @@ describe('App', () => {
 
         it.each([
             ['/admin/users', 'Admin Page'],
+            ['/admin/billing', 'Billing Page'],
             ['/admin/roles', 'Roles Policies'],
+            ['/admin/groups', 'Groups Page'],
             ['/admin/notification-channels', 'Notification Channels'],
             ['/settings/health', 'System Health'],
             ['/settings/auth', 'Authentication'],
             ['/settings/encryption', 'Encryption & Keys'],
+            ['/settings/license', 'License Page'],
             ['/admin/users/42', 'User Detail'],
             ['/admin/service-accounts', 'Service Accounts'],
             ['/admin/api-tokens', 'API Tokens'],
@@ -203,10 +210,13 @@ describe('App', () => {
         });
 
         it.each([
+            '/admin/billing',
+            '/admin/groups',
             '/admin/notification-channels',
             '/settings/health',
             '/settings/auth',
             '/settings/encryption',
+            '/settings/license',
             '/admin/users/42',
             '/admin/service-accounts',
             '/admin/api-tokens',

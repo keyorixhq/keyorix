@@ -137,6 +137,15 @@ describe('BillingPage', () => {
         expect(screen.getByText('No secrets or activity recorded for any project in this window.')).toBeInTheDocument();
     });
 
+    it('falls back to "(project <id>)" when a project has no name', () => {
+        const report = sampleReport();
+        report.projects[0].projectName = '';
+        useBillingReportMock.mockReturnValue(reportState({ report }));
+        render(<BillingPage />);
+
+        expect(screen.getByText('(project 1)')).toBeInTheDocument();
+    });
+
     it('defaults to the "This month" preset and recomputes the window on preset change', () => {
         render(<BillingPage />);
 
@@ -158,5 +167,34 @@ describe('BillingPage', () => {
 
         const lastCall = useBillingReportMock.mock.calls[useBillingReportMock.mock.calls.length - 1][0];
         expect(lastCall.from).toBe('2026-01-05T00:00:00Z');
+    });
+
+    it('switches to a custom range when the "To date" input is edited directly', () => {
+        render(<BillingPage />);
+
+        fireEvent.change(screen.getByLabelText('To date'), { target: { value: '2026-01-20' } });
+
+        const lastCall = useBillingReportMock.mock.calls[useBillingReportMock.mock.calls.length - 1][0];
+        expect(lastCall.to).toBe('2026-01-20T00:00:00Z');
+    });
+
+    it('computes the "Last month" window', () => {
+        render(<BillingPage />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Last month' }));
+
+        const lastCall = useBillingReportMock.mock.calls[useBillingReportMock.mock.calls.length - 1][0];
+        expect(lastCall.from).toBe(new Date(Date.UTC(2026, 0, 1)).toISOString());
+        expect(lastCall.to).toBe(new Date(Date.UTC(2026, 1, 1)).toISOString());
+    });
+
+    it('computes the "Last 90 days" window', () => {
+        render(<BillingPage />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Last 90 days' }));
+
+        const lastCall = useBillingReportMock.mock.calls[useBillingReportMock.mock.calls.length - 1][0];
+        expect(lastCall.from).toBe(new Date(Date.UTC(2026, 1, 15) - 90 * 86_400_000).toISOString());
+        expect(lastCall.to).toBe(new Date(Date.UTC(2026, 1, 15)).toISOString());
     });
 });

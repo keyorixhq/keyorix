@@ -597,6 +597,21 @@ describe('SecretsListPage — create secret: naming policy validation', () => {
         );
     });
 
+    it('allows a name under the max length when no pattern is configured, and submits', () => {
+        secretPolicyState.data = { name: { enabled: true, max_length: 20 } };
+        render(<SecretsListPage />);
+        fireEvent.click(screen.getAllByTestId('create-secret-button')[0]!);
+
+        expect(screen.getByText('Naming policy: max 20 chars.')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'short-name' } });
+        fireEvent.change(screen.getByLabelText(/^Value/), { target: { value: 'super-secret' } });
+        fireEvent.click(screen.getByTestId('create-secret-submit'));
+
+        expect(screen.queryByText('Name exceeds the 20-character maximum.')).not.toBeInTheDocument();
+        expect(createMutate).toHaveBeenCalled();
+    });
+
     // Documented, not fixed (out of scope for this coverage-only PR): a naming
     // pattern that looks catastrophically-backtracking (per safe-regex's
     // heuristic, e.g. `(a+)+$`) is never validated client-side — this is the

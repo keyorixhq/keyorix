@@ -110,6 +110,14 @@ describe('machineIdentitiesApi.transition', () => {
 
         expect(m.state).toBe('active');
     });
+
+    it('falls back to bare response.data when data.data is absent', async () => {
+        mocked.put.mockResolvedValue({ data: { ID: 9, State: 'revoked' } });
+
+        const m = await machineIdentitiesApi.transition(2, 9, 'revoke');
+
+        expect(m.state).toBe('revoked');
+    });
 });
 
 describe('normalizeMachineIdentity defaults', () => {

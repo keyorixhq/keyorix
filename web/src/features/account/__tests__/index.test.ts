@@ -28,14 +28,40 @@ vi.mock('../../../services/mfa', () => ({
     },
 }));
 
+import { accountApi } from '../../../services/account';
 import { personalTokensApi } from '../../../services/personalTokens';
 import { mfaApi } from '../../../services/mfa';
-import { useCreatePersonalToken, useEnrollMfa, useActivateMfa, useRegenerateRecoveryCodes } from '../index';
+import {
+    useUpdateProfile,
+    useChangePassword,
+    useSessions,
+    useRevokeSession,
+    usePersonalTokens,
+    useCreatePersonalToken,
+    useRevokePersonalToken,
+    useMfaRecoveryStatus,
+    useEnrollMfa,
+    useActivateMfa,
+    useDisableMfa,
+    useRegenerateRecoveryCodes,
+} from '../index';
 
-const personalTokensMock = personalTokensApi as unknown as { createToken: ReturnType<typeof vi.fn> };
+const accountMock = accountApi as unknown as {
+    updateProfile: ReturnType<typeof vi.fn>;
+    changePassword: ReturnType<typeof vi.fn>;
+    listSessions: ReturnType<typeof vi.fn>;
+    revokeSession: ReturnType<typeof vi.fn>;
+};
+const personalTokensMock = personalTokensApi as unknown as {
+    listTokens: ReturnType<typeof vi.fn>;
+    createToken: ReturnType<typeof vi.fn>;
+    revokeToken: ReturnType<typeof vi.fn>;
+};
 const mfaMock = mfaApi as unknown as {
     enroll: ReturnType<typeof vi.fn>;
     activate: ReturnType<typeof vi.fn>;
+    disable: ReturnType<typeof vi.fn>;
+    recoveryCodesStatus: ReturnType<typeof vi.fn>;
     regenerateRecoveryCodes: ReturnType<typeof vi.fn>;
 };
 
@@ -111,5 +137,109 @@ describe('sensitive mutation cache eviction (G28)', () => {
 
         unmount();
         await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
+    });
+});
+
+describe('profile + password mutations', () => {
+    it('useUpdateProfile calls accountApi.updateProfile with the given body', async () => {
+        accountMock.updateProfile.mockResolvedValueOnce({});
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useUpdateProfile(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ display_name: 'Ada', email: 'ada@example.com' });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(accountMock.updateProfile).toHaveBeenCalledWith({ display_name: 'Ada', email: 'ada@example.com' });
+    });
+
+    it('useChangePassword calls accountApi.changePassword with the given body', async () => {
+        accountMock.changePassword.mockResolvedValueOnce({});
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useChangePassword(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ current_password: 'old', new_password: 'new' });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(accountMock.changePassword).toHaveBeenCalledWith({ current_password: 'old', new_password: 'new' });
+    });
+});
+
+describe('active sessions', () => {
+    it('useSessions fetches the session list', async () => {
+        accountMock.listSessions.mockResolvedValueOnce([{ id: 1 }]);
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useSessions(), { wrapper });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.data).toEqual([{ id: 1 }]);
+    });
+
+    it('useRevokeSession revokes a session and invalidates the sessions query', async () => {
+        accountMock.listSessions.mockResolvedValue([]);
+        accountMock.revokeSession.mockResolvedValueOnce({});
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useRevokeSession(), { wrapper });
+
+        act(() => {
+            result.current.mutate(7);
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(accountMock.revokeSession).toHaveBeenCalledWith(7);
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['account-sessions'] });
+    });
+});
+
+describe('personal access tokens', () => {
+    it('usePersonalTokens fetches the token list', async () => {
+        personalTokensMock.listTokens.mockResolvedValueOnce([{ id: 1 }]);
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => usePersonalTokens(), { wrapper });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.data).toEqual([{ id: 1 }]);
+    });
+
+    it('useRevokePersonalToken revokes a token and invalidates the tokens query', async () => {
+        personalTokensMock.listTokens.mockResolvedValue([]);
+        personalTokensMock.revokeToken.mockResolvedValueOnce({});
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useRevokePersonalToken(), { wrapper });
+
+        act(() => {
+            result.current.mutate(3);
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(personalTokensMock.revokeToken).toHaveBeenCalledWith(3);
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['account-tokens'] });
+    });
+});
+
+describe('MFA self-service', () => {
+    it('useMfaRecoveryStatus fetches the recovery-code status', async () => {
+        mfaMock.recoveryCodesStatus.mockResolvedValueOnce({ total: 5, remaining: 3 });
+        const { wrapper } = createWrapper();
+        const { result } = renderHook(() => useMfaRecoveryStatus(), { wrapper });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.data).toEqual({ total: 5, remaining: 3 });
+    });
+
+    it('useDisableMfa disables MFA and invalidates the recovery-status query', async () => {
+        mfaMock.recoveryCodesStatus.mockResolvedValue({ total: 0, remaining: 0 });
+        mfaMock.disable.mockResolvedValueOnce({});
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useDisableMfa(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ code: '123456' });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(mfaMock.disable).toHaveBeenCalledWith({ code: '123456' });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['account-mfa-recovery'] });
     });
 });

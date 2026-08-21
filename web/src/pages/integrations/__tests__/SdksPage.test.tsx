@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
+import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
 import { SdksPage } from '../SdksPage';
 
 describe('SdksPage', () => {
@@ -49,5 +49,35 @@ describe('SdksPage', () => {
         fireEvent.click(copyButtons[0]!);
 
         await waitFor(() => expect(writeText).toHaveBeenCalled());
+    });
+
+    it('reverts the copy icon back to clipboard once the copied indicator times out', async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.assign(navigator, { clipboard: { writeText } });
+
+        // Fake timers must be active before the click so the 1500ms reset
+        // timer it schedules is itself a fake timer.
+        vi.useFakeTimers();
+        try {
+            render(<SdksPage />);
+            const copyButton = screen.getAllByRole('button', { name: 'Copy to clipboard' })[0]!;
+            const before = copyButton.innerHTML;
+            fireEvent.click(copyButton);
+
+            // copyToClipboard awaits navigator.clipboard.writeText (an already-
+            // resolved mock) before flipping the icon; flush that microtask.
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            expect(writeText).toHaveBeenCalled();
+            expect(copyButton.innerHTML).not.toBe(before);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1500);
+            });
+            expect(copyButton.innerHTML).toBe(before);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

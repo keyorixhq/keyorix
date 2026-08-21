@@ -164,6 +164,43 @@ describe('ProjectInvitationsSection — stale warnings', () => {
         expect(screen.getByText('expired')).toBeInTheDocument();
     });
 
+    it('falls back to the muted badge style for a revoked invite (own switch case)', () => {
+        // 'revoked' and 'expired' share a fallthrough case in stateStyle's switch;
+        // the 'expired' test above enters that block via the 'expired' label, never
+        // via 'revoked', so this exercises the 'revoked' case label directly.
+        invitations = [
+            {
+                id: 15,
+                projectId: 3,
+                email: 'revoked@demo.test',
+                role: 'project_viewer',
+                state: 'revoked',
+                invitedBy: 1,
+                createdAt: daysAgo(30),
+            },
+        ];
+        render(<ProjectInvitationsSection projectId={3} />);
+        expect(screen.getByText('revoked')).toBeInTheDocument();
+    });
+
+    it('falls back to the muted badge style for an unrecognized state (default case)', () => {
+        // stateStyle's switch has no case for arbitrary backend states; this
+        // exercises the `default:` branch itself.
+        invitations = [
+            {
+                id: 16,
+                projectId: 3,
+                email: 'unknown-state@demo.test',
+                role: 'project_viewer',
+                state: 'cancelled',
+                invitedBy: 1,
+                createdAt: daysAgo(30),
+            },
+        ];
+        render(<ProjectInvitationsSection projectId={3} />);
+        expect(screen.getByText('cancelled')).toBeInTheDocument();
+    });
+
     it('shows the expiry date for a non-stale pending invite with expiresAt', () => {
         const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
         invitations = [

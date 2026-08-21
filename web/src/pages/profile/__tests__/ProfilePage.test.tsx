@@ -489,7 +489,14 @@ describe('ProfilePage — Basic Info tab additional coverage', () => {
         render(<ProfilePage />);
         expect(screen.getByLabelText('Display Name')).toHaveValue('');
         expect(screen.getByLabelText('Email')).toHaveValue('');
+        // Required fields must be filled for the form to actually submit (jsdom
+        // enforces native HTML5 required-field validation) — the point of this
+        // test is what happens once onSuccess fires with no signed-in user, not
+        // the empty-fallback rendering checked just above.
+        fireEvent.change(screen.getByLabelText('Display Name'), { target: { value: 'X' } });
+        fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'x@example.com' } });
         fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+        expect(mocks.updateProfileMutate).toHaveBeenCalled();
         expect(mocks.setUser).not.toHaveBeenCalled();
         (mocks as { user: unknown }).user = originalUser;
     });

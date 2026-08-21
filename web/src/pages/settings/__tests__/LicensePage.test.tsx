@@ -132,4 +132,26 @@ describe('LicensePage — success state', () => {
         expect(screen.getByText('Expired')).toBeInTheDocument();
         expect(screen.getByText('license expired on 2026-01-01 — running the community baseline')).toBeInTheDocument();
     });
+
+    it('falls back to the community-baseline badge style for an unrecognized state', () => {
+        // Simulates a server rolling out a new LicenseState value the web build
+        // doesn't know about yet — STATE_META[state] ?? STATE_META.none.
+        useLicenseStatus.mockReturnValue({
+            data: { ...activeLicense, state: 'some_future_state' as any },
+            isLoading: false,
+            isError: false,
+        });
+        render(<LicensePage />);
+        expect(screen.getByText('Community baseline')).toBeInTheDocument();
+    });
+
+    it('falls back to the em dash for an unparseable expiry date', () => {
+        useLicenseStatus.mockReturnValue({
+            data: { ...activeLicense, expiresAt: 'not-a-real-date' },
+            isLoading: false,
+            isError: false,
+        });
+        render(<LicensePage />);
+        expect(screen.getByText('—')).toBeInTheDocument();
+    });
 });

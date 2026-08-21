@@ -148,6 +148,96 @@ describe('ShareSecretModal recipient search', () => {
         expect(await screen.findByText(/No users found/)).toBeInTheDocument();
     });
 
+    // Unlike the test above (where "No users found" is also the dropdown's default
+    // empty state, so it can pass before the fetch ever settles), this waits for the
+    // in-flight "Searching…" state first and only then rejects — so the assertion can
+    // only succeed if the effect's catch handler actually ran.
+    it('reaches the catch handler and clears results when a fetch genuinely rejects mid-flight', async () => {
+        let rejectSearch: (e: Error) => void = () => {};
+        searchImpl = () =>
+            new Promise((_resolve, reject) => {
+                rejectSearch = reject;
+            });
+
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'bob' } });
+
+        expect(await screen.findByText('Searching…')).toBeInTheDocument();
+        rejectSearch(new Error('network down'));
+        expect(await screen.findByText(/No users found/)).toBeInTheDocument();
+    });
+
+    // "No users found" is also the dropdown's default empty state, so a search that
+    // starts from empty results can't prove this ran. Show a real match first, then
+    // switch to a response missing the `users` field and wait for the transition
+    // back to "No users found" — that can only happen via the `?? []` fallback.
+    it('falls back to an empty result list when the search response omits the users field', async () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'bob' } });
+        await screen.findByText('Bob');
+
+        searchImpl = async () => ({}) as unknown as { users: unknown[] };
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'zzz' } });
+
+        expect(await screen.findByText(/No users found/)).toBeInTheDocument();
+    });
+
+    // Regression / race-condition guard: if the query changes again before an
+    // in-flight search settles, the stale response must be ignored so it can't
+    // clobber results/loading state that belong to the newer query.
+    it('ignores a stale successful response for a query that was superseded before it resolved', async () => {
+        let callCount = 0;
+        let resolveFirst: (v: { users: unknown[] }) => void = () => {};
+        searchImpl = async () => {
+            callCount += 1;
+            if (callCount === 1) {
+                return new Promise<{ users: unknown[] }>((resolve) => {
+                    resolveFirst = resolve;
+                });
+            }
+            return { users: [{ id: 9, username: 'carol', display_name: 'Carol', email: 'carol@test.com' }] };
+        };
+
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'bo' } });
+        expect(await screen.findByText('Searching…')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'car' } });
+        expect(await screen.findByText('Carol')).toBeInTheDocument();
+
+        // Resolve the superseded first request only after the second has already won.
+        resolveFirst({ users: [{ id: 1, username: 'stale', display_name: 'Stale', email: 'stale@test.com' }] });
+        await waitFor(() => expect(screen.queryByText('Stale')).not.toBeInTheDocument());
+        expect(screen.getByText('Carol')).toBeInTheDocument();
+    });
+
+    // Same guard, but for the catch path: a superseded request that later rejects
+    // must not be allowed to clear results that belong to the newer, already-resolved query.
+    it('ignores a stale rejected response for a query that was superseded before it settled', async () => {
+        let callCount = 0;
+        let rejectFirst: (e: Error) => void = () => {};
+        searchImpl = async () => {
+            callCount += 1;
+            if (callCount === 1) {
+                return new Promise<{ users: unknown[] }>((_resolve, reject) => {
+                    rejectFirst = reject;
+                });
+            }
+            return { users: [{ id: 9, username: 'carol', display_name: 'Carol', email: 'carol@test.com' }] };
+        };
+
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'bo' } });
+        expect(await screen.findByText('Searching…')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'car' } });
+        expect(await screen.findByText('Carol')).toBeInTheDocument();
+
+        rejectFirst(new Error('stale network error'));
+        await waitFor(() => expect(screen.getByText('Carol')).toBeInTheDocument());
+        expect(screen.queryByText(/No users found/)).not.toBeInTheDocument();
+    });
+
     it('falls back to username when a matched user has no display name', async () => {
         searchImpl = async () => ({
             users: [{ id: 8, username: 'nodisplay', display_name: '', email: 'nd@test.com' }],
@@ -181,6 +271,18 @@ describe('ShareSecretModal recipient search', () => {
         expect(screen.queryByText('Bob')).not.toBeInTheDocument();
     });
 
+    // Counterpart to the "outside click" test above: a mousedown that lands inside
+    // the search input itself is not "outside", so the dropdown must stay open.
+    it('keeps the dropdown open when the click lands on the search input itself', async () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        const input = screen.getByPlaceholderText(/Search by name/i);
+        fireEvent.change(input, { target: { value: 'bob' } });
+        await screen.findByText('Bob');
+
+        fireEvent.mouseDown(input);
+        expect(screen.getByText('Bob')).toBeInTheDocument();
+    });
+
     it('reopens the dropdown on focus when a query is already present', async () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         const input = screen.getByPlaceholderText(/Search by name/i);
@@ -190,6 +292,14 @@ describe('ShareSecretModal recipient search', () => {
 
         fireEvent.focus(input);
         expect(await screen.findByText('Bob')).toBeInTheDocument();
+    });
+
+    it('does not reopen the dropdown on focus when the query is empty', () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        const input = screen.getByPlaceholderText(/Search by name/i);
+
+        fireEvent.focus(input);
+        expect(screen.queryByText(/No users found/)).not.toBeInTheDocument();
     });
 });
 

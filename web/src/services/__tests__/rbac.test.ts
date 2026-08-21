@@ -202,6 +202,14 @@ describe('rbacApi.getRoles', () => {
         mocked.get.mockResolvedValueOnce({ data: { data: {} } });
         await expect(rbacApi.getRoles()).resolves.toEqual([]);
     });
+
+    it('defaults permissions to [] when neither permissions nor Permissions is present', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { data: [{ id: 1, name: 'no-perms-field' }] },
+        });
+        const roles = await rbacApi.getRoles();
+        expect(roles[0].permissions).toEqual([]);
+    });
 });
 
 // ── getRole ───────────────────────────────────────────────────────────────────

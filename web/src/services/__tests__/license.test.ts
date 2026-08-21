@@ -56,4 +56,41 @@ describe('licenseApi.getStatus', () => {
         expect(status.maxSeats).toBe(0);
         expect(status.features).toEqual([]);
     });
+
+    it('defaults state to "none" and features to [] when the fields are missing entirely', async () => {
+        mock.get.mockResolvedValueOnce({ data: { data: {} } });
+
+        const status = await licenseApi.getStatus();
+
+        expect(status.state).toBe('none');
+        expect(status.features).toEqual([]);
+    });
+
+    it('unwraps a payload that is not itself wrapped in an envelope data field', async () => {
+        mock.get.mockResolvedValueOnce({
+            data: {
+                state: 'expired',
+                licensee: 'Direct Co',
+                plan: 'community',
+                features: [],
+                grants: false,
+                expires_at: '2025-01-01T00:00:00Z',
+                max_seats: 5,
+                reason: 'past due',
+            },
+        });
+
+        const status = await licenseApi.getStatus();
+
+        expect(status).toEqual({
+            state: 'expired',
+            licensee: 'Direct Co',
+            plan: 'community',
+            features: [],
+            grants: false,
+            expiresAt: '2025-01-01T00:00:00Z',
+            maxSeats: 5,
+            reason: 'past due',
+        });
+    });
 });

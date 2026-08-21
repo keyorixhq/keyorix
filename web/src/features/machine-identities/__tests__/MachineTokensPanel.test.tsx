@@ -82,6 +82,16 @@ describe('MachineTokensPanel', () => {
         expect(issueMutate).not.toHaveBeenCalled();
     });
 
+    it('does not issue when Enter is pressed with a blank/whitespace-only name', () => {
+        // The Issue button is disabled for a blank name, but Enter bypasses it —
+        // the handler's own trim() guard is what stops the issue here.
+        render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+        const nameInput = screen.getByPlaceholderText('Token name…');
+        fireEvent.change(nameInput, { target: { value: '   ' } });
+        fireEvent.keyDown(nameInput, { key: 'Enter' });
+        expect(issueMutate).not.toHaveBeenCalled();
+    });
+
     it('issues via the Enter key and shows the one-time token modal, then Copy + Done', async () => {
         issueMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ token: 'kx_machine_raw_secret', id: 99, prefix: 'kx_machine_9999', classification: '' });
@@ -104,6 +114,52 @@ describe('MachineTokensPanel', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Done' }));
         expect(screen.queryByText('Machine token issued')).not.toBeInTheDocument();
+    });
+
+    it('clears the issued token modal when closed via the Modal close button', () => {
+        issueMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ token: 'kx_machine_x_close', id: 103, prefix: 'kx_machine_xc', classification: '' });
+        });
+
+        render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+        fireEvent.change(screen.getByPlaceholderText('Token name…'), { target: { value: 'x-close-test' } });
+        fireEvent.click(screen.getByRole('button', { name: /issue token/i }));
+        expect(screen.getByText('Machine token issued')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+        expect(screen.queryByText('Machine token issued')).not.toBeInTheDocument();
+    });
+
+    describe('copy-to-clipboard reset', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('reverts the Copy button label back to "Copy" after the timeout elapses', () => {
+            issueMutate.mockImplementation((_vars, opts) => {
+                opts.onSuccess({
+                    token: 'kx_machine_copy_secret',
+                    id: 102,
+                    prefix: 'kx_machine_copy',
+                    classification: '',
+                });
+            });
+            vi.useFakeTimers();
+
+            render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+            fireEvent.change(screen.getByPlaceholderText('Token name…'), { target: { value: 'copy-test' } });
+            fireEvent.click(screen.getByRole('button', { name: /issue token/i }));
+
+            fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+            expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+
+            act(() => {
+                vi.advanceTimersByTime(2000);
+            });
+
+            expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+        });
     });
 
     it('an Enter keypress on the name field is a no-op when Enter is not pressed', () => {
@@ -155,6 +211,38 @@ describe('MachineTokensPanel', () => {
 
         expect(revokeMutate).toHaveBeenCalledWith(11, expect.anything());
         expect(screen.getByText('Failed to revoke token.')).toBeInTheDocument();
+    });
+
+    it('falls back to "(unnamed)" and Unclassified for a token with no name/classification, and can reclassify it', () => {
+        tokensData = [{ id: 13, name: '', prefix: 'kx_machine_zz00', revoked: false, classification: undefined }];
+
+        render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+
+        expect(screen.getByText('(unnamed)')).toBeInTheDocument();
+        const picker = screen.getByLabelText('Classification for token kx_machine_zz00') as HTMLSelectElement;
+        expect(picker.value).toBe('');
+
+        fireEvent.change(picker, { target: { value: 'confidential' } });
+        expect(classifyMutate).toHaveBeenCalledWith({ tokenId: 13, classification: 'confidential' }, expect.anything());
+    });
+
+    it('shows the Unclassified badge for a token with no classification (read-only view)', () => {
+        tokensData = [{ id: 13, name: 'svc', prefix: 'kx_machine_zz00', revoked: false, classification: undefined }];
+
+        render(<MachineTokensPanel projectId={3} machineId={7} canManage={false} />);
+
+        expect(screen.getByTestId('mt-classification-badge')).toHaveTextContent('Unclassified');
+    });
+
+    it('falls back to the prefix in the revoke confirmation when the token has no name', () => {
+        tokensData = [{ id: 13, name: '', prefix: 'kx_machine_zz00', revoked: false, classification: '' }];
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+        fireEvent.click(screen.getByTitle('Revoke token'));
+
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('kx_machine_zz00'));
+        expect(revokeMutate).toHaveBeenCalledWith(13, expect.anything());
     });
 
     it('hides the revoke action for already-revoked tokens', () => {

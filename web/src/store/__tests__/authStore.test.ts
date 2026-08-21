@@ -650,4 +650,30 @@ describe('authStore', () => {
             expect(isTokenExpired()).toBe(false);
         });
     });
+
+    describe('module-level browser guard (typeof window !== "undefined")', () => {
+        // This suite runs under jsdom, where `window` always exists, so the
+        // `typeof window !== 'undefined'` guard around the cross-tab storage
+        // listener registration (bottom of authStore.ts) only ever takes its
+        // true branch through every other test in this file. Force a fresh
+        // module evaluation with `window` shadowed to undefined — simulating
+        // the SSR/non-browser context the guard exists for — to prove the
+        // module still loads cleanly and skips registering the listener,
+        // without touching product code to make the branch reachable another
+        // way.
+        it('reimporting the module without a global window does not throw and skips wiring the storage listener', async () => {
+            const originalWindow = globalThis.window;
+            vi.resetModules();
+            // @ts-expect-error deliberately simulating an environment without `window`
+            globalThis.window = undefined;
+
+            try {
+                const mod = await import('../authStore');
+                expect(mod.useAuthStore).toBeDefined();
+                expect(mod.useAuthStore.getState().isLoading).toBe(true);
+            } finally {
+                globalThis.window = originalWindow;
+            }
+        });
+    });
 });
