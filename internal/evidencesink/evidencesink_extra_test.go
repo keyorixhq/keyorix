@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -268,4 +269,67 @@ func TestMulti_AllFailing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "a")
 	assert.Contains(t, err.Error(), "b")
+}
+
+// TestValidateEndpoint_MalformedURL covers the url.Parse error branch of
+// validateEndpoint (previously unreached — every existing test used a
+// syntactically valid URL, so only the well-formed path was exercised).
+func TestValidateEndpoint_MalformedURL(t *testing.T) {
+	err := validateEndpoint("http://[::1", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid endpoint")
+}
+
+// TestPinnedDialContext_NoAddressesResolved covers the branch where the
+// resolver succeeds but returns zero addresses — distinct from a resolution
+// error, and previously unreached.
+func TestPinnedDialContext_NoAddressesResolved(t *testing.T) {
+	orig := lookupIPAddr
+	t.Cleanup(func() { lookupIPAddr = orig })
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		return nil, nil // resolves successfully but to nothing
+	}
+
+	dial, err := pinnedDialContext("empty-answer.evidence.example")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not resolve to any address")
+	assert.Nil(t, dial)
+}
+
+// TestPinnedDialContext_InvalidDialAddress covers the returned dialer's
+// net.SplitHostPort error branch: a dial address without a port must be
+// refused with a clear error rather than panicking or dialing garbage.
+func TestPinnedDialContext_InvalidDialAddress(t *testing.T) {
+	orig := lookupIPAddr
+	t.Cleanup(func() { lookupIPAddr = orig })
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("203.0.113.20")}}, nil
+	}
+
+	dial, err := pinnedDialContext("split-host-port.evidence.example")
+	require.NoError(t, err)
+
+	_, dialErr := dial(context.Background(), "tcp", "no-port-here")
+	require.Error(t, dialErr, "a dial address with no port must be refused")
+	assert.Contains(t, dialErr.Error(), "invalid dial address")
+}
+
+// TestNewObjectStore_AWSConfigLoadFailurePropagates covers the
+// awsconfig.LoadDefaultConfig error branch of NewObjectStore (fail-closed):
+// a misconfigured AWS environment (here, an unreadable CA bundle path) must
+// surface as a constructor error rather than deferring the failure to the
+// first upload.
+func TestNewObjectStore_AWSConfigLoadFailurePropagates(t *testing.T) {
+	origCABundle, hadCABundle := os.LookupEnv("AWS_CA_BUNDLE")
+	require.NoError(t, os.Setenv("AWS_CA_BUNDLE", "/nonexistent/evidencesink-test/ca-bundle.pem"))
+	t.Cleanup(func() {
+		if hadCABundle {
+			_ = os.Setenv("AWS_CA_BUNDLE", origCABundle)
+		} else {
+			_ = os.Unsetenv("AWS_CA_BUNDLE")
+		}
+	})
+
+	_, err := NewObjectStore(context.Background(), ObjectStoreConfig{Bucket: "b"})
+	require.ErrorContains(t, err, "load AWS config")
 }

@@ -49,6 +49,28 @@ func TestResolveGoBinary_NeitherGorootNorPATH(t *testing.T) {
 	}
 }
 
+// TestRealTestNames_PoisonedToolchainEnv exercises realTestNames() with a
+// GOROOT/PATH combination that would make goBinary() fail if runtime.GOROOT()
+// picked up the override -- it doesn't (empirically, on this toolchain,
+// runtime.GOROOT() reflects the value at process start, not later
+// os.Setenv/t.Setenv calls, so goBinaryFrom(runtime.GOROOT()) still finds the
+// real "go" via its unchanged, compiled-in GOROOT). The `go test -list`
+// *subprocess* realTestNames() then shells out to inherits this broken
+// GOROOT via its environment, though, and fails to run at all -- so this
+// still drives realTestNames() to its cmd.Run() error-wrapping branch
+// (already covered by TestRealTestNames_DirWithNoGoFiles via a different
+// trigger), just not through goBinary() itself, which this package cannot
+// force to fail without either controlling the environment before process
+// start or mocking non-test production code -- both out of reach here.
+func TestRealTestNames_PoisonedToolchainEnv(t *testing.T) {
+	t.Setenv("GOROOT", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	if _, err := realTestNames(); err == nil {
+		t.Error("expected an error when the go subprocess's own GOROOT/PATH environment is broken")
+	}
+}
+
 func TestRealTestNames_DirWithNoGoFiles(t *testing.T) {
 	original := handlersPkgDir
 	handlersPkgDir = t.TempDir()

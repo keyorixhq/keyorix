@@ -2,6 +2,7 @@ package notifychan
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -128,6 +129,22 @@ func TestChatSink_EscapesMrkdwnInjectionInTitle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(get(), &payload))
 	assert.NotContains(t, payload["text"], "<!here>")
 	assert.Contains(t, payload["text"], "&lt;!here&gt;")
+}
+
+// TestChatSink_SendRequestBuildErrorIsPermanent covers send's http.NewRequestWithContext
+// error path. The webhook URL is validated once at construction (newChat), so the only
+// way to exercise a request-build failure at send time is to bypass the constructor and
+// hand send() a URL that url.Parse itself rejects (a raw control character) — proving
+// the documented contract (a request-construction failure is a permanent, non-retryable
+// error, same as a marshalling failure) actually holds, not just that some error occurs.
+func TestChatSink_SendRequestBuildErrorIsPermanent(t *testing.T) {
+	s := &ChatSink{
+		cfg:    ChatConfig{Kind: ChatSlack, WebhookURL: "https://example.com/\x7fbad"},
+		client: &http.Client{},
+	}
+	retryable, err := s.send(context.Background(), core.NotificationEvent{Title: "x"})
+	require.Error(t, err)
+	assert.False(t, retryable, "a malformed request must be treated as permanent, not retried")
 }
 
 func TestNewChat_Validation(t *testing.T) {

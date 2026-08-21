@@ -86,4 +86,76 @@ func TestPrintProviderStatus_AWSKMS(t *testing.T) {
 	})
 	assert.Contains(t, out, "Key Provider: aws-kms")
 	assert.Contains(t, out, "arn:aws:kms")
+	// No WrappedKeyPath configured — the "Wrapped key:" line must be omitted.
+	assert.NotContains(t, out, "Wrapped key:")
+}
+
+func TestPrintProviderStatus_AWSKMS_WithWrappedKeyPath(t *testing.T) {
+	out := captureProviderStatusOutput(t, func() {
+		printProviderStatus(config.KeyProviderConfig{
+			Type:           "aws-kms",
+			KMSKeyID:       "arn:aws:kms:eu-west-1:123:key/abc",
+			WrappedKeyPath: "/var/lib/keyorix/wrapped.key",
+		})
+	})
+	assert.Contains(t, out, "Key Provider: aws-kms")
+	assert.Contains(t, out, "Wrapped key: /var/lib/keyorix/wrapped.key")
+	assert.Contains(t, out, "connectivity not checked")
+}
+
+func TestPrintProviderStatus_GCPKMS(t *testing.T) {
+	out := captureProviderStatusOutput(t, func() {
+		printProviderStatus(config.KeyProviderConfig{
+			Type:     "gcp-kms",
+			KMSKeyID: "projects/p/locations/l/keyRings/r/cryptoKeys/k",
+		})
+	})
+	assert.Contains(t, out, "Key Provider: gcp-kms")
+	assert.Contains(t, out, "projects/p/locations")
+}
+
+func TestPrintProviderStatus_AzureKMS(t *testing.T) {
+	out := captureProviderStatusOutput(t, func() {
+		printProviderStatus(config.KeyProviderConfig{
+			Type:     "azure-kms",
+			KMSKeyID: "https://vault.vault.azure.net/keys/kek/abc",
+		})
+	})
+	assert.Contains(t, out, "Key Provider: azure-kms")
+	assert.Contains(t, out, "vault.azure.net")
+}
+
+func TestPrintProviderStatus_Exec(t *testing.T) {
+	out := captureProviderStatusOutput(t, func() {
+		printProviderStatus(config.KeyProviderConfig{
+			Type:        "exec",
+			ExecCommand: []string{"/usr/local/bin/get-kek", "--format", "hex"},
+		})
+	})
+	assert.Contains(t, out, "Key Provider: exec")
+	assert.Contains(t, out, "get-kek")
+}
+
+func TestPrintProviderStatus_Shamir(t *testing.T) {
+	out := captureProviderStatusOutput(t, func() {
+		printProviderStatus(config.KeyProviderConfig{
+			Type:             "shamir",
+			ShamirShareFiles: []string{"share1.key", "share2.key", "share3.key"},
+		})
+	})
+	assert.Contains(t, out, "Key Provider: shamir")
+	assert.Contains(t, out, "3 configured")
+}
+
+func TestPrintProviderStatus_TPM(t *testing.T) {
+	out := captureProviderStatusOutput(t, func() {
+		printProviderStatus(config.KeyProviderConfig{
+			Type:           "tpm",
+			TPMDevice:      "/dev/tpmrm0",
+			WrappedKeyPath: "wrapped-kek.tpm",
+		})
+	})
+	assert.Contains(t, out, "Key Provider: tpm")
+	assert.Contains(t, out, "TPM device: /dev/tpmrm0")
+	assert.Contains(t, out, "Wrapped key: wrapped-kek.tpm")
 }

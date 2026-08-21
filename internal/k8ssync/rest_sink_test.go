@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -261,6 +262,43 @@ func TestRESTSink_ApplyPatchRejectsResourceVersionConflict_Bug4(t *testing.T) {
 	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("v2")})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 409")
+}
+
+// failOnMethodTransport is an http.RoundTripper that simulates a network failure
+// for one specific HTTP method (letting every other method through to base), so a
+// test can force applyOwnedSecret's/createSecret's hc.Do error branch on exactly the
+// request it targets without disturbing the preceding ownership-check GET.
+type failOnMethodTransport struct {
+	base       http.RoundTripper
+	failMethod string
+}
+
+func (t *failOnMethodTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == t.failMethod {
+		return nil, fmt.Errorf("simulated network failure")
+	}
+	return t.base.RoundTrip(req)
+}
+
+// TestRESTSink_ApplyPatchNetworkError exercises applyOwnedSecret's hc.Do error
+// branch: the ownership-check GET succeeds (the Secret is owned, so Apply proceeds
+// to the Server-Side-Apply PATCH), but the PATCH itself fails at the transport level
+// (e.g. a connection drop) rather than getting an HTTP response at all.
+func TestRESTSink_ApplyPatchNetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only the ownership-check GET should ever reach the server; the PATCH is
+		// intercepted by the failing transport before it leaves the client.
+		require.Equal(t, http.MethodGet, r.Method)
+		_, _ = w.Write([]byte(`{"metadata":{"uid":"u-1","resourceVersion":"rv-1","labels":{"app.kubernetes.io/managed-by":"keyorix-sync"}}}`))
+	}))
+	defer srv.Close()
+
+	sink := testSink(srv)
+	sink.hc = &http.Client{Transport: &failOnMethodTransport{base: http.DefaultTransport, failMethod: http.MethodPatch}}
+
+	err := sink.Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("v2")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "request failed")
 }
 
 func TestRESTSink_ApplyError(t *testing.T) {

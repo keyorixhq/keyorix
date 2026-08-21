@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // --- PrometheusMiddleware ---
@@ -45,6 +46,34 @@ func TestPrometheusMiddleware_UnmatchedRoute(t *testing.T) {
 	PrometheusMiddleware(handler).ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+// TestPrometheusMiddleware_HandlerWritesWithoutExplicitStatus verifies that
+// when a handler never calls WriteHeader (writing only a body, or nothing at
+// all), the RECORDED METRIC status defaults to 200 — the "ww.Status() == 0"
+// branch in PrometheusMiddleware's deferred recorder — rather than being
+// recorded as 0 or omitted. This is checked against the actual
+// httpRequestsTotal series, not just the HTTP response code (which the test
+// ResponseRecorder itself would default to 200 regardless of this branch).
+func TestPrometheusMiddleware_HandlerWritesWithoutExplicitStatus(t *testing.T) {
+	const route = "/api/v1/implicit-200-status-metric"
+	before := testutil.ToFloat64(httpRequestsTotal.WithLabelValues(http.MethodGet, route, "200"))
+
+	rctx := chi.NewRouteContext()
+	rctx.RoutePatterns = []string{route}
+	req := httptest.NewRequest(http.MethodGet, route, nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		// Deliberately does not call WriteHeader or Write.
+	})
+	PrometheusMiddleware(handler).ServeHTTP(rec, req)
+
+	after := testutil.ToFloat64(httpRequestsTotal.WithLabelValues(http.MethodGet, route, "200"))
+	if after != before+1 {
+		t.Errorf("httpRequestsTotal{status=200} = %v -> %v; want +1 (an unwritten response must be recorded as 200)", before, after)
 	}
 }
 

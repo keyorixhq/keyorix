@@ -100,6 +100,29 @@ func TestEvictableServiceAccountKey_PrefersDisabledOverEnabled(t *testing.T) {
 	assert.Equal(t, "k/disabled", evictableServiceAccountKey(keys))
 }
 
+// TestEvictableServiceAccountKey_SkipsNamelessKeys proves a key with no Name is
+// skipped entirely as an eviction candidate — it can never be returned (there'd be
+// nothing to pass to DeleteKey), and it must not shadow a later, real candidate by
+// being treated as "the oldest seen so far".
+func TestEvictableServiceAccountKey_SkipsNamelessKeys(t *testing.T) {
+	keys := []gcpServiceAccountKeyInfo{
+		{Name: "", Disabled: false, ValidAfterTime: "2000-01-01T00:00:00Z"}, // nameless: would look "oldest" if not skipped
+		{Name: "k/real-oldest", Disabled: false, ValidAfterTime: "2020-01-01T00:00:00Z"},
+		{Name: "k/newer", Disabled: false, ValidAfterTime: "2024-01-01T00:00:00Z"},
+	}
+	assert.Equal(t, "k/real-oldest", evictableServiceAccountKey(keys), "the nameless entry must never be selected, even though its timestamp is the oldest")
+}
+
+// TestEvictableServiceAccountKey_AllNameless proves the function returns "" (no
+// candidate) when every key lacks a name, per its documented contract.
+func TestEvictableServiceAccountKey_AllNameless(t *testing.T) {
+	keys := []gcpServiceAccountKeyInfo{
+		{Name: "", Disabled: false, ValidAfterTime: "2020-01-01T00:00:00Z"},
+		{Name: "", Disabled: true, ValidAfterTime: "2021-01-01T00:00:00Z"},
+	}
+	assert.Empty(t, evictableServiceAccountKey(keys))
+}
+
 func TestEvictableServiceAccountKey_PrefersOldestWhenAllEnabled(t *testing.T) {
 	keys := []gcpServiceAccountKeyInfo{
 		{Name: "k/newest", Disabled: false, ValidAfterTime: "2026-01-01T00:00:00Z"},

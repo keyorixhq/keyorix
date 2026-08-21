@@ -116,6 +116,23 @@ func TestEvaluate_EmptyKeyID(t *testing.T) {
 	assert.False(t, st.Grants())
 }
 
+// TestIssue_MarshalError covers the json.Marshal error branch in Issue. time.Time's
+// MarshalJSON rejects years outside [0,9999], so a NotAfter far in the future makes
+// json.Marshal(&lic) fail even though all of Issue's own field validations pass.
+func TestIssue_MarshalError(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	lic := License{
+		Licensee: "ACME",
+		KeyID:    "k",
+		NotAfter: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), // year out of range for MarshalJSON
+	}
+	token, err := Issue(lic, priv)
+	assert.Error(t, err, "an unmarshalable NotAfter must surface the json.Marshal error")
+	assert.Empty(t, token, "no token should be produced on marshal failure")
+}
+
 // TestStatus_HasFeature_DegradedStates checks HasFeature returns false for every
 // non-granting state, covering the short-circuit in HasFeature.
 func TestStatus_HasFeature_DegradedStates(t *testing.T) {

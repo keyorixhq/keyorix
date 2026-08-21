@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,8 +75,26 @@ func TestFilteringGatherer_DropsOnlyNamedFamilies(t *testing.T) {
 
 type fakeGatherer struct {
 	mfs []*dto.MetricFamily
+	err error
 }
 
 func (f fakeGatherer) Gather() ([]*dto.MetricFamily, error) {
-	return f.mfs, nil
+	return f.mfs, f.err
+}
+
+// TestFilteringGatherer_PropagatesInnerError verifies that filteringGatherer
+// surfaces an error from the wrapped Gatherer unchanged, rather than masking
+// it or returning a partial family list.
+func TestFilteringGatherer_PropagatesInnerError(t *testing.T) {
+	wantErr := errors.New("simulated gather failure")
+	inner := fakeGatherer{err: wantErr}
+	g := filteringGatherer{inner: inner, drop: nil}
+
+	mfs, err := g.Gather()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected the inner gatherer's error to propagate, got: %v", err)
+	}
+	if mfs != nil {
+		t.Fatalf("expected a nil family list on error, got %v", mfs)
+	}
 }

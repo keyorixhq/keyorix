@@ -11,6 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// NOTE: GenerateCSRFToken's crypto/rand.Read error branch is not covered by a
+// test. Since Go 1.24, crypto/rand.Read is documented to never return an
+// error — an underlying entropy-source failure calls runtime.fatal() and
+// crashes the process outright rather than returning an error value (see
+// https://go.dev/issue/66821), so swapping crypto/rand.Reader for a failing
+// io.Reader to exercise that branch takes the whole test binary down instead
+// of exercising the branch. The branch is dead code under the Go version this
+// repo builds with; left uncovered deliberately rather than crashing the test
+// run to chase it.
+
 // TestSetSessionCookie verifies the HttpOnly, SameSite, and Secure attributes.
 func TestSetSessionCookie(t *testing.T) {
 	rr := httptest.NewRecorder()

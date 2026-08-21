@@ -19,11 +19,16 @@ package saml
 //     Redirect error branch requires an SSO URL that is syntactically valid (passes
 //     url.Parse and the XML round-trip validator) but triggers an error inside
 //     req.Redirect. Tests below document what has been tried and what is reachable.
-//   - parseIDPMetadata EntitiesDescriptor unmarshal error: the round-trip validator
-//     already guarantees well-formed XML, and crewjam's EntitiesDescriptor struct
-//     uses loose string fields, so Unmarshal never returns an error for unexpected
-//     content. The branch is structurally unreachable in the same way as the
-//     Metadata marshal error. Documented below.
+//   - parseIDPMetadata EntitiesDescriptor unmarshal error: reachable — see
+//     TestParseIDPMetadata_EntitiesDescriptorUnmarshalError below. The outer
+//     xml.Unmarshal(data, entity) fails first because the root element name
+//     ("EntitiesDescriptor") doesn't match EntityDescriptor's XMLName, and that
+//     failure message names the actual root element, satisfying the
+//     strings.Contains(err.Error(), "EntitiesDescriptor") check. The retry into
+//     EntitiesDescriptor then fails independently when an attribute doesn't
+//     satisfy its Go type (e.g. an unparsable validUntil timestamp, since
+//     EntitiesDescriptor.ValidUntil is *time.Time and time.Time implements
+//     encoding.TextUnmarshaler).
 
 import (
 	"net/http"
@@ -173,6 +178,25 @@ func TestParseIDPMetadata_WhitespaceOnly(t *testing.T) {
 func TestParseIDPMetadata_MalformedXML(t *testing.T) {
 	_, err := parseIDPMetadata([]byte("<unclosed"))
 	require.Error(t, err)
+}
+
+// TestParseIDPMetadata_EntitiesDescriptorUnmarshalError covers the inner
+// `xml.Unmarshal(data, entities)` error branch inside parseIDPMetadata's
+// EntitiesDescriptor fallback: the outer unmarshal into EntityDescriptor fails
+// because the root element is <EntitiesDescriptor> (naming it in the error, so
+// the strings.Contains check routes here), and the retry into EntitiesDescriptor
+// itself fails because validUntil is not a parsable timestamp.
+func TestParseIDPMetadata_EntitiesDescriptorUnmarshalError(t *testing.T) {
+	xml := []byte(`<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" validUntil="not-a-valid-timestamp">
+  <EntityDescriptor entityID="https://sp.example">
+    <SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"></SPSSODescriptor>
+  </EntityDescriptor>
+</EntitiesDescriptor>`)
+	entity, err := parseIDPMetadata(xml)
+	require.Error(t, err)
+	assert.Nil(t, entity)
+	assert.Contains(t, err.Error(), "not-a-valid-timestamp",
+		"the retry's own unmarshal error (not the outer root-mismatch error) must be returned")
 }
 
 // TestParseIDPMetadata_ValidEntityDescriptorWithIDP is a direct call to the

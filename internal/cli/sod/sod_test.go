@@ -89,6 +89,54 @@ func TestPolicyDelete_RequiredIDAndRemote(t *testing.T) {
 	assert.Contains(t, out, "Deleted SoD policy 5.")
 }
 
+// TestNotConnected_IsolatedConfig exercises the same "not connected" branches
+// as sod_s25_test.go's *_NotConnected tests, but hermetically: it redirects
+// XDG_CONFIG_HOME to an empty temp dir so ResolveRemote can't fall back to a
+// developer's real ~/.keyorix/cli.yaml (see internal/cli/common/common_test.go
+// for the same isolation convention). Without this, a machine with a stale
+// client-mode cli.yaml makes these commands dial a real (possibly dead)
+// endpoint instead of hitting the "not connected" guard — which is exactly
+// the pre-existing, local-only failure mode of the sibling tests in
+// sod_s25_test.go.
+func TestNotConnected_IsolatedConfig(t *testing.T) {
+	t.Run("policy list", func(t *testing.T) {
+		t.Setenv("KEYORIX_SERVER", "")
+		t.Setenv("KEYORIX_TOKEN", "")
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		err := policyListCmd.RunE(nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not connected")
+	})
+	t.Run("policy create", func(t *testing.T) {
+		t.Setenv("KEYORIX_SERVER", "")
+		t.Setenv("KEYORIX_TOKEN", "")
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		sName, sPermA, sPermB = "p", "roles.assign", "secrets.delete"
+		t.Cleanup(func() { sName, sPermA, sPermB = "", "", "" })
+		err := policyCreateCmd.RunE(nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not connected")
+	})
+	t.Run("policy delete", func(t *testing.T) {
+		t.Setenv("KEYORIX_SERVER", "")
+		t.Setenv("KEYORIX_TOKEN", "")
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		sID = 7
+		t.Cleanup(func() { sID = 0 })
+		err := policyDeleteCmd.RunE(nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not connected")
+	})
+	t.Run("violations", func(t *testing.T) {
+		t.Setenv("KEYORIX_SERVER", "")
+		t.Setenv("KEYORIX_TOKEN", "")
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		err := violationsCmd.RunE(nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not connected")
+	})
+}
+
 func TestViolations_Remote(t *testing.T) {
 	t.Run("none", func(t *testing.T) {
 		setupRemote(t, func(w http.ResponseWriter, r *http.Request) {

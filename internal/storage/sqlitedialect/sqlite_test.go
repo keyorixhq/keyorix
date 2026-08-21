@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -174,6 +175,50 @@ func TestTranslate_UnrelatedError(t *testing.T) {
 	assert.Equal(t, original, d.Translate(original))
 }
 
+// marshalFailError has an exported field of a type (func) that json.Marshal
+// cannot encode, forcing Translate's json.Marshal call to fail.
+type marshalFailError struct {
+	Fn func()
+}
+
+func (*marshalFailError) Error() string { return "marshal-fail" }
+
+func TestTranslate_MarshalFailureReturnsOriginalError(t *testing.T) {
+	d := Dialector{}
+	original := &marshalFailError{Fn: func() {}}
+	assert.Same(t, original, d.Translate(original), "when the error can't even be marshaled to JSON, Translate must return it unchanged")
+}
+
+// badCodeError has an exported "Code" field whose JSON representation
+// (a string) doesn't fit ErrMessage.Code (an int), forcing Translate's
+// json.Unmarshal call to fail.
+type badCodeError struct {
+	Code string
+}
+
+func (badCodeError) Error() string { return "bad-code" }
+
+func TestTranslate_UnmarshalFailureReturnsOriginalError(t *testing.T) {
+	d := Dialector{}
+	original := badCodeError{Code: "not-a-number"}
+	assert.Equal(t, original, d.Translate(original), "when the marshaled JSON can't be unmarshaled into ErrMessage, Translate must return the original error unchanged")
+}
+
+// extCodeError has an exported ExtendedCode field, matching ErrMessage's
+// json shape, so Translate can pattern-match it against errCodes purely via
+// the JSON fallback path (no Code() method).
+type extCodeError struct {
+	ExtendedCode int
+}
+
+func (extCodeError) Error() string { return "ext-code" }
+
+func TestTranslate_ExtendedCodeMatchViaJSONFallback(t *testing.T) {
+	d := Dialector{}
+	original := extCodeError{ExtendedCode: 1555}
+	assert.ErrorIs(t, d.Translate(original), gorm.ErrDuplicatedKey)
+}
+
 func TestMigrator_DropTable(t *testing.T) {
 	db := openTestDB(t)
 	type dropTableModel struct {
@@ -185,6 +230,88 @@ func TestMigrator_DropTable(t *testing.T) {
 	require.True(t, m.HasTable(&dropTableModel{}))
 	require.NoError(t, m.DropTable(&dropTableModel{}))
 	assert.False(t, m.HasTable(&dropTableModel{}))
+}
+
+// TestInitialize_UsesProvidedConnPool exercises Initialize's Conn-provided
+// branch: when Config.Conn is set, Initialize must use it directly instead of
+// opening a new connection via DriverName/DSN.
+func TestInitialize_UsesProvidedConnPool(t *testing.T) {
+	sqlDB, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	d := New(Config{Conn: sqlDB})
+	db, err := gorm.Open(d, &gorm.Config{})
+	require.NoError(t, err)
+
+	var version string
+	require.NoError(t, db.Raw("select sqlite_version()").Row().Scan(&version))
+	assert.NotEmpty(t, version)
+}
+
+// TestInitialize_SQLOpenErrorPropagates exercises Initialize's sql.Open error
+// branch: an unregistered driver name must surface as an error from
+// gorm.Open, not panic or silently succeed.
+func TestInitialize_SQLOpenErrorPropagates(t *testing.T) {
+	d := New(Config{DriverName: "not-a-real-driver", DSN: ":memory:"})
+	_, err := gorm.Open(d, &gorm.Config{})
+	require.Error(t, err)
+}
+
+// TestInitialize_VersionQueryErrorPropagates exercises Initialize's
+// version-query error branch: a closed connection pool must surface the
+// query error from gorm.Open rather than panicking.
+func TestInitialize_VersionQueryErrorPropagates(t *testing.T) {
+	sqlDB, err := sql.Open(DriverName, ":memory:")
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	d := New(Config{Conn: sqlDB})
+	_, err = gorm.Open(d, &gorm.Config{})
+	require.Error(t, err)
+}
+
+// TestClauseBuilders_InsertModifierAndTableOverride exercises the two
+// conditional branches of the INSERT clause builder: a non-empty Modifier
+// (e.g. "OR IGNORE") and an explicit Table override.
+func TestClauseBuilders_InsertModifierAndTableOverride(t *testing.T) {
+	db := openTestDB(t)
+	type insertOptsModel struct {
+		ID   uint `gorm:"primaryKey"`
+		Name string
+	}
+	require.NoError(t, db.AutoMigrate(&insertOptsModel{}))
+
+	modifierSQL := db.Session(&gorm.Session{DryRun: true}).
+		Clauses(clause.Insert{Modifier: "OR IGNORE"}).
+		Create(&insertOptsModel{Name: "x"}).Statement.SQL.String()
+	assert.Contains(t, modifierSQL, "INSERT OR IGNORE INTO")
+
+	tableOverrideSQL := db.Session(&gorm.Session{DryRun: true}).
+		Clauses(clause.Insert{Table: clause.Table{Name: "custom_table"}}).
+		Create(&insertOptsModel{Name: "x"}).Statement.SQL.String()
+	assert.Contains(t, tableOverrideSQL, "INSERT INTO `custom_table`")
+}
+
+func TestQuoteTo_BacktickEdgeCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"two consecutive backticks", "a``b", "`a``b`"},
+		{"leading backtick", "`a", "`a`"},
+		{"trailing backtick", "ab`", "`ab```"},
+	}
+
+	d := Dialector{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var w strings.Builder
+			d.QuoteTo(&w, tc.input)
+			assert.Equal(t, tc.want, w.String())
+		})
+	}
 }
 
 func TestCompareVersion(t *testing.T) {

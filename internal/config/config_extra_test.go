@@ -586,6 +586,77 @@ func TestValidateAllowedOrigins_TrailingSlash(t *testing.T) {
 	assert.Contains(t, err.Error(), "allowed_origins")
 }
 
+// TestPasswordPolicyConfig_Resolve_AllFieldsSetOverrideDefaults exercises the
+// true branch of every *pointer field's nil-check in Resolve — the existing
+// partial-block tests each set only one or two of MinLength/RequireUppercase/
+// RequireLowercase/RequireDigit/RejectPersonalInfo/HistoryCount, leaving those
+// individual "explicitly set" branches uncovered. Set every field explicitly to
+// a value that DIFFERS from the defaults so each branch is both taken and
+// verified to actually take effect.
+func TestPasswordPolicyConfig_Resolve_AllFieldsSetOverrideDefaults(t *testing.T) {
+	defaults := PasswordPolicyValues{
+		MinLength: 16, RequireUppercase: true, RequireLowercase: true, RequireDigit: true,
+		RequireSpecial: true, RejectPersonalInfo: true, RejectCommonPasswords: true, HistoryCount: 5,
+		MaxAgeDays: 90,
+	}
+	full := PasswordPolicyConfig{
+		MinLength:             IntPtr(24),
+		RequireUppercase:      BoolPtr(false),
+		RequireLowercase:      BoolPtr(false),
+		RequireDigit:          BoolPtr(false),
+		RequireSpecial:        BoolPtr(false),
+		RejectPersonalInfo:    BoolPtr(false),
+		RejectCommonPasswords: BoolPtr(false),
+		HistoryCount:          IntPtr(10),
+		MaxAgeDays:            30,
+	}
+	resolved := full.Resolve(defaults)
+
+	assert.Equal(t, 24, resolved.MinLength)
+	assert.False(t, resolved.RequireUppercase)
+	assert.False(t, resolved.RequireLowercase)
+	assert.False(t, resolved.RequireDigit)
+	assert.False(t, resolved.RequireSpecial)
+	assert.False(t, resolved.RejectPersonalInfo)
+	assert.False(t, resolved.RejectCommonPasswords)
+	assert.Equal(t, 10, resolved.HistoryCount)
+	// MaxAgeDays is unconditional in Resolve (not gated on a pointer nil-check),
+	// so it always takes the config's value, even 0 — verify that's still true here.
+	assert.Equal(t, 30, resolved.MaxAgeDays)
+}
+
+// TestIntPtr validates that IntPtr returns a pointer to the given value.
+func TestIntPtr(t *testing.T) {
+	p := IntPtr(42)
+	require.NotNil(t, p)
+	assert.Equal(t, 42, *p)
+
+	pZero := IntPtr(0)
+	require.NotNil(t, pZero)
+	assert.Equal(t, 0, *pZero)
+}
+
+// TestClassificationConfig_GetMFAStepUpGrantRetentionDays_Default validates
+// that an unset (zero) retention defaults to 30 days.
+func TestClassificationConfig_GetMFAStepUpGrantRetentionDays_Default(t *testing.T) {
+	c := ClassificationConfig{}
+	assert.Equal(t, 30, c.GetMFAStepUpGrantRetentionDays())
+}
+
+// TestClassificationConfig_GetMFAStepUpGrantRetentionDays_Negative validates
+// that a negative retention also falls back to the 30 day default.
+func TestClassificationConfig_GetMFAStepUpGrantRetentionDays_Negative(t *testing.T) {
+	c := ClassificationConfig{MFAStepUpGrantRetentionDays: -5}
+	assert.Equal(t, 30, c.GetMFAStepUpGrantRetentionDays())
+}
+
+// TestClassificationConfig_GetMFAStepUpGrantRetentionDays_Positive validates
+// that a positive retention is used as-is.
+func TestClassificationConfig_GetMFAStepUpGrantRetentionDays_Positive(t *testing.T) {
+	c := ClassificationConfig{MFAStepUpGrantRetentionDays: 90}
+	assert.Equal(t, 90, c.GetMFAStepUpGrantRetentionDays())
+}
+
 // TestValidateAllowedOrigins_Empty validates that an empty list is accepted.
 func TestValidateAllowedOrigins_Empty(t *testing.T) {
 	require.NoError(t, validateAllowedOrigins(nil))

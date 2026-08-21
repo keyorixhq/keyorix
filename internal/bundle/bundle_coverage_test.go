@@ -20,7 +20,10 @@ import (
 	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -405,4 +408,303 @@ func TestWriteBundle_Cov_ComponentFileDisappears(t *testing.T) {
 	var buf bytes.Buffer
 	err = WriteBundle(&buf, dir, m, sig)
 	assert.Error(t, err, "WriteBundle must fail when a component file is missing from srcDir")
+}
+
+// ---------------------------------------------------------------------------
+// WriteBundle — component tw.WriteHeader / io.Copy / tw.Close error branches
+// via a truncating writer over large, INCOMPRESSIBLE component data.
+//
+// gzip/flate buffer internally: for small or highly-compressible content
+// (as used by the other WriteBundle error-injection tests in this package),
+// essentially every byte the tar writer hands to gzip stays buffered until
+// gz.Close() flushes it all at once, so a truncating writer can only ever
+// surface an error from the final gz.Close() call — never from the
+// tw.WriteHeader/io.Copy/tw.Close call sites that logically preceded it.
+// Large, random (incompressible) component data forces flate to emit real
+// output continuously as it compresses, so a writer that stops accepting
+// bytes partway through can land the failure at any of those call sites.
+// Scanning many cut points over the real output range reliably exercises
+// all of them without depending on exact internal buffer thresholds.
+// ---------------------------------------------------------------------------
+
+func TestWriteBundle_Cov_ComponentWriteErrorsIncompressible(t *testing.T) {
+	randBytes := func(n int) string {
+		b := make([]byte, n)
+		_, err := rand.Read(b)
+		require.NoError(t, err)
+		return string(b)
+	}
+	dir := srcDirWith(t, map[string]string{
+		"images/a.tar": randBytes(160 * 1024),
+		"images/b.tar": randBytes(160 * 1024),
+	})
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	m, err := BuildManifest(dir, "v1.0.0", "k-incompressible", "", time.Unix(1_700_000_000, 0))
+	require.NoError(t, err)
+	sig, err := Sign(m, priv)
+	require.NoError(t, err)
+
+	var full bytes.Buffer
+	require.NoError(t, WriteBundle(&full, dir, m, sig))
+	total := full.Len()
+	require.Greater(t, total, 64*1024, "incompressible components must dominate the archive size")
+
+	var errCount int
+	for cut := 512; cut < total; cut += 512 {
+		w := &limitedWriter{limit: cut}
+		if err := WriteBundle(w, dir, m, sig); err != nil {
+			errCount++
+		}
+	}
+	assert.Greater(t, errCount, 0,
+		"at least one truncation point must cause WriteBundle to fail while writing component data")
+}
+
+// TestWriteBundle_Cov_SigWriteErrorViaLargeManifest targets the writeTarBytes(sigName)
+// error branch specifically: it must fail on manifest.json's own bytes for the "sig" write
+// to ever be attempted at all with something for the truncating writer to reject. A manifest
+// with many components produces a manifest.json large enough that flate emits real output
+// during the manifest write itself (rather than buffering it entirely until gz.Close, as
+// happens with the small manifests used elsewhere in this package) — so scanning cut points
+// across that region can land the failure between the manifest write succeeding and the sig
+// write being attempted.
+func TestWriteBundle_Cov_SigWriteErrorViaLargeManifest(t *testing.T) {
+	const numComponents = 600
+	files := make(map[string]string, numComponents)
+	for i := 0; i < numComponents; i++ {
+		b := make([]byte, 4)
+		_, err := rand.Read(b)
+		require.NoError(t, err)
+		files[fmt.Sprintf("c/%05d.bin", i)] = string(b)
+	}
+	dir := srcDirWith(t, files)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	m, err := BuildManifest(dir, "v1.0.0", "k-big-manifest", "", time.Unix(1_700_000_000, 0))
+	require.NoError(t, err)
+	sig, err := Sign(m, priv)
+	require.NoError(t, err)
+	manifestBytes, err := m.MarshalCanonical()
+	require.NoError(t, err)
+	require.Greater(t, len(manifestBytes), 40*1024, "manifest with 600 components must be sizeable")
+
+	var errCount int
+	for cut := 512; cut < len(manifestBytes)+2048; cut += 512 {
+		w := &limitedWriter{limit: cut}
+		if err := WriteBundle(w, dir, m, sig); err != nil {
+			errCount++
+		}
+	}
+	assert.Greater(t, errCount, 0,
+		"at least one truncation point must cause WriteBundle to fail while writing the manifest/sig entries")
+}
+
+// ---------------------------------------------------------------------------
+// streamComponent — mkdirAllNoSymlink error path (line "bundle: mkdir for %s")
+// ---------------------------------------------------------------------------
+
+// TestExtract_Cov_ComponentDirBlockedByEarlierComponentFile verifies that Extract
+// fails when a later component's required parent directory was already staged as
+// a plain FILE by an earlier component in the same archive (processed in archive
+// order). This is distinct from the "pre-existing" collision case covered
+// elsewhere: destDir starts genuinely EMPTY (so the no-marker-but-non-empty
+// fail-closed gate in readInstalledVersion never fires), and the conflict is
+// created mid-extraction by the archive's own first component, exercising the
+// mkdirAllNoSymlink error branch inside streamComponent itself.
+func TestExtract_Cov_ComponentDirBlockedByEarlierComponentFile(t *testing.T) {
+	sumHex := func(s string) string {
+		h := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(h[:])
+	}
+	m := &Manifest{
+		Version:    "v1.0.0",
+		ReleasedAt: time.Unix(1_700_000_000, 0).UTC(),
+		KeyID:      "k-conflict",
+		Components: []Component{
+			{Path: "conflict", SHA256: sumHex("A"), Size: 1},
+			{Path: "conflict/nested.bin", SHA256: sumHex("B"), Size: 1},
+		},
+	}
+	manifestBytes, err := m.MarshalCanonical()
+	require.NoError(t, err)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	sig, err := Sign(m, priv)
+	require.NoError(t, err)
+
+	// Archive order matters: "conflict" (staged as a FILE) must be processed before
+	// "conflict/nested.bin" (which then needs "conflict" to be a directory).
+	raw := writeRawBundle(t, manifestBytes, sig, [][2]string{
+		{"conflict", "A"},
+		{"conflict/nested.bin", "B"},
+	})
+
+	reg := trust.NewRegistry()
+	pub := priv.Public().(ed25519.PublicKey)
+	require.NoError(t, reg.Add(trust.PurposeUpdate, "k-conflict", pub))
+
+	dest := t.TempDir()
+	_, err = Extract(bytes.NewReader(raw), reg, dest, "")
+	assert.Error(t, err, "Extract must fail when a component's own file blocks another component's required directory")
+}
+
+// ---------------------------------------------------------------------------
+// streamComponent — os.Rename error path ("bundle: stage %s")
+// ---------------------------------------------------------------------------
+
+// TestExtract_Cov_RenameFailsComponentPathIsDir verifies that Extract fails when
+// the final destination path for a component already exists as a DIRECTORY
+// (rather than being absent or a file), which makes the atomic os.Rename(tmp,
+// finalPath) fail — a scenario mkdirAllNoSymlink cannot catch up front because
+// the conflicting entry is the leaf component path itself, not one of its parent
+// directories.
+func TestExtract_Cov_RenameFailsComponentPathIsDir(t *testing.T) {
+	// A destDir with any pre-existing entry but no installed-version marker is
+	// refused up front by the no-marker-but-non-empty fail-closed gate (see
+	// readInstalledVersion), well before per-component processing — so we can't
+	// just pre-plant a conflicting directory in a fresh destDir. Instead: run a
+	// real first Extract to populate dest with a legitimate marker, THEN plant
+	// the conflicting directory for a second, newer-version Extract — which
+	// passes the marker/no-downgrade gate and reaches streamComponent for real.
+	reg := trust.NewRegistry()
+
+	pub1, priv1, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	require.NoError(t, reg.Add(trust.PurposeUpdate, "k-rename-1", pub1))
+	dir1 := srcDirWith(t, map[string]string{"other.bin": "y"})
+	m1, err := BuildManifest(dir1, "v1.0.0", "k-rename-1", "", time.Unix(1_700_000_000, 0))
+	require.NoError(t, err)
+	sig1, err := Sign(m1, priv1)
+	require.NoError(t, err)
+	var buf1 bytes.Buffer
+	require.NoError(t, WriteBundle(&buf1, dir1, m1, sig1))
+
+	dest := t.TempDir()
+	_, err = Extract(bytes.NewReader(buf1.Bytes()), reg, dest, "")
+	require.NoError(t, err, "first Extract must succeed and persist an installed-version marker")
+
+	pub2, priv2, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	require.NoError(t, reg.Add(trust.PurposeUpdate, "k-rename-2", pub2))
+	dir2 := srcDirWith(t, map[string]string{"img.bin": "data"})
+	m2, err := BuildManifest(dir2, "v2.0.0", "k-rename-2", "", time.Unix(1_700_000_001, 0))
+	require.NoError(t, err)
+	sig2, err := Sign(m2, priv2)
+	require.NoError(t, err)
+	var buf2 bytes.Buffer
+	require.NoError(t, WriteBundle(&buf2, dir2, m2, sig2))
+
+	// Pre-plant a DIRECTORY at the exact component leaf path so Rename(tmp file,
+	// that path) fails instead of succeeding.
+	require.NoError(t, os.Mkdir(filepath.Join(dest, "img.bin"), 0o755))
+
+	_, err = Extract(bytes.NewReader(buf2.Bytes()), reg, dest, "")
+	assert.Error(t, err, "Extract must fail when the component's destination path is already a directory")
+}
+
+// ---------------------------------------------------------------------------
+// mkdirAllNoSymlink — default branch: os.Lstat fails with a non-IsNotExist error
+// (permission denied walking through a no-execute directory)
+// ---------------------------------------------------------------------------
+
+func TestMkdirAllNoSymlink_Cov_LstatPermissionDenied(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses permission checks; skip")
+	}
+	root := t.TempDir()
+	blocked := filepath.Join(root, "blocked")
+	require.NoError(t, os.Mkdir(blocked, 0o755))
+	// No execute bit at all: even Lstat-ing an entry underneath "blocked" fails
+	// with permission-denied (not "not exist"), unlike the sibling test that uses
+	// 0o555 (which still allows traversal, so Lstat of a nonexistent child there
+	// succeeds as IsNotExist and Mkdir itself is what fails).
+	require.NoError(t, os.Chmod(blocked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
+
+	err := mkdirAllNoSymlink(root, filepath.Join(blocked, "child"))
+	assert.Error(t, err, "mkdirAllNoSymlink must fail when Lstat itself is denied by a no-execute parent")
+}
+
+// ---------------------------------------------------------------------------
+// BuildManifest — hashFile error path (file becomes unreadable mid-walk)
+// ---------------------------------------------------------------------------
+
+func TestBuildManifest_Cov_HashFileUnreadable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses permission checks; skip")
+	}
+	dir := srcDirWith(t, map[string]string{"secret.bin": "data"})
+	require.NoError(t, os.Chmod(filepath.Join(dir, "secret.bin"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "secret.bin"), 0o644) })
+
+	_, err := BuildManifest(dir, "v1.0.0", "k", "", time.Unix(1_700_000_000, 0))
+	assert.Error(t, err, "BuildManifest must fail when a source file can't be read for hashing")
+}
+
+// ---------------------------------------------------------------------------
+// PersistedInstalledVersion — thin public wrapper around readInstalledVersion,
+// entirely untested prior to this file (0% coverage).
+// ---------------------------------------------------------------------------
+
+func TestPersistedInstalledVersion_Cov(t *testing.T) {
+	// No marker yet: a fresh, nonexistent destDir is a legitimate first install.
+	dest := filepath.Join(t.TempDir(), "does-not-exist-yet")
+	version, ok, err := PersistedInstalledVersion(dest)
+	require.NoError(t, err)
+	assert.False(t, ok, "no marker should mean ok=false")
+	assert.Empty(t, version)
+
+	// After a real Extract, the marker exists and PersistedInstalledVersion must
+	// surface the version that Extract just staged.
+	raw, reg, _ := signedBundle(t, map[string]string{"a.bin": "x"}, "v2.3.4", "k-persist", "")
+	dest2 := t.TempDir()
+	_, err = Extract(bytes.NewReader(raw), reg, dest2, "")
+	require.NoError(t, err)
+
+	version, ok, err = PersistedInstalledVersion(dest2)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "v2.3.4", version)
+}
+
+// ---------------------------------------------------------------------------
+// readInstalledVersion — os.ReadFile fails with a non-IsNotExist error (the
+// marker exists but is unreadable / is itself a blocked path).
+// ---------------------------------------------------------------------------
+
+func TestReadInstalledVersion_Cov_UnreadableMarker(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses permission checks; skip")
+	}
+	dest := t.TempDir()
+	markerPath := filepath.Join(dest, installedVersionMarker)
+	require.NoError(t, os.WriteFile(markerPath, []byte("v1.0.0\n"), 0o644))
+	require.NoError(t, os.Chmod(markerPath, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(markerPath, 0o644) })
+
+	_, ok, err := PersistedInstalledVersion(dest)
+	assert.False(t, ok)
+	assert.Error(t, err, "a present-but-unreadable marker must fail closed, not be treated as absent")
+}
+
+// TestReadInstalledVersion_Cov_DestDirHasContentErrors covers the branch where the
+// marker is legitimately absent (a normal os.IsNotExist from os.ReadFile) but the
+// destDirHasContent fallback check itself errors for an unrelated reason — here,
+// destDir has execute-but-not-read permission: enough for os.ReadFile to look up
+// the (nonexistent) marker by name and get a clean ENOENT, but not enough for
+// os.ReadDir to list destDir's entries to decide whether it's "non-empty".
+func TestReadInstalledVersion_Cov_DestDirHasContentErrors(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses permission checks; skip")
+	}
+	parent := t.TempDir()
+	dest := filepath.Join(parent, "dest")
+	require.NoError(t, os.Mkdir(dest, 0o755))
+	require.NoError(t, os.Chmod(dest, 0o100)) // execute-only: lookup works, listing doesn't
+	t.Cleanup(func() { _ = os.Chmod(dest, 0o755) })
+
+	_, ok, err := PersistedInstalledVersion(dest)
+	assert.False(t, ok)
+	assert.Error(t, err, "a destDirHasContent failure must propagate as an error, not silently mean empty")
 }

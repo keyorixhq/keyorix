@@ -77,6 +77,31 @@ func TestDefaultRegistry_MalformedKeySpec(t *testing.T) {
 	require.Error(t, err, "a malformed embedded key spec must surface as an error")
 }
 
+// TestDefaultRegistry_CrossPurposeKeyReuseErrors exercises the r.Add error path inside
+// DefaultRegistry's parse loop: if the update and license specs embed the SAME public key
+// (under different key-ids), the second Add call fails with ErrKeyReusedAcrossPurposes and
+// DefaultRegistry must propagate that error rather than silently building a registry that
+// violates the independent-blast-radii guarantee (see the Purpose doc comment).
+func TestDefaultRegistry_CrossPurposeKeyReuseErrors(t *testing.T) {
+	pub, _, err := GenerateKey()
+	require.NoError(t, err)
+	encoded := base64.StdEncoding.EncodeToString(pub)
+
+	origUpdate := updateKeysB64
+	origLicense := licenseKeysB64
+	updateKeysB64 = "upd-shared=" + encoded
+	licenseKeysB64 = "lic-shared=" + encoded
+	t.Cleanup(func() {
+		updateKeysB64 = origUpdate
+		licenseKeysB64 = origLicense
+	})
+
+	r, err := DefaultRegistry()
+	require.Error(t, err, "embedding the same public key for both purposes must be refused")
+	assert.ErrorIs(t, err, ErrKeyReusedAcrossPurposes)
+	assert.Nil(t, r, "DefaultRegistry must not return a partially-built registry on error")
+}
+
 // TestDefaultRegistry_MultipleKeys verifies that a comma-separated spec with
 // several keys is parsed and all keys are usable.
 func TestDefaultRegistry_MultipleKeys(t *testing.T) {

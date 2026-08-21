@@ -199,6 +199,27 @@ func TestGRPCRateLimiter_SweepsEveryNRequests(t *testing.T) {
 	assert.False(t, presentAfterSweep, "the sweep must run on exactly the Nth request and evict the stale entry")
 }
 
+// grpcIPFailureLimiter.sweepLocked (the per-IP token-auth-failure budget's own
+// sweep, distinct from grpcRateLimiter.sweepLocked above) evicts only entries
+// idle past the TTL, not everything and not nothing. allow() always sets
+// lastSeen to time.Now() for the entry it just touched before sweeping, so
+// driving this through the public recordGRPCTokenAuthFailure API can never
+// produce a stale entry for the sweep to evict; constructed directly against
+// the unexported type (white-box), same rationale as
+// TestGRPCRateLimiter_SweepEvictsOnlyIdleEntries.
+func TestGRPCIPFailureLimiter_SweepEvictsOnlyIdleEntries(t *testing.T) {
+	l := &grpcIPFailureLimiter{limiters: make(map[string]*grpcPrincipalBucket)}
+	l.limiters["stale"] = &grpcPrincipalBucket{lastSeen: time.Now().Add(-11 * time.Minute)}
+	l.limiters["fresh"] = &grpcPrincipalBucket{lastSeen: time.Now().Add(-9 * time.Minute)}
+
+	l.sweepLocked()
+
+	_, staleStillPresent := l.limiters["stale"]
+	_, freshStillPresent := l.limiters["fresh"]
+	assert.False(t, staleStillPresent, "an entry idle past the 10-minute TTL must be evicted")
+	assert.True(t, freshStillPresent, "an entry within the 10-minute TTL must survive")
+}
+
 // ---------------------------------------------------------------------------
 // StreamRateLimitInterceptor — G41: the streaming counterpart to
 // GRPCRateLimitInterceptor above. Before G41, StreamAuditLogs (the server's
@@ -258,6 +279,22 @@ func TestStreamRateLimitInterceptor_EnforcesPerPrincipalBudget(t *testing.T) {
 	other := &fakeStream{ctx: grpcCtxForUser(2, 0)}
 	err = interceptor(nil, other, nil, streamRLHandler())
 	assert.NoError(t, err, "a different principal opening a stream must have an independent budget")
+}
+
+// Mirrors TestGRPCRateLimitInterceptor_BurstDefaultsToRequestsPerSecond: Burst
+// defaults to RequestsPerSecond when unset (Burst <= 0) on the stream side too —
+// the token bucket accepts exactly RequestsPerSecond stream opens up front.
+func TestStreamRateLimitInterceptor_BurstDefaultsToRequestsPerSecond(t *testing.T) {
+	interceptor := StreamRateLimitInterceptor(config.RateLimitConfig{Enabled: true, RequestsPerSecond: 3})
+
+	for i := 0; i < 3; i++ {
+		stream := &fakeStream{ctx: grpcCtxForUser(1, 0)}
+		err := interceptor(nil, stream, nil, streamRLHandler())
+		require.NoError(t, err, "stream open %d within the defaulted burst of 3 must pass", i)
+	}
+	blocked := &fakeStream{ctx: grpcCtxForUser(1, 0)}
+	err := interceptor(nil, blocked, nil, streamRLHandler())
+	assert.Error(t, err, "the 4th stream open must be limited once the defaulted burst is exhausted")
 }
 
 // An unauthenticated stream open (no UserContext — StreamAuthInterceptor

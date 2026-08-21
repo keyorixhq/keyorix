@@ -53,9 +53,10 @@ func (fakeKMS) Decrypt(_ context.Context, req *kmspb.DecryptRequest, _ ...gax.Ca
 // does not match its payload, modelling transport corruption between the client
 // and the KMS service.
 type corruptChecksumKMS struct {
-	corruptEncryptResp bool
-	corruptDecryptResp bool
-	dropVerifiedFlags  bool
+	corruptEncryptResp   bool
+	corruptDecryptResp   bool
+	dropVerifiedFlags    bool
+	dropAADVerifiedFlags bool
 }
 
 func (c corruptChecksumKMS) Encrypt(ctx context.Context, req *kmspb.EncryptRequest, opts ...gax.CallOption) (*kmspb.EncryptResponse, error) {
@@ -68,6 +69,9 @@ func (c corruptChecksumKMS) Encrypt(ctx context.Context, req *kmspb.EncryptReque
 	}
 	if c.dropVerifiedFlags {
 		resp.VerifiedPlaintextCrc32C = false
+	}
+	if c.dropAADVerifiedFlags {
+		resp.VerifiedAdditionalAuthenticatedDataCrc32C = false
 	}
 	return resp, nil
 }
@@ -274,6 +278,24 @@ func TestGCPKMS_Encrypt_RejectsUnverifiedPlaintextChecksum(t *testing.T) {
 	}
 }
 
+// crypto-gcpkms-02: an EncryptResponse that carries AAD but never reports the AAD
+// checksum as verified (the server received/echoed the AAD but did not confirm the
+// checksum against it) must be rejected on the same grounds as an unverified
+// plaintext checksum — an unverified AAD checksum is exactly what undetected
+// request-side corruption of the AAD looks like, and this bug would silently
+// upgrade to an unbound wrapped KEK.
+func TestGCPKMS_Encrypt_RejectsUnverifiedAADChecksum(t *testing.T) {
+	c := &client{
+		kms:     corruptChecksumKMS{dropAADVerifiedFlags: true},
+		keyName: "k",
+		aad:     []byte("env=prod\n"),
+	}
+	_, err := c.Encrypt(context.Background(), []byte("payload"))
+	if err == nil {
+		t.Fatal("Encrypt must reject a response that does not report the AAD checksum as verified when AAD is set")
+	}
+}
+
 // crypto-gcpkms-02: a corrupted DecryptResponse.plaintext_crc32c must be detected
 // and rejected rather than silently trusted.
 func TestGCPKMS_Decrypt_RejectsCorruptedResponseChecksum(t *testing.T) {
@@ -335,6 +357,36 @@ func TestGCPKMS_Decrypt_NoFallback_NoAuditEvent(t *testing.T) {
 	}
 	if fired {
 		t.Fatal("audit sink must not fire when the decrypt succeeds without falling back")
+	}
+}
+
+// emitFallbackAudit is best-effort: a wired sink that itself fails to write must
+// be swallowed (logged, not propagated) since by the time it runs the fallback
+// decrypt it's reporting on has already succeeded and must not be undone by an
+// audit-logging failure.
+func TestGCPKMS_Decrypt_FallbackAuditSinkErrorStillSucceeds(t *testing.T) {
+	legacy := newTestClient(nil, false)
+	ct, err := legacy.Encrypt(context.Background(), []byte("kek"))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	bound := newTestClient(map[string]string{"keyorix-install": "inst-1"}, true)
+
+	sinkCalled := false
+	bound.SetAuditSink(func(_ context.Context, _ *models.AuditEvent) error {
+		sinkCalled = true
+		return errors.New("audit backend unavailable")
+	})
+
+	pt, err := bound.Decrypt(context.Background(), ct)
+	if err != nil {
+		t.Fatalf("decrypt via fallback must succeed even though the audit sink errors: %v", err)
+	}
+	if string(pt) != "kek" {
+		t.Fatalf("got %q", pt)
+	}
+	if !sinkCalled {
+		t.Fatal("audit sink was not invoked on a fallback decrypt")
 	}
 }
 

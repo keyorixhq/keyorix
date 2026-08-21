@@ -33,6 +33,48 @@ func TestParseAllColumns_UnexpectedToken(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParseAllColumns_BracketQuoted(t *testing.T) {
+	got, err := parseAllColumns("([id])")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"id"}, got)
+}
+
+func TestParseAllColumns_EscapedQuoteInsideQuotedName(t *testing.T) {
+	got, err := parseAllColumns("(`na``me`)")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"na`me"}, got, "a doubled quote char inside a quoted name must be treated as an escaped literal, not the closing quote")
+}
+
+func TestParseAllColumns_SpacesAroundSeparator(t *testing.T) {
+	got, err := parseAllColumns("(id  , name)")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"id", "name"}, got)
+}
+
+func TestParseAllColumns_TrailingWhitespaceAfterClose(t *testing.T) {
+	got, err := parseAllColumns("(id) ")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"id"}, got)
+}
+
+func TestParseAllColumns_UnquotedNameFollowedByQuoteErrors(t *testing.T) {
+	_, err := parseAllColumns(`(id"x)`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected token")
+}
+
+func TestParseAllColumns_UnexpectedTokenAfterName(t *testing.T) {
+	_, err := parseAllColumns("(id x)")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected token")
+}
+
+func TestParseAllColumns_UnterminatedInput(t *testing.T) {
+	_, err := parseAllColumns("(id")
+	require.Error(t, err)
+	assert.Equal(t, "unexpected end", err.Error())
+}
+
 func TestIsSpaceIsQuoteIsSeparator(t *testing.T) {
 	assert.True(t, isSpace(' '))
 	assert.True(t, isSpace('\t'))

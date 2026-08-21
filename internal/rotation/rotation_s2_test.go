@@ -113,6 +113,29 @@ func TestAzureGraphClient_Do_WithOutput(t *testing.T) {
 	assert.Equal(t, "myapp", out.Name)
 }
 
+// erroringRoundTripper always fails a request, simulating a transport-level failure
+// (e.g. DNS/connection refused) distinct from a Graph API error response.
+type erroringRoundTripper struct{ err error }
+
+func (rt *erroringRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, rt.err
+}
+
+// TestAzureGraphClient_Do_HTTPDoError exercises the c.http.Do error branch in
+// azureGraphClient.do() — distinct from TestAzureGraphClient_Do_HTTPError, which
+// covers a successfully-received non-2xx response. Here the request never gets a
+// response at all (the RoundTripper fails outright), the transport-error path do()
+// must also propagate.
+func TestAzureGraphClient_Do_HTTPDoError(t *testing.T) {
+	c := &azureGraphClient{
+		cred: &fakeTokenCredential{token: "tok"},
+		http: &http.Client{Transport: &erroringRoundTripper{err: fmt.Errorf("connection refused")}},
+	}
+	err := c.do(context.Background(), http.MethodGet, "http://127.0.0.1/unreachable", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
 func TestAzureGraphClient_Do_TokenError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

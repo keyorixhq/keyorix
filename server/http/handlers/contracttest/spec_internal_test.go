@@ -16,6 +16,28 @@ info:
 paths: {}
 `
 
+// badServerURLSpec parses and passes OpenAPI validation cleanly (server URLs
+// aren't checked for validity by doc.Validate()), but its server URL's
+// invalid percent-encoding ("%zz" is not a valid URL escape) makes
+// gorillamux.NewRouter fail when it parses the URL to build the mux route --
+// the one loadSpecFrom error branch a malformed-YAML or failed-validation
+// spec can't reach.
+const badServerURLSpec = `
+openapi: 3.0.3
+info:
+  title: bad server url
+  version: "1.0"
+servers:
+  - url: "http://example.com/%zz"
+paths:
+  /foo:
+    get:
+      operationId: foo
+      responses:
+        '200':
+          description: ok
+`
+
 func writeTempSpec(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "openapi.yaml")
@@ -62,6 +84,17 @@ func TestLoadSpecFrom(t *testing.T) {
 		}
 		if doc == nil || r == nil {
 			t.Fatal("expected a non-nil doc and router")
+		}
+	})
+
+	t.Run("valid spec whose router fails to build", func(t *testing.T) {
+		path := writeTempSpec(t, badServerURLSpec)
+		_, _, err := loadSpecFrom(path)
+		if err == nil {
+			t.Fatal("expected an error when gorillamux.NewRouter cannot build a router from the doc")
+		}
+		if !strings.Contains(err.Error(), "building operation router") {
+			t.Errorf("expected a router-build error, got: %v", err)
 		}
 	})
 }

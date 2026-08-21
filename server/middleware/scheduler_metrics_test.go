@@ -156,6 +156,23 @@ func TestSchedulerRunsTotalStillOnDefaultRegistry(t *testing.T) {
 	}
 }
 
+// TestRecordSchedulerRun_UsesRealWallClockByDefault exercises the actual
+// production nowUnix implementation (time.Now().Unix()) — every other test in
+// this file overrides nowUnix, so the default var initializer itself was
+// never invoked. Bounds the recorded timestamp against the wall clock rather
+// than asserting an exact value.
+func TestRecordSchedulerRun_UsesRealWallClockByDefault(t *testing.T) {
+	const name = "test_real_wall_clock"
+	before := time.Now().Unix()
+	RecordSchedulerRun(name, SchedulerSuccess, time.Millisecond)
+	after := time.Now().Unix()
+
+	got := gauge(t, schedulerLastRun, name)
+	if got < float64(before) || got > float64(after) {
+		t.Errorf("last_run = %v, want a value between %d and %d (the real wall clock)", got, before, after)
+	}
+}
+
 func TestSchedulerMetricsHandlerServesTimestampGauges(t *testing.T) {
 	const name = "test_scheduler_metrics_handler"
 	nowUnix = func() int64 { return 4242 }

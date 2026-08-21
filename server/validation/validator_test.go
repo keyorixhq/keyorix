@@ -454,6 +454,25 @@ func TestValidate_Identifier_NilPointer_Passes(t *testing.T) {
 	require.NoError(t, v.Validate(payload{Name: nil}))
 }
 
+func TestValidate_Identifier_NilPointer_NoOmitempty_Passes(t *testing.T) {
+	// Same as TestValidate_Identifier_NilPointer_Passes but WITHOUT an
+	// `omitempty` rule ahead of `identifier`. With `omitempty` present,
+	// validateField's own isEmpty short-circuit returns before
+	// validateIdentifier is ever reached for a nil pointer, so that test
+	// alone never exercises validateIdentifier's own derefForRule ok=false
+	// branch (line "if !ok { return nil }"). A bare `identifier` tag routes
+	// straight into applyRule -> validateIdentifier with the nil pointer
+	// field, confirming validateIdentifier itself treats "nothing to
+	// validate" as a pass, matching every other charset rule's handling of a
+	// nil pointer.
+	type payload struct {
+		Name *string `json:"name" validate:"identifier"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{Name: nil}))
+}
+
 func TestValidate_UsesJSONNameForErrorField(t *testing.T) {
 	type payload struct {
 		UserName string `json:"user_name" validate:"required"`

@@ -1,12 +1,15 @@
 package contracttest
 
 import (
+	"errors"
 	"flag"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
 // setFlag sets a registered testing flag for the duration of the calling
@@ -223,5 +226,301 @@ func TestAssertOpenAPIResponse_Success(t *testing.T) {
 	exercisedMu.Unlock()
 	if !got {
 		t.Error("expected healthCheck to be recorded as exercised after a successful call")
+	}
+}
+
+// TestAssertOpenAPIResponse_SpecErrFailsLoudly covers the branch no other
+// test reaches: loadSpec() having already recorded a failure (specErr set)
+// by the time AssertOpenAPIResponse runs. Every other caller in this package
+// exercises a clean spec, so this manipulates the package-global specErr
+// directly (safe: specOnce has already fired earlier in the suite, so
+// loadSpec()'s own call inside AssertOpenAPIResponse is a no-op and won't
+// clobber our injected value).
+func TestAssertOpenAPIResponse_SpecErrFailsLoudly(t *testing.T) {
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+	original := specErr
+	boom := errors.New("TEST: synthetic spec load failure")
+	specErr = boom
+	t.Cleanup(func() { specErr = original })
+
+	fakeT := &testing.T{}
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	done := make(chan bool, 1)
+	go func() {
+		defer func() { done <- fakeT.Failed() }()
+		AssertOpenAPIResponse(fakeT, req, w)
+	}()
+	failed := <-done
+
+	if !failed {
+		t.Fatal("expected AssertOpenAPIResponse to fail loudly when specErr is already set")
+	}
+}
+
+// TestOperationHasSchema_NilResponses covers the guard at the top of
+// operationHasSchema: an operation with a nil Responses object (never
+// produced by the real, validated openapi.yaml, since OpenAPI validation
+// requires every operation to declare at least one response) must report no
+// schema rather than panic walking a nil map.
+func TestOperationHasSchema_NilResponses(t *testing.T) {
+	op := &openapi3.Operation{}
+	if operationHasSchema(op) {
+		t.Error("expected operationHasSchema to return false when Responses is nil")
+	}
+}
+
+// TestStaleRegistryEntries_FlagsUnknownKeys covers the "key not in validIDs"
+// branch directly (the real registries are always kept in sync with
+// openapi.yaml, so this branch is otherwise only reachable by staging real
+// registry corruption through CheckPartition).
+func TestStaleRegistryEntries_FlagsUnknownKeys(t *testing.T) {
+	validIDs := map[string]bool{"knownOp": true}
+	got := staleRegistryEntries("exampleRegistry", []string{"knownOp", "staleOp"}, validIDs)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one stale-entry violation, got %v", got)
+	}
+	if !strings.Contains(got[0], "staleOp") || !strings.Contains(got[0], "exampleRegistry") {
+		t.Errorf("expected the violation to name the stale key and registry, got: %q", got[0])
+	}
+}
+
+// syntheticSpecWithMissingOperationID is a valid OpenAPI document (operationId
+// is optional per the spec itself) whose single operation declares none --
+// the real openapi.yaml never has one, since every operation in it already
+// carries an operationId, so this branch needs a synthetic doc to reach.
+const syntheticSpecWithMissingOperationID = `
+openapi: 3.0.3
+info:
+  title: missing operationId test
+  version: "1.0"
+paths:
+  /no-id:
+    get:
+      responses:
+        '200':
+          description: ok
+`
+
+// loadSyntheticSpec parses and validates a literal OpenAPI document, the
+// same way harness_test.go's dualContentSpec does, for tests that need a
+// spec shape the real openapi.yaml can't express.
+func loadSyntheticSpec(t *testing.T, yaml string) *openapi3.T {
+	t.Helper()
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromData([]byte(yaml))
+	if err != nil {
+		t.Fatalf("loading synthetic spec: %v", err)
+	}
+	if err := doc.Validate(loader.Context); err != nil {
+		t.Fatalf("validating synthetic spec: %v", err)
+	}
+	return doc
+}
+
+// swapSpec temporarily replaces the package-global spec (already populated
+// by loadSpec() earlier in the suite, so its sync.Once won't overwrite this)
+// and restores the original on cleanup.
+func swapSpec(t *testing.T, doc *openapi3.T) {
+	t.Helper()
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+	original := spec
+	spec = doc
+	t.Cleanup(func() { spec = original })
+}
+
+// TestOperationsWithoutID_MissingID covers operationsWithoutID's actual
+// "found a missing operationId" branch, which the real, fully-IDed
+// openapi.yaml never reaches.
+func TestOperationsWithoutID_MissingID(t *testing.T) {
+	swapSpec(t, loadSyntheticSpec(t, syntheticSpecWithMissingOperationID))
+
+	got := operationsWithoutID()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one missing-operationId entry, got %v", got)
+	}
+	if !strings.Contains(got[0], "/no-id") {
+		t.Errorf("expected the entry to mention /no-id, got %q", got[0])
+	}
+}
+
+// TestCheckPartition_MissingOperationID covers CheckPartition's own loop
+// over operationsWithoutID() (checks.go), which the real spec never
+// populates since every real operation already carries an operationId.
+func TestCheckPartition_MissingOperationID(t *testing.T) {
+	swapSpec(t, loadSyntheticSpec(t, syntheticSpecWithMissingOperationID))
+
+	err := CheckPartition()
+	if err == nil {
+		t.Fatal("expected an error for an operation with no operationId")
+	}
+	if !strings.Contains(err.Error(), "operation has no operationId") {
+		t.Errorf("expected the missing-operationId violation, got: %v", err)
+	}
+}
+
+// TestCheckPartition_PropagatesSpecErr covers the top-of-function specErr
+// short-circuit, unreachable through the real (always-valid) openapi.yaml.
+func TestCheckPartition_PropagatesSpecErr(t *testing.T) {
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+	boom := errors.New("TEST: synthetic spec load failure")
+	specErr = boom
+	t.Cleanup(func() { specErr = nil })
+
+	if err := CheckPartition(); !errors.Is(err, boom) {
+		t.Errorf("expected CheckPartition to propagate specErr verbatim, got: %v", err)
+	}
+}
+
+// TestCheckPartition_PendingButHasSchema covers the "pending entry whose
+// operation has since gained a schema" violation -- every operation in
+// pendingRegistry today genuinely has no schema, so this stages the
+// contradiction on a real, schema-bearing operation (healthCheck) instead
+// of relying on the registry ever actually drifting into that state.
+func TestCheckPartition_PendingButHasSchema(t *testing.T) {
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+
+	const opID = "healthCheck" // enforced: has a real 2xx schema
+	if _, already := pendingRegistry[opID]; already {
+		t.Fatalf("test assumption violated: %s is already in pendingRegistry", opID)
+	}
+	pendingRegistry[opID] = "TEST: pending-but-has-schema case"
+	t.Cleanup(func() { delete(pendingRegistry, opID) })
+
+	err := CheckPartition()
+	if err == nil {
+		t.Fatal("expected an error when a pending entry's operation has a schema")
+	}
+	if !strings.Contains(err.Error(), "still in pendingRegistry") {
+		t.Errorf("expected the pending-but-scheduled violation, got: %v", err)
+	}
+}
+
+// TestCheckPartition_OutOfScopeButHasSchemaNotExempt covers the
+// "schema-bearing operation opted out of enforcement without an explicit
+// schemaExemptOperations entry" violation -- the only real outOfScopeRegistry
+// entry with a schema (prometheusMetrics) is already exempt, so this stages
+// the non-exempt case on a real, schema-bearing operation instead.
+func TestCheckPartition_OutOfScopeButHasSchemaNotExempt(t *testing.T) {
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+
+	const opID = "healthCheck"
+	if _, already := outOfScopeRegistry[opID]; already {
+		t.Fatalf("test assumption violated: %s is already in outOfScopeRegistry", opID)
+	}
+	if schemaExemptOperations[opID] {
+		t.Fatalf("test assumption violated: %s is already schema-exempt", opID)
+	}
+	outOfScopeRegistry[opID] = "TEST: out-of-scope-but-has-schema case"
+	t.Cleanup(func() { delete(outOfScopeRegistry, opID) })
+
+	err := CheckPartition()
+	if err == nil {
+		t.Fatal("expected an error when a non-exempt out-of-scope entry's operation has a schema")
+	}
+	if !strings.Contains(err.Error(), "without being in schemaExemptOperations") {
+		t.Errorf("expected the not-exempt violation, got: %v", err)
+	}
+}
+
+// TestCheckPartition_UnregisteredNoSchema covers the "no schema, and not
+// registered anywhere" violation -- every real schema-less operation is
+// already in pendingRegistry, so this removes one temporarily to stage the
+// gap the check exists to catch.
+func TestCheckPartition_UnregisteredNoSchema(t *testing.T) {
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+
+	const opID = "acknowledgeAnomalyAlert" // real, currently-pending, no-schema operation
+	if _, isOOS := outOfScopeRegistry[opID]; isOOS {
+		t.Fatalf("test assumption violated: %s is already in outOfScopeRegistry", opID)
+	}
+	original, wasPending := pendingRegistry[opID]
+	if !wasPending {
+		t.Fatalf("test assumption violated: %s is not in pendingRegistry", opID)
+	}
+	delete(pendingRegistry, opID)
+	t.Cleanup(func() { pendingRegistry[opID] = original })
+
+	err := CheckPartition()
+	if err == nil {
+		t.Fatal("expected an error when a schema-less operation is registered nowhere")
+	}
+	if !strings.Contains(err.Error(), "not registered in pendingRegistry") {
+		t.Errorf("expected the unregistered-no-schema violation, got: %v", err)
+	}
+}
+
+// TestCheckAllEnforcedExercised_PropagatesSpecErr covers its own top-of-
+// function specErr short-circuit, unreachable through the real spec.
+func TestCheckAllEnforcedExercised_PropagatesSpecErr(t *testing.T) {
+	setFlag(t, "test.list", "")
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+	boom := errors.New("TEST: synthetic spec load failure")
+	specErr = boom
+	t.Cleanup(func() { specErr = nil })
+
+	if err := CheckAllEnforcedExercised(); !errors.Is(err, boom) {
+		t.Errorf("expected CheckAllEnforcedExercised to propagate specErr verbatim, got: %v", err)
+	}
+}
+
+// TestCheckAllEnforcedExercised_NoExercisingTestsEntry covers the
+// "enforced operation has no exercisingTests entry at all" branch, distinct
+// from the eligible-but-unexercised branch TestCheckAllEnforcedExercised
+// already covers -- every real enforced operation already has an entry, so
+// this removes one temporarily to stage the gap.
+func TestCheckAllEnforcedExercised_NoExercisingTestsEntry(t *testing.T) {
+	loadSpec()
+	if specErr != nil {
+		t.Fatal(specErr)
+	}
+
+	exercisedMu.Lock()
+	saved := exercised
+	exercised = map[string]bool{}
+	exercisedMu.Unlock()
+	t.Cleanup(func() {
+		exercisedMu.Lock()
+		exercised = saved
+		exercisedMu.Unlock()
+	})
+	setFlag(t, "test.run", "")
+
+	const opID = "healthCheck"
+	original, ok := exercisingTests[opID]
+	if !ok {
+		t.Fatalf("test assumption violated: %s has no exercisingTests entry to remove", opID)
+	}
+	delete(exercisingTests, opID)
+	t.Cleanup(func() { exercisingTests[opID] = original })
+
+	err := CheckAllEnforcedExercised()
+	if err == nil {
+		t.Fatal("expected an error when an enforced operation has no exercisingTests entry")
+	}
+	if !strings.Contains(err.Error(), "no entry in exercisingTests") {
+		t.Errorf("expected the no-entry violation message, got: %v", err)
 	}
 }

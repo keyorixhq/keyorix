@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -285,6 +286,76 @@ func TestRunChannelDelete_NoServer(t *testing.T) {
 	assert.Contains(t, err.Error(), "not connected to a server")
 }
 
+// ── cobra entry-point coverage (no-server, config-isolated) ───────────────────
+//
+// The *_NoServer tests above rely on the ambient environment having no
+// ~/.keyorix/cli.yaml / ./keyorix.yaml lying around; on a machine that has one
+// (e.g. from a prior 'keyorix connect'), common.ResolveRemote finds it despite
+// KEYORIX_SERVER/KEYORIX_TOKEN being cleared, and the test instead exercises a
+// real (slow, network-dependent) connection attempt to that stale server. This
+// is a known local-only condition — see internal/cli/config/cli_config.go's
+// getDefaultCLIConfigPath, which honors XDG_CONFIG_HOME first. Pointing
+// XDG_CONFIG_HOME at an empty per-test temp dir (the pattern already used
+// elsewhere in this repo, e.g. internal/cli/anomalies) makes LoadCLIConfig see
+// no config file regardless of the host machine's state, so these variants
+// deterministically exercise the "not connected" branch every time.
+
+func TestRunChannelList_NoServer_ConfigIsolated(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	err := runChannelList(listCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected to a server")
+}
+
+func TestRunChannelAdd_NoServer_ConfigIsolated(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	origType := flagChannelType
+	t.Cleanup(func() { flagChannelType = origType })
+	flagChannelType = "webhook"
+
+	err := runChannelAdd(addCmd, []string{"my-channel"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected to a server")
+}
+
+func TestRunChannelGet_NoServer_ConfigIsolated(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	err := runChannelGet(getCmd, []string{"my-channel"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected to a server")
+}
+
+func TestRunChannelUpdate_NoServer_ConfigIsolated(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	err := runChannelUpdate(updateCmd, []string{"my-channel"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected to a server")
+}
+
+func TestRunChannelDelete_NoServer_ConfigIsolated(t *testing.T) {
+	origConfirm := flagConfirm
+	t.Cleanup(func() { flagConfirm = origConfirm })
+	flagConfirm = true
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	err := runChannelDelete(deleteCmd, []string{"my-channel"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected to a server")
+}
+
 // ── additional coverage: empty list, error paths ──────────────────────────────
 
 // TestNotificationChannelList_Remote_Empty verifies that when the server returns
@@ -401,4 +472,99 @@ func TestNotificationChannelList_Remote_WithEnabledFalse(t *testing.T) {
 
 	err := runChannelListRemote(rc)
 	require.NoError(t, err)
+}
+
+// ── cobra entry-point coverage (connected-server success paths) ───────────────
+//
+// The tests above exercise the *Remote helpers directly and the "not
+// connected to a server" branch of each cobra entry point. None of them drive
+// the entry point's own "connected" branch — the call from e.g. runChannelList
+// into runChannelListRemote. These tests close that gap by pointing the
+// package-level env-resolved client at a live httptest server and invoking
+// the cobra RunE function itself.
+
+func TestRunChannelList_ConnectedServer(t *testing.T) {
+	buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(channelListBody))
+	})
+
+	err := runChannelList(listCmd, nil)
+	require.NoError(t, err)
+}
+
+func TestRunChannelAdd_ConnectedServer(t *testing.T) {
+	origType, origURL, origEmail, origEvents := flagChannelType, flagChannelURL, flagChannelEmail, flagChannelEvents
+	t.Cleanup(func() {
+		flagChannelType, flagChannelURL, flagChannelEmail, flagChannelEvents = origType, origURL, origEmail, origEvents
+	})
+	flagChannelType = "webhook"
+	flagChannelURL = "https://hook.example.com"
+	flagChannelEmail = ""
+	flagChannelEvents = ""
+
+	var gotBody map[string]interface{}
+	buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(channelSingleBody))
+	})
+
+	err := runChannelAdd(addCmd, []string{"slack-ops"})
+	require.NoError(t, err)
+	assert.Equal(t, "webhook", gotBody["type"])
+	assert.Equal(t, "https://hook.example.com", gotBody["url"])
+}
+
+func TestRunChannelGet_ConnectedServer_Found(t *testing.T) {
+	buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(channelListBody))
+	})
+
+	err := runChannelGet(getCmd, []string{"slack-ops"})
+	require.NoError(t, err)
+}
+
+func TestRunChannelUpdate_ConnectedServer(t *testing.T) {
+	require.NoError(t, updateCmd.Flags().Set("events", "secret.rotated"))
+	t.Cleanup(func() {
+		updateCmd.Flags().Lookup("events").Changed = false
+		flagChannelEvents = ""
+	})
+
+	callCount := 0
+	var gotBody map[string]interface{}
+	buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(channelListBody))
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(channelSingleBody))
+	})
+
+	err := runChannelUpdate(updateCmd, []string{"slack-ops"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, callCount, "expected exactly GET+PUT calls")
+	assert.Equal(t, "secret.rotated", gotBody["events"])
+}
+
+func TestRunChannelDelete_ConnectedServer(t *testing.T) {
+	origConfirm := flagConfirm
+	t.Cleanup(func() { flagConfirm = origConfirm })
+	flagConfirm = true
+
+	callCount := 0
+	buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(channelListBody))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":1,"deleted":true}}`))
+	})
+
+	err := runChannelDelete(deleteCmd, []string{"slack-ops"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, callCount, "expected exactly GET+DELETE calls")
 }

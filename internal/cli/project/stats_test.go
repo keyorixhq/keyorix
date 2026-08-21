@@ -1,13 +1,16 @@
 package project
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,4 +145,140 @@ func TestProjectStats_Remote_NotFound(t *testing.T) {
 	err := runStatsRemote(t.Context(), rc, "nonexistent-project")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestProjectStats_Remote_UnsupportedFormat verifies the printStats default
+// branch (format neither "table" nor "json") is rejected.
+func TestProjectStats_Remote_UnsupportedFormat(t *testing.T) {
+	rc, done := setupStatsRemote(t, projectsAndStatsHandler)
+	defer done()
+
+	statsFormat = "xml"
+	err := runStatsRemote(t.Context(), rc, "acme")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported format")
+}
+
+// TestProjectStats_Remote_ListProjectsError verifies that a server error on
+// GET /api/v1/projects is surfaced from runStatsRemote.
+func TestProjectStats_Remote_ListProjectsError(t *testing.T) {
+	rc, done := setupStatsRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer done()
+
+	err := runStatsRemote(t.Context(), rc, "acme")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list projects")
+}
+
+// TestProjectStats_Remote_StatsEndpointError verifies that a server error on
+// GET /api/v1/projects/{id}/stats is surfaced from runStatsRemote.
+func TestProjectStats_Remote_StatsEndpointError(t *testing.T) {
+	rc, done := setupStatsRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"projects":[{"id":1,"name":"acme"}]}}`))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+	defer done()
+
+	err := runStatsRemote(t.Context(), rc, "acme")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get project stats")
+}
+
+// ── Embedded mode ────────────────────────────────────────────────────────
+
+// setupStatsEmbedded configures an isolated on-disk SQLite database for the
+// stats command in embedded mode (no KEYORIX_SERVER/TOKEN set).
+func setupStatsEmbedded(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	require.NoError(t, config.Save(cfgPath, &config.Config{
+		Locale:  config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+		Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: filepath.Join(dir, "test.db")}},
+	}))
+	t.Setenv("KEYORIX_CONFIG_PATH", cfgPath)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("KEYORIX_TOKEN", "")
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_PROJECT", "")
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(func() { statsFormat = "table" })
+}
+
+// TestProjectStats_Embedded_NotFound verifies runStatsEmbedded propagates the
+// project-not-found error from common.LookupProjectIDByName.
+func TestProjectStats_Embedded_NotFound(t *testing.T) {
+	setupStatsEmbedded(t)
+
+	err := runStatsEmbedded(context.Background(), "no-such-project")
+	require.Error(t, err)
+}
+
+// TestProjectStats_Embedded_Table exercises the full embedded success path
+// (InitializeCoreService, LookupProjectIDByName, GetProjectStats, table print).
+func TestProjectStats_Embedded_Table(t *testing.T) {
+	setupStatsEmbedded(t)
+
+	createName = "alpha"
+	createDescription = ""
+	createEnvs = "dev"
+	require.NoError(t, runCreate(nil, nil))
+	t.Cleanup(func() { createName, createDescription, createEnvs = "", "", "" })
+
+	statsFormat = "table"
+	out := captureStatsStdout(t, func() {
+		require.NoError(t, runStatsEmbedded(context.Background(), "alpha"))
+	})
+	assert.Contains(t, out, "Project: alpha")
+	assert.Contains(t, out, "Secrets")
+	assert.Contains(t, out, "Rotation")
+	assert.Contains(t, out, "Access")
+}
+
+// TestProjectStats_Embedded_JSON exercises the embedded JSON-format branch.
+func TestProjectStats_Embedded_JSON(t *testing.T) {
+	setupStatsEmbedded(t)
+
+	createName = "beta"
+	createDescription = ""
+	createEnvs = "prod"
+	require.NoError(t, runCreate(nil, nil))
+	t.Cleanup(func() { createName, createDescription, createEnvs = "", "", "" })
+
+	statsFormat = "json"
+	out := captureStatsStdout(t, func() {
+		require.NoError(t, runStatsEmbedded(context.Background(), "beta"))
+	})
+	assert.Contains(t, out, `"project_name":"beta"`)
+	assert.Contains(t, out, `"total_secrets"`)
+}
+
+// ── runStats dispatcher ─────────────────────────────────────────────────────
+
+// TestProjectStats_RunE_Remote verifies statsCmd.RunE dispatches to the
+// remote path when KEYORIX_SERVER + KEYORIX_TOKEN are set.
+func TestProjectStats_RunE_Remote(t *testing.T) {
+	_, done := setupStatsRemote(t, projectsAndStatsHandler)
+	defer done()
+
+	statsFormat = "table"
+	out := captureStatsStdout(t, func() {
+		require.NoError(t, statsCmd.RunE(statsCmd, []string{"acme"}))
+	})
+	assert.Contains(t, out, "acme")
+}
+
+// TestProjectStats_RunE_Embedded verifies statsCmd.RunE dispatches to the
+// embedded path when no server env vars are set.
+func TestProjectStats_RunE_Embedded(t *testing.T) {
+	setupStatsEmbedded(t)
+
+	err := statsCmd.RunE(statsCmd, []string{"no-such-project"})
+	require.Error(t, err)
 }

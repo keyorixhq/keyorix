@@ -275,3 +275,133 @@ func TestVerifyReceipt_AcceptsSHA256HashAlgorithm(t *testing.T) {
 	require.NoError(t, err)
 	assert.WithinDuration(t, fixedTime, at, time.Second)
 }
+
+// ---------------------------------------------------------------------------
+// Anchor — refuseRedirect, defense-in-depth URL re-validation, and the
+// recover() path around timestamp.ParseResponse
+// ---------------------------------------------------------------------------
+
+// TestRFC3161_Anchor_RefusesRedirect confirms the client never follows a 3xx
+// from the TSA endpoint: refuseRedirect must reject it (CWE-918 — a
+// compromised/misconfigured TSA could otherwise bounce the request to an
+// internal host such as cloud IMDS even though the configured URL itself was
+// fine at setup time).
+func TestRFC3161_Anchor_RefusesRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:1/elsewhere", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+	_, err = tsa.Anchor(context.Background(), []byte("m"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to follow redirect")
+}
+
+// TestRFC3161_Anchor_RevalidatesURLAtCallTime constructs an RFC3161 value
+// directly (bypassing NewRFC3161's constructor validation) to exercise
+// Anchor's own defense-in-depth validateTSAURL call. This matters because the
+// url field could in principle be reached via a path that skips the
+// constructor; Anchor must not trust a stale/bypassed value.
+func TestRFC3161_Anchor_RevalidatesURLAtCallTime(t *testing.T) {
+	r := &RFC3161{url: "http://not-loopback.example.com/tsr", client: &http.Client{Timeout: 5 * time.Second}}
+	_, err := r.Anchor(context.Background(), []byte("m"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "https")
+}
+
+// rfc3161TestPKIStatusInfo/rfc3161TestResponse mirror digitorus/timestamp's
+// unexported `pkiStatusInfo`/`response` ASN.1 shapes closely enough to build a
+// well-formed TSA response envelope by hand (see rfc3161_struct.go in that
+// module): a SEQUENCE of a status INTEGER-bearing structure followed by an
+// (optional) raw TimeStampToken.
+type rfc3161TestPKIStatusInfo struct {
+	Status int
+}
+
+type rfc3161TestResponse struct {
+	Status         rfc3161TestPKIStatusInfo
+	TimeStampToken asn1.RawValue `asn1:"optional"`
+}
+
+// TestRFC3161_Anchor_NestedMalformedResponse_RecoversFromPanic is #G61's
+// sibling for a panic that TestRFC3161_Anchor_MalformedTSAResponseNoPanic's
+// flat byte sequences cannot reach: those are all rejected by Go's
+// standard-library asn1 decoder (used for the OUTER response envelope) before
+// the bytes ever reach digitorus/pkcs7's own hand-rolled BER reader, so the
+// recover() in Anchor never actually fires for them.
+//
+// Here the outer envelope is well-formed DER (so encoding/asn1 accepts it and
+// hands the embedded TimeStampToken bytes through untouched), but those
+// embedded bytes are a high-tag-number form whose length byte sits exactly one
+// byte past the end of the buffer — digitorus/pkcs7's readObject indexes that
+// byte without a bounds check first (ber.go), panicking with "index out of
+// range" instead of returning a parse error. Anchor's recover() must convert
+// that into an error, never crash the process anchoring an audit checkpoint.
+func TestRFC3161_Anchor_NestedMalformedResponse_RecoversFromPanic(t *testing.T) {
+	respBytes, err := asn1.Marshal(rfc3161TestResponse{
+		Status: rfc3161TestPKIStatusInfo{Status: 0},
+		TimeStampToken: asn1.RawValue{
+			FullBytes: []byte{0x30, 0x02, 0xff, 0x30},
+		},
+	})
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(respBytes)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+
+	var anchorErr error
+	require.NotPanics(t, func() {
+		_, anchorErr = client.Anchor(context.Background(), []byte("anchor message"))
+	})
+	require.Error(t, anchorErr)
+	assert.Contains(t, anchorErr.Error(), "parser panic")
+}
+
+// TestRFC3161_Anchor_NilContext confirms Anchor surfaces
+// http.NewRequestWithContext's own defensive nil-Context error as a wrapped
+// "new request" error rather than panicking or silently proceeding with a
+// background context.
+func TestRFC3161_Anchor_NilContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+
+	//lint:ignore SA1012 deliberately nil to exercise the nil-Context guard inside http.NewRequestWithContext
+	_, err = tsa.Anchor(nil, []byte("m"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "new request")
+}
+
+// TestRFC3161_Anchor_ResponseBodyReadError confirms a TSA response whose
+// declared Content-Length is never fully delivered (connection closed mid-body)
+// surfaces as a wrapped "read response" error from io.ReadAll, not a panic or
+// a response treated as complete.
+func TestRFC3161_Anchor_ResponseBodyReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		require.True(t, ok)
+		conn, buf, err := hj.Hijack()
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+		// Claim far more body bytes than are actually sent, then close the
+		// connection — the client's io.ReadAll(resp.Body) hits an
+		// unexpected-EOF read error instead of a clean 200 with a full body.
+		_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nContent-Type: application/timestamp-reply\r\n\r\nshort")
+		_ = buf.Flush()
+	}))
+	t.Cleanup(srv.Close)
+	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+	_, err = tsa.Anchor(context.Background(), []byte("m"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read response")
+}

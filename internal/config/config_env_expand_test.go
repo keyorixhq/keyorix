@@ -78,6 +78,23 @@ func TestLoadLeavesUnresolvedEnvVarWithNoDefaultIntact(t *testing.T) {
 	assert.Equal(t, "${KEYORIX_REQUIRED_DOMAIN}", cfg.Server.HTTP.Domain)
 }
 
+// bash ${VAR} semantics (no default form): a variable explicitly set to the empty
+// string, with no ":-default" fallback in the reference, resolves to that explicit
+// empty value rather than being left unresolved — distinct from the fully-unset case
+// in TestLoadLeavesUnresolvedEnvVarWithNoDefaultIntact, which must stay literal.
+func TestLoadExpandsEnvVarNoDefaultExplicitlyEmpty(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"server:\n  http:\n    domain: \"prefix-${KEYORIX_EMPTY_NO_DEFAULT}-suffix\"\n",
+	), 0600))
+
+	t.Setenv("KEYORIX_EMPTY_NO_DEFAULT", "")
+	cfg, err := Load(p)
+	require.NoError(t, err)
+	assert.Equal(t, "prefix--suffix", cfg.Server.HTTP.Domain)
+}
+
 // production.yaml itself must still load cleanly and resolve its documented
 // KEYORIX_DOMAIN interpolation end to end.
 func TestLoadProductionYAMLExpandsDomain(t *testing.T) {
