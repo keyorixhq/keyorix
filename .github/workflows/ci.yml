@@ -313,6 +313,21 @@ jobs:
           - leg: root-4
             timeout: 600
             coverage-file: coverage_root4.out
+          # core (internal/core, re-enabled 2026-08-22 after ~4 months dark --
+          # see fix/ci-reenable-internal-core) gets its own pinned leg rather
+          # than folding into root-4's catch-all: measured 369.6s in isolation
+          # locally (-race, same flags as this leg) but 605s -- over root-4's
+          # 600s budget -- sharing a runner with a dozen other concurrent test
+          # binaries there. A per-package timeout exists to catch hangs, not
+          # to enforce a speed budget; 1800s here is deliberately generous so
+          # a healthy-but-slow run never trips it, rather than tuning to just
+          # past the observed duration and risking the same intermittent-red
+          # outcome that made the April exclusion look justified in hindsight.
+          # 323 test files in one package is itself worth revisiting --
+          # tracked separately, not folded into this CI-scheduling fix.
+          - leg: core
+            timeout: 1800
+            coverage-file: coverage_core.out
           # handlers (server/http/handlers, one package, 167 test files, 5151
           # top-level tests, all already t.Parallel()) measured at 911s in CI
           # -- vs. 15s wall / 37s summed-per-test locally without -race. That
@@ -360,7 +375,6 @@ jobs:
           root_base() {
             go list ./... | grep -v \
               -e 'internal/cli$' \
-              -e 'internal/core$' \
               -e 'internal/storage/remote' \
               -e 'server/http$' \
               -e 'server/http/handlers$' \
@@ -431,6 +445,8 @@ jobs:
           github.com/keyorixhq/keyorix/internal/delivery
           github.com/keyorixhq/keyorix/internal/core/storage"
 
+          core_pkgs="github.com/keyorixhq/keyorix/internal/core"
+
           leg="${{ matrix.leg }}"
           # Empty matches everything (verified: `go test -run ""` and no
           # -run flag at all select the identical test set) -- root-1/2/3/4
@@ -447,11 +463,14 @@ jobs:
             root-3)
               pkgs="$root_3_pkgs"
               ;;
+            core)
+              pkgs="$core_pkgs"
+              ;;
             root-4)
               # Catch-all: every root-eligible package not pinned to root-1/2/3
-              # above, including any package added since this split was last
-              # tuned. comm needs both inputs sorted.
-              pinned=$(printf '%s\n%s\n%s\n' "$root_1_pkgs" "$root_2_pkgs" "$root_3_pkgs" | sort -u)
+              # or core above, including any package added since this split
+              # was last tuned. comm needs both inputs sorted.
+              pinned=$(printf '%s\n%s\n%s\n%s\n' "$root_1_pkgs" "$root_2_pkgs" "$root_3_pkgs" "$core_pkgs" | sort -u)
               pkgs=$(comm -23 <(root_base | sort -u) <(echo "$pinned"))
               ;;
             handlers-1|handlers-2|handlers-3|handlers-4)
