@@ -32,7 +32,7 @@ import (
 // #531's four sub-fixes, plus a live project and the bootstrap admin's own user
 // ID (needed as an already-vetted actorID for CreateUserWithAssignments' own
 // escalation-ceiling check).
-func newUpstreamDownstreamForMiscProxy(t *testing.T) (upstream, downstream *core.KeyorixCore, projectID, adminID uint) {
+func newUpstreamDownstreamForMiscProxy(t *testing.T) (upstream, downstream *core.KeyorixCore, srv *httptest.Server, projectID, adminID uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
@@ -67,7 +67,7 @@ func newUpstreamDownstreamForMiscProxy(t *testing.T) (upstream, downstream *core
 	admin, err := upstream.GetUserByUsername(ctx, "testadmin")
 	require.NoError(t, err)
 
-	return upstream, downstream, project.ID, admin.ID
+	return upstream, downstream, upstreamSrv, project.ID, admin.ID
 }
 
 // --- 1. Access-activity ---
@@ -78,7 +78,7 @@ func newUpstreamDownstreamForMiscProxy(t *testing.T) (upstream, downstream *core
 // RemoteStorage, keyed by the right user, all via storage.type: remote against
 // a real router, not a protocol mock.
 func TestRemoteStorageAccessActivity_RealServer(t *testing.T) {
-	upstream, downstream, projectID, adminID := newUpstreamDownstreamForMiscProxy(t)
+	upstream, downstream, _, projectID, adminID := newUpstreamDownstreamForMiscProxy(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -150,7 +150,7 @@ func TestRemoteStorageAccessActivity_RealServer(t *testing.T) {
 // now resolves a soft-deleted secret's scope via storage.type: remote instead
 // of 404ing before ever reaching the already-proxied RestoreSecret.
 func TestRemoteStorageGetSecretIncludingDeleted_RealServer(t *testing.T) {
-	upstream, downstream, projectID, adminID := newUpstreamDownstreamForMiscProxy(t)
+	upstream, downstream, _, projectID, adminID := newUpstreamDownstreamForMiscProxy(t)
 	ctx := context.Background()
 
 	env, err := upstream.CreateEnvironment(ctx, projectID, "misc-proxy-env-2")
@@ -190,7 +190,7 @@ func TestRemoteStorageGetSecretIncludingDeleted_RealServer(t *testing.T) {
 // core.ListSharesByUser's owned-share half no longer hard-fails under
 // storage.type: remote.
 func TestRemoteStorageListSharesByOwner_RealServer(t *testing.T) {
-	upstream, downstream, projectID, adminID := newUpstreamDownstreamForMiscProxy(t)
+	upstream, downstream, _, projectID, adminID := newUpstreamDownstreamForMiscProxy(t)
 	ctx := context.Background()
 
 	env, err := upstream.CreateEnvironment(ctx, projectID, "misc-proxy-env-3")
@@ -270,8 +270,19 @@ func TestRemoteStorageListSharesByOwner_RealServer(t *testing.T) {
 // still-open round-119 gap (unrelated to #531) that would make this test
 // depend on a fix outside this PR's scope.
 func TestRemoteStorageCreateUserWithRoleGrants_RealServer(t *testing.T) {
-	upstream, downstream, _, _ := newUpstreamDownstreamForMiscProxy(t)
+	upstream, _, srv, _, _ := newUpstreamDownstreamForMiscProxy(t)
 	ctx := context.Background()
+
+	// CreateUserWithRoleGrantsProxy (#G79) re-validates escalation-ceiling/SoD
+	// authority against actorID(r) -- the AUTHENTICATED caller of this
+	// specific request, not the target user's new grants alone. A node
+	// credential (the harness's default downstream above) resolves to
+	// actorID 0 and can never satisfy that check, unlike every other proxy in
+	// this file, which are plain storage passthroughs with no such
+	// authority check. Use a real admin session instead, matching the
+	// caller identity this endpoint's own doc comment assumes.
+	adminToken := createTestToken(t, upstream)
+	adminDownstream := newDownstreamRemoteStorage(t, srv, adminToken)
 
 	viewerRole, err := upstream.Storage().GetRoleByName(ctx, "system_viewer")
 	require.NoError(t, err)
@@ -282,7 +293,7 @@ func TestRemoteStorageCreateUserWithRoleGrants_RealServer(t *testing.T) {
 		Username:     "atomic-create-user",
 		Email:        "atomic-create-user@example.com",
 		DisplayName:  "Atomic Create",
-		PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01",
+		PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0", // 60 chars: isPlausibleBcryptHash requires exactly 60
 		IsActive:     true,
 		AccountState: "active",
 	}
@@ -290,7 +301,7 @@ func TestRemoteStorageCreateUserWithRoleGrants_RealServer(t *testing.T) {
 		{RoleID: viewerRole.ID},
 		{RoleID: adminRole.ID},
 	}
-	created, err := downstream.Storage().CreateUserWithRoleGrants(ctx, user, grants)
+	created, err := adminDownstream.Storage().CreateUserWithRoleGrants(ctx, user, grants)
 	require.NoError(t, err, "creating a user with role grants must succeed via storage.type: remote")
 	require.NotZero(t, created.ID)
 
@@ -318,7 +329,7 @@ func TestRemoteStorageCreateUserWithRoleGrants_RealServer(t *testing.T) {
 // storage.CreateUserWithRoleGrants) so this genuinely exercises the DB-level
 // race guard, not just the ordinary pre-check.
 func TestRemoteStorageCreateUserWithRoleGrants_DuplicateEmail_RealServer(t *testing.T) {
-	upstream, downstream, _, _ := newUpstreamDownstreamForMiscProxy(t)
+	upstream, downstream, _, _, _ := newUpstreamDownstreamForMiscProxy(t)
 	ctx := context.Background()
 
 	_, err := upstream.CreateUser(ctx, &core.CreateUserRequest{
@@ -336,7 +347,7 @@ func TestRemoteStorageCreateUserWithRoleGrants_DuplicateEmail_RealServer(t *test
 		Username:     "dup-email-newcomer",
 		Email:        "dup-email@example.com",
 		DisplayName:  "Dup Newcomer",
-		PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01",
+		PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0", // 60 chars: isPlausibleBcryptHash requires exactly 60
 		IsActive:     true,
 		AccountState: "active",
 	}, []corestorage.RoleGrant{{RoleID: viewerRole.ID}})
