@@ -274,6 +274,56 @@ over-reaches elsewhere in the same `/system` route group. It does —
 grant any role, including admin-tier ones, to any user or group, with no ceiling check
 and no audit-log write on that path. Filed as #1524; not touched here.
 
+### Standing practice: verify a repaired fixture by breaking its subject
+
+Established while fixing C1 and confirmed again on every C2 fixture repair: after
+rebuilding a test's fixture so it stops failing, temporarily break the actual invariant
+the test claims to cover (comment out a guard's refusal branch, force a check to always
+pass, etc.) and confirm the test goes red. Revert before committing. A green test after
+a fixture fix proves the fixture compiles and runs; it does not prove the test still
+reaches and exercises its subject — that's exactly the failure mode C2's four root
+causes were (twelve tests failing during setup, before ever touching the cycle
+detection / duplicate rejection / setup-token logic they claim to cover). This is now
+the default verification step for any fixture repair in this campaign, not optional
+due diligence — every C1 and C2 fix in this document was verified this way before being
+reported as fixed.
+
+### Task 3 — runner headroom audit
+
+Pulled every `test-suite` leg's actual `go test`-only elapsed time (step start to its
+last package's `ok` line, NOT the job's total wall-clock, which includes ~1-2 min of
+checkout/setup overhead that doesn't count against `-timeout`) from PR #1520's completed
+CI run, against the OLD 600s/1800s budgets:
+
+| Leg | Timeout (old) | Actual | Headroom | |
+|---|---|---|---|---|
+| root-1 | 600s | 461s | 139s (23%) | |
+| root-2 | 600s | 504s | 96s (16%) | |
+| root-3 | 600s | 555s | 45s (7.5%) | ⚠️ tight |
+| root-4 | 600s | 569s | 31s (5.2%) | ⚠️⚠️ tighter than internal/core died at (605s) |
+| core | 1800s | 625s | 1175s (65%) | comfortable |
+| handlers-1 | 600s | 465s | 135s (22.5%) | |
+| handlers-2 | 600s | 497s | 103s (17%) | |
+| handlers-3 | 600s | 409s | 191s (32%) | |
+| handlers-4 | 600s | 465s | 135s (22.5%) | |
+
+**Finding: 600s was miscalibrated repo-wide, not just for `internal/core`.** root-3 and
+root-4 were already sitting in the same danger zone `internal/core` crossed —
+`internal/core` was just the first leg to actually cross the line, not an outlier. Fixed
+in #1526 (raises every leg to 1800s, standalone PR, landed ahead of C4).
+
+**server/http CI-duration prediction for C4**: local baseline (this machine, `-race
+-timeout 1200s`, all C2/C3 fixture fixes applied, the 2 known-separate C1-scope failures
+excluded) — see the PR that lands C4 for the actual measured number and the leg timeout
+it was sized from. Applying the ~1.7x local→CI runner factor established above
+(`internal/core`: local 369.6s → CI 624.8s isolated) to that local number is the
+starting point for C4's dedicated leg's timeout, with generous headroom on top per the
+same reasoning as every other leg in this document — a hang detector, not a speed
+budget. **C4 must pin server/http to its own dedicated leg, not fold it into root-4's
+catch-all** — root_base() is the catch-all computation, so un-excluding server/http
+without pinning it would drop 91 HTTP integration test files into root-4 (already at
+569s/5.2% headroom before #1526's fix) — a guaranteed timeout, not a surprise.
+
 ### C2 / C3 / C4 / C5
 
 Tracked in their own PRs as they land; this section gets filled in per PR, not ahead of
