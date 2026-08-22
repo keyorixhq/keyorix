@@ -378,113 +378,23 @@ jobs:
 
       - name: go test (${{ matrix.leg }})
         run: |
-          # Every root-N leg starts from the same base exclusion root always
-          # used (pre-existing failures requiring a running server / known
-          # mock mismatches -- see `git log -S "internal/cli\$" --
-          # .github/workflows/ci.yml` for why each was excluded; do not
-          # re-include without fixing the underlying test first. handlers is
-          # excluded here because it runs as its own matrix leg below).
-          root_base() {
-            go list ./... | grep -v \
-              -e 'internal/cli$' \
-              -e 'internal/storage/remote' \
-              -e 'server/http$' \
-              -e 'server/http/handlers$' \
-              -e 'server/proto/pb$'
-          }
-
-          # root-1/2/3: pinned "heavy" packages (bin-packed by measured
-          # per-package time, ~830s/leg). Keep these three lists AND the
-          # exclusion list in root-4 below in sync -- a package listed here
-          # must be excluded there, and vice versa.
-          root_1_pkgs="github.com/keyorixhq/keyorix/internal/encryption
-          github.com/keyorixhq/keyorix/server/grpc/services
-          github.com/keyorixhq/keyorix/internal/cli/invite
-          github.com/keyorixhq/keyorix/internal/cli/group
-          github.com/keyorixhq/keyorix/internal/cli/run
-          github.com/keyorixhq/keyorix/internal/crypto
-          github.com/keyorixhq/keyorix/server/grpc
-          github.com/keyorixhq/keyorix/internal/testhelper
-          github.com/keyorixhq/keyorix/internal/cli/accessreview
-          github.com/keyorixhq/keyorix/internal/cli/anomalies
-          github.com/keyorixhq/keyorix/internal/cli/auth
-          github.com/keyorixhq/keyorix/internal/bundle
-          github.com/keyorixhq/keyorix/internal/rotation
-          github.com/keyorixhq/keyorix/internal/cli/license
-          github.com/keyorixhq/keyorix/internal/cli/config
-          github.com/keyorixhq/keyorix/cmd/validate-translations
-          github.com/keyorixhq/keyorix/internal/startup
-          github.com/keyorixhq/keyorix/internal/di
-          github.com/keyorixhq/keyorix/server/webui"
-
-          root_2_pkgs="github.com/keyorixhq/keyorix/internal/cli/user
-          github.com/keyorixhq/keyorix/internal/cli/encryption
-          github.com/keyorixhq/keyorix/internal/storage
-          github.com/keyorixhq/keyorix/internal/cli/share
-          github.com/keyorixhq/keyorix/server/grpc/interceptors
-          github.com/keyorixhq/keyorix/internal/cli/common
-          github.com/keyorixhq/keyorix/internal/cli/hygiene
-          github.com/keyorixhq/keyorix/internal/cli/sod
-          github.com/keyorixhq/keyorix/internal/cli/breakglass
-          github.com/keyorixhq/keyorix/internal/cli/audit
-          github.com/keyorixhq/keyorix/internal/saml
-          github.com/keyorixhq/keyorix/internal/i18n
-          github.com/keyorixhq/keyorix/internal/notary
-          github.com/keyorixhq/keyorix/internal/securefiles
-          github.com/keyorixhq/keyorix/internal/trust
-          github.com/keyorixhq/keyorix/internal/license
-          github.com/keyorixhq/keyorix/internal/cli/trust
-          github.com/keyorixhq/keyorix/internal/crypto/awskms
-          github.com/keyorixhq/keyorix/internal/utils/safeconv"
-
-          root_3_pkgs="github.com/keyorixhq/keyorix/server/tools
-          github.com/keyorixhq/keyorix/internal/cli/machine
-          github.com/keyorixhq/keyorix/server
-          github.com/keyorixhq/keyorix/internal/cli/rbac
-          github.com/keyorixhq/keyorix/internal/cli/project
-          github.com/keyorixhq/keyorix/internal/cli/status
-          github.com/keyorixhq/keyorix/internal/notifychan
-          github.com/keyorixhq/keyorix/internal/cli/risk
-          github.com/keyorixhq/keyorix/internal/cli/rotation
-          github.com/keyorixhq/keyorix/internal/cli/dynamic
-          github.com/keyorixhq/keyorix/internal/audit/siem
-          github.com/keyorixhq/keyorix/internal/mcp
-          github.com/keyorixhq/keyorix/internal/cli/bundle
-          github.com/keyorixhq/keyorix/server/validation
-          github.com/keyorixhq/keyorix/internal/connect
-          github.com/keyorixhq/keyorix/internal/config
-          github.com/keyorixhq/keyorix/internal/storage/models
-          github.com/keyorixhq/keyorix/internal/delivery
-          github.com/keyorixhq/keyorix/internal/core/storage"
-
-          core_pkgs="github.com/keyorixhq/keyorix/internal/core"
+          # Which packages each leg runs, and why each excluded package is
+          # excluded, now lives in one place (scripts/ci-test-legs.sh) shared
+          # with the leg-completeness assertion job below -- see that file's
+          # own header comment for why (G80 C5: a hand-duplicated pattern
+          # list here is exactly what let server/http drift to zero legs,
+          # unnoticed, for ~4 months).
+          source scripts/ci-test-legs.sh
 
           leg="${{ matrix.leg }}"
           # Empty matches everything (verified: `go test -run ""` and no
-          # -run flag at all select the identical test set) -- root-1/2/3/4
-          # leave this empty since they shard by package, not by test name.
+          # -run flag at all select the identical test set) -- every leg
+          # except handlers-N leaves this empty, since only handlers shards
+          # by test name rather than by package.
           run_filter=""
+          pkgs=$(pkgs_for_leg "$leg")
 
           case "$leg" in
-            root-1)
-              pkgs="$root_1_pkgs"
-              ;;
-            root-2)
-              pkgs="$root_2_pkgs"
-              ;;
-            root-3)
-              pkgs="$root_3_pkgs"
-              ;;
-            core)
-              pkgs="$core_pkgs"
-              ;;
-            root-4)
-              # Catch-all: every root-eligible package not pinned to root-1/2/3
-              # or core above, including any package added since this split
-              # was last tuned. comm needs both inputs sorted.
-              pinned=$(printf '%s\n%s\n%s\n%s\n' "$root_1_pkgs" "$root_2_pkgs" "$root_3_pkgs" "$core_pkgs" | sort -u)
-              pkgs=$(comm -23 <(root_base | sort -u) <(echo "$pinned"))
-              ;;
             handlers-1|handlers-2|handlers-3|handlers-4)
               # One package (server/http/handlers), 5151 top-level tests, all
               # already t.Parallel() -- no per-test timing outliers to pin the
@@ -494,11 +404,9 @@ jobs:
               # (sorted test name index) mod 4 instead. A newly added test
               # always lands in whichever shard its name happens to hash to --
               # nothing to keep in sync, unlike root-1/2/3's pinned lists.
-              pkgs=./server/http/handlers/...
               shard=${leg#handlers-}
-              names=$(go test -list '^Test' ./server/http/handlers/... | grep -v '^ok\b' | sort)
-              selected=$(echo "$names" | awk -v n=4 -v s="$shard" 'NR % n == (s - 1)')
-              run_filter="^($(echo "$selected" | paste -sd '|'))\$"
+              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 4)
+              pkgs=./server/http/handlers/...
               ;;
           esac
           # $pkgs is deliberately unquoted below: it holds a space-separated
@@ -513,6 +421,53 @@ jobs:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
           retention-days: 1
+
+  # G80 C5: fails (does not warn) when a TEMPORARY exclusion in
+  # scripts/ci-test-legs.sh has sat unreviewed for more than 30 days. Cheap
+  # and fast (bash + `date`, no Go/checkout of test code needed beyond the
+  # script itself), so it runs independently of test-suite rather than
+  # waiting on it. The check itself, and the fact that it fires, are both
+  # verified in the PR that introduced this job (see the PR description) by
+  # temporarily pointing it at a deliberately stale entry.
+  exclusion-freshness:
+    needs: [preflight, changes]
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check CI exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        run: |
+          source scripts/ci-test-legs.sh
+          check_exclusion_freshness
+
+  # G80 C5: fails when any package in `go list ./...` is covered by NEITHER
+  # a CI test-suite leg NOR an entry in scripts/ci-test-legs.sh's exclusion
+  # table -- the guard against a package silently landing in zero legs, the
+  # exact failure mode that let server/http go untested for ~4 months with
+  # nothing red anywhere to catch it. Independent of test-suite: this only
+  # needs `go list` (package discovery), not an actual test run, so it's
+  # fast and doesn't wait on the (up to 30-minute) test-suite matrix.
+  assert-leg-completeness:
+    needs: [preflight, changes]
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      - name: Assert every package is covered by exactly the CI matrix or an enumerated exclusion
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_leg_completeness
 
   # Independent of test execution/coverage -- both tools statically analyze
   # source, so this runs in parallel with test-suite instead of waiting for it
