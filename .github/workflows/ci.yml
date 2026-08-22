@@ -360,7 +360,6 @@ jobs:
           root_base() {
             go list ./... | grep -v \
               -e 'internal/cli$' \
-              -e 'internal/core$' \
               -e 'internal/storage/remote' \
               -e 'server/http$' \
               -e 'server/http/handlers$' \
