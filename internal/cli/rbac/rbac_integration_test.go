@@ -463,9 +463,15 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("KEYORIX_ENV", "test")
 	_ = os.Setenv("KEYORIX_LOG_LEVEL", "error")
 
+	// Isolate $HOME so tests never read a developer's real ~/.keyorix/cli.yaml
+	// (internal/cli/config.LoadCLIConfig) -- see testhelper.IsolateCLIHome's
+	// doc comment for why this must happen once here, not per-test.
+	cleanupHome := testhelper.IsolateCLIHome()
+
 	// Run tests
 	code := m.Run()
 
 	// Cleanup
+	cleanupHome()
 	os.Exit(code)
 }
