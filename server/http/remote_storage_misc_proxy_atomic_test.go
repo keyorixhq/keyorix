@@ -46,8 +46,15 @@ import (
 //     TestRemoteStorageCreateUserWithRoleGrants_RealServer above additionally
 //     proves both grants land together on an uncontested create.
 func TestRemoteStorageCreateUserWithRoleGrants_ConcurrentDuplicateEmailRace_RealServer(t *testing.T) {
-	upstream, downstream, _, _ := newUpstreamDownstreamForMiscProxy(t)
+	upstream, _, srv, _, _ := newUpstreamDownstreamForMiscProxy(t)
 	ctx := context.Background()
+
+	// See TestRemoteStorageCreateUserWithRoleGrants_RealServer's comment
+	// (remote_storage_misc_proxy_test.go): CreateUserWithRoleGrantsProxy
+	// (#G79) requires a real authenticated actor, not a node credential, to
+	// pass its escalation-ceiling/SoD authority check.
+	adminToken := createTestToken(t, upstream)
+	downstream := newDownstreamRemoteStorage(t, srv, adminToken)
 
 	viewerRole, err := upstream.Storage().GetRoleByName(ctx, "system_viewer")
 	require.NoError(t, err)
@@ -66,7 +73,7 @@ func TestRemoteStorageCreateUserWithRoleGrants_ConcurrentDuplicateEmailRace_Real
 				Username:     fmt.Sprintf("atomic-race-user-%d", i),
 				Email:        raceEmail,
 				DisplayName:  "Atomic Race",
-				PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01",
+				PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0", // 60 chars: isPlausibleBcryptHash requires exactly 60
 				IsActive:     true,
 				AccountState: "active",
 			}

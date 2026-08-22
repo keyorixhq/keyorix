@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -58,6 +59,25 @@ func newDownstreamRemoteStorage(t *testing.T, srv *httptest.Server, token string
 	return core.NewKeyorixCore(rs)
 }
 
+// createTestSecretID creates a real secret in project 1's default environment and
+// returns its ID. Secret-dependency edges reference dependent/depends-on secrets by
+// ID, and CreateSecretDependencyProxy validates the referenced secret actually
+// belongs to the given project — a check the fixtures below predate, when a
+// plausible-looking but nonexistent ID (501, 502, 601, ...) still passed. It no
+// longer does, so every edge below needs a real row.
+func createTestSecretID(t *testing.T, c *core.KeyorixCore, name string) uint {
+	t.Helper()
+	ctx := context.Background()
+	envs, err := c.Storage().ListEnvironmentsByProject(ctx, 1)
+	require.NoError(t, err)
+	require.NotEmpty(t, envs, "the seeded default project must have at least one environment")
+	secret, err := c.Storage().CreateSecret(ctx, &models.SecretNode{
+		Name: name, ProjectID: 1, EnvironmentID: envs[0].ID, IsSecret: true,
+	})
+	require.NoError(t, err)
+	return secret.ID
+}
+
 // TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer proves the fix for
 // CreateSecretDependency/GetSecretDependency/ListSecretDependenciesForProject/
 // ListSecretDependenciesForProjectForUpdate/DeleteSecretDependency: an edge is
@@ -69,13 +89,17 @@ func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testi
 	downstream := newDownstreamRemoteStorage(t, srv, token)
 	ctx := context.Background()
 
+	secretA := createTestSecretID(t, upstream, "app-token")
+	secretB := createTestSecretID(t, upstream, "db-password")
+	secretC := createTestSecretID(t, upstream, "third-secret")
+
 	created, err := downstream.Storage().CreateSecretDependency(ctx, &models.SecretDependency{
-		ProjectID: 1, DependentSecretID: 501, DependsOnSecretID: 502, Note: "app token derives from db password", CreatedBy: 10,
+		ProjectID: 1, DependentSecretID: secretA, DependsOnSecretID: secretB, Note: "app token derives from db password", CreatedBy: 10,
 	})
 	require.NoError(t, err, "creating a secret dependency must succeed via storage.type: remote")
 	require.NotZero(t, created.ID, "the upstream must assign a real ID")
-	assert.Equal(t, uint(501), created.DependentSecretID)
-	assert.Equal(t, uint(502), created.DependsOnSecretID)
+	assert.Equal(t, secretA, created.DependentSecretID)
+	assert.Equal(t, secretB, created.DependsOnSecretID)
 
 	// A REAL row on the upstream's own storage, not just "the call didn't error".
 	direct, err := upstream.Storage().GetSecretDependency(ctx, created.ID)
@@ -93,7 +117,7 @@ func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testi
 	// A second edge, then list both back via the downstream's
 	// ListSecretDependenciesForProject / ListSecretDependenciesForProjectForUpdate.
 	second, err := downstream.Storage().CreateSecretDependency(ctx, &models.SecretDependency{
-		ProjectID: 1, DependentSecretID: 503, DependsOnSecretID: 501,
+		ProjectID: 1, DependentSecretID: secretC, DependsOnSecretID: secretA,
 	})
 	require.NoError(t, err)
 
@@ -134,19 +158,22 @@ func TestRemoteStorageSecretDependencies_GetNotFound_RealServer(t *testing.T) {
 // not an opaque error, so AddSecretDependency's errors.Is checks
 // (internal/core/secret_dependencies.go) still work against storage.type: remote.
 func TestRemoteStorageSecretDependencies_Exclusive_DuplicateAndCycleRejected(t *testing.T) {
-	_, srv, token := newUpstreamForSecretDependencies(t)
+	upstream, srv, token := newUpstreamForSecretDependencies(t)
 	downstream := newDownstreamRemoteStorage(t, srv, token)
 	ctx := context.Background()
 
+	secretX := createTestSecretID(t, upstream, "exclusive-secret-x")
+	secretY := createTestSecretID(t, upstream, "exclusive-secret-y")
+
 	created, err := downstream.Storage().CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
-		ProjectID: 1, DependentSecretID: 601, DependsOnSecretID: 602,
+		ProjectID: 1, DependentSecretID: secretX, DependsOnSecretID: secretY,
 	})
 	require.NoError(t, err)
 	require.NotZero(t, created.ID)
 
 	// Exact duplicate pair.
 	_, err = downstream.Storage().CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
-		ProjectID: 1, DependentSecretID: 601, DependsOnSecretID: 602,
+		ProjectID: 1, DependentSecretID: secretX, DependsOnSecretID: secretY,
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, coreStorage.ErrDuplicateSecretDependency),
@@ -154,7 +181,7 @@ func TestRemoteStorageSecretDependencies_Exclusive_DuplicateAndCycleRejected(t *
 
 	// Reverse edge would close a 2-node cycle.
 	_, err = downstream.Storage().CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
-		ProjectID: 1, DependentSecretID: 602, DependsOnSecretID: 601,
+		ProjectID: 1, DependentSecretID: secretY, DependsOnSecretID: secretX,
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, coreStorage.ErrSecretDependencyCycle),
@@ -183,13 +210,13 @@ func TestRemoteStorageSecretDependencies_Exclusive_DuplicateAndCycleRejected(t *
 // requests, so exactly one must win — proving the fix closes the gap the interface doc
 // describes, not just the same-process case the mutex already covered.
 func TestRemoteStorageSecretDependencies_ConcurrentRace_NoCycleAcrossTwoDownstreams(t *testing.T) {
-	_, srv, token := newUpstreamForSecretDependencies(t)
+	upstream, srv, token := newUpstreamForSecretDependencies(t)
 	ctx := context.Background()
 
 	const iterations = 8
 	for i := 0; i < iterations; i++ {
-		a := uint(2000 + i*2)
-		b := uint(2000 + i*2 + 1)
+		a := createTestSecretID(t, upstream, fmt.Sprintf("race-secret-a-%d", i))
+		b := createTestSecretID(t, upstream, fmt.Sprintf("race-secret-b-%d", i))
 
 		// Fresh RemoteStorage clients each iteration: every pair has exactly one
 		// "loser" that gets an expected 400/409 rejection, and the client's circuit

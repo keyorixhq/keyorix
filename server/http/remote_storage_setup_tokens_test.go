@@ -72,6 +72,14 @@ func newUpstreamDownstreamForSetupTokens(t *testing.T) (upstream *core.KeyorixCo
 // with a 24h TTL — WITHOUT going through IssueSetupToken itself, so the
 // storage-primitive tests below can exercise CreateSetupToken/GetSetupTokenByHash/
 // MarkSetupTokenConsumed directly, independent of the higher-level core API.
+//
+// Deliberately does NOT set SubjectUserID or InvitationID: CreateSetupTokenProxy
+// (#G79, server/http/handlers/setup_tokens_proxy.go) requires exactly one of them,
+// depending on purpose, referencing a real row whose email matches SubjectEmail —
+// every caller below sets the appropriate one on the returned token before passing
+// it to CreateSetupToken. invitation_accept callers already do this (set
+// InvitationID); account_setup/password_reset_link callers must set SubjectUserID
+// via createSetupTokenSubjectUser.
 func buildActiveSetupToken(now time.Time, tokenHash, purpose, email string) *models.SetupToken {
 	return &models.SetupToken{
 		TokenHash:    tokenHash,
@@ -81,6 +89,19 @@ func buildActiveSetupToken(now time.Time, tokenHash, purpose, email string) *mod
 		ExpiresAt:    now.Add(24 * time.Hour),
 		CreatedAt:    now,
 	}
+}
+
+// createSetupTokenSubjectUser creates a real user with the given email on upstream
+// and returns its ID, for a buildActiveSetupToken caller to set as SubjectUserID —
+// CreateSetupTokenProxy requires it to reference a real user whose email matches
+// the token's SubjectEmail exactly (case-insensitive).
+func createSetupTokenSubjectUser(t *testing.T, upstream *core.KeyorixCore, email string) uint {
+	t.Helper()
+	user, err := upstream.Storage().CreateUser(context.Background(), &models.User{
+		Username: "setup-subject-" + email, Email: email,
+	}, "TestPassword123!")
+	require.NoError(t, err)
+	return user.ID
 }
 
 // TestRemoteStorageSetupToken_CreateGetConsume_RealServer proves the #510 fix for
@@ -93,8 +114,10 @@ func TestRemoteStorageSetupToken_CreateGetConsume_RealServer(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	tok, err := downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-create-get-consume", core.SetupPurposeAccountSetup, "newuser@example.com"))
+	subjectID := createSetupTokenSubjectUser(t, upstream, "newuser@example.com")
+	newToken := buildActiveSetupToken(now, "hash-create-get-consume", core.SetupPurposeAccountSetup, "newuser@example.com")
+	newToken.SubjectUserID = &subjectID
+	tok, err := downstream.Storage().CreateSetupToken(ctx, newToken)
 	require.NoError(t, err, "creating a setup token must succeed via storage.type: remote")
 	require.NotZero(t, tok.ID, "the upstream must assign a real ID")
 	assert.Equal(t, core.SetupPurposeAccountSetup, tok.Purpose)
@@ -153,15 +176,21 @@ func TestRemoteStorageSetupToken_Supersede_RealServer(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	_, err := downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-supersede-1", core.SetupPurposePasswordResetLink, "reset@example.com"))
+	resetSubjectID := createSetupTokenSubjectUser(t, upstream, "reset@example.com")
+	otherSubjectID := createSetupTokenSubjectUser(t, upstream, "other@example.com")
+
+	tok1 := buildActiveSetupToken(now, "hash-supersede-1", core.SetupPurposePasswordResetLink, "reset@example.com")
+	tok1.SubjectUserID = &resetSubjectID
+	_, err := downstream.Storage().CreateSetupToken(ctx, tok1)
 	require.NoError(t, err)
-	_, err = downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-supersede-2", core.SetupPurposePasswordResetLink, "reset@example.com"))
+	tok2 := buildActiveSetupToken(now, "hash-supersede-2", core.SetupPurposePasswordResetLink, "reset@example.com")
+	tok2.SubjectUserID = &resetSubjectID
+	_, err = downstream.Storage().CreateSetupToken(ctx, tok2)
 	require.NoError(t, err)
 	// A different email must NOT be affected.
-	_, err = downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-supersede-other", core.SetupPurposePasswordResetLink, "other@example.com"))
+	tokOther := buildActiveSetupToken(now, "hash-supersede-other", core.SetupPurposePasswordResetLink, "other@example.com")
+	tokOther.SubjectUserID = &otherSubjectID
+	_, err = downstream.Storage().CreateSetupToken(ctx, tokOther)
 	require.NoError(t, err)
 
 	require.NoError(t, downstream.Storage().SupersedeActiveSetupTokens(ctx, core.SetupPurposePasswordResetLink, "reset@example.com", nil))
@@ -249,8 +278,10 @@ func TestRemoteStorageSetupToken_Expire_RealServer(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	tok, err := downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-expire", core.SetupPurposeAccountSetup, "expire@example.com"))
+	subjectID := createSetupTokenSubjectUser(t, upstream, "expire@example.com")
+	expireToken := buildActiveSetupToken(now, "hash-expire", core.SetupPurposeAccountSetup, "expire@example.com")
+	expireToken.SubjectUserID = &subjectID
+	tok, err := downstream.Storage().CreateSetupToken(ctx, expireToken)
 	require.NoError(t, err)
 
 	require.NoError(t, downstream.Storage().MarkSetupTokenExpired(ctx, tok.ID))
@@ -263,20 +294,25 @@ func TestRemoteStorageSetupToken_Expire_RealServer(t *testing.T) {
 // TestRemoteStorageSetupToken_CountSince_RealServer proves CountSetupTokensSince
 // backs resend throttling/the daily cap correctly over storage.type: remote.
 func TestRemoteStorageSetupToken_CountSince_RealServer(t *testing.T) {
-	_, downstream := newUpstreamDownstreamForSetupTokens(t)
+	upstream, downstream := newUpstreamDownstreamForSetupTokens(t)
 	ctx := context.Background()
 	now := time.Now()
 	since := now.Add(-time.Hour)
 
-	_, err := downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-count-1", core.SetupPurposeAccountSetup, "count@example.com"))
+	subjectID := createSetupTokenSubjectUser(t, upstream, "count@example.com")
+
+	tok1 := buildActiveSetupToken(now, "hash-count-1", core.SetupPurposeAccountSetup, "count@example.com")
+	tok1.SubjectUserID = &subjectID
+	_, err := downstream.Storage().CreateSetupToken(ctx, tok1)
 	require.NoError(t, err)
-	_, err = downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-count-2", core.SetupPurposeAccountSetup, "count@example.com"))
+	tok2 := buildActiveSetupToken(now, "hash-count-2", core.SetupPurposeAccountSetup, "count@example.com")
+	tok2.SubjectUserID = &subjectID
+	_, err = downstream.Storage().CreateSetupToken(ctx, tok2)
 	require.NoError(t, err)
 	// A different purpose must not be counted.
-	_, err = downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-count-other-purpose", core.SetupPurposePasswordResetLink, "count@example.com"))
+	tokOtherPurpose := buildActiveSetupToken(now, "hash-count-other-purpose", core.SetupPurposePasswordResetLink, "count@example.com")
+	tokOtherPurpose.SubjectUserID = &subjectID
+	_, err = downstream.Storage().CreateSetupToken(ctx, tokOtherPurpose)
 	require.NoError(t, err)
 
 	n, err := downstream.Storage().CountSetupTokensSince(ctx, core.SetupPurposeAccountSetup, "count@example.com", since)
@@ -300,12 +336,14 @@ func TestRemoteStorageSetupToken_CountSince_RealServer(t *testing.T) {
 // would reopen exactly this race. Mirrors #507's
 // TestRemoteStorageInvitation_ConcurrentAcceptRace_RealServer exactly.
 func TestRemoteStorageSetupToken_ConcurrentConsumeRace_RealServer(t *testing.T) {
-	_, downstream := newUpstreamDownstreamForSetupTokens(t)
+	upstream, downstream := newUpstreamDownstreamForSetupTokens(t)
 	ctx := context.Background()
 	now := time.Now()
 
-	tok, err := downstream.Storage().CreateSetupToken(ctx,
-		buildActiveSetupToken(now, "hash-race", core.SetupPurposeAccountSetup, "race@example.com"))
+	subjectID := createSetupTokenSubjectUser(t, upstream, "race@example.com")
+	raceToken := buildActiveSetupToken(now, "hash-race", core.SetupPurposeAccountSetup, "race@example.com")
+	raceToken.SubjectUserID = &subjectID
+	tok, err := downstream.Storage().CreateSetupToken(ctx, raceToken)
 	require.NoError(t, err)
 
 	const n = 20

@@ -104,7 +104,12 @@ func TestPermissionBaseline_CSV_Headers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, records, "expected at least a header row")
 
-	wantHeaders := []string{"user_id", "username", "email", "role_name", "scope", "permission"}
+	// Full column set as actually emitted (handlers/permission_baseline.go:57),
+	// asserted explicitly rather than by count: G25 added grant_expired and
+	// holder_deleted after this test was written, and a bare length check
+	// would have passed even if a column were silently reordered or a
+	// DIFFERENT new column added instead of these two specific ones.
+	wantHeaders := []string{"user_id", "username", "email", "role_name", "scope", "permission", "grant_expired", "holder_deleted"}
 	assert.Equal(t, wantHeaders, records[0], "CSV header must match the spec exactly")
 }
 
