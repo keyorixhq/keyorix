@@ -301,30 +301,42 @@ jobs:
           # package always lands somewhere (root-4) rather than silently
           # never running, and only gets promoted to its own pinned leg once
           # it's proven slow enough to be worth the split.
+          #
+          # Every leg below (root-1/2/3/4, handlers-1/2/3/4) was raised from
+          # 600s to 1800s in one pass (2026-08-22), matching the core leg's
+          # precedent below rather than tuning each individually: pulling
+          # actual go-test-only elapsed time (not job wall-clock) from a real
+          # CI run found root-3 at 555s (7.5% headroom) and root-4 at 569s
+          # (5.2% headroom) against the old 600s budget -- the SAME range
+          # internal/core died at (605s) before it got its own leg. 600s was
+          # miscalibrated repo-wide, not just for internal/core; core was
+          # just the first leg to actually cross it. A per-package timeout
+          # exists to catch hangs, not to enforce a speed budget -- unused
+          # headroom costs nothing, and tuning each leg to just past its
+          # observed duration risks exactly the intermittent-red outcome that
+          # made the original April exclusion look justified in hindsight.
           - leg: root-1
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_root1.out
           - leg: root-2
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_root2.out
           - leg: root-3
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_root3.out
           - leg: root-4
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_root4.out
           # core (internal/core, re-enabled 2026-08-22 after ~4 months dark --
           # see fix/ci-reenable-internal-core) gets its own pinned leg rather
           # than folding into root-4's catch-all: measured 369.6s in isolation
           # locally (-race, same flags as this leg) but 605s -- over root-4's
-          # 600s budget -- sharing a runner with a dozen other concurrent test
-          # binaries there. A per-package timeout exists to catch hangs, not
-          # to enforce a speed budget; 1800s here is deliberately generous so
-          # a healthy-but-slow run never trips it, rather than tuning to just
-          # past the observed duration and risking the same intermittent-red
-          # outcome that made the April exclusion look justified in hindsight.
-          # 323 test files in one package is itself worth revisiting --
-          # tracked separately, not folded into this CI-scheduling fix.
+          # OLD 600s budget -- sharing a runner with a dozen other concurrent
+          # test binaries there. 1800s here is deliberately generous so a
+          # healthy-but-slow run never trips it, rather than tuning to just
+          # past the observed duration. 323 test files in one package is
+          # itself worth revisiting -- tracked separately (#1523), not folded
+          # into this CI-scheduling fix.
           - leg: core
             timeout: 1800
             coverage-file: coverage_core.out
@@ -342,16 +354,16 @@ jobs:
           # name happens to hash to -- nothing to keep in sync, unlike
           # root-1/2/3's pinned lists.
           - leg: handlers-1
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_handlers1.out
           - leg: handlers-2
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_handlers2.out
           - leg: handlers-3
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_handlers3.out
           - leg: handlers-4
-            timeout: 600
+            timeout: 1800
             coverage-file: coverage_handlers4.out
     runs-on: ubuntu-latest
     permissions:
