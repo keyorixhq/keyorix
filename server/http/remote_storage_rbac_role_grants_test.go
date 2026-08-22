@@ -23,38 +23,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// createRBACDriverToken creates a fresh admin identity (held via the
-// system_admin role, deliberately DISTINCT from the "admin" role the
-// last-global-admin tests below juggle) and returns a session token for it —
-// used to drive the downstream RemoteStorage client in tests that remove the
-// bootstrap admin's OWN "admin"-role grant. Reusing the bootstrap admin's own
-// token for those calls would be self-defeating: the moment that removal
-// succeeds, the bootstrap admin's session immediately loses system.write
-// (permissions are evaluated per-request against CURRENT role assignments, not
-// cached at login), so every SUBSEQUENT call over that same token would 403
-// regardless of whether the RBAC logic under test is correct.
-func createRBACDriverToken(t *testing.T, c *core.KeyorixCore) string {
-	t.Helper()
-	ctx := context.Background()
-	systemAdminRole, err := c.Storage().GetRoleByName(ctx, "system_admin")
-	require.NoError(t, err)
-	driver, err := c.CreateUser(ctx, &core.CreateUserRequest{
-		Username: "rbacguardtestdriver", Email: "rbac-guard-test-driver@example.com",
-		DisplayName: "RBAC Guard Driver", Password: "Qr7#Kp2$Lm5@Vn9!",
-	})
-	require.NoError(t, err)
-	require.NoError(t, c.Storage().AssignRole(ctx, driver.ID, systemAdminRole.ID, coreStorage.Scope{}))
-	session, _, err := c.Login(ctx, &core.LoginRequest{Username: "rbacguardtestdriver", Password: "Qr7#Kp2$Lm5@Vn9!"})
-	require.NoError(t, err)
-	return session.SessionToken
-}
+// Driving the last-global-admin tests below needs a caller identity that is
+// NOT itself a global admin — otherwise the fixture recreates the exact
+// defect these tests exist to catch (see the tests' own doc comments). The
+// package's existing createNodeToken (integration_test.go) is used instead of
+// a dedicated helper here: a node-type machine credential is not a user, is
+// never assigned a role, and is structurally invisible to
+// ListGlobalAdminAssignmentsForUpdate (internal/storage/store/local_rbac.go),
+// which queries only models.UserRole/models.GroupRole rows — verified at the
+// query level, not inferred, before relying on it here. A previous version of
+// this file used a dedicated createRBACDriverToken granting its driver the
+// system_admin role "purely to authenticate" — but the server-side guard
+// (resolveInstallAdminRoleIDsProxy, server/http/handlers/
+// rbac_role_grants_proxy.go) deliberately treats system_admin as
+// admin-conferring (#G79, to stop a caller from undercounting admins via an
+// incomplete wire-supplied set), so that driver was itself a standing second
+// admin from the moment it was created — defeating the single-admin premise
+// every one of these tests depends on. See docs/g80-remediation-notes.md for
+// the full investigation.
 
 // TestRemoteStorageRBACRoleGrants_ReadsAndWrites_RealServer proves the fix for
 // GetGroupRoleGrants/AssignRoleWithExpiry/AssignRoleToGroupWithExpiry/
@@ -164,7 +156,7 @@ func TestRemoteStorageRBACRoleGrants_ReadsAndWrites_RealServer(t *testing.T) {
 // RemoveUserRole depends on surviving the HTTP hop.
 func TestRemoteStorageRBACRoleGrants_RemoveGlobalAdminRoleGuarded_RealServer(t *testing.T) {
 	upstream, srv, _ := newUpstreamForSecretDependencies(t)
-	driverToken := createRBACDriverToken(t, upstream)
+	driverToken := createNodeToken(t, upstream)
 	downstream := newDownstreamRemoteStorage(t, srv, driverToken)
 	ctx := context.Background()
 
@@ -209,6 +201,46 @@ func TestRemoteStorageRBACRoleGrants_RemoveGlobalAdminRoleGuarded_RealServer(t *
 		"a nonexistent grant must surface ErrRoleNotAssigned, not ErrWouldStrandLastAdmin: %v", err)
 }
 
+// TestRemoteStorageRBACRoleGrants_RemoveGlobalAdminRoleGuarded_SucceedsWithSurvivingAdmin_RealServer
+// is the deliberate companion to the refusal path proven above: it sets up TWO
+// real global admins from the start (never passing through a single-admin
+// state at all) and asserts the removal SUCCEEDS. Shipped as an independent
+// test, not folded into the refusal test's own multi-step sequence, because a
+// guard that always returned ErrWouldStrandLastAdmin unconditionally would
+// otherwise still pass "refused when the target is the last admin" — only a
+// standalone assertion that a genuine two-admin removal succeeds catches that.
+func TestRemoteStorageRBACRoleGrants_RemoveGlobalAdminRoleGuarded_SucceedsWithSurvivingAdmin_RealServer(t *testing.T) {
+	upstream, srv, _ := newUpstreamForSecretDependencies(t)
+	driverToken := createNodeToken(t, upstream)
+	downstream := newDownstreamRemoteStorage(t, srv, driverToken)
+	ctx := context.Background()
+
+	adminRole, err := upstream.Storage().GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	adminIDs := []uint{adminRole.ID}
+
+	bootstrapAdmin, err := upstream.Storage().GetUserByEmail(ctx, "testadmin@example.com")
+	require.NoError(t, err)
+
+	// A second global admin, in place BEFORE the removal under test — this
+	// never passes through a single-admin state.
+	secondAdmin, err := upstream.Storage().CreateUser(ctx, &models.User{
+		Username: "rbac-guarded-surviving-admin", Email: "rbac-guarded-surviving-admin@example.com",
+	}, "TestPassword123!")
+	require.NoError(t, err)
+	require.NoError(t, upstream.Storage().AssignRole(ctx, secondAdmin.ID, adminRole.ID, coreStorage.Scope{}))
+
+	require.NoError(t, downstream.Storage().RemoveGlobalAdminRoleGuarded(ctx, bootstrapAdmin.ID, adminRole.ID, adminIDs),
+		"removal must succeed when another global admin genuinely survives it")
+
+	// A REAL removal on the upstream's own storage, and the surviving admin is
+	// exactly who it should be.
+	remaining, err := upstream.Storage().ListGlobalAdminAssignmentsForUpdate(ctx, adminIDs)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1, "exactly the second admin's grant must remain")
+	assert.Equal(t, secondAdmin.ID, remaining[0].PrincipalID)
+}
+
 // TestRemoteStorageRBACRoleGrants_ConcurrentRace_LastAdminNeverStranded_RealServer
 // is the cross-process analogue of internal/core's
 // TestConcurrency_RemoveUserRole_CannotStrandLastTwoAdmins (#340): TWO INDEPENDENT
@@ -226,7 +258,7 @@ func TestRemoteStorageRBACRoleGrants_RemoveGlobalAdminRoleGuarded_RealServer(t *
 // requests, so exactly one must win.
 func TestRemoteStorageRBACRoleGrants_ConcurrentRace_LastAdminNeverStranded_RealServer(t *testing.T) {
 	upstream, srv, _ := newUpstreamForSecretDependencies(t)
-	driverToken := createRBACDriverToken(t, upstream)
+	driverToken := createNodeToken(t, upstream)
 	ctx := context.Background()
 
 	adminRole, err := upstream.Storage().GetRoleByName(ctx, "admin")
@@ -311,6 +343,20 @@ func TestRemoteStorageRBACRoleGrants_ConcurrentRace_LastAdminNeverStranded_RealS
 		}
 		assert.Equal(t, 1, heldByUserAOrB,
 			"iteration %d: exactly one of userA/userB must still hold the admin grant — never both removed, never both surviving unresolved", i)
+
+		// The install-level invariant this whole test exists to prove, asserted
+		// directly rather than only inferred from the userA/userB-specific count
+		// above: at least one global admin (of any admin-conferring role, not
+		// just whichever of userA/userB happened to win) must still exist. In
+		// this test's own closed setup these are equivalent (only userA/userB
+		// hold an admin-conferring role at this point — bootstrapAdmin was
+		// stripped above, and the driver authenticates via a node credential
+		// that holds none), but asserting the install-wide count directly is
+		// the same check the production guard itself performs, and doesn't rely
+		// on that closed-world assumption staying true if this test is ever
+		// extended.
+		assert.GreaterOrEqual(t, len(stillHeld), 1,
+			"iteration %d: at least one global admin must remain after the race — the install must never be left with zero", i)
 
 		// Strip the survivor's grant (raw storage call, outside the flow under
 		// test) so it doesn't silently become a permanent extra admin the NEXT
