@@ -324,6 +324,52 @@ catch-all** — root_base() is the catch-all computation, so un-excluding server
 without pinning it would drop 91 HTTP integration test files into root-4 (already at
 569s/5.2% headroom before #1526's fix) — a guaranteed timeout, not a surprise.
 
+### A recurring pattern: node-credential auth vs. `actorID(r)`-gated authority checks
+
+Three separate instances found in this campaign so far, all the same shape: a
+`server/http/handlers/*_proxy.go` route that (correctly, per #G79) re-validates
+authority server-side against `actorID(r)` — the authenticated caller of THIS
+specific request — rather than trusting a wire-supplied value. `actorID(r)`
+(`server/http/handlers/catalog.go:19`) returns `0` for a node-credential-authenticated
+caller, since `middleware.GetUserFromContext` only recognizes a real user session.
+Node credentials are this package's dominant test-harness pattern (`createNodeToken`,
+used in ~20+ real-server test files) because most proxies in this tree are pure
+storage passthroughs with no such check — but the handful that DO check authority
+structurally cannot pass for a node-credential caller, and the failure surfaces as
+whatever the specific test's fixture bug looked like, not as an obviously-related
+symptom:
+
+1. **C1** — `RemoveGlobalAdminRoleGuardedProxy`/`ApproveRiskExceptionProxy`/
+   `RevokeRiskExceptionProxy`: `createRBACDriverToken`'s driver held `system_admin`,
+   masking the actorID(0) problem behind a DIFFERENT bug (the driver counting as an
+   extra admin) for the RBAC guard specifically; the risk-exception revoke/approve
+   tests hit actorID(0) directly and are quarantined in C3 (no clean fixture fix
+   available without a product-level call on whether node-sync should reach
+   dual-control-gated operations at all — see the #1511 comment).
+2. **C2** — `CreateUserWithRoleGrantsProxy`'s `ValidateRoleGrantAuthority(ctx,
+   actorID(r), grants)`: masked behind the bcrypt-length bug for
+   `TestRemoteStorageCreateUserWithRoleGrants_RealServer`/
+   `_ConcurrentDuplicateEmailRace_RealServer` — fixing the bcrypt fixture alone
+   surfaced this as a NEW 403, not a pass. Unlike C1's cases, this one DOES have a
+   clean fixture fix: a real admin session (`createTestToken`) legitimately has the
+   authority these grants need, so swapping just these two tests' caller identity
+   (not the harness default, which stays `createNodeToken` for every other test in
+   the file) resolves it correctly rather than requiring quarantine.
+
+The difference between "quarantine" (C1's risk-exception cases) and "fix by swapping
+identity" (C2's case) is whether a real, differently-authenticated caller can
+legitimately satisfy the check being exercised: risk-exception revoke/approve's own
+doc comment claims node-sync support that the actorID(0) fallback contradicts (a
+product question, not a test question); `CreateUserWithRoleGrantsProxy`'s authority
+check is exactly the kind of thing a real admin SHOULD be able to satisfy, and no
+product claim says otherwise.
+
+**Practical implication**: any future test in this package using `createNodeToken`
+against a route this campaign hasn't already audited should not be assumed to work
+just because the pattern is dominant — check whether the specific handler validates
+`actorID(r)`-gated authority (search the handler for `actorID(r)` directly) before
+assuming a node credential is sufficient.
+
 ### C2 / C3 / C4 / C5
 
 Tracked in their own PRs as they land; this section gets filled in per PR, not ahead of
