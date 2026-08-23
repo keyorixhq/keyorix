@@ -2038,12 +2038,28 @@ func validateConnectScopes(cc ConnectConfig) error {
 // combination a broken feature, not a smaller one. See ADR-083 for the full
 // investigation (which supersedes ADR-049's "downstream Keyorix server" framing)
 // before ever considering lifting this gate.
+//
+// G80 follow-up (2026-08-24): rejects unconditionally now, not just when
+// server.http.enabled or server.grpc.enabled. server/main.go's startSchedulers
+// (main.go:157) runs EVERY time this process's main() executes, independent of
+// both of those flags — #G12 deliberately unified scheduler startup so a
+// gRPC-only (HTTP disabled) or even an HTTP-and-gRPC-both-disabled "worker-only"
+// deployment still runs its background jobs. Three of the 17 schedulers
+// (anomaly_detection, login_attempt_prune, mfa_stepup_grant_prune) have no
+// enable flag at all -- they always run -- so no finite enumeration of
+// `cfg.X.Enabled` checks can fully close this gap; a new scheduler added later
+// would silently reopen it again. This function is safe to make unconditional
+// because it is ONLY ever reached from server/main.go's own cfg.Validate() call
+// (verified: internal/config.Config.Validate has no caller anywhere under
+// internal/cli — the CLI's own "connected mode" validates a narrower, distinct
+// internal/storage/remote.Config, never this type) -- there is no legitimate
+// caller this change could break.
 func validateRemoteStorageNotServer(c *Config) error {
-	if c.Server.HTTP.Enabled || c.Server.GRPC.Enabled {
-		return fmt.Errorf("storage.type: remote cannot back a server with server.http.enabled or server.grpc.enabled: " +
-			"remote storage is a CLI/client mode only, not a deployable server backend — see ADR-083")
-	}
-	return nil
+	return fmt.Errorf("storage.type: remote cannot back a server process: " +
+		"remote storage is a CLI/client mode only, not a deployable server backend " +
+		"(this includes a scheduler-only process with server.http.enabled and " +
+		"server.grpc.enabled both false -- server/main.go always starts its " +
+		"background schedulers regardless of either flag) — see ADR-083")
 }
 
 // validateAllowedOrigins rejects a misconfigured CORS allowlist (server.http.

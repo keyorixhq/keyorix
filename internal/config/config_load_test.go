@@ -194,13 +194,27 @@ func TestValidate_RejectsRemoteStorageWithBothHTTPAndGRPCEnabled(t *testing.T) {
 	require.Contains(t, err.Error(), "storage.type: remote")
 }
 
-// The CLI/client case must still validate cleanly: storage.type: remote with
-// NEITHER server enabled is exactly what a CLI in client mode looks like.
-func TestValidate_AcceptsRemoteStorageWithNoServerEnabled(t *testing.T) {
+// G80 follow-up (2026-08-24), correcting this test's own prior premise: it used
+// to assert that storage.type: remote with neither server flag enabled must
+// validate cleanly, reasoning "that's exactly what a CLI in client mode looks
+// like." That reasoning doesn't hold: Config.Validate (and therefore this
+// function) has NO caller anywhere under internal/cli — verified by a
+// repo-wide search — the CLI's own "connected mode" validates a narrower,
+// distinct internal/storage/remote.Config, never reaches this code at all. So
+// there is no legitimate CLI case being protected here. What IS reachable with
+// both server flags false: server/main.go's startSchedulers (main.go:157) runs
+// unconditionally on every boot, independent of server.http.enabled/
+// server.grpc.enabled — three of its 17 schedulers (anomaly_detection,
+// login_attempt_prune, mfa_stepup_grant_prune) have no enable flag at all and
+// always run. That's a real, bootable "scheduler-only worker" server shape
+// this check was missing entirely. Now rejected unconditionally.
+func TestValidate_RejectsRemoteStorageWithNoServerEnabled(t *testing.T) {
 	c := &Config{}
 	c.Storage.Type = "remote"
 	err := c.Validate()
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "storage.type: remote")
+	require.Contains(t, err.Error(), "ADR-083")
 }
 
 // A validation change here must be scoped to storage.type: remote specifically —
@@ -239,7 +253,13 @@ func TestValidate_RejectsUnknownStorageType(t *testing.T) {
 // storage.type value must still validate cleanly — a validation change that's
 // too aggressive is as dangerous as one that's too permissive.
 func TestValidate_AcceptsValidStorageTypes(t *testing.T) {
-	for _, storageType := range []string{"", "local", "postgres", "postgresql", "remote"} {
+	// G80 follow-up (2026-08-24): "remote" deliberately excluded from this list --
+	// it's a genuinely-supported storage.type value for the CLI, but Config.Validate
+	// (this function) is never reached by the CLI (see
+	// TestValidate_RejectsRemoteStorageWithNoServerEnabled's comment) and now rejects
+	// "remote" unconditionally, since it's the one storage type this validator's own
+	// caller (server/main.go) can never legitimately back a server process with.
+	for _, storageType := range []string{"", "local", "postgres", "postgresql"} {
 		c := &Config{}
 		c.Storage.Type = storageType
 		switch storageType {
