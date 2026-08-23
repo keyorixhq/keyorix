@@ -374,3 +374,64 @@ assuming a node credential is sufficient.
 
 Tracked in their own PRs as they land; this section gets filled in per PR, not ahead of
 it.
+
+## Stopping rule: classify reach, fix human-reachable, file machine-only, stop
+
+Adopted after #1542's fix (routing 4 raw-storage-bypass RBAC proxy routes through
+`internal/core`) organically grew into fixing a 5th (`RemoveMachineRoleProxy`) and
+building a whole new completeness guard, whose OWN findings (#1545, #1546) then needed
+their own reach classification before any further work was justified. Without an
+explicit boundary, "I found a related gap while fixing this one" has no natural stopping
+point — every fix's blast radius touches a shared checkpoint (a ceiling function, a
+storage primitive) with its own set of callers, and each of those callers can look like
+"just one more thing to check while I'm here."
+
+**The rule:**
+
+1. **Classify reach before deciding whether to fix.** For any candidate (a ceiling
+   exemption, a raw-storage bypass, an authority check that might be skippable) the
+   first and only question that decides urgency is: can a real, network-authenticated
+   HUMAN session trigger this, or is it structurally limited to a machine credential (or
+   a genuinely-trusted local/embedded call path)? Answer it with file:line evidence —
+   trace the actual call chain and the actual authentication layer (does `UserID`/
+   `actorID` ever come from a real human session with the vulnerable value, or only from
+   a machine token by construction) — never by assumption. This is the same question
+   that made #1542 top priority over #1524's other findings, and the same rigor #1545's
+   classification used (`server/middleware/auth.go`'s "UserID is 0 for ANY machine
+   token" doc comment, traced against every real call site of the two functions in
+   question) to conclude machine-only, not human-reachable.
+2. **Human-reachable: fix it now, it outranks other open work.** Matches #1542's own
+   framing ("outranks everything else open").
+3. **Machine-only: file it, with the reach classification and evidence in the issue
+   body, and stop.** Do not fix it in the same sitting just because the shared checkpoint
+   is already open in an editor. Filing with real evidence (not a bare TODO) is what
+   makes "later" credible — see #1545, #1546, #1547, none fixed on discovery, each with a
+   full evidence trail so a future session doesn't have to re-derive reach from scratch.
+4. **"Stop" means stop working THIS finding, not stop auditing.** This rule does not
+   relax the standing exhaustive-coverage practice elsewhere in this campaign (guards and
+   finders should keep being comprehensive) — it bounds what happens the MOMENT a finding
+   is confirmed machine-only: classify, file, move on. It exists specifically to stop a
+   single fix from cascading into fixing every sibling discovered along the way without a
+   fresh, explicit decision to expand scope.
+
+**Applied so far:**
+
+- **#1545** (`AssignPermissionToRole` self-permission-bundling ceiling,
+  `internal/core/rbac_management.go:90`; `BulkDeleteSecrets` per-secret ACL/ownership
+  check, `internal/core/bulk_delete.go:100,116`) — classified machine-only (a real human
+  session's `UserID` is never 0 over HTTP/gRPC; only a machine-token-authenticated caller
+  or the genuinely-trusted local/embedded path can produce the `actorID==0` these
+  functions' exemption depends on). Filed, not fixed.
+- **#1546** (`TransitionMembershipProxy` bypassing `core.TransitionMembership`'s
+  activation ceiling + role-grant/revoke side effects) — reach genuinely unresolved (may
+  be a real gap, or may be safe-by-design if the side effect already lands via a separate
+  relayed call from the downstream's own `core.TransitionMembership`) — filed with both
+  hypotheses stated, not guess-fixed.
+- **#1547** (the raw-storage-bypass guard's 18-route scope losing coverage, demonstrated
+  by #1545/#1546 both being found outside it) — classification of the guard's own
+  false-positive pattern filed as its own follow-up, not implemented mid-session.
+
+A future session picking up #1545/#1546/#1547 (or whatever the guards in this campaign
+surface next) should apply the same rule: classify reach first, fix only what's
+human-reachable, file the rest with evidence, and treat "filed" as a legitimate stopping
+point, not an unfinished task to feel behind on.

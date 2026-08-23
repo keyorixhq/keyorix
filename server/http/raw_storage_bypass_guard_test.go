@@ -10,16 +10,20 @@
 //
 // Scope: intentionally limited to the 18 routes classifiedNodeCredentialRoutes
 // (node_credential_route_classification_test.go) already covers, not every
-// Storage() call in every handler. A repo-wide version was tried first and
-// rejected: 195 distinct storage method names are called via
-// h.coreService.Storage() across server/http/handlers, and 173 of those ALSO
-// appear as a c.storage.X(...) call somewhere in internal/core -- an 89% false-
-// positive rate, because "some core method incidentally also calls this
-// read-only primitive" is a completely different fact from "this specific
-// caller is skipping a real ceiling." Scoping to the 18 RBAC/governance-mutation
-// routes P2's classification already hand-audited keeps the signal precise
-// enough to allowlist exhaustively, the same tradeoff #1524's own scope
-// narrowing made.
+// Storage() call in every handler. A repo-wide run of this exact detection
+// logic (not a cruder name-overlap estimate) flags 149 call sites across
+// server/http/handlers -- 90 of them (60%) are read-shaped storage methods
+// (Get*/List*/Count*/Export*, mechanically excludable: a read confers no new
+// access, so there's no ceiling to bypass), leaving 59 write-shaped
+// candidates that would need real classification (some already confirmed
+// audit-only/no-ceiling, some deliberate documented exceptions like
+// CreateUserWithRoleGrantsProxy/RemoveGlobalAdminRoleGuardedProxy below, and
+// at least DeleteProjectProxy/TransitionMembershipProxy genuinely
+// unresolved). #1545 and #1546 were both found by hand in code this
+// 18-route scope doesn't watch -- direct evidence the narrowing loses real
+// coverage, the same shape #1540 already flagged for
+// knownUnresolvedWireCalls. Filed as #1547 (the C5 treatment for this
+// guard's exclusion pattern), not implemented here.
 package http
 
 import (
