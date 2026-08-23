@@ -418,10 +418,16 @@ storage primitive) with its own set of callers, and each of those callers can lo
 
 - **#1545** (`AssignPermissionToRole` self-permission-bundling ceiling,
   `internal/core/rbac_management.go:90`; `BulkDeleteSecrets` per-secret ACL/ownership
-  check, `internal/core/bulk_delete.go:100,116`) — classified machine-only (a real human
-  session's `UserID` is never 0 over HTTP/gRPC; only a machine-token-authenticated caller
-  or the genuinely-trusted local/embedded path can produce the `actorID==0` these
-  functions' exemption depends on). Filed, not fixed.
+  check, `internal/core/bulk_delete.go:100,116`) — classified machine-only, confirmed by
+  exhaustive call-site tracing (every real HTTP/gRPC caller with a `UserID`-carrying
+  session self-blocks at its own upstream `Authorize()` pre-check before ever reaching
+  the exemption; the only zero-actor callers are a machine credential — `UserID` is 0 for
+  ANY machine token type, `server/middleware/auth.go:66-68` — or an already-established
+  trusted local pseudo-actor, boot-time reconcile for the first and embedded CLI for the
+  second). No human account can ever present `UserID==0` (verified against
+  session/PAT/bootstrap/impersonation/OIDC-federation code paths, `server/middleware/auth.go`
+  and `server/grpc/interceptors/auth.go`). Filed, not fixed; full evidence trail on the
+  issue.
 - **#1546** (`TransitionMembershipProxy` bypassing `core.TransitionMembership`'s
   activation ceiling + role-grant/revoke side effects) — reach genuinely unresolved (may
   be a real gap, or may be safe-by-design if the side effect already lands via a separate
@@ -430,6 +436,26 @@ storage primitive) with its own set of callers, and each of those callers can lo
 - **#1547** (the raw-storage-bypass guard's 18-route scope losing coverage, demonstrated
   by #1545/#1546 both being found outside it) — classification of the guard's own
   false-positive pattern filed as its own follow-up, not implemented mid-session.
+  Re-measuring the guard's real detection logic (not a cruder estimate) against every
+  handler in `server/http/handlers`, not just the 18 already-classified routes, found
+  **149 flagged call sites**: 90 (60%) mechanically excludable as read-shaped storage
+  methods (`Get*`/`List*`/`Count*`/`Export*` — a read confers no new access, so there's
+  no ceiling to bypass), leaving **59 write-shaped candidates**. Of those 59, individual
+  investigation (not the keyword-match heuristic alone, which proved unreliable in both
+  directions — see #1547) confirmed 7 as safe: 3 with no independent ceiling to bypass
+  (`ClearProjectSecretOwnershipProxy`, `DeleteSecretACLsByUserAndProjectProxy`,
+  `DeleteExpiredRoleGrantsProxy` — each core "wrapper" is audit-only bookkeeping, not a
+  gated primitive) and 4 deliberate, already-documented exceptions
+  (`CreateUserWithRoleGrantsProxy` — C2, one-atomic-transaction requirement, ADR-028;
+  `RemoveGlobalAdminRoleGuardedProxy` — no real transaction spans the HTTP hop, guard
+  must live at the row-owning server; `DeleteProjectProxy`/`DeleteProjectIfEmptyProxy` —
+  same reasoning as `RemoveGlobalAdminRoleGuardedProxy`, `DeleteProjectIfEmpty` is a
+  purpose-built atomic storage-layer primitive enforcing `DeleteProject(force=false)`'s
+  guard across the hop, #528). **That leaves 52 genuinely unresolved** — the measured
+  remaining backlog for this bug class — of which 1 (`TransitionMembershipProxy`)
+  already has its own filed issue (#1546) and 51 have not been individually investigated
+  at all. This is the number a future session should treat as the actual size of the
+  #1542-shaped backlog, not the 18-route scope's apparent completeness.
 
 A future session picking up #1545/#1546/#1547 (or whatever the guards in this campaign
 surface next) should apply the same rule: classify reach first, fix only what's
