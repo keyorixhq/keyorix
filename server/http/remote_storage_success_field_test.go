@@ -151,9 +151,20 @@ func TestRemoteStorage_SuccessFieldFix_RealServerRoundTrip(t *testing.T) {
 	// names, e.g. "MaxReads"), while UpdateSecret's handler decodes a snake_case DTO
 	// ("max_reads") — silently no-op'ing any field-level change sent this way. This
 	// step now asserts the field itself landed, not just that UpdatedAt bumped.
+	//
+	// G80 Phase 0 changed RemoteStorage.UpdateSecret's contract: it now sends the
+	// caller's FULL desired SecretNode state (see remote_secrets.go's
+	// secretUpdateWireRequest), matching how every real internal/core caller behaves
+	// (fetch the existing row, mutate specific fields, pass the whole thing on) — so
+	// this test fetches first too, rather than constructing a sparse SecretNode with
+	// only ID/MaxReads set (every other field at its Go zero value, which the hub's
+	// default-deny diff now correctly refuses to blindly overwrite).
 	beforeUpdatedAt := secret.UpdatedAt
+	toUpdate, err := rs.GetSecret(ctx, secret.ID)
+	require.NoError(t, err)
 	newMaxReads := 7
-	updated, err := rs.UpdateSecret(ctx, &models.SecretNode{ID: secret.ID, MaxReads: &newMaxReads})
+	toUpdate.MaxReads = &newMaxReads
+	updated, err := rs.UpdateSecret(ctx, toUpdate)
 	require.NoError(t, err, "UpdateSecret must not be misreported as a failure for a genuinely successful upstream response")
 	require.NotNil(t, updated)
 	require.NotNil(t, updated.MaxReads, "#496: max_reads must round-trip in the response, not silently drop")
@@ -180,7 +191,10 @@ func TestRemoteStorage_SuccessFieldFix_RealServerRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, withExpiry.Expiration, "test setup: the direct (non-remote) write must have set an expiration")
 
-	cleared, err := rs.UpdateSecret(ctx, &models.SecretNode{ID: secret.ID, MaxReads: updated.MaxReads})
+	toClear, err := rs.GetSecret(ctx, secret.ID)
+	require.NoError(t, err)
+	toClear.Expiration = nil
+	cleared, err := rs.UpdateSecret(ctx, toClear)
 	require.NoError(t, err, "#496: UpdateSecret with a nil Expiration must still succeed (interpreted as clear_expiration)")
 	assert.Nil(t, cleared.Expiration, "#496: a nil Expiration must map to clear_expiration:true and genuinely clear it")
 

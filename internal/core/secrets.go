@@ -58,8 +58,13 @@ type UpdateSecretRequest struct {
 	ClearExpiration bool              `json:"clear_expiration,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
 	Tags            []string          `json:"tags,omitempty"`
-	UpdatedBy       string            `json:"updated_by" validate:"required"`
-	UserID          uint              `json:"user_id,omitempty"`
+	// Description, when non-nil, replaces the secret's description ("" clears it). A nil
+	// pointer means "leave unchanged" — matching Metadata's nil-means-unchanged
+	// convention, since "" is itself a meaningful value here (SetSecretDescription has
+	// the same gate as the rest of this request; no separate authorization applies).
+	Description *string `json:"description,omitempty"`
+	UpdatedBy   string  `json:"updated_by" validate:"required"`
+	UserID      uint    `json:"user_id,omitempty"`
 }
 
 // CreateSecret creates a new secret with business logic validation.
@@ -302,10 +307,13 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 }
 
 // applyUpdateSecretFields patches the non-value fields (max reads, expiration,
-// metadata) from req onto secret in place.
+// metadata, description) from req onto secret in place.
 func applyUpdateSecretFields(secret *models.SecretNode, req *UpdateSecretRequest) error {
 	if req.Type != "" {
 		secret.Type = req.Type
+	}
+	if req.Description != nil {
+		secret.Description = *req.Description
 	}
 	if req.MaxReads != nil {
 		secret.MaxReads = req.MaxReads
