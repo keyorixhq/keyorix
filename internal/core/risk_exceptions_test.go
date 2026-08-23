@@ -127,7 +127,7 @@ func TestApproveRiskException_DeniesSelfApproval(t *testing.T) {
 	})).Return(nil)
 
 	c := riskCore(store, now)
-	err := c.ApproveRiskException(context.Background(), 9, 5) // actor 9 == creator 9
+	err := c.ApproveRiskException(context.Background(), 9, false, 5) // actor 9 == creator 9
 	require.Error(t, err, "the creator must not be able to approve their own exception")
 	assert.Contains(t, err.Error(), "cannot approve it")
 	require.NotNil(t, audited, "the denial must still be audited")
@@ -148,7 +148,39 @@ func TestApproveRiskException_DifferentActorSucceeds(t *testing.T) {
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	c := riskCore(store, now)
-	require.NoError(t, c.ApproveRiskException(context.Background(), 3, 5))
+	require.NoError(t, c.ApproveRiskException(context.Background(), 3, false, 5))
+}
+
+// #1524 finding (c): a machine credential relaying a HUMAN-created exception
+// (CreatedBy=9, actorID=0) does NOT collide with the self-approval comparison
+// (actorID == e.CreatedBy) the way a node-created-and-node-approved exception
+// would -- it must still be denied, unconditionally, because dual control
+// requires a different HUMAN reviewed it, which a machine can never be.
+// Companion to TestApproveRiskException_DifferentActorSucceeds (a real
+// different human succeeds) and TestApproveRiskException_DeniesSelfApproval
+// (the same human is refused) -- this is the third case neither of those
+// covers: a non-human actor, regardless of whose exception it is.
+func TestApproveRiskException_DeniesMachineActor(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
+	var audited *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
+		if ev.EventType == EventRiskExceptionApproved {
+			audited = ev
+			return true
+		}
+		return false
+	})).Return(nil)
+
+	c := riskCore(store, now)
+	err := c.ApproveRiskException(context.Background(), 0, true, 5) // actorID 0, actorIsMachine true, CreatedBy 9 -- no sentinel collision
+	require.Error(t, err, "a machine credential must not be able to approve a risk exception, even one it did not create")
+	assert.Contains(t, err.Error(), "human")
+	require.NotNil(t, audited, "the denial must still be audited")
+	require.NotNil(t, audited.Success)
+	assert.False(t, *audited.Success)
+	store.AssertNotCalled(t, "ApproveRiskExceptionIfPending", mock.Anything, mock.Anything)
 }
 
 // StateTransitionMissingCAS.ql: a lost race on approve — the row's persisted
@@ -162,7 +194,7 @@ func TestApproveRiskException_LostRaceReturnsError(t *testing.T) {
 	store.On("ApproveRiskExceptionIfPending", mock.Anything, mock.Anything).Return(false, nil)
 
 	c := riskCore(store, now)
-	err := c.ApproveRiskException(context.Background(), 3, 5)
+	err := c.ApproveRiskException(context.Background(), 3, false, 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "concurrently revoked or approved")
 	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
@@ -175,7 +207,7 @@ func TestApproveRiskException_RejectsAlreadyApproved(t *testing.T) {
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, Approved: true, ExpiresAt: now.Add(24 * time.Hour)}, nil)
 
 	c := riskCore(store, now)
-	err := c.ApproveRiskException(context.Background(), 3, 5)
+	err := c.ApproveRiskException(context.Background(), 3, false, 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already approved")
 }

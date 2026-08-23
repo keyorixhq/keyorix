@@ -61,7 +61,7 @@ func TestAddUserToGroup_BlocksSoDViolationAcrossGroupRoleSet(t *testing.T) {
 	// combo_read_only nor combo_write_only is an admin-tier role name, so
 	// requireAuthorityForRole imposes no ceiling here — only the SoD gate under
 	// test is exercised.
-	err = h.CoreService.AddUserToGroup(ctx, 71, 70, 50, 0)
+	err = h.CoreService.AddUserToGroup(ctx, 71, false, 70, 50, 0)
 	require.Error(t, err, "joining a group whose OWN role grants combine into a toxic pair must be refused")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 
@@ -98,7 +98,7 @@ func TestAddUserToGroup_BlocksSoDViolationWithExistingRole(t *testing.T) {
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
-	err = h.CoreService.AddUserToGroup(ctx, 73, 72, 51, 0)
+	err = h.CoreService.AddUserToGroup(ctx, 73, false, 72, 51, 0)
 	require.Error(t, err, "joining a group that grants a role completing a policy with an already-held role must be refused")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 }
@@ -125,7 +125,7 @@ func TestAddUserToGroup_AllowsNonViolatingGroupJoin(t *testing.T) {
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
-	err = h.CoreService.AddUserToGroup(ctx, 75, 74, 52, 0)
+	err = h.CoreService.AddUserToGroup(ctx, 75, false, 74, 52, 0)
 	require.NoError(t, err, "a non-violating group join must succeed unimpeded")
 
 	groups, gerr := h.Storage.GetUserGroups(ctx, 74)

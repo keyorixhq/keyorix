@@ -83,7 +83,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	ctx := context.Background()
 
-	require.NoError(t, c.AddUserToGroup(ctx, 42, 11, 7, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, 42, false, 11, 7, 0))
 
 	entries, total, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)

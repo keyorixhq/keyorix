@@ -35,7 +35,7 @@ func TestDeleteGroup_RefusesLastProjectAdmin(t *testing.T) {
 	group, err := st.CreateGroup(ctx, &models.Group{Name: "proj7-admins"})
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
-	require.NoError(t, c.AddUserToGroup(ctx, actor, u.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u.ID, group.ID, 0))
 
 	err = c.DeleteGroup(ctx, actor, group.ID)
 	require.Error(t, err, "must refuse to delete a group holding project 7's last roles.assign grant")
@@ -62,7 +62,7 @@ func TestDeleteGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
 	group, err := st.CreateGroup(ctx, &models.Group{Name: "proj7-admins"})
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
-	require.NoError(t, c.AddUserToGroup(ctx, actor, u.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u.ID, group.ID, 0))
 	// An independent, direct project_admin grant at the same project survives
 	// the group's deletion.
 	require.NoError(t, c.AddProjectMember(ctx, actor, proj, other.ID, "project_admin"))
@@ -102,7 +102,7 @@ func TestDeleteGroup_RefusesWhenGroupAdminsMultipleProjects(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: projA}))
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: projB}))
-	require.NoError(t, c.AddUserToGroup(ctx, actor, u.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u.ID, group.ID, 0))
 	// projB has an independent survivor; projA does not.
 	require.NoError(t, c.AddProjectMember(ctx, actor, projB, other.ID, "project_admin"))
 
@@ -126,7 +126,7 @@ func TestRemoveUserFromGroup_RefusesLastProjectAdminMember(t *testing.T) {
 	group, err := st.CreateGroup(ctx, &models.Group{Name: "proj7-admins"})
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
-	require.NoError(t, c.AddUserToGroup(ctx, actor, u.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u.ID, group.ID, 0))
 
 	err = c.RemoveUserFromGroup(ctx, actor, u.ID, group.ID, 0)
 	require.Error(t, err, "must refuse to remove the group's only member when that member is project 7's last admin route")
@@ -154,8 +154,8 @@ func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberSurvives(t *testing.T) 
 	group, err := st.CreateGroup(ctx, &models.Group{Name: "proj7-admins"})
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
-	require.NoError(t, c.AddUserToGroup(ctx, actor, u1.ID, group.ID, 0))
-	require.NoError(t, c.AddUserToGroup(ctx, actor, u2.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u1.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u2.ID, group.ID, 0))
 
 	err = c.RemoveUserFromGroup(ctx, actor, u1.ID, group.ID, 0)
 	require.NoError(t, err, "removing one of two group members is fine — the other still derives project-admin authority")
@@ -184,7 +184,7 @@ func TestDeprovisionSCIMGroup_RefusesLastProjectAdmin(t *testing.T) {
 	group, err := st.CreateGroup(ctx, &models.Group{Name: "scim-proj7-admins"})
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
-	require.NoError(t, c.AddUserToGroup(ctx, actor, u.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u.ID, group.ID, 0))
 
 	err = c.DeprovisionSCIMGroup(ctx, actor, group.ID)
 	require.Error(t, err, "SCIM group deprovisioning must also refuse to strip project 7's last admin route")

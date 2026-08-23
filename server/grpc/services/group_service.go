@@ -160,7 +160,7 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
 		return nil, err
 	}
-	if err := s.core.AddUserToGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
+	if err := s.core.AddUserToGroup(ctx, actor.UserID, false, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0); requireUser above guarantees a real human actor, never a machine
 		return nil, groupError(err)
 	}
 	return &emptypb.Empty{}, nil
