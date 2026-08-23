@@ -474,7 +474,7 @@ func testFuncExists(t *testing.T, relPath, fn string) bool {
 	if err != nil {
 		t.Fatalf("reading %s: %v", relPath, err)
 	}
-	return regexp.MustCompile(`(?m)^func `+regexp.QuoteMeta(fn)+`\(`).Match(b)
+	return regexp.MustCompile(`(?m)^func ` + regexp.QuoteMeta(fn) + `\(`).Match(b)
 }
 
 // TestNodeCredentialRoutes_PerActorCeilingsAreEnforced verifies every
