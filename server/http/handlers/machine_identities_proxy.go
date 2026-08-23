@@ -20,13 +20,24 @@
 // every other proxied call), mirroring dynamic_secrets_proxy.go/groups_proxy.go
 // exactly.
 //
-// These are thin passthroughs onto the SAME storage.Storage primitives
+// Most of these are thin passthroughs onto the SAME storage.Storage primitives
 // internal/core/machine_identities.go, machine_token.go, and machine_oidc.go
-// already use against a local backend. NO authorization/business-logic decision
-// (state-machine transition legality, role-grant authorization, token
-// issuance/hashing, OIDC-subject federation policy) is made here — that stays
-// entirely in the CALLING server's own internal/core.KeyorixCore, exactly as it
-// does against a local backend.
+// already use against a local backend, on the theory that no authorization/
+// business-logic decision needs to be made here because the CALLING server's
+// own internal/core.KeyorixCore already made it before deciding to relay the
+// write. #1542: that theory only holds for a genuine node-credential relay —
+// this route group's gate also admits any caller (human or machine) holding
+// the system.write PERMISSION directly, with no node credential, and THAT
+// caller is not relaying anyone's already-checked decision.
+// AssignMachineRoleProxy/RemoveMachineRoleProxy now route through
+// core.AssignMachineRole/core.RemoveMachineRole (machineInProject's scope
+// bound + requireAuthorityForRole's admin-tier ceiling), closing a global-scope
+// role-grant escalation for the former and a cross-project role-removal gap
+// for the latter — see each handler's own doc. Every other proxy in this file
+// remains a genuine raw passthrough (state-machine transition legality,
+// token issuance/hashing, OIDC-subject federation policy) — that logic stays
+// entirely in the CALLING server's own internal/core.KeyorixCore, exactly as
+// it does against a local backend.
 //
 // This is why the existing human-facing routes under
 // /api/v1/projects/{id}/machine-identities/... (server/http/handlers/
@@ -663,6 +674,17 @@ func machineRoleScopeQuery(w http.ResponseWriter, r *http.Request) (storage.Scop
 
 // AssignMachineRoleProxy handles POST
 // /api/v1/system/machine-identities/{id}/roles/{roleId}?project_id=&environment_id=.
+//
+// #1542: previously called storage.AssignMachineRole directly — no
+// machineInProject scope check (a machine's grant was reachable at ANY
+// project, including global scope 0, entirely caller-controlled via the
+// query params) and no requireAuthorityForRole admin-tier ceiling. Routed
+// through core.AssignMachineRole instead, closing both: machineInProject
+// bounds the grant to the machine's real project, and requireAuthorityForRole
+// only evaluates for admin-tier roles, denying actorID==0 with no
+// special-casing needed (same construction as AssignRoleToGroupWithExpiryProxy
+// — see that handler's doc) — correct for a node relay and a direct
+// system.write caller alike, no branch needed.
 func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -678,7 +700,7 @@ func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if err := h.coreService.Storage().AssignMachineRole(r.Context(), uint(machineID), uint(roleID), scope); err != nil {
+	if err := h.coreService.AssignMachineRole(r.Context(), uint(machineID), uint(roleID), scope, actorID(r)); err != nil {
 		if isAlreadyAssignedErr(err) {
 			writeRemoteAPIError(w, http.StatusConflict, "ALREADY_ASSIGNED", "role already assigned")
 			return
@@ -692,6 +714,16 @@ func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.R
 
 // RemoveMachineRoleProxy handles DELETE
 // /api/v1/system/machine-identities/{id}/roles/{roleId}?project_id=&environment_id=.
+//
+// #1542 follow-up (found by the raw-storage-bypass guard, not the original
+// finding): routes through core.RemoveMachineRole instead of calling
+// storage.RemoveMachineRole directly, restoring machineInProject's scope
+// bound. Removal confers nothing, so this was never an escalation path --
+// but a project-scoped caller could remove a role grant for a machine
+// actually belonging to a DIFFERENT project by naming that project in the
+// query params, an availability/tampering gap now closed. Its error text
+// ("machine identity not found") still matches isNotFoundErr's substring
+// check, so the existing 404 mapping is unchanged.
 func (h *CatalogHandler) RemoveMachineRoleProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -707,7 +739,7 @@ func (h *CatalogHandler) RemoveMachineRoleProxy(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if err := h.coreService.Storage().RemoveMachineRole(r.Context(), uint(machineID), uint(roleID), scope); err != nil {
+	if err := h.coreService.RemoveMachineRole(r.Context(), uint(machineID), uint(roleID), scope, actorID(r)); err != nil {
 		if isNotFoundErr(err) || isNotAssignedErr(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "role grant not found")
 			return

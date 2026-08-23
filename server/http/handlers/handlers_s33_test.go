@@ -137,8 +137,15 @@ func TestRemoveMachineRoleProxy_DBError_S33(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 	h.RemoveMachineRoleProxy(w, r)
-	// RemoveMachineRole: broken DB → result.Error != nil → "ErrorStorageFailed" (not "not assigned") → 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// #1542: RemoveMachineRoleProxy now routes through core.RemoveMachineRole,
+	// which calls machineInProject FIRST -- machineInProject collapses ANY
+	// GetMachineIdentity failure (including this broken-DB case, not just a
+	// genuine not-found) into a single "machine identity not found" error, by
+	// design (the caller can't distinguish "doesn't exist" from "can't
+	// confirm it exists" for authorization purposes, and both should refuse).
+	// isNotFoundErr's substring match on that text now maps this route's
+	// broken-DB case to 404, not the previous raw-storage-call 500.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestGetMachineRoleIDsAtProxy_MissingScopeQuery_S33(t *testing.T) {

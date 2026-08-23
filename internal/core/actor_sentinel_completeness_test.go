@@ -93,8 +93,8 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		note:  "attribution-only audit pointer, shared writer for RBAC audit events.",
 	},
 	"authz.go:requireGranterHoldsRolePermissions": {
-		class: classPerActorCeiling, status: statusOpenGap,
-		note: "actorID==0 skips the #93/#107/#141 grant-ceiling check. Not machine-reachable TODAY -- AssignRoleWithExpiryProxy/AssignRoleToGroupWithExpiryProxy bypass internal/core entirely via raw storage (#1542) -- but becomes reachable the moment #1542 is fixed by routing through core. Being fixed alongside #1542, not tracked as a separate issue.",
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "#1542: actorIsMachine parameter added, denies a machine actor instead of exempting it. AssignRoleWithExpiryProxy's non-node-relay path now passes isMachineActor(r); a genuine node relay skips this function entirely (still calls raw storage, by design -- see rbac_role_grants_proxy.go). Other callers (AssignUserRole's OWN callers -- AddProjectMember, the AssignRole gRPC/HTTP endpoint, access-request approval) still pass actorIsMachine=false unconditionally -- sibling gap, not fixed here.",
 	},
 	"bulk_delete.go:BulkDeleteSecrets": {
 		class: classPerActorCeiling, status: statusOpenGap,
@@ -253,7 +253,7 @@ func TestActorSentinelOpenGapsAreTracked(t *testing.T) {
 		}
 	}
 	sort.Strings(open)
-	const knownOpen = 3 // bulk_delete.go:BulkDeleteSecrets, rbac_management.go:AssignPermissionToRole (#1545); authz.go:requireGranterHoldsRolePermissions (fixed alongside #1542, task 3)
+	const knownOpen = 2 // bulk_delete.go:BulkDeleteSecrets, rbac_management.go:AssignPermissionToRole -- #1545
 	if len(open) != knownOpen {
 		t.Errorf("expected exactly %d statusOpenGap classPerActorCeiling entries (tracked via #1545), found %d: %v\n"+
 			"A new open gap needs its own issue filed (see #1545's shape) before this count changes; a closed "+

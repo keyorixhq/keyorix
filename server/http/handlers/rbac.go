@@ -481,7 +481,11 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	// expiry routes through the time-bound (JIT) path.
 	var err error
 	if req.ExpiresAt != nil {
-		err = h.coreService.AssignUserRoleWithExpiry(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope, *req.ExpiresAt)
+		// #1542: a machine identity (UserID==0 by construction, see
+		// server/middleware/auth.go's UserContext doc) reaching this endpoint via
+		// RequireScopedPermission must not be treated as the trusted
+		// actorID==0 local-CLI exemption inside requireGranterHoldsRolePermissions.
+		err = h.coreService.AssignUserRoleWithExpiry(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope, *req.ExpiresAt, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
 		err = h.coreService.AssignUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope)
 	}
