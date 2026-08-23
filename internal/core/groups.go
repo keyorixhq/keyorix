@@ -144,20 +144,28 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 }
 
 // AddUserToGroup adds a user to a group. actorID is the admin performing it (0 = no
-// authenticated principal, e.g. a local CLI invocation). projectID scopes the
-// membership: 0 = global (applies in every project), non-zero = this project only.
-// Membership confers every role the group holds at the matching scope, so this is
-// recorded in the RBAC audit trail (#233).
+// authenticated principal, e.g. a local CLI invocation). actorIsMachine distinguishes
+// that true "no principal" case from a machine-credential-authenticated caller — both
+// present as actorID==0, but only the former is exempt from the ceiling check below;
+// see #1524. projectID scopes the membership: 0 = global (applies in every project),
+// non-zero = this project only. Membership confers every role the group holds at the
+// matching scope, so this is recorded in the RBAC audit trail (#233).
 //
 // Joining an admin-conferring group inherits that access just as directly as a
 // role grant, so every global-scope admin role the group already holds is gated
 // by the same escalation-by-proxy ceiling AssignRoleToGroup applies
 // (requireAuthorityForRole): a non-admin roles.assign holder must not be able to
 // self-escalate by joining a privileged group instead of being granted the role.
-// The local CLI (actorID 0) is exempt — it is already fully trusted (it can grant
-// any role directly via AssignRoleToUser, which bypasses this ceiling entirely) and
-// the exemption avoids forcing an existing admin group deployment through this new
-// check retroactively.
+// The local CLI (actorID 0, actorIsMachine false) is exempt — it is already fully
+// trusted (it can grant any role directly via AssignRoleToUser, which bypasses this
+// ceiling entirely) and the exemption avoids forcing an existing admin group
+// deployment through this new check retroactively. A MACHINE credential (actorID 0,
+// actorIsMachine true — e.g. a RemoteStorage node relay, #1524 finding (b)) is NOT
+// exempt: it is not the local CLI, and requireAuthorityForRole already fails closed
+// correctly for actorID 0 when the check actually runs (no real user holds the
+// admin-tier role an escalation attempt would need) — an ordinary, non-admin-conferring
+// group join still succeeds unaffected, since requireAuthorityForRole only evaluates
+// anything for admin-tier roles in the first place.
 // validateGroupJoinRoles checks that actorID has the authority to grant all roles
 // the group already holds, and that userID would not gain a SoD-violating role
 // combination by joining (AUTHZ-007). Skips roles whose definition cannot be loaded.
@@ -214,7 +222,7 @@ func (c *KeyorixCore) domainAllowedForGroupJoin(ctx context.Context, userID, gro
 	return nil
 }
 
-func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
+func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsMachine bool, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
@@ -237,7 +245,7 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, group
 	// race).
 	c.sodGrantMu.Lock()
 	defer c.sodGrantMu.Unlock()
-	if actorID != 0 {
+	if actorID != 0 || actorIsMachine {
 		if err := c.validateGroupJoinRoles(ctx, actorID, userID, groupID); err != nil {
 			return err
 		}
@@ -252,8 +260,8 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, group
 // AddUserToGroupGlobal is a convenience wrapper that adds a global membership
 // (projectID=0). Callers that do not need project-scoped membership (e.g. SSO
 // JIT provisioning, SCIM) should call this rather than hard-coding 0.
-func (c *KeyorixCore) AddUserToGroupGlobal(ctx context.Context, actorID, userID, groupID uint) error {
-	return c.AddUserToGroup(ctx, actorID, userID, groupID, 0)
+func (c *KeyorixCore) AddUserToGroupGlobal(ctx context.Context, actorID uint, actorIsMachine bool, userID, groupID uint) error {
+	return c.AddUserToGroup(ctx, actorID, actorIsMachine, userID, groupID, 0)
 }
 
 // RemoveUserFromGroup removes a user from a group at the given projectID scope.

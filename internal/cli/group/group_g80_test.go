@@ -254,7 +254,7 @@ func TestRunRemoveMember_Local_Success_Isolated(t *testing.T) {
 	require.NoError(t, err)
 	g, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "isolated-remove-group"})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, g.ID, 0))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, false, u.ID, g.ID, 0))
 
 	origG, origU := removeMemberGroupID, removeMemberUserID
 	defer func() { removeMemberGroupID = origG; removeMemberUserID = origU }()
@@ -291,7 +291,7 @@ func TestRunRemoveMember_Local_RefusesLastGlobalAdmin_Isolated(t *testing.T) {
 	require.NoError(t, err)
 	g, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "sole-admin-group"})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, g.ID, 0))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, false, u.ID, g.ID, 0))
 
 	dbPath := filepath.Join(dir, "test.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{Logger: logger.Discard})

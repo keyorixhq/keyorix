@@ -16,11 +16,35 @@ import (
 )
 
 // actorID returns the acting user's ID from the request context (0 when absent).
+//
+// actorID(r)==0 is ambiguous by construction: it means EITHER no request
+// context at all (a true local/embedded call — see isMachineActor's doc
+// comment) OR a machine-authenticated request (a machine identity has no
+// UserID). A caller whose ceiling check treats actorID==0 as "trusted, skip
+// the check" — rather than letting it flow through and fail closed like an
+// ordinary unauthorized actor would — is silently trusting every machine
+// credential too. Check isMachineActor(r) explicitly wherever that
+// distinction matters (see #1524).
 func actorID(r *http.Request) uint {
 	if u := middleware.GetUserFromContext(r.Context()); u != nil {
 		return u.UserID
 	}
 	return 0
+}
+
+// isMachineActor reports whether the request's authenticated principal is a
+// machine identity (any type, including a node credential) rather than a
+// user or a true unauthenticated/embedded call. Unlike actorID(r), this
+// distinguishes "no context at all" (nil UserContext — an in-process/local
+// caller, e.g. the CLI's embedded LocalStorage path) from "authenticated as
+// a machine" (non-nil UserContext with ActorType machine_identity,
+// UserID==0) — the two cases actorID(r) alone cannot tell apart. #1524: a
+// per-actor ceiling check that only tests `actorID != 0` treats both the
+// same, silently trusting a machine credential the way it was only ever
+// meant to trust a genuinely-local call.
+func isMachineActor(r *http.Request) bool {
+	u := middleware.GetUserFromContext(r.Context())
+	return u != nil && u.ActorKind() == core.ActorTypeMachine
 }
 
 // CatalogHandler handles project and environment endpoints.

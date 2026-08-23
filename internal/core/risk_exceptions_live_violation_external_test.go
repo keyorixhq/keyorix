@@ -101,7 +101,7 @@ func TestApproveRiskException_RejectsSoDReferenceThatWentStale(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, sodAfter.Violations, "the violation must be gone")
 
-	err = h.CoreService.ApproveRiskException(ctx, 2, exc.ID)
+	err = h.CoreService.ApproveRiskException(ctx, 2, false, exc.ID)
 	require.Error(t, err, "approval must re-validate against a fresh scan and refuse a now-stale reference")
 	assert.Contains(t, err.Error(), "does not match any currently-detected SoD violation")
 }

@@ -383,7 +383,7 @@ func TestRemoveGroupMember_ProjectScoped_S13(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add a project-scoped membership first.
-	require.NoError(t, cs.AddUserToGroup(ctx, 0, user.ID, grp.ID, 5))
+	require.NoError(t, cs.AddUserToGroup(ctx, 0, false, user.ID, grp.ID, 5))
 
 	// Now remove it via the handler with ?project_id=5.
 	url := "/?project_id=5"

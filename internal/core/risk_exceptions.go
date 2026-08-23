@@ -217,7 +217,16 @@ func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint)
 // exception suppresses its matched violation from the compliance posture — before
 // approval the raw violation keeps counting, so a self-dealt exception has no
 // effect. A denied self-approval attempt is itself audited distinctly from a grant.
-func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID, id uint) error {
+//
+// actorIsMachine: dual control's entire premise is "a different HUMAN reviewed
+// this" — a machine credential can never BE that different human, by definition,
+// regardless of any other detail (#1524 finding (c)). This is not a narrower
+// version of the self-approval check (actorID == e.CreatedBy): a node relaying a
+// HUMAN-created exception (CreatedBy != 0) doesn't collide with that comparison
+// at all and would otherwise approve with no authority check whatsoever. Deny
+// unconditionally rather than trying to make the comparison "work" for a
+// principal type it was never written to represent.
+func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID uint, actorIsMachine bool, id uint) error {
 	e, err := c.storage.GetRiskException(ctx, id)
 	if err != nil {
 		return err
@@ -230,6 +239,11 @@ func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID, id uint
 	}
 	if e.Approved {
 		return fmt.Errorf("risk exception %d is already approved", id)
+	}
+	if actorIsMachine {
+		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil, "",
+			fmt.Sprintf("risk exception %d approval DENIED: a machine credential cannot satisfy dual control", id))
+		return fmt.Errorf("dual control requires a human approver; a machine credential cannot approve a risk exception")
 	}
 	if actorID == e.CreatedBy {
 		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil, "",

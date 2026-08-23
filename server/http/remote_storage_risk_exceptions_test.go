@@ -152,6 +152,42 @@ func TestRemoteStorageRiskExceptions_GetNotFound_RealServer(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential is the real
+// regression test for #1524 finding (c): a node credential (this file's
+// harness default -- newUpstreamDownstreamForRiskExceptions) must not be
+// able to approve a HUMAN-created exception. Before the fix, the only
+// gate was actorID == e.CreatedBy (self-approval); a node relaying an
+// exception it did not create (CreatedBy a real human ID, actorID(r)==0)
+// never collided with that comparison and approved with no authority check
+// at all. The exception here is created directly on the upstream's own
+// core (bypassing the node-token wire entirely) specifically so CreatedBy
+// is a real, nonzero human ID, not the node's own actorID(r)==0 -- proving
+// this is the reversed-direction case #1531's investigation found, not the
+// already-correctly-denied node-created-and-node-approved collision.
+func TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential(t *testing.T) {
+	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
+	ctx := context.Background()
+
+	const humanCreator = uint(5)
+	exc, err := upstream.CreateRiskException(ctx, humanCreator, "Human-created, node must not approve",
+		"other", "", "seeded directly on upstream for #1524 (c) regression coverage", time.Now().Add(30*24*time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, humanCreator, exc.CreatedBy)
+
+	// clientSafe sanitizes every proxy error to a blanket "an internal error
+	// occurred" string before it reaches the wire caller (the real "dual
+	// control requires a human approver" message is only visible server-side
+	// -- log output during a local run of this test). What the client can
+	// observe is that the call errors and never reports a match.
+	matched, err := downstream.Storage().ApproveRiskExceptionIfPending(ctx, exc)
+	assert.False(t, matched, "a node credential must never report a successful approval")
+	require.Error(t, err, "a node credential must not be able to approve a risk exception it did not create")
+
+	direct, err := upstream.Storage().GetRiskException(ctx, exc.ID)
+	require.NoError(t, err)
+	assert.False(t, direct.Approved, "the denied approval must never land on the upstream's own storage")
+}
+
 // TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer proves
 // ListRiskExceptions(activeOnly=true) excludes revoked rows at the storage
 // layer, matching local_risk_exceptions.go's contract exactly (expiry itself is

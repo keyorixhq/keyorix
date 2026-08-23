@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
@@ -142,7 +143,12 @@ func TestRemoteStorageGroup_ListAndListPage_RealServer(t *testing.T) {
 
 // TestRemoteStorageGroup_Membership_RealServer proves the user-membership fix:
 // AddUserToGroup, ListGroupMembers, GetUserGroups, and RemoveUserFromGroup all
-// work correctly via storage.type: remote against a real server.
+// work correctly via storage.type: remote against a real server. "on-call"
+// carries no role grants, so this alone cannot distinguish "the
+// escalation-ceiling check ran and found nothing to object to" from "the
+// check was skipped outright" -- that distinction is what
+// TestRemoteStorageGroup_Membership_AdminConferringGroup_DeniesNodeCredential
+// (#1524 finding (b)) exists to prove instead.
 func TestRemoteStorageGroup_Membership_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForGroups(t)
 	ctx := context.Background()
@@ -196,4 +202,49 @@ func TestRemoteStorageGroup_Membership_RealServer(t *testing.T) {
 	userGroups, err = downstream.Storage().GetUserGroups(ctx, user.ID)
 	require.NoError(t, err)
 	assert.Empty(t, userGroups)
+}
+
+// TestRemoteStorageGroup_Membership_AdminConferringGroup_DeniesNodeCredential
+// is the real regression test for #1524 finding (b): a node credential
+// (this file's harness default -- see newUpstreamDownstreamForGroups) must
+// NOT be able to add a user to a group that holds an admin-conferring role.
+// Before the fix, AddUserToGroup's `if actorID != 0` exemption treated a node
+// credential's actorID(r)==0 identically to the true local-CLI case it was
+// written for, silently skipping the escalation-ceiling check entirely.
+// Unlike TestRemoteStorageGroup_Membership_RealServer's zero-grant "on-call"
+// group, this one genuinely exercises the check: a real HTTP round trip
+// through AddGroupMemberProxy against a group holding "admin" must come back
+// as an error, and the membership must never land on the upstream's own
+// storage -- proving the ceiling ran, not just that the wire call returned
+// something.
+func TestRemoteStorageGroup_Membership_AdminConferringGroup_DeniesNodeCredential(t *testing.T) {
+	upstream, downstream := newUpstreamDownstreamForGroups(t)
+	ctx := context.Background()
+
+	group, err := downstream.Storage().CreateGroup(ctx, &models.Group{Name: "admins-node-test"})
+	require.NoError(t, err)
+	adminRole, err := upstream.Storage().GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, upstream.Storage().AssignRoleToGroup(ctx, group.ID, adminRole.ID, coreStorage.Scope{}))
+
+	user, err := upstream.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "wouldbeadmin",
+		Email:    "wouldbeadmin@example.com",
+		Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+
+	// The proxy's error handling runs every error through clientSafe (a
+	// blanket "an internal error occurred" string, deliberately never
+	// leaking detail to the wire caller), so the real "only an administrator
+	// can grant..." message is only visible server-side (log output during a
+	// local run of this test). What the CLIENT can observe -- and what
+	// actually matters for this regression -- is that the call errors at
+	// all, and that the membership never lands.
+	err = downstream.Storage().AddUserToGroup(ctx, user.ID, group.ID, 0)
+	require.Error(t, err, "a node credential must not be able to add a user to an admin-conferring group")
+
+	directMembers, err := upstream.Storage().ListGroupMembers(ctx, group.ID)
+	require.NoError(t, err)
+	assert.Empty(t, directMembers, "the denied join must never land on the upstream's own storage")
 }

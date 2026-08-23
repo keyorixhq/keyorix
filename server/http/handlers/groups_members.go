@@ -73,7 +73,7 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "user_id is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, body.UserID, uint(groupID), body.ProjectID); err != nil {
+	if err := h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, false, body.UserID, uint(groupID), body.ProjectID); err != nil {
 		log.Printf("Error adding group member: %v", err)
 		switch {
 		case strings.Contains(err.Error(), "not found"):

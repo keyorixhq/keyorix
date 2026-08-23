@@ -215,14 +215,19 @@ func (h *DashboardHandler) RevokeRiskExceptionProxy(w http.ResponseWriter, r *ht
 // never checked at all by this proxy — also covers an approval via node-sync
 // (#G79); ApproveRiskException re-fetches the row and resolves
 // Approved/ApprovedBy/ApprovedAt itself, so none of that (nor any other field
-// on the row) is accepted from the wire body anymore.
+// on the row) is accepted from the wire body anymore. #1524 finding (c): a
+// node credential relaying a human-created exception collided with neither
+// side of the old actorID==e.CreatedBy comparison, so approval proceeded with
+// no authority check. isMachineActor(r) closes it unconditionally — dual
+// control requires a different HUMAN, which a machine credential can never
+// be, independent of the self-approval comparison.
 func (h *DashboardHandler) ApproveRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
 		return
 	}
-	if err := h.coreService.ApproveRiskException(r.Context(), actorID(r), uint(id)); err != nil {
+	if err := h.coreService.ApproveRiskException(r.Context(), actorID(r), isMachineActor(r), uint(id)); err != nil {
 		log.Printf("risk-exceptions proxy: approve failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

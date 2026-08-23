@@ -55,7 +55,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_ProjectScopedGrant(t *testing.T)
 	// actorID 99 is arbitrary/unprivileged: domain_gate_role is not an
 	// admin-tier role name, so requireAuthorityForRole imposes no ceiling here
 	// — only the domain-allowlist gate under test is exercised.
-	err := h.CoreService.AddUserToGroup(ctx, 99, mallory.ID, 60, proj)
+	err := h.CoreService.AddUserToGroup(ctx, 99, false, mallory.ID, 60, proj)
 	require.Error(t, err, "adding a disallowed-domain user to a group that confers project access must be refused")
 	assert.Contains(t, err.Error(), "not on the allowlist")
 
@@ -88,7 +88,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_GlobalMembershipReachesProjectGr
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
 	// projectID 0 == a GLOBAL membership, not a project-scoped one.
-	err := h.CoreService.AddUserToGroup(ctx, 99, trent.ID, 61, 0)
+	err := h.CoreService.AddUserToGroup(ctx, 99, false, trent.ID, 61, 0)
 	require.Error(t, err, "a global group join that reaches a project-scoped grant must still be refused")
 	assert.Contains(t, err.Error(), "not on the allowlist")
 }
@@ -112,7 +112,7 @@ func TestAddUserToGroup_AllowsAllowedDomain(t *testing.T) {
 
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
-	err := h.CoreService.AddUserToGroup(ctx, 99, peggy.ID, 62, proj)
+	err := h.CoreService.AddUserToGroup(ctx, 99, false, peggy.ID, 62, proj)
 	require.NoError(t, err, "an allowed-domain user must still be able to join a project-conferring group")
 
 	groups, gerr := h.Storage.GetUserGroups(ctx, peggy.ID)
@@ -142,6 +142,6 @@ func TestAddUserToGroup_NoRoleGrant_NotGatedByDomainAllowlist(t *testing.T) {
 
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
-	err := h.CoreService.AddUserToGroup(ctx, 99, oscar.ID, 63, 0)
+	err := h.CoreService.AddUserToGroup(ctx, 99, false, oscar.ID, 63, 0)
 	require.NoError(t, err, "joining a group with no role grants confers no access and must not be gated")
 }

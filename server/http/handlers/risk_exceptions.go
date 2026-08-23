@@ -87,7 +87,7 @@ func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.R
 		sendError(w, "InvalidParameter", "Invalid exception ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.ApproveRiskException(r.Context(), actor.UserID, uint(id)); err != nil {
+	if err := h.coreService.ApproveRiskException(r.Context(), actor.UserID, isMachineActor(r), uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
