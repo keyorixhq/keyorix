@@ -461,3 +461,51 @@ A future session picking up #1545/#1546/#1547 (or whatever the guards in this ca
 surface next) should apply the same rule: classify reach first, fix only what's
 human-reachable, file the rest with evidence, and treat "filed" as a legitimate stopping
 point, not an unfinished task to feel behind on.
+
+## Overnight triage of the 52 unresolved candidates (2026-08-23 → 2026-08-24)
+
+Full results: `docs/g80-raw-storage-bypass-enumeration.md` (the reproducible 58-candidate
+baseline, and why it supersedes the 59 above — see below), `docs/g80-raw-storage-bypass-blind-spots.md`
+(five categories this guard cannot see, named not chased), `docs/g80-raw-storage-bypass-triage.md`
+(per-candidate table with file:line evidence), and `docs/g80-overnight-handoff-2.md`
+(executive summary — **read this first**, it flags several human-reachable, unfixed
+findings prominently).
+
+**The "149 flagged / 90 read / 59 write-shaped" figures immediately above (from the
+original #1547 entry) could not be reproduced and should be treated as incorrect.** Two
+independent implementations of that entry's own stated methodology — a regex/line-scan
+version and an AST-based version (`scripts/analysis/raw_storage_bypass_enumerate.go`,
+committed, immune to line-wrapping by construction) — both produce **145 flagged / 87
+read-shaped / 58 write-shaped**. Multi-line method chains and variable/interface dispatch
+were checked directly as candidate explanations for the gap and ruled out (zero instances
+of either in the current codebase). 58, not 59, is now the reproducible baseline; run
+`go run scripts/analysis/raw_storage_bypass_enumerate.go` to regenerate it.
+
+Of those 58 candidates, 50 were investigated tonight (the 7 already resolved above, plus
+`TransitionMembershipProxy`/#1546, were left as-is).
+
+**Result: 35 of the 50 are `real` (a genuine ceiling bypass), and all 35 are
+`human-reachable`** — not machine-only. The stopping rule's informal extrapolation from
+the 7-item sample (implying most of the remainder would be safe, ~11-12%) was wrong in
+the dangerous direction: the actual true-positive rate among the unresolved remainder was
+70%. **None of the 35 have been fixed** — this was classification only, per explicit
+instruction for the overnight session; unsupervised edits to authorization code were
+out of scope regardless of how many findings turned out human-reachable. GitHub issue
+filing and the #1547 Slack post are both blocked on `gh auth` being broken (invalid
+keyring token) — see the handoff doc for ready-to-file issue content.
+
+**State the number as: 35 of 58 real and human-reachable, within the guard's stated
+reach (server/http/handlers only) — with five further categories (multi-line chains,
+now fixed; variable/interface dispatch; wrapper-mediated calls; the read-shaped naming
+heuristic; non-handler layers — gRPC/CLI/background jobs) named as unexamined in
+`docs/g80-raw-storage-bypass-blind-spots.md`, not folded into this count.** 20 files
+outside `server/http/handlers` (7 gRPC service files, 13 CLI command files) make raw
+storage calls this guard never looks at.
+
+**This is now the top-priority open item in the G80/#1542 lineage** — worse in aggregate
+than the original G80 bug and on par with or worse than #1542's own motivating finding.
+Do not treat "filed, not fixed" as equivalent to low-urgency here; the stopping rule's
+own clause 2 ("human-reachable: fix it now, it outranks other open work") applies to all
+35 — it was deliberately not invoked tonight only because this was an unsupervised
+overnight session and authz-code changes need a human in the loop, not because the
+findings don't qualify.
