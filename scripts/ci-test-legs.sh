@@ -45,9 +45,7 @@
 # not hidden -- it's on record in #1533/#1534/#1535 and in this comment.
 exclusion_entries() {
   cat <<'EOF'
-internal/cli$|TEMPORARY|TestRemoteCLIIntegration/TestLocalToRemoteSwitching require a running server (originally excluded 2026-04-27, commit 7ccb7dda)|#1533|2026-08-23
-internal/storage/remote|TEMPORARY|TestRemoteStorage_Health times out (originally excluded 2026-04-27, commit 7ccb7dda)|#1534|2026-08-23
-server/http$|TEMPORARY|TestSharingHTTPIntegration/TestHTTPServerErrorScenarios -- G80 campaign C4 target (originally excluded 2026-04-27, commit 7ccb7dda)|#1535|2026-08-23
+server/http$|SHARDED|runs in its own dedicated http-1..6 matrix legs below (G80 C4, 2026-08-23) -- see #1535 for the ~4-month exclusion history this closes|#1535|2026-08-23
 server/http/handlers$|SHARDED|runs in its own dedicated handlers-1..4 matrix legs below|n/a|2026-04-27
 server/proto/pb$|PERMANENT|auto-generated protobuf code (DO NOT EDIT), no tests to write|n/a|2026-07-18
 EOF
@@ -178,6 +176,20 @@ handlers_pkg() {
   echo "github.com/keyorixhq/keyorix/server/http/handlers"
 }
 
+# http_pkg: the single package every http-1..6 leg shards by test name, not
+# by package (G80 C4) -- same reasoning and mechanism as handlers_pkg above.
+# 6 shards, not 4: measured 1904.015s local (-race, unsharded, single run --
+# see docs/g80-remediation-notes.md) with zero failures beyond the two
+# already-fixed-on-main C1-scope fixtures, confirming server/http is healthy
+# and slow, not deadlocked. 1904.015s * ~1.7 (local->runner factor) ~=
+# 3237s runner-equivalent; 6 shards puts each at ~540s, ~30% of the 1800s
+# per-leg timeout budget -- comfortably under the "roughly a third" target
+# with real headroom, matching every other leg's generous-budget precedent
+# (see the timeout-raise comment above).
+http_pkg() {
+  echo "github.com/keyorixhq/keyorix/server/http"
+}
+
 # pkgs_for_leg: package list for a given leg name, space/newline-separated.
 # Matches the case statement the test-suite matrix step uses to pick $pkgs.
 pkgs_for_leg() {
@@ -188,6 +200,7 @@ pkgs_for_leg() {
     core) core_pkgs ;;
     root-4) root_4_pkgs ;;
     handlers-1|handlers-2|handlers-3|handlers-4) handlers_pkg ;;
+    http-1|http-2|http-3|http-4|http-5|http-6) http_pkg ;;
     *) echo "pkgs_for_leg: unknown leg '$1'" >&2; return 1 ;;
   esac
 }
@@ -206,6 +219,12 @@ handlers-1
 handlers-2
 handlers-3
 handlers-4
+http-1
+http-2
+http-3
+http-4
+http-5
+http-6
 EOF
 }
 

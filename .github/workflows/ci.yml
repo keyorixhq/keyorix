@@ -365,6 +365,39 @@ jobs:
           - leg: handlers-4
             timeout: 1800
             coverage-file: coverage_handlers4.out
+          # http (server/http, re-enabled 2026-08-23 after ~4 months dark --
+          # see docs/g80-remediation-notes.md, G80 C4). Measured 1904.015s
+          # locally (-race, unsharded, one full run, zero failures beyond
+          # two already-fixed-on-main fixtures) -- healthy and slow, not
+          # deadlocked (the prior 20-minute goroutine-dump "failure" that
+          # motivated this measurement was the default go-test timeout
+          # cutting off a genuinely still-running suite, not a hang).
+          # Sharded 6 ways by test name (same mechanism as handlers-1..4
+          # above, generalized into run_filter_for_shard) rather than left
+          # as one leg: 1904.015s * ~1.7 local->runner factor puts an
+          # unsharded run around 3237s, well past any per-leg budget this
+          # workflow uses elsewhere. 6 shards lands each at ~540s, ~30% of
+          # the 1800s timeout -- comfortably under budget with real headroom
+          # to spare, matching this workflow's generous-timeout precedent
+          # rather than tuning tight to the observed duration.
+          - leg: http-1
+            timeout: 1800
+            coverage-file: coverage_http1.out
+          - leg: http-2
+            timeout: 1800
+            coverage-file: coverage_http2.out
+          - leg: http-3
+            timeout: 1800
+            coverage-file: coverage_http3.out
+          - leg: http-4
+            timeout: 1800
+            coverage-file: coverage_http4.out
+          - leg: http-5
+            timeout: 1800
+            coverage-file: coverage_http5.out
+          - leg: http-6
+            timeout: 1800
+            coverage-file: coverage_http6.out
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -389,8 +422,8 @@ jobs:
           leg="${{ matrix.leg }}"
           # Empty matches everything (verified: `go test -run ""` and no
           # -run flag at all select the identical test set) -- every leg
-          # except handlers-N leaves this empty, since only handlers shards
-          # by test name rather than by package.
+          # except handlers-N/http-N leaves this empty, since only those
+          # shard by test name rather than by package.
           run_filter=""
           pkgs=$(pkgs_for_leg "$leg")
 
@@ -407,6 +440,14 @@ jobs:
               shard=${leg#handlers-}
               run_filter=$(run_filter_for_shard "$pkgs" "$shard" 4)
               pkgs=./server/http/handlers/...
+              ;;
+            http-1|http-2|http-3|http-4|http-5|http-6)
+              # server/http, 392 top-level tests -- same by-test-name-mod-N
+              # sharding as handlers-N above (see http_pkg's own comment in
+              # scripts/ci-test-legs.sh for the shard-count derivation).
+              shard=${leg#http-}
+              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 6)
+              pkgs=./server/http
               ;;
           esac
           # $pkgs is deliberately unquoted below: it holds a space-separated
@@ -565,7 +606,7 @@ jobs:
       - name: Merge coverage profiles
         run: |
           echo "mode: atomic" > coverage_merged.out
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
