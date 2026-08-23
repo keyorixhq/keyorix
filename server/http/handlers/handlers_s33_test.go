@@ -56,8 +56,13 @@ func TestGetMachineIdentityCredentialByIDProxy_DBError_S33(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/machine-credentials/1", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetMachineIdentityCredentialByIDProxy(w, r)
-	// GetMachineIdentityCredentialByID wraps First() errors as "not found" → 404
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// G80: GetMachineIdentityCredentialByID used to wrap EVERY First() error as
+	// "not found" regardless of cause, so a genuine storage failure (this test's
+	// closed DB) was indistinguishable from a real not-found and surfaced as 404.
+	// Fixed in local_machine_credentials.go to only report 404 for a genuine
+	// gorm.ErrRecordNotFound, matching GetUser's already-correct pattern -- a
+	// real storage error now correctly surfaces as 500.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestListMachineIdentityCredentialsProxy_DBError_S33(t *testing.T) {

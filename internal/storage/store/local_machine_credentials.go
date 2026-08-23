@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -34,7 +35,19 @@ func (ls *LocalStorage) GetMachineIdentityCredentialByHash(ctx context.Context, 
 func (ls *LocalStorage) GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error) {
 	var c models.MachineIdentityCredential
 	if err := ls.db.WithContext(ctx).First(&c, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		// G80: was an unconditional "not found" wrap regardless of the underlying
+		// error, so a genuine storage failure (e.g. a closed/unreachable DB) read
+		// identically to a real not-found to any caller doing the same string-match
+		// server/http/handlers.isNotFoundErr does -- UpdateMachineIdentityCredentialProxy
+		// (server/http/handlers/machine_identities_proxy.go), added as part of the
+		// same G80 fix that first called this method from that handler, surfaced
+		// this as a wrong 404 instead of 500 for a real storage error. Distinguish
+		// genuine not-found (gorm.ErrRecordNotFound) from everything else, matching
+		// GetUser's (local_users.go) already-established pattern.
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &c, nil
 }

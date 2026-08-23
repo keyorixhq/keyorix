@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -250,8 +251,13 @@ func TestFinishWebAuthnPasswordlessLogin_RateLimited_S13B(t *testing.T) {
 func TestUpsertMFASecretProxy_Success_S13B(t *testing.T) {
 	cs := freshCoreS12(t)
 	h := NewAuthHandler(cs, false)
+	setTestAuthEncryptor(t, cs)
+	created, err := cs.CreateUser(context.Background(), &core.CreateUserRequest{
+		Username: "s13buser1", Email: "s13buser1@example.com", DisplayName: "S13B User", Password: "Notarealpassw0rd!",
+	})
+	require.NoError(t, err)
 	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    1,
+		"user_id":    created.ID,
 		"secret_enc": []byte("encryptedsecret"),
 	})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",

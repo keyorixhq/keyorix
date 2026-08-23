@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -3220,7 +3221,12 @@ func TestConsumeSSOLoginStateProxy_HappyPath(t *testing.T) {
 
 func TestUpsertMFASecretProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"user_id":1,"secret_enc":"aGVsbG8="}`
+	setTestAuthEncryptor(t, h.coreService)
+	created, err := h.coreService.CreateUser(t.Context(), &core.CreateUserRequest{
+		Username: "s5upsertmfahappy", Email: "s5upsertmfahappy@example.com", DisplayName: "S5 Upsert Happy", Password: "Notarealpassw0rd!",
+	})
+	require.NoError(t, err)
+	body := fmt.Sprintf(`{"user_id":%d,"secret_enc":"aGVsbG8="}`, created.ID)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.UpsertMFASecretProxy(w, req)
@@ -3237,14 +3243,25 @@ func TestGetMFASecretProxy_NotFound(t *testing.T) {
 
 func TestGetMFASecretProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
+	// G80: UpsertMFASecretProxy now requires a real, not-yet-enrolled target user
+	// and an active encryptor -- create a real user rather than the old synthetic
+	// user_id:42 (never backed by an actual row), and wire an encryptor onto the
+	// shared S4 core (additive; no other test in this file depends on encryption
+	// being off).
+	setTestAuthEncryptor(t, h.coreService)
+	created, err := h.coreService.CreateUser(t.Context(), &core.CreateUserRequest{
+		Username: "s5getmfahappy", Email: "s5getmfahappy@example.com", DisplayName: "S5 MFA Happy", Password: "Notarealpassw0rd!",
+	})
+	require.NoError(t, err)
 	// Upsert first so there is something to get.
-	bodyUp := `{"user_id":42,"secret_enc":"aGVsbG8="}`
-	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyUp))
+	bodyUp, err := json.Marshal(map[string]interface{}{"user_id": created.ID, "secret_enc": "aGVsbG8="})
+	require.NoError(t, err)
+	req0 := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(bodyUp))
 	w0 := httptest.NewRecorder()
 	h.UpsertMFASecretProxy(w0, req0)
 	require.Equal(t, http.StatusOK, w0.Code)
 
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=42", nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?user_id=%d", created.ID), nil)
 	w := httptest.NewRecorder()
 	h.GetMFASecretProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
