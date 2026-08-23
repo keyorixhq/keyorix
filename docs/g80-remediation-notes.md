@@ -225,7 +225,8 @@ underlying symptom this timing problem is a symptom of).
 | CSV header assertion predates G25's added columns | 1 | C2 fix |
 | Secret-dependency fixture uses nonexistent IDs 501/502 | 3 | C2 fix |
 | `buildActiveSetupToken` never sets `SubjectUserID` | 5 | C2 fix |
-| Risk-exception routes missing / method mismatch (#1511) | 4 | C3 quarantine |
+| `UpdateRiskExceptionProxy` deliberately unregistered (#G79, tracked in #1511) | 2 | C3 quarantine |
+| `RevokeRiskExceptionProxy`/`ApproveRiskExceptionProxy` proxy the core policy function instead of the raw conditional primitive, so a lost race/already-decided precondition returns a 500 instead of `matched=false` (#1531) — **corrected**; originally misdiagnosed as another actorID(r)==0 instance, see the recurring-pattern section below | 2 | C3 quarantine |
 
 ### C1 — the last-global-admin invariant (fixed as a fixture bug, not a product bug)
 
@@ -324,6 +325,33 @@ catch-all** — root_base() is the catch-all computation, so un-excluding server
 without pinning it would drop 91 HTTP integration test files into root-4 (already at
 569s/5.2% headroom before #1526's fix) — a guaranteed timeout, not a surprise.
 
+**Refreshed after #1526 + C4** (job wall-clock — includes ~1-2 min checkout/setup
+overhead, NOT the go-test-only elapsed time the table above uses; both are against
+the CURRENT 1800s budget, same for every leg):
+
+| Leg | Wall-clock | % of 1800s budget |
+|---|---|---|
+| root-1 | 8m27s (507s) | 28% |
+| root-2 | 7m36s (456s) | 25% |
+| root-3 | 9m21s (561s) | 31% |
+| root-4 | 9m34s (574s) | 32% |
+| core | 12m53s (773s) | 43% |
+| handlers-1 | 8m10s (490s) | 27% |
+| handlers-2 | 8m6s (486s) | 27% |
+| handlers-3 | 7m9s (429s) | 24% |
+| handlers-4 | 8m17s (497s) | 28% |
+| http-1 | 11m54s (714s) | 40% |
+| http-2 | 11m2s (662s) | 37% |
+| http-3 | 11m18s (678s) | 38% |
+| http-4 | 11m34s (694s) | 39% |
+| http-5 | 11m36s (696s) | 39% |
+| http-6 | 12m4s (724s) | 40% |
+
+Every leg now sits comfortably under budget (max 43%, `core`) — no leg in the
+5-7.5%-headroom danger zone #1526 was written to fix. `http-1..6` landed within
+predicted range (~30% target, measured 37-40% — job wall-clock includes overhead
+the prediction's go-test-only estimate didn't, accounting for the gap).
+
 ### A recurring pattern: node-credential auth vs. `actorID(r)`-gated authority checks
 
 Three separate instances found in this campaign so far, all the same shape: a
@@ -339,38 +367,159 @@ structurally cannot pass for a node-credential caller, and the failure surfaces 
 whatever the specific test's fixture bug looked like, not as an obviously-related
 symptom:
 
-1. **C1** — `RemoveGlobalAdminRoleGuardedProxy`/`ApproveRiskExceptionProxy`/
-   `RevokeRiskExceptionProxy`: `createRBACDriverToken`'s driver held `system_admin`,
-   masking the actorID(0) problem behind a DIFFERENT bug (the driver counting as an
-   extra admin) for the RBAC guard specifically; the risk-exception revoke/approve
-   tests hit actorID(0) directly and are quarantined in C3 (no clean fixture fix
-   available without a product-level call on whether node-sync should reach
-   dual-control-gated operations at all — see the #1511 comment).
+1. **C1** — `RemoveGlobalAdminRoleGuardedProxy`: `createRBACDriverToken`'s driver
+   held `system_admin`, masking the actorID(0) problem behind a DIFFERENT bug (the
+   driver counting as an extra admin) for the RBAC guard specifically.
 2. **C2** — `CreateUserWithRoleGrantsProxy`'s `ValidateRoleGrantAuthority(ctx,
    actorID(r), grants)`: masked behind the bcrypt-length bug for
    `TestRemoteStorageCreateUserWithRoleGrants_RealServer`/
    `_ConcurrentDuplicateEmailRace_RealServer` — fixing the bcrypt fixture alone
-   surfaced this as a NEW 403, not a pass. Unlike C1's cases, this one DOES have a
+   surfaced this as a NEW 403, not a pass. Unlike C1's case, this one DOES have a
    clean fixture fix: a real admin session (`createTestToken`) legitimately has the
    authority these grants need, so swapping just these two tests' caller identity
    (not the harness default, which stays `createNodeToken` for every other test in
    the file) resolves it correctly rather than requiring quarantine.
 
-The difference between "quarantine" (C1's risk-exception cases) and "fix by swapping
-identity" (C2's case) is whether a real, differently-authenticated caller can
-legitimately satisfy the check being exercised: risk-exception revoke/approve's own
-doc comment claims node-sync support that the actorID(0) fallback contradicts (a
-product question, not a test question); `CreateUserWithRoleGrantsProxy`'s authority
-check is exactly the kind of thing a real admin SHOULD be able to satisfy, and no
-product claim says otherwise.
+**Correction (post-C3): the risk-exception revoke/approve quarantines are NOT a
+third instance of this pattern.** Originally attributed to actorID(0) directly
+(same shape as C1/C2). Directly disproven by unskipping both tests and running
+them: the real cause is a wire-contract mismatch (`RevokeRiskExceptionProxy`/
+`ApproveRiskExceptionProxy` proxy `core.KeyorixCore.RevokeRiskException`/
+`ApproveRiskException` — the POLICY functions, which turn a lost race or an
+already-decided precondition into a Go error — instead of the raw
+`RevokeRiskExceptionIfNotRevoked`/`ApproveRiskExceptionIfPending` conditional
+primitives `putConditionalTransition`'s wire contract expects), filed separately
+as #1531 and unrelated to node-credential identity. The lesson generalizes past
+this specific case: **a plausible-sounding cause matching an already-established
+pattern is not verified until the test has actually been run with the fix/cause
+applied** — pattern-matching a new failure against a known shape is a hypothesis,
+not a diagnosis.
+
+The actorID(r) pattern itself is real and was swept exhaustively (not just
+found by accident) after C2: every `actorID(r)` call site in
+`server/http/handlers` (18 sites) was graded on what happens when it resolves to
+0 — hard-fail (safe), silently skip, accidentally match a sentinel, or write an
+unattributed audit record (only the first is safe). Found two more confirmed,
+live instances beyond C1/C2, both production authorization gaps, not test
+artifacts:
+
+- **`AddGroupMemberProxy` → `AddUserToGroup`**: `if actorID != 0 {
+  validateGroupJoinRoles(...) }` treats "no session" (a legitimate local-CLI
+  exemption) and "a node credential" (the most widely distributed credential
+  class in any deployment) as the same zero sentinel. A node credential can add
+  a user to an admin-conferring group with the escalation-ceiling/SoD check
+  never evaluated — confirmed reachable end-to-end.
+  `TestRemoteStorageGroup_Membership_RealServer` is green for the wrong reason:
+  it exercises a group with zero role grants, so the skipped check has nothing
+  to check either way.
+- **`ApproveRiskException`'s dual-control bypass**: the self-approval guard
+  (`actorID == e.CreatedBy`) only catches a node-created-and-node-approved
+  exception (both sides zero). A human-created exception approved by a node
+  credential does not collide — dual control's entire point (a creator can't
+  unilaterally suppress their own violation) is bypassable in exactly the case
+  that matters.
+
+Filed on #1524 (10 confirmed routes total now), plus two related-but-distinct
+follow-ups: #1529 (several sites have NO actor-authority check at all —
+`DeleteSoDPolicy` most concerning — a different question from the sentinel
+collision) and #1530 (even a legitimate relay call persists
+`CreatedBy=0`/`RevokedBy=0` on governance records — an audit-integrity defect).
+**ADR-085** answers the design question underneath all of the above (should
+node credentials carry their own narrow permission set instead of an
+OR-bypass of the whole permission system — recommends yes, reusing ADR-030's
+existing `machine_identity_roles`/`AuthorizePrincipal` mechanism) — accepted
+and merged by Andrei directly (not part of this campaign's own authority).
+None of #1524/#1529/#1530 is fixed in this campaign — every one needs a
+production code change and a product decision.
 
 **Practical implication**: any future test in this package using `createNodeToken`
 against a route this campaign hasn't already audited should not be assumed to work
 just because the pattern is dominant — check whether the specific handler validates
 `actorID(r)`-gated authority (search the handler for `actorID(r)` directly) before
-assuming a node credential is sufficient.
+assuming a node credential is sufficient, and don't assume a failure matches a
+known pattern without running it.
 
-### C2 / C3 / C4 / C5
+### Standing practice: adversarially verify a guard, not just that it exists
 
-Tracked in their own PRs as they land; this section gets filled in per PR, not ahead of
-it.
+Added after the overnight run: writing a guard (a completeness test, a route
+coverage check, a freshness assertion) and confirming it passes is not the same
+as confirming it protects anything. Before reporting any of this campaign's three
+CI-level guards (G80's reflection completeness test, #1511's AST route-coverage
+guard, C5's exclusion-freshness/leg-completeness checks) as done, each was
+adversarially tested: make the exact change the guard exists to catch, confirm it
+goes red with a usable error message, revert, confirm green again. All three
+guards fired correctly on every mutation tried (9 mutations total across the
+three guards — see the PR that lands this writeup for the full table), including
+reproducing the ORIGINAL historical defect this campaign started from (G80's
+`ID` field was once not compared in `diffSecretUpdate` at all; removing it again
+and re-running the test now fails the `ID` subtest specifically, by name). One
+near-miss during testing is worth recording: the first route picked to test the
+AST guard's route-deletion detection was already in `knownUnresolvedWireCalls`
+(a path built via string concatenation with a non-constant), so deleting its
+router registration didn't fire — correct behavior for an already-known blind
+spot, not a guard failure, but a reminder to check which detection path a test
+target actually exercises before trusting a single negative result.
+
+### C1 — PR #1525, merged 2026-08-22
+
+See above.
+
+### C2 / C3 — PR #1528, merged
+
+Six fixture repairs (bcrypt length, CSV headers, secret-dependency IDs,
+setup-token `SubjectUserID`, the `CreateUserWithRoleGrantsProxy` actorID(r)
+fix) and four risk-exception quarantines (2 correctly attributed to #G79's
+removed route from the start, 2 corrected mid-campaign per #1531 above). Every
+fixture repair verified red-then-green by breaking its subject first.
+
+**Quarantine list, verified against the actual `t.Skip` calls in
+`server/http/remote_storage_risk_exceptions_test.go`** (grepped directly, not
+copied from an earlier draft of this document — 2026-08-23):
+
+| Test | Reason | Issue |
+|---|---|---|
+| `TestRemoteStorageRiskExceptions_CreateGetListUpdate_RealServer` | `UpdateRiskExceptionProxy` deliberately unregistered (#G79) | #1511 |
+| `TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer` | same — also calls the unregistered route | #1511 |
+| `TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServer` | wire-contract mismatch, not actorID(r) — see #1531 | #1531 |
+| `TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer` | same wire-contract mismatch | #1531 |
+
+No other `t.Skip` in `server/http` or `server/http/handlers` belongs to this
+campaign (3 unrelated pre-existing skips found in `server/http/handlers` —
+a SQLite ILIKE limitation, an SSOLoginState seeding limitation, and one
+`t.Skip("CreateSecret failed:", err)` in `handlers_s10_test.go:106` that uses
+`t.Skip` where `t.Fatal` looks more appropriate — noticed, not chased, not
+part of this campaign).
+
+### C4 — PR #1537, merged 2026-08-23
+
+Re-enabled `server/http`, excluded since 2026-04-27 with no leg even if
+un-excluded. Investigated whether the package was genuinely healthy before
+sharding: ran the full unsharded package locally with `-race -timeout 3600s`
+— 1904.015s, zero failures beyond the 2 already-fixed-on-main C1-scope
+fixtures (the branch it ran on predated #1525's merge). Confirmed healthy and
+slow, not deadlocked — the earlier 20-minute goroutine-dump "failure" that
+started this investigation was the default `go test` timeout cutting off a
+still-running suite, not a hang.
+
+Sharded 6 ways (`http-1..6`) by test name, generalizing handlers-1..4's
+existing mod-N mechanism (`run_filter_for_shard`, added in C5) rather than
+reimplementing it: 1904.015s × ~1.7 (local→runner factor, same one
+established for `internal/core`) ≈ 3237s runner-equivalent; 6 shards puts each
+at ~540s predicted, ~30% of the 1800s timeout. Measured on the real runner
+(job wall-clock, includes checkout/setup overhead): 662s–724s per leg — see
+the refreshed headroom table in "Task 3" above.
+
+Also swept in `internal/cli$` and `internal/storage/remote` (both measured
+clean: 0.558s and 31.201s locally, zero failures) into `root-4`'s catch-all —
+too small to need a dedicated leg. Closed #1533/#1534/#1535.
+
+### C5 — PR #1536, merged 2026-08-23
+
+Replaced the bare `grep -v` exclusion patterns with a single source of truth
+(`scripts/ci-test-legs.sh`) shared between the test-suite matrix step and two
+new independent jobs: `exclusion-freshness` (fails, not warns, when a
+`TEMPORARY` exclusion is older than 30 days) and `assert-leg-completeness`
+(fails when any package is covered by neither a leg nor the exclusion table —
+the direct guard against the failure mode that let `server/http` sit dark for
+~4 months). Both guards verified to actually fire (see the standing-practice
+note above and this PR's own description for the exact mutations used).
