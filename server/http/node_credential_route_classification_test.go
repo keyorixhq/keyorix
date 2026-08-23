@@ -36,6 +36,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -432,24 +433,79 @@ func TestNodeCredentialRoutes_MatchClassification(t *testing.T) {
 	}
 }
 
-// TestNodeCredentialRoutes_PerActorCeilingsAreEnforced is a smoke check, not
-// a substitute for the real behavioral tests: every classPerActorCeiling
-// route must be one this package's tests actually exercise a machine-actor
-// outcome for -- either a dedicated denial regression test (P1:
-// AddGroupMemberProxy, ApproveRiskExceptionProxy -- see
-// server/http/remote_storage_groups_test.go,
-// remote_storage_risk_exceptions_test.go) or an already-correct fail-closed
-// path proven by an existing fixture swap (CreateUserWithRoleGrantsProxy,
-// C2 -- ValidateRoleGrantAuthority has no actorID==0 exemption to begin
-// with, so a node caller was already refused before this campaign; see
-// remote_storage_misc_proxy_test.go). This does not re-run those tests -- it
-// only guards against a FOURTH per-actor-ceiling route being classified
-// correctly here but never getting equivalent coverage at all.
+// perActorCeilingCoverage maps every classPerActorCeiling route to the test
+// function(s) that actually assert a machine actor is denied on that route --
+// not just that the route is classified. TestNodeCredentialRoutes_PerActorCeilingsAreEnforced
+// verifies these functions still exist in source; it does not re-run them
+// (that's `go test ./server/http/... ./internal/core/...`'s job). This is
+// still weaker than invoking the deny path from inside this test directly --
+// seeing an assertion that once verified a real 403/error, break-tested by
+// hand during P1 (see PR #1544's test plan) -- but it closes the actual gap
+// the original version of this test had: a prior version asserted only
+// perActorCount == 3, a pure count that would stay green even if every
+// listed test function were deleted. Route -> function name(s) is checked
+// against the real file, so a renamed/deleted test fails this immediately.
+var perActorCeilingCoverage = map[string][]struct {
+	file string // relative to repo root
+	fn   string
+}{
+	"POST /api/v1/system/groups/{id}/members": {
+		{file: "internal/core/authz_admin_ceiling_group_test.go", fn: "TestAddUserToGroup_MachineActorBlockedFromAdminGroup"},
+		{file: "server/http/remote_storage_groups_test.go", fn: "TestRemoteStorageGroup_Membership_AdminConferringGroup_DeniesNodeCredential"},
+	},
+	"PUT /api/v1/system/risk-exceptions/{id}/approve": {
+		{file: "internal/core/risk_exceptions_test.go", fn: "TestApproveRiskException_DeniesMachineActor"},
+		{file: "server/http/remote_storage_risk_exceptions_test.go", fn: "TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential"},
+	},
+	"POST /api/v1/system/users/with-role-grants": {
+		// ValidateRoleGrantAuthority has no actorID==0 exemption to begin with
+		// (C2) -- this test's name reflects its original DB-error purpose, but
+		// its assertion (403 before the broken DB is ever reached) is exactly
+		// the fail-closed-first behavior this table exists to pin.
+		{file: "server/http/handlers/handlers_s32_test.go", fn: "TestCreateUserWithRoleGrantsProxy_DBError_S32"},
+	},
+}
+
+// testFuncExists reports whether `func <fn>(` appears in the named file,
+// relative to the repo root (two levels up from server/http).
+func testFuncExists(t *testing.T, relPath, fn string) bool {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", relPath))
+	if err != nil {
+		t.Fatalf("reading %s: %v", relPath, err)
+	}
+	return regexp.MustCompile(`(?m)^func `+regexp.QuoteMeta(fn)+`\(`).Match(b)
+}
+
+// TestNodeCredentialRoutes_PerActorCeilingsAreEnforced verifies every
+// classPerActorCeiling route has real, still-present, machine-actor-denial
+// test coverage listed in perActorCeilingCoverage -- not a route count that
+// happens to match. Two independent failure modes: a classPerActorCeiling
+// route with no coverage entry at all (a new ceiling route was classified
+// but never given its own fix + test, matching P1's `actorIsMachine` shape),
+// or a coverage entry naming a test function that no longer exists (renamed
+// or deleted without updating this table).
 func TestNodeCredentialRoutes_PerActorCeilingsAreEnforced(t *testing.T) {
 	perActorCount := 0
 	for _, c := range classifiedNodeCredentialRoutes {
-		if c.Class == classPerActorCeiling {
-			perActorCount++
+		if c.Class != classPerActorCeiling {
+			continue
+		}
+		perActorCount++
+		key := c.Method + " " + c.Path
+		coverage, ok := perActorCeilingCoverage[key]
+		if !ok || len(coverage) == 0 {
+			t.Errorf("classPerActorCeiling route %q has no entry in perActorCeilingCoverage — "+
+				"a per-actor ceiling route needs its own fail-closed fix AND a dedicated machine-actor "+
+				"denial test before it can be classified here, not just a table entry (see P1, #1524 b/c)", key)
+			continue
+		}
+		for _, tc := range coverage {
+			if !testFuncExists(t, tc.file, tc.fn) {
+				t.Errorf("classPerActorCeiling route %q: perActorCeilingCoverage names %s in %s, "+
+					"but that function no longer exists — it was renamed or deleted without updating "+
+					"this table, silently losing enforcement coverage for this ceiling", key, tc.fn, tc.file)
+			}
 		}
 	}
 	const knownEnforced = 3 // AddGroupMemberProxy, ApproveRiskExceptionProxy (P1), CreateUserWithRoleGrantsProxy (C2, already fail-closed)
