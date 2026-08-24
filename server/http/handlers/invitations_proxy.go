@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -120,6 +121,16 @@ func validInvitationTargetState(s string) bool {
 // (a raw storage-layer create) rather than routing through
 // InviteToProject/InviteToProjectWithLink's business logic + email delivery a
 // second time.
+//
+// #1529-shape guard: InviteToProject/InviteGlobal both call
+// requireAuthorityForRole before ever persisting -- a system.write-only caller
+// (no project-admin authority) must not be able to mint a pending admin-role
+// invitation by relaying a raw create with no upstream check having actually
+// run. Re-derive, at the hub, the SAME escalation-by-proxy ceiling for every
+// role this wire body can carry: the project-scoped Role, the global
+// SystemRole, and each project assignment bundled into AssignmentsJSON --
+// exactly the three checks InviteToProject/InviteGlobal apply before ever
+// reaching this storage primitive locally.
 func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Request) {
 	var body invitationProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -133,6 +144,31 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 	if body.Email == "" || body.State == "" {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "email and state are required")
 		return
+	}
+	if body.Role != "" {
+		if err := h.coreService.RequireAuthorityForRole(r.Context(), body.InvitedBy, body.ProjectID, body.Role); err != nil {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
+	}
+	if body.SystemRole != "" {
+		if err := h.coreService.RequireAuthorityForRole(r.Context(), body.InvitedBy, 0, body.SystemRole); err != nil {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
+	}
+	if body.AssignmentsJSON != "" {
+		var assignments []core.ProjectAssignment
+		if err := json.Unmarshal([]byte(body.AssignmentsJSON), &assignments); err != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "assignments_json is not a valid assignment list")
+			return
+		}
+		for _, a := range assignments {
+			if err := h.coreService.RequireAuthorityForRole(r.Context(), body.InvitedBy, a.ProjectID, a.Role); err != nil {
+				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+				return
+			}
+		}
 	}
 	created, err := h.coreService.Storage().CreateProjectInvitation(r.Context(), body.toModel())
 	if err != nil {
@@ -169,6 +205,21 @@ func (h *CatalogHandler) GetInvitationProxy(w http.ResponseWriter, r *http.Reque
 // storage.Storage primitive this server's local /auth/setup/consume and
 // /projects/{id}/invitations paths use), returning whether it actually matched a
 // still-pending row — the single round trip a concurrent-accept race resolves in.
+//
+// #1529-shape guard: every legitimate caller of storage.UpdateProjectInvitation
+// (completeInvitationAccept/RevokeInvitation/expireInvitationIfOverdue, all in
+// internal/core) re-fetches the row it already has and mutates ONLY State plus
+// AcceptedAt (accept) or RevokedAt (revoke) — never Email/Role/InvitedBy/
+// SystemRole/AssignmentsJSON/ProjectID, which are set once at creation and
+// otherwise immutable. Because the underlying storage call is a `Select("*")`
+// full-row update (same AR-001 pattern as UpdateAccessRequestProxy), a
+// client-supplied wire body could otherwise rewrite an invitation's identity
+// (e.g. SystemRole) under cover of a resolution-state transition, or force
+// State=accepted on a row with no grant ever applied on this side, stranding
+// the real invitee (completeInvitationAccept's own pending check then refuses
+// them with "invitation is accepted"). Re-fetch the authoritative row and apply
+// only the legitimate transition fields from the wire, matching every real
+// caller's own behavior exactly.
 func (h *CatalogHandler) UpdateInvitationProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -184,8 +235,20 @@ func (h *CatalogHandler) UpdateInvitationProxy(w http.ResponseWriter, r *http.Re
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "state must be one of accepted, revoked, expired")
 		return
 	}
-	body.ID = uint(id)
-	updated, err := h.coreService.Storage().UpdateProjectInvitation(r.Context(), body.toModel())
+	existing, err := h.coreService.Storage().GetProjectInvitation(r.Context(), uint(id))
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "invitation not found")
+			return
+		}
+		log.Printf("invitations proxy: update lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	existing.State = body.State
+	existing.AcceptedAt = body.AcceptedAt
+	existing.RevokedAt = body.RevokedAt
+	updated, err := h.coreService.Storage().UpdateProjectInvitation(r.Context(), existing)
 	if err != nil {
 		log.Printf("invitations proxy: update failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

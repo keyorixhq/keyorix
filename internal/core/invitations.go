@@ -68,6 +68,23 @@ func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, proj
 	return nil
 }
 
+// RequireAdminAuthorityAt exports requireAdminAuthorityAt for the /system proxy
+// layer (server/http/handlers), which cannot call unexported KeyorixCore methods
+// across the package boundary. Used to re-derive, at the hub, the SAME ceiling
+// core methods already enforce locally on a downstream node before relaying a
+// state change here -- the #1542 shape, closed the same way
+// TransitionMachineIdentityStateProxy's core.IsValidMachineTransition
+// re-derivation was.
+func (c *KeyorixCore) RequireAdminAuthorityAt(ctx context.Context, actorID, projectID uint) error {
+	return c.requireAdminAuthorityAt(ctx, actorID, projectID)
+}
+
+// RequireAuthorityForRole exports requireAuthorityForRole for the same reason as
+// RequireAdminAuthorityAt above.
+func (c *KeyorixCore) RequireAuthorityForRole(ctx context.Context, actorID, projectID uint, role string) error {
+	return c.requireAuthorityForRole(ctx, actorID, projectID, role)
+}
+
 // requireAdminAuthorityAt refuses unless actorID holds an admin role (adminRoleNames)
 // directly assigned at the given project scope (0 = global). The shared primitive
 // behind requireAuthorityForRole (gating a role GRANT) and any other action that

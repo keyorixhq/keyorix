@@ -290,6 +290,23 @@ var rawStorageBypassAllowlist = map[string]string{
 	// a caller-side concern already satisfied before the relayed call reached here.
 	"UpdateMachineIdentityCredentialProxy": "FIXED: narrowed to fetch-existing + apply-Classification-only -- see " +
 		"the FIXED comment immediately above this entry for the full reasoning.",
+	// FIXED 2026-08-24 (G80 Phase 2, #1529 re-triage): CreateInvitationProxy now
+	// re-derives InviteToProject's/InviteGlobal's own requireAuthorityForRole
+	// escalation-by-proxy ceiling for every role the wire body can carry (the
+	// project-scoped Role, the global SystemRole, and each project assignment
+	// bundled into AssignmentsJSON) -- newly exported core.RequireAuthorityForRole,
+	// since the /system proxy layer can't call unexported KeyorixCore methods
+	// across the package boundary. UpdateInvitationProxy now re-fetches the
+	// existing row and applies only State/AcceptedAt/RevokedAt from the wire
+	// (the AR-001 field-narrowing pattern, mirroring UpdateAccessRequestProxy):
+	// every real caller of storage.UpdateProjectInvitation
+	// (completeInvitationAccept/RevokeInvitation/expireInvitationIfOverdue) only
+	// ever mutates those three fields on the row it already fetched, never
+	// Email/Role/SystemRole/InvitedBy/ProjectID, which are set once at creation.
+	"CreateInvitationProxy": "FIXED: re-derives requireAuthorityForRole for Role/SystemRole/each AssignmentsJSON " +
+		"entry -- see the FIXED comment immediately above this entry for the full reasoning.",
+	"UpdateInvitationProxy": "FIXED: re-fetches the existing row and applies only State/AcceptedAt/RevokedAt from " +
+		"the wire -- see the FIXED comment immediately above this entry for the full reasoning.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by
@@ -320,12 +337,6 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	"UpdateAccessRequestProxy": "REAL, human-reachable, CRITICAL: same dual-control bypass as " +
 		"CreateAccessRequestProxy, applied to an EXISTING pending request via PUT {state:\"approved\", " +
 		"resolved_by:self}.",
-	"CreateInvitationProxy": "REAL, human-reachable: a system.write-only caller (no project-admin authority) can " +
-		"create a pending admin-role invitation, bypassing the escalation-by-proxy guard (requireAuthorityForRole) " +
-		"entirely -- this file's own package doc names this as NOT made here.",
-	"UpdateInvitationProxy": "REAL, human-reachable: raw proxy can flip state straight to accepted/revoked with " +
-		"NO grants ever applied and no audit -- strands the real invitee (a state-machine sequencing bypass, not " +
-		"just a permission gap).",
 	// UpdateLoginLockoutStateProxy's route was deleted (G80 23-handler no-caller
 	// deletion) -- entry removed, no longer applicable.
 	// CreateMachineIdentityProxy is FIXED (moved to rawStorageBypassAllowlist);
