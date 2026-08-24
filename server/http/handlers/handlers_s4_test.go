@@ -9890,7 +9890,12 @@ func TestCatalogHandler_TransitionMachineIdentityStateProxy_MissingFromState(t *
 
 func TestCatalogHandler_TransitionMachineIdentityStateProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	body := `{"machine_identity":{},"from_state":"pending"}`
+	// G80: the target state must be a legal transition from from_state
+	// (core.IsValidMachineTransition, checked before the storage call) --
+	// pending->active is legal, so this still exercises the "machine not found"
+	// path the test's name/comment describes, rather than an unconditionally
+	// rejected empty target state.
+	body := `{"machine_identity":{"state":"active"},"from_state":"pending"}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.TransitionMachineIdentityStateProxy(w, req)
@@ -11099,7 +11104,10 @@ func TestCatalogHandler_UpdateMachineIdentityCredentialProxy_BadJSONDup(t *testi
 
 func TestCatalogHandler_UpdateMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"classification":"low"}`)), "id", "1")
+	// G80: classification is now validated (core.IsValidClassification) before
+	// the credential lookup -- "low" was never a valid value, use a real one so
+	// this still exercises the "no such credential" path the test describes.
+	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"classification":"internal"}`)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateMachineIdentityCredentialProxy(w, req)
 	// storage error expected (no such credential), but not a bad request

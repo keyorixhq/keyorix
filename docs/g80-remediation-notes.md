@@ -523,3 +523,138 @@ new independent jobs: `exclusion-freshness` (fails, not warns, when a
 the direct guard against the failure mode that let `server/http` sit dark for
 ~4 months). Both guards verified to actually fire (see the standing-practice
 note above and this PR's own description for the exact mutations used).
+
+## Stopping rule: classify reach, fix human-reachable, file machine-only, stop
+
+Adopted after #1542's fix (routing 4 raw-storage-bypass RBAC proxy routes through
+`internal/core`) organically grew into fixing a 5th (`RemoveMachineRoleProxy`) and
+building a whole new completeness guard, whose OWN findings (#1545, #1546) then needed
+their own reach classification before any further work was justified. Without an
+explicit boundary, "I found a related gap while fixing this one" has no natural stopping
+point — every fix's blast radius touches a shared checkpoint (a ceiling function, a
+storage primitive) with its own set of callers, and each of those callers can look like
+"just one more thing to check while I'm here."
+
+**The rule:**
+
+1. **Classify reach before deciding whether to fix.** For any candidate (a ceiling
+   exemption, a raw-storage bypass, an authority check that might be skippable) the
+   first and only question that decides urgency is: can a real, network-authenticated
+   HUMAN session trigger this, or is it structurally limited to a machine credential (or
+   a genuinely-trusted local/embedded call path)? Answer it with file:line evidence —
+   trace the actual call chain and the actual authentication layer (does `UserID`/
+   `actorID` ever come from a real human session with the vulnerable value, or only from
+   a machine token by construction) — never by assumption. This is the same question
+   that made #1542 top priority over #1524's other findings, and the same rigor #1545's
+   classification used (`server/middleware/auth.go`'s "UserID is 0 for ANY machine
+   token" doc comment, traced against every real call site of the two functions in
+   question) to conclude machine-only, not human-reachable.
+2. **Human-reachable: fix it now, it outranks other open work.** Matches #1542's own
+   framing ("outranks everything else open").
+3. **Machine-only: file it, with the reach classification and evidence in the issue
+   body, and stop.** Do not fix it in the same sitting just because the shared checkpoint
+   is already open in an editor. Filing with real evidence (not a bare TODO) is what
+   makes "later" credible — see #1545, #1546, #1547, none fixed on discovery, each with a
+   full evidence trail so a future session doesn't have to re-derive reach from scratch.
+4. **"Stop" means stop working THIS finding, not stop auditing.** This rule does not
+   relax the standing exhaustive-coverage practice elsewhere in this campaign (guards and
+   finders should keep being comprehensive) — it bounds what happens the MOMENT a finding
+   is confirmed machine-only: classify, file, move on. It exists specifically to stop a
+   single fix from cascading into fixing every sibling discovered along the way without a
+   fresh, explicit decision to expand scope.
+
+**Applied so far:**
+
+- **#1545** (`AssignPermissionToRole` self-permission-bundling ceiling,
+  `internal/core/rbac_management.go:90`; `BulkDeleteSecrets` per-secret ACL/ownership
+  check, `internal/core/bulk_delete.go:100,116`) — classified machine-only, confirmed by
+  exhaustive call-site tracing (every real HTTP/gRPC caller with a `UserID`-carrying
+  session self-blocks at its own upstream `Authorize()` pre-check before ever reaching
+  the exemption; the only zero-actor callers are a machine credential — `UserID` is 0 for
+  ANY machine token type, `server/middleware/auth.go:66-68` — or an already-established
+  trusted local pseudo-actor, boot-time reconcile for the first and embedded CLI for the
+  second). No human account can ever present `UserID==0` (verified against
+  session/PAT/bootstrap/impersonation/OIDC-federation code paths, `server/middleware/auth.go`
+  and `server/grpc/interceptors/auth.go`). Filed, not fixed; full evidence trail on the
+  issue.
+- **#1546** (`TransitionMembershipProxy` bypassing `core.TransitionMembership`'s
+  activation ceiling + role-grant/revoke side effects) — reach genuinely unresolved (may
+  be a real gap, or may be safe-by-design if the side effect already lands via a separate
+  relayed call from the downstream's own `core.TransitionMembership`) — filed with both
+  hypotheses stated, not guess-fixed.
+- **#1547** (the raw-storage-bypass guard's 18-route scope losing coverage, demonstrated
+  by #1545/#1546 both being found outside it) — classification of the guard's own
+  false-positive pattern filed as its own follow-up, not implemented mid-session.
+  Re-measuring the guard's real detection logic (not a cruder estimate) against every
+  handler in `server/http/handlers`, not just the 18 already-classified routes, found
+  **149 flagged call sites**: 90 (60%) mechanically excludable as read-shaped storage
+  methods (`Get*`/`List*`/`Count*`/`Export*` — a read confers no new access, so there's
+  no ceiling to bypass), leaving **59 write-shaped candidates**. Of those 59, individual
+  investigation (not the keyword-match heuristic alone, which proved unreliable in both
+  directions — see #1547) confirmed 7 as safe: 3 with no independent ceiling to bypass
+  (`ClearProjectSecretOwnershipProxy`, `DeleteSecretACLsByUserAndProjectProxy`,
+  `DeleteExpiredRoleGrantsProxy` — each core "wrapper" is audit-only bookkeeping, not a
+  gated primitive) and 4 deliberate, already-documented exceptions
+  (`CreateUserWithRoleGrantsProxy` — C2, one-atomic-transaction requirement, ADR-028;
+  `RemoveGlobalAdminRoleGuardedProxy` — no real transaction spans the HTTP hop, guard
+  must live at the row-owning server; `DeleteProjectProxy`/`DeleteProjectIfEmptyProxy` —
+  same reasoning as `RemoveGlobalAdminRoleGuardedProxy`, `DeleteProjectIfEmpty` is a
+  purpose-built atomic storage-layer primitive enforcing `DeleteProject(force=false)`'s
+  guard across the hop, #528). **That leaves 52 genuinely unresolved** — the measured
+  remaining backlog for this bug class — of which 1 (`TransitionMembershipProxy`)
+  already has its own filed issue (#1546) and 51 have not been individually investigated
+  at all. This is the number a future session should treat as the actual size of the
+  #1542-shaped backlog, not the 18-route scope's apparent completeness.
+
+A future session picking up #1545/#1546/#1547 (or whatever the guards in this campaign
+surface next) should apply the same rule: classify reach first, fix only what's
+human-reachable, file the rest with evidence, and treat "filed" as a legitimate stopping
+point, not an unfinished task to feel behind on.
+
+## Overnight triage of the 52 unresolved candidates (2026-08-23 → 2026-08-24)
+
+Full results: `docs/g80-raw-storage-bypass-enumeration.md` (the reproducible 58-candidate
+baseline, and why it supersedes the 59 above — see below), `docs/g80-raw-storage-bypass-blind-spots.md`
+(five categories this guard cannot see, named not chased), `docs/g80-raw-storage-bypass-triage.md`
+(per-candidate table with file:line evidence), and `docs/g80-overnight-handoff-2.md`
+(executive summary — **read this first**, it flags several human-reachable, unfixed
+findings prominently).
+
+**The "149 flagged / 90 read / 59 write-shaped" figures immediately above (from the
+original #1547 entry) could not be reproduced and should be treated as incorrect.** Two
+independent implementations of that entry's own stated methodology — a regex/line-scan
+version and an AST-based version (`scripts/analysis/raw_storage_bypass_enumerate.go`,
+committed, immune to line-wrapping by construction) — both produce **145 flagged / 87
+read-shaped / 58 write-shaped**. Multi-line method chains and variable/interface dispatch
+were checked directly as candidate explanations for the gap and ruled out (zero instances
+of either in the current codebase). 58, not 59, is now the reproducible baseline; run
+`go run scripts/analysis/raw_storage_bypass_enumerate.go` to regenerate it.
+
+Of those 58 candidates, 50 were investigated tonight (the 7 already resolved above, plus
+`TransitionMembershipProxy`/#1546, were left as-is).
+
+**Result: 35 of the 50 are `real` (a genuine ceiling bypass), and all 35 are
+`human-reachable`** — not machine-only. The stopping rule's informal extrapolation from
+the 7-item sample (implying most of the remainder would be safe, ~11-12%) was wrong in
+the dangerous direction: the actual true-positive rate among the unresolved remainder was
+70%. **None of the 35 have been fixed** — this was classification only, per explicit
+instruction for the overnight session; unsupervised edits to authorization code were
+out of scope regardless of how many findings turned out human-reachable. GitHub issue
+filing and the #1547 Slack post are both blocked on `gh auth` being broken (invalid
+keyring token) — see the handoff doc for ready-to-file issue content.
+
+**State the number as: 35 of 58 real and human-reachable, within the guard's stated
+reach (server/http/handlers only) — with five further categories (multi-line chains,
+now fixed; variable/interface dispatch; wrapper-mediated calls; the read-shaped naming
+heuristic; non-handler layers — gRPC/CLI/background jobs) named as unexamined in
+`docs/g80-raw-storage-bypass-blind-spots.md`, not folded into this count.** 20 files
+outside `server/http/handlers` (7 gRPC service files, 13 CLI command files) make raw
+storage calls this guard never looks at.
+
+**This is now the top-priority open item in the G80/#1542 lineage** — worse in aggregate
+than the original G80 bug and on par with or worse than #1542's own motivating finding.
+Do not treat "filed, not fixed" as equivalent to low-urgency here; the stopping rule's
+own clause 2 ("human-reachable: fix it now, it outranks other open work") applies to all
+35 — it was deliberately not invoked tonight only because this was an unsupervised
+overnight session and authz-code changes need a human in the loop, not because the
+findings don't qualify.

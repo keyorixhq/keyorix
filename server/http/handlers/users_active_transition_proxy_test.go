@@ -42,23 +42,33 @@ func TestUpdateUserIfActiveStateMatchesProxy_BadBody(t *testing.T) {
 }
 
 // TestUpdateUserIfActiveStateMatchesProxy_HappyPath — a conditional write
-// against the seeded admin user (id=1, IsActive=true) with a matching
-// from_active succeeds and reports matched:true.
+// against a non-admin user (IsActive=true) with a matching from_active
+// succeeds and reports matched:true.
+//
+// G80: deliberately NOT the seeded admin (id=1) any more -- this route now
+// calls core.GuardLastAdminDeactivation, which correctly refuses to deactivate
+// the install's only admin. Using a non-admin user keeps this test's actual
+// subject (the conditional-write/CAS mechanics) isolated from that guard,
+// which has its own dedicated tests
+// (users_active_transition_proxy_lastadmin_test.go).
 func TestUpdateUserIfActiveStateMatchesProxy_HappyPath(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
+	cs, db := freshCoreS12WithAdmin(t)
 	h, err := NewUserHandler(cs)
 	require.NoError(t, err)
+	target := &models.User{Username: "s12nonadmin-happy", Email: "s12nonadmin-happy@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(target).Error)
+	idStr := machineUintToStr(target.ID)
 
 	body := proxyJSON(map[string]interface{}{
-		"username":     "testuser_s12",
-		"email":        "testuser_s12@example.com",
-		"display_name": "Deactivated Admin",
+		"username":     target.Username,
+		"email":        target.Email,
+		"display_name": "Deactivated User",
 		"active":       false,
 		"from_active":  true,
 	})
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition", body),
-		"id", "1",
+		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", body),
+		"id", idStr,
 	)
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
@@ -69,31 +79,35 @@ func TestUpdateUserIfActiveStateMatchesProxy_HappyPath(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, true, data["matched"])
 
-	updated, err := cs.Storage().GetUser(req.Context(), 1)
+	updated, err := cs.Storage().GetUser(req.Context(), target.ID)
 	require.NoError(t, err)
 	assert.False(t, updated.IsActive)
-	assert.Equal(t, "Deactivated Admin", updated.DisplayName)
+	assert.Equal(t, "Deactivated User", updated.DisplayName)
 }
 
 // TestUpdateUserIfActiveStateMatchesProxy_LostRace — a second conditional
 // write asserting the SAME (now-stale) from_active as a call that already won
 // must report matched:false, not silently re-apply over the winner (proves
 // the CAS race is closed at the HTTP-proxy boundary too, not just LocalStorage).
+// G80: uses a non-admin user, same reasoning as the HappyPath test above.
 func TestUpdateUserIfActiveStateMatchesProxy_LostRace(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
+	cs, db := freshCoreS12WithAdmin(t)
 	h, err := NewUserHandler(cs)
 	require.NoError(t, err)
+	target := &models.User{Username: "s12nonadmin-race", Email: "s12nonadmin-race@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(target).Error)
+	idStr := machineUintToStr(target.ID)
 
 	firstBody := proxyJSON(map[string]interface{}{
-		"username":     "testuser_s12",
-		"email":        "testuser_s12@example.com",
+		"username":     target.Username,
+		"email":        target.Email,
 		"display_name": "First Winner",
 		"active":       false,
 		"from_active":  true,
 	})
 	firstReq := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition", firstBody),
-		"id", "1",
+		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", firstBody),
+		"id", idStr,
 	)
 	w1 := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w1, firstReq)
@@ -105,15 +119,15 @@ func TestUpdateUserIfActiveStateMatchesProxy_LostRace(t *testing.T) {
 
 	// Second call still asserts from_active=true (stale — the row is now false).
 	secondBody := proxyJSON(map[string]interface{}{
-		"username":     "testuser_s12",
-		"email":        "testuser_s12@example.com",
+		"username":     target.Username,
+		"email":        target.Email,
 		"display_name": "Should Not Persist",
 		"active":       false,
 		"from_active":  true,
 	})
 	secondReq := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition", secondBody),
-		"id", "1",
+		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", secondBody),
+		"id", idStr,
 	)
 	w2 := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w2, secondReq)
@@ -123,7 +137,7 @@ func TestUpdateUserIfActiveStateMatchesProxy_LostRace(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, false, data2["matched"], "second (racing) call must lose")
 
-	updated, err := cs.Storage().GetUser(secondReq.Context(), 1)
+	updated, err := cs.Storage().GetUser(secondReq.Context(), target.ID)
 	require.NoError(t, err)
 	assert.NotEqual(t, "Should Not Persist", updated.DisplayName)
 }

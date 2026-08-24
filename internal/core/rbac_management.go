@@ -323,8 +323,16 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 // paths funnel through. See requireGranterHoldsRolePermissions for the
 // admin-rank-ceiling check on the grant (#93/#107/#141), and requireNoSoDViolation
 // (sod.go) for the separation-of-duties preventive gate (#419).
+//
+// Passes actorIsMachine=false unconditionally to requireGranterHoldsRolePermissions
+// -- unlike AssignUserRoleWithExpiry, this permanent-grant path has no caller
+// fixed as part of #1542, so its actorID==0 exemption behavior is left
+// unchanged here. Several of ITS OWN callers (AddProjectMember/
+// SetProjectMemberRole, the AssignRole gRPC/HTTP endpoints) are reachable by
+// a general machine identity the same way #1545 found for other functions --
+// tracked as a sibling finding, not fixed in this pass.
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
-	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope); err != nil {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, false); err != nil {
 		return err
 	}
 	// #G04: sodGrantMu holds across the check AND the write — see its doc

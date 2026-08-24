@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,6 +28,11 @@ import (
 func freshClosedCoreS21(t *testing.T) *AuthHandler {
 	t.Helper()
 	cs, db := freshCoreS12WithAdmin(t)
+	// G80: UpsertMFASecretProxy now checks AuthEncryptionActive() before ever
+	// reaching storage -- wire an encryptor first so tests exercising a genuine
+	// storage-layer failure (the DB close below) still reach the storage call
+	// they mean to test, instead of getting intercepted earlier by the new check.
+	setTestAuthEncryptor(t, cs)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
@@ -151,8 +157,10 @@ func TestDeleteMFARecoveryCodesProxy_StorageError_S21(t *testing.T) {
 // to exercise the 200 success branch in one shot (verifies the happy path runs
 // through the not-found guard cleanly when the row exists).
 func TestGetMFASecretProxy_NotFoundAfterUpsert_S21(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
+	cs, db := freshCoreS12WithAdmin(t)
 	h := NewAuthHandler(cs, false)
+	setTestAuthEncryptor(t, cs)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "s21user2", Email: "s21user2@example.com", AccountState: "active"}).Error)
 	// Upsert so GET finds a row.
 	upBody, _ := json.Marshal(map[string]interface{}{
 		"user_id":    uint(2),
@@ -233,8 +241,10 @@ func TestCountUnusedMFARecoveryCodesProxy_InvalidUserIDQuery_S21(t *testing.T) {
 // TestUpsertMFASecretProxy_RoundTrip_S21 — upsert then verify response wire
 // contains expected fields (exercises newMFASecretProxyWire via JSON decode).
 func TestUpsertMFASecretProxy_RoundTrip_S21(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
+	cs, db := freshCoreS12WithAdmin(t)
 	h := NewAuthHandler(cs, false)
+	setTestAuthEncryptor(t, cs)
+	require.NoError(t, db.Create(&models.User{ID: 3, Username: "s21user3", Email: "s21user3@example.com", AccountState: "active"}).Error)
 	body, _ := json.Marshal(map[string]interface{}{
 		"user_id":    uint(3),
 		"secret_enc": []byte("s21roundtrip"),
@@ -261,8 +271,10 @@ func TestUpsertMFASecretProxy_RoundTrip_S21(t *testing.T) {
 
 // TestActivateMFASecretProxy_HappyPath_S21 — seed a secret then activate → 200.
 func TestActivateMFASecretProxy_HappyPath_S21(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
+	cs, db := freshCoreS12WithAdmin(t)
 	h := NewAuthHandler(cs, false)
+	setTestAuthEncryptor(t, cs)
+	require.NoError(t, db.Create(&models.User{ID: 4, Username: "s21user4", Email: "s21user4@example.com", AccountState: "active"}).Error)
 
 	// Upsert a secret for user 4 first.
 	upBody, _ := json.Marshal(map[string]interface{}{

@@ -74,7 +74,7 @@ func TestAssignUserRoleWithExpiry_EscalationByProxyBlocked(t *testing.T) {
 	role, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
 
-	err = c.AssignUserRoleWithExpiry(ctx, attacker, victim, role.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour))
+	err = c.AssignUserRoleWithExpiry(ctx, attacker, victim, role.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour), false)
 	require.Error(t, err, "a non-admin actor must not be able to grant the admin role via a time-bound JIT grant")
 	assert.Contains(t, err.Error(), "cannot grant this role")
 }
@@ -89,7 +89,7 @@ func TestAssignUserRoleWithExpiry_NonAdminRoleAllowed(t *testing.T) {
 	role, err := st.GetRoleByName(ctx, "project_developer")
 	require.NoError(t, err)
 
-	err = c.AssignUserRoleWithExpiry(ctx, actor, victim, role.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour))
+	err = c.AssignUserRoleWithExpiry(ctx, actor, victim, role.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour), false)
 	require.NoError(t, err, "granting a role the actor already holds every permission of must not be blocked")
 }
 

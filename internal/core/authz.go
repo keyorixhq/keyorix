@@ -561,9 +561,21 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 //
 // actorID 0 is the established "system" pseudo-actor for genuinely non-attacker-
 // reachable callers (the local CLI's AssignRoleToUser); skipped exactly like
-// #169's analogous check on AssignPermissionToRole.
-func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, actorID, roleID uint, scope Scope) error {
-	if actorID == 0 {
+// #169's analogous check on AssignPermissionToRole. actorIsMachine distinguishes
+// that true local/absent case from a machine-credential-authenticated caller,
+// which also produces actorID==0 (server/middleware/auth.go: "UserID is 0" for
+// ANY machine token) but is NOT the trusted pseudo-actor this exemption was
+// written for -- #1542: AssignRoleWithExpiryProxy called storage.AssignRoleWithExpiry
+// directly, bypassing this check (and every other core ceiling) entirely for
+// ANY system.write holder, human or machine. Routing that proxy through
+// AssignUserRoleWithExpiry (which calls this) closes that, but only if this
+// exemption also stops treating a real machine actor as the trusted case.
+// actorIsMachine is threaded through for the routes this fix targets;
+// existing callers not part of that fix pass false unchanged (see #1545 for
+// the broader sibling instances of this same exemption elsewhere -- not
+// fixed here, tracked separately).
+func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, actorID, roleID uint, scope Scope, actorIsMachine bool) error {
+	if actorID == 0 && !actorIsMachine {
 		return nil
 	}
 	perms, err := c.storage.GetRolePermissions(ctx, roleID)

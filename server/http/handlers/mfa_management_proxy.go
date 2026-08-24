@@ -51,12 +51,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -116,6 +118,22 @@ func parseMFAUserIDParam(w http.ResponseWriter, r *http.Request, name string) (u
 // already encrypted it and refuses outright when encryption is unavailable —
 // see models.MFASecret's doc) — matching LocalStorage's own GORM
 // Create-with-OnConflict, this is an upsert keyed on user_id.
+//
+// #1542-shape guard (G80 overnight campaign, Tier 1 Group A #4): this used to
+// trust the wire body unconditionally. BeginMFAEnrollment enforces two
+// target-state checks before ever reaching this storage primitive -- fail
+// closed if at-rest encryption is disabled, and refuse if the target already
+// has MFA enabled -- neither of which this raw proxy re-derived, so a caller
+// could plant or overwrite an "Activated" MFA secret for a user who already
+// has MFA enabled, or while encryption is off. Both checks depend only on
+// hub-local state (the hub's own encryption config, and the target user's own
+// MFAEnabled flag) -- no actor context needed, so no RemoteStorage
+// wire-protocol change either. Deliberately NOT re-derived here: BeginMFAEnrollment's
+// self-only scoping (server/http/handlers/mfa.go:22) -- that's a HANDLER-layer
+// check comparing the caller's OWN session to the target, which has no
+// meaning for a relayed call (the relay's real caller is the downstream
+// server's system.write identity, never an end-user session); re-imposing it
+// here would break the legitimate relay pattern this whole proxy exists for.
 func (h *AuthHandler) UpsertMFASecretProxy(w http.ResponseWriter, r *http.Request) {
 	var body mfaSecretProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -124,6 +142,26 @@ func (h *AuthHandler) UpsertMFASecretProxy(w http.ResponseWriter, r *http.Reques
 	}
 	if body.UserID == 0 || len(body.SecretEnc) == 0 {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and secret_enc are required")
+		return
+	}
+	if !h.coreService.AuthEncryptionActive() {
+		writeRemoteAPIError(w, http.StatusConflict, "ENCRYPTION_REQUIRED",
+			"MFA enrolment requires at-rest encryption to be enabled")
+		return
+	}
+	target, err := h.coreService.Storage().GetUser(r.Context(), body.UserID)
+	if err != nil {
+		if errors.Is(err, storage.ErrUserNotFound) {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user not found")
+			return
+		}
+		log.Printf("mfa proxy: upsert secret target lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	if target.MFAEnabled {
+		writeRemoteAPIError(w, http.StatusConflict, "MFA_ALREADY_ENABLED",
+			"MFA is already enabled for this user; disable it first to re-enrol")
 		return
 	}
 	row := &models.MFASecret{

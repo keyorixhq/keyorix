@@ -581,6 +581,16 @@ func (c *KeyorixCore) SecretValueEncryptionActive() bool {
 	return c.secretValueEncryptor != nil && c.secretValueEncryptor.IsEnabled() && c.secretValueEncryptor.IsInitialized()
 }
 
+// AuthEncryptionActive reports whether at-rest encryption for auth secrets (MFA
+// TOTP seeds, dynamic-secret configs) is enabled -- the same condition
+// BeginMFAEnrollment fails closed on. Exported for UpsertMFASecretProxy
+// (server/http/handlers/mfa_management_proxy.go), which needs to refuse an
+// MFA-secret write under the same condition without duplicating the
+// authEncryptor field access.
+func (c *KeyorixCore) AuthEncryptionActive() bool {
+	return c.authEncryptor != nil && c.authEncryptor.IsEnabled()
+}
+
 // encryptAuthSecret reversibly encrypts plain, bound to aad (#94: MFASecretAAD /
 // DynamicSecretConfigAAD / DynamicSecretLeaseAAD — never nil for a live caller, so a
 // DB-write attacker cannot transplant one row's ciphertext onto another's identity and

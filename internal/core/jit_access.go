@@ -34,8 +34,12 @@ import (
 // an unacceptable failure mode for the control that exists to remediate
 // incidents — so break_glass.go calls assignUserRoleWithExpirySkipSoD
 // directly instead, never this function.
-func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
-	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope); err != nil {
+// actorIsMachine distinguishes a machine-credential-authenticated caller from
+// the true absent/local-CLI case -- both produce actorID==0, but only the
+// latter is the trusted exemption requireGranterHoldsRolePermissions was
+// written for. #1542.
+func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time, actorIsMachine bool) error {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
 	// #G04: same unsynchronized-check-then-write race as AssignUserRole (see

@@ -261,6 +261,79 @@ already runs in production for every other machine-identity type; the
 proposal is to stop excluding `MachineTypeNode` from it, not to invent a new
 mechanism.
 
+### Note: this ADR's "downstream server" framing predates ADR-083 and should be read through it
+
+This document (Context, above) frames the OR-gate's justification as "a
+downstream server's already-authorized human action gets replayed against
+the upstream's real storage" — the same "full downstream Keyorix server"
+topology **ADR-083 (Accepted) later found never actually functioned and is
+now boot-rejected** (`Config.Validate()` refuses `storage.type: remote` +
+`server.http.enabled`/`server.grpc.enabled`). ADR-083's own Status header
+says it "supersedes the 'full downstream Keyorix server' framing that had
+informally grown up around ADR-049 in later code comments" — this ADR is
+one more place that framing grew up, not yet corrected here. It does not
+change this ADR's actual proposal (node credentials still need their own
+scoped permission set regardless of who the caller is), but it changes
+**who the real caller of these routes is**: not a second server relaying a
+human's already-authorized action, but either (a) a genuine CLI one-shot
+command using `RemoteStorage` directly, in-process, no router involved (the
+one confirmed-working use of `storage.type: remote`), or (b) a human or
+node credential hitting the hub's `/system` routes directly over HTTP — the
+G80 raw-storage-bypass campaign's finding. Route-by-route, which of (a)/(b)
+is the *real* legitimate caller should be checked before assuming a fix
+would break "the downstream server" — because that server, as a distinct
+relaying process, never existed as a working thing to break.
+
+### Credential/MFA slice, resolved: option (b), restrict to the hub
+
+The G80 overnight campaign's Tier 1 fixes needed an answer for the three
+`/system` WebAuthn credential-management routes
+(`CreateWebAuthnCredentialProxy`/`DeleteWebAuthnCredentialProxy`/
+`SetUserWebAuthnEnabledProxy`) and, by the same reasoning,
+`CreateMFAStepUpGrantProxy`: their real ceiling (`requireReauth`/
+`verifyMFAStepUpCode`) is a **proof-of-possession** check — the target
+account's current password/TOTP/step-up code — not an RBAC permission at
+all, and the wire protocol has never carried that proof (only the
+already-verified result). Two structurally available answers, matching
+this ADR's own "second, harder question" framing: (i) extend the wire
+protocol to carry the proof, or (ii) deny this slice a node/relay path
+entirely and require whoever manages credentials to authenticate to the hub
+directly.
+
+**Decision for this slice: (ii).** Rationale: proof of possession cannot be
+meaningfully relayed — forwarding a TOTP code or password proof across a
+second hop converts a single-use, short-lived proof into something that
+functions as a replayable bearer credential for the duration it stays
+valid in transit and at the relay, which is a strictly worse security
+property than not relaying it at all. Identity and credential management
+operations belong at the identity authority (the hub), not at a relay one
+hop removed from it. This does not contradict the ADR's main proposal (node
+credentials still want their own scoped permission set for the operations
+that legitimately DO relay) — it resolves one specific slice by removing it
+from the relay surface rather than by scoping it.
+
+**Confirmed before deciding, not assumed**: WebAuthn enrollment via
+`RemoteStorage` is wired (`internal/storage/store/remote_webauthn.go` has
+real HTTP-calling implementations) but has **zero real callers today** — no
+`keyorix` CLI command performs WebAuthn registration (`internal/cli` has no
+WebAuthn command at all; a passkey ceremony fundamentally needs a browser,
+which no CLI process is), and the only other theoretical caller — a
+downstream server replaying an already-completed browser ceremony — is the
+now-superseded topology from the note above. Removing the `system.write`
+permission arm for these specific routes (leaving them reachable only by a
+genuine node credential, or removing the route entirely — a separate
+implementation choice from this decision) therefore has no known
+backward-compatibility cost to weigh. If a real product need for
+CLI-driven or relayed credential/MFA management surfaces later, it should
+be designed with a real proof-carrying mechanism from the start, not by
+reopening this raw-storage path.
+
+**Not yet checked**: whether the same "wired but unused" conclusion holds
+for `CreateMFAStepUpGrantProxy` specifically (grouped here by the same
+proof-of-possession reasoning, but its actual CLI/caller usage wasn't
+independently traced this session) — worth a quick confirmation before
+implementing, same standard as the WebAuthn check above.
+
 ### Why not leave the OR-gate as-is and patch call sites individually
 
 This is the status quo, and it is what #1524/#1529's two confirmed findings
