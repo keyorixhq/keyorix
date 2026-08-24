@@ -26,7 +26,15 @@
 // not (yet) cover RevokeMachineIdentityCredentialProxy: the current wire contract
 // (DELETE-by-bare-credential-ID, no project/scope parameter at all) can't express
 // a scope check without a RemoteStorage client-side change first — a different,
-// harder fix shape than the other rows here, tracked but not asserted on below.
+// harder fix shape than the other rows here; deferred and filed as #1551, not
+// asserted on below.
+//
+// A second dimension, added after the first fix pass: "Node-credential-path
+// rows" below exercise the human-caller rows' SAME three write routes again, but
+// as a genuine node-credential relay (f.nodeToken) instead of the system.write-
+// only human (f.token) — see that section's own doc for why, and
+// docs/g80-raw-storage-bypass-triage.md's "Fix status" section for the
+// authoritative half-fixed/open status these rows pin.
 package http
 
 import (
@@ -54,6 +62,7 @@ import (
 type ceilingTableFixtures struct {
 	serverURL     string
 	token         string // system.write-only human caller under test
+	nodeToken     string // genuine node-credential relay caller (createNodeToken)
 	projectID     uint
 	plainMachine  uint // ordinary machine identity, no roles
 	adminMachine  uint // holds the admin-tier "system_admin" role at global scope
@@ -121,10 +130,15 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 	require.NoError(t, err)
 
 	token := createSystemWriteOnlyToken(t, testCore)
+	// createNodeToken (integration_test.go) also calls createTestToken internally —
+	// safe to call again here since createTestToken tolerates an already-initialized
+	// system (logs and continues rather than failing).
+	nodeToken := createNodeToken(t, testCore)
 
 	return ceilingTableFixtures{
 		serverURL:     server.URL,
 		token:         token,
+		nodeToken:     nodeToken,
 		projectID:     projectID,
 		plainMachine:  plainMachine.ID,
 		adminMachine:  adminMachine.ID,
@@ -138,8 +152,17 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 }
 
 // doCeilingRequest issues method/path with body (nil for none) as the table
-// fixture's system.write-only caller and returns the status code + raw body.
+// fixture's system.write-only human caller and returns the status code + raw body.
 func doCeilingRequest(t *testing.T, f ceilingTableFixtures, method, path string, body any) (int, string) {
+	t.Helper()
+	return doCeilingRequestAs(t, f, f.token, method, path, body)
+}
+
+// doCeilingRequestAs is doCeilingRequest generalized to an explicit bearer token,
+// so a row can exercise the SAME route as a different caller class — e.g.
+// f.nodeToken (a genuine node-credential relay) instead of f.token (the
+// system.write-only human).
+func doCeilingRequestAs(t *testing.T, f ceilingTableFixtures, token, method, path string, body any) (int, string) {
 	t.Helper()
 	var reader *bytes.Reader
 	if body != nil {
@@ -151,7 +174,7 @@ func doCeilingRequest(t *testing.T, f ceilingTableFixtures, method, path string,
 	}
 	req, err := http.NewRequest(method, f.serverURL+path, reader)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -317,4 +340,95 @@ func TestSystemWriteCeiling_DeleteOIDCBindingProxy_VerifiesOwnership(t *testing.
 	status, body := doCeilingRequest(t, f, http.MethodDelete, fmt.Sprintf("/api/v1/system/machine-oidc-bindings/%d", f.bindingID), nil)
 	t.Logf("DeleteOIDCBindingProxy: status=%d body=%s", status, body)
 	require.Equal(t, http.StatusOK, status, "the delete itself is expected to succeed for a binding that IS legitimately owned by its machine")
+}
+
+// ── Node-credential-path rows ────────────────────────────────────────────────
+//
+// The three rows below exercise the SAME routes above, but with f.nodeToken (a
+// genuine node-type machine credential — createNodeToken, integration_test.go)
+// instead of f.token (the system.write-only human). They exist because fixing
+// CreateMachineIdentityCredentialProxy and CreateOIDCBindingProxy for a DIRECT
+// caller (above) required an isNodeCredentialRequest(r) branch that routes a
+// node-credential caller around the new check entirely, to the raw storage
+// call — otherwise every legitimate node relay would ALSO be denied (a node
+// always resolves actorID(r)==0, and both requireMachinePrivilegeCeiling and
+// requireAuthorityForRole refuse actorID==0 outright). That branch is
+// necessary — but it also means the exemption is real, not hypothetical, and
+// needed its own visible, asserted coverage rather than living implicitly
+// inside an if-statement with no test pinning what it actually permits.
+//
+// These rows assert CURRENT behavior (allowed) exactly as it is today — this
+// is a KNOWN, DOCUMENTED GAP (see docs/g80-raw-storage-bypass-triage.md's "Fix
+// status" section and knownUnfixedRawStorageBypasses' HALF-FIXED entries for
+// CreateMachineIdentityCredentialProxy/CreateOIDCBindingProxy), NOT intended,
+// approved-safe behavior. Nothing on the wire distinguishes a genuine relay of
+// an already-checked downstream decision from a bare node credential calling
+// the route directly with attacker-chosen parameters (ADR-085's still-unresolved
+// "harder question" — see docs/adr-085-node-credential-permission-scope.md). If
+// a future fix closes this (a wire-level actor-identity field, or removing the
+// node bypass per ADR-085's proposed direction), these rows must go RED and get
+// updated to assert denial — they are pinning the gap, not blessing it.
+
+// TestSystemWriteCeiling_CreateMachineIdentityProxy_NodeCredential_AlsoForcesActiveState
+// is NOT a gap: core.CreateMachineIdentity has no actor-authority check at all
+// (only State/IdentityType/Classification validation), for ANY caller. A node
+// credential behaves identically to the human caller in the row above. Included
+// for symmetry/completeness of the node-credential dimension, not because this
+// route has a caller-class-dependent exemption to pin.
+func TestSystemWriteCeiling_CreateMachineIdentityProxy_NodeCredential_AlsoForcesActiveState(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
+		"name": "ceiling-table-node-create", "project_id": f.projectID,
+		"identity_type": core.MachineTypeService, "state": core.MachineRevoked,
+	})
+	t.Logf("CreateMachineIdentityProxy(node credential, state=%s): status=%d body=%s", core.MachineRevoked, status, body)
+	require.Equal(t, http.StatusOK, status, "no actor-authority check exists for either caller class on this route")
+	var parsed struct {
+		Data struct {
+			State string `json:"state"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &parsed))
+	require.Equal(t, core.MachineActive, parsed.Data.State, "same forced-active behavior as the human-caller row — no caller-class difference here")
+}
+
+// TestSystemWriteCeiling_CreateMachineIdentityCredentialProxy_NodeCredential_StillBypassesPrivilegeCeiling
+// pins the KNOWN, OPEN gap: unlike the human-caller row above (now 403), a node
+// credential still reaches the raw storage.CreateMachineIdentityCredential call
+// unconditionally (isNodeCredentialRequest branch, machine_identities_proxy.go),
+// so it can still forge a working credential for f.adminMachine (holds
+// system_admin) — the campaign's original "MOST SEVERE FINDING", now reachable
+// only via a node credential instead of any system.write holder, not closed.
+func TestSystemWriteCeiling_CreateMachineIdentityCredentialProxy_NodeCredential_StillBypassesPrivilegeCeiling(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/machine-credentials", map[string]any{
+		"machine_identity_id": f.adminMachine,
+		"token_hash":          "dddd000000000000000000000000000000000000000000000000000000000004",
+		"token_prefix":        "mid_forged_admin_node",
+	})
+	t.Logf("CreateMachineIdentityCredentialProxy(node credential, machine_identity_id=admin-tier %d): status=%d body=%s", f.adminMachine, status, body)
+	require.Equal(t, http.StatusOK, status,
+		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still forges a "+
+			"credential for an admin-tier machine identity — isNodeCredentialRequest routes it around "+
+			"requireMachinePrivilegeCeiling entirely, on an unverified relay-trust assumption. If this ever goes "+
+			"non-200, update this assertion — that would mean the gap closed, which is the goal, not a regression.")
+}
+
+// TestSystemWriteCeiling_CreateOIDCBindingProxy_NodeCredential_StillBypassesAdminAuthority
+// pins the KNOWN, OPEN gap: unlike the human-caller row above (now 403), a node
+// credential still reaches the raw storage.CreateOIDCBinding call unconditionally
+// (isNodeCredentialRequest branch), so it can still pre-claim any (issuer,
+// subject) pair for a machine of its choosing with no install-wide admin-authority
+// check at all.
+func TestSystemWriteCeiling_CreateOIDCBindingProxy_NodeCredential_StillBypassesAdminAuthority(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/machine-oidc-bindings", map[string]any{
+		"machine_identity_id": f.plainMachine, "issuer": "https://ceiling-table-node-preclaim.example", "subject": "node-preclaimed-subject",
+	})
+	t.Logf("CreateOIDCBindingProxy(node credential): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusOK, status,
+		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still creates an "+
+			"OIDC binding with no install-wide admin-authority check — isNodeCredentialRequest routes it around "+
+			"requireAuthorityForRole entirely, on an unverified relay-trust assumption. If this ever goes non-200, "+
+			"update this assertion — that would mean the gap closed, which is the goal, not a regression.")
 }

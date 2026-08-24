@@ -290,46 +290,6 @@ var rawStorageBypassAllowlist = map[string]string{
 	// a caller-side concern already satisfied before the relayed call reached here.
 	"UpdateMachineIdentityCredentialProxy": "FIXED: narrowed to fetch-existing + apply-Classification-only -- see " +
 		"the FIXED comment immediately above this entry for the full reasoning.",
-	// FIXED 2026-08-24 (was in knownUnfixedRawStorageBypasses as "MOST SEVERE
-	// FINDING"): the raw storage.CreateMachineIdentityCredential call is still here
-	// deliberately -- it must persist the caller-supplied TokenHash verbatim, which
-	// a legitimate RemoteStorage relay computed itself locally (via its own
-	// core.IssueMachineToken call) and is only relaying the hash of; routing this
-	// through IssueMachineToken here would instead generate a NEW random token via
-	// crypto/rand, breaking that relay. What's added is the ceiling
-	// IssueMachineToken itself enforces before generating a token:
-	// core.RequireMachinePrivilegeCeiling (a newly-exported wrapper around the
-	// existing requireMachinePrivilegeCeiling / MACH-001 check), called before the
-	// storage write and mapped to 403. No RemoteStorage wire-protocol change: the
-	// check needs only (actorID, MachineIdentityID), both already available/on the
-	// wire. Verified via server/http/system_write_ceiling_table_test.go's
-	// CreateMachineIdentityCredentialProxy_EnforcesPrivilegeCeiling row (previously
-	// red under a real server + real auth, now green) and confirmed no regression
-	// on the base non-admin-tier-target case (system_write_ceiling_test.go).
-	"CreateMachineIdentityCredentialProxy": "FIXED: raw storage call preserved for the caller-supplied-TokenHash " +
-		"relay case, but now preceded by core.RequireMachinePrivilegeCeiling -- see the FIXED comment immediately " +
-		"above this entry for the full reasoning.",
-	// FIXED 2026-08-24 (was in knownUnfixedRawStorageBypasses): a direct,
-	// non-node-credential caller now routes through core.CreateOIDCBinding, which
-	// enforces requireAuthorityForRole(..., "system_admin") (#127) -- install-wide
-	// admin authority, since (issuer, subject) is a global namespace. The raw
-	// storage.CreateOIDCBinding call is preserved ONLY for a genuine node-credential
-	// relay (isNodeCredentialRequest(r)): a node always resolves actorID(r)==0, and
-	// requireAuthorityForRole explicitly refuses actorID==0, so applying the check
-	// unconditionally would deny every legitimate relay too, not just a direct
-	// escalation attempt -- the downstream node's own core.CreateOIDCBinding call
-	// already ran this exact check against the real acting human before relaying
-	// (same trust boundary as AssignRoleWithExpiryProxy's precedent,
-	// rbac_role_grants_proxy.go). No RemoteStorage wire-protocol change: the wire
-	// body carries no project_id, so the direct-caller path derives it from the
-	// machine identity's own real ProjectID rather than trusting a caller-asserted
-	// value. Verified via server/http/system_write_ceiling_table_test.go's
-	// CreateOIDCBindingProxy_RequiresInstallWideAdminAuthority row (previously red,
-	// now green) and TestRemoteStorageMachineIdentities_OIDCBindingCreateGetListDelete_RealServer
-	// (a genuine node-credential relay, confirmed still succeeds).
-	"CreateOIDCBindingProxy": "FIXED: raw storage call preserved ONLY for a genuine node-credential relay; a " +
-		"direct caller now routes through core.CreateOIDCBinding's install-wide admin-authority check -- see the " +
-		"FIXED comment immediately above this entry for the full reasoning.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by
@@ -396,9 +356,48 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"(DoS).",
 	"RevokeMachineIdentityCredentialProxy": "REAL, human-reachable, narrower: revokes by bare credential ID with " +
 		"no project-membership check, skips audit + cache-eviction hand-off. Mirrors this file's own " +
-		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation.",
+		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation. " +
+		"Deferred (not a wire-compatible fix like its siblings): the wire contract carries no project/scope " +
+		"parameter at all, so closing it needs a RemoteStorage client-side change first -- filed as #1551.",
 	"DeleteOIDCBindingProxy": "REAL, human-reachable: deletes any binding ID with no ownership/project-scope " +
 		"check and no audit event, versus core.DeleteOIDCBinding's machineInProject + binding-ownership checks.",
+	// HALF-FIXED 2026-08-24 -- do NOT move to rawStorageBypassAllowlist: CLOSED
+	// for a direct, non-node-credential caller (routes through
+	// core.RequireMachinePrivilegeCeiling, MACH-001, now denying a system.write-only
+	// caller minting a credential for an admin-tier machine identity -- see
+	// system_write_ceiling_table_test.go's EnforcesPrivilegeCeiling row). STILL OPEN
+	// for a node-credential caller: isNodeCredentialRequest(r) routes around the
+	// check entirely to the raw storage.CreateMachineIdentityCredential call, on the
+	// theory that a genuine relay already ran this check downstream -- an assertion
+	// with no wire-level verification (ADR-085's unresolved "harder question": the
+	// wire carries no field attesting which human/decision a relayed action actually
+	// traces to). A bare node credential -- the single most widely distributed
+	// credential class in a deployment (ADR-085) -- can still forge a credential for
+	// an admin-tier machine identity by calling this route directly, with nothing
+	// distinguishing that from a genuine relay. See system_write_ceiling_table_test.go's
+	// node-credential-path rows for the live, asserted-red-in-spirit (documented
+	// current-behavior) evidence.
+	"CreateMachineIdentityCredentialProxy": "HALF-FIXED: closed for a direct system.write-only human/machine " +
+		"caller (core.RequireMachinePrivilegeCeiling now enforced); STILL OPEN for a node-credential caller " +
+		"(isNodeCredentialRequest routes around the check to the raw storage call, on an unverified relay-trust " +
+		"assumption -- see the HALF-FIXED comment immediately above this entry).",
+	// HALF-FIXED 2026-08-24 -- do NOT move to rawStorageBypassAllowlist: CLOSED for
+	// a direct, non-node-credential caller (routes through core.CreateOIDCBinding's
+	// requireAuthorityForRole(..., "system_admin") install-wide admin-authority
+	// check -- see system_write_ceiling_table_test.go's
+	// RequiresInstallWideAdminAuthority row). STILL OPEN for a node-credential
+	// caller: isNodeCredentialRequest(r) routes around the check entirely to the raw
+	// storage.CreateOIDCBinding call, same unverified relay-trust assumption as
+	// CreateMachineIdentityCredentialProxy above (and the same assumption
+	// AssignRoleWithExpiryProxy's node branch makes, rbac_role_grants_proxy.go --
+	// re-examined during this fix wave and reported, not itself changed, as a
+	// separate, real, uncatalogued instance of this exact pattern). A bare node
+	// credential can still pre-claim any (issuer, subject) OIDC binding for a
+	// machine of its choosing by calling this route directly.
+	"CreateOIDCBindingProxy": "HALF-FIXED: closed for a direct system.write-only human/machine caller " +
+		"(core.CreateOIDCBinding's install-wide admin-authority check now enforced); STILL OPEN for a " +
+		"node-credential caller (isNodeCredentialRequest routes around the check to the raw storage call -- see " +
+		"the HALF-FIXED comment immediately above this entry).",
 	"UpsertMFASecretProxy": "REAL, human-reachable: raw proxy takes user_id/SecretEnc/Activated straight from the " +
 		"JSON body -- plant or overwrite an \"Activated\" MFA secret for ANY user, even an already-MFA-enabled " +
 		"one, even with at-rest encryption disabled, versus BeginMFAEnrollment's fail-closed + already-enabled " +
