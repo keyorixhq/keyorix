@@ -226,11 +226,16 @@ func TestCreateMachineIdentityProxy_HappyPath_S28(t *testing.T) {
 	cs := freshCoreS28(t)
 	h := NewCatalogHandler(cs)
 
+	// identity_type must be one of core's validMachineTypes (ci|k8s|service|
+	// automation|other|node) now that CreateMachineIdentityProxy routes through
+	// core.CreateMachineIdentity (G80 raw-storage-bypass fix) instead of trusting
+	// the wire body's identity_type/state verbatim — "workload" was never a real
+	// identity_type, the old unvalidated raw proxy just never checked.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-identities",
 		jsonBodyS28(t, map[string]interface{}{
 			"name":          "test-machine-s28",
 			"project_id":    1,
-			"identity_type": "workload",
+			"identity_type": "service",
 			"state":         "active",
 		}))
 	w := httptest.NewRecorder()

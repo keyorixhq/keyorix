@@ -289,6 +289,20 @@ func newRoleProxyWire(r *models.Role) roleProxyWire {
 // --- Machine identities ---
 
 // CreateMachineIdentityProxy handles POST /api/v1/system/machine-identities.
+//
+// #1542-shape guard (G80 raw-storage-bypass triage): core.CreateMachineIdentity
+// validates IdentityType/Classification and unconditionally forces
+// State=MachineActive (a machine identity is never born in any other state) —
+// this raw proxy used to persist whatever State/IdentityType/Classification the
+// caller supplied verbatim, letting a caller mint an identity already revoked (or
+// any other state) with no validation. Fixed by routing through
+// core.CreateMachineIdentity instead of the raw storage call: State/ID/timestamps
+// are no longer caller-controlled (core.CreateMachineIdentity doesn't accept a
+// State parameter at all), and IdentityType/Classification are validated. No
+// wire-protocol change — every input core.CreateMachineIdentity needs
+// (name/project_id/identity_type/description/classification/created_by) was
+// already on the wire; only the fields a legitimate relay never had a reason to
+// set (State, arbitrary ID/timestamps) are now ignored rather than trusted.
 func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -299,10 +313,17 @@ func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "name and project_id are required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateMachineIdentity(r.Context(), body.toModel())
+	created, err := h.coreService.CreateMachineIdentity(r.Context(), body.ProjectID, body.Name, body.IdentityType, body.Description, body.Classification, body.CreatedBy)
 	if err != nil {
-		log.Printf("machine-identities proxy: create failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		msg := err.Error()
+		status := http.StatusInternalServerError
+		if strings.Contains(msg, "invalid identity_type") || strings.Contains(msg, "classification must be") || strings.Contains(msg, "required") {
+			status = http.StatusBadRequest
+		} else {
+			log.Printf("machine-identities proxy: create failed: %v", err)
+			msg = clientSafe(err)
+		}
+		writeRemoteAPIError(w, status, "STORAGE_ERROR", msg)
 		return
 	}
 	writeRemoteAPISuccess(w, newMachineIdentityProxyWire(created))
