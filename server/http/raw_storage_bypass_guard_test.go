@@ -309,6 +309,27 @@ var rawStorageBypassAllowlist = map[string]string{
 	"CreateMachineIdentityCredentialProxy": "FIXED: raw storage call preserved for the caller-supplied-TokenHash " +
 		"relay case, but now preceded by core.RequireMachinePrivilegeCeiling -- see the FIXED comment immediately " +
 		"above this entry for the full reasoning.",
+	// FIXED 2026-08-24 (was in knownUnfixedRawStorageBypasses): a direct,
+	// non-node-credential caller now routes through core.CreateOIDCBinding, which
+	// enforces requireAuthorityForRole(..., "system_admin") (#127) -- install-wide
+	// admin authority, since (issuer, subject) is a global namespace. The raw
+	// storage.CreateOIDCBinding call is preserved ONLY for a genuine node-credential
+	// relay (isNodeCredentialRequest(r)): a node always resolves actorID(r)==0, and
+	// requireAuthorityForRole explicitly refuses actorID==0, so applying the check
+	// unconditionally would deny every legitimate relay too, not just a direct
+	// escalation attempt -- the downstream node's own core.CreateOIDCBinding call
+	// already ran this exact check against the real acting human before relaying
+	// (same trust boundary as AssignRoleWithExpiryProxy's precedent,
+	// rbac_role_grants_proxy.go). No RemoteStorage wire-protocol change: the wire
+	// body carries no project_id, so the direct-caller path derives it from the
+	// machine identity's own real ProjectID rather than trusting a caller-asserted
+	// value. Verified via server/http/system_write_ceiling_table_test.go's
+	// CreateOIDCBindingProxy_RequiresInstallWideAdminAuthority row (previously red,
+	// now green) and TestRemoteStorageMachineIdentities_OIDCBindingCreateGetListDelete_RealServer
+	// (a genuine node-credential relay, confirmed still succeeds).
+	"CreateOIDCBindingProxy": "FIXED: raw storage call preserved ONLY for a genuine node-credential relay; a " +
+		"direct caller now routes through core.CreateOIDCBinding's install-wide admin-authority check -- see the " +
+		"FIXED comment immediately above this entry for the full reasoning.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by
@@ -376,9 +397,6 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	"RevokeMachineIdentityCredentialProxy": "REAL, human-reachable, narrower: revokes by bare credential ID with " +
 		"no project-membership check, skips audit + cache-eviction hand-off. Mirrors this file's own " +
 		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation.",
-	"CreateOIDCBindingProxy": "REAL, human-reachable: core.CreateOIDCBinding requires install-wide system_admin " +
-		"authority (requireAuthorityForRole, #127) plus machine-project scope + issuer-trust validation, none of " +
-		"which admin-tier-or-system.write (the route's own gate) implies.",
 	"DeleteOIDCBindingProxy": "REAL, human-reachable: deletes any binding ID with no ownership/project-scope " +
 		"check and no audit event, versus core.DeleteOIDCBinding's machineInProject + binding-ownership checks.",
 	"UpsertMFASecretProxy": "REAL, human-reachable: raw proxy takes user_id/SecretEnc/Activated straight from the " +
