@@ -270,10 +270,23 @@ func (ls *LocalStorage) ListOIDCBindings(ctx context.Context, machineID uint) ([
 	return rows, nil
 }
 
+// GetOIDCBindingByID used to wrap EVERY error from First (not just a genuine
+// gorm.ErrRecordNotFound) with the "not found" i18n string -- surfaced by
+// DeleteOIDCBindingProxy's G80 fix, which now reads the binding before
+// deleting it (to resolve its owning machine/project): a real connection
+// failure got mislabeled as "not found" and the proxy handler's
+// isNotFoundErr string match then reported 404 instead of 500 for a genuine
+// storage outage. Matches the established gorm.ErrRecordNotFound-vs-
+// everything-else pattern this package already uses elsewhere (e.g.
+// local_sod.go's GetSoDPolicy, fixed the same way for the identical reason).
 func (ls *LocalStorage) GetOIDCBindingByID(ctx context.Context, id uint) (*models.MachineIdentityOIDCBinding, error) {
 	var b models.MachineIdentityOIDCBinding
-	if err := ls.db.WithContext(ctx).First(&b, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	err := ls.db.WithContext(ctx).First(&b, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &b, nil
 }
