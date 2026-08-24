@@ -123,14 +123,25 @@ facto superuser) rather than a bug count. Full content, including the fix-patter
 grouping table, is in `docs/g80-tracking-issue-draft.md` (not yet filed — `gh` auth
 blocked, see the handoff doc). The rough manual priority order below is superseded by
 that grouping table but kept for reference since two of its entries (worst blast radius)
-match the two patterns flagged standalone-and-first there too:
-1. CreateMachineIdentityCredentialProxy — privilege escalation
-2. CreateWebAuthnCredentialProxy / DeleteWebAuthnCredentialProxy / SetUserWebAuthnEnabledProxy — account takeover / 2FA bypass
-3. CreateAccessRequestProxy / UpdateAccessRequestProxy — dual-control bypass on restricted secrets
-4. CreateMFAStepUpGrantProxy — MFA gate bypass with zero verification
-5. UpdateUserIfActiveStateMatchesProxy — last-admin lockout + stale-credential bypass
-6. UpdateProjectProxy / RestoreProjectProxy — MFA-policy silent disable / admin-role resurrection
-7. Everything else in the table (24 more), roughly in the order listed above
+match the two patterns flagged standalone-and-first there too. **Re-ranked 2026-08-24**:
+`AssignRoleWithExpiryProxy`'s node-credential exemption (filed as
+[#1552](https://github.com/keyorixhq/keyorix/issues/1552), see "Re-examined" below)
+moves to #1 — a shorter path to global admin than the original #1 (grants a role
+directly to an attacker-chosen user account; CreateMachineIdentityCredentialProxy
+required an admin-tier machine identity to already exist as a target):
+1. **AssignRoleWithExpiryProxy (node-credential branch) — #1552** — arbitrary role
+   grant (including admin-tier) to an arbitrary user, via a bare node credential
+   (zero RBAC permissions by design), bypassing requireGranterHoldsRolePermissions
+   entirely. Not yet fixed.
+2. CreateMachineIdentityCredentialProxy — privilege escalation. HALF-FIXED: closed
+   for a direct caller, still open for a node credential (same #1552 pattern) — see
+   "Fix status" below.
+3. CreateWebAuthnCredentialProxy / DeleteWebAuthnCredentialProxy / SetUserWebAuthnEnabledProxy — account takeover / 2FA bypass
+4. CreateAccessRequestProxy / UpdateAccessRequestProxy — dual-control bypass on restricted secrets
+5. CreateMFAStepUpGrantProxy — MFA gate bypass with zero verification
+6. UpdateUserIfActiveStateMatchesProxy — last-admin lockout + stale-credential bypass
+7. UpdateProjectProxy / RestoreProjectProxy — MFA-policy silent disable / admin-role resurrection
+8. Everything else in the table (24 more), roughly in the order listed above
 
 ## Fix status (updated 2026-08-24, machine-identity/OIDC-binding sub-wave)
 
@@ -150,14 +161,16 @@ comments don't carry cross-references to this doc's original investigation rows 
   (MACH-001) when the target machine holds an admin-tier role. A **node-credential**
   caller still reaches the raw storage call unconditionally — `isNodeCredentialRequest(r)`
   routes around the new check on the theory that a genuine relay already ran it
-  downstream, an assumption with no wire-level verification (see "Re-examined" below).
-  The original finding's worst-case (forge a credential for an admin-tier machine
-  identity) is still reachable by anyone holding a bare node credential.
+  downstream, an assumption with no wire-level verification (see "Re-examined" below,
+  and [#1552](https://github.com/keyorixhq/keyorix/issues/1552)). The original finding's
+  worst-case (forge a credential for an admin-tier machine identity) is still reachable
+  by anyone holding a bare node credential.
 - **CreateOIDCBindingProxy** — **HALF-FIXED, still in `knownUnfixedRawStorageBypasses`,
   NOT closed.** Same shape as above: a direct caller now routes through
   `core.CreateOIDCBinding`'s `requireAuthorityForRole(..., "system_admin")` check; a
   node-credential caller still reaches the raw storage call unconditionally, on the
-  same unverified relay-trust assumption.
+  same unverified relay-trust assumption tracked in
+  [#1552](https://github.com/keyorixhq/keyorix/issues/1552).
 - **RevokeMachineIdentityCredentialProxy** — still fully open, for both caller types.
   Deferred and filed as **[#1551](https://github.com/keyorixhq/keyorix/issues/1551)**:
   unlike the fixes above, its wire contract (`POST .../revoke` with only a bare
@@ -189,7 +202,10 @@ raw storage. This reads as a genuine, uncatalogued instance of the exact `#1542`
 this campaign has been fixing, not a reviewed-safe design difference — and it is broader
 in scope than #1545 (`AssignPermissionToRole`'s self-permission-bundling check,
 `BulkDeleteSecrets`' per-secret ACL check), which covers different call sites entirely.
-**Not fixed here** — reported per explicit instruction, filing/fixing left to a
-follow-up decision. This is exactly ADR-085's own still-open "harder question" (whose
-authority a relayed action is actually exercised under), materialized as a concrete,
-reachable finding rather than a design question.
+**Not fixed here** — reported per explicit instruction. Filed as
+[**#1552**](https://github.com/keyorixhq/keyorix/issues/1552), Tier 1, ranked #1 above
+(shorter path to global admin than CreateMachineIdentityCredentialProxy: grants a role
+directly to an attacker-chosen user account, no pre-existing admin-tier machine
+required). This is exactly ADR-085's own still-open "harder question" (whose authority
+a relayed action is actually exercised under), materialized as a concrete, reachable
+finding rather than a design question.
