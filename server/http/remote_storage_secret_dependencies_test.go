@@ -80,10 +80,12 @@ func createTestSecretID(t *testing.T, c *core.KeyorixCore, name string) uint {
 
 // TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer proves the fix for
 // CreateSecretDependency/GetSecretDependency/ListSecretDependenciesForProject/
-// ListSecretDependenciesForProjectForUpdate/DeleteSecretDependency: an edge is
-// genuinely persisted on the upstream via the downstream's RemoteStorage, fetchable by
-// ID, listed both ways, and removable — all via storage.type: remote against a real
-// router, not a protocol mock.
+// ListSecretDependenciesForProjectForUpdate: an edge is genuinely persisted on
+// the upstream via the downstream's RemoteStorage, fetchable by ID, and listed
+// both ways — all via storage.type: remote against a real router, not a
+// protocol mock. The delete itself is applied directly against the upstream's
+// real storage (DeleteSecretDependencyProxy was deleted -- G80 liveness sweep
+// found no live caller; see docs/g80-remediation-notes.md).
 func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testing.T) {
 	upstream, srv, token := newUpstreamForSecretDependencies(t)
 	downstream := newDownstreamRemoteStorage(t, srv, token)
@@ -129,13 +131,21 @@ func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testi
 	require.NoError(t, err)
 	require.Len(t, rowsForUpdate, 2)
 
-	// DeleteSecretDependency via the downstream removes it from the upstream's own
-	// storage.
-	require.NoError(t, downstream.Storage().DeleteSecretDependency(ctx, second.ID))
+	// DeleteSecretDependency applied directly against the upstream's storage.
+	// Re-verify directly against the upstream, not through the SAME downstream
+	// client used above: the client caches successful GET responses for 5
+	// minutes, invalidated only by a MUTATION that goes through that SAME
+	// client (internal/storage/remote/client.go) — since the delete below is
+	// applied directly against the upstream (bypassing the downstream client
+	// entirely), the shared "downstream" client's already-cached
+	// ListSecretDependenciesForProject response would otherwise be served
+	// stale here. The downstream wire path for this list was already proven
+	// above (the pre-delete `rows` call).
+	require.NoError(t, upstream.Storage().DeleteSecretDependency(ctx, second.ID))
 	_, err = upstream.Storage().GetSecretDependency(ctx, second.ID)
 	require.Error(t, err, "the deleted edge must no longer exist directly on the upstream")
 
-	remaining, err := downstream.Storage().ListSecretDependenciesForProject(ctx, 1)
+	remaining, err := upstream.Storage().ListSecretDependenciesForProject(ctx, 1)
 	require.NoError(t, err)
 	require.Len(t, remaining, 1)
 	assert.Equal(t, created.ID, remaining[0].ID)

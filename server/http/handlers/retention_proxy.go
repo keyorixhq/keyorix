@@ -1,11 +1,13 @@
 // retention_proxy.go — server-side endpoints backing RemoteStorage's
 // data-retention/purge-sweep storage primitives (finding #520):
-// PurgeDeletedSecretsBefore, DeleteAnomalyAlertsBefore,
-// DeleteClosedAccessReviewsBefore, DeleteExpiredBreakGlassBefore,
-// DeleteResolvedAccessRequestsBefore (remote_secrets.go); DeleteExpiredRoleGrants
+// PurgeDeletedSecretsBefore (remote_secrets.go); DeleteExpiredRoleGrants
 // (remote_rbac.go); DeleteExpiredShareRecords (remote_sharing.go);
 // PurgeDeletedUsersBefore/PurgeDeletedProjectsBefore/
 // PurgeDeletedEnvironmentsBefore/ListUsersInStateBefore (remote_users.go).
+// (DeleteAnomalyAlertsBeforeProxy/DeleteClosedAccessReviewsBeforeProxy/
+// DeleteExpiredBreakGlassBeforeProxy/DeleteResolvedAccessRequestsBeforeProxy
+// were deleted -- G80 liveness sweep found no live caller for any of them; see
+// docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // its scheduled retention/purge/lifecycle-sweep storage calls to whichever
@@ -200,111 +202,10 @@ func (h *SecretHandler) PurgeDeletedSecretsBeforeProxy(w http.ResponseWriter, r 
 	writeRemoteAPISuccess(w, map[string]int64{"purged": n})
 }
 
-// --- AuditHandler: DeleteAnomalyAlertsBefore (#489, ISO A.5.33) ---
-
-// anomalyAlertsPurgeBody is the wire body for
-// POST /api/v1/system/retention/anomaly-alerts/purge. Either field may be the
-// zero time.Time — matching DeleteAnomalyAlertsBefore's own contract, a zero
-// value disables that clause entirely rather than being misread as "purge
-// everything before year 1" (see local_purge.go's DeleteAnomalyAlertsBefore doc).
-type anomalyAlertsPurgeBody struct {
-	AckBefore    time.Time `json:"ack_before"`
-	UnackCeiling time.Time `json:"unack_ceiling"`
-}
-
-// DeleteAnomalyAlertsBeforeProxy handles POST
-// /api/v1/system/retention/anomaly-alerts/purge.
-func (h *AuditHandler) DeleteAnomalyAlertsBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	var body anomalyAlertsPurgeBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
-		return
-	}
-	// A zero value disables the corresponding clause (see the type doc) — only a
-	// genuinely-set field needs the future-cutoff bound.
-	if !body.AckBefore.IsZero() {
-		if err := validateRetentionCutoff(body.AckBefore); err != nil {
-			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "ack_before: "+err.Error())
-			return
-		}
-	}
-	if !body.UnackCeiling.IsZero() {
-		if err := validateRetentionCutoff(body.UnackCeiling); err != nil {
-			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "unack_ceiling: "+err.Error())
-			return
-		}
-	}
-	// AnomalyAlert.DetectedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
-	// .UTC() on an already-zero time.Time leaves it zero (IsZero() depends only on
-	// the represented instant, not the Location), so DeleteAnomalyAlertsBefore's
-	// own "zero disables this clause" contract is preserved for whichever field
-	// the caller left unset.
-	n, err := h.coreService.Storage().DeleteAnomalyAlertsBefore(r.Context(), body.AckBefore.UTC(), body.UnackCeiling.UTC())
-	if err != nil {
-		log.Printf("retention proxy: purge anomaly alerts failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"purged": n})
-}
-
-// --- CatalogHandler: access-reviews / break-glass / access-requests / projects /
-// environments purges. CatalogHandler already owns the human-facing CRUD (and,
-// for access-reviews/break-glass, the sibling CRUD proxy) for every one of these
-// subsystems (catalog.go's Project/Environment CRUD, invitations.go's
-// AccessRequest CRUD, access_review_campaigns_proxy.go, break_glass_proxy.go), so
-// it is the natural owner of each subsystem's own retention sweep too. ---
-
-// DeleteClosedAccessReviewsBeforeProxy handles POST
-// /api/v1/system/retention/access-reviews/purge-closed.
-func (h *CatalogHandler) DeleteClosedAccessReviewsBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	before, ok := decodeRetentionBeforeBody(w, r)
-	if !ok {
-		return
-	}
-	// AccessReviewCampaign.ClosedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
-	campaigns, items, err := h.coreService.Storage().DeleteClosedAccessReviewsBefore(r.Context(), before.UTC())
-	if err != nil {
-		log.Printf("retention proxy: purge closed access reviews failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"campaigns_purged": campaigns, "items_purged": items})
-}
-
-// DeleteExpiredBreakGlassBeforeProxy handles POST
-// /api/v1/system/retention/break-glass/purge-expired.
-func (h *CatalogHandler) DeleteExpiredBreakGlassBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	before, ok := decodeRetentionBeforeBody(w, r)
-	if !ok {
-		return
-	}
-	// BreakGlassActivation.CreatedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
-	n, err := h.coreService.Storage().DeleteExpiredBreakGlassBefore(r.Context(), before.UTC())
-	if err != nil {
-		log.Printf("retention proxy: purge expired break-glass failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"purged": n})
-}
-
-// DeleteResolvedAccessRequestsBeforeProxy handles POST
-// /api/v1/system/retention/access-requests/purge-resolved.
-func (h *CatalogHandler) DeleteResolvedAccessRequestsBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	before, ok := decodeRetentionBeforeBody(w, r)
-	if !ok {
-		return
-	}
-	// AccessRequest.ResolvedAt is G81 BeforeSave-hooked to UTC — .UTC() to match.
-	requests, approvals, err := h.coreService.Storage().DeleteResolvedAccessRequestsBefore(r.Context(), before.UTC())
-	if err != nil {
-		log.Printf("retention proxy: purge resolved access requests failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"requests_purged": requests, "approvals_purged": approvals})
-}
+// --- CatalogHandler: projects / environments purges. CatalogHandler already
+// owns the human-facing CRUD for both of these subsystems (catalog.go's
+// Project/Environment CRUD), so it is the natural owner of each subsystem's
+// own retention sweep too. ---
 
 // PurgeDeletedProjectsBeforeProxy handles POST
 // /api/v1/system/retention/projects/purge.

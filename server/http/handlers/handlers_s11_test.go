@@ -1679,49 +1679,6 @@ func TestRunExpiryReminders_HappyPath_S11(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// ── break_glass_proxy.go: CreateBreakGlassActivationProxy ────────────────────
-
-// TestCreateBreakGlassActivationProxy_HappyPath_S11 — valid body with project+user → 200.
-func TestCreateBreakGlassActivationProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11bgproxy", "")
-	require.NoError(t, err)
-	bootstrapS11(t, cs, "bgproxy11")
-	ctx := context.Background()
-	user, err := cs.GetUserByUsername(ctx, "s11bgproxy11")
-	require.NoError(t, err)
-
-	body := fmt.Sprintf(`{"project_id":%d,"user_id":%d,"state":"active","justification":"test"}`,
-		proj.ID, user.ID)
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, r)
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusConflict, "unexpected: %d", w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_MissingFields_S11 — missing required fields → 400.
-func TestCreateBreakGlassActivationProxy_MissingFields_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	body := `{"project_id":1}`
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_BadJSON_S11 — malformed JSON → 400.
-func TestCreateBreakGlassActivationProxy_BadJSON_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad}"))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── webauthn_proxy.go: ListWebAuthnCredentialsProxy / CountWebAuthnCredentialsProxy ─
 
 // TestListWebAuthnCredentialsProxy_HappyPath_S11 — valid user_id → 200.
@@ -1986,22 +1943,6 @@ func TestListProjectsProxy_WithProjects_S11(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListProjectsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestUpdateProjectProxy_HappyPath_S11 — update an existing project → 200.
-func TestUpdateProjectProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11updateprojproxy", "old desc")
-	require.NoError(t, err)
-
-	body := fmt.Sprintf(`{"id":%d,"name":"s11updateprojproxy","description":"new desc"}`, proj.ID)
-	r := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.UpdateProjectProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -2332,40 +2273,6 @@ func TestRotationPolicyGet_HappyPath_S11(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// ── environment_catalog_proxy.go: RestoreEnvironmentProxy success path ────────
-
-// TestRestoreEnvironmentProxy_HappyPath_S11 — delete an environment then restore → 200.
-func TestRestoreEnvironmentProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-
-	// Create a project (environments are created automatically per project).
-	proj, err := cs.CreateProject(ctx, "s11restoreenv", "")
-	require.NoError(t, err)
-
-	// Get the auto-created environments.
-	envs, err := cs.ListEnvironmentsByProject(ctx, proj.ID)
-	require.NoError(t, err)
-	require.NotEmpty(t, envs)
-	env := envs[0]
-
-	// Soft-delete the environment so restore can succeed.
-	err = cs.Storage().DeleteEnvironment(ctx, env.ID)
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodPost,
-		fmt.Sprintf("/api/v1/system/projects/%d/environments/%d/restore", proj.ID, env.ID), nil)
-	r = withChiParamsS8(r, map[string]string{
-		"projectId": fmt.Sprintf("%d", proj.ID),
-		"id":        fmt.Sprintf("%d", env.ID),
-	})
-	w := httptest.NewRecorder()
-	h.RestoreEnvironmentProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // TestGetAccessReviewCampaignHandler_HappyPath_S11 covers the sendSuccess at line 106
 // in access_review_campaigns.go (the non-proxy handler).
 func TestGetAccessReviewCampaignHandler_HappyPath_S11(t *testing.T) {
@@ -2495,40 +2402,6 @@ func TestListWebAuthnCredentialsProxy_WithCredential_S11(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?user_id=%d", testUserID), nil)
 	w := httptest.NewRecorder()
 	h.ListWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestDeleteWebAuthnCredentialProxy_HappyPath_S11 — delete a real credential → 200.
-func TestDeleteWebAuthnCredentialProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewAuthHandler(cs, false)
-	ctx := context.Background()
-
-	const testUserID = uint(55)
-	cred := &models.WebAuthnCredential{
-		UserID:         testUserID,
-		CredentialID:   []byte("s11-delete-cred-id"),
-		Name:           "s11 delete key",
-		CredentialBlob: []byte(`{}`),
-	}
-	err := cs.Storage().CreateWebAuthnCredential(ctx, cred)
-	require.NoError(t, err)
-
-	// Retrieve the credential's ID.
-	creds, err := cs.Storage().ListWebAuthnCredentials(ctx, testUserID)
-	require.NoError(t, err)
-	require.NotEmpty(t, creds)
-	credID := creds[0].ID
-
-	r := httptest.NewRequest(http.MethodDelete,
-		fmt.Sprintf("/api/v1/system/webauthn/users/%d/credentials/%d", testUserID, credID), nil)
-	r = withChiParamsS8(r, map[string]string{
-		"userId": fmt.Sprintf("%d", testUserID),
-		"id":     fmt.Sprintf("%d", credID),
-	})
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

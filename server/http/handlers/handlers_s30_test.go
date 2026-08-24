@@ -123,16 +123,6 @@ func TestListProjectsWithCountsProxy_DBError_S30(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestUpdateProjectProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	body := bytes.NewBufferString(`{"name":"x"}`)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", body), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateProjectProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestListAllMachineIdentitiesProxy_DBError_S30(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS30(t))
@@ -169,16 +159,6 @@ func TestCountMachineIdentityCredentialsByClassificationProxy_DBError_S30(t *tes
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestCreateBreakGlassActivationProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	body := bytes.NewBufferString(`{"project_id":1,"user_id":1,"state":"active","activated_by":1}`)
-	req := httptest.NewRequest(http.MethodPost, "/", body)
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestCreateMembershipProxy_DBError_S30(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS30(t))
@@ -186,33 +166,6 @@ func TestCreateMembershipProxy_DBError_S30(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", body)
 	w := httptest.NewRecorder()
 	h.CreateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeleteClosedAccessReviewsBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.DeleteClosedAccessReviewsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeleteExpiredBreakGlassBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.DeleteExpiredBreakGlassBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeleteResolvedAccessRequestsBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.DeleteResolvedAccessRequestsBeforeProxy(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -231,17 +184,6 @@ func TestPurgeDeletedEnvironmentsBeforeProxy_DBError_S30(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
 	w := httptest.NewRecorder()
 	h.PurgeDeletedEnvironmentsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// ── AuthHandler ───────────────────────────────────────────────────────────────
-
-func TestDeleteConnectRefGrantProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreBrokenS30(t), false)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 

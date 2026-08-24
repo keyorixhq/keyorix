@@ -37,7 +37,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -178,36 +177,6 @@ func (h *CatalogHandler) GetProjectByNameProxy(w http.ResponseWriter, r *http.Re
 	writeRemoteAPISuccess(w, newProjectProxyWire(p))
 }
 
-// UpdateProjectProxy handles PUT /api/v1/system/projects/{id}. Like the group/
-// invitation proxies' raw persist, this trusts the caller's already-fully-resolved
-// final desired state (the calling core.KeyorixCore.UpdateProject already merged the
-// existing row with the requested changes before invoking storage.UpdateProject)
-// rather than re-deriving a partial update here.
-func (h *CatalogHandler) UpdateProjectProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
-		return
-	}
-	var body projectProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
-		return
-	}
-	body.ID = uint(id)
-	updated, err := h.coreService.Storage().UpdateProject(r.Context(), body.toModel())
-	if err != nil {
-		if isProjectNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errProjectNotFound)
-			return
-		}
-		log.Printf("project catalog proxy: update failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newProjectProxyWire(updated))
-}
-
 // DeleteProjectProxy handles DELETE /api/v1/system/projects/{id} — the plain,
 // unconditional cascade (storage.Storage.DeleteProject), backing the CALLING
 // server's force=true path. The force=false guard+cascade is DeleteProjectIfEmptyProxy
@@ -254,29 +223,6 @@ func (h *CatalogHandler) DeleteProjectIfEmptyProxy(w http.ResponseWriter, r *htt
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]interface{}{"blocking_secret_count": blocking})
-}
-
-// RestoreProjectProxy handles POST /api/v1/system/projects/{id}/restore.
-func (h *CatalogHandler) RestoreProjectProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
-		return
-	}
-	restoredEnvironments, restoredSecrets, err := h.coreService.Storage().RestoreProject(r.Context(), uint(id))
-	if err != nil {
-		if isProjectNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "project not found or not deleted")
-			return
-		}
-		log.Printf("project catalog proxy: restore failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]interface{}{
-		"restored_environments": restoredEnvironments,
-		"restored_secrets":      restoredSecrets,
-	})
 }
 
 // ListProjectMembersProxy handles GET /api/v1/system/projects/{id}/members.

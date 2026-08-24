@@ -3,8 +3,6 @@ package http
 import (
 	"context"
 	"net/http/httptest"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -132,10 +130,13 @@ func TestRemoteStorageAccessReviewCampaign_GetNotFound_RealServer(t *testing.T) 
 // TestRemoteStorageAccessReviewCampaign_OpenAndLatestClosed_RealServer proves
 // GetOpenAccessReviewCampaign/GetLatestClosedAccessReviewCampaign round-trip
 // their nil-is-success ("no such campaign") contract, and correctly identify
-// the open vs. most-recently-closed campaign after an UpdateAccessReviewCampaign
-// state transition.
+// the open vs. most-recently-closed campaign after a state transition. The
+// close itself is applied directly against the upstream's real storage
+// (UpdateAccessReviewCampaignProxy was deleted -- G80 liveness sweep found no
+// live caller; see docs/g80-remediation-notes.md) — only the two Get* queries
+// under test go over the downstream's RemoteStorage wire.
 func TestRemoteStorageAccessReviewCampaign_OpenAndLatestClosed_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
+	upstream, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -157,54 +158,32 @@ func TestRemoteStorageAccessReviewCampaign_OpenAndLatestClosed_RealServer(t *tes
 	require.NotNil(t, open)
 	assert.Equal(t, c.ID, open.ID)
 
-	// Close it via UpdateAccessReviewCampaign's conditional UPDATE.
+	// Close it directly against the upstream's storage.
 	closedAt := time.Now()
 	c.State = core.CampaignStateClosed
 	c.ClosedBy = 1
 	c.ClosedAt = &closedAt
-	updated, err := downstream.Storage().UpdateAccessReviewCampaign(ctx, c)
+	updated, err := upstream.Storage().UpdateAccessReviewCampaign(ctx, c)
 	require.NoError(t, err)
 	assert.True(t, updated, "closing a still-open campaign must succeed")
 
-	open, err = downstream.Storage().GetOpenAccessReviewCampaign(ctx, projectID)
+	// Re-verify directly against the upstream, not through the SAME downstream
+	// client used above: the client caches successful GET responses for 5
+	// minutes, invalidated only by a MUTATION that goes through that SAME
+	// client (internal/storage/remote/client.go) — since the close above was
+	// applied directly against the upstream (bypassing the downstream client
+	// entirely), the shared "downstream" client's already-cached
+	// GetOpenAccessReviewCampaign response would otherwise be served stale
+	// here. The downstream wire path for these two reads was already proven
+	// above (the pre-close GetOpenAccessReviewCampaign call).
+	open, err = upstream.Storage().GetOpenAccessReviewCampaign(ctx, projectID)
 	require.NoError(t, err)
 	assert.Nil(t, open, "no campaign is open once the only one is closed")
 
-	closedCampaign, err = downstream.Storage().GetLatestClosedAccessReviewCampaign(ctx, projectID)
+	closedCampaign, err = upstream.Storage().GetLatestClosedAccessReviewCampaign(ctx, projectID)
 	require.NoError(t, err)
 	require.NotNil(t, closedCampaign)
 	assert.Equal(t, c.ID, closedCampaign.ID)
-}
-
-// TestRemoteStorageAccessReviewCampaign_UpdateRejectsWhenAlreadyClosed_RealServer
-// proves UpdateAccessReviewCampaign's conditional `WHERE state = 'open'` UPDATE
-// survives the HTTP hop faithfully: a second close attempt against an
-// already-closed campaign must report updated=false (a lost race), not
-// silently re-apply.
-func TestRemoteStorageAccessReviewCampaign_UpdateRejectsWhenAlreadyClosed_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
-	ctx := context.Background()
-	now := time.Now()
-
-	c, err := downstream.Storage().CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID: projectID, Name: "double-close", State: core.CampaignStateOpen, CreatedBy: 1, CreatedAt: now,
-	})
-	require.NoError(t, err)
-
-	closedAt := time.Now()
-	firstClose := &models.AccessReviewCampaign{ID: c.ID, ProjectID: projectID, Name: c.Name, State: core.CampaignStateClosed, ClosedBy: 1, ClosedAt: &closedAt}
-	updated, err := downstream.Storage().UpdateAccessReviewCampaign(ctx, firstClose)
-	require.NoError(t, err)
-	assert.True(t, updated, "the first close must win")
-
-	secondClose := &models.AccessReviewCampaign{ID: c.ID, ProjectID: projectID, Name: c.Name, State: core.CampaignStateClosed, ClosedBy: 2, ClosedAt: &closedAt}
-	updated, err = downstream.Storage().UpdateAccessReviewCampaign(ctx, secondClose)
-	require.NoError(t, err, "a lost race is reported via the bool, not an error")
-	assert.False(t, updated, "a second close against an already-closed campaign must be rejected")
-
-	fetched, err := downstream.Storage().GetAccessReviewCampaign(ctx, c.ID)
-	require.NoError(t, err)
-	assert.Equal(t, uint(1), fetched.ClosedBy, "the winning close's ClosedBy must not be clobbered by the loser")
 }
 
 // TestRemoteStorageAccessReviewCampaign_ItemsRoundTrip_RealServer proves
@@ -301,58 +280,3 @@ func TestRemoteStorageAccessReviewCampaign_UpdateItemRejectsWhenAlreadyDecided_R
 	assert.Equal(t, core.ReviewItemAttested, fetched.Decision, "the winning decision must not be clobbered by the loser")
 }
 
-// TestRemoteStorageAccessReviewCampaign_ConcurrentClose_OnlyOneWins_RealServer
-// drives real concurrent close attempts, through the REAL HTTP proxy hop (not
-// direct LocalStorage calls, unlike
-// store.TestConcurrency_UpdateAccessReviewCampaign_OnlyOneCloseWins), against
-// the SAME open campaign and asserts the conditional UPDATE — running
-// server-side inside a single proxied round trip — still lets exactly one
-// win. This is the end-to-end proof that access_review_campaigns_proxy.go's
-// atomicity analysis holds: no separate lock+update pair was introduced (and
-// none was needed) to preserve the guarantee across the wire.
-func TestRemoteStorageAccessReviewCampaign_ConcurrentClose_OnlyOneWins_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
-	ctx := context.Background()
-	now := time.Now()
-
-	c, err := downstream.Storage().CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID: projectID, Name: "concurrent-close", State: core.CampaignStateOpen, CreatedBy: 1, CreatedAt: now,
-	})
-	require.NoError(t, err)
-
-	const racers = 16
-	var succeeded atomic.Int64
-	errs := make(chan error, racers)
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	for i := 0; i < racers; i++ {
-		wg.Add(1)
-		closerID := uint(300 + i)
-		go func(closerID uint) {
-			defer wg.Done()
-			<-start
-			closedAt := time.Now()
-			candidate := &models.AccessReviewCampaign{ID: c.ID, ProjectID: projectID, Name: c.Name, State: core.CampaignStateClosed, ClosedBy: closerID, ClosedAt: &closedAt}
-			ok, err := downstream.Storage().UpdateAccessReviewCampaign(context.Background(), candidate)
-			if err != nil {
-				errs <- err
-				return
-			}
-			if ok {
-				succeeded.Add(1)
-			}
-		}(closerID)
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		require.NoError(t, err)
-	}
-
-	assert.Equal(t, int64(1), succeeded.Load(), "exactly one concurrent close may win over the proxy — never zero, never more than one")
-
-	fetched, err := downstream.Storage().GetAccessReviewCampaign(ctx, c.ID)
-	require.NoError(t, err)
-	assert.Equal(t, core.CampaignStateClosed, fetched.State, "the winning close must have been persisted")
-}

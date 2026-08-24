@@ -180,18 +180,6 @@ func TestListGroupRoleAssignmentsProxy_DBError_S32(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// ── AuditHandler / retention_proxy.go ─────────────────────────────────────────
-
-func TestDeleteAnomalyAlertsBeforeProxy_DBError_S32(t *testing.T) {
-	t.Parallel()
-	h := NewAuditHandler(freshCoreBrokenS32(t))
-	body := bytes.NewBufferString(`{"ack_before":"2020-01-01T00:00:00Z","unack_ceiling":"2020-06-01T00:00:00Z"}`)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/retention/anomaly-alerts/purge", body)
-	w := httptest.NewRecorder()
-	h.DeleteAnomalyAlertsBeforeProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── DashboardHandler / risk_exceptions_proxy.go ───────────────────────────────
 
 func TestGetRiskExceptionProxy_DBError_S32(t *testing.T) {

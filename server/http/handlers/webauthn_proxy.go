@@ -1,10 +1,12 @@
 // webauthn_proxy.go — server-side endpoints backing RemoteStorage's WebAuthn
-// storage primitives (ADR-036/ADR-049, finding #517): CreateWebAuthnCredential/
+// storage primitives (ADR-036/ADR-049, finding #517):
 // ListWebAuthnCredentials/GetWebAuthnCredentialByCredID/
 // LockWebAuthnCredentialForUpdate/UpdateWebAuthnCredential/
-// AdvanceWebAuthnCredentialCounter/DeleteWebAuthnCredential/
-// CountWebAuthnCredentials/SetUserWebAuthnEnabled/CreateWebAuthnSession/
-// ConsumeWebAuthnSession.
+// AdvanceWebAuthnCredentialCounter/CountWebAuthnCredentials/
+// CreateWebAuthnSession/ConsumeWebAuthnSession. (CreateWebAuthnCredentialProxy/
+// DeleteWebAuthnCredentialProxy/SetUserWebAuthnEnabledProxy were deleted --
+// G80 liveness sweep found no live caller for any of them; see
+// docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // its WebAuthn storage calls to whichever upstream server it's configured
@@ -156,26 +158,6 @@ func parseWebAuthnUserIDQuery(w http.ResponseWriter, r *http.Request) (userID ui
 	return uint(id), true
 }
 
-// CreateWebAuthnCredentialProxy handles POST /api/v1/system/webauthn/credentials.
-func (h *AuthHandler) CreateWebAuthnCredentialProxy(w http.ResponseWriter, r *http.Request) {
-	var body webAuthnCredentialProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if body.UserID == 0 || len(body.CredentialID) == 0 {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and credential_id are required")
-		return
-	}
-	row := body.toModel()
-	if err := h.coreService.Storage().CreateWebAuthnCredential(r.Context(), row); err != nil {
-		log.Printf("webauthn proxy: create credential failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newWebAuthnCredentialProxyWire(row))
-}
-
 // ListWebAuthnCredentialsProxy handles GET
 // /api/v1/system/webauthn/credentials?user_id=X.
 func (h *AuthHandler) ListWebAuthnCredentialsProxy(w http.ResponseWriter, r *http.Request) {
@@ -318,33 +300,6 @@ func (h *AuthHandler) AdvanceWebAuthnCredentialCounterProxy(w http.ResponseWrite
 	writeRemoteAPISuccess(w, map[string]bool{"advanced": advanced})
 }
 
-// DeleteWebAuthnCredentialProxy handles DELETE
-// /api/v1/system/webauthn/users/{userId}/credentials/{id} — scoped by user (in
-// the path, not just a query parameter) so a caller can't delete another user's
-// passkey by id, mirroring the local implementation's own ownership check.
-func (h *AuthHandler) DeleteWebAuthnCredentialProxy(w http.ResponseWriter, r *http.Request) {
-	userID, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user id")
-		return
-	}
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid credential id")
-		return
-	}
-	if err := h.coreService.Storage().DeleteWebAuthnCredential(r.Context(), uint(userID), uint(id)); err != nil {
-		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errWebAuthnCredNotFound)
-			return
-		}
-		log.Printf("webauthn proxy: delete credential failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
-}
-
 // CountWebAuthnCredentialsProxy handles GET
 // /api/v1/system/webauthn/credentials/count?user_id=X.
 func (h *AuthHandler) CountWebAuthnCredentialsProxy(w http.ResponseWriter, r *http.Request) {
@@ -359,32 +314,6 @@ func (h *AuthHandler) CountWebAuthnCredentialsProxy(w http.ResponseWriter, r *ht
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]int64{"count": n})
-}
-
-// setUserWebAuthnEnabledProxyBody is the wire body for SetUserWebAuthnEnabledProxy.
-type setUserWebAuthnEnabledProxyBody struct {
-	Enabled bool `json:"enabled"`
-}
-
-// SetUserWebAuthnEnabledProxy handles PUT
-// /api/v1/system/webauthn/users/{userId}/webauthn-enabled.
-func (h *AuthHandler) SetUserWebAuthnEnabledProxy(w http.ResponseWriter, r *http.Request) {
-	userID, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user id")
-		return
-	}
-	var body setUserWebAuthnEnabledProxyBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if err := h.coreService.Storage().SetUserWebAuthnEnabled(r.Context(), uint(userID), body.Enabled); err != nil {
-		log.Printf("webauthn proxy: set webauthn enabled failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
 }
 
 // CreateWebAuthnSessionProxy handles POST /api/v1/system/webauthn/sessions.

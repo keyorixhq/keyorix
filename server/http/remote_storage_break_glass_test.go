@@ -106,43 +106,38 @@ func buildActiveBreakGlassActivation(now time.Time, projectID, userID uint) *mod
 	}
 }
 
-// TestRemoteStorageBreakGlass_CreateGetListUpdate_RealServer proves the fix for
-// CreateBreakGlassActivation/GetBreakGlassActivation/ListBreakGlassActivations/
-// UpdateBreakGlassActivation: an activation is genuinely persisted on the
-// upstream server via the DOWNSTREAM's RemoteStorage, fetchable by ID, listed,
-// and updatable — all via storage.type: remote against a real router, not a
-// protocol mock.
-func TestRemoteStorageBreakGlass_CreateGetListUpdate_RealServer(t *testing.T) {
+// TestRemoteStorageBreakGlass_GetList_RealServer proves
+// GetBreakGlassActivation/ListBreakGlassActivations: an activation seeded
+// directly against the upstream's real storage (CreateBreakGlassActivationProxy/
+// UpdateBreakGlassActivationProxy were deleted -- G80 liveness sweep found no
+// live caller for either; see docs/g80-remediation-notes.md) is fetchable by
+// ID and listed correctly via the DOWNSTREAM's RemoteStorage — storage.type:
+// remote against a real router, not a protocol mock.
+func TestRemoteStorageBreakGlass_GetList_RealServer(t *testing.T) {
 	upstream, downstream, projectID, _, _ := newUpstreamDownstreamForBreakGlass(t)
 	ctx := context.Background()
 	now := time.Now()
 
-	act, err := downstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 10))
-	require.NoError(t, err, "creating a break-glass activation must succeed via storage.type: remote")
-	require.NotZero(t, act.ID, "the upstream must assign a real ID")
-	assert.Equal(t, "editor", act.RoleName)
-	assert.Equal(t, core.BreakGlassActive, act.State)
-	assert.Equal(t, projectID, act.ProjectID)
-	assert.EqualValues(t, 10, act.UserID)
-
-	// Confirm it is a REAL row in the upstream's own storage (not just "the call
-	// didn't error"), by reading it back directly against upstream.
-	direct, err := upstream.Storage().GetBreakGlassActivation(ctx, act.ID)
+	act, err := upstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 10))
 	require.NoError(t, err)
-	assert.Equal(t, "prod incident #42", direct.Justification)
+	require.NotZero(t, act.ID)
 
 	// GetBreakGlassActivation via the downstream (RemoteStorage) round-trips
 	// every field correctly.
 	fetched, err := downstream.Storage().GetBreakGlassActivation(ctx, act.ID)
 	require.NoError(t, err)
 	assert.Equal(t, act.ID, fetched.ID)
+	assert.Equal(t, "editor", fetched.RoleName)
+	assert.Equal(t, core.BreakGlassActive, fetched.State)
+	assert.Equal(t, projectID, fetched.ProjectID)
+	assert.EqualValues(t, 10, fetched.UserID)
 	assert.Equal(t, act.Justification, fetched.Justification)
 	require.NotNil(t, fetched.ExpiresAt)
 	assert.WithinDuration(t, *act.ExpiresAt, *fetched.ExpiresAt, time.Second)
 
 	// A second activation for a DIFFERENT user, then list both back via the
 	// downstream's ListBreakGlassActivations.
-	_, err = downstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 11))
+	_, err = upstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 11))
 	require.NoError(t, err)
 
 	rows, err := downstream.Storage().ListBreakGlassActivations(ctx, projectID)
@@ -154,13 +149,6 @@ func TestRemoteStorageBreakGlass_CreateGetListUpdate_RealServer(t *testing.T) {
 	}
 	assert.True(t, userIDs[10])
 	assert.True(t, userIDs[11])
-
-	// UpdateBreakGlassActivation persists a change via the downstream.
-	fetched.Justification = "updated justification text"
-	require.NoError(t, downstream.Storage().UpdateBreakGlassActivation(ctx, fetched))
-	reFetched, err := upstream.Storage().GetBreakGlassActivation(ctx, act.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "updated justification text", reFetched.Justification, "the update must be visible directly on the upstream's own storage")
 }
 
 // TestRemoteStorageBreakGlass_GetNotFound_RealServer proves a clean not-found
@@ -173,39 +161,20 @@ func TestRemoteStorageBreakGlass_GetNotFound_RealServer(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestRemoteStorageBreakGlass_CreateRejectsSecondActiveForSameProjectUser_RealServer
-// proves CreateBreakGlassActivationProxy's 409/BREAK_GLASS_ALREADY_ACTIVE
-// wire-code translation round-trips correctly: a second concurrent-active
-// activation for the SAME (project_id, user_id) is rejected with the same
-// storage.ErrBreakGlassAlreadyActive sentinel core.ActivateBreakGlass's
-// errors.Is check depends on — not an opaque "create failed" error — even though
-// this now went over a real HTTP hop instead of a direct in-process call.
-func TestRemoteStorageBreakGlass_CreateRejectsSecondActiveForSameProjectUser_RealServer(t *testing.T) {
-	_, downstream, projectID, _, _ := newUpstreamDownstreamForBreakGlass(t)
-	ctx := context.Background()
-	now := time.Now()
-
-	first, err := downstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 42))
-	require.NoError(t, err)
-	assert.NotZero(t, first.ID)
-
-	_, err = downstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 42))
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, coreStorage.ErrBreakGlassAlreadyActive), "got %v", err)
-}
-
 // TestRemoteStorageBreakGlass_RevokeThenRevokeAgainFails_RealServer proves
 // RevokeBreakGlassActivationProxy's conditional `WHERE state = 'active'` update
 // (and its 409/BREAK_GLASS_NOT_ACTIVE wire-code translation) round-trips
 // correctly: revoking an already-revoked activation cleanly fails with
 // storage.ErrBreakGlassNotActive, the sentinel core.RevokeBreakGlass's
-// errors.Is check depends on.
+// errors.Is check depends on. The activation is seeded directly against the
+// upstream's real storage (CreateBreakGlassActivationProxy was deleted -- G80
+// liveness sweep found no live caller; see docs/g80-remediation-notes.md).
 func TestRemoteStorageBreakGlass_RevokeThenRevokeAgainFails_RealServer(t *testing.T) {
-	_, downstream, projectID, _, _ := newUpstreamDownstreamForBreakGlass(t)
+	upstream, downstream, projectID, _, _ := newUpstreamDownstreamForBreakGlass(t)
 	ctx := context.Background()
 	now := time.Now()
 
-	act, err := downstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 7))
+	act, err := upstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 7))
 	require.NoError(t, err)
 
 	require.NoError(t, downstream.Storage().RevokeBreakGlassActivation(ctx, act.ID, 1, time.Now()))
@@ -219,79 +188,22 @@ func TestRemoteStorageBreakGlass_RevokeThenRevokeAgainFails_RealServer(t *testin
 	assert.True(t, errors.Is(err, coreStorage.ErrBreakGlassNotActive), "got %v", err)
 }
 
-// TestRemoteStorageBreakGlass_ConcurrentActivationRace_RealServer is the critical
-// #519 test (mirroring #507's TestRemoteStorageInvitation_ConcurrentAcceptRace_
-// RealServer and #511's project-membership race test): it fires N concurrent
-// "activate" requests for the SAME (project_id, user_id) over real HTTP against
-// the real upstream router, and asserts EXACTLY ONE succeeds — proving
-// CreateBreakGlassActivationProxy's real DB-level partial-unique-index race gate
-// (local_break_glass.go's `OnConflict{DoNothing: true}` insert, backing
-// uniq_break_glass_active_project_user — docs/security/BUGS.md #104, PR #670)
-// still closes the double-activation race even across a network hop, not a
-// client-side "check-then-create" sequence, which would reopen exactly that race.
-func TestRemoteStorageBreakGlass_ConcurrentActivationRace_RealServer(t *testing.T) {
-	_, downstream, projectID, baseURL, apiKey := newUpstreamDownstreamForBreakGlass(t)
-	now := time.Now()
-
-	const n = 20
-	var successCount atomic.Int64
-	var conflictCount atomic.Int64
-	var otherErrCount atomic.Int64
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			// Each racer gets its OWN RemoteStorage client (see
-			// newBreakGlassRemoteClient's doc comment) so the 19 EXPECTED 409
-			// Conflict responses from losing racers can't trip a shared client's
-			// circuit breaker.
-			client := newBreakGlassRemoteClient(t, baseURL, apiKey)
-			_, err := client.Storage().CreateBreakGlassActivation(
-				context.Background(), buildActiveBreakGlassActivation(now, projectID, 99))
-			switch {
-			case err == nil:
-				successCount.Add(1)
-			case errors.Is(err, coreStorage.ErrBreakGlassAlreadyActive):
-				conflictCount.Add(1)
-			default:
-				otherErrCount.Add(1)
-				t.Logf("unexpected error: %v", err)
-			}
-		}()
-	}
-	wg.Wait()
-
-	assert.Zero(t, otherErrCount.Load(), "every losing racer must fail with the sentinel, not some other error")
-	assert.EqualValues(t, 1, successCount.Load(), "exactly one concurrent activation must win, regardless of goroutine scheduling")
-	assert.EqualValues(t, n-1, conflictCount.Load())
-
-	// And the upstream's own storage agrees: exactly one 'active' row exists for
-	// this (project, user).
-	rows, err := downstream.Storage().ListBreakGlassActivations(context.Background(), projectID)
-	require.NoError(t, err)
-	activeCount := 0
-	for _, r := range rows {
-		if r.UserID == 99 && r.State == core.BreakGlassActive {
-			activeCount++
-		}
-	}
-	assert.Equal(t, 1, activeCount)
-}
-
-// TestRemoteStorageBreakGlass_ConcurrentRevokeRace_RealServer proves the OTHER
-// half of #519's atomicity requirement: N concurrent "revoke" requests against
-// the SAME already-active activation must yield exactly one winner, via
-// RevokeBreakGlassActivationProxy's conditional `UPDATE ... WHERE id = ? AND
-// state = 'active'` write (local_break_glass.go's RevokeBreakGlassActivation) —
-// not a client-side "GET, check state, then PUT" sequence, which would reopen a
-// double-revoke TOCTOU race.
+// TestRemoteStorageBreakGlass_ConcurrentRevokeRace_RealServer proves the
+// #519 atomicity requirement for revoke: N concurrent "revoke" requests
+// against the SAME already-active activation must yield exactly one winner,
+// via RevokeBreakGlassActivationProxy's conditional `UPDATE ... WHERE id = ?
+// AND state = 'active'` write (local_break_glass.go's RevokeBreakGlassActivation)
+// — not a client-side "GET, check state, then PUT" sequence, which would
+// reopen a double-revoke TOCTOU race. The activation is seeded directly
+// against the upstream's real storage (CreateBreakGlassActivationProxy was
+// deleted -- G80 liveness sweep found no live caller; see
+// docs/g80-remediation-notes.md).
 func TestRemoteStorageBreakGlass_ConcurrentRevokeRace_RealServer(t *testing.T) {
-	_, downstream, projectID, baseURL, apiKey := newUpstreamDownstreamForBreakGlass(t)
+	upstream, downstream, projectID, baseURL, apiKey := newUpstreamDownstreamForBreakGlass(t)
 	ctx := context.Background()
 	now := time.Now()
 
-	act, err := downstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 55))
+	act, err := upstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 55))
 	require.NoError(t, err)
 
 	const n = 20

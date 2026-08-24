@@ -546,37 +546,6 @@ func TestRunComplianceDigest_Success_S19(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "sent")
 }
 
-// ── connect_grants_proxy.go: DeleteConnectRefGrantProxy ──────────────────────
-
-// TestDeleteConnectRefGrantProxy_BadID_S19 — non-numeric grant id → 400.
-func TestDeleteConnectRefGrantProxy_BadID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/connect-grants/bad", nil),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
-
-// TestDeleteConnectRefGrantProxy_Success_S19 — valid id, not-found is still success (idempotent delete).
-func TestDeleteConnectRefGrantProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/connect-grants/9999", nil),
-		"id", "9999",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-	// May return 200 (idempotent) or 500 (not found treated as error) depending on storage
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusInternalServerError)
-}
-
 // ── dynamic_secrets_proxy.go: CountActiveLeasesProxy ─────────────────────────
 
 // TestCountActiveLeasesProxy_MissingConfigID_S19 — missing config_id → 400.
@@ -784,52 +753,6 @@ func TestCreateLegalHoldProxy_RefusesNonAdminActor_S19(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateLegalHoldProxy(w, req)
 	assert.NotEqual(t, http.StatusOK, w.Code, "a caller with no admin-tier role must not be able to place a legal hold via the proxy")
-}
-
-// ── break_glass_proxy.go: CreateBreakGlassActivationProxy ────────────────────
-
-// TestCreateBreakGlassActivationProxy_BadBody_S19 — malformed JSON → 400.
-func TestCreateBreakGlassActivationProxy_BadBody_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass",
-		bytes.NewBufferString("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
-
-// TestCreateBreakGlassActivationProxy_MissingFields_S19 — missing required fields → 400.
-func TestCreateBreakGlassActivationProxy_MissingFields_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	// project_id=0, user_id=0, state="" — all zero/empty
-	body, _ := json.Marshal(map[string]interface{}{})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_Success_S19 — valid body → 200.
-func TestCreateBreakGlassActivationProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	body, _ := json.Marshal(map[string]interface{}{
-		"project_id": 1,
-		"user_id":    1,
-		"state":      "active",
-		"reason":     "emergency",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
 }
 
 // ── mfa_management_proxy.go: ActivateMFASecretProxy ─────────────────────────

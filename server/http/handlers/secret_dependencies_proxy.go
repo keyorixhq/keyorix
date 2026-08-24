@@ -1,8 +1,9 @@
 // secret_dependencies_proxy.go — server-side endpoints backing RemoteStorage's secret
 // dependency-graph storage primitives (ADR-052): CreateSecretDependency/
 // GetSecretDependency/ListSecretDependenciesForProject/
-// ListSecretDependenciesForProjectForUpdate/DeleteSecretDependency/
-// CreateSecretDependencyExclusive.
+// ListSecretDependenciesForProjectForUpdate/CreateSecretDependencyExclusive.
+// (DeleteSecretDependencyProxy was deleted -- G80 liveness sweep found no live
+// caller; see docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies its
 // secret-dependency storage calls to whichever upstream server it's configured
@@ -247,25 +248,6 @@ func (h *SecretHandler) ListSecretDependenciesForProjectForUpdateProxy(w http.Re
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]interface{}{"dependencies": newSecretDependencyProxyWireList(rows)})
-}
-
-// DeleteSecretDependencyProxy handles DELETE /api/v1/system/secret-dependencies/{id}.
-func (h *SecretHandler) DeleteSecretDependencyProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid dependency id")
-		return
-	}
-	if err := h.coreService.Storage().DeleteSecretDependency(r.Context(), uint(id)); err != nil {
-		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "secret dependency not found")
-			return
-		}
-		log.Printf("secret-dependencies proxy: delete failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
 }
 
 func newSecretDependencyProxyWireList(rows []*models.SecretDependency) []secretDependencyProxyWire {

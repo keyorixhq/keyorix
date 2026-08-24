@@ -88,12 +88,15 @@ func buildDynamicSecretConfig(now time.Time, projectID, environmentID uint, name
 	}
 }
 
-// TestRemoteStorageDynamicSecrets_ConfigCreateGetListUpdate_RealServer proves the
-// fix for CreateDynamicSecretConfig/GetDynamicSecretConfig/ListDynamicSecretConfigs/
-// UpdateDynamicSecretConfig: a config is genuinely persisted on the upstream server
-// via the DOWNSTREAM's RemoteStorage, fetchable by ID, listed, and updatable — all
-// via storage.type: remote against a real router, not a protocol mock.
-func TestRemoteStorageDynamicSecrets_ConfigCreateGetListUpdate_RealServer(t *testing.T) {
+// TestRemoteStorageDynamicSecrets_ConfigCreateGetList_RealServer proves the fix
+// for CreateDynamicSecretConfig/GetDynamicSecretConfig/ListDynamicSecretConfigs:
+// a config is genuinely persisted on the upstream server via the DOWNSTREAM's
+// RemoteStorage, fetchable by ID, and listed — all via storage.type: remote
+// against a real router, not a protocol mock. The classification update
+// (formerly also exercised here) is applied directly against the upstream's
+// real storage (UpdateDynamicSecretConfigProxy was deleted -- G80 liveness
+// sweep found no live caller; see docs/g80-remediation-notes.md).
+func TestRemoteStorageDynamicSecrets_ConfigCreateGetList_RealServer(t *testing.T) {
 	upstream, downstream, projectID, environmentID := newUpstreamDownstreamForDynamicSecrets(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -136,9 +139,11 @@ func TestRemoteStorageDynamicSecrets_ConfigCreateGetListUpdate_RealServer(t *tes
 	assert.True(t, names["app-db"])
 	assert.True(t, names["cache-db"])
 
-	// UpdateDynamicSecretConfig persists a change (classification) via the downstream.
+	// A classification change applied directly against the upstream's storage
+	// is visible via GetDynamicSecretConfig/CountDynamicSecretConfigsByClassification
+	// through the downstream.
 	fetched.Classification = "confidential"
-	require.NoError(t, downstream.Storage().UpdateDynamicSecretConfig(ctx, fetched))
+	require.NoError(t, upstream.Storage().UpdateDynamicSecretConfig(ctx, fetched))
 	reFetched, err := upstream.Storage().GetDynamicSecretConfig(ctx, cfg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "confidential", reFetched.Classification, "the update must be visible directly on the upstream's own storage")
@@ -159,21 +164,20 @@ func TestRemoteStorageDynamicSecrets_GetConfigNotFound_RealServer(t *testing.T) 
 	require.Error(t, err)
 }
 
-// TestRemoteStorageDynamicSecrets_AdminDSNNeverPlaintextOnUpstream_RealServer is
-// the critical sensitive-data-boundary test for this finding: it encrypts an
-// admin DSN with a LOCAL encryption service (standing in for the downstream
-// server's own encryptAuthSecret, exactly as internal/core.CreateDynamicSecretConfig
-// does before ever calling storage.CreateDynamicSecretConfig/
-// UpdateDynamicSecretConfig), persists ONLY the resulting ciphertext through the
-// downstream's RemoteStorage, and proves:
-//  1. the RAW bytes visible directly in the upstream's own storage are NOT the
-//     plaintext admin DSN (the upstream never sees it — it only ever receives
-//     opaque ciphertext over the wire);
-//  2. fetching the config back via the downstream's RemoteStorage and decrypting
-//     with the SAME encryption service reproduces the exact original plaintext,
-//     proving the ciphertext round-trips through this HTTP hop byte-for-byte
-//     (encoding/json base64 for []byte fields), unmodified.
-func TestRemoteStorageDynamicSecrets_AdminDSNNeverPlaintextOnUpstream_RealServer(t *testing.T) {
+// TestRemoteStorageDynamicSecrets_AdminDSNRoundTripsViaGet_RealServer is the
+// sensitive-data-boundary test for this finding: it encrypts an admin DSN with
+// a LOCAL encryption service (standing in for the downstream server's own
+// encryptAuthSecret, exactly as internal/core.CreateDynamicSecretConfig does
+// before ever calling storage.CreateDynamicSecretConfig/UpdateDynamicSecretConfig),
+// persists ONLY the resulting ciphertext directly against the upstream's real
+// storage (UpdateDynamicSecretConfigProxy was deleted -- G80 liveness sweep
+// found no live caller; see docs/g80-remediation-notes.md — so this write no
+// longer crosses the wire), and proves fetching the config back via the
+// DOWNSTREAM's RemoteStorage and decrypting with the SAME encryption service
+// reproduces the exact original plaintext: the ciphertext round-trips through
+// the GET HTTP hop byte-for-byte (encoding/json base64 for []byte fields),
+// unmodified.
+func TestRemoteStorageDynamicSecrets_AdminDSNRoundTripsViaGet_RealServer(t *testing.T) {
 	upstream, downstream, projectID, environmentID := newUpstreamDownstreamForDynamicSecrets(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -189,24 +193,25 @@ func TestRemoteStorageDynamicSecrets_AdminDSNNeverPlaintextOnUpstream_RealServer
 	require.NoError(t, err)
 
 	// Phase 2: encrypt LOCALLY (standing in for the downstream server's own
-	// encryptAuthSecret) and persist only the ciphertext.
+	// encryptAuthSecret) and persist only the ciphertext, directly against the
+	// upstream's storage.
 	ct, meta, err := enc.EncryptSecretWithAAD([]byte(adminDSNPlain), encryption.DynamicSecretConfigAAD(cfg.ID, projectID, environmentID))
 	require.NoError(t, err)
 	require.NotEqual(t, adminDSNPlain, string(ct), "the encrypted bytes must not equal the plaintext")
 	cfg.AdminDSNEnc = ct
 	cfg.AdminDSNMeta = meta
-	require.NoError(t, downstream.Storage().UpdateDynamicSecretConfig(ctx, cfg))
+	require.NoError(t, upstream.Storage().UpdateDynamicSecretConfig(ctx, cfg))
 
-	// Property 1: the upstream's OWN storage never holds the plaintext DSN anywhere
-	// in the row — only the ciphertext this test encrypted itself.
+	// The upstream's OWN storage never holds the plaintext DSN anywhere in the
+	// row — only the ciphertext this test encrypted itself.
 	direct, err := upstream.Storage().GetDynamicSecretConfig(ctx, cfg.ID)
 	require.NoError(t, err)
-	assert.NotContains(t, string(direct.AdminDSNEnc), "s3cr3t", "the upstream must never receive/store the plaintext admin DSN")
+	assert.NotContains(t, string(direct.AdminDSNEnc), "s3cr3t", "the upstream must never hold the plaintext admin DSN")
 	assert.Equal(t, ct, direct.AdminDSNEnc, "the upstream stores the exact ciphertext bytes it was given, unmodified")
 
-	// Property 2: fetching back through the downstream's RemoteStorage and
-	// decrypting with the SAME encryption service reproduces the original
-	// plaintext exactly — the ciphertext round-trips through the HTTP hop intact.
+	// Fetching back through the downstream's RemoteStorage and decrypting with
+	// the SAME encryption service reproduces the original plaintext exactly —
+	// the ciphertext round-trips through the GET HTTP hop intact.
 	fetched, err := downstream.Storage().GetDynamicSecretConfig(ctx, cfg.ID)
 	require.NoError(t, err)
 	plain, err := enc.DecryptSecretWithAAD(fetched.AdminDSNEnc, encryption.DynamicSecretConfigAAD(cfg.ID, projectID, environmentID))
@@ -233,13 +238,16 @@ func buildDynamicSecretLease(now time.Time, configID, projectID, environmentID u
 	}
 }
 
-// TestRemoteStorageDynamicSecrets_LeaseCreateGetListCountUpdate_RealServer proves
-// the fix for CreateDynamicSecretLease/GetDynamicSecretLease/
-// ListDynamicSecretLeases/CountActiveLeases/UpdateDynamicSecretLease: a lease is
-// genuinely persisted, fetchable by its opaque LeaseID, listed/counted, and its
-// status transition (revoke) is visible directly on the upstream — all via
-// storage.type: remote against a real router.
-func TestRemoteStorageDynamicSecrets_LeaseCreateGetListCountUpdate_RealServer(t *testing.T) {
+// TestRemoteStorageDynamicSecrets_LeaseGetListCount_RealServer proves the fix
+// for GetDynamicSecretLease/ListDynamicSecretLeases/CountActiveLeases: leases
+// seeded directly against the upstream's real storage
+// (CreateDynamicSecretLeaseProxy/UpdateDynamicSecretLeaseProxy were deleted --
+// G80 liveness sweep found no live caller for either; see
+// docs/g80-remediation-notes.md) are fetchable by their opaque LeaseID,
+// listed/counted, and a status transition (revoke) applied directly against
+// the upstream is visible via the same queries — all via storage.type: remote
+// against a real router.
+func TestRemoteStorageDynamicSecrets_LeaseGetListCount_RealServer(t *testing.T) {
 	upstream, downstream, projectID, environmentID := newUpstreamDownstreamForDynamicSecrets(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -247,23 +255,17 @@ func TestRemoteStorageDynamicSecrets_LeaseCreateGetListCountUpdate_RealServer(t 
 	cfg, err := downstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "lease-test-db"))
 	require.NoError(t, err)
 
-	lease, err := downstream.Storage().CreateDynamicSecretLease(ctx, buildDynamicSecretLease(now, cfg.ID, projectID, environmentID, "lease-abc-123"))
-	require.NoError(t, err, "creating a dynamic-secret lease must succeed via storage.type: remote")
-	require.NotZero(t, lease.ID)
-	assert.Equal(t, "lease-abc-123", lease.LeaseID)
-	assert.Equal(t, "active", lease.Status)
-
-	// A REAL row on the upstream's own storage.
-	direct, err := upstream.Storage().GetDynamicSecretLease(ctx, "lease-abc-123")
+	lease, err := upstream.Storage().CreateDynamicSecretLease(ctx, buildDynamicSecretLease(now, cfg.ID, projectID, environmentID, "lease-abc-123"))
 	require.NoError(t, err)
-	assert.Equal(t, cfg.ID, direct.ConfigID)
+	require.NotZero(t, lease.ID)
 
 	// GetDynamicSecretLease/ListDynamicSecretLeases/CountActiveLeases via the downstream.
 	fetched, err := downstream.Storage().GetDynamicSecretLease(ctx, "lease-abc-123")
 	require.NoError(t, err)
 	assert.Equal(t, lease.RoleName, fetched.RoleName)
+	assert.Equal(t, "active", fetched.Status)
 
-	_, err = downstream.Storage().CreateDynamicSecretLease(ctx, buildDynamicSecretLease(now, cfg.ID, projectID, environmentID, "lease-def-456"))
+	_, err = upstream.Storage().CreateDynamicSecretLease(ctx, buildDynamicSecretLease(now, cfg.ID, projectID, environmentID, "lease-def-456"))
 	require.NoError(t, err)
 
 	leases, err := downstream.Storage().ListDynamicSecretLeases(ctx, cfg.ID)
@@ -274,13 +276,21 @@ func TestRemoteStorageDynamicSecrets_LeaseCreateGetListCountUpdate_RealServer(t 
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), active)
 
-	// UpdateDynamicSecretLease: revoke one lease via the downstream, confirm the
-	// transition is visible directly on the upstream.
+	// Revoke one lease directly against the upstream's storage. Re-verify
+	// directly against the upstream, not through the SAME downstream client
+	// used above: the client caches successful GET responses for 5 minutes,
+	// invalidated only by a MUTATION that goes through that SAME client
+	// (internal/storage/remote/client.go) — since the revoke below is applied
+	// directly against the upstream (bypassing the downstream client
+	// entirely), the shared "downstream" client's already-cached
+	// GetDynamicSecretLease/CountActiveLeases responses would otherwise be
+	// served stale here. The downstream wire path for these two reads was
+	// already proven above (the pre-revoke fetched/active calls).
 	fetched.Status = "revoked"
 	revokedAt := time.Now()
 	fetched.RevokedAt = &revokedAt
 	fetched.RevokeReason = "manual"
-	require.NoError(t, downstream.Storage().UpdateDynamicSecretLease(ctx, fetched))
+	require.NoError(t, upstream.Storage().UpdateDynamicSecretLease(ctx, fetched))
 
 	reFetched, err := upstream.Storage().GetDynamicSecretLease(ctx, "lease-abc-123")
 	require.NoError(t, err)
@@ -289,7 +299,7 @@ func TestRemoteStorageDynamicSecrets_LeaseCreateGetListCountUpdate_RealServer(t 
 	require.NotNil(t, reFetched.RevokedAt)
 
 	// The active count now reflects only the still-active second lease.
-	activeAfter, err := downstream.Storage().CountActiveLeases(ctx, cfg.ID)
+	activeAfter, err := upstream.Storage().CountActiveLeases(ctx, cfg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), activeAfter)
 }

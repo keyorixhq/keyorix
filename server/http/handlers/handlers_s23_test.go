@@ -7,9 +7,6 @@
 //   - dynamic_secrets.go: CreateConfig (happy path with admin+seeded project+env),
 //     IssueLease (no user ctx, bad config id, not found, happy with safe error),
 //     ListLeases (happy path with seeded config)
-//   - dynamic_secrets_proxy.go: UpdateDynamicSecretConfigProxy (happy path),
-//     CreateDynamicSecretLeaseProxy (happy path), UpdateDynamicSecretLeaseProxy
-//     (happy path)
 //   - connect.go: CreateRefGrant (happy path with seeded role), ListRefGrants
 //     (with seeded grants — loop body), DeleteRefGrant (happy path seeded grant)
 //   - admin_jobs.go: RunExpiryReminders (no lead_days — defaults to 0),
@@ -32,7 +29,6 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -357,129 +353,6 @@ func TestDynamic_ListLeases_HappyPath_S23(t *testing.T) {
 	))
 	w := httptest.NewRecorder()
 	h.ListLeases(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
-
-// ── dynamic_secrets_proxy.go: UpdateDynamicSecretConfigProxy happy path ──────
-
-// TestDynProxy_UpdateConfig_HappyPath_S23 verifies the 200 branch: updating a
-// config that exists returns {"updated":true}.
-func TestDynProxy_UpdateConfig_HappyPath_S23(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewDynamicSecretHandler(cs)
-
-	// First create a config via the proxy so we have a real ID.
-	createBody, _ := json.Marshal(map[string]interface{}{
-		"name": "s23-upd-cfg", "project_id": uint(1), "backend_type": "postgres",
-	})
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/dynamic-secrets/configs", bytes.NewReader(createBody))
-	createReq.Header.Set("Content-Type", "application/json")
-	cw := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(cw, createReq)
-	require.Equal(t, http.StatusOK, cw.Code)
-	var createResp map[string]interface{}
-	require.NoError(t, json.NewDecoder(cw.Body).Decode(&createResp))
-	data := createResp["data"].(map[string]interface{})
-	cfgID := uintStr(uint(data["id"].(float64)))
-
-	// Now update it.
-	updateBody, _ := json.Marshal(map[string]interface{}{
-		"name": "s23-upd-cfg-renamed", "project_id": uint(1), "backend_type": "postgres",
-	})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/dynamic-secrets/configs/"+cfgID, bytes.NewReader(updateBody)),
-		"id", cfgID,
-	)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.UpdateDynamicSecretConfigProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
-
-// ── dynamic_secrets_proxy.go: CreateDynamicSecretLeaseProxy happy path ───────
-
-// TestDynProxy_CreateLease_HappyPath_S23 verifies the 200 branch: a fully
-// specified lease row is persisted and returned.
-func TestDynProxy_CreateLease_HappyPath_S23(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewDynamicSecretHandler(cs)
-
-	now := time.Now()
-	body, _ := json.Marshal(map[string]interface{}{
-		"config_id":  uint(1),
-		"lease_id":   "s23-test-lease-001",
-		"project_id": uint(1),
-		"role_name":  "s23_role",
-		"status":     "active",
-		"issued_at":  now,
-		"expires_at": now.Add(time.Hour),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/dynamic-secrets/leases", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretLeaseProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
-
-// ── dynamic_secrets_proxy.go: UpdateDynamicSecretLeaseProxy happy path ───────
-
-// TestDynProxy_UpdateLease_HappyPath_S23 verifies the 200 branch: creating a
-// lease via the proxy and then updating it (with the correct row id) succeeds.
-func TestDynProxy_UpdateLease_HappyPath_S23(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewDynamicSecretHandler(cs)
-
-	now := time.Now()
-	createBody, _ := json.Marshal(map[string]interface{}{
-		"config_id":  uint(1),
-		"lease_id":   "s23-upd-lease-002",
-		"project_id": uint(1),
-		"role_name":  "s23_upd_role",
-		"status":     "active",
-		"issued_at":  now,
-		"expires_at": now.Add(time.Hour),
-	})
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/dynamic-secrets/leases", bytes.NewReader(createBody))
-	createReq.Header.Set("Content-Type", "application/json")
-	cw := httptest.NewRecorder()
-	h.CreateDynamicSecretLeaseProxy(cw, createReq)
-	require.Equal(t, http.StatusOK, cw.Code)
-
-	// Extract the auto-assigned row ID so Save() does an UPDATE not a second INSERT.
-	var createResp map[string]interface{}
-	require.NoError(t, json.NewDecoder(cw.Body).Decode(&createResp))
-	rowData := createResp["data"].(map[string]interface{})
-	rowID := uint(rowData["id"].(float64))
-
-	updateBody, _ := json.Marshal(map[string]interface{}{
-		"id":         rowID,
-		"config_id":  uint(1),
-		"lease_id":   "s23-upd-lease-002",
-		"project_id": uint(1),
-		"role_name":  "s23_upd_role",
-		"status":     "revoked",
-		"issued_at":  now,
-		"expires_at": now.Add(time.Hour),
-	})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/dynamic-secrets/leases/s23-upd-lease-002", bytes.NewReader(updateBody)),
-		"leaseID", "s23-upd-lease-002",
-	)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.UpdateDynamicSecretLeaseProxy(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}

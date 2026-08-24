@@ -17,24 +17,21 @@
 //     id, valid)
 //   - environment_catalog_proxy.go: ListEnvironmentsProxy, ListEnvironmentsByProject
 //     (bad id, include_deleted), GetEnvironmentProxy (bad id, not found),
-//     DeleteEnvironmentProxy (bad id, not found), RestoreEnvironmentProxy (bad
-//     projectId, bad id, not found)
+//     DeleteEnvironmentProxy (bad id, not found)
 //   - groups_proxy.go: CreateGroupProxy (bad JSON, missing name, valid), GetGroupProxy
 //     (bad id, not found), UpdateGroupProxy (bad id, bad JSON, valid), DeleteGroupProxy
 //     (bad id, valid), RestoreGroupProxy (bad id, not found), ListGroupsProxy,
 //     ListGroupsPageProxy (bad offset, bad limit, valid), AddGroupMemberProxy (bad id,
 //     bad JSON, missing user_id, valid)
-//   - break_glass_proxy.go: CreateBreakGlassActivationProxy (bad JSON, missing fields,
-//     valid), GetBreakGlassActivationProxy (bad id, not found), ListBreakGlassActivationsProxy
-//     (missing/invalid project_id, valid), UpdateBreakGlassActivationProxy (bad id,
-//     valid), RevokeBreakGlassActivationProxy (bad id, bad JSON, missing revoked_by, valid)
+//   - break_glass_proxy.go: GetBreakGlassActivationProxy (bad id, not found),
+//     ListBreakGlassActivationsProxy (missing/invalid project_id, valid),
+//     RevokeBreakGlassActivationProxy (bad id, bad JSON, missing revoked_by, valid)
 package handlers
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -813,65 +810,6 @@ func TestDeleteEnvironmentProxy_NotFound_S22(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestRestoreEnvironmentProxy_BadProjectID_S22 verifies the 400 branch on a
-// non-numeric {projectId}.
-func TestRestoreEnvironmentProxy_BadProjectID_S22(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-
-	req := withChiParams2_S22(
-		httptest.NewRequest(http.MethodPost,
-			"/api/v1/system/projects/bad/environments/1/restore", nil),
-		"projectId", "bad", "id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.RestoreEnvironmentProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestRestoreEnvironmentProxy_BadEnvID_S22 verifies the 400 branch on a
-// non-numeric {id}.
-func TestRestoreEnvironmentProxy_BadEnvID_S22(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-
-	req := withChiParams2_S22(
-		httptest.NewRequest(http.MethodPost,
-			"/api/v1/system/projects/1/environments/bad/restore", nil),
-		"projectId", "1", "id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.RestoreEnvironmentProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestRestoreEnvironmentProxy_NotFound_S22 verifies the not-found branch when
-// a project exists (so requireLiveProject passes) but the environment id does
-// not exist (or is not soft-deleted) — returns 404.
-func TestRestoreEnvironmentProxy_NotFound_S22(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	// Seed a live project so requireLiveProject passes inside RestoreEnvironment.
-	proj := &models.Project{Name: "restore-env-proj-s22"}
-	require.NoError(t, db.Create(proj).Error)
-	projIDStr := fmt.Sprintf("%d", proj.ID)
-
-	req := withChiParams2_S22(
-		httptest.NewRequest(http.MethodPost,
-			"/api/v1/system/projects/"+projIDStr+"/environments/9999/restore", nil),
-		"projectId", projIDStr, "id", "9999",
-	)
-	w := httptest.NewRecorder()
-	h.RestoreEnvironmentProxy(w, req)
-
-	// The environment 9999 is not soft-deleted → "environment not found or not
-	// deleted" → isEnvironmentNotFound → 404.
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── groups_proxy.go ──────────────────────────────────────────────────────────
 
 // TestCreateGroupProxy_BadJSON_S22 verifies the 400 branch on malformed JSON.
@@ -1119,65 +1057,6 @@ func TestAddGroupMemberProxy_MissingUserID_S22(t *testing.T) {
 
 // ── break_glass_proxy.go ──────────────────────────────────────────────────────
 
-// TestCreateBreakGlassActivationProxy_BadJSON_S22 verifies the 400 branch.
-func TestCreateBreakGlassActivationProxy_BadJSON_S22(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass",
-		bytes.NewBufferString(`{bad`))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_MissingFields_S22 verifies the 400
-// branch when required fields are zero.
-func TestCreateBreakGlassActivationProxy_MissingFields_S22(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"project_id": 0,
-		"user_id":    0,
-		"state":      "",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_Valid_S22 verifies the 200 happy path.
-func TestCreateBreakGlassActivationProxy_Valid_S22(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "bg-proxy-proj-s22"}
-	require.NoError(t, db.Create(proj).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"project_id":    proj.ID,
-		"user_id":       uint(1),
-		"role_id":       uint(0),
-		"role_name":     "viewer",
-		"justification": "emergency",
-		"state":         "active",
-		"created_at":    time.Now().UTC(),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), `"success":true`)
-}
-
 // TestGetBreakGlassActivationProxy_BadID_S22 verifies the 400 branch.
 func TestGetBreakGlassActivationProxy_BadID_S22(t *testing.T) {
 	cs := freshCoreS12(t)
@@ -1248,21 +1127,6 @@ func TestListBreakGlassActivationsProxy_Valid_S22(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), `"success":true`)
-}
-
-// TestUpdateBreakGlassActivationProxy_BadID_S22 verifies the 400 branch.
-func TestUpdateBreakGlassActivationProxy_BadID_S22(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/break-glass/bad", nil),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // TestRevokeBreakGlassActivationProxy_BadID_S22 verifies the 400 branch.

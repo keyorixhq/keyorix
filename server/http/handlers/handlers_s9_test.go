@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -324,33 +325,6 @@ func TestGetOpenAccessReviewCampaignProxy_WithCampaign_S9(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestUpdateAccessReviewCampaignProxy_Success_S9(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-
-	// Create campaign
-	createBody := `{"project_id":30,"name":"S9 Update Campaign","created_by":1,"state":"open"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
-	createW := httptest.NewRecorder()
-	h.CreateAccessReviewCampaignProxy(createW, createReq)
-	require.Equal(t, http.StatusOK, createW.Code)
-
-	var createResp struct {
-		Data struct {
-			ID uint `json:"id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
-	require.NotZero(t, createResp.Data.ID)
-
-	// Update it
-	idStr := strconv.FormatUint(uint64(createResp.Data.ID), 10)
-	updateBody := `{"state":"open","name":"S9 Updated"}`
-	updateReq := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(updateBody)), "id", idStr)
-	updateW := httptest.NewRecorder()
-	h.UpdateAccessReviewCampaignProxy(updateW, updateReq)
-	assert.Equal(t, http.StatusOK, updateW.Code)
-}
-
 func TestCreateAccessReviewItemsProxy_Success_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 
@@ -449,34 +423,21 @@ func TestImpersonationHandler_End_NoAdminCookie_S9(t *testing.T) {
 
 // ── webauthn_proxy.go: success paths ─────────────────────────────────────────
 
-func TestCreateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	// credential_id is a []byte field (base64 on the wire) carrying a DB-level
-	// unique constraint; fold in a counter (see s4UniqueCounter) so a repeat
-	// invocation against the shared sharedS4Core DB doesn't collide with its own
-	// prior insert. Must stay valid base64, so encode the unique string rather
-	// than appending raw text to the existing base64 literal.
-	credID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("test-cred-s9-%d", s4UniqueCounter.Add(1))))
-	body := fmt.Sprintf(`{"user_id":1,"credential_id":%q,"public_key":"cHVia2V5LXM5","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["internal"]}`, credID)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestListWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 
-	// Create a credential first. credential_id is a []byte field (base64 on the
-	// wire) carrying a DB-level unique constraint; fold in a counter (see
-	// s4UniqueCounter) so a repeat invocation against the shared sharedS4Core DB
-	// doesn't collide with its own prior insert.
-	credID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("test-cred-s92-%d", s4UniqueCounter.Add(1))))
-	body := fmt.Sprintf(`{"user_id":77,"credential_id":%q,"public_key":"cHVia2V5LXM5Mg==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["usb"]}`, credID)
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	createW := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(createW, createReq)
-	require.Equal(t, http.StatusOK, createW.Code)
+	// Seed a credential directly via storage (CreateWebAuthnCredentialProxy was
+	// deleted -- G80 liveness sweep found no live caller; see
+	// docs/g80-remediation-notes.md). credential_id carries a DB-level unique
+	// constraint; fold in a counter (see s4UniqueCounter) so a repeat invocation
+	// against the shared sharedS4Core DB doesn't collide with its own prior insert.
+	credID := []byte(fmt.Sprintf("test-cred-s92-%d", s4UniqueCounter.Add(1)))
+	require.NoError(t, h.coreService.Storage().CreateWebAuthnCredential(context.Background(), &models.WebAuthnCredential{
+		UserID:         77,
+		CredentialID:   credID,
+		Name:           "s9-list-cred",
+		CredentialBlob: []byte(`{}`),
+	}))
 
 	// List (covers loop body)
 	listReq := httptest.NewRequest(http.MethodGet, "/?user_id=77", nil)
@@ -488,16 +449,18 @@ func TestListWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 func TestCountWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 
-	// Create a credential. credential_id is a []byte field (base64 on the wire)
-	// carrying a DB-level unique constraint; fold in a counter (see
-	// s4UniqueCounter) so a repeat invocation against the shared sharedS4Core DB
-	// doesn't collide with its own prior insert.
-	credID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("test-cred-s93-%d", s4UniqueCounter.Add(1))))
-	body := fmt.Sprintf(`{"user_id":88,"credential_id":%q,"public_key":"cHVia2V5LXM5Mw==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["nfc"]}`, credID)
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	createW := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(createW, createReq)
-	require.Equal(t, http.StatusOK, createW.Code)
+	// Seed a credential directly via storage (CreateWebAuthnCredentialProxy was
+	// deleted -- G80 liveness sweep found no live caller; see
+	// docs/g80-remediation-notes.md). credential_id carries a DB-level unique
+	// constraint; fold in a counter (see s4UniqueCounter) so a repeat invocation
+	// against the shared sharedS4Core DB doesn't collide with its own prior insert.
+	credID := []byte(fmt.Sprintf("test-cred-s93-%d", s4UniqueCounter.Add(1)))
+	require.NoError(t, h.coreService.Storage().CreateWebAuthnCredential(context.Background(), &models.WebAuthnCredential{
+		UserID:         88,
+		CredentialID:   credID,
+		Name:           "s9-count-cred",
+		CredentialBlob: []byte(`{}`),
+	}))
 
 	// Count
 	countReq := httptest.NewRequest(http.MethodGet, "/?user_id=88", nil)
@@ -509,67 +472,27 @@ func TestCountWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 func TestUpdateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 
-	// Create a credential
-	createBody := `{"user_id":99,"credential_id":"dGVzdC1jcmVkLXM5NA==","public_key":"cHVia2V5LXM5NA==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["ble"]}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
-	createW := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(createW, createReq)
-	require.Equal(t, http.StatusOK, createW.Code)
-
-	var createResp struct {
-		Data struct {
-			ID uint `json:"id"`
-		} `json:"data"`
+	// Seed a credential directly via storage (CreateWebAuthnCredentialProxy was
+	// deleted -- G80 liveness sweep found no live caller; see
+	// docs/g80-remediation-notes.md).
+	cred := &models.WebAuthnCredential{
+		UserID:         99,
+		CredentialID:   []byte("test-cred-s94"),
+		Name:           "s9-update-cred",
+		CredentialBlob: []byte(`{}`),
 	}
-	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
-	require.NotZero(t, createResp.Data.ID)
+	require.NoError(t, h.coreService.Storage().CreateWebAuthnCredential(context.Background(), cred))
+	require.NotZero(t, cred.ID)
 
 	// Update. #G79: UpdateWebAuthnCredentialProxy is an unconditional full-row
 	// Save, so the request must carry the full row (matching Create) — a body
 	// missing credential_id would otherwise zero that column on the existing row.
-	idStr := strconv.FormatUint(uint64(createResp.Data.ID), 10)
+	idStr := strconv.FormatUint(uint64(cred.ID), 10)
 	updateBody := `{"name":"Updated S9","user_id":99,"credential_id":"dGVzdC1jcmVkLXM5NA=="}`
 	updateReq := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(updateBody)), "id", idStr)
 	updateW := httptest.NewRecorder()
 	h.UpdateWebAuthnCredentialProxy(updateW, updateReq)
 	assert.Equal(t, http.StatusOK, updateW.Code)
-}
-
-func TestDeleteWebAuthnCredentialProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-
-	// Create a credential to delete
-	createBody := `{"user_id":111,"credential_id":"dGVzdC1jcmVkLXM5NQ==","public_key":"cHVia2V5LXM5NQ==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["internal"]}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
-	createW := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(createW, createReq)
-	require.Equal(t, http.StatusOK, createW.Code)
-
-	var createResp struct {
-		Data struct {
-			ID uint `json:"id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
-	require.NotZero(t, createResp.Data.ID)
-
-	// Delete by userId + id path params (must set both in one chi context)
-	idStr := strconv.FormatUint(uint64(createResp.Data.ID), 10)
-	deleteReq := withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil),
-		map[string]string{"userId": "111", "id": idStr})
-	deleteW := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(deleteW, deleteReq)
-	assert.Equal(t, http.StatusOK, deleteW.Code)
-}
-
-func TestSetUserWebAuthnEnabledProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"enabled":true}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "userId", "55")
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, req)
-	// Storage will succeed (upsert on user 55) or not; either way no 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCreateWebAuthnSessionProxy_Success_S9(t *testing.T) {
