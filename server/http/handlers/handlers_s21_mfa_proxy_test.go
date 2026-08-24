@@ -1,6 +1,5 @@
 // handlers_s21_mfa_proxy_test.go — coverage sweep targeting the storage-error
 // (500) branches in mfa_management_proxy.go that remain uncovered:
-//   - UpsertMFASecretProxy: storage error → 500
 //   - GetMFASecretProxy: non-not-found storage error → 500
 //   - ActivateMFASecretProxy: bad userId → 400, storage error → 500
 //   - DeleteMFAForUserProxy: bad userId → 400, storage error → 500
@@ -12,6 +11,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -37,23 +37,6 @@ func freshClosedCoreS21(t *testing.T) *AuthHandler {
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
 	return NewAuthHandler(cs, false)
-}
-
-// ── UpsertMFASecretProxy ──────────────────────────────────────────────────────
-
-// TestUpsertMFASecretProxy_StorageError_S21 — valid body but DB is closed
-// → storage error → 500.
-func TestUpsertMFASecretProxy_StorageError_S21(t *testing.T) {
-	h := freshClosedCoreS21(t)
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    1,
-		"secret_enc": []byte("enc"),
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // ── GetMFASecretProxy ─────────────────────────────────────────────────────────
@@ -153,24 +136,21 @@ func TestDeleteMFARecoveryCodesProxy_StorageError_S21(t *testing.T) {
 
 // ── GetMFASecretProxy: not-found branch via context deadline ─────────────────
 
-// TestGetMFASecretProxy_NotFoundAfterUpsert_S21 — upsert a secret then GET it
-// to exercise the 200 success branch in one shot (verifies the happy path runs
-// through the not-found guard cleanly when the row exists).
+// TestGetMFASecretProxy_NotFoundAfterUpsert_S21 — persist a secret directly via
+// storage (UpsertMFASecretProxy was deleted -- G80 liveness sweep found no live
+// caller; see docs/g80-remediation-notes.md) then GET it to exercise the 200
+// success branch in one shot (verifies the happy path runs through the
+// not-found guard cleanly when the row exists).
 func TestGetMFASecretProxy_NotFoundAfterUpsert_S21(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	h := NewAuthHandler(cs, false)
 	setTestAuthEncryptor(t, cs)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "s21user2", Email: "s21user2@example.com", AccountState: "active"}).Error)
-	// Upsert so GET finds a row.
-	upBody, _ := json.Marshal(map[string]interface{}{
-		"user_id":    uint(2),
-		"secret_enc": []byte("s21enc"),
-	})
-	r0 := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",
-		bytes.NewReader(upBody))
-	w0 := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w0, r0)
-	require.Equal(t, http.StatusOK, w0.Code)
+	// Seed a row directly via storage so GET finds it.
+	require.NoError(t, cs.Storage().UpsertMFASecret(context.Background(), &models.MFASecret{
+		UserID:    2,
+		SecretEnc: []byte("s21enc"),
+	}))
 
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/mfa/secrets?user_id=2", nil)
 	w := httptest.NewRecorder()
@@ -236,56 +216,22 @@ func TestCountUnusedMFARecoveryCodesProxy_InvalidUserIDQuery_S21(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── newMFASecretProxyWire: exercise via round-trip ────────────────────────────
-
-// TestUpsertMFASecretProxy_RoundTrip_S21 — upsert then verify response wire
-// contains expected fields (exercises newMFASecretProxyWire via JSON decode).
-func TestUpsertMFASecretProxy_RoundTrip_S21(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewAuthHandler(cs, false)
-	setTestAuthEncryptor(t, cs)
-	require.NoError(t, db.Create(&models.User{ID: 3, Username: "s21user3", Email: "s21user3@example.com", AccountState: "active"}).Error)
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    uint(3),
-		"secret_enc": []byte("s21roundtrip"),
-		"activated":  false,
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w, r)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var resp struct {
-		Success bool `json:"success"`
-		Data    struct {
-			UserID uint `json:"user_id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-	assert.Equal(t, uint(3), resp.Data.UserID)
-}
-
 // ── ActivateMFASecretProxy: happy path after upsert ──────────────────────────
 
-// TestActivateMFASecretProxy_HappyPath_S21 — seed a secret then activate → 200.
+// TestActivateMFASecretProxy_HappyPath_S21 — seed a secret directly via
+// storage (UpsertMFASecretProxy was deleted -- G80 liveness sweep found no
+// live caller; see docs/g80-remediation-notes.md) then activate → 200.
 func TestActivateMFASecretProxy_HappyPath_S21(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	h := NewAuthHandler(cs, false)
 	setTestAuthEncryptor(t, cs)
 	require.NoError(t, db.Create(&models.User{ID: 4, Username: "s21user4", Email: "s21user4@example.com", AccountState: "active"}).Error)
 
-	// Upsert a secret for user 4 first.
-	upBody, _ := json.Marshal(map[string]interface{}{
-		"user_id":    uint(4),
-		"secret_enc": []byte("enc4"),
-	})
-	r0 := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",
-		bytes.NewReader(upBody))
-	w0 := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w0, r0)
-	require.Equal(t, http.StatusOK, w0.Code)
+	// Seed a secret for user 4 directly via storage.
+	require.NoError(t, cs.Storage().UpsertMFASecret(context.Background(), &models.MFASecret{
+		UserID:    4,
+		SecretEnc: []byte("enc4"),
+	}))
 
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets/4/activate", nil)
 	r = withChiParams(r, map[string]string{"userId": "4"})
@@ -342,21 +288,6 @@ func TestCountUnusedMFARecoveryCodesProxy_HappyPath_S21(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.True(t, resp.Success)
 	assert.Equal(t, 0, resp.Data["count"])
-}
-
-// ── UpsertMFASecretProxy: missing user_id or secret_enc → 400 ────────────────
-
-// TestUpsertMFASecretProxy_MissingSecretEnc_S21 — user_id present but
-// secret_enc absent → 400 (validation branch).
-func TestUpsertMFASecretProxy_MissingSecretEnc_S21(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 1})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── CreateMFARecoveryCodesProxy: happy path ───────────────────────────────────

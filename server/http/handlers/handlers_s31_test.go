@@ -93,19 +93,6 @@ func TestGetLatestClosedAccessReviewCampaignProxy_DBError_S31(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestUpdateAccessReviewCampaignProxy_DBError_S31(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS31(t))
-	body := bytes.NewBufferString(`{"project_id":1,"name":"Test","state":"open","created_by":1}`)
-	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-review-campaigns/1", body), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateAccessReviewCampaignProxy(w, r)
-	// UpdateAccessReviewCampaignProxy now re-fetches the row first (ARC-006);
-	// local storage wraps First() errors as "ErrorNotFound", so isNotFoundErr
-	// triggers 404 here — same pre-existing wart TestGetAccessReviewCampaignProxy_DBError_S31 documents.
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 func TestCreateAccessReviewItemsProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS31(t))
@@ -235,16 +222,6 @@ func TestListBreakGlassActivationsProxy_DBError_S31(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/break-glass?project_id=1", nil)
 	w := httptest.NewRecorder()
 	h.ListBreakGlassActivationsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestUpdateBreakGlassActivationProxy_DBError_S31(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS31(t))
-	body := bytes.NewBufferString(`{"project_id":1,"activated_by":1,"state":"active"}`)
-	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/break-glass/1", body), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -387,27 +364,7 @@ func TestListConnectRefGrantsByConnectorProxy_DBError_S31(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestCreateConnectRefGrantProxy_DBError_S31(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	body := bytes.NewBufferString(`{"role_id":1,"connector":"github","ref_prefix":"refs/heads/main"}`)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/connect-grants", body)
-	w := httptest.NewRecorder()
-	h.CreateConnectRefGrantProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── AuthHandler / webauthn_proxy.go ───────────────────────────────────────────
-
-func TestCreateWebAuthnCredentialProxy_DBError_S31(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	body := bytes.NewBufferString(`{"user_id":1,"credential_id":"AQIDBA==","name":"YubiKey","credential_blob":"AQIDBA==","created_at":"2024-01-01T00:00:00Z"}`)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/credentials", body)
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 func TestListWebAuthnCredentialsProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
@@ -438,31 +395,12 @@ func TestUpdateWebAuthnCredentialProxy_DBError_S31(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestDeleteWebAuthnCredentialProxy_DBError_S31(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	r := withChiParams2_S22(httptest.NewRequest(http.MethodDelete, "/api/v1/system/webauthn/users/1/credentials/1", nil), "userId", "1", "id", "1")
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestCountWebAuthnCredentialsProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewAuthHandler(freshCoreBrokenS31(t), false)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/webauthn/credentials/count?user_id=1", nil)
 	w := httptest.NewRecorder()
 	h.CountWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestSetUserWebAuthnEnabledProxy_DBError_S31(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	body := bytes.NewBufferString(`{"enabled":true}`)
-	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/webauthn/users/1/webauthn-enabled", body), "userId", "1")
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 

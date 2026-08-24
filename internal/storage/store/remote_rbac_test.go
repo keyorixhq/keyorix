@@ -424,44 +424,6 @@ func TestRemoteStorage_ListConnectRefGrants(t *testing.T) {
 	assert.Equal(t, "conn-a", grants[0].Connector)
 }
 
-func TestRemoteStorage_CreateConnectRefGrant(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/connect-grants", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id": 10, "role_id": 2, "connector": "my-conn", "ref_prefix": "staging/",
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	grant, err := rs.CreateConnectRefGrant(context.Background(), &models.ConnectRefGrant{
-		RoleID:    2,
-		Connector: "my-conn",
-		RefPrefix: "staging/",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, uint(10), grant.ID)
-	assert.Equal(t, "my-conn", grant.Connector)
-}
-
-func TestRemoteStorage_DeleteConnectRefGrant(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/api/v1/system/connect-grants/10", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.DeleteConnectRefGrant(context.Background(), 10)
-	require.NoError(t, err)
-}
-
 // --- Group roles ---
 
 func TestRemoteStorage_GetGroupRoles(t *testing.T) {
@@ -682,23 +644,6 @@ func TestRemoteStorage_GetProject(t *testing.T) {
 	assert.Equal(t, "my-project", project.Name)
 }
 
-func TestRemoteStorage_UpdateProject(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/v1/system/projects/9", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"id": 9, "name": "updated-project"}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	project, err := rs.UpdateProject(context.Background(), &models.Project{ID: 9, Name: "updated-project"})
-	require.NoError(t, err)
-	assert.Equal(t, uint(9), project.ID)
-	assert.Equal(t, "updated-project", project.Name)
-}
-
 func TestRemoteStorage_DeleteProject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
@@ -728,26 +673,6 @@ func TestRemoteStorage_DeleteProjectIfEmpty(t *testing.T) {
 	count, err := rs.DeleteProjectIfEmpty(context.Background(), 9)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
-}
-
-func TestRemoteStorage_RestoreProject(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/projects/9/restore", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"restored_environments": 2,
-			"restored_secrets":      7,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	envs, secrets, err := rs.RestoreProject(context.Background(), 9)
-	require.NoError(t, err)
-	assert.Equal(t, 2, envs)
-	assert.Equal(t, 7, secrets)
 }
 
 func TestRemoteStorage_ListEnvironments(t *testing.T) {
@@ -844,21 +769,6 @@ func TestRemoteStorage_DeleteEnvironment(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.DeleteEnvironment(context.Background(), 4)
-	require.NoError(t, err)
-}
-
-func TestRemoteStorage_RestoreEnvironment(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/projects/9/environments/4/restore", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.RestoreEnvironment(context.Background(), 9, 4)
 	require.NoError(t, err)
 }
 

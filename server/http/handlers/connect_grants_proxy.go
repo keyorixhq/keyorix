@@ -1,7 +1,8 @@
 // connect_grants_proxy.go — server-side endpoints backing RemoteStorage's
-// ListConnectRefGrantsByConnector/ListConnectRefGrants/CreateConnectRefGrant/
-// DeleteConnectRefGrant (Keyorix Connect per-reference grants, ADR-045; backlog
-// #527).
+// ListConnectRefGrantsByConnector/ListConnectRefGrants (Keyorix Connect
+// per-reference grants, ADR-045; backlog #527). (CreateConnectRefGrantProxy/
+// DeleteConnectRefGrantProxy were deleted — G80 liveness sweep found no live
+// caller for either; see docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) runs the
 // SAME core.KeyorixCore as any other node. Its ReadFederatedSecret (the HTTP
@@ -13,7 +14,7 @@
 // EVERY Keyorix Connect read failed on EVERY connector on any storage.type: remote
 // node with Connect configured.
 //
-// These four routes (registered in server/http/router.go under
+// These two routes (registered in server/http/router.go under
 // /api/v1/system/connect-grants, gated on the existing system.read/system.write RBAC
 // permissions — the SAME credential a RemoteStorage client already needs for every
 // other proxied call, e.g. full user CRUD and the #510 setup-tokens proxy, so this
@@ -30,10 +31,8 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -99,55 +98,4 @@ func (h *AuthHandler) ListConnectRefGrantsProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeRemoteAPISuccess(w, connectRefGrantsProxyWireList(grants))
-}
-
-// connectRefGrantCreateBody is the wire body for POST /api/v1/system/connect-grants.
-// The server assigns ID/CreatedAt, so the body carries only the mutable fields.
-type connectRefGrantCreateBody struct {
-	RoleID    uint       `json:"role_id"`
-	Connector string     `json:"connector"`
-	RefPrefix string     `json:"ref_prefix"`
-	ExpiresAt *time.Time `json:"expires_at"`
-}
-
-// CreateConnectRefGrantProxy handles POST /api/v1/system/connect-grants. The caller
-// (the downstream server's own core.KeyorixCore.CreateConnectRefGrant) has already
-// validated the role and connector exist; this is a raw persist, no policy decision.
-func (h *AuthHandler) CreateConnectRefGrantProxy(w http.ResponseWriter, r *http.Request) {
-	var body connectRefGrantCreateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
-		return
-	}
-	if body.RoleID == 0 || body.Connector == "" {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "role_id and connector are required")
-		return
-	}
-	created, err := h.coreService.Storage().CreateConnectRefGrant(r.Context(), &models.ConnectRefGrant{
-		RoleID:    body.RoleID,
-		Connector: body.Connector,
-		RefPrefix: body.RefPrefix,
-		ExpiresAt: body.ExpiresAt,
-	})
-	if err != nil {
-		log.Printf("connect-grants proxy: create failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newConnectRefGrantProxyWire(created))
-}
-
-// DeleteConnectRefGrantProxy handles DELETE /api/v1/system/connect-grants/{id}.
-func (h *AuthHandler) DeleteConnectRefGrantProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid grant id")
-		return
-	}
-	if err := h.coreService.Storage().DeleteConnectRefGrant(r.Context(), uint(id)); err != nil {
-		log.Printf("connect-grants proxy: delete failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
 }

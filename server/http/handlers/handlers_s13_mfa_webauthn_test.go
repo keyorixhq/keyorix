@@ -373,28 +373,6 @@ func TestFinishWebAuthnPasswordlessLogin_InvalidAssertion_S13(t *testing.T) {
 
 // ── MFA management proxy handlers (mfa_management_proxy.go) ──────────────────
 
-// TestUpsertMFASecretProxy_BadJSON_S13 — malformed JSON → 400.
-func TestUpsertMFASecretProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",
-		bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestUpsertMFASecretProxy_MissingFields_S13 — missing user_id/secret_enc → 400.
-func TestUpsertMFASecretProxy_MissingFields_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 0})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // TestGetMFASecretProxy_MissingUserID_S13 — missing user_id query param → 400.
 func TestGetMFASecretProxy_MissingUserID_S13(t *testing.T) {
 	cs := freshCoreS12(t)
@@ -524,29 +502,6 @@ func TestDeleteMFARecoveryCodesProxy_BadIDParam_S13(t *testing.T) {
 
 // ── WebAuthn proxy handlers (webauthn_proxy.go) ───────────────────────────────
 
-// TestCreateWebAuthnCredentialProxy_BadJSON_S13 — malformed JSON → 400.
-func TestCreateWebAuthnCredentialProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/credentials",
-		bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateWebAuthnCredentialProxy_MissingFields_S13 — missing user_id/credential_id → 400.
-func TestCreateWebAuthnCredentialProxy_MissingFields_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 0})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/credentials",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // TestListWebAuthnCredentialsProxy_MissingUserID_S13 — missing user_id → 400.
 func TestListWebAuthnCredentialsProxy_MissingUserID_S13(t *testing.T) {
 	cs := freshCoreS12(t)
@@ -663,44 +618,6 @@ func TestAdvanceWebAuthnCredentialCounterProxy_MissingFields_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestDeleteWebAuthnCredentialProxy_BadUserIDParam_S13 — non-numeric userId → 400.
-func TestDeleteWebAuthnCredentialProxy_BadUserIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/system/webauthn/users/bad/credentials/1", nil)
-	r = withChiParams(r, map[string]string{"userId": "bad", "id": "1"})
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestDeleteWebAuthnCredentialProxy_BadCredIDParam_S13 — valid userId but
-// non-numeric credential id → 400.
-func TestDeleteWebAuthnCredentialProxy_BadCredIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/system/webauthn/users/1/credentials/bad", nil)
-	r = withChiParams(r, map[string]string{"userId": "1", "id": "bad"})
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestDeleteWebAuthnCredentialProxy_NotFound_S13 — valid params but no such
-// credential → 404.
-func TestDeleteWebAuthnCredentialProxy_NotFound_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/system/webauthn/users/1/credentials/9999", nil)
-	r = withChiParams(r, map[string]string{"userId": "1", "id": "9999"})
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // TestCountWebAuthnCredentialsProxy_MissingUserID_S13 — missing user_id → 400.
 func TestCountWebAuthnCredentialsProxy_MissingUserID_S13(t *testing.T) {
 	cs := freshCoreS12(t)
@@ -709,31 +626,6 @@ func TestCountWebAuthnCredentialsProxy_MissingUserID_S13(t *testing.T) {
 		"/api/v1/system/webauthn/credentials/count", nil)
 	w := httptest.NewRecorder()
 	h.CountWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestSetUserWebAuthnEnabledProxy_BadIDParam_S13 — non-numeric userId → 400.
-func TestSetUserWebAuthnEnabledProxy_BadIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPut,
-		"/api/v1/system/webauthn/users/bad/webauthn-enabled", nil)
-	r = withChiParams(r, map[string]string{"userId": "bad"})
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestSetUserWebAuthnEnabledProxy_BadJSON_S13 — valid id but malformed JSON → 400.
-func TestSetUserWebAuthnEnabledProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPut,
-		"/api/v1/system/webauthn/users/1/webauthn-enabled",
-		bytes.NewBufferString("not-json"))
-	r = withChiParams(r, map[string]string{"userId": "1"})
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

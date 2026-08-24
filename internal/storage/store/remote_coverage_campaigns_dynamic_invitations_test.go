@@ -82,37 +82,6 @@ func TestRemoteCov_GetAccessReviewCampaign_MalformedJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_UpdateAccessReviewCampaign_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("CONFLICT", "update failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.UpdateAccessReviewCampaign(context.Background(), &models.AccessReviewCampaign{
-		ID: 1, State: "closed", CreatedAt: time.Now(),
-	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "update access-review campaign failed")
-}
-
-func TestRemoteCov_UpdateAccessReviewCampaign_MalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("{broken"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.UpdateAccessReviewCampaign(context.Background(), &models.AccessReviewCampaign{
-		ID: 1, State: "closed", CreatedAt: time.Now(),
-	})
-	assert.Error(t, err)
-}
-
 func TestRemoteCov_CountPendingAccessReviewItems_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("INTERNAL", "count failed"))
@@ -289,41 +258,6 @@ func TestRemoteCov_CountDynamicSecretConfigsByClassification_MalformedJSON(t *te
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_CreateDynamicSecretLease_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL", "create lease failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateDynamicSecretLease(context.Background(), &models.DynamicSecretLease{
-		ConfigID: 1, LeaseID: "lease-xyz", ProjectID: 1, EnvironmentID: 2,
-		RoleName: "reader", Status: "active",
-		IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
-	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "create dynamic-secret lease failed")
-}
-
-func TestRemoteCov_CreateDynamicSecretLease_MalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("{bad}"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateDynamicSecretLease(context.Background(), &models.DynamicSecretLease{
-		ConfigID: 1, LeaseID: "lease-xyz", ProjectID: 1, EnvironmentID: 2,
-		RoleName: "reader", Status: "active",
-		IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
-	})
-	assert.Error(t, err)
-}
-
 func TestRemoteCov_GetDynamicSecretConfig_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("NOT_FOUND", "config not found"))
@@ -351,54 +285,6 @@ func TestRemoteCov_GetDynamicSecretConfig_MalformedJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_UpdateDynamicSecretConfig_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL", "update config failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateDynamicSecretConfig(context.Background(), &models.DynamicSecretConfig{
-		ID: 1, Name: "pg", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
-		CreatedBy: "admin", CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "update dynamic-secret config failed")
-}
-
-func TestRemoteCov_TransitionDynamicSecretConfigDisabled_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL", "transition config failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	matched, err := rs.TransitionDynamicSecretConfigDisabled(context.Background(),
-		&models.DynamicSecretConfig{ID: 1, Disabled: true}, false)
-	assert.Error(t, err)
-	assert.False(t, matched)
-	assert.Contains(t, err.Error(), "transition dynamic-secret config failed")
-}
-
-func TestRemoteCov_TransitionDynamicSecretConfigDisabled_MalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("{bad}"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	matched, err := rs.TransitionDynamicSecretConfigDisabled(context.Background(),
-		&models.DynamicSecretConfig{ID: 1, Disabled: true}, false)
-	assert.Error(t, err)
-	assert.False(t, matched)
-}
-
 func TestRemoteCov_GetDynamicSecretLease_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("NOT_FOUND", "lease not found"))
@@ -424,24 +310,6 @@ func TestRemoteCov_GetDynamicSecretLease_MalformedJSON(t *testing.T) {
 
 	_, err = rs.GetDynamicSecretLease(context.Background(), "lease-xyz")
 	assert.Error(t, err)
-}
-
-func TestRemoteCov_UpdateDynamicSecretLease_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL", "update lease failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateDynamicSecretLease(context.Background(), &models.DynamicSecretLease{
-		ID: 1, ConfigID: 1, LeaseID: "lease-xyz", ProjectID: 1, EnvironmentID: 2,
-		RoleName: "reader", Status: "revoked", RevokeReason: "expired",
-		IssuedAt: time.Now().Add(-2 * time.Hour), ExpiresAt: time.Now().Add(-time.Hour),
-	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "update dynamic-secret lease failed")
 }
 
 func TestRemoteCov_CountActiveLeases_Error(t *testing.T) {

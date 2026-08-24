@@ -46,66 +46,6 @@ func freshCoreWithStepUpGrant(t *testing.T, expiry time.Time) (*AuthHandler, *go
 	return NewAuthHandler(cs, false), db
 }
 
-// ── CreateMFAStepUpGrantProxy ─────────────────────────────────────────────────
-
-func TestCreateMFAStepUpGrantProxy_BadJSON(t *testing.T) {
-	h := freshClosedCoreS21(t)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/stepup-grants",
-		bytes.NewReader([]byte("{bad json}")))
-	w := httptest.NewRecorder()
-	h.CreateMFAStepUpGrantProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateMFAStepUpGrantProxy_MissingUserID(t *testing.T) {
-	h := freshClosedCoreS21(t)
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    0,
-		"expires_at": time.Now().UTC().Add(15 * time.Minute),
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/stepup-grants",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMFAStepUpGrantProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateMFAStepUpGrantProxy_StorageError(t *testing.T) {
-	h := freshClosedCoreS21(t)
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    1,
-		"expires_at": time.Now().UTC().Add(15 * time.Minute),
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/stepup-grants",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMFAStepUpGrantProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCreateMFAStepUpGrantProxy_Success(t *testing.T) {
-	h, _ := freshCoreWithStepUpGrant(t, time.Now().UTC().Add(10*time.Minute))
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    2,
-		"expires_at": time.Now().UTC().Add(15 * time.Minute),
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/stepup-grants",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMFAStepUpGrantProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp struct {
-		Success bool `json:"success"`
-		Data    struct {
-			UserID uint `json:"user_id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.True(t, resp.Success)
-	assert.Equal(t, uint(2), resp.Data.UserID)
-}
-
 // ── GetActiveMFAStepUpGrantProxy ──────────────────────────────────────────────
 
 func TestGetActiveMFAStepUpGrantProxy_BadJSON(t *testing.T) {

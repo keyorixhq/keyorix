@@ -52,11 +52,13 @@ func newUpstreamDownstreamForProjectCatalog(t *testing.T) (upstream *core.Keyori
 	return upstream, downstream
 }
 
-// TestRemoteStorageProject_ListGetUpdate_RealServer proves the read/update fix: a
+// TestRemoteStorageProject_ListGetUpdate_RealServer proves the read fix: a
 // project created directly on the upstream (RemoteStorage has no CreateProject —
-// that stays an intentional stub, see remote_rbac.go) is listed, fetched, and
-// updated correctly via the DOWNSTREAM's RemoteStorage, all against a real router,
-// not a protocol mock.
+// that stays an intentional stub, see remote_rbac.go) is listed and fetched
+// correctly via the DOWNSTREAM's RemoteStorage, against a real router, not a
+// protocol mock. The update itself is applied directly against the upstream's
+// real storage (UpdateProjectProxy was deleted -- G80 liveness sweep found no
+// live caller; see docs/g80-remediation-notes.md).
 func TestRemoteStorageProject_ListGetUpdate_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForProjectCatalog(t)
 	ctx := context.Background()
@@ -96,11 +98,11 @@ func TestRemoteStorageProject_ListGetUpdate_RealServer(t *testing.T) {
 	assert.Equal(t, "catalog-project", fetched.Name)
 	assert.Equal(t, "initial description", fetched.Description)
 
-	// UpdateProject via the downstream persists on the upstream.
+	// UpdateProject applied directly against the upstream's storage.
 	fetched.Name = "renamed-project"
 	fetched.Description = "updated description"
 	fetched.RequireMFA = true
-	updated, err := downstream.Storage().UpdateProject(ctx, fetched)
+	updated, err := upstream.Storage().UpdateProject(ctx, fetched)
 	require.NoError(t, err)
 	assert.Equal(t, "renamed-project", updated.Name)
 	assert.True(t, updated.RequireMFA)
@@ -126,7 +128,10 @@ func TestRemoteStorageProject_GetNotFound_RealServer(t *testing.T) {
 // DeleteProjectIfEmpty fix end to end: a project with a live secret blocks a
 // force=false delete (reporting the real blocking count), while force=true
 // (plain DeleteProject) cascades over it regardless — both via the downstream's
-// RemoteStorage against a real upstream server.
+// RemoteStorage against a real upstream server. The restore is applied
+// directly against the upstream's real storage (RestoreProjectProxy was
+// deleted -- G80 liveness sweep found no live caller; see
+// docs/g80-remediation-notes.md).
 func TestRemoteStorageProject_DeleteIfEmpty_And_Force_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForProjectCatalog(t)
 	ctx := context.Background()
@@ -162,9 +167,9 @@ func TestRemoteStorageProject_DeleteIfEmpty_And_Force_RealServer(t *testing.T) {
 	_, err = upstream.Storage().GetProject(ctx, project.ID)
 	require.Error(t, err, "a soft-deleted project must no longer be readable as active")
 
-	// RestoreProject via the downstream brings back the project AND the cascaded
-	// secret/environment.
-	restoredEnvs, restoredSecrets, err := downstream.Storage().RestoreProject(ctx, project.ID)
+	// RestoreProject applied directly against the upstream's storage brings
+	// back the project AND the cascaded secret/environment.
+	restoredEnvs, restoredSecrets, err := upstream.Storage().RestoreProject(ctx, project.ID)
 	require.NoError(t, err)
 	assert.Positive(t, restoredEnvs)
 	assert.Equal(t, 1, restoredSecrets)

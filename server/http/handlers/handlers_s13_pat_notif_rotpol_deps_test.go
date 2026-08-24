@@ -728,42 +728,6 @@ func TestListSecretDependenciesForProjectForUpdateProxy_HappyPath_S13(t *testing
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestDeleteSecretDependencyProxy_NotFound_S13 — valid id but no row → 404.
-func TestDeleteSecretDependencyProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.DeleteSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// TestDeleteSecretDependencyProxy_HappyPath_S13 — existing row → 200.
-func TestDeleteSecretDependencyProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	dep, createErr := cs.Storage().CreateSecretDependency(
-		httptest.NewRequest(http.MethodGet, "/", nil).Context(),
-		&models.SecretDependency{
-			ProjectID:         2,
-			DependentSecretID: 5,
-			DependsOnSecretID: 6,
-		},
-	)
-	require.NoError(t, createErr)
-
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", fmt.Sprintf("%d", dep.ID))
-	w := httptest.NewRecorder()
-	h.DeleteSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // TestParseProxyProjectIDQuery_S13 — exercises the 77.8% branch directly.
 // The missing branch is the invalid-integer path (already partially covered above,
 // but let's hit it directly to be sure).

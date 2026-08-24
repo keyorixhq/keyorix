@@ -596,29 +596,6 @@ func TestGetLatestClosedCampaignProxy_WithRecord_S26(t *testing.T) {
 	assert.NotNil(t, resp["data"])
 }
 
-// ── break_glass_proxy.go: CreateBreakGlassActivationProxy missing state ───────
-
-// TestCreateBreakGlassActivationProxy_MissingState_S26 verifies that a request
-// with a missing state field returns 400 (covers line 152 in break_glass_proxy.go).
-func TestCreateBreakGlassActivationProxy_MissingState_S26(t *testing.T) {
-	cs := freshCoreS26(t)
-	h := NewCatalogHandler(cs)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"project_id": 1,
-		"user_id":    1,
-		// "state" missing → should be validated
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass-activations",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-
-	// Missing state → 400
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── users_crud.go: bad ID / not found paths ──────────────────────────────────
 
 // TestGetUser_BadID_S26 verifies that a non-numeric user ID returns 400.
@@ -798,44 +775,6 @@ func TestCreateAccessReviewCampaignProxy_HappyPath_S26(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// ── UpdateAccessReviewCampaignProxy happy path ────────────────────────────────
-
-// TestUpdateAccessReviewCampaignProxy_HappyPath_S26 verifies that updating an
-// existing open campaign returns 200 with updated=false (no matching open row).
-func TestUpdateAccessReviewCampaignProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-update-camp-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "Q1 2026 Access Review",
-		State:     "open",
-		CreatedBy: 1,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"id":         campaign.ID,
-		"project_id": proj.ID,
-		"name":       "Q1 2026 Access Review Updated",
-		"state":      "open",
-		"created_by": 1,
-	})
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodPut,
-			fmt.Sprintf("/api/v1/system/access-review-campaigns/%d", campaign.ID),
-			bytes.NewReader(body)),
-		"id", uintStrS26(campaign.ID),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.UpdateAccessReviewCampaignProxy(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }

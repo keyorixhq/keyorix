@@ -372,83 +372,43 @@ func (rs *RemoteStorage) PurgeDeletedSecretsBefore(ctx context.Context, before t
 	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/secrets/purge", before, "purge deleted secrets")
 }
 
-// DeleteAnomalyAlertsBefore proxies onto POST
-// /api/v1/system/retention/anomaly-alerts/purge. ackBefore/unackCeiling are sent
-// as-is (including when zero) — DeleteAnomalyAlertsBefore's own contract treats a
-// zero time.Time as "this clause is disabled", not "purge everything before year
-// 1" (see local_purge.go), and the proxy handler preserves that by decoding both
-// fields unconditionally rather than rejecting a zero value as invalid.
-func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore, unackCeiling time.Time) (int64, error) {
-	body := struct {
-		AckBefore    time.Time `json:"ack_before"`
-		UnackCeiling time.Time `json:"unack_ceiling"`
-	}{AckBefore: ackBefore, UnackCeiling: unackCeiling}
-	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/anomaly-alerts/purge", body)
-	if err != nil {
-		return 0, fmt.Errorf("failed to purge anomaly alerts: %w", err)
-	}
-	if !resp.Success {
-		return 0, fmt.Errorf("purge anomaly alerts failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Purged int64 `json:"purged"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Purged, nil
+// DeleteAnomalyAlertsBefore used to proxy onto POST
+// /api/v1/system/retention/anomaly-alerts/purge (DeleteAnomalyAlertsBeforeProxy),
+// deleted in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _, _ time.Time) (int64, error) {
+	return 0, errUnsupportedRemote
 }
 
-// DeleteClosedAccessReviewsBefore proxies onto POST
-// /api/v1/system/retention/access-reviews/purge-closed.
-func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
-	body := struct {
-		Before time.Time `json:"before"`
-	}{Before: before}
-	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/access-reviews/purge-closed", body)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to purge closed access reviews: %w", err)
-	}
-	if !resp.Success {
-		return 0, 0, fmt.Errorf("purge closed access reviews failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		CampaignsPurged int64 `json:"campaigns_purged"`
-		ItemsPurged     int64 `json:"items_purged"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.CampaignsPurged, result.ItemsPurged, nil
+// DeleteClosedAccessReviewsBefore used to proxy onto POST
+// /api/v1/system/retention/access-reviews/purge-closed
+// (DeleteClosedAccessReviewsBeforeProxy), deleted in the G80 liveness sweep — no
+// live caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
+	return 0, 0, errUnsupportedRemote
 }
 
-// DeleteExpiredBreakGlassBefore proxies onto POST
-// /api/v1/system/retention/break-glass/purge-expired.
-func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
-	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/break-glass/purge-expired", before, "purge expired break-glass activations")
+// DeleteExpiredBreakGlassBefore used to proxy onto POST
+// /api/v1/system/retention/break-glass/purge-expired
+// (DeleteExpiredBreakGlassBeforeProxy), deleted in the G80 liveness sweep — no
+// live caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, errUnsupportedRemote
 }
 
-// DeleteResolvedAccessRequestsBefore proxies onto POST
-// /api/v1/system/retention/access-requests/purge-resolved.
-func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
-	body := struct {
-		Before time.Time `json:"before"`
-	}{Before: before}
-	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/access-requests/purge-resolved", body)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to purge resolved access requests: %w", err)
-	}
-	if !resp.Success {
-		return 0, 0, fmt.Errorf("purge resolved access requests failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		RequestsPurged  int64 `json:"requests_purged"`
-		ApprovalsPurged int64 `json:"approvals_purged"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.RequestsPurged, result.ApprovalsPurged, nil
+// DeleteResolvedAccessRequestsBefore used to proxy onto POST
+// /api/v1/system/retention/access-requests/purge-resolved
+// (DeleteResolvedAccessRequestsBeforeProxy), deleted in the G80 liveness sweep —
+// no live caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
+	return 0, 0, errUnsupportedRemote
 }
 
 // postRetentionBeforeCountResp is the shared shape for every retention-purge

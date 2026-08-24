@@ -77,12 +77,15 @@ func webAuthnCredentialBlob(t *testing.T, credID []byte, signCount uint32) []byt
 }
 
 // TestRemoteStorageWebAuthn_CredentialCRUD_RealServer proves the fix for
-// CreateWebAuthnCredential/ListWebAuthnCredentials/GetWebAuthnCredentialByCredID/
+// ListWebAuthnCredentials/GetWebAuthnCredentialByCredID/
 // LockWebAuthnCredentialForUpdate/UpdateWebAuthnCredential/
-// CountWebAuthnCredentials/DeleteWebAuthnCredential/SetUserWebAuthnEnabled: a
-// credential is genuinely persisted on the upstream server via the downstream's
-// RemoteStorage, fetchable both by ID (lock) and cred ID, listed, counted,
-// updatable, and deletable — all via storage.type: remote against a real router.
+// CountWebAuthnCredentials: credentials seeded directly against the upstream's
+// real storage (CreateWebAuthnCredentialProxy/DeleteWebAuthnCredentialProxy/
+// SetUserWebAuthnEnabledProxy were deleted -- G80 liveness sweep found no live
+// caller for any of them; see docs/g80-remediation-notes.md) are fetchable
+// both by ID (lock) and cred ID, listed, counted, and updatable via the
+// downstream's RemoteStorage — all via storage.type: remote against a real
+// router.
 func TestRemoteStorageWebAuthn_CredentialCRUD_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForWebAuthn(t)
 	ctx := context.Background()
@@ -103,13 +106,8 @@ func TestRemoteStorageWebAuthn_CredentialCRUD_RealServer(t *testing.T) {
 		CredentialBlob: webAuthnCredentialBlob(t, credID, 0),
 		CreatedAt:      now,
 	}
-	require.NoError(t, downstream.Storage().CreateWebAuthnCredential(ctx, row))
+	require.NoError(t, upstream.Storage().CreateWebAuthnCredential(ctx, row))
 	require.NotZero(t, row.ID, "the upstream must assign a real ID")
-
-	// A REAL row on the upstream's own storage.
-	direct, err := upstream.Storage().GetWebAuthnCredentialByCredID(ctx, credID, user.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "YubiKey 5C", direct.Name)
 
 	// GetWebAuthnCredentialByCredID / LockWebAuthnCredentialForUpdate via the
 	// downstream both round-trip correctly.
@@ -131,7 +129,7 @@ func TestRemoteStorageWebAuthn_CredentialCRUD_RealServer(t *testing.T) {
 		CredentialBlob: webAuthnCredentialBlob(t, credID2, 0),
 		CreatedAt:      now,
 	}
-	require.NoError(t, downstream.Storage().CreateWebAuthnCredential(ctx, row2))
+	require.NoError(t, upstream.Storage().CreateWebAuthnCredential(ctx, row2))
 
 	rows, err := downstream.Storage().ListWebAuthnCredentials(ctx, user.ID)
 	require.NoError(t, err)
@@ -156,14 +154,15 @@ func TestRemoteStorageWebAuthn_CredentialCRUD_RealServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, reFetched.Disabled, "the disable must be visible directly on the upstream's own storage")
 
-	// SetUserWebAuthnEnabled via the downstream.
-	require.NoError(t, downstream.Storage().SetUserWebAuthnEnabled(ctx, user.ID, true))
+	// SetUserWebAuthnEnabled applied directly against the upstream's storage.
+	require.NoError(t, upstream.Storage().SetUserWebAuthnEnabled(ctx, user.ID, true))
 	directUser, err := upstream.Storage().GetUser(ctx, user.ID)
 	require.NoError(t, err)
 	assert.True(t, directUser.WebAuthnEnabled)
 
-	// DeleteWebAuthnCredential via the downstream; count drops to 1.
-	require.NoError(t, downstream.Storage().DeleteWebAuthnCredential(ctx, user.ID, row2.ID))
+	// DeleteWebAuthnCredential applied directly against the upstream's storage;
+	// count drops to 1.
+	require.NoError(t, upstream.Storage().DeleteWebAuthnCredential(ctx, user.ID, row2.ID))
 	countAfter, err := downstream.Storage().CountWebAuthnCredentials(ctx, user.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), countAfter)

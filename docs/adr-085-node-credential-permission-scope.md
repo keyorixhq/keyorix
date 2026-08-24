@@ -328,11 +328,17 @@ CLI-driven or relayed credential/MFA management surfaces later, it should
 be designed with a real proof-carrying mechanism from the start, not by
 reopening this raw-storage path.
 
-**Not yet checked**: whether the same "wired but unused" conclusion holds
-for `CreateMFAStepUpGrantProxy` specifically (grouped here by the same
-proof-of-possession reasoning, but its actual CLI/caller usage wasn't
-independently traced this session) — worth a quick confirmation before
-implementing, same standard as the WebAuthn check above.
+**Superseded by the liveness sweep (2026-08-24) — see "Removed implementations"
+below.** The "not yet checked" question above was resolved: `CreateMFAStepUpGrantProxy`
+has the same "wired but unused" shape as the WebAuthn trio — zero live callers, not
+just no CLI command. That changes this slice's own premise. Restricting a route to
+the hub is a decision about who gets to reach a route something still calls; when
+nothing calls it in either topology, there is no relay traffic left to restrict —
+deletion is the more consistent remedy, for the same reason the other 23 no-caller
+`/system` routes were deleted rather than fixed. This section's reasoning (proof of
+possession cannot be meaningfully relayed) remains correct and still governs any
+FUTURE WebAuthn/MFA-enrollment relay work — see "Removed implementations" for what
+that means going forward.
 
 ### Why not leave the OR-gate as-is and patch call sites individually
 
@@ -436,3 +442,58 @@ recreating the conflation.
   roles?") is answered, since several node-legitimate routes classified for
   #1532 are global-scope operations a project-scoped machine identity cannot
   reach today regardless of what permission set it's given.
+
+## Removed implementations (2026-08-24)
+
+Separate from this ADR's still-open recommendation above, but recorded here because
+it resolves the "Credential/MFA slice" decision two sections up: the G80
+raw-storage-bypass campaign's liveness sweep (`docs/g80-tracking-issue-draft.md`)
+traced every one of the campaign's 33 then-unfixed `/system` proxy findings for a
+real caller — every `internal/cli` command and every `server/main.go` scheduler.
+23 of the 33, including the WebAuthn trio and `CreateMFAStepUpGrantProxy` from the
+Credential/MFA slice above, had **no live caller anywhere in either topology** — not
+"reachable only by a node relay we choose to restrict," genuinely unreached. A
+privileged route nothing calls is attack surface with no offsetting benefit, so all
+23 were deleted rather than fixed or hub-restricted, in the PR that also lands this
+note. Pre-deletion state is tagged `pre-system-proxy-deletion` — `git show
+pre-system-proxy-deletion:path/to/file` recovers any individual file's prior
+content for archaeology. **The tag is for archaeology, not for restoration**: do not
+resurrect a handler from the tag if a similar need resurfaces. A future WebAuthn or
+MFA-enrollment relay feature must be designed fresh against this ADR's proof-of-
+possession principle (proof cannot be meaningfully relayed spoke-to-hub) and
+`internal/core`'s current ceiling checks, not restored from history.
+
+| # | Handler | File (removed) | What it did |
+|---|---|---|---|
+| 1 | `UpdateAccessReviewCampaignProxy` | `access_review_campaigns_proxy.go` | Raw proxy for force-closing an access-review campaign, bypassing `CloseAccessReviewCampaign`'s state-machine + independence checks. |
+| 2 | `CreateBreakGlassActivationProxy` | `break_glass_proxy.go` | Raw proxy for creating a break-glass activation, bypassing `ActivateBreakGlass`'s membership/role-containment checks. |
+| 3 | `UpdateBreakGlassActivationProxy` | `break_glass_proxy.go` | Raw proxy for updating a break-glass activation, bypassing the same create-time uniqueness guard. |
+| 4 | `CreateConnectRefGrantProxy` | `connect_grants_proxy.go` | Raw proxy for creating a connect-ref grant, bypassing connector-existence/scope validation. |
+| 5 | `DeleteConnectRefGrantProxy` | `connect_grants_proxy.go` | Raw proxy for deleting a connect-ref grant with no audit trail. |
+| 6 | `UpdateDynamicSecretConfigProxy` | `dynamic_secrets_proxy.go` | Raw proxy for updating a dynamic-secret config, bypassing classification validation. |
+| 7 | `TransitionDynamicSecretConfigDisabledProxy` | `dynamic_secrets_proxy.go` | Raw proxy for disabling a dynamic-secret config, bypassing the atomic CAS write `SetDynamicSecretConfigEnabled` provides. |
+| 8 | `CreateDynamicSecretLeaseProxy` | `dynamic_secrets_proxy.go` | Raw proxy for issuing a dynamic-secret lease, bypassing `IssueLease`'s ceiling checks. |
+| 9 | `UpdateDynamicSecretLeaseProxy` | `dynamic_secrets_proxy.go` | Raw proxy that could resurrect a revoked lease to active, bypassing `RevokeLease`/`RenewLease`. |
+| 10 | `RestoreEnvironmentProxy` | `environment_catalog_proxy.go` | Raw proxy for restoring a soft-deleted environment with no actorID/authority parameter at all. |
+| 11 | `UpdateLoginLockoutStateProxy` | `login_lockout_proxy.go` (file removed entirely) | Raw proxy for unlocking a locked-out user, bypassing `UnlockUser`'s `users.write` permission requirement. |
+| 12 | `UpsertMFASecretProxy` | `mfa_management_proxy.go` | Raw proxy for planting an MFA/TOTP secret, taking `user_id`/`SecretEnc`/`Activated` straight from the caller. |
+| 13 | `CreateMFAStepUpGrantProxy` | `mfa_stepup_proxy.go` | Raw proxy for granting an MFA step-up (satisfies the restricted-secret MFA gate) with zero TOTP/recovery-code verification. |
+| 14 | `UpdateProjectProxy` | `project_catalog_proxy.go` | Raw proxy that could silently disable a project's MFA requirement, bypassing `roles.assign` and leaving no audit trail. |
+| 15 | `RestoreProjectProxy` | `project_catalog_proxy.go` | Raw proxy for restoring a soft-deleted project with zero authority check, including any admin-tier role grants it carried. |
+| 16 | `DeleteAnomalyAlertsBeforeProxy` | `retention_proxy.go` | Raw proxy for purging anomaly alerts, bypassing `legalHoldGuard`'s active-legal-hold refusal. |
+| 17 | `DeleteClosedAccessReviewsBeforeProxy` | `retention_proxy.go` | Same `legalHoldGuard` gap, for closed access reviews. |
+| 18 | `DeleteExpiredBreakGlassBeforeProxy` | `retention_proxy.go` | Same `legalHoldGuard` gap, for expired break-glass records. |
+| 19 | `DeleteResolvedAccessRequestsBeforeProxy` | `retention_proxy.go` | Same `legalHoldGuard` gap, for resolved access requests. |
+| 20 | `DeleteSecretDependencyProxy` | `secret_dependencies_proxy.go` | Raw proxy for deleting a secret-dependency edge, bypassing peer-endpoint authorization (the #G32 defense). |
+| 21 | `CreateWebAuthnCredentialProxy` | `webauthn_proxy.go` | Raw proxy for registering a WebAuthn credential, bypassing `requireReauth` — could implant an attacker-controlled passkey on any account. |
+| 22 | `DeleteWebAuthnCredentialProxy` | `webauthn_proxy.go` | Same `requireReauth` gap, for deleting a passkey. |
+| 23 | `SetUserWebAuthnEnabledProxy` | `webauthn_proxy.go` | Same `requireReauth` gap, for flipping a user's WebAuthn-enabled flag. |
+
+The other 12 of the campaign's 35 confirmed findings are unaffected by this note: 2
+were already fixed independently (`TransitionMachineIdentityStateProxy`,
+`UpdateMachineIdentityCredentialProxy`), and 10 have a real live caller and still
+need a ceiling fix (`CreateAccessRequestProxy`, `UpdateAccessRequestProxy`,
+`CreateInvitationProxy`, `UpdateInvitationProxy`, `UpdateUserIfActiveStateMatchesProxy`,
+`CreateMachineIdentityProxy`, `CreateMachineIdentityCredentialProxy`,
+`RevokeMachineIdentityCredentialProxy`, `CreateOIDCBindingProxy`,
+`DeleteOIDCBindingProxy`) — tracked in `docs/g80-tracking-issue-draft.md`, not this ADR.

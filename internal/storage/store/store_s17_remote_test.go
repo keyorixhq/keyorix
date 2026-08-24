@@ -185,41 +185,6 @@ func TestRemoteStorage_GetProject_WithDeletedAt(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// remote_rbac.go:735 — newProjectWire with valid DeletedAt
-// ---------------------------------------------------------------------------
-
-// TestRemoteStorage_UpdateProject_WithDeletedAt exercises the p.DeletedAt.Valid
-// branch in newProjectWire (line 744-747).
-func TestRemoteStorage_UpdateProject_WithDeletedAt(t *testing.T) {
-	deletedAt := time.Now().UTC().Add(-time.Hour)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify the serialized payload includes deleted_at.
-		var req map[string]interface{}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		assert.NotNil(t, req["deleted_at"], "deleted_at must be present in the wire payload")
-
-		body := map[string]interface{}{
-			"id":   float64(7),
-			"name": "soft-deleted-proj",
-		}
-		_, _ = w.Write(s17OK(body))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	project, err := rs.UpdateProject(context.Background(), &models.Project{
-		ID:        7,
-		Name:      "soft-deleted-proj",
-		DeletedAt: gorm.DeletedAt{Time: deletedAt, Valid: true},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, uint(7), project.ID)
-}
-
-// ---------------------------------------------------------------------------
 // remote_rbac.go:897 — environmentWire.toModel with non-nil DeletedAt
 // ---------------------------------------------------------------------------
 

@@ -1,7 +1,8 @@
 // environment_catalog_proxy.go — server-side endpoints backing RemoteStorage's
 // Environment catalog methods (ListEnvironments/ListEnvironmentsByProject/
-// ListEnvironmentsByProjectIncludingDeleted/GetEnvironment/DeleteEnvironment/
-// RestoreEnvironment).
+// ListEnvironmentsByProjectIncludingDeleted/GetEnvironment/DeleteEnvironment).
+// (RestoreEnvironmentProxy was deleted — G80 liveness sweep found no live caller;
+// see docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies its
 // environment-catalog storage calls to whichever upstream server it's configured
@@ -159,29 +160,4 @@ func (h *CatalogHandler) DeleteEnvironmentProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
-}
-
-// RestoreEnvironmentProxy handles POST
-// /api/v1/system/projects/{projectId}/environments/{id}/restore.
-func (h *CatalogHandler) RestoreEnvironmentProxy(w http.ResponseWriter, r *http.Request) {
-	projectID, err := strconv.ParseUint(chi.URLParam(r, "projectId"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project ID")
-		return
-	}
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidEnvironmentID)
-		return
-	}
-	if err := h.coreService.Storage().RestoreEnvironment(r.Context(), uint(projectID), uint(id)); err != nil {
-		if isEnvironmentNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "environment not found or not deleted")
-			return
-		}
-		log.Printf("environment catalog proxy: restore failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"restored": true})
 }

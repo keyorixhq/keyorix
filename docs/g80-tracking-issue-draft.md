@@ -1,5 +1,18 @@
 # DRAFT — one GitHub issue, not yet filed (file whenever gh device-flow login is convenient, not a gate — see bottom)
 
+## Headline (2026-08-24, post-reconciliation)
+
+**35 confirmed findings → 2 already fixed (Group A) + 23 deleted (no live caller in
+either topology — 18 originally no-caller, 5 orphaned by the scheduler boot-gate fix,
+including the WebAuthn trio + `CreateMFAStepUpGrantProxy`, see ADR-085's "Removed
+implementations") + 10 requiring a real ceiling fix (live caller confirmed).** Deletion
+PR: removes the 23, tagged `pre-system-proxy-deletion` beforehand for archaeology. The
+10 remaining are next: 5 confirmed solid, 5 narrower (their CLI command bypasses the
+proxy in connected mode via a direct REST call, so the fix protects the embedded-mode
+path — verify the direct REST endpoint carries its own ceiling before fixing the proxy,
+per the standing "don't protect nothing" check) — see the Liveness sweep section below
+for the full breakdown.
+
 **Title**: The /system proxy layer is a parallel API surface that bypasses the ceilings
 `internal/core` enforces on the human-facing routes — 35 confirmed instances, 16 distinct
 fix patterns

@@ -58,10 +58,12 @@ func TestRemoteStorageEnvironment_GetNotFound_RealServer(t *testing.T) {
 }
 
 // TestRemoteStorageEnvironment_DeleteRestore_RealServer proves the DeleteEnvironment/
-// RestoreEnvironment/ListEnvironmentsByProjectIncludingDeleted fix: an environment
-// with no active secrets is soft-deletable and restorable via the downstream's
-// RemoteStorage, and the soft-deleted row is only visible via the
-// include-deleted listing.
+// ListEnvironmentsByProjectIncludingDeleted fix: an environment with no active
+// secrets is soft-deletable via the downstream's RemoteStorage, and the
+// soft-deleted row is only visible via the include-deleted listing. The
+// restore itself is applied directly against the upstream's real storage
+// (RestoreEnvironmentProxy was deleted -- G80 liveness sweep found no live
+// caller; see docs/g80-remediation-notes.md).
 func TestRemoteStorageEnvironment_DeleteRestore_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForProjectCatalog(t)
 	ctx := context.Background()
@@ -94,8 +96,9 @@ func TestRemoteStorageEnvironment_DeleteRestore_RealServer(t *testing.T) {
 	}
 	assert.True(t, foundDeleted, "the include-deleted listing must still show the soft-deleted environment")
 
-	// RestoreEnvironment via the downstream brings it back.
-	require.NoError(t, downstream.Storage().RestoreEnvironment(ctx, project.ID, envID))
+	// RestoreEnvironment applied directly against the upstream's storage
+	// brings it back.
+	require.NoError(t, upstream.Storage().RestoreEnvironment(ctx, project.ID, envID))
 	restored, err := upstream.Storage().GetEnvironment(ctx, envID)
 	require.NoError(t, err)
 	assert.Equal(t, envID, restored.ID)

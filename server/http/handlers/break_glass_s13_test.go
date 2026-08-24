@@ -128,34 +128,6 @@ func TestRevokeBreakGlass_NotFound_S13(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── break_glass_proxy.go: CreateBreakGlassActivationProxy ────────────────────
-
-func TestCreateBreakGlassActivationProxy_BadJSON_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad json"))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateBreakGlassActivationProxy_MissingFields_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	// project_id and user_id are 0 (missing), state is empty
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"role_name":"test"}`))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateBreakGlassActivationProxy_MissingState_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	// project_id and user_id set but state empty
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"project_id":1,"user_id":1}`))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── break_glass_proxy.go: GetBreakGlassActivationProxy ───────────────────────
 
 func TestGetBreakGlassActivationProxy_BadID_S13(t *testing.T) {
@@ -198,24 +170,6 @@ func TestListBreakGlassActivationsProxy_HappyPath_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListBreakGlassActivationsProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// ── break_glass_proxy.go: UpdateBreakGlassActivationProxy ────────────────────
-
-func TestUpdateBreakGlassActivationProxy_BadID_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "notanumber")
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUpdateBreakGlassActivationProxy_BadJSON_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── break_glass_proxy.go: RevokeBreakGlassActivationProxy ────────────────────

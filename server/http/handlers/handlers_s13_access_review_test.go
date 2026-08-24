@@ -421,36 +421,6 @@ func TestGetLatestClosedAccessReviewCampaignProxy_NoneClosed_S13(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "campaign")
 }
 
-// ── access_review_campaigns_proxy.go: UpdateAccessReviewCampaignProxy ─────────
-
-// TestUpdateAccessReviewCampaignProxy_BadID_S13 — non-numeric {id} → 400.
-func TestUpdateAccessReviewCampaignProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS12(t))
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"project_id":1,"name":"x","state":"closed","created_by":1}`)),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_PARAMETER")
-}
-
-// TestUpdateAccessReviewCampaignProxy_InvalidJSON_S13 — bad body → 400.
-func TestUpdateAccessReviewCampaignProxy_InvalidJSON_S13(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS12(t))
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{not json}`)),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
-
 // ── access_review_campaigns_proxy.go: CreateAccessReviewItemsProxy ─────────
 
 // TestCreateAccessReviewItemsProxy_BadID_S13 — non-numeric {id} → 400.

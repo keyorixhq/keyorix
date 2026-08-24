@@ -454,53 +454,13 @@ func (rs *RemoteStorage) SetPasswordHash(_ context.Context, _ uint, _ string, _ 
 		"upstream PUT /api/v1/users/{id} endpoint does not accept this field: %w", ErrRemoteUnsupported)
 }
 
-// loginLockoutUpdateWireRequest mirrors server/http/handlers/login_lockout_proxy.go's
-// loginLockoutUpdateProxyBody exactly — the four positional parameters
-// UpdateLoginLockoutState takes, named on the wire.
-type loginLockoutUpdateWireRequest struct {
-	FailedLoginAttempts int        `json:"failed_login_attempts"`
-	LastFailedLoginAt   *time.Time `json:"last_failed_login_at"`
-	LoginLockedUntil    *time.Time `json:"login_locked_until"`
-	LoginLockoutCount   int        `json:"login_lockout_count"`
-}
-
-// UpdateLoginLockoutState persists ONLY the four login-lockout accounting columns via
-// a single HTTP round trip to the NEW PUT /api/v1/system/users/{id}/login-lockout
-// route (server/http/handlers/login_lockout_proxy.go), closing backlog #529: this
-// method used to be a hard, permanent remoteUnsupported(...) stub (#454), silently
-// making per-account brute-force lockout inert for every storage.type: remote
-// deployment (recordFailedLogin/checkLockAndClearLoginFailures/clearLoginFailures/
-// UnlockUser in internal/core/login_lockout.go all fail OPEN — log once, continue —
-// whenever this returns storage.ErrUnsupportedByBackend, exactly the "permanent
-// architectural gap" treatment #452 established for the login rate limiter).
-//
-// This is a THIN passthrough, not a new atomic primitive: LocalStorage's own
-// implementation (internal/storage/store/local_users.go) is a single unconditional
-// column UPDATE with no server-side read-modify-write or compare-and-set condition —
-// every caller in login_lockout.go already computes the final values itself (under
-// its own LockUserForUpdate + WithTransaction + per-user loginFailureMu shard
-// serialization) before calling this method, so one HTTP round trip preserves the
-// LOCAL implementation's semantics exactly unchanged. Unlike
-// AdvanceWebAuthnCredentialCounterProxy (a genuine compare-and-swap needing the
-// entire check-then-write to run server-side in one request because
-// RemoteStorage.WithTransaction is a no-op passthrough), there is no analogous race
-// to reopen here.
-func (rs *RemoteStorage) UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error {
-	path := fmt.Sprintf("/api/v1/system/users/%d/login-lockout", id)
-	body := loginLockoutUpdateWireRequest{
-		FailedLoginAttempts: attempts,
-		LastFailedLoginAt:   lastFailedAt,
-		LoginLockedUntil:    lockedUntil,
-		LoginLockoutCount:   lockoutCount,
-	}
-	resp, err := rs.client.Put(ctx, path, body)
-	if err != nil {
-		return fmt.Errorf("failed to update login lockout state: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("update login lockout state failed: %s", resp.Error.Error())
-	}
-	return nil
+// UpdateLoginLockoutState used to proxy onto PUT
+// /api/v1/system/users/{id}/login-lockout (UpdateLoginLockoutStateProxy),
+// deleted in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateLoginLockoutState(_ context.Context, _ uint, _ int, _, _ *time.Time, _ int) error {
+	return errUnsupportedRemote
 }
 
 // DeleteUser deletes a user via remote API.

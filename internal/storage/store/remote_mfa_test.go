@@ -15,35 +15,6 @@ import (
 
 // --- MFA secret management ---
 
-func TestRemoteStorage_UpsertMFASecret(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/secrets", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id": 7, "user_id": 42,
-			"secret_enc":  []byte("encdata"),
-			"secret_meta": []byte("metainfo"),
-			"activated":   false,
-			"created_at":  time.Now(),
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	s := &models.MFASecret{
-		UserID:     42,
-		SecretEnc:  []byte("encdata"),
-		SecretMeta: []byte("metainfo"),
-	}
-	err = rs.UpsertMFASecret(context.Background(), s)
-	require.NoError(t, err)
-	// The method mutates the argument in-place with upstream-assigned fields.
-	assert.Equal(t, uint(7), s.ID)
-	assert.Equal(t, uint(42), s.UserID)
-}
-
 func TestRemoteStorage_GetMFASecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)

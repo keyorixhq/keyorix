@@ -526,35 +526,22 @@ func (rs *RemoteStorage) ListConnectRefGrants(ctx context.Context) ([]*models.Co
 	return connectRefGrantsFromWire(wire), nil
 }
 
-// CreateConnectRefGrant creates a per-reference grant via remote API — see the
-// package doc above (backlog #527).
-func (rs *RemoteStorage) CreateConnectRefGrant(ctx context.Context, g *models.ConnectRefGrant) (*models.ConnectRefGrant, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/connect-grants", newConnectRefGrantWire(g))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connect ref-grant: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create connect ref-grant failed: %s", resp.Error.Error())
-	}
-	var wire connectRefGrantWire
-	if err := json.Unmarshal(resp.Data, &wire); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return wire.toModel(), nil
+// CreateConnectRefGrant used to proxy onto POST /api/v1/system/connect-grants
+// (CreateConnectRefGrantProxy), deleted in the G80 liveness sweep — no live
+// caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) CreateConnectRefGrant(_ context.Context, _ *models.ConnectRefGrant) (*models.ConnectRefGrant, error) {
+	return nil, errUnsupportedRemote
 }
 
-// DeleteConnectRefGrant deletes a per-reference grant by id via remote API — see the
-// package doc above (backlog #527).
-func (rs *RemoteStorage) DeleteConnectRefGrant(ctx context.Context, id uint) error {
-	path := fmt.Sprintf("/api/v1/system/connect-grants/%d", id)
-	resp, err := rs.client.Delete(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to delete connect ref-grant: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("delete connect ref-grant failed: %s", resp.Error.Error())
-	}
-	return nil
+// DeleteConnectRefGrant used to proxy onto DELETE
+// /api/v1/system/connect-grants/{id} (DeleteConnectRefGrantProxy), deleted in
+// the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
+	return errUnsupportedRemote
 }
 
 // connectRefGrantWire mirrors models.ConnectRefGrant's fields exactly (snake_case) —
@@ -567,17 +554,6 @@ type connectRefGrantWire struct {
 	RefPrefix string     `json:"ref_prefix"`
 	ExpiresAt *time.Time `json:"expires_at"`
 	CreatedAt time.Time  `json:"created_at"`
-}
-
-func newConnectRefGrantWire(g *models.ConnectRefGrant) connectRefGrantWire {
-	return connectRefGrantWire{
-		ID:        g.ID,
-		RoleID:    g.RoleID,
-		Connector: g.Connector,
-		RefPrefix: g.RefPrefix,
-		ExpiresAt: g.ExpiresAt,
-		CreatedAt: g.CreatedAt,
-	}
 }
 
 func (w connectRefGrantWire) toModel() *models.ConnectRefGrant {
@@ -759,22 +735,6 @@ func (w projectWire) toModel() *models.Project {
 	return p
 }
 
-func newProjectWire(p *models.Project) projectWire {
-	w := projectWire{
-		ID:          p.ID,
-		Name:        p.Name,
-		Description: p.Description,
-		RequireMFA:  p.RequireMFA,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
-	}
-	if p.DeletedAt.Valid {
-		t := p.DeletedAt.Time
-		w.DeletedAt = &t
-	}
-	return w
-}
-
 func decodeProjectResponse(data json.RawMessage) (*models.Project, error) {
 	var w projectWire
 	if err := json.Unmarshal(data, &w); err != nil {
@@ -857,17 +817,13 @@ func (rs *RemoteStorage) GetProjectByName(ctx context.Context, name string) (*mo
 	return decodeProjectResponse(resp.Data)
 }
 
-// UpdateProject updates an existing project via PUT /api/v1/system/projects/{id}.
-func (rs *RemoteStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	path := fmt.Sprintf("/api/v1/system/projects/%d", project.ID)
-	resp, err := rs.client.Put(ctx, path, newProjectWire(project))
-	if err != nil {
-		return nil, fmt.Errorf("failed to update project: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("update project failed: %s", resp.Error.Error())
-	}
-	return decodeProjectResponse(resp.Data)
+// UpdateProject used to proxy onto PUT /api/v1/system/projects/{id}
+// (UpdateProjectProxy), deleted in the G80 liveness sweep — no live caller in
+// either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
+	return nil, errUnsupportedRemote
 }
 
 // DeleteProject cascade-deletes a project (unconditionally — no empty-project guard)
@@ -908,25 +864,13 @@ func (rs *RemoteStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int
 	return result.BlockingSecretCount, nil
 }
 
-// RestoreProject reverses a project soft-delete (and its cascade) via POST
-// /api/v1/system/projects/{id}/restore.
-func (rs *RemoteStorage) RestoreProject(ctx context.Context, id uint) (int, int, error) {
-	path := fmt.Sprintf("/api/v1/system/projects/%d/restore", id)
-	resp, err := rs.client.Post(ctx, path, nil)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to restore project: %w", err)
-	}
-	if !resp.Success {
-		return 0, 0, fmt.Errorf("restore project failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		RestoredEnvironments int `json:"restored_environments"`
-		RestoredSecrets      int `json:"restored_secrets"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.RestoredEnvironments, result.RestoredSecrets, nil
+// RestoreProject used to proxy onto POST /api/v1/system/projects/{id}/restore
+// (RestoreProjectProxy), deleted in the G80 liveness sweep — no live caller in
+// either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
+	return 0, 0, errUnsupportedRemote
 }
 
 // environmentWire mirrors models.Environment's fields exactly (snake_case) — the
@@ -1053,18 +997,14 @@ func (rs *RemoteStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 	return nil
 }
 
-// RestoreEnvironment reverses a soft-delete, scoped to projectID, via POST
-// /api/v1/system/projects/{projectId}/environments/{id}/restore.
-func (rs *RemoteStorage) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
-	path := fmt.Sprintf("/api/v1/system/projects/%d/environments/%d/restore", projectID, id)
-	resp, err := rs.client.Post(ctx, path, nil)
-	if err != nil {
-		return fmt.Errorf("failed to restore environment: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("restore environment failed: %s", resp.Error.Error())
-	}
-	return nil
+// RestoreEnvironment used to proxy onto POST
+// /api/v1/system/projects/{projectId}/environments/{id}/restore
+// (RestoreEnvironmentProxy), deleted in the G80 liveness sweep — no live caller
+// in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) RestoreEnvironment(_ context.Context, _, _ uint) error {
+	return errUnsupportedRemote
 }
 
 // ListProjectMembers lists a project's user members via GET

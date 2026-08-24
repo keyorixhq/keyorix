@@ -105,18 +105,6 @@ type mfaSecretWire struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-func newMFASecretWire(s *models.MFASecret) mfaSecretWire {
-	return mfaSecretWire{
-		ID:           s.ID,
-		UserID:       s.UserID,
-		SecretEnc:    s.SecretEnc,
-		SecretMeta:   s.SecretMeta,
-		Activated:    s.Activated,
-		LastUsedStep: s.LastUsedStep,
-		CreatedAt:    s.CreatedAt,
-	}
-}
-
 func (w mfaSecretWire) toModel() *models.MFASecret {
 	return &models.MFASecret{
 		ID:           w.ID,
@@ -137,25 +125,13 @@ func decodeMFASecretResponse(data []byte) (*models.MFASecret, error) {
 	return wire.toModel(), nil
 }
 
-// UpsertMFASecret persists the user's TOTP secret row via POST
-// /api/v1/system/mfa/secrets, then copies the upstream-assigned fields (ID,
-// CreatedAt) back into s — mirroring CreateWebAuthnCredential's identical
-// in-place-mutate contract, and LocalStorage's own GORM Create-with-OnConflict,
-// which does the same.
-func (rs *RemoteStorage) UpsertMFASecret(ctx context.Context, s *models.MFASecret) error {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/secrets", newMFASecretWire(s))
-	if err != nil {
-		return fmt.Errorf("failed to store MFA secret: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("store MFA secret failed: %s", resp.Error.Error())
-	}
-	saved, err := decodeMFASecretResponse(resp.Data)
-	if err != nil {
-		return err
-	}
-	*s = *saved
-	return nil
+// UpsertMFASecret used to proxy onto POST /api/v1/system/mfa/secrets
+// (UpsertMFASecretProxy), deleted in the G80 liveness sweep — no live caller in
+// either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) error {
+	return errUnsupportedRemote
 }
 
 // GetMFASecret fetches a user's TOTP secret row via GET

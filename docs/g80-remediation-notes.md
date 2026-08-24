@@ -658,3 +658,53 @@ own clause 2 ("human-reachable: fix it now, it outranks other open work") applie
 35 — it was deliberately not invoked tonight only because this was an unsupervised
 overnight session and authz-code changes need a human in the loop, not because the
 findings don't qualify.
+
+## Stale-test disposition: premise-impossible vs. premise-true-but-unverified (2026-08-24)
+
+Merging #1550 (the 23-handler deletion) into main broke 3 `internal/core` tests
+(`login_lockout_remote_test.go`'s `TestLockout_RemoteStorageGenuinelyPersistsAndLocks`,
+`TestLockout_RemoteStorageGenuinelyClears`, `TestUnlockUser_RemoteStorageGenuinelyPersistsAndAudits`)
+plus ~50 `internal/storage/store` tests exercising the same 22-23 now-stubbed
+`RemoteStorage` methods. Every prior "stale test" disposition in this campaign has been
+a **coverage gap**: the test was fine, the code under it changed, update the fixture.
+This is the first one that isn't — worth naming the distinction explicitly so it doesn't
+get collapsed into the same bucket next time:
+
+- **Premise-true-but-unverified**: the test exercises a real, reachable code path, but
+  its expectations (a fixture, a mock response, a hardcoded count) drifted from current
+  behavior. Fix the fixture, don't delete the test — the reachability claim still holds,
+  only the assertion is wrong. This is every prior stale-test fix in C0–C5 above (fixture
+  gaps, RealServer quarantines, coverage assertions).
+- **Premise-impossible**: the test's OWN SETUP constructs a topology that cannot occur in
+  any real deployment, independent of what it asserts. No fixture fix rescues this — the
+  scenario itself is fiction. Delete the test (and any helper that exists solely to serve
+  it), don't quarantine or paper over it.
+
+The 3 `internal/core` tests are premise-impossible: `newRemoteLockoutCoreAgainst` builds
+`&KeyorixCore{storage: rs}` as a raw struct literal, never touching
+`internal/config.Config` or `Config.Validate()`. That topology — a server process backed
+by `RemoteStorage` — is rejected UNCONDITIONALLY by `validateRemoteStorageNotServer`
+(`internal/config/config.go:2057`), verified by checking both guard call sites
+(`server/main.go:75` in `main()`, `server/main.go:302` in `initializeCoreService()`, the
+ONE function among 27 `core.NewKeyorixCore` call sites repo-wide that ever feeds
+`server/http/handlers`) and confirming neither has a bypass. No amount of fixing the
+fake-upstream HTTP mock's response shape would make the scenario real; the only correct
+fix is deleting the test.
+
+**The check that catches this, sharpened from the stopping rule above: a Go call graph
+proves a function CAN be called, not that the call CAN be constructed in a real process.**
+Tracing `server/http/handlers/catalog.go → core.UpdateProject → storage.UpdateProject`
+finds a real call chain — but whether that chain ever executes with a `RemoteStorage`
+receiver depends on whether anything can actually construct that pairing at runtime, which
+is a separate question a call graph alone cannot answer. Verify the WIRING (what
+constructs the receiver, and does anything gate that construction), not just the CALL.
+See CLAUDE.md's "Engineering practices" for the general form of this rule and four
+concrete instances from this campaign that cut in both directions.
+
+The anti-silent-no-op guarantee these 3 tests protected (backlog #529: prove
+`RemoteStorage` write methods fail LOUDLY, not silently, when unsupported) is preserved by
+different, still-live machinery: `RemoteStorage.UpdateLoginLockoutState` (and the other 22
+now-stubbed methods) return `errUnsupportedRemote` unconditionally — a loud, immediate
+error, not a silent no-op — and `TestRemoteStorageWireCalls_HaveMatchingRoute`
+(`internal/storage/store`) independently catches any wire call left with no matching
+route. Nothing about #529's original finding is unprotected; the protection just moved.

@@ -33,7 +33,7 @@
 //   - knownUnfixedRawStorageBypasses: REVIEWED AND NOT SAFE. A genuine ceiling
 //     bypass, confirmed real and (for all but one) human-reachable, tracked but
 //     NOT yet fixed. Grandfathered so this guard can go live immediately without
-//     waiting for all 35+1 to be remediated first -- exactly the
+//     waiting for all 10+1 to be remediated first -- exactly the
 //     knownUnresolvedWireCalls / knownMissingRoutes pattern
 //     (internal/storage/store/remote_wire_route_coverage_test.go): name every
 //     known-bad instance explicitly so instance #58 (a NEW bypass) cannot be added
@@ -301,12 +301,14 @@ var rawStorageBypassAllowlist = map[string]string{
 // reproducing (fixed -- move it to rawStorageBypassAllowlist with a reason, or
 // delete the entry) or if its handler is removed from /system entirely.
 //
-// 35 of these 36 were independently re-verified against an escalation-delta test
+// 10 of these 11 were independently re-verified against an escalation-delta test
 // (does an actor holding ONLY the route's gating permission gain a capability the
 // gate did not already authorize, traced to a real human auth path) on a 5-item
 // sample the same night this list was built; all 5 held up. The reach column
 // noted per entry is human-reachable for all but TransitionMembershipProxy
-// (reach genuinely unresolved, tracked separately as #1546).
+// (reach genuinely unresolved, tracked separately as #1546). (The other 23
+// originally-listed entries were deleted outright — G80 liveness sweep found no
+// live caller for any of them; see docs/g80-remediation-notes.md.)
 var knownUnfixedRawStorageBypasses = map[string]string{
 	"TransitionMembershipProxy": "UNRESOLVED, not confirmed real or safe -- filed as #1546. The exported wrapper " +
 		"(TransitionMembership) gates activation with requireAuthorityForRole and grants/revokes the underlying " +
@@ -318,42 +320,17 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	"UpdateAccessRequestProxy": "REAL, human-reachable, CRITICAL: same dual-control bypass as " +
 		"CreateAccessRequestProxy, applied to an EXISTING pending request via PUT {state:\"approved\", " +
 		"resolved_by:self}.",
-	"UpdateAccessReviewCampaignProxy": "REAL, human-reachable: raw PUT force-closes a campaign regardless of " +
-		"pending items or ARC-002's self/group/machine conflict-of-interest independence check, and emits no " +
-		"audit event at all (unlike the Create path).",
-	"CreateBreakGlassActivationProxy": "REAL, human-reachable, narrower blast radius: fabricates an activation " +
-		"row for any user/project/any-contained-role with no membership check, but never invokes " +
-		"assignUserRoleWithExpirySkipSoD -- impact is compliance-evidence/audit-trail fabrication, not live RBAC " +
-		"escalation.",
-	"UpdateBreakGlassActivationProxy": "REAL, human-reachable, narrower blast radius: the \"at most one active " +
-		"activation per (project,user)\" invariant is enforced only at INSERT (a DB unique index), never on " +
-		"UPDATE -- can resurrect a revoked/expired row to active with an unclamped ExpiresAt. Same limited blast " +
-		"radius as CreateBreakGlassActivationProxy.",
-	"CreateConnectRefGrantProxy": "REAL, human-reachable: connector-existence and not-platform-scoped checks " +
-		"(#1479) plus an audit event are all skipped by the raw call.",
-	"DeleteConnectRefGrantProxy": "REAL, human-reachable: raw delete leaves zero audit trail (EventConnectRefGrantDelete).",
-	"UpdateDynamicSecretConfigProxy": "REAL, human-reachable: raw PUT can set an invalid classification or " +
-		"silently flip Disabled with no audit and no CAS, defeating the dedicated CAS-guard proxy " +
-		"(TransitionDynamicSecretConfigDisabledProxy) that exists specifically to protect that field.",
-	"TransitionDynamicSecretConfigDisabledProxy": "REAL, human-reachable, narrow: atomicity (the CAS write) is " +
-		"faithfully preserved; only the audit event is skipped.",
-	"CreateDynamicSecretLeaseProxy": "REAL, human-reachable: raw POST can inject a fabricated lease for a " +
-		"disabled config or exceed MaxActiveLeases (the resource-exhaustion ceiling), no audit.",
-	"UpdateDynamicSecretLeaseProxy": "REAL, human-reachable: raw PUT can resurrect a revoked lease to active with " +
-		"an arbitrary far-future ExpiresAt, bypassing RenewLease's MaxTTLSeconds ceiling and audit.",
-	"RestoreEnvironmentProxy": "REAL, human-reachable: no actorID/authority parameter at all -- skips " +
-		"requireAuthorityToReinstateProjectRoles (the same #161 escalation guard RestoreProject uses) and emits " +
-		"no audit event; this file's own package doc names this exact check as one NOT made by the proxy.",
 	"CreateInvitationProxy": "REAL, human-reachable: a system.write-only caller (no project-admin authority) can " +
 		"create a pending admin-role invitation, bypassing the escalation-by-proxy guard (requireAuthorityForRole) " +
 		"entirely -- this file's own package doc names this as NOT made here.",
 	"UpdateInvitationProxy": "REAL, human-reachable: raw proxy can flip state straight to accepted/revoked with " +
 		"NO grants ever applied and no audit -- strands the real invitee (a state-machine sequencing bypass, not " +
 		"just a permission gap).",
-	"UpdateLoginLockoutStateProxy": "REAL, human-reachable: UnlockUser requires users.write (a DIFFERENT " +
-		"permission from this route's system.write) and always audits; the raw proxy lets any system.write " +
-		"holder silently clear a lockout (no audit, no users.write) or force-lock any account for up to 30 days " +
-		"(DoS).",
+	// UpdateLoginLockoutStateProxy's route was deleted (G80 23-handler no-caller
+	// deletion) -- entry removed, no longer applicable.
+	// CreateMachineIdentityProxy is FIXED (moved to rawStorageBypassAllowlist);
+	// CreateMachineIdentityCredentialProxy is HALF-FIXED (see its entry below) --
+	// neither belongs here with its original pre-fix text.
 	"RevokeMachineIdentityCredentialProxy": "REAL, human-reachable, narrower: revokes by bare credential ID with " +
 		"no project-membership check, skips audit + cache-eviction hand-off. Mirrors this file's own " +
 		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation. " +
@@ -399,43 +376,12 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"(core.CreateOIDCBinding's install-wide admin-authority check now enforced); STILL OPEN for a " +
 		"node-credential caller (isNodeCredentialRequest routes around the check to the raw storage call -- see " +
 		"the HALF-FIXED comment immediately above this entry).",
-	"UpsertMFASecretProxy": "REAL, human-reachable: raw proxy takes user_id/SecretEnc/Activated straight from the " +
-		"JSON body -- plant or overwrite an \"Activated\" MFA secret for ANY user, even an already-MFA-enabled " +
-		"one, even with at-rest encryption disabled, versus BeginMFAEnrollment's fail-closed + already-enabled " +
-		"refusal + handler-layer self-only scoping.",
-	"CreateMFAStepUpGrantProxy": "REAL, human-reachable, SEVERE: VerifyMFAStepUp requires a valid TOTP/recovery " +
-		"code (verifyMFAStepUpCode) before granting the step-up that satisfies checkRestrictedMFAGate for " +
-		"restricted-secret reads. The raw proxy creates a grant for any UserID with an attacker-chosen ExpiresAt " +
-		"and ZERO code verification -- full bypass of the restricted-secret MFA gate. Verified against the " +
-		"escalation-delta test: requireReauth-family checks verify the TARGET user's own password/TOTP, " +
-		"orthogonal to any RBAC permission including system.write.",
-	"UpdateProjectProxy": "REAL, human-reachable, HIGH VALUE: catalog.go's human-facing UpdateProject handler " +
-		"explicitly gates a RequireMFA change on roles.assign at project scope (ADR-037; its own comment: " +
-		"\"otherwise a developer could silently disable the project's MFA enforcement\") plus an audit event on " +
-		"any flip. roles.assign and system.write are distinct permission strings -- the raw proxy has no such " +
-		"check at all. Verified against the escalation-delta test directly in code (catalog.go:240-248 vs. " +
-		"project_catalog_proxy.go:186-198).",
-	"RestoreProjectProxy": "REAL, human-reachable: raw handler restores any project with zero authority check, " +
-		"resurrecting admin-tier role grants that requireAuthorityToReinstateProjectRoles (the #161 escalation " +
-		"guard) would otherwise refuse -- same shape as the already-fixed C1/RemoveGlobalAdminRoleGuardedProxy " +
-		"bug (a wrapper that resolves its own admin/ceiling list; the raw call skips it entirely).",
-	"DeleteAnomalyAlertsBeforeProxy": "REAL, human-reachable, different shape from the others: legalHoldGuard " +
-		"checks global state (IsLegalHoldActive), not caller identity -- purges unconditionally with no check, " +
-		"destroying evidence a deployment-wide legal hold (ADR-032/033) is meant to protect. Verified against the " +
-		"escalation-delta test: the capability gained (purge during an active hold) is denied to EVERY actor, " +
-		"including full admins, through the correct path -- not a privilege-tier escalation, but a genuine " +
-		"capability gain no one should have while a hold is active.",
-	"DeleteClosedAccessReviewsBeforeProxy": "REAL, human-reachable: same legalHoldGuard gap as " +
-		"DeleteAnomalyAlertsBeforeProxy -- PurgeExpiredComplianceRecords re-checks the hold before this delete " +
-		"too, and the raw proxy has no equivalent check.",
-	"DeleteExpiredBreakGlassBeforeProxy": "REAL, human-reachable: same legalHoldGuard gap as " +
-		"DeleteAnomalyAlertsBeforeProxy, applied to break-glass records.",
-	"DeleteResolvedAccessRequestsBeforeProxy": "REAL, human-reachable: same legalHoldGuard gap as " +
-		"DeleteAnomalyAlertsBeforeProxy, applied to resolved access requests.",
-	"DeleteSecretDependencyProxy": "REAL, human-reachable: RemoveSecretDependency verifies the edge references " +
-		"the caller's authorized FOCAL secret, then independently authorizes the caller on the PEER endpoint " +
-		"(#G32 defense -- an ACL grant on one endpoint doesn't extend to the other), then audits. The raw proxy " +
-		"deletes any edge ID with only the route's own gate -- no focal-secret scoping, no peer-authz, no audit.",
+	// UpsertMFASecretProxy, CreateMFAStepUpGrantProxy, UpdateProjectProxy,
+	// RestoreProjectProxy, DeleteAnomalyAlertsBeforeProxy,
+	// DeleteClosedAccessReviewsBeforeProxy, DeleteExpiredBreakGlassBeforeProxy,
+	// DeleteResolvedAccessRequestsBeforeProxy, DeleteSecretDependencyProxy: all
+	// deleted (G80 23-handler no-caller deletion) -- entries removed, no longer
+	// applicable.
 	"UpdateUserIfActiveStateMatchesProxy": "PARTIALLY FIXED 2026-08-24 (G80 overnight campaign, Tier 1 Group A " +
 		"#3): the last-admin-lockout half is fixed -- core.GuardLastAdminDeactivation now runs before any " +
 		"deactivating transition (FromActive:true, Active:false), a target-state check needing only the target " +
@@ -448,18 +394,6 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"offboarding failure (cannot deactivate ANY user in connected mode, not just a missing side effect on " +
 		"this one raw call), tracked and assessed separately against the Tier 1 line, not fixed as part of this " +
 		"change.",
-	"CreateWebAuthnCredentialProxy": "REAL, human-reachable, SEVERE: FinishWebAuthnRegistration calls " +
-		"requireReauth (re-prove the TARGET account's current password/TOTP) before persisting; its own doc says " +
-		"this \"must not be reachable by a bearer token alone.\" The raw proxy has ZERO reauth -- implant an " +
-		"attacker-controlled passkey on ANY account. Verified against the escalation-delta test: requireReauth " +
-		"checks possession of the target user's own credentials, unrelated to any RBAC permission the caller " +
-		"holds.",
-	"DeleteWebAuthnCredentialProxy": "REAL, human-reachable: same requireReauth gap as " +
-		"CreateWebAuthnCredentialProxy -- strip any user's real passkeys with no proof of ownership.",
-	"SetUserWebAuthnEnabledProxy": "REAL, human-reachable: the only two core callers of SetUserWebAuthnEnabled " +
-		"(FinishWebAuthnRegistration, DeleteWebAuthnCredential) both run it only AFTER their own requireReauth -- " +
-		"the raw proxy flips any user's webauthn_enabled flag directly, no reauth, no paired session-purge/audit " +
-		"-- silent 2FA downgrade or bogus force-enable on an arbitrary account.",
 }
 
 // TestNoUnjustifiedRawStorageBypass is #1542's guard, extended by #1547 to cover

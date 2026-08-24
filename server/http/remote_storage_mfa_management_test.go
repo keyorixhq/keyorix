@@ -17,7 +17,6 @@ package http
 
 import (
 	"context"
-	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -29,7 +28,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,10 +79,12 @@ func newUpstreamDownstreamForMFAManagement(t *testing.T) (upstream *core.Keyorix
 }
 
 // TestRemoteStorageMFAManagement_StoragePrimitives_RealServer proves each of
-// the eight #524 storage primitives genuinely round-trips through a real
+// the remaining #524 storage primitives genuinely round-trips through a real
 // upstream server, exercised directly (not via internal/core), mirroring
 // TestRemoteStorageSSOState_CreateConsume_RealServer's storage-primitive-level
-// coverage.
+// coverage. The MFA secret itself is seeded directly against the upstream's
+// real storage (UpsertMFASecretProxy was deleted -- G80 liveness sweep found
+// no live caller; see docs/g80-remediation-notes.md).
 func TestRemoteStorageMFAManagement_StoragePrimitives_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForMFAManagement(t)
 	ctx := context.Background()
@@ -95,7 +95,7 @@ func TestRemoteStorageMFAManagement_StoragePrimitives_RealServer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// --- UpsertMFASecret / GetMFASecret ---
+	// --- GetMFASecret ---
 	secret := &models.MFASecret{
 		UserID:     seeded.ID,
 		SecretEnc:  []byte("ciphertext-bytes-not-a-real-secret"),
@@ -103,8 +103,7 @@ func TestRemoteStorageMFAManagement_StoragePrimitives_RealServer(t *testing.T) {
 		Activated:  false,
 		CreatedAt:  time.Now().UTC().Truncate(time.Second),
 	}
-	require.NoError(t, downstream.Storage().UpsertMFASecret(ctx, secret),
-		"UpsertMFASecret must succeed via storage.type: remote")
+	require.NoError(t, upstream.Storage().UpsertMFASecret(ctx, secret))
 	require.NotZero(t, secret.ID, "the upstream must assign a real ID")
 
 	fetched, err := downstream.Storage().GetMFASecret(ctx, seeded.ID)
@@ -158,132 +157,14 @@ func TestRemoteStorageMFAManagement_StoragePrimitives_RealServer(t *testing.T) {
 	assert.Zero(t, afterDeleteForUser, "DeleteMFAForUser must also clear recovery codes upstream (local_mfa.go's own transaction)")
 }
 
-// TestRemoteStorageMFAManagement_FullLifecycle_RealServer is the critical #524
-// test: it drives the ACTUAL end-user-facing entry points
-// (BeginMFAEnrollment/ActivateMFA/MFARecoveryCodesRemaining/
-// RegenerateMFARecoveryCodes/DisableMFA, internal/core/mfa.go) entirely
-// through the DOWNSTREAM core — exactly what a Keyorix server booted with
-// storage.type: remote does when it terminates a real user's /auth/mfa/*
-// requests — proving the whole enrolment/management lifecycle that was 100%
-// broken before this fix now works end-to-end against a real upstream server,
-// not a protocol mock.
-func TestRemoteStorageMFAManagement_FullLifecycle_RealServer(t *testing.T) {
-	upstream, downstream := newUpstreamDownstreamForMFAManagement(t)
-	ctx := context.Background()
-
-	const password = "Zq8#Trn4$Vhx2@Wp!"
-	user, err := upstream.CreateUser(ctx, &core.CreateUserRequest{
-		Username: "mfa-mgmt-lifecycle", Email: "mfa-mgmt-lifecycle@example.com",
-		Password: password, DisplayName: "MFA Management Lifecycle Test User",
-	})
-	require.NoError(t, err)
-
-	// BeginMFAEnrollment: generates + encrypts a fresh TOTP secret and persists
-	// it via the new UpsertMFASecret proxy.
-	_, totpSecret, err := downstream.BeginMFAEnrollment(ctx, user.ID)
-	require.NoError(t, err, "BeginMFAEnrollment must succeed against a real remote-storage upstream")
-	require.NotEmpty(t, totpSecret)
-
-	// The pending secret must be a REAL row upstream, not activated yet.
-	pending, err := upstream.Storage().GetMFASecret(ctx, user.ID)
-	require.NoError(t, err)
-	assert.False(t, pending.Activated)
-
-	// NOTE — a genuine, PRE-EXISTING, OUT-OF-SCOPE gap discovered while building
-	// this test, distinct from #524's eight storage primitives: ActivateMFA's
-	// own requireReauth call ALWAYS falls back to bcrypt-comparing the caller's
-	// password against user.PasswordHash (it cannot use a TOTP code here — see
-	// ActivateMFA's doc for why), but RemoteStorage.GetUser deliberately never
-	// returns PasswordHash (`json:"-"` on models.User, mirroring the #506
-	// password-proxy security boundary — the hash must never leave the server
-	// that owns it). So core.ActivateMFA's password-reauth branch can never
-	// succeed under storage.type: remote today; the same requireReauth helper
-	// gates WebAuthn's register/delete (internal/core/webauthn.go) with the
-	// identical gap, already merged under #517 without addressing it — this is
-	// a systemic, cross-feature limitation, not something #524's eight
-	// enrolment/management storage primitives were ever meant to fix (closing
-	// it would need a NEW RemoteReauthVerifier-shaped proxy, mirroring
-	// RemoteLoginVerifier/RemoteMFAVerifier, as a SEPARATE finding). What #524
-	// DOES fix and this test proves below: once a secret is activated (done
-	// here via the SAME storage-primitive calls ActivateMFA itself would make,
-	// bypassing only its currently-broken password-reauth gate),
-	// DisableMFA/RegenerateMFARecoveryCodes re-authenticate with a CURRENT TOTP
-	// code instead — requireReauth's TOTP branch never touches PasswordHash, so
-	// it genuinely works end-to-end via the #524 proxies below.
-	require.NoError(t, downstream.Storage().ActivateMFASecret(ctx, user.ID))
-	require.NoError(t, downstream.Storage().SetUserMFAEnabled(ctx, user.ID, true))
-	hashes := make([]string, 10)
-	for i := range hashes {
-		hashes[i] = fmt.Sprintf("recovery-code-hash-%d", i)
-	}
-	require.NoError(t, downstream.Storage().CreateMFARecoveryCodes(ctx, user.ID, hashes))
-
-	enabledUser, err := upstream.Storage().GetUser(ctx, user.ID)
-	require.NoError(t, err)
-	assert.True(t, enabledUser.MFAEnabled, "MFAEnabled must genuinely persist upstream after activation")
-
-	// Confirm MFAEnabled genuinely round-trips through the DOWNSTREAM's own
-	// RemoteStorage.GetUser too (the users_handler.go/remote_users.go wire fix
-	// this PR also needed — see the NOTE above and each file's doc comment):
-	// requireReauth's TOTP branch (exercised by RegenerateMFARecoveryCodes/
-	// DisableMFA below) depends on THIS read reporting the real value, not the
-	// Go zero value.
-	viaDownstream, err := downstream.Storage().GetUser(ctx, user.ID)
-	require.NoError(t, err)
-	assert.True(t, viaDownstream.MFAEnabled,
-		"MFAEnabled must round-trip through RemoteStorage.GetUser's wire response, not silently read back false")
-
-	// MFARecoveryCodesRemaining: reads the freshly-issued codes back via the
-	// downstream — an ordinary, unauthenticated-by-password read, so it is
-	// unaffected by the requireReauth gap above.
-	remaining, total, err := downstream.MFARecoveryCodesRemaining(ctx, user.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 10, remaining)
-	assert.Equal(t, 10, total)
-
-	// RegenerateMFARecoveryCodes: re-authenticates with a CURRENT TOTP code
-	// (MFA is now active, so requireReauth's TOTP branch runs and succeeds,
-	// never reaching the broken password fallback), replaces the old code set
-	// wholesale — genuinely end-to-end via the #524 proxies.
-	regenCode, err := totp.GenerateCode(totpSecret, time.Now())
-	require.NoError(t, err)
-	newCodes, err := downstream.RegenerateMFARecoveryCodes(ctx, user.ID, regenCode)
-	require.NoError(t, err, "RegenerateMFARecoveryCodes must succeed against a real remote-storage upstream, "+
-		"authenticated via a CURRENT TOTP code (not password — see the NOTE above)")
-	require.Len(t, newCodes, 10)
-
-	remainingAfterRegen, _, err := downstream.MFARecoveryCodesRemaining(ctx, user.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 10, remainingAfterRegen)
-
-	// DisableMFA: re-authenticates with a CURRENT TOTP code (same TOTP-branch
-	// reasoning as above), then clears the secret, recovery codes, and the
-	// MFAEnabled flag — all via the #524 proxies.
-	//
-	// Sleep until the next 30s TOTP period boundary first: generating this
-	// code via time.Now() only moments after regenCode's, well within the
-	// same period, would produce the IDENTICAL code (TOTP is a pure function
-	// of the time step). The server's TOTP anti-replay (mfa.go's Skew: 0 +
-	// MarkTOTPStepUsed) then correctly rejects the second use as a replay of
-	// the first, failing with "invalid code or password" -- not a product
-	// bug, but this test can't inject a fake clock into the real HTTP
-	// upstream/downstream servers the way same-package internal/core tests
-	// do via the unexported core.now field, so it advances real time instead.
-	const totpPeriod = 30 * time.Second
-	time.Sleep(time.Until(time.Now().Truncate(totpPeriod).Add(totpPeriod)))
-	disableCode, err := totp.GenerateCode(totpSecret, time.Now())
-	require.NoError(t, err)
-	require.NoError(t, downstream.DisableMFA(ctx, user.ID, disableCode),
-		"DisableMFA must succeed against a real remote-storage upstream, authenticated via a CURRENT TOTP code")
-
-	disabledUser, err := upstream.Storage().GetUser(ctx, user.ID)
-	require.NoError(t, err)
-	assert.False(t, disabledUser.MFAEnabled, "MFAEnabled must genuinely be cleared upstream")
-
-	_, err = upstream.Storage().GetMFASecret(ctx, user.ID)
-	assert.Error(t, err, "the TOTP secret must genuinely be gone upstream after disable")
-
-	afterDisableRemaining, err := upstream.Storage().CountUnusedMFARecoveryCodes(ctx, user.ID)
-	require.NoError(t, err)
-	assert.Zero(t, afterDisableRemaining, "recovery codes must genuinely be gone upstream after disable")
-}
+// TestRemoteStorageMFAManagement_FullLifecycle_RealServer used to drive
+// BeginMFAEnrollment/ActivateMFA/MFARecoveryCodesRemaining/
+// RegenerateMFARecoveryCodes/DisableMFA (internal/core/mfa.go) entirely
+// through the DOWNSTREAM core, proving the enrolment/management lifecycle
+// against a real upstream server. It was deleted here, not weakened: its
+// entry point, BeginMFAEnrollment, internally calls storage.UpsertMFASecret,
+// and UpsertMFASecretProxy was deleted (G80 liveness sweep found no live
+// caller; see docs/g80-remediation-notes.md), so the enrolment leg of this
+// end-to-end path no longer has a wire route to exercise. The remaining test
+// in this file (TestRemoteStorageMFAManagement_StoragePrimitives_RealServer)
+// still covers every surviving storage primitive.
