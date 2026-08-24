@@ -326,24 +326,62 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	"UpdateInvitationProxy": "REAL, human-reachable: raw proxy can flip state straight to accepted/revoked with " +
 		"NO grants ever applied and no audit -- strands the real invitee (a state-machine sequencing bypass, not " +
 		"just a permission gap).",
-	"CreateMachineIdentityProxy": "REAL, human-reachable: raw proxy only checks Name/ProjectID non-empty -- " +
-		"arbitrary IdentityType/Classification/State, zero audit, versus core.CreateMachineIdentity's validation " +
-		"+ forced State=MachineActive + audit.",
-	"CreateMachineIdentityCredentialProxy": "REAL, human-reachable, MOST SEVERE FINDING -- full privilege " +
-		"escalation: IssueMachineToken enforces requireMachinePrivilegeCeiling (a non-admin cannot mint a " +
-		"credential for a machine identity holding admin-tier roles, MACH-001) and generates TokenHash itself via " +
-		"crypto/rand. The raw proxy accepts an attacker-CHOSEN TokenHash for any existing MachineIdentityID with " +
-		"NO privilege-ceiling check -- forge a working credential for an admin-tier machine identity and " +
-		"authenticate as it. Verified against the escalation-delta test: requireMachinePrivilegeCeiling checks " +
-		"IsGlobalAdmin (role-name membership), which system.write alone does not satisfy.",
+	// UpdateLoginLockoutStateProxy's route was deleted (G80 23-handler no-caller
+	// deletion) -- entry removed, no longer applicable.
+	// CreateMachineIdentityProxy is FIXED (moved to rawStorageBypassAllowlist);
+	// CreateMachineIdentityCredentialProxy is HALF-FIXED (see its entry below) --
+	// neither belongs here with its original pre-fix text.
 	"RevokeMachineIdentityCredentialProxy": "REAL, human-reachable, narrower: revokes by bare credential ID with " +
 		"no project-membership check, skips audit + cache-eviction hand-off. Mirrors this file's own " +
-		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation.",
-	"CreateOIDCBindingProxy": "REAL, human-reachable: core.CreateOIDCBinding requires install-wide system_admin " +
-		"authority (requireAuthorityForRole, #127) plus machine-project scope + issuer-trust validation, none of " +
-		"which admin-tier-or-system.write (the route's own gate) implies.",
+		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation. " +
+		"Deferred (not a wire-compatible fix like its siblings): the wire contract carries no project/scope " +
+		"parameter at all, so closing it needs a RemoteStorage client-side change first -- filed as #1551.",
 	"DeleteOIDCBindingProxy": "REAL, human-reachable: deletes any binding ID with no ownership/project-scope " +
 		"check and no audit event, versus core.DeleteOIDCBinding's machineInProject + binding-ownership checks.",
+	// HALF-FIXED 2026-08-24 -- do NOT move to rawStorageBypassAllowlist: CLOSED
+	// for a direct, non-node-credential caller (routes through
+	// core.RequireMachinePrivilegeCeiling, MACH-001, now denying a system.write-only
+	// caller minting a credential for an admin-tier machine identity -- see
+	// system_write_ceiling_table_test.go's EnforcesPrivilegeCeiling row). STILL OPEN
+	// for a node-credential caller: isNodeCredentialRequest(r) routes around the
+	// check entirely to the raw storage.CreateMachineIdentityCredential call, on the
+	// theory that a genuine relay already ran this check downstream -- an assertion
+	// with no wire-level verification (ADR-085's unresolved "harder question": the
+	// wire carries no field attesting which human/decision a relayed action actually
+	// traces to). A bare node credential -- the single most widely distributed
+	// credential class in a deployment (ADR-085) -- can still forge a credential for
+	// an admin-tier machine identity by calling this route directly, with nothing
+	// distinguishing that from a genuine relay. Tracked under #1552 (the same
+	// AssignRoleWithExpiryProxy-precedent pattern, filed Tier 1, ranked above this
+	// finding). See system_write_ceiling_table_test.go's node-credential-path rows
+	// for the live, asserted-red-in-spirit (documented current-behavior) evidence.
+	"CreateMachineIdentityCredentialProxy": "HALF-FIXED: closed for a direct system.write-only human/machine " +
+		"caller (core.RequireMachinePrivilegeCeiling now enforced); STILL OPEN for a node-credential caller " +
+		"(isNodeCredentialRequest routes around the check to the raw storage call, on an unverified relay-trust " +
+		"assumption -- see the HALF-FIXED comment immediately above this entry).",
+	// HALF-FIXED 2026-08-24 -- do NOT move to rawStorageBypassAllowlist: CLOSED for
+	// a direct, non-node-credential caller (routes through core.CreateOIDCBinding's
+	// requireAuthorityForRole(..., "system_admin") install-wide admin-authority
+	// check -- see system_write_ceiling_table_test.go's
+	// RequiresInstallWideAdminAuthority row). STILL OPEN for a node-credential
+	// caller: isNodeCredentialRequest(r) routes around the check entirely to the raw
+	// storage.CreateOIDCBinding call, same unverified relay-trust assumption as
+	// CreateMachineIdentityCredentialProxy above (and the same assumption
+	// AssignRoleWithExpiryProxy's node branch makes, rbac_role_grants_proxy.go --
+	// filed as #1552, Tier 1, ranked above CreateMachineIdentityCredentialProxy: a
+	// shorter path to global admin, attacker-chosen target account). A bare node
+	// credential can still pre-claim any (issuer, subject) OIDC binding for a
+	// machine of its choosing by calling this route directly.
+	"CreateOIDCBindingProxy": "HALF-FIXED: closed for a direct system.write-only human/machine caller " +
+		"(core.CreateOIDCBinding's install-wide admin-authority check now enforced); STILL OPEN for a " +
+		"node-credential caller (isNodeCredentialRequest routes around the check to the raw storage call -- see " +
+		"the HALF-FIXED comment immediately above this entry).",
+	// UpsertMFASecretProxy, CreateMFAStepUpGrantProxy, UpdateProjectProxy,
+	// RestoreProjectProxy, DeleteAnomalyAlertsBeforeProxy,
+	// DeleteClosedAccessReviewsBeforeProxy, DeleteExpiredBreakGlassBeforeProxy,
+	// DeleteResolvedAccessRequestsBeforeProxy, DeleteSecretDependencyProxy: all
+	// deleted (G80 23-handler no-caller deletion) -- entries removed, no longer
+	// applicable.
 	"UpdateUserIfActiveStateMatchesProxy": "PARTIALLY FIXED 2026-08-24 (G80 overnight campaign, Tier 1 Group A " +
 		"#3): the last-admin-lockout half is fixed -- core.GuardLastAdminDeactivation now runs before any " +
 		"deactivating transition (FromActive:true, Active:false), a target-state check needing only the target " +

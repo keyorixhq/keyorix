@@ -169,8 +169,20 @@ func TestCheckSecretAccessSchedule_Denied(t *testing.T) {
 // allowedDaysExcludingToday returns a comma-separated day list (ISO 1=Mon..7=Sun)
 // that excludes today, guaranteeing enforceSchedule denies on the day check
 // alone — independent of the current hour.
+//
+// Intermittent-failure fix: every caller in this file sets the fixture schedule's
+// Timezone to "UTC", and enforceSchedule (secret_schedule.go:46) evaluates
+// local := now.In(loc) against THAT timezone — but this used to compute "today"
+// from time.Now().Weekday(), the machine's LOCAL timezone. Near the local/UTC day
+// boundary the two disagree (e.g. a UTC+1 machine between 00:00 and 01:00 local
+// has already rolled to tomorrow locally while UTC is still on today), so the
+// excluded day didn't match the day enforceSchedule actually checked, and the
+// test flaked open (expected denial, got access) for that ~1h/day window,
+// machine-timezone-dependent. Anchoring to UTC here matches the fixture's own
+// configured schedule timezone, closing the mismatch outright rather than
+// narrowing the window.
 func allowedDaysExcludingToday() string {
-	today := int(time.Now().Weekday())
+	today := int(time.Now().UTC().Weekday())
 	if today == 0 {
 		today = 7
 	}
