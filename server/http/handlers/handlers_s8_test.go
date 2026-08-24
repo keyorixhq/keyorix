@@ -1117,4 +1117,3 @@ func TestMachineActionState_S8(t *testing.T) {
 	assert.False(t, ok)
 	assert.Empty(t, state)
 }
-

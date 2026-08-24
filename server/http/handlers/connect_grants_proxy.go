@@ -99,4 +99,3 @@ func (h *AuthHandler) ListConnectRefGrantsProxy(w http.ResponseWriter, r *http.R
 	}
 	writeRemoteAPISuccess(w, connectRefGrantsProxyWireList(grants))
 }
-

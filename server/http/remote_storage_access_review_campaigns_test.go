@@ -279,4 +279,3 @@ func TestRemoteStorageAccessReviewCampaign_UpdateItemRejectsWhenAlreadyDecided_R
 	require.NoError(t, err)
 	assert.Equal(t, core.ReviewItemAttested, fetched.Decision, "the winning decision must not be clobbered by the loser")
 }
-
