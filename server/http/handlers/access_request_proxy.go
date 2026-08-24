@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -153,6 +154,17 @@ func validAccessRequestTargetState(s string) bool {
 // access request as-is (a raw storage-layer create) rather than routing
 // through RequestProjectAccess/RequestSecretAccess's business logic (audit
 // writes, notifications) a second time.
+//
+// #1529-shape guard: every legitimate creation path (RequestProjectAccess,
+// RequestSecretAccess) always creates with State=pending -- approval is a
+// SEPARATE, subsequent action (UpdateAccessRequestProxy), never something the
+// creator decides for themselves. Before this fix, State was caller-writable
+// with no restriction: POST {state:"approved", secret_id, user_id:self}
+// bypassed ApproveSecretAccessRequest's admin-authority + maker≠checker dual
+// control entirely, in one call. Reject anything but "pending" -- this needs
+// no RemoteStorage wire-protocol change, since the only real caller (a
+// downstream node's own RequestProjectAccess/RequestSecretAccess, relayed)
+// only ever sends "pending" in the first place.
 func (h *CatalogHandler) CreateAccessRequestProxy(w http.ResponseWriter, r *http.Request) {
 	var body accessRequestProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -163,8 +175,8 @@ func (h *CatalogHandler) CreateAccessRequestProxy(w http.ResponseWriter, r *http
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id and user_id are required")
 		return
 	}
-	if body.State == "" {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "state is required")
+	if body.State != core.AccessRequestPending {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "state must be \"pending\" -- a new access request is never created pre-resolved")
 		return
 	}
 	created, err := h.coreService.Storage().CreateAccessRequest(r.Context(), body.toModel())
@@ -240,6 +252,44 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 		log.Printf("access-requests proxy: update lookup failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
+	}
+	// #1529-shape guard: approving is the one transition that grants something
+	// (secret-scoped: read access, the instant the row reads State=approved --
+	// see ApproveSecretAccessRequest's package doc; project/role-scoped: the
+	// GrantedRole record a later AssignRoleWithExpiryProxy call relies on being
+	// trustworthy). Before this fix, a caller could PUT {state:"approved",
+	// resolved_by:self} on an existing pending request with NO check at all --
+	// same finding as CreateAccessRequestProxy above, applied to an update
+	// instead of a create. Re-derive, at the hub, exactly the ceiling the
+	// matching core method already applies before ever reaching this storage
+	// primitive locally: maker≠checker, then admin authority (secret-scoped,
+	// mirroring ApproveSecretAccessRequest) or role-grant authority
+	// (project/role-scoped, mirroring ApproveAccessRequestWithExpiry's
+	// RequireAuthorityForRole call). Reject/withdraw/expire are left as before:
+	// core.RejectAccessRequest has no actor-authority check of its own (any
+	// project member may reject), and core.WithdrawAccessRequest's self-only
+	// check has no wire-carried actor field distinct from ResolvedBy to
+	// re-derive against here -- out of scope for this fix.
+	if body.State == core.AccessRequestApproved {
+		if body.ResolvedBy == existing.UserID {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "a requester cannot approve their own access request")
+			return
+		}
+		if existing.SecretID != nil {
+			if err := h.coreService.RequireAdminAuthorityAt(r.Context(), body.ResolvedBy, existing.ProjectID); err != nil {
+				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "only an administrator can approve access to a restricted secret: "+err.Error())
+				return
+			}
+		} else {
+			role := body.GrantedRole
+			if role == "" {
+				role = existing.SuggestedRole
+			}
+			if err := h.coreService.RequireAuthorityForRole(r.Context(), body.ResolvedBy, existing.ProjectID, role); err != nil {
+				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+				return
+			}
+		}
 	}
 	existing.State = body.State
 	existing.GrantedRole = body.GrantedRole

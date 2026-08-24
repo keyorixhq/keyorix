@@ -21,6 +21,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
@@ -287,4 +288,149 @@ func TestRemoteStorageAccessRequest_Approvals_RealServer(t *testing.T) {
 	approvals, err = downstream.Storage().ListAccessRequestApprovals(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Len(t, approvals, 2, "a duplicate approver sign-off must not insert a second row")
+}
+
+// seedAccessRequestSecretFixture creates a project, a requester (owner of the
+// secret and project viewer), a real user with NO special authority, a real
+// admin, and a restricted secret with one version — mirroring
+// internal/core/classification_gate_test.go's seedClassificationGateFixture
+// exactly, against the upstream's own storage so the fixture is real rows,
+// not a mock.
+func seedAccessRequestSecretFixture(t *testing.T, upstream *core.KeyorixCore) (secretID, requesterID, nonAdminID, adminID, projectID uint) {
+	t.Helper()
+	ctx := context.Background()
+	st := upstream.Storage()
+
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "ar-1529-fixture"})
+	require.NoError(t, err)
+
+	requester, err := st.CreateUser(ctx, &models.User{Username: "ar1529-requester", Email: "ar1529-requester@example.com", IsActive: true})
+	require.NoError(t, err)
+	viewerRole, err := st.GetRoleByName(ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, requester.ID, viewerRole.ID, coreStorage.Scope{ProjectID: proj.ID}))
+
+	nonAdmin, err := st.CreateUser(ctx, &models.User{Username: "ar1529-nonadmin", Email: "ar1529-nonadmin@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	admin, err := st.CreateUser(ctx, &models.User{Username: "ar1529-admin", Email: "ar1529-admin@example.com", IsActive: true})
+	require.NoError(t, err)
+	adminRole, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, admin.ID, adminRole.ID, coreStorage.Scope{}))
+
+	secret, err := st.CreateSecret(ctx, &models.SecretNode{
+		Name: "ar1529-secret", ProjectID: proj.ID, EnvironmentID: 1, Type: "password",
+		IsSecret: true, OwnerID: requester.ID, Status: "active", Classification: "restricted",
+	})
+	require.NoError(t, err)
+	_, err = st.CreateSecretVersion(ctx, &models.SecretVersion{
+		SecretNodeID: secret.ID, VersionNumber: 1, EncryptedValue: []byte("s3cr3t-value"),
+	})
+	require.NoError(t, err)
+
+	return secret.ID, requester.ID, nonAdmin.ID, admin.ID, proj.ID
+}
+
+// TestAccessRequestProxy_CreateRejectsNonPendingState (#1529) proves
+// CreateAccessRequestProxy no longer accepts a caller-supplied non-pending
+// State. Before the fix, POST {state:"approved", secret_id, user_id:self}
+// created an access request that read as already-approved on its very first
+// GET, bypassing ApproveSecretAccessRequest's dual control entirely — the
+// CRITICAL finding. RED without the fix: the create below would have
+// succeeded and the fetched row would have read State=="approved".
+func TestAccessRequestProxy_CreateRejectsNonPendingState(t *testing.T) {
+	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, _, _, projectID := seedAccessRequestSecretFixture(t, upstream)
+	ctx := context.Background()
+	sid := secretID
+
+	forged := &models.AccessRequest{
+		ProjectID: projectID, UserID: requesterID, SecretID: &sid,
+		State: "approved", ResolvedBy: requesterID, CreatedAt: time.Now(),
+	}
+	_, err := downstream.Storage().CreateAccessRequest(ctx, forged)
+	require.Error(t, err, "creating an access request pre-approved must be refused")
+}
+
+// TestAccessRequestProxy_UpdateApprove_RejectsSelfApproval (#1529) proves
+// UpdateAccessRequestProxy re-derives ApproveSecretAccessRequest's maker≠checker
+// check. RED without the fix: this update would have succeeded.
+func TestAccessRequestProxy_UpdateApprove_RejectsSelfApproval(t *testing.T) {
+	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, _, _, projectID := seedAccessRequestSecretFixture(t, upstream)
+	ctx := context.Background()
+	sid := secretID
+
+	req, err := downstream.Storage().CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: projectID, UserID: requesterID, SecretID: &sid, State: "pending", CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	req.State = "approved"
+	req.ResolvedBy = requesterID // the requester approving their own request
+	now := time.Now()
+	req.ResolvedAt = &now
+	_, err = downstream.Storage().UpdateAccessRequest(ctx, req)
+	require.Error(t, err, "a requester approving their own access request must be refused")
+}
+
+// TestAccessRequestProxy_UpdateApprove_RejectsNonAdminApprover (#1529) proves
+// UpdateAccessRequestProxy re-derives ApproveSecretAccessRequest's
+// admin-authority ceiling for a secret-scoped request. This is the CRITICAL
+// finding itself: before the fix, ANY caller holding only system.write (no
+// admin authority at all) could approve access to a restricted secret via
+// this raw call. RED without the fix: this update would have succeeded.
+func TestAccessRequestProxy_UpdateApprove_RejectsNonAdminApprover(t *testing.T) {
+	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, nonAdminID, _, projectID := seedAccessRequestSecretFixture(t, upstream)
+	ctx := context.Background()
+	sid := secretID
+
+	req, err := downstream.Storage().CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: projectID, UserID: requesterID, SecretID: &sid, State: "pending", CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	req.State = "approved"
+	req.ResolvedBy = nonAdminID // real user, real account, zero admin authority
+	now := time.Now()
+	req.ResolvedAt = &now
+	_, err = downstream.Storage().UpdateAccessRequest(ctx, req)
+	require.Error(t, err, "a non-admin approver must not be able to approve access to a restricted secret")
+
+	// The row must still read pending — the rejected attempt must not have
+	// partially applied.
+	fetched, err := downstream.Storage().GetAccessRequest(ctx, req.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", fetched.State)
+}
+
+// TestAccessRequestProxy_UpdateApprove_AllowsAdminApprover (#1529) is the
+// positive control: a genuine admin approving a genuine restricted-secret
+// request must still succeed end-to-end over the proxy — the fix closes the
+// bypass without breaking the legitimate path.
+func TestAccessRequestProxy_UpdateApprove_AllowsAdminApprover(t *testing.T) {
+	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, _, adminID, projectID := seedAccessRequestSecretFixture(t, upstream)
+	ctx := context.Background()
+	sid := secretID
+
+	req, err := downstream.Storage().CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: projectID, UserID: requesterID, SecretID: &sid, State: "pending", CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	req.State = "approved"
+	req.ResolvedBy = adminID
+	now := time.Now()
+	req.ResolvedAt = &now
+	updated, err := downstream.Storage().UpdateAccessRequest(ctx, req)
+	require.NoError(t, err, "a genuine admin approving a genuine request must still succeed")
+	assert.True(t, updated)
+
+	fetched, err := downstream.Storage().GetAccessRequest(ctx, req.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "approved", fetched.State)
+	assert.Equal(t, adminID, fetched.ResolvedBy)
 }
