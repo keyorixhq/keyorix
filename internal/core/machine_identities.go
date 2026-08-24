@@ -70,6 +70,19 @@ func canTransitionMachine(from, to string) bool {
 	return false
 }
 
+// IsValidMachineTransition reports whether from->to is a legal machine-identity
+// state transition (revoked is terminal). Exported so the raw-storage
+// TransitionMachineIdentityStateProxy handler (server/http/handlers/machine_identities_proxy.go)
+// can enforce the same legality check TransitionMachineIdentity's transaction body
+// (transitionMachineInTx) applies, without duplicating machineTransitions — this is
+// the one part of that check that is target-state-only (no actor/project context
+// needed), unlike the cross-project guard, which is a caller-side concern that
+// already ran on whichever server's core.TransitionMachineIdentity initiated the
+// relayed call and cannot be meaningfully re-derived from the wire alone.
+func IsValidMachineTransition(from, to string) bool {
+	return canTransitionMachine(from, to)
+}
+
 // CreateMachineIdentity creates an active machine identity in a project.
 func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint, name, identityType, description, classification string, createdBy uint) (*models.MachineIdentity, error) {
 	if projectID == 0 || name == "" {

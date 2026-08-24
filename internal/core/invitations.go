@@ -745,8 +745,10 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 		expiresAt := now.Add(grantTTL)
 		// Routed through the audited wrapper so this grant lands in the RBAC audit
 		// trail with a structured RoleID, alongside the generic access_request.approved
-		// event below (#298).
-		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
+		// event below (#298). actorIsMachine=false: unchanged from before #1542 --
+		// approverID here isn't threaded from a live actor-kind signal at this call
+		// site; a machine-driven approval chain is a sibling finding, not fixed here.
+		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt, false); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", roleModel.Name, expiresAt.UTC().Format(time.RFC3339), grantTTL)

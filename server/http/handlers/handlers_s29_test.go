@@ -345,35 +345,6 @@ func TestListAccessRequests_HappyPath_S29(t *testing.T) {
 	assert.True(t, resp["success"].(bool))
 }
 
-// ── break_glass_proxy.go: CreateBreakGlassActivationProxy ────────────────────
-
-// TestCreateBreakGlassActivationProxy_HappyPath_S29 — well-formed body with
-// all required fields is persisted and returns a 200 with the created record.
-func TestCreateBreakGlassActivationProxy_HappyPath_S29(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS29(t)
-	h := NewCatalogHandler(cs)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"project_id":    1,
-		"user_id":       1,
-		"state":         "active",
-		"justification": "incident response",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-	data, ok := resp["data"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "active", data["state"])
-}
-
 // ── dynamic_secrets_proxy.go: CountActiveLeasesProxy ─────────────────────────
 
 // TestCountActiveLeasesProxy_MissingConfigID_S29 — missing config_id query
@@ -520,57 +491,6 @@ func TestUpdateGroupProxy_HappyPath_S29(t *testing.T) {
 	var resp map[string]interface{}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.True(t, resp["success"].(bool))
-}
-
-// ── connect_grants_proxy.go: DeleteConnectRefGrantProxy ──────────────────────
-
-// TestDeleteConnectRefGrantProxy_BadID_S29 — non-numeric {id} → 400.
-func TestDeleteConnectRefGrantProxy_BadID_S29(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS29(t)
-	h := NewAuthHandler(cs, false)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/connect-grants/bad", nil),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestDeleteConnectRefGrantProxy_HappyPath_S29 — existing grant is deleted → 200.
-func TestDeleteConnectRefGrantProxy_HappyPath_S29(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS29WithAdmin(t)
-	h := NewAuthHandler(cs, false)
-
-	// Seed a role and a grant.
-	role := &models.Role{Name: "s29-connect-role"}
-	require.NoError(t, db.Create(role).Error)
-	grant := &models.ConnectRefGrant{
-		RoleID:    role.ID,
-		Connector: "github",
-		RefPrefix: "refs/heads/main",
-	}
-	require.NoError(t, db.Create(grant).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodDelete,
-			fmt.Sprintf("/api/v1/system/connect-grants/%d", grant.ID), nil),
-		"id", uintStrS29(grant.ID),
-	)
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-	data, ok := resp["data"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, true, data["deleted"])
 }
 
 // ── audit.go: VerifyAuditChain ────────────────────────────────────────────────

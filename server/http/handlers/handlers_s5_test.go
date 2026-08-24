@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1594,14 +1596,6 @@ func TestSoDProxy_DeleteSoDPolicyProxy_NotFound(t *testing.T) {
 
 // ── webauthn_proxy.go ──────────────────────────────────────────────────────────
 
-func TestWebAuthnProxy_CreateWebAuthnCredentialProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestWebAuthnProxy_ListWebAuthnCredentialsProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?user_id=9999", nil)
@@ -1652,22 +1646,6 @@ func TestWebAuthnProxy_UpdateWebAuthnCredentialProxy_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestWebAuthnProxy_SetUserWebAuthnEnabledProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_SetUserWebAuthnEnabledProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"user_id":0,"enabled":true}`))
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestWebAuthnProxy_CountWebAuthnCredentialsProxy_MissingUserID(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -1690,16 +1668,6 @@ func TestWebAuthnProxy_CreateWebAuthnSessionProxy_BadJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateWebAuthnSessionProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_DeleteWebAuthnCredentialProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	params := map[string]string{"userId": "9999", "id": "1"}
-	req := withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil), params)
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, req)
-	// not found → 404
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
 // ── access_review_campaigns.go ─────────────────────────────────────────────────
@@ -1948,25 +1916,6 @@ func TestCreateUserWithRoleGrantsProxy_MissingUsername(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── dynamic_secrets_proxy.go — UpdateDynamicSecretLeaseProxy ─────────────────
-
-func TestUpdateDynamicSecretLeaseProxy_BadLeaseID(t *testing.T) {
-	h := NewDynamicSecretHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "leaseID", "")
-	w := httptest.NewRecorder()
-	h.UpdateDynamicSecretLeaseProxy(w, req)
-	// empty leaseID treated as not found or error
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestUpdateDynamicSecretLeaseProxy_BadJSONS5(t *testing.T) {
-	h := NewDynamicSecretHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "leaseID", "some-id")
-	w := httptest.NewRecorder()
-	h.UpdateDynamicSecretLeaseProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── RBAC — GetUserRoles additional paths ──────────────────────────────────────
 
 func TestRBACHandler_GetUserRoles_BadIDS5(t *testing.T) {
@@ -2174,14 +2123,6 @@ func TestCatalogHandler_ListProjects_HappyPathS5b(t *testing.T) {
 }
 
 // ── break_glass_proxy.go ──────────────────────────────────────────────────────
-
-func TestBreakGlassProxy_CreateActivation_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestBreakGlassProxy_GetActivation_BadID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -2471,14 +2412,6 @@ func TestUpdateSharePermission_NotFound(t *testing.T) {
 
 // ── break_glass_proxy.go — additional coverage ────────────────────────────────
 
-func TestBreakGlassProxy_CreateActivation_MissingFields(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"project_id":0,"user_id":0,"state":""}`))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestBreakGlassProxy_ListActivations_MissingProjectIDS5(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -2493,31 +2426,6 @@ func TestBreakGlassProxy_ListActivations_BadProjectIDS5(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListBreakGlassActivationsProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestBreakGlassProxy_UpdateActivation_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestBreakGlassProxy_UpdateActivation_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestBreakGlassProxy_UpdateActivation_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"project_id":1,"user_id":1,"state":"active"}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, req)
-	// Either success or not-found, but not bad-request
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
 func TestBreakGlassProxy_RevokeActivation_BadJSON(t *testing.T) {
@@ -2576,25 +2484,7 @@ func TestWriteAuditCheckpoint_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// ── webauthn_proxy.go — CreateWebAuthnCredentialProxy happy path ──────────────
-
-func TestCreateWebAuthnCredentialProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"user_id":1,"credential_id":"AQID","public_key":"AQID","aaguid":"AQID","sign_count":0,"name":"key1","user_handle":"AQID"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, req)
-	// Either 200 (created) or error — but not bad-request because fields present
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSetUserWebAuthnEnabledProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"enabled":true}`)), "userId", "1")
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
+// ── webauthn_proxy.go — AdvanceWebAuthnCredentialCounterProxy happy path ──────
 
 func TestAdvanceWebAuthnCredentialCounterProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
@@ -2751,24 +2641,6 @@ func TestListConnectRefGrantsByConnectorProxy_MissingConnectorS5(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListConnectRefGrantsByConnectorProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateConnectRefGrantProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"role_id":1,"connector":"github","ref_prefix":"refs/heads/"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateConnectRefGrantProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateConnectRefGrantProxy_MissingFieldsS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"role_id":0,"connector":""}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateConnectRefGrantProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -3068,57 +2940,6 @@ func TestPurgeDeletedSecretsBeforeProxy_MissingBefore(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestDeleteClosedAccessReviewsBeforeProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.DeleteClosedAccessReviewsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestDeleteClosedAccessReviewsBeforeProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.DeleteClosedAccessReviewsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteExpiredBreakGlassBeforeProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.DeleteExpiredBreakGlassBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestDeleteExpiredBreakGlassBeforeProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.DeleteExpiredBreakGlassBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteResolvedAccessRequestsBeforeProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.DeleteResolvedAccessRequestsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestDeleteResolvedAccessRequestsBeforeProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.DeleteResolvedAccessRequestsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestPurgeDeletedProjectsBeforeProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
@@ -3218,15 +3039,6 @@ func TestConsumeSSOLoginStateProxy_HappyPath(t *testing.T) {
 
 // ── mfa_management_proxy.go — happy paths ────────────────────────────────────
 
-func TestUpsertMFASecretProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"user_id":1,"secret_enc":"aGVsbG8="}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestGetMFASecretProxy_NotFound(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?user_id=9999", nil)
@@ -3237,14 +3049,21 @@ func TestGetMFASecretProxy_NotFound(t *testing.T) {
 
 func TestGetMFASecretProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	// Upsert first so there is something to get.
-	bodyUp := `{"user_id":42,"secret_enc":"aGVsbG8="}`
-	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyUp))
-	w0 := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w0, req0)
-	require.Equal(t, http.StatusOK, w0.Code)
+	// Create a real user rather than the old synthetic user_id:42 (never backed
+	// by an actual row).
+	created, err := h.coreService.CreateUser(t.Context(), &core.CreateUserRequest{
+		Username: "s5getmfahappy", Email: "s5getmfahappy@example.com", DisplayName: "S5 MFA Happy", Password: "Notarealpassw0rd!",
+	})
+	require.NoError(t, err)
+	// Seed a secret directly via storage so there is something to get
+	// (UpsertMFASecretProxy was deleted -- G80 liveness sweep found no live
+	// caller; see docs/g80-remediation-notes.md).
+	require.NoError(t, h.coreService.Storage().UpsertMFASecret(context.Background(), &models.MFASecret{
+		UserID:    created.ID,
+		SecretEnc: []byte("hello"),
+	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=42", nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?user_id=%d", created.ID), nil)
 	w := httptest.NewRecorder()
 	h.GetMFASecretProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -3432,14 +3251,6 @@ func TestDeleteProjectIfEmptyProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestRestoreProjectProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.RestoreProjectProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── environment_catalog_proxy.go — additional paths ──────────────────────────
 
 func TestDeleteEnvironmentProxy_NotFoundS5(t *testing.T) {
@@ -3521,14 +3332,6 @@ func TestListSecretDependenciesForProjectForUpdateProxy_HappyPath(t *testing.T) 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestDeleteSecretDependencyProxy_NotFound(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── setup_tokens_proxy.go — additional paths ─────────────────────────────────
 
 func TestSupersedeSetupTokensProxy_HappyPath(t *testing.T) {
@@ -3538,26 +3341,6 @@ func TestSupersedeSetupTokensProxy_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.SupersedeSetupTokensProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// ── webauthn_proxy.go — additional paths ─────────────────────────────────────
-
-// TestListWebAuthnCredentialsProxy_HappyPath already in s4
-
-func TestDeleteWebAuthnCredentialProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil), map[string]string{"userId": "bad", "id": "bad"})
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteWebAuthnCredentialProxy_NotFound(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil), map[string]string{"userId": "1", "id": "999999"})
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // ── legal_hold_proxy.go — additional paths ───────────────────────────────────
@@ -3586,27 +3369,7 @@ func TestGetActiveLegalHoldProxy_HappyPathS5(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// ── connect_grants_proxy.go — DeleteConnectRefGrantProxy additional ───────────
-
-func TestDeleteConnectRefGrantProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-	// No-op delete for nonexistent grant returns 200.
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── break_glass_proxy.go — additional paths ──────────────────────────────────
-
-func TestCreateBreakGlassActivationProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"user_id":1,"project_id":1,"state":"active"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 func TestRevokeBreakGlassActivationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -3720,17 +3483,6 @@ func TestGetAccessReviewItemProxy_HappyPath(t *testing.T) {
 
 // ── sod_proxy.go — additional paths ──────────────────────────────────────────
 
-// ── login_lockout_proxy.go — GetLoginLockoutState ─────────────────────────────
-
-func TestUpdateLoginLockoutStateProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"failed_login_attempts":0,"login_lockout_count":0}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateLoginLockoutStateProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── connect_grants_proxy.go — ListConnectRefGrantsProxy ──────────────────────
 
 func TestListConnectRefGrantsProxy_HappyPathS5(t *testing.T) {
@@ -3739,14 +3491,6 @@ func TestListConnectRefGrantsProxy_HappyPathS5(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListConnectRefGrantsProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestDeleteConnectRefGrantProxy_BadIDS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── dynamic_secrets_proxy.go — happy paths ───────────────────────────────────
@@ -3768,38 +3512,11 @@ func TestGetDynamicSecretConfigProxy_HappyPath(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-func TestUpdateDynamicSecretConfigProxy_HappyPath(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	body := `{"name":"updated","project_id":1}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateDynamicSecretConfigProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateDynamicSecretLeaseProxy_HappyPath(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	body := `{"config_id":1,"lease_id":"test-lease-id","project_id":1}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretLeaseProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 func TestGetDynamicSecretLeaseProxy_NotFoundS5b(t *testing.T) {
 	h := newDynamicSecretHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "leaseID", "nonexistent-lease-id-2")
 	w := httptest.NewRecorder()
 	h.GetDynamicSecretLeaseProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUpdateDynamicSecretLeaseProxy_HappyPath(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	body := `{"config_id":1,"status":"active"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "leaseID", "some-lease-id")
-	w := httptest.NewRecorder()
-	h.UpdateDynamicSecretLeaseProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
@@ -3823,14 +3540,6 @@ func TestDeleteEnvironmentProxy_NotFound(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRestoreEnvironmentProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"projectId": "1", "id": "999999"})
-	w := httptest.NewRecorder()
-	h.RestoreEnvironmentProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── access_review_campaigns_proxy.go — happy paths ───────────────────────────
 
 func TestListAccessReviewItemsProxy_HappyPathS5(t *testing.T) {
@@ -3846,17 +3555,6 @@ func TestCountPendingAccessReviewItemsProxy_HappyPathS5(t *testing.T) {
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.CountPendingAccessReviewItemsProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-// ── break_glass_proxy.go — uncovered paths ───────────────────────────────────
-
-func TestUpdateBreakGlassActivationProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"user_id":1,"project_id":1,"state":"revoked"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateBreakGlassActivationProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
@@ -3914,16 +3612,6 @@ func TestPurgeDeletedSecretsBeforeProxy_HappyPathS5(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.PurgeDeletedSecretsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestDeleteAnomalyAlertsBeforeProxy_HappyPathS5(t *testing.T) {
-	now := time.Now().Format(time.RFC3339)
-	h := newAuditHandlerS4(t)
-	body := `{"ack_before":"` + now + `","unack_ceiling":"` + now + `"}`
-	req := httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.DeleteAnomalyAlertsBeforeProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -4235,18 +3923,6 @@ func TestCreateAccessReviewItemsProxy_BadJSONS5(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewItemsProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// ── login_lockout_proxy.go — UpdateLoginLockoutStateProxy happy path ──────────
-
-func TestUpdateLoginLockoutStateProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"failed_login_attempts":0,"login_lockout_count":0}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateLoginLockoutStateProxy(w, req)
-	// User may not exist → not 400 (bad-request)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
 // ── access_request_proxy.go — GetAccessRequestProxy additional paths ──────────
@@ -4750,17 +4426,6 @@ func TestCatalogHandler_ListProjectEnvironments_HappyPath_S5(t *testing.T) {
 	h.ListProjectEnvironments(w, req)
 	// empty DB → not 401
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-// ── connect_grants_proxy.go — additional paths ───────────────────────────────
-
-func TestDeleteConnectRefGrantProxy_HappyPath_S5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-	// not found → not 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
 // ── dashboard.go — additional happy paths ────────────────────────────────────

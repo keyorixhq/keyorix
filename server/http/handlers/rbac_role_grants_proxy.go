@@ -13,12 +13,26 @@
 // other proxied call, so this introduces no new privilege class). Mirrors
 // secret_dependencies_proxy.go/retention_proxy.go exactly.
 //
-// These are thin passthroughs onto the SAME storage.Storage primitives
-// internal/core/jit_access.go, project_members.go, groups.go, and
-// rbac_management.go already use against a local backend — no RBAC POLICY
-// decision (escalation-by-proxy ceiling checks, separation-of-duties, audit-log
-// writes) is made here; that stays entirely in the CALLING server's own
-// internal/core.KeyorixCore, exactly as it does against a local backend.
+// Most of these were originally thin passthroughs straight onto storage.Storage,
+// on the theory that no RBAC POLICY decision needs to be made here because the
+// CALLING server's own internal/core.KeyorixCore already made it before
+// deciding to relay the write. #1542: that theory only holds for a genuine
+// node-credential relay — this route group's gate
+// (RequireNodeCredentialOrPermission) also admits any caller (human or
+// machine) holding the system.write PERMISSION directly, with no node
+// credential at all, and THAT caller is not relaying anyone's already-checked
+// decision. A raw storage passthrough gave such a caller a clean path to
+// global admin with zero ceiling checks of any kind. AssignRoleWithExpiryProxy/
+// AssignRoleToGroupWithExpiryProxy/AssignMachineRoleProxy/
+// RemoveAllProjectRoleGrantsProxy now route through the SAME internal/core
+// functions (AssignUserRoleWithExpiry, AssignGroupRoleWithExpiry,
+// AssignMachineRole, RemoveProjectMember) a local backend would use, so their
+// real ceiling checks run for a direct system.write caller. A genuine node
+// relay is still trusted for the one check (requireGranterHoldsRolePermissions)
+// that can't distinguish "the real acting human already passed this" from "the
+// node itself holds no permissions" without a wire-level actor-identity field
+// that doesn't exist yet (isNodeCredentialRequest, catalog.go) — see each
+// handler's own doc for why the others need no such carve-out.
 //
 // This is deliberately NOT a reuse of RBACHandler/GroupHandler's existing
 // human-facing routes (POST /groups/{id}/members, DELETE
@@ -27,7 +41,8 @@
 // (validation, audit-log writes, last-admin/last-project-admin ceiling checks)
 // against THIS server's identity — the wrong semantics for a raw storage-primitive
 // passthrough, whose caller already ran all of that on the downstream side and
-// only needs this server to persist/return the already-decided row. Exactly the
+// only needs this server to persist/return the already-decided row (still true
+// for the routes in this group that remain plain passthroughs). Exactly the
 // same reasoning the #519/#520/#527 proxies in this package already established.
 //
 // One deliberate exception: RemoveGlobalAdminRoleGuardedProxy calls
@@ -59,6 +74,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
@@ -94,6 +110,16 @@ func (h *RBACHandler) GetGroupRoleGrantsProxy(w http.ResponseWriter, r *http.Req
 
 // AssignRoleWithExpiryProxy handles POST
 // /api/v1/system/rbac/assign-role-with-expiry.
+//
+// #1542: previously called storage.AssignRoleWithExpiry directly, bypassing
+// every core ceiling (requireGranterHoldsRolePermissions, #419 SoD) for ANY
+// system.write holder, human or machine — reaching global admin. A genuine
+// node-credential relay is trusted to have already run that ceiling locally
+// against the real acting human (see the package doc); a caller reaching
+// this route via the system.write PERMISSION arm without a node credential
+// is not relaying anyone's decision, so it's routed through
+// core.AssignUserRoleWithExpiry, running the real ceiling against ITS OWN
+// authority instead.
 func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.Request) {
 	var body roleWithExpiryProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -105,7 +131,13 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if err := h.coreService.Storage().AssignRoleWithExpiry(r.Context(), body.UserID, body.RoleID, scope, body.ExpiresAt); err != nil {
+	var err error
+	if isNodeCredentialRequest(r) {
+		err = h.coreService.Storage().AssignRoleWithExpiry(r.Context(), body.UserID, body.RoleID, scope, body.ExpiresAt)
+	} else {
+		err = h.coreService.AssignUserRoleWithExpiry(r.Context(), actorID(r), body.UserID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r))
+	}
+	if err != nil {
 		log.Printf("rbac role-grants proxy: assign role with expiry failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
@@ -115,6 +147,16 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 
 // AssignRoleToGroupWithExpiryProxy handles POST
 // /api/v1/system/rbac/assign-role-to-group-with-expiry.
+//
+// #1542: routed through core.AssignGroupRoleWithExpiry instead of calling
+// storage.AssignRoleToGroupWithExpiry directly. Unlike AssignRoleWithExpiryProxy,
+// no node-vs-direct-caller branch is needed here: AssignGroupRoleWithExpiry's
+// ceiling (requireAuthorityForRole) only evaluates anything for admin-tier
+// roles, and for those it already denies actorID==0 with no special-casing
+// (the same construction PlaceLegalHold/LiftLegalHold/RestoreProject's
+// admin-tier branch rely on — see docs/adr-085-node-credential-permission-scope.md) —
+// correct for a node relay AND a direct system.write caller alike. A
+// non-admin-tier grant (the ordinary relay case) passes through unchanged.
 func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r *http.Request) {
 	var body roleWithExpiryProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -126,7 +168,7 @@ func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r 
 		return
 	}
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if err := h.coreService.Storage().AssignRoleToGroupWithExpiry(r.Context(), body.GroupID, body.RoleID, scope, body.ExpiresAt); err != nil {
+	if err := h.coreService.AssignGroupRoleWithExpiry(r.Context(), actorID(r), body.GroupID, body.RoleID, scope, body.ExpiresAt); err != nil {
 		log.Printf("rbac role-grants proxy: assign role to group with expiry failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
@@ -143,6 +185,22 @@ type removeAllProjectRoleGrantsProxyWire struct {
 
 // RemoveAllProjectRoleGrantsProxy handles POST
 // /api/v1/system/rbac/remove-all-project-role-grants.
+//
+// #1542: routed through core.RemoveProjectMember instead of calling
+// storage.RemoveAllProjectRoleGrants directly, so guardLastProjectAdmin (the
+// last-project-admin availability check) actually runs. No node-vs-direct
+// branch needed: guardLastProjectAdmin is target-state-invariant — it only
+// asks whether removing this grant leaves the project with zero
+// roles.assign holders, never who's asking — safe for any caller including
+// a bare node credential, by construction.
+//
+// core.ErrNotProjectMember is treated as success: the raw storage delete this
+// replaced was an unconditional, idempotent DELETE ... WHERE (no error on
+// zero rows matched); RemoveProjectMember returns ErrNotProjectMember for the
+// same "nothing to remove" case, and a relay caller that legitimately retries
+// or calls this defensively must see the same idempotent result as before,
+// not a new error for a case that was never actually a failure. Matches the
+// established convention at membership_lifecycle.go:316.
 func (h *RBACHandler) RemoveAllProjectRoleGrantsProxy(w http.ResponseWriter, r *http.Request) {
 	var body removeAllProjectRoleGrantsProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -153,7 +211,7 @@ func (h *RBACHandler) RemoveAllProjectRoleGrantsProxy(w http.ResponseWriter, r *
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and project_id are required")
 		return
 	}
-	if err := h.coreService.Storage().RemoveAllProjectRoleGrants(r.Context(), body.UserID, body.ProjectID); err != nil {
+	if err := h.coreService.RemoveProjectMember(r.Context(), actorID(r), body.ProjectID, body.UserID); err != nil && !errors.Is(err, core.ErrNotProjectMember) {
 		log.Printf("rbac role-grants proxy: remove all project role grants failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

@@ -272,7 +272,13 @@ type groupMemberBody struct {
 // through core.KeyorixCore.AddUserToGroup (not a bare storage.AddUserToGroup)
 // so the escalation-by-proxy ceiling and SoD checks (validateGroupJoinRoles)
 // on joining an admin-conferring group also cover a membership add via
-// node-sync (#G79).
+// node-sync (#G79). #1524 finding (b): a bare node credential resolves
+// actorID(r)==0, the same value AddUserToGroup's local-CLI exemption treats
+// as fully trusted — passing isMachineActor(r) explicitly closes that gap
+// without touching the local-CLI case (both remain distinguishable at the
+// HTTP layer even though actorID(r) alone can't tell them apart). A machine
+// relay joining an ordinary, non-admin-conferring group is unaffected —
+// AddUserToGroup's ceiling only evaluates anything for admin-tier roles.
 func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -288,7 +294,7 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
 		return
 	}
-	if err := h.coreService.AddUserToGroup(r.Context(), actorID(r), body.UserID, uint(groupID), body.ProjectID); err != nil {
+	if err := h.coreService.AddUserToGroup(r.Context(), actorID(r), isMachineActor(r), body.UserID, uint(groupID), body.ProjectID); err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "user or group not found")
 			return

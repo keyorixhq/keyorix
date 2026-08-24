@@ -225,7 +225,8 @@ underlying symptom this timing problem is a symptom of).
 | CSV header assertion predates G25's added columns | 1 | C2 fix |
 | Secret-dependency fixture uses nonexistent IDs 501/502 | 3 | C2 fix |
 | `buildActiveSetupToken` never sets `SubjectUserID` | 5 | C2 fix |
-| Risk-exception routes missing / method mismatch (#1511) | 4 | C3 quarantine |
+| `UpdateRiskExceptionProxy` deliberately unregistered (#G79, tracked in #1511) | 2 | C3 quarantine |
+| `RevokeRiskExceptionProxy`/`ApproveRiskExceptionProxy` proxy the core policy function instead of the raw conditional primitive, so a lost race/already-decided precondition returns a 500 instead of `matched=false` (#1531) — **corrected**; originally misdiagnosed as another actorID(r)==0 instance, see the recurring-pattern section below | 2 | C3 quarantine |
 
 ### C1 — the last-global-admin invariant (fixed as a fixture bug, not a product bug)
 
@@ -324,6 +325,33 @@ catch-all** — root_base() is the catch-all computation, so un-excluding server
 without pinning it would drop 91 HTTP integration test files into root-4 (already at
 569s/5.2% headroom before #1526's fix) — a guaranteed timeout, not a surprise.
 
+**Refreshed after #1526 + C4** (job wall-clock — includes ~1-2 min checkout/setup
+overhead, NOT the go-test-only elapsed time the table above uses; both are against
+the CURRENT 1800s budget, same for every leg):
+
+| Leg | Wall-clock | % of 1800s budget |
+|---|---|---|
+| root-1 | 8m27s (507s) | 28% |
+| root-2 | 7m36s (456s) | 25% |
+| root-3 | 9m21s (561s) | 31% |
+| root-4 | 9m34s (574s) | 32% |
+| core | 12m53s (773s) | 43% |
+| handlers-1 | 8m10s (490s) | 27% |
+| handlers-2 | 8m6s (486s) | 27% |
+| handlers-3 | 7m9s (429s) | 24% |
+| handlers-4 | 8m17s (497s) | 28% |
+| http-1 | 11m54s (714s) | 40% |
+| http-2 | 11m2s (662s) | 37% |
+| http-3 | 11m18s (678s) | 38% |
+| http-4 | 11m34s (694s) | 39% |
+| http-5 | 11m36s (696s) | 39% |
+| http-6 | 12m4s (724s) | 40% |
+
+Every leg now sits comfortably under budget (max 43%, `core`) — no leg in the
+5-7.5%-headroom danger zone #1526 was written to fix. `http-1..6` landed within
+predicted range (~30% target, measured 37-40% — job wall-clock includes overhead
+the prediction's go-test-only estimate didn't, accounting for the gap).
+
 ### A recurring pattern: node-credential auth vs. `actorID(r)`-gated authority checks
 
 Three separate instances found in this campaign so far, all the same shape: a
@@ -339,38 +367,344 @@ structurally cannot pass for a node-credential caller, and the failure surfaces 
 whatever the specific test's fixture bug looked like, not as an obviously-related
 symptom:
 
-1. **C1** — `RemoveGlobalAdminRoleGuardedProxy`/`ApproveRiskExceptionProxy`/
-   `RevokeRiskExceptionProxy`: `createRBACDriverToken`'s driver held `system_admin`,
-   masking the actorID(0) problem behind a DIFFERENT bug (the driver counting as an
-   extra admin) for the RBAC guard specifically; the risk-exception revoke/approve
-   tests hit actorID(0) directly and are quarantined in C3 (no clean fixture fix
-   available without a product-level call on whether node-sync should reach
-   dual-control-gated operations at all — see the #1511 comment).
+1. **C1** — `RemoveGlobalAdminRoleGuardedProxy`: `createRBACDriverToken`'s driver
+   held `system_admin`, masking the actorID(0) problem behind a DIFFERENT bug (the
+   driver counting as an extra admin) for the RBAC guard specifically.
 2. **C2** — `CreateUserWithRoleGrantsProxy`'s `ValidateRoleGrantAuthority(ctx,
    actorID(r), grants)`: masked behind the bcrypt-length bug for
    `TestRemoteStorageCreateUserWithRoleGrants_RealServer`/
    `_ConcurrentDuplicateEmailRace_RealServer` — fixing the bcrypt fixture alone
-   surfaced this as a NEW 403, not a pass. Unlike C1's cases, this one DOES have a
+   surfaced this as a NEW 403, not a pass. Unlike C1's case, this one DOES have a
    clean fixture fix: a real admin session (`createTestToken`) legitimately has the
    authority these grants need, so swapping just these two tests' caller identity
    (not the harness default, which stays `createNodeToken` for every other test in
    the file) resolves it correctly rather than requiring quarantine.
 
-The difference between "quarantine" (C1's risk-exception cases) and "fix by swapping
-identity" (C2's case) is whether a real, differently-authenticated caller can
-legitimately satisfy the check being exercised: risk-exception revoke/approve's own
-doc comment claims node-sync support that the actorID(0) fallback contradicts (a
-product question, not a test question); `CreateUserWithRoleGrantsProxy`'s authority
-check is exactly the kind of thing a real admin SHOULD be able to satisfy, and no
-product claim says otherwise.
+**Correction (post-C3): the risk-exception revoke/approve quarantines are NOT a
+third instance of this pattern.** Originally attributed to actorID(0) directly
+(same shape as C1/C2). Directly disproven by unskipping both tests and running
+them: the real cause is a wire-contract mismatch (`RevokeRiskExceptionProxy`/
+`ApproveRiskExceptionProxy` proxy `core.KeyorixCore.RevokeRiskException`/
+`ApproveRiskException` — the POLICY functions, which turn a lost race or an
+already-decided precondition into a Go error — instead of the raw
+`RevokeRiskExceptionIfNotRevoked`/`ApproveRiskExceptionIfPending` conditional
+primitives `putConditionalTransition`'s wire contract expects), filed separately
+as #1531 and unrelated to node-credential identity. The lesson generalizes past
+this specific case: **a plausible-sounding cause matching an already-established
+pattern is not verified until the test has actually been run with the fix/cause
+applied** — pattern-matching a new failure against a known shape is a hypothesis,
+not a diagnosis.
+
+The actorID(r) pattern itself is real and was swept exhaustively (not just
+found by accident) after C2: every `actorID(r)` call site in
+`server/http/handlers` (18 sites) was graded on what happens when it resolves to
+0 — hard-fail (safe), silently skip, accidentally match a sentinel, or write an
+unattributed audit record (only the first is safe). Found two more confirmed,
+live instances beyond C1/C2, both production authorization gaps, not test
+artifacts:
+
+- **`AddGroupMemberProxy` → `AddUserToGroup`**: `if actorID != 0 {
+  validateGroupJoinRoles(...) }` treats "no session" (a legitimate local-CLI
+  exemption) and "a node credential" (the most widely distributed credential
+  class in any deployment) as the same zero sentinel. A node credential can add
+  a user to an admin-conferring group with the escalation-ceiling/SoD check
+  never evaluated — confirmed reachable end-to-end.
+  `TestRemoteStorageGroup_Membership_RealServer` is green for the wrong reason:
+  it exercises a group with zero role grants, so the skipped check has nothing
+  to check either way.
+- **`ApproveRiskException`'s dual-control bypass**: the self-approval guard
+  (`actorID == e.CreatedBy`) only catches a node-created-and-node-approved
+  exception (both sides zero). A human-created exception approved by a node
+  credential does not collide — dual control's entire point (a creator can't
+  unilaterally suppress their own violation) is bypassable in exactly the case
+  that matters.
+
+Filed on #1524 (10 confirmed routes total now), plus two related-but-distinct
+follow-ups: #1529 (several sites have NO actor-authority check at all —
+`DeleteSoDPolicy` most concerning — a different question from the sentinel
+collision) and #1530 (even a legitimate relay call persists
+`CreatedBy=0`/`RevokedBy=0` on governance records — an audit-integrity defect).
+**ADR-085** answers the design question underneath all of the above (should
+node credentials carry their own narrow permission set instead of an
+OR-bypass of the whole permission system — recommends yes, reusing ADR-030's
+existing `machine_identity_roles`/`AuthorizePrincipal` mechanism) — accepted
+and merged by Andrei directly (not part of this campaign's own authority).
+None of #1524/#1529/#1530 is fixed in this campaign — every one needs a
+production code change and a product decision.
 
 **Practical implication**: any future test in this package using `createNodeToken`
 against a route this campaign hasn't already audited should not be assumed to work
 just because the pattern is dominant — check whether the specific handler validates
 `actorID(r)`-gated authority (search the handler for `actorID(r)` directly) before
-assuming a node credential is sufficient.
+assuming a node credential is sufficient, and don't assume a failure matches a
+known pattern without running it.
 
-### C2 / C3 / C4 / C5
+### Standing practice: adversarially verify a guard, not just that it exists
 
-Tracked in their own PRs as they land; this section gets filled in per PR, not ahead of
-it.
+Added after the overnight run: writing a guard (a completeness test, a route
+coverage check, a freshness assertion) and confirming it passes is not the same
+as confirming it protects anything. Before reporting any of this campaign's three
+CI-level guards (G80's reflection completeness test, #1511's AST route-coverage
+guard, C5's exclusion-freshness/leg-completeness checks) as done, each was
+adversarially tested: make the exact change the guard exists to catch, confirm it
+goes red with a usable error message, revert, confirm green again. All three
+guards fired correctly on every mutation tried (9 mutations total across the
+three guards — see the PR that lands this writeup for the full table), including
+reproducing the ORIGINAL historical defect this campaign started from (G80's
+`ID` field was once not compared in `diffSecretUpdate` at all; removing it again
+and re-running the test now fails the `ID` subtest specifically, by name). One
+near-miss during testing is worth recording: the first route picked to test the
+AST guard's route-deletion detection was already in `knownUnresolvedWireCalls`
+(a path built via string concatenation with a non-constant), so deleting its
+router registration didn't fire — correct behavior for an already-known blind
+spot, not a guard failure, but a reminder to check which detection path a test
+target actually exercises before trusting a single negative result.
+
+### C1 — PR #1525, merged 2026-08-22
+
+See above.
+
+### C2 / C3 — PR #1528, merged
+
+Six fixture repairs (bcrypt length, CSV headers, secret-dependency IDs,
+setup-token `SubjectUserID`, the `CreateUserWithRoleGrantsProxy` actorID(r)
+fix) and four risk-exception quarantines (2 correctly attributed to #G79's
+removed route from the start, 2 corrected mid-campaign per #1531 above). Every
+fixture repair verified red-then-green by breaking its subject first.
+
+**Quarantine list, verified against the actual `t.Skip` calls in
+`server/http/remote_storage_risk_exceptions_test.go`** (grepped directly, not
+copied from an earlier draft of this document — 2026-08-23):
+
+| Test | Reason | Issue |
+|---|---|---|
+| `TestRemoteStorageRiskExceptions_CreateGetListUpdate_RealServer` | `UpdateRiskExceptionProxy` deliberately unregistered (#G79) | #1511 |
+| `TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer` | same — also calls the unregistered route | #1511 |
+| `TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServer` | wire-contract mismatch, not actorID(r) — see #1531 | #1531 |
+| `TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer` | same wire-contract mismatch | #1531 |
+
+No other `t.Skip` in `server/http` or `server/http/handlers` belongs to this
+campaign (3 unrelated pre-existing skips found in `server/http/handlers` —
+a SQLite ILIKE limitation, an SSOLoginState seeding limitation, and one
+`t.Skip("CreateSecret failed:", err)` in `handlers_s10_test.go:106` that uses
+`t.Skip` where `t.Fatal` looks more appropriate — noticed, not chased, not
+part of this campaign).
+
+### C4 — PR #1537, merged 2026-08-23
+
+Re-enabled `server/http`, excluded since 2026-04-27 with no leg even if
+un-excluded. Investigated whether the package was genuinely healthy before
+sharding: ran the full unsharded package locally with `-race -timeout 3600s`
+— 1904.015s, zero failures beyond the 2 already-fixed-on-main C1-scope
+fixtures (the branch it ran on predated #1525's merge). Confirmed healthy and
+slow, not deadlocked — the earlier 20-minute goroutine-dump "failure" that
+started this investigation was the default `go test` timeout cutting off a
+still-running suite, not a hang.
+
+Sharded 6 ways (`http-1..6`) by test name, generalizing handlers-1..4's
+existing mod-N mechanism (`run_filter_for_shard`, added in C5) rather than
+reimplementing it: 1904.015s × ~1.7 (local→runner factor, same one
+established for `internal/core`) ≈ 3237s runner-equivalent; 6 shards puts each
+at ~540s predicted, ~30% of the 1800s timeout. Measured on the real runner
+(job wall-clock, includes checkout/setup overhead): 662s–724s per leg — see
+the refreshed headroom table in "Task 3" above.
+
+Also swept in `internal/cli$` and `internal/storage/remote` (both measured
+clean: 0.558s and 31.201s locally, zero failures) into `root-4`'s catch-all —
+too small to need a dedicated leg. Closed #1533/#1534/#1535.
+
+### C5 — PR #1536, merged 2026-08-23
+
+Replaced the bare `grep -v` exclusion patterns with a single source of truth
+(`scripts/ci-test-legs.sh`) shared between the test-suite matrix step and two
+new independent jobs: `exclusion-freshness` (fails, not warns, when a
+`TEMPORARY` exclusion is older than 30 days) and `assert-leg-completeness`
+(fails when any package is covered by neither a leg nor the exclusion table —
+the direct guard against the failure mode that let `server/http` sit dark for
+~4 months). Both guards verified to actually fire (see the standing-practice
+note above and this PR's own description for the exact mutations used).
+
+## Stopping rule: classify reach, fix human-reachable, file machine-only, stop
+
+Adopted after #1542's fix (routing 4 raw-storage-bypass RBAC proxy routes through
+`internal/core`) organically grew into fixing a 5th (`RemoveMachineRoleProxy`) and
+building a whole new completeness guard, whose OWN findings (#1545, #1546) then needed
+their own reach classification before any further work was justified. Without an
+explicit boundary, "I found a related gap while fixing this one" has no natural stopping
+point — every fix's blast radius touches a shared checkpoint (a ceiling function, a
+storage primitive) with its own set of callers, and each of those callers can look like
+"just one more thing to check while I'm here."
+
+**The rule:**
+
+1. **Classify reach before deciding whether to fix.** For any candidate (a ceiling
+   exemption, a raw-storage bypass, an authority check that might be skippable) the
+   first and only question that decides urgency is: can a real, network-authenticated
+   HUMAN session trigger this, or is it structurally limited to a machine credential (or
+   a genuinely-trusted local/embedded call path)? Answer it with file:line evidence —
+   trace the actual call chain and the actual authentication layer (does `UserID`/
+   `actorID` ever come from a real human session with the vulnerable value, or only from
+   a machine token by construction) — never by assumption. This is the same question
+   that made #1542 top priority over #1524's other findings, and the same rigor #1545's
+   classification used (`server/middleware/auth.go`'s "UserID is 0 for ANY machine
+   token" doc comment, traced against every real call site of the two functions in
+   question) to conclude machine-only, not human-reachable.
+2. **Human-reachable: fix it now, it outranks other open work.** Matches #1542's own
+   framing ("outranks everything else open").
+3. **Machine-only: file it, with the reach classification and evidence in the issue
+   body, and stop.** Do not fix it in the same sitting just because the shared checkpoint
+   is already open in an editor. Filing with real evidence (not a bare TODO) is what
+   makes "later" credible — see #1545, #1546, #1547, none fixed on discovery, each with a
+   full evidence trail so a future session doesn't have to re-derive reach from scratch.
+4. **"Stop" means stop working THIS finding, not stop auditing.** This rule does not
+   relax the standing exhaustive-coverage practice elsewhere in this campaign (guards and
+   finders should keep being comprehensive) — it bounds what happens the MOMENT a finding
+   is confirmed machine-only: classify, file, move on. It exists specifically to stop a
+   single fix from cascading into fixing every sibling discovered along the way without a
+   fresh, explicit decision to expand scope.
+
+**Applied so far:**
+
+- **#1545** (`AssignPermissionToRole` self-permission-bundling ceiling,
+  `internal/core/rbac_management.go:90`; `BulkDeleteSecrets` per-secret ACL/ownership
+  check, `internal/core/bulk_delete.go:100,116`) — classified machine-only, confirmed by
+  exhaustive call-site tracing (every real HTTP/gRPC caller with a `UserID`-carrying
+  session self-blocks at its own upstream `Authorize()` pre-check before ever reaching
+  the exemption; the only zero-actor callers are a machine credential — `UserID` is 0 for
+  ANY machine token type, `server/middleware/auth.go:66-68` — or an already-established
+  trusted local pseudo-actor, boot-time reconcile for the first and embedded CLI for the
+  second). No human account can ever present `UserID==0` (verified against
+  session/PAT/bootstrap/impersonation/OIDC-federation code paths, `server/middleware/auth.go`
+  and `server/grpc/interceptors/auth.go`). Filed, not fixed; full evidence trail on the
+  issue.
+- **#1546** (`TransitionMembershipProxy` bypassing `core.TransitionMembership`'s
+  activation ceiling + role-grant/revoke side effects) — reach genuinely unresolved (may
+  be a real gap, or may be safe-by-design if the side effect already lands via a separate
+  relayed call from the downstream's own `core.TransitionMembership`) — filed with both
+  hypotheses stated, not guess-fixed.
+- **#1547** (the raw-storage-bypass guard's 18-route scope losing coverage, demonstrated
+  by #1545/#1546 both being found outside it) — classification of the guard's own
+  false-positive pattern filed as its own follow-up, not implemented mid-session.
+  Re-measuring the guard's real detection logic (not a cruder estimate) against every
+  handler in `server/http/handlers`, not just the 18 already-classified routes, found
+  **149 flagged call sites**: 90 (60%) mechanically excludable as read-shaped storage
+  methods (`Get*`/`List*`/`Count*`/`Export*` — a read confers no new access, so there's
+  no ceiling to bypass), leaving **59 write-shaped candidates**. Of those 59, individual
+  investigation (not the keyword-match heuristic alone, which proved unreliable in both
+  directions — see #1547) confirmed 7 as safe: 3 with no independent ceiling to bypass
+  (`ClearProjectSecretOwnershipProxy`, `DeleteSecretACLsByUserAndProjectProxy`,
+  `DeleteExpiredRoleGrantsProxy` — each core "wrapper" is audit-only bookkeeping, not a
+  gated primitive) and 4 deliberate, already-documented exceptions
+  (`CreateUserWithRoleGrantsProxy` — C2, one-atomic-transaction requirement, ADR-028;
+  `RemoveGlobalAdminRoleGuardedProxy` — no real transaction spans the HTTP hop, guard
+  must live at the row-owning server; `DeleteProjectProxy`/`DeleteProjectIfEmptyProxy` —
+  same reasoning as `RemoveGlobalAdminRoleGuardedProxy`, `DeleteProjectIfEmpty` is a
+  purpose-built atomic storage-layer primitive enforcing `DeleteProject(force=false)`'s
+  guard across the hop, #528). **That leaves 52 genuinely unresolved** — the measured
+  remaining backlog for this bug class — of which 1 (`TransitionMembershipProxy`)
+  already has its own filed issue (#1546) and 51 have not been individually investigated
+  at all. This is the number a future session should treat as the actual size of the
+  #1542-shaped backlog, not the 18-route scope's apparent completeness.
+
+A future session picking up #1545/#1546/#1547 (or whatever the guards in this campaign
+surface next) should apply the same rule: classify reach first, fix only what's
+human-reachable, file the rest with evidence, and treat "filed" as a legitimate stopping
+point, not an unfinished task to feel behind on.
+
+## Overnight triage of the 52 unresolved candidates (2026-08-23 → 2026-08-24)
+
+Full results: `docs/g80-raw-storage-bypass-enumeration.md` (the reproducible 58-candidate
+baseline, and why it supersedes the 59 above — see below), `docs/g80-raw-storage-bypass-blind-spots.md`
+(five categories this guard cannot see, named not chased), `docs/g80-raw-storage-bypass-triage.md`
+(per-candidate table with file:line evidence), and `docs/g80-overnight-handoff-2.md`
+(executive summary — **read this first**, it flags several human-reachable, unfixed
+findings prominently).
+
+**The "149 flagged / 90 read / 59 write-shaped" figures immediately above (from the
+original #1547 entry) could not be reproduced and should be treated as incorrect.** Two
+independent implementations of that entry's own stated methodology — a regex/line-scan
+version and an AST-based version (`scripts/analysis/raw_storage_bypass_enumerate.go`,
+committed, immune to line-wrapping by construction) — both produce **145 flagged / 87
+read-shaped / 58 write-shaped**. Multi-line method chains and variable/interface dispatch
+were checked directly as candidate explanations for the gap and ruled out (zero instances
+of either in the current codebase). 58, not 59, is now the reproducible baseline; run
+`go run scripts/analysis/raw_storage_bypass_enumerate.go` to regenerate it.
+
+Of those 58 candidates, 50 were investigated tonight (the 7 already resolved above, plus
+`TransitionMembershipProxy`/#1546, were left as-is).
+
+**Result: 35 of the 50 are `real` (a genuine ceiling bypass), and all 35 are
+`human-reachable`** — not machine-only. The stopping rule's informal extrapolation from
+the 7-item sample (implying most of the remainder would be safe, ~11-12%) was wrong in
+the dangerous direction: the actual true-positive rate among the unresolved remainder was
+70%. **None of the 35 have been fixed** — this was classification only, per explicit
+instruction for the overnight session; unsupervised edits to authorization code were
+out of scope regardless of how many findings turned out human-reachable. GitHub issue
+filing and the #1547 Slack post are both blocked on `gh auth` being broken (invalid
+keyring token) — see the handoff doc for ready-to-file issue content.
+
+**State the number as: 35 of 58 real and human-reachable, within the guard's stated
+reach (server/http/handlers only) — with five further categories (multi-line chains,
+now fixed; variable/interface dispatch; wrapper-mediated calls; the read-shaped naming
+heuristic; non-handler layers — gRPC/CLI/background jobs) named as unexamined in
+`docs/g80-raw-storage-bypass-blind-spots.md`, not folded into this count.** 20 files
+outside `server/http/handlers` (7 gRPC service files, 13 CLI command files) make raw
+storage calls this guard never looks at.
+
+**This is now the top-priority open item in the G80/#1542 lineage** — worse in aggregate
+than the original G80 bug and on par with or worse than #1542's own motivating finding.
+Do not treat "filed, not fixed" as equivalent to low-urgency here; the stopping rule's
+own clause 2 ("human-reachable: fix it now, it outranks other open work") applies to all
+35 — it was deliberately not invoked tonight only because this was an unsupervised
+overnight session and authz-code changes need a human in the loop, not because the
+findings don't qualify.
+
+## Stale-test disposition: premise-impossible vs. premise-true-but-unverified (2026-08-24)
+
+Merging #1550 (the 23-handler deletion) into main broke 3 `internal/core` tests
+(`login_lockout_remote_test.go`'s `TestLockout_RemoteStorageGenuinelyPersistsAndLocks`,
+`TestLockout_RemoteStorageGenuinelyClears`, `TestUnlockUser_RemoteStorageGenuinelyPersistsAndAudits`)
+plus ~50 `internal/storage/store` tests exercising the same 22-23 now-stubbed
+`RemoteStorage` methods. Every prior "stale test" disposition in this campaign has been
+a **coverage gap**: the test was fine, the code under it changed, update the fixture.
+This is the first one that isn't — worth naming the distinction explicitly so it doesn't
+get collapsed into the same bucket next time:
+
+- **Premise-true-but-unverified**: the test exercises a real, reachable code path, but
+  its expectations (a fixture, a mock response, a hardcoded count) drifted from current
+  behavior. Fix the fixture, don't delete the test — the reachability claim still holds,
+  only the assertion is wrong. This is every prior stale-test fix in C0–C5 above (fixture
+  gaps, RealServer quarantines, coverage assertions).
+- **Premise-impossible**: the test's OWN SETUP constructs a topology that cannot occur in
+  any real deployment, independent of what it asserts. No fixture fix rescues this — the
+  scenario itself is fiction. Delete the test (and any helper that exists solely to serve
+  it), don't quarantine or paper over it.
+
+The 3 `internal/core` tests are premise-impossible: `newRemoteLockoutCoreAgainst` builds
+`&KeyorixCore{storage: rs}` as a raw struct literal, never touching
+`internal/config.Config` or `Config.Validate()`. That topology — a server process backed
+by `RemoteStorage` — is rejected UNCONDITIONALLY by `validateRemoteStorageNotServer`
+(`internal/config/config.go:2057`), verified by checking both guard call sites
+(`server/main.go:75` in `main()`, `server/main.go:302` in `initializeCoreService()`, the
+ONE function among 27 `core.NewKeyorixCore` call sites repo-wide that ever feeds
+`server/http/handlers`) and confirming neither has a bypass. No amount of fixing the
+fake-upstream HTTP mock's response shape would make the scenario real; the only correct
+fix is deleting the test.
+
+**The check that catches this, sharpened from the stopping rule above: a Go call graph
+proves a function CAN be called, not that the call CAN be constructed in a real process.**
+Tracing `server/http/handlers/catalog.go → core.UpdateProject → storage.UpdateProject`
+finds a real call chain — but whether that chain ever executes with a `RemoteStorage`
+receiver depends on whether anything can actually construct that pairing at runtime, which
+is a separate question a call graph alone cannot answer. Verify the WIRING (what
+constructs the receiver, and does anything gate that construction), not just the CALL.
+See CLAUDE.md's "Engineering practices" for the general form of this rule and four
+concrete instances from this campaign that cut in both directions.
+
+The anti-silent-no-op guarantee these 3 tests protected (backlog #529: prove
+`RemoteStorage` write methods fail LOUDLY, not silently, when unsupported) is preserved by
+different, still-live machinery: `RemoteStorage.UpdateLoginLockoutState` (and the other 22
+now-stubbed methods) return `errUnsupportedRemote` unconditionally — a loud, immediate
+error, not a silent no-op — and `TestRemoteStorageWireCalls_HaveMatchingRoute`
+(`internal/storage/store`) independently catches any wire call left with no matching
+route. Nothing about #529's original finding is unprotected; the protection just moved.

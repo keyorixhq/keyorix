@@ -82,29 +82,51 @@ func newSecretCreateWireRequest(secret *models.SecretNode, plaintextValue string
 	}
 }
 
-// secretUpdateWireRequest mirrors UpdateSecret's handler DTO. By the time
-// core.UpdateSecret calls storage.UpdateSecret, secret.Expiration already
-// reflects the FULLY resolved final desired state (it first fetches the
-// existing row via GetSecret, then only mutates Expiration for an explicit
-// clear-or-set request) — so a nil Expiration here unambiguously means "the
-// final state has no expiration," and unconditionally sending
-// clear_expiration:true in that case is always correct: it is a harmless no-op
-// against a row that already has no expiration, and correctly clears one that
-// does.
+// secretUpdateWireRequest carries the caller's full desired SecretNode state —
+// a Go-to-Go round trip (SecretNode has no json tags besides ValueStored's
+// "-"), matching the existing TransitionSecretStatus/GetSecretIncludingDeleted
+// precedent — so the hub can diff it against its OWN authoritative row and
+// decide what may actually change (G80 Phase 0).
+//
+// Deliberately NOT a narrow, named-field DTO: a hand-picked client-side field
+// list is exactly how the original G80 bug happened (secretUpdateWireRequest
+// used to carry only MaxReads/Expiration/ClearExpiration, silently dropping
+// every other field seven other internal/core call sites mutate before
+// calling storage.UpdateSecret — see docs/g80-remediation-notes.md). The hub
+// is the only side that can enforce the security-gated fields' real
+// authorization requirements (SoD on ownership transfer, the G09 read-approval
+// gate on classification downgrade, requireAdminAuthorityAt on rotation-
+// backend binding) — see updateSecretAllowlist in
+// server/http/handlers/secret_update_diff.go for the full classification and
+// why sending everything and letting the hub decide is the only safe shape
+// here.
+//
+// By the time any internal/core call site calls storage.UpdateSecret, the
+// SecretNode it passes already reflects the fully-resolved final desired
+// state for every field it legitimately owns (each site first fetches the
+// existing row via GetSecret, then mutates in place) — so a nil Expiration
+// here unambiguously means "the final state has no expiration," with no
+// separate clear-vs-unchanged flag needed the way the old narrow DTO required.
+//
+// DO NOT "optimize" this back to a named-field/sparse DTO. That is the exact
+// shape of the original bug: a client-chosen subset silently drops whatever
+// field the client didn't think to include, and the hub has no way to tell
+// "the caller wants this field unchanged" from "the caller's DTO never had a
+// slot for it." Sending the full node and diffing hub-side is what makes the
+// allowlist in secret_update_diff.go default-deny instead of default-trust —
+// narrowing the wire shape again would silently defeat that, not just
+// regress performance. No secret VALUE or ciphertext is ever at risk here:
+// ValueStored is gorm:"-"/json:"-" (never serialized — guarded by
+// TestRemoteStorage_UpdateSecret_NeverSerializesValueStored,
+// remote_secrets_test.go) and models.SecretNode itself has no field that
+// carries the encrypted or plaintext value; that lives entirely in a
+// separate SecretVersion row this struct never touches.
 type secretUpdateWireRequest struct {
-	MaxReads        *int   `json:"max_reads,omitempty"`
-	Expiration      string `json:"expiration,omitempty"`
-	ClearExpiration bool   `json:"clear_expiration,omitempty"`
+	Secret *models.SecretNode `json:"secret"`
 }
 
 func newSecretUpdateWireRequest(secret *models.SecretNode) secretUpdateWireRequest {
-	req := secretUpdateWireRequest{MaxReads: secret.MaxReads}
-	if secret.Expiration != nil {
-		req.Expiration = secret.Expiration.UTC().Format(time.RFC3339)
-	} else {
-		req.ClearExpiration = true
-	}
-	return req
+	return secretUpdateWireRequest{Secret: secret}
 }
 
 // CreateSecret creates a new secret via remote API. plaintextValue is optional
@@ -216,7 +238,12 @@ func (rs *RemoteStorage) ClearProjectSecretOwnership(ctx context.Context, userID
 	return nil
 }
 
-// UpdateSecret updates an existing secret via remote API.
+// UpdateSecret updates an existing secret via remote API. The hub independently
+// decides what may change (G80 Phase 0) — a field this call mutated that the hub
+// rejects surfaces here as a real error, never as a silent no-op: this method
+// must never return (nil, nil) after the hub declined to apply part of the
+// request. See secretUpdateWireRequest's doc comment for why the full desired
+// state is sent rather than a client-chosen subset.
 func (rs *RemoteStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
 	path := fmt.Sprintf("/api/v1/secrets/%d", secret.ID)
 	resp, err := rs.client.Put(ctx, path, newSecretUpdateWireRequest(secret))
@@ -224,7 +251,13 @@ func (rs *RemoteStorage) UpdateSecret(ctx context.Context, secret *models.Secret
 		return nil, fmt.Errorf("failed to update secret: %w", err)
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf("update secret failed: %s", resp.Error.Error())
+		// The hub's error names the rejected field(s) and states that the
+		// operation needs its own dedicated endpoint against a hub — see
+		// updateSecretAllowlist (server/http/handlers/secret_update_diff.go).
+		// Not yet supported: ownership transfer, move, classification change,
+		// bulk rename, rotation-backend binding, and recording a rotation
+		// timestamp, when connected to a hub.
+		return nil, fmt.Errorf("update secret rejected by hub: %s", resp.Error.Error())
 	}
 	var result models.SecretNode
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -339,83 +372,43 @@ func (rs *RemoteStorage) PurgeDeletedSecretsBefore(ctx context.Context, before t
 	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/secrets/purge", before, "purge deleted secrets")
 }
 
-// DeleteAnomalyAlertsBefore proxies onto POST
-// /api/v1/system/retention/anomaly-alerts/purge. ackBefore/unackCeiling are sent
-// as-is (including when zero) — DeleteAnomalyAlertsBefore's own contract treats a
-// zero time.Time as "this clause is disabled", not "purge everything before year
-// 1" (see local_purge.go), and the proxy handler preserves that by decoding both
-// fields unconditionally rather than rejecting a zero value as invalid.
-func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore, unackCeiling time.Time) (int64, error) {
-	body := struct {
-		AckBefore    time.Time `json:"ack_before"`
-		UnackCeiling time.Time `json:"unack_ceiling"`
-	}{AckBefore: ackBefore, UnackCeiling: unackCeiling}
-	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/anomaly-alerts/purge", body)
-	if err != nil {
-		return 0, fmt.Errorf("failed to purge anomaly alerts: %w", err)
-	}
-	if !resp.Success {
-		return 0, fmt.Errorf("purge anomaly alerts failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Purged int64 `json:"purged"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Purged, nil
+// DeleteAnomalyAlertsBefore used to proxy onto POST
+// /api/v1/system/retention/anomaly-alerts/purge (DeleteAnomalyAlertsBeforeProxy),
+// deleted in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _, _ time.Time) (int64, error) {
+	return 0, errUnsupportedRemote
 }
 
-// DeleteClosedAccessReviewsBefore proxies onto POST
-// /api/v1/system/retention/access-reviews/purge-closed.
-func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
-	body := struct {
-		Before time.Time `json:"before"`
-	}{Before: before}
-	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/access-reviews/purge-closed", body)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to purge closed access reviews: %w", err)
-	}
-	if !resp.Success {
-		return 0, 0, fmt.Errorf("purge closed access reviews failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		CampaignsPurged int64 `json:"campaigns_purged"`
-		ItemsPurged     int64 `json:"items_purged"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.CampaignsPurged, result.ItemsPurged, nil
+// DeleteClosedAccessReviewsBefore used to proxy onto POST
+// /api/v1/system/retention/access-reviews/purge-closed
+// (DeleteClosedAccessReviewsBeforeProxy), deleted in the G80 liveness sweep — no
+// live caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
+	return 0, 0, errUnsupportedRemote
 }
 
-// DeleteExpiredBreakGlassBefore proxies onto POST
-// /api/v1/system/retention/break-glass/purge-expired.
-func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
-	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/break-glass/purge-expired", before, "purge expired break-glass activations")
+// DeleteExpiredBreakGlassBefore used to proxy onto POST
+// /api/v1/system/retention/break-glass/purge-expired
+// (DeleteExpiredBreakGlassBeforeProxy), deleted in the G80 liveness sweep — no
+// live caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, errUnsupportedRemote
 }
 
-// DeleteResolvedAccessRequestsBefore proxies onto POST
-// /api/v1/system/retention/access-requests/purge-resolved.
-func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
-	body := struct {
-		Before time.Time `json:"before"`
-	}{Before: before}
-	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/access-requests/purge-resolved", body)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to purge resolved access requests: %w", err)
-	}
-	if !resp.Success {
-		return 0, 0, fmt.Errorf("purge resolved access requests failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		RequestsPurged  int64 `json:"requests_purged"`
-		ApprovalsPurged int64 `json:"approvals_purged"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.RequestsPurged, result.ApprovalsPurged, nil
+// DeleteResolvedAccessRequestsBefore used to proxy onto POST
+// /api/v1/system/retention/access-requests/purge-resolved
+// (DeleteResolvedAccessRequestsBeforeProxy), deleted in the G80 liveness sweep —
+// no live caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
+	return 0, 0, errUnsupportedRemote
 }
 
 // postRetentionBeforeCountResp is the shared shape for every retention-purge

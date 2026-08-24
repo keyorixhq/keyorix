@@ -376,42 +376,6 @@ func TestRemoteStorage_SetPasswordHash_Unsupported(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrRemoteUnsupported)
 }
 
-// --- UpdateLoginLockoutState ---
-
-func TestRemoteStorage_UpdateLoginLockoutState(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/users/1/login-lockout", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	now := time.Now()
-	lockedUntil := now.Add(15 * time.Minute)
-	err = rs.UpdateLoginLockoutState(context.Background(), 1, 3, &now, &lockedUntil, 1)
-	require.NoError(t, err)
-}
-
-func TestRemoteStorage_UpdateLoginLockoutState_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   map[string]string{"code": "NOT_FOUND", "message": "user not found"},
-		})
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateLoginLockoutState(context.Background(), 999, 0, nil, nil, 0)
-	assert.Error(t, err)
-}
-
 // --- DeleteUser ---
 
 func TestRemoteStorage_DeleteUser(t *testing.T) {

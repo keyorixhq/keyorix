@@ -4,7 +4,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -1118,60 +1116,4 @@ func TestMachineActionState_S8(t *testing.T) {
 	state, ok = machineActionState("")
 	assert.False(t, ok)
 	assert.Empty(t, state)
-}
-
-// ── break_glass_proxy.go: CreateBreakGlassActivationProxy ────────────────────
-
-// TestCreateBreakGlassActivationProxy_BadJSON_S8 tests the bad JSON path → 400.
-func TestCreateBreakGlassActivationProxy_BadJSON_S8(t *testing.T) {
-	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_MissingFields_S8 tests missing required
-// fields (project_id / user_id / state) → 400.
-func TestCreateBreakGlassActivationProxy_MissingFields_S8(t *testing.T) {
-	h := newCatalogHandlerS8(t)
-	body := `{"project_id":0,"user_id":0,"state":""}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_MissingState_S8 tests that an empty
-// state field is rejected → 400.
-func TestCreateBreakGlassActivationProxy_MissingState_S8(t *testing.T) {
-	h := newCatalogHandlerS8(t)
-	body := `{"project_id":1,"user_id":2,"state":""}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateBreakGlassActivationProxy_HappyPath_S8 tests the success branch —
-// all required fields supplied → 200.
-func TestCreateBreakGlassActivationProxy_HappyPath_S8(t *testing.T) {
-	h := newCatalogHandlerS8(t)
-	now := time.Now().UTC()
-	expires := now.Add(time.Hour)
-	payload := breakGlassActivationProxyWire{
-		ProjectID: 1,
-		UserID:    1,
-		State:     "active",
-		ExpiresAt: &expires,
-		CreatedAt: now,
-	}
-	b, err := json.Marshal(payload)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(b))
-	w := httptest.NewRecorder()
-	h.CreateBreakGlassActivationProxy(w, req)
-	// Depending on DB state may return 200 or 409 (already active); both are
-	// non-error branches from the proxy's logic perspective.
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusConflict, "unexpected: %d", w.Code)
 }

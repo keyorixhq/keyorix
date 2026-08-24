@@ -364,26 +364,6 @@ func TestRemoteCov_GetRBACAuditLogs_Error(t *testing.T) {
 
 // ─── remote_webauthn.go ─────────────────────────────────────────────────────
 
-func TestRemoteCov_CreateWebAuthnCredential_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("CONFLICT", "credential already registered"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	c := &models.WebAuthnCredential{
-		UserID:         7,
-		CredentialID:   []byte{0x01, 0x02},
-		Name:           "YubiKey",
-		CredentialBlob: []byte(`{}`),
-	}
-	err = rs.CreateWebAuthnCredential(context.Background(), c)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "create webauthn credential failed")
-}
-
 func TestRemoteCov_AdvanceWebAuthnCredentialCounter_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(apiNotOK("CONFLICT", "counter already advanced"))
@@ -694,20 +674,6 @@ func TestRemoteCov_UpdateWebAuthnCredential_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "update webauthn credential failed")
 }
 
-func TestRemoteCov_DeleteWebAuthnCredential_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "credential not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.DeleteWebAuthnCredential(context.Background(), 7, 999)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "delete webauthn credential failed")
-}
-
 func TestRemoteCov_CountWebAuthnCredentials_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(apiNotOK("INTERNAL", "db error"))
@@ -720,18 +686,4 @@ func TestRemoteCov_CountWebAuthnCredentials_Error(t *testing.T) {
 	_, err = rs.CountWebAuthnCredentials(context.Background(), 7)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "count webauthn credentials failed")
-}
-
-func TestRemoteCov_SetUserWebAuthnEnabled_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "user not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.SetUserWebAuthnEnabled(context.Background(), 999, true)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "set webauthn enabled failed")
 }

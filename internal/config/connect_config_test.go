@@ -156,8 +156,13 @@ func TestValidateConnectScopes_ValidEntriesExcludedFromAggregation(t *testing.T)
 // so the boot path (server/main.go's cfg.Validate() call) actually enforces
 // ADR-082 §C.
 func TestValidate_ConnectScopesWired(t *testing.T) {
+	// G80 follow-up (2026-08-24): storage.type: remote used to be a convenient way
+	// to skip the local DB path requirement below, but Config.Validate now rejects
+	// "remote" unconditionally (validateRemoteStorageNotServer) — that error would
+	// surface here instead of the connect-scope error this test means to check.
+	// "local" + a Database.Path satisfies the same requirement without tripping it.
 	c := &Config{
-		Storage: StorageConfig{Type: "remote"}, // skip local DB path requirement
+		Storage: StorageConfig{Type: "local", Database: DatabaseConfig{Path: "/tmp/keyorix-connect-scopes-test.db"}},
 		Connect: ConnectConfig{Connectors: []ConnectorConfig{
 			{Name: "unscoped-connector", Type: "vault"},
 		}},
@@ -255,8 +260,10 @@ func TestValidateConnectTypes_ValidEntriesExcludedFromAggregation(t *testing.T) 
 // connector type error — not just the unexported helper in isolation — so the
 // boot path actually enforces #1476.
 func TestValidate_ConnectTypesWired(t *testing.T) {
+	// G80 follow-up (2026-08-24): see TestValidate_ConnectScopesWired's comment —
+	// "remote" no longer skips validation cleanly, it's rejected outright now.
 	c := &Config{
-		Storage: StorageConfig{Type: "remote"}, // skip local DB path requirement
+		Storage: StorageConfig{Type: "local", Database: DatabaseConfig{Path: "/tmp/keyorix-connect-types-test.db"}},
 		Connect: ConnectConfig{Connectors: []ConnectorConfig{
 			{Name: "mistyped-connector", Type: "aws-secrets-mangler", Scope: "platform"},
 		}},
@@ -273,8 +280,10 @@ func TestValidate_ConnectTypesWired(t *testing.T) {
 // an unrecognized type AND a missing scope must surface the type error, not
 // the scope error.
 func TestValidate_ConnectTypesRunsBeforeScopes(t *testing.T) {
+	// G80 follow-up (2026-08-24): see TestValidate_ConnectScopesWired's comment —
+	// "remote" no longer skips validation cleanly, it's rejected outright now.
 	c := &Config{
-		Storage: StorageConfig{Type: "remote"},
+		Storage: StorageConfig{Type: "local", Database: DatabaseConfig{Path: "/tmp/keyorix-connect-order-test.db"}},
 		Connect: ConnectConfig{Connectors: []ConnectorConfig{
 			{Name: "doubly-broken", Type: "bogus-type"}, // no Type match AND no Scope
 		}},

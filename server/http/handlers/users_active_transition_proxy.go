@@ -108,6 +108,26 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 			return
 		}
 	}
+	// #1542-shape guard (G80 overnight campaign, Tier 1 Group A #3): this route
+	// never called the last-global-admin lockout guard core.UpdateUser's
+	// deactivating branch applies (internal/core/users.go:384), so a caller could
+	// deactivate the install's only admin with no protection. core.GuardLastAdminDeactivation
+	// depends only on the target user ID (a target-state invariant, not a
+	// caller-authority check -- see its doc), which is already the route's own
+	// path parameter, so this closes the gap with no RemoteStorage wire-protocol
+	// change. Deliberately NOT addressed here: PAT/session revocation on
+	// deactivation, which core.UpdateUser also performs -- that's a separate,
+	// pre-existing defect (RemoteStorage.RevokeAllPersonalAccessTokensForUser and
+	// DeleteSessionsForUserExcept are both stubbed to errUnsupportedRemote,
+	// meaning the "correct" full deactivation flow already fails outright over
+	// RemoteStorage today, independent of this proxy) -- tracked separately, not
+	// fixed as part of this change.
+	if body.FromActive && !body.Active {
+		if err := h.coreService.GuardLastAdminDeactivation(r.Context(), uint(id)); err != nil {
+			writeRemoteAPIError(w, http.StatusForbidden, "LAST_ADMIN", clientSafe(err))
+			return
+		}
+	}
 	user := &models.User{
 		ID:          uint(id),
 		Username:    body.Username,

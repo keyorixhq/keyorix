@@ -1,7 +1,8 @@
 // break_glass_proxy.go — server-side endpoints backing RemoteStorage's
-// break-glass storage primitives (finding #519): CreateBreakGlassActivation/
-// GetBreakGlassActivation/ListBreakGlassActivations/UpdateBreakGlassActivation/
-// RevokeBreakGlassActivation.
+// break-glass storage primitives (finding #519): GetBreakGlassActivation/
+// ListBreakGlassActivations/RevokeBreakGlassActivation. (CreateBreakGlassActivationProxy/
+// UpdateBreakGlassActivationProxy were deleted — G80 liveness sweep found no live
+// caller for either; see docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // its break-glass storage calls to whichever upstream server it's configured
@@ -26,24 +27,11 @@
 // passthrough whose caller already ran all of that on the downstream side.
 //
 // Atomicity note — the critical property for this subsystem (docs/security/
-// BUGS.md #104, PR #670): local_break_glass.go's CreateBreakGlassActivation relies
-// on a REAL DB-level partial unique index (uniq_break_glass_active_project_user,
-// ensureBreakGlassActiveIndex) scoped to state='active' to reject a second
-// concurrent active activation for the same (project_id, user_id) — an
-// `INSERT ... ON CONFLICT DO NOTHING` whose RowsAffected==0 is translated to
-// storage.ErrBreakGlassAlreadyActive. CreateBreakGlassActivationProxy calls that
-// SAME storage.Storage primitive directly against this server's own database, so
-// that guarantee is a property of the upstream's own database and survives this
-// HTTP hop unchanged — NOT a client-side "GET then POST" sequence, which would
-// reopen exactly the TOCTOU race #104 closed. Similarly, RevokeBreakGlassActivation
-// is a single conditional `UPDATE ... WHERE id = ? AND state = 'active'` (not a
-// read-then-write) — RevokeBreakGlassActivationProxy calls that same primitive
-// directly, so a losing racer against a concurrent revoke gets
-// storage.ErrBreakGlassNotActive rather than silently double-revoking. Only
-// UpdateBreakGlassActivationProxy is a plain unconditional Save (matching
-// local_break_glass.go's own UpdateBreakGlassActivation semantics exactly — there
-// is no conditional write to preserve there, mirroring
-// UpdateDynamicSecretConfigProxy's precedent).
+// BUGS.md #104, PR #670): RevokeBreakGlassActivation is a single conditional
+// `UPDATE ... WHERE id = ? AND state = 'active'` (not a read-then-write) —
+// RevokeBreakGlassActivationProxy calls that same primitive directly, so a
+// losing racer against a concurrent revoke gets storage.ErrBreakGlassNotActive
+// rather than silently double-revoking.
 //
 // Response envelope: like project_memberships_proxy.go/invitations_proxy.go,
 // these do NOT use the package's generic sendSuccess/sendError helpers — they
@@ -53,10 +41,8 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -124,86 +110,12 @@ func (w breakGlassActivationProxyWire) toModel() *models.BreakGlassActivation {
 // there is no exported equivalent. Keep in sync if that list ever changes.
 var breakGlassContainmentAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
 
-// checkBreakGlassRoleContainment reimplements the two role-containment checks
-// core.ActivateBreakGlass applies before granting an emergency role (#G79):
-// the role must not be install-wide admin, and must not carry roles.assign
-// (which would let a time-bound emergency grant mint a PERMANENT one during
-// its window). This proxy cannot re-run ActivateBreakGlass itself — the
-// activating user's project-affiliation/policy state lives on the calling
-// (downstream) server, not here, and the role grant this activation records
-// was already issued via a separate RemoteStorage call — but it CAN, and
-// must, still refuse to persist an activation record naming a role that is
-// dangerous by the upstream's OWN role table, so a compromised or
-// misconfigured downstream cannot use this proxy to fabricate a record for
-// (and thereby legitimize/re-derive) an uncontained role.
-func (h *CatalogHandler) checkBreakGlassRoleContainment(ctx context.Context, roleID uint) error {
-	if roleID == 0 {
-		return nil
-	}
-	for _, name := range breakGlassContainmentAdminRoleNames {
-		role, err := h.coreService.Storage().GetRoleByName(ctx, name)
-		if err == nil && role != nil && role.ID == roleID {
-			return fmt.Errorf("the recorded role grants install-wide administration and cannot be used for break-glass")
-		}
-	}
-	hasAssign, err := h.coreService.Storage().RoleSetHasPermission(ctx, []uint{roleID}, "roles.assign")
-	if err != nil {
-		return fmt.Errorf("failed to verify role containment: %w", err)
-	}
-	if hasAssign {
-		return fmt.Errorf("the recorded role can assign roles or issue credentials and cannot be used for break-glass")
-	}
-	return nil
-}
-
-// breakGlassAlreadyActiveCode is the machine-readable error code
-// CreateBreakGlassActivationProxy returns when the upstream's own DB-level
-// partial-unique-index rejection (storage.ErrBreakGlassAlreadyActive,
-// local_break_glass.go) fires — the wire-level signal
-// RemoteStorage.CreateBreakGlassActivation uses to reconstruct the same sentinel
-// core.ActivateBreakGlass's errors.Is check depends on, so that check-and-translate
-// behavior is preserved across this HTTP hop and not silently downgraded to an
-// opaque "failed to create activation" error.
-const breakGlassAlreadyActiveCode = "BREAK_GLASS_ALREADY_ACTIVE"
-
 // breakGlassNotActiveCode is the machine-readable error code
 // RevokeBreakGlassActivationProxy returns when the conditional
 // `WHERE state = 'active'` update matches no row (storage.ErrBreakGlassNotActive,
 // local_break_glass.go) — the wire-level signal RemoteStorage.
 // RevokeBreakGlassActivation uses to reconstruct that sentinel.
 const breakGlassNotActiveCode = "BREAK_GLASS_NOT_ACTIVE"
-
-// CreateBreakGlassActivationProxy handles POST /api/v1/system/break-glass. See
-// the package doc for why this persists the caller's already-fully-built
-// activation row as-is (a raw storage-layer create backed by a real DB-level
-// unique-index race gate), not a re-run of ActivateBreakGlass's own business
-// logic.
-func (h *CatalogHandler) CreateBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
-	var body breakGlassActivationProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if body.ProjectID == 0 || body.UserID == 0 || body.State == "" {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, user_id, and state are required")
-		return
-	}
-	if err := h.checkBreakGlassRoleContainment(r.Context(), body.RoleID); err != nil {
-		writeRemoteAPIError(w, http.StatusForbidden, "ROLE_NOT_CONTAINED", err.Error())
-		return
-	}
-	created, err := h.coreService.Storage().CreateBreakGlassActivation(r.Context(), body.toModel())
-	if err != nil {
-		if errors.Is(err, coreStorage.ErrBreakGlassAlreadyActive) {
-			writeRemoteAPIError(w, http.StatusConflict, breakGlassAlreadyActiveCode, coreStorage.ErrBreakGlassAlreadyActive.Error())
-			return
-		}
-		log.Printf("break-glass proxy: create activation failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newBreakGlassActivationProxyWire(created))
-}
 
 // GetBreakGlassActivationProxy handles GET /api/v1/system/break-glass/{id}.
 func (h *CatalogHandler) GetBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
@@ -249,36 +161,6 @@ func (h *CatalogHandler) ListBreakGlassActivationsProxy(w http.ResponseWriter, r
 		wire = append(wire, newBreakGlassActivationProxyWire(a))
 	}
 	writeRemoteAPISuccess(w, map[string]interface{}{"activations": wire})
-}
-
-// UpdateBreakGlassActivationProxy handles PUT /api/v1/system/break-glass/{id}. A
-// raw persist (storage.Storage.UpdateBreakGlassActivation is an unconditional
-// full-row Save, matching LocalStorage's own semantics exactly — the actual
-// atomicity guarantee for this subsystem lives in CreateBreakGlassActivation's
-// unique-index insert and RevokeBreakGlassActivation's conditional update, both
-// proxied separately below).
-func (h *CatalogHandler) UpdateBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidActivationID)
-		return
-	}
-	var body breakGlassActivationProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.ID = uint(id)
-	if err := h.checkBreakGlassRoleContainment(r.Context(), body.RoleID); err != nil {
-		writeRemoteAPIError(w, http.StatusForbidden, "ROLE_NOT_CONTAINED", err.Error())
-		return
-	}
-	if err := h.coreService.Storage().UpdateBreakGlassActivation(r.Context(), body.toModel()); err != nil {
-		log.Printf("break-glass proxy: update activation failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
 }
 
 // breakGlassRevokeProxyRequest is RevokeBreakGlassActivationProxy's request body.

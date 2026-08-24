@@ -16,11 +16,54 @@ import (
 )
 
 // actorID returns the acting user's ID from the request context (0 when absent).
+//
+// actorID(r)==0 is ambiguous by construction: it means EITHER no request
+// context at all (a true local/embedded call — see isMachineActor's doc
+// comment) OR a machine-authenticated request (a machine identity has no
+// UserID). A caller whose ceiling check treats actorID==0 as "trusted, skip
+// the check" — rather than letting it flow through and fail closed like an
+// ordinary unauthorized actor would — is silently trusting every machine
+// credential too. Check isMachineActor(r) explicitly wherever that
+// distinction matters (see #1524).
 func actorID(r *http.Request) uint {
 	if u := middleware.GetUserFromContext(r.Context()); u != nil {
 		return u.UserID
 	}
 	return 0
+}
+
+// isMachineActor reports whether the request's authenticated principal is a
+// machine identity (any type, including a node credential) rather than a
+// user or a true unauthenticated/embedded call. Unlike actorID(r), this
+// distinguishes "no context at all" (nil UserContext — an in-process/local
+// caller, e.g. the CLI's embedded LocalStorage path) from "authenticated as
+// a machine" (non-nil UserContext with ActorType machine_identity,
+// UserID==0) — the two cases actorID(r) alone cannot tell apart. #1524: a
+// per-actor ceiling check that only tests `actorID != 0` treats both the
+// same, silently trusting a machine credential the way it was only ever
+// meant to trust a genuinely-local call.
+func isMachineActor(r *http.Request) bool {
+	u := middleware.GetUserFromContext(r.Context())
+	return u != nil && u.ActorKind() == core.ActorTypeMachine
+}
+
+// isNodeCredentialRequest reports whether this request authenticated with a
+// genuine MachineTypeNode credential (a RemoteStorage relay), as opposed to a
+// human or a non-node machine identity (ci/k8s/service/automation/other)
+// reaching the route via the system.write PERMISSION arm of
+// RequireNodeCredentialOrPermission. Both arms satisfy that gate identically,
+// but they mean different things for a route with a genuine per-actor
+// ceiling downstream: a real node relay is trusted to have already run the
+// ceiling check locally, against the real acting human, before deciding to
+// relay the already-authorized write (see rbac_role_grants_proxy.go's
+// package doc) — re-running the ceiling here would check it against the
+// node's OWN (by-design, permission-free) authority, the wrong principal,
+// not a stronger check. A system.write holder without a node credential is
+// NOT relaying anyone else's decision — they ARE the decision, and the real
+// ceiling must run against their own authority. #1542.
+func isNodeCredentialRequest(r *http.Request) bool {
+	u := middleware.GetUserFromContext(r.Context())
+	return u != nil && u.ActorKind() == core.ActorTypeMachine && u.MachineIdentityType == core.MachineTypeNode
 }
 
 // CatalogHandler handles project and environment endpoints.

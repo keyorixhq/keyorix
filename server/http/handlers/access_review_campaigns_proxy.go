@@ -45,9 +45,9 @@
 // wire, is needed here (unlike, say, #511's unique-index-violation
 // translation, which needed the DUPLICATE_ACTIVE_MEMBERSHIP wire code because
 // CreateProjectMembership's atomicity depended on a DB-level constraint
-// surfacing through an untyped error). UpdateAccessReviewCampaignProxy/
-// UpdateAccessReviewItemProxy below MUST relay that bool faithfully — never
-// synthesize "updated: true" independent of the storage call's own result.
+// surfacing through an untyped error). UpdateAccessReviewItemProxy below MUST
+// relay that bool faithfully — never synthesize "updated: true" independent
+// of the storage call's own result.
 //
 // Response envelope: like project_memberships_proxy.go/dynamic_secrets_proxy.go,
 // these do NOT use the package's generic sendSuccess/sendError helpers — they
@@ -330,59 +330,6 @@ func (h *CatalogHandler) GetLatestClosedAccessReviewCampaignProxy(w http.Respons
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]interface{}{"campaign": newAccessReviewCampaignProxyWire(c)})
-}
-
-// UpdateAccessReviewCampaignProxy handles PUT
-// /api/v1/system/access-review-campaigns/{id}. Runs the SAME single
-// conditional UPDATE (`WHERE id = ? AND state = 'open'`) LocalStorage's own
-// UpdateAccessReviewCampaign does — see the package doc for why relaying that
-// call's bool result (not synthesizing one) is the entire atomicity
-// contract here.
-//
-// ARC-006: the only caller of storage.UpdateAccessReviewCampaign,
-// core.CloseAccessReviewCampaign, ever sets exactly four fields on the
-// campaign it fetched and mutated in place: State, ClosedBy, ClosedAt,
-// ForcedIncomplete. It never touches ProjectID/Name/CreatedBy/CreatedAt/
-// Degraded/DegradedReasons — those always carry through from the row it
-// loaded. Because the underlying storage call is a `Select("*")` full-row
-// update (see package doc's Atomicity note), a client-supplied wire body
-// could otherwise rewrite a campaign's identity or silently clear its
-// degraded-snapshot flag in the same call. Re-fetch the authoritative row
-// and apply only the four legitimate transition fields from the wire —
-// mirrors the ARC-003 stripping CreateAccessReviewCampaignProxy already
-// applies, just on the opposite field set.
-func (h *CatalogHandler) UpdateAccessReviewCampaignProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCampaignIDLower)
-		return
-	}
-	var body accessReviewCampaignProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	existing, err := h.coreService.Storage().GetAccessReviewCampaign(r.Context(), uint(id))
-	if err != nil {
-		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "access-review campaign not found")
-			return
-		}
-		log.Printf("access-review-campaigns proxy: update campaign lookup failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	existing.State = body.State
-	existing.ClosedBy = body.ClosedBy
-	existing.ClosedAt = body.ClosedAt
-	existing.ForcedIncomplete = body.ForcedIncomplete
-	updated, err := h.coreService.Storage().UpdateAccessReviewCampaign(r.Context(), existing)
-	if err != nil {
-		log.Printf("access-review-campaigns proxy: update campaign failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": updated})
 }
 
 // CreateAccessReviewItemsProxy handles POST

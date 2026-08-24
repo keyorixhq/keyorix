@@ -245,22 +245,6 @@ func TestFinishWebAuthnPasswordlessLogin_RateLimited_S13B(t *testing.T) {
 
 // ── mfa_management_proxy.go: success paths ───────────────────────────────────
 
-// TestUpsertMFASecretProxy_Success_S13B — valid body with user_id + secret_enc
-// reaches the storage layer successfully.
-func TestUpsertMFASecretProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    1,
-		"secret_enc": []byte("encryptedsecret"),
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.UpsertMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // TestActivateMFASecretProxy_Success_S13B — upsert a secret first, then
 // activate it → 200.
 func TestActivateMFASecretProxy_Success_S13B(t *testing.T) {
@@ -346,25 +330,6 @@ func TestDeleteMFARecoveryCodesProxy_Success_S13B(t *testing.T) {
 
 // ── webauthn_proxy.go: success paths ─────────────────────────────────────────
 
-// TestCreateWebAuthnCredentialProxy_Success_S13B — valid credential body →
-// creates the credential → 200.
-func TestCreateWebAuthnCredentialProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	blob, _ := json.Marshal(webauthn.Credential{ID: []byte("cred-s13b")})
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":         1,
-		"credential_id":   []byte("cred-s13b"),
-		"credential_blob": blob,
-		"name":            "test-key",
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/credentials",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // TestListWebAuthnCredentialsProxy_Success_S13B — valid user_id, no credentials
 // in DB → empty list → 200.
 func TestListWebAuthnCredentialsProxy_Success_S13B(t *testing.T) {
@@ -442,20 +407,6 @@ func TestAdvanceWebAuthnCredentialCounterProxy_NotFound_S13B(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestDeleteWebAuthnCredentialProxy_StorageError_S13B — valid params but
-// credential doesn't exist → 404 (isNotFoundErr branch).
-// Also verifies the storage-error branch in DeleteWebAuthnCredentialProxy.
-func TestDeleteWebAuthnCredentialProxy_StorageError_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/system/webauthn/users/1/credentials/9999", nil)
-	r = withChiParams(r, map[string]string{"userId": "1", "id": "9999"})
-	w := httptest.NewRecorder()
-	h.DeleteWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // TestCountWebAuthnCredentialsProxy_Success_S13B — valid user_id, no
 // credentials → count = 0 → 200.
 func TestCountWebAuthnCredentialsProxy_Success_S13B(t *testing.T) {
@@ -465,20 +416,6 @@ func TestCountWebAuthnCredentialsProxy_Success_S13B(t *testing.T) {
 		"/api/v1/system/webauthn/credentials/count?user_id=1", nil)
 	w := httptest.NewRecorder()
 	h.CountWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestSetUserWebAuthnEnabledProxy_Success_S13B — valid userId + valid body →
-// SetUserWebAuthnEnabled succeeds → 200.
-func TestSetUserWebAuthnEnabledProxy_Success_S13B(t *testing.T) {
-	h, _, _ := setupMFAReauthTest(t)
-	body, _ := json.Marshal(map[string]bool{"enabled": true})
-	r := httptest.NewRequest(http.MethodPut,
-		"/api/v1/system/webauthn/users/1/webauthn-enabled",
-		bytes.NewReader(body))
-	r = withChiParams(r, map[string]string{"userId": "1"})
-	w := httptest.NewRecorder()
-	h.SetUserWebAuthnEnabledProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

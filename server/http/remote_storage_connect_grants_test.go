@@ -63,13 +63,14 @@ func newUpstreamDownstreamForConnectGrants(t *testing.T) (upstream *core.Keyorix
 	return upstream, downstream
 }
 
-// TestRemoteStorageConnectGrants_CreateListDeleteByConnector_RealServer proves the
-// #527 fix for ListConnectRefGrantsByConnector/ListConnectRefGrants/
-// CreateConnectRefGrant/DeleteConnectRefGrant: grants are genuinely persisted on
-// the upstream via the DOWNSTREAM's RemoteStorage, filterable by connector, and
-// deletable — all via storage.type: remote against a real router, not a protocol
-// mock.
-func TestRemoteStorageConnectGrants_CreateListDeleteByConnector_RealServer(t *testing.T) {
+// TestRemoteStorageConnectGrants_ListByConnector_RealServer proves the #527 fix
+// for ListConnectRefGrantsByConnector/ListConnectRefGrants: grants seeded
+// directly against the upstream's real storage (CreateConnectRefGrantProxy/
+// DeleteConnectRefGrantProxy were deleted -- G80 liveness sweep found no live
+// caller for either; see docs/g80-remediation-notes.md) are listed and
+// filterable by connector via the DOWNSTREAM's RemoteStorage — all via
+// storage.type: remote against a real router, not a protocol mock.
+func TestRemoteStorageConnectGrants_ListByConnector_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForConnectGrants(t)
 	ctx := context.Background()
 
@@ -78,27 +79,21 @@ func TestRemoteStorageConnectGrants_CreateListDeleteByConnector_RealServer(t *te
 	roleGCP, err := upstream.Storage().CreateRole(ctx, &models.Role{Name: "connect-grant-role-gcp"})
 	require.NoError(t, err)
 
-	g1, err := downstream.Storage().CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
+	g1, err := upstream.Storage().CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
 		RoleID: roleAWS.ID, Connector: "aws", RefPrefix: "prod/",
 	})
-	require.NoError(t, err, "creating a connect ref-grant must succeed via storage.type: remote")
-	require.NotZero(t, g1.ID, "the upstream must assign a real ID")
+	require.NoError(t, err)
+	require.NotZero(t, g1.ID)
 
-	g2, err := downstream.Storage().CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
+	g2, err := upstream.Storage().CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
 		RoleID: roleAWS.ID, Connector: "aws", RefPrefix: "staging/",
 	})
 	require.NoError(t, err)
 
-	g3, err := downstream.Storage().CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
+	g3, err := upstream.Storage().CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
 		RoleID: roleGCP.ID, Connector: "gcp", RefPrefix: "",
 	})
 	require.NoError(t, err)
-
-	// Confirm these are REAL rows in the upstream's own storage (not just "the
-	// call didn't error"), by reading back directly against upstream.
-	all, err := upstream.Storage().ListConnectRefGrants(ctx)
-	require.NoError(t, err)
-	assert.Len(t, all, 3)
 
 	// ListConnectRefGrants via the downstream round-trips every grant.
 	allViaDownstream, err := downstream.Storage().ListConnectRefGrants(ctx)
@@ -123,13 +118,6 @@ func TestRemoteStorageConnectGrants_CreateListDeleteByConnector_RealServer(t *te
 	noneGrants, err := downstream.Storage().ListConnectRefGrantsByConnector(ctx, "azure")
 	require.NoError(t, err)
 	assert.Empty(t, noneGrants)
-
-	// DeleteConnectRefGrant removes exactly the targeted grant.
-	require.NoError(t, downstream.Storage().DeleteConnectRefGrant(ctx, g1.ID))
-	awsGrantsAfter, err := upstream.Storage().ListConnectRefGrantsByConnector(ctx, "aws")
-	require.NoError(t, err)
-	require.Len(t, awsGrantsAfter, 1)
-	assert.Equal(t, g2.ID, awsGrantsAfter[0].ID)
 }
 
 // TestReadFederatedSecret_RemoteStorage_NoGrantsSucceeds_RealServer and

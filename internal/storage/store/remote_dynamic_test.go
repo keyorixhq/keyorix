@@ -151,67 +151,6 @@ func TestRemoteStorage_ListDynamicSecretConfigs_WithEnvironment(t *testing.T) {
 	assert.Len(t, results, 1)
 }
 
-// --- UpdateDynamicSecretConfig ---
-
-func TestRemoteStorage_UpdateDynamicSecretConfig(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/dynamic-secrets/configs/1", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	c := &models.DynamicSecretConfig{
-		ID:            1,
-		Name:          "pg-dynamic",
-		ProjectID:     1,
-		EnvironmentID: 2,
-		BackendType:   "postgres",
-		CreatedBy:     "admin",
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-	err = rs.UpdateDynamicSecretConfig(context.Background(), c)
-	require.NoError(t, err)
-}
-
-// --- TransitionDynamicSecretConfigDisabled ---
-
-func TestRemoteStorage_TransitionDynamicSecretConfigDisabled(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/dynamic-secrets/configs/1/transition", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"matched": true}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	matched, err := rs.TransitionDynamicSecretConfigDisabled(context.Background(),
-		&models.DynamicSecretConfig{ID: 1, Disabled: true}, false)
-	require.NoError(t, err)
-	assert.True(t, matched)
-}
-
-func TestRemoteStorage_TransitionDynamicSecretConfigDisabled_NotMatched(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK(map[string]interface{}{"matched": false}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	matched, err := rs.TransitionDynamicSecretConfigDisabled(context.Background(),
-		&models.DynamicSecretConfig{ID: 1, Disabled: false}, true)
-	require.NoError(t, err)
-	assert.False(t, matched)
-}
-
 // --- CountDynamicSecretConfigsByClassification ---
 
 func TestRemoteStorage_CountDynamicSecretConfigsByClassification(t *testing.T) {
@@ -234,36 +173,6 @@ func TestRemoteStorage_CountDynamicSecretConfigsByClassification(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, counts["confidential"])
 	assert.Equal(t, 1, counts["public"])
-}
-
-// --- CreateDynamicSecretLease ---
-
-func TestRemoteStorage_CreateDynamicSecretLease(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/dynamic-secrets/leases", r.URL.Path)
-		_, _ = w.Write(apiOK(dynamicLeaseWireData(1, "lease-abc", 1)))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	l := &models.DynamicSecretLease{
-		ConfigID:      1,
-		LeaseID:       "lease-abc",
-		ProjectID:     1,
-		EnvironmentID: 2,
-		RoleName:      "app_reader",
-		Status:        "active",
-		IssuedAt:      time.Now(),
-		ExpiresAt:     time.Now().Add(time.Hour),
-	}
-	result, err := rs.CreateDynamicSecretLease(context.Background(), l)
-	require.NoError(t, err)
-	assert.Equal(t, uint(1), result.ID)
-	assert.Equal(t, "lease-abc", result.LeaseID)
-	assert.Equal(t, "active", result.Status)
 }
 
 // --- GetDynamicSecretLease ---
@@ -329,35 +238,6 @@ func TestRemoteStorage_CountActiveLeases(t *testing.T) {
 	count, err := rs.CountActiveLeases(context.Background(), 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), count)
-}
-
-// --- UpdateDynamicSecretLease ---
-
-func TestRemoteStorage_UpdateDynamicSecretLease(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/dynamic-secrets/leases/lease-abc", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	l := &models.DynamicSecretLease{
-		ID:            1,
-		ConfigID:      1,
-		LeaseID:       "lease-abc",
-		ProjectID:     1,
-		EnvironmentID: 2,
-		RoleName:      "app_reader",
-		Status:        "revoked",
-		RevokeReason:  "expired",
-		IssuedAt:      time.Now().Add(-2 * time.Hour),
-		ExpiresAt:     time.Now().Add(-time.Hour),
-	}
-	err = rs.UpdateDynamicSecretLease(context.Background(), l)
-	require.NoError(t, err)
 }
 
 // --- ListExpiredActiveLeases ---

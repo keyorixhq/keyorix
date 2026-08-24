@@ -1,8 +1,9 @@
 // mfa_management_proxy.go — server-side endpoints backing RemoteStorage's MFA
 // enrolment/management storage primitives (finding #524):
-// UpsertMFASecret/GetMFASecret/ActivateMFASecret/DeleteMFAForUser/
+// GetMFASecret/ActivateMFASecret/DeleteMFAForUser/
 // SetUserMFAEnabled/CreateMFARecoveryCodes/CountUnusedMFARecoveryCodes/
-// DeleteMFARecoveryCodes.
+// DeleteMFARecoveryCodes. (UpsertMFASecretProxy was deleted — G80 liveness
+// sweep found no live caller; see docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049)
 // terminates every /auth/mfa/* request itself — BeginMFAEnrollment/ActivateMFA/
@@ -109,37 +110,6 @@ func parseMFAUserIDParam(w http.ResponseWriter, r *http.Request, name string) (u
 		return 0, false
 	}
 	return uint(id), true
-}
-
-// UpsertMFASecretProxy handles POST /api/v1/system/mfa/secrets. A raw persist
-// of the caller's already-encrypted secret row (core.BeginMFAEnrollment has
-// already encrypted it and refuses outright when encryption is unavailable —
-// see models.MFASecret's doc) — matching LocalStorage's own GORM
-// Create-with-OnConflict, this is an upsert keyed on user_id.
-func (h *AuthHandler) UpsertMFASecretProxy(w http.ResponseWriter, r *http.Request) {
-	var body mfaSecretProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if body.UserID == 0 || len(body.SecretEnc) == 0 {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and secret_enc are required")
-		return
-	}
-	row := &models.MFASecret{
-		UserID:       body.UserID,
-		SecretEnc:    body.SecretEnc,
-		SecretMeta:   body.SecretMeta,
-		Activated:    body.Activated,
-		LastUsedStep: body.LastUsedStep,
-		CreatedAt:    body.CreatedAt,
-	}
-	if err := h.coreService.Storage().UpsertMFASecret(r.Context(), row); err != nil {
-		log.Printf("mfa proxy: upsert secret failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newMFASecretProxyWire(row))
 }
 
 // GetMFASecretProxy handles GET /api/v1/system/mfa/secrets?user_id=X.

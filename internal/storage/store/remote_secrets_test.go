@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -99,6 +101,42 @@ func TestRemoteStorage_UpdateSecret(t *testing.T) {
 	assert.Equal(t, uint(42), secret.ID)
 }
 
+// TestRemoteStorage_UpdateSecret_NeverSerializesValueStored guards secretUpdateWireRequest's
+// full-node-send design (G80 Phase 0, remote_secrets.go's own doc comment: "DO NOT
+// 'optimize' this back to a named-field/sparse DTO") from an easy, hard-to-notice
+// regression: ValueStored is gorm:"-"/json:"-" and must never appear on the wire, and
+// models.SecretNode itself must never grow a field that carries the secret value or its
+// ciphertext (that lives entirely in a separate SecretVersion row this DTO never
+// touches) — if it ever did, this full-node send would put it on the wire on every
+// metadata-only update.
+func TestRemoteStorage_UpdateSecret_NeverSerializesValueStored(t *testing.T) {
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		_, _ = w.Write(apiOK(map[string]interface{}{"id": 1}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	secret := &models.SecretNode{ID: 1, Name: "n", ValueStored: true}
+	_, err = rs.UpdateSecret(context.Background(), secret)
+	require.NoError(t, err)
+
+	var asMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(capturedBody, &asMap))
+	inner, ok := asMap["secret"].(map[string]interface{})
+	require.True(t, ok, "expected a top-level \"secret\" key")
+
+	_, present := inner["ValueStored"]
+	assert.False(t, present, "ValueStored must never be serialized onto the wire")
+	for _, sensitiveKey := range []string{"Value", "value", "EncryptedValue", "encrypted_value", "PlaintextValue"} {
+		_, present := inner[sensitiveKey]
+		assert.False(t, present, "no field carrying a secret value or ciphertext may ever appear on this wire — found %q", sensitiveKey)
+	}
+}
+
 func TestRemoteStorage_DeleteSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
@@ -164,72 +202,6 @@ func TestRemoteStorage_PurgeDeletedSecretsBefore(t *testing.T) {
 	purged, err := rs.PurgeDeletedSecretsBefore(context.Background(), time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), purged)
-}
-
-func TestRemoteStorage_DeleteAnomalyAlertsBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/retention/anomaly-alerts/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"purged": 7}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	purged, err := rs.DeleteAnomalyAlertsBefore(context.Background(), time.Now(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(7), purged)
-}
-
-func TestRemoteStorage_DeleteClosedAccessReviewsBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/retention/access-reviews/purge-closed", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"campaigns_purged": 2, "items_purged": 10}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	campaigns, items, err := rs.DeleteClosedAccessReviewsBefore(context.Background(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), campaigns)
-	assert.Equal(t, int64(10), items)
-}
-
-func TestRemoteStorage_DeleteExpiredBreakGlassBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/retention/break-glass/purge-expired", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"purged": 1}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	purged, err := rs.DeleteExpiredBreakGlassBefore(context.Background(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), purged)
-}
-
-func TestRemoteStorage_DeleteResolvedAccessRequestsBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/retention/access-requests/purge-resolved", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"requests_purged": 4, "approvals_purged": 8}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	requests, approvals, err := rs.DeleteResolvedAccessRequestsBefore(context.Background(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(4), requests)
-	assert.Equal(t, int64(8), approvals)
 }
 
 // --- Server-side-only operations (unsupported in remote mode) ---

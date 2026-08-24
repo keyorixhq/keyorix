@@ -1,9 +1,12 @@
 // dynamic_secrets_proxy.go — server-side endpoints backing RemoteStorage's
 // dynamic-secrets storage primitives (ADR-035/ADR-049): CreateDynamicSecretConfig/
-// GetDynamicSecretConfig/ListDynamicSecretConfigs/UpdateDynamicSecretConfig/
-// TransitionDynamicSecretConfigDisabled/CountDynamicSecretConfigsByClassification/
-// CreateDynamicSecretLease/GetDynamicSecretLease/ListDynamicSecretLeases/
-// CountActiveLeases/UpdateDynamicSecretLease/ListExpiredActiveLeases.
+// GetDynamicSecretConfig/ListDynamicSecretConfigs/
+// CountDynamicSecretConfigsByClassification/GetDynamicSecretLease/
+// ListDynamicSecretLeases/CountActiveLeases/ListExpiredActiveLeases.
+// (UpdateDynamicSecretConfigProxy/TransitionDynamicSecretConfigDisabledProxy/
+// CreateDynamicSecretLeaseProxy/UpdateDynamicSecretLeaseProxy were deleted — G80
+// liveness sweep found no live caller for any of them; see
+// docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // its dynamic-secrets storage calls to whichever upstream server it's configured
@@ -269,70 +272,6 @@ func (h *DynamicSecretHandler) ListDynamicSecretConfigsProxy(w http.ResponseWrit
 	writeRemoteAPISuccess(w, map[string]interface{}{"configs": wire})
 }
 
-// UpdateDynamicSecretConfigProxy handles PUT /api/v1/system/dynamic-secrets/configs/{id}.
-// A raw persist (storage.Storage.UpdateDynamicSecretConfig is an unconditional
-// full-row Save, matching LocalStorage's own semantics exactly — there is no
-// conditional/optimistic-concurrency write to preserve here, unlike
-// UpdateProjectInvitation's `WHERE ... AND state = 'pending'`).
-func (h *DynamicSecretHandler) UpdateDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
-		return
-	}
-	var body dynamicSecretConfigProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.ID = uint(id)
-	if err := h.coreService.Storage().UpdateDynamicSecretConfig(r.Context(), body.toModel()); err != nil {
-		log.Printf("dynamic-secrets proxy: update config failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
-}
-
-// transitionDynamicSecretConfigDisabledBody is the request body
-// TransitionDynamicSecretConfigDisabledProxy expects: the full config row the
-// caller already mutated in memory (Disabled/UpdatedAt already set to the
-// target values), plus the fromDisabled value the caller observed via its own
-// GetDynamicSecretConfig read.
-type transitionDynamicSecretConfigDisabledBody struct {
-	Config       dynamicSecretConfigProxyWire `json:"config"`
-	FromDisabled bool                         `json:"from_disabled"`
-}
-
-// TransitionDynamicSecretConfigDisabledProxy handles PUT
-// /api/v1/system/dynamic-secrets/configs/{id}/transition. Runs the SAME
-// conditional "WHERE id = ? AND disabled = ?" write
-// core.KeyorixCore.SetDynamicSecretConfigEnabled relies on against a local
-// backend (StateTransitionMissingCAS) — see the package doc's atomicity note
-// for why this is a dedicated route rather than a generic
-// UpdateDynamicSecretConfigProxy call.
-func (h *DynamicSecretHandler) TransitionDynamicSecretConfigDisabledProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
-		return
-	}
-	var body transitionDynamicSecretConfigDisabledBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.Config.ID = uint(id)
-	cfg := body.Config.toModel()
-	matched, err := h.coreService.Storage().TransitionDynamicSecretConfigDisabled(r.Context(), cfg, body.FromDisabled)
-	if err != nil {
-		log.Printf("dynamic-secrets proxy: transition config failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
-}
-
 // CountDynamicSecretConfigsByClassificationProxy handles GET
 // /api/v1/system/dynamic-secrets/configs/classification-counts (a static path,
 // registered before /configs/{id} in router.go).
@@ -344,29 +283,6 @@ func (h *DynamicSecretHandler) CountDynamicSecretConfigsByClassificationProxy(w 
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]interface{}{"counts": counts})
-}
-
-// CreateDynamicSecretLeaseProxy handles POST /api/v1/system/dynamic-secrets/leases.
-// The calling server has already minted the credential on the target and
-// encrypted it with its own key (internal/core.IssueLease) before this call — this
-// only persists the resulting lease row (with its opaque ciphertext).
-func (h *DynamicSecretHandler) CreateDynamicSecretLeaseProxy(w http.ResponseWriter, r *http.Request) {
-	var body dynamicSecretLeaseProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if body.ConfigID == 0 || body.LeaseID == "" {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "config_id and lease_id are required")
-		return
-	}
-	created, err := h.coreService.Storage().CreateDynamicSecretLease(r.Context(), body.toModel())
-	if err != nil {
-		log.Printf("dynamic-secrets proxy: create lease failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newDynamicSecretLeaseProxyWire(created))
 }
 
 // GetDynamicSecretLeaseProxy handles GET /api/v1/system/dynamic-secrets/leases/{leaseID}.
@@ -420,29 +336,6 @@ func (h *DynamicSecretHandler) CountActiveLeasesProxy(w http.ResponseWriter, r *
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]int64{"count": n})
-}
-
-// UpdateDynamicSecretLeaseProxy handles PUT /api/v1/system/dynamic-secrets/leases/{leaseID}.
-// A raw persist (storage.Storage.UpdateDynamicSecretLease is an unconditional
-// full-row Save, matching LocalStorage's own semantics exactly — the calling
-// server's own core.RevokeLease/RenewLease already re-fetches the lease and checks
-// its status before mutating it, exactly as it does against a local backend; this
-// proxy adds no NEW atomicity guarantee beyond what LocalStorage already provides,
-// and removes none).
-func (h *DynamicSecretHandler) UpdateDynamicSecretLeaseProxy(w http.ResponseWriter, r *http.Request) {
-	leaseID := chi.URLParam(r, "leaseID")
-	var body dynamicSecretLeaseProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.LeaseID = leaseID
-	if err := h.coreService.Storage().UpdateDynamicSecretLease(r.Context(), body.toModel()); err != nil {
-		log.Printf("dynamic-secrets proxy: update lease failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
 }
 
 // ListExpiredActiveLeasesProxy handles GET

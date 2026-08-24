@@ -1199,18 +1199,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/dynamic-secrets/configs/{id}", dynamicSecretHandler.GetDynamicSecretConfigProxy)
 			r.Get("/dynamic-secrets/configs", dynamicSecretHandler.ListDynamicSecretConfigsProxy)
 			r.Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
-			r.Put("/dynamic-secrets/configs/{id}", dynamicSecretHandler.UpdateDynamicSecretConfigProxy)
-			// TransitionDynamicSecretConfigDisabled is a dedicated conditional-write
-			// route (NOT a generic Update), closing the StateTransitionMissingCAS
-			// TOCTOU on DynamicSecretConfig.Disabled across this HTTP hop — see
-			// dynamic_secrets_proxy.go's TransitionDynamicSecretConfigDisabledProxy doc.
-			r.Put("/dynamic-secrets/configs/{id}/transition", dynamicSecretHandler.TransitionDynamicSecretConfigDisabledProxy)
 			r.Get("/dynamic-secrets/leases/active-count", dynamicSecretHandler.CountActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/expired", dynamicSecretHandler.ListExpiredActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.GetDynamicSecretLeaseProxy)
 			r.Get("/dynamic-secrets/leases", dynamicSecretHandler.ListDynamicSecretLeasesProxy)
-			r.Post("/dynamic-secrets/leases", dynamicSecretHandler.CreateDynamicSecretLeaseProxy)
-			r.Put("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.UpdateDynamicSecretLeaseProxy)
 
 			// Group CRUD/membership storage-primitive proxy (finding filed round 116).
 			// Lets a downstream Keyorix server booted with storage.type: remote
@@ -1366,8 +1358,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// system.read tier in this group.
 			r.Get("/connect-grants/by-connector/{connector}", authHandler.ListConnectRefGrantsByConnectorProxy)
 			r.Get("/connect-grants", authHandler.ListConnectRefGrantsProxy)
-			r.Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
-			r.Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
 
 			// Connect connector→project ID binding storage-primitive proxy (ADR-082
 			// branch 2). Same rationale and pattern as the connect-grants block above
@@ -1458,7 +1448,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/secret-dependencies", secretHandler.ListSecretDependenciesForProjectProxy)
 			r.Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
 			r.Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
-			r.Delete("/secret-dependencies/{id}", secretHandler.DeleteSecretDependencyProxy)
 
 			// WebAuthn / passkey storage-primitive proxy (finding #517). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1489,39 +1478,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/webauthn/credentials/lookup", authHandler.GetWebAuthnCredentialByCredIDProxy)
 			r.Get("/webauthn/credentials/count", authHandler.CountWebAuthnCredentialsProxy)
 			r.Get("/webauthn/credentials", authHandler.ListWebAuthnCredentialsProxy)
-			r.Post("/webauthn/credentials", authHandler.CreateWebAuthnCredentialProxy)
 			r.Put("/webauthn/credentials/{id}", authHandler.UpdateWebAuthnCredentialProxy)
 			r.Patch("/webauthn/credentials/advance-counter", authHandler.AdvanceWebAuthnCredentialCounterProxy)
-			r.Delete("/webauthn/users/{userId}/credentials/{id}", authHandler.DeleteWebAuthnCredentialProxy)
-			r.Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
 			r.Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
 			r.Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
-
-			// Login-lockout accounting storage-primitive proxy (backlog #529). Lets a
-			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
-			// UpdateLoginLockoutState to THIS server's real storage backend, instead of
-			// RemoteStorage's one remaining login-lockout method having no server endpoint
-			// to call at all (per-account brute-force lockout accounting — every
-			// recordFailedLogin/checkLockAndClearLoginFailures/clearLoginFailures/
-			// UnlockUser call in internal/core/login_lockout.go — silently failed OPEN
-			// under storage.type: remote, the last piece of the #454 gap left after the
-			// login-attempts/setup-tokens/groups/webauthn proxies above each closed their
-			// own slice of it). Exactly the same pattern as the webauthn proxy above: a
-			// thin passthrough onto storage.Storage (no lockout POLICY decision — the
-			// failure threshold, the exponential cooldown, WHEN to trip or clear — is made
-			// here; that stays entirely in the CALLING server's own
-			// internal/core.KeyorixCore, exactly as it does against a local backend),
-			// reusing the group's existing system.write baseline (not a
-			// system.read/system.write tier — see the group header comment above)
-			// — no new privilege class. This is a single unconditional column
-			// UPDATE, not a compare-and-swap (see
-			// login_lockout_proxy.go's package doc for the atomicity analysis): every
-			// caller already computes the final values itself under its own
-			// LockUserForUpdate + WithTransaction + per-user mutex-shard serialization, so
-			// one proxied round trip preserves LocalStorage's own semantics unchanged —
-			// unlike AdvanceWebAuthnCredentialCounterProxy just above, no new atomic
-			// primitive is needed.
-			r.Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
 
 			// User active-state CAS storage-primitive proxy. Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1611,7 +1571,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/access-review-campaigns", catalogHandler.ListAccessReviewCampaignsProxy)
 			r.Post("/access-review-campaigns", catalogHandler.CreateAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/{id}", catalogHandler.GetAccessReviewCampaignProxy)
-			r.Put("/access-review-campaigns/{id}", catalogHandler.UpdateAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/{id}/items/pending-count", catalogHandler.CountPendingAccessReviewItemsProxy)
 			r.Get("/access-review-campaigns/{id}/items", catalogHandler.ListAccessReviewItemsProxy)
 			r.Post("/access-review-campaigns/{id}/items", catalogHandler.CreateAccessReviewItemsProxy)
@@ -1632,17 +1591,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// CALLING server's own internal/core.KeyorixCore, exactly as it does
 			// against a local backend), reusing the SAME system.write baseline
 			// (not a system.read/system.write tier — see the group header comment
-			// above) — no new privilege class. Critically, CreateBreakGlassActivationProxy
-			// and RevokeBreakGlassActivationProxy call storage.Storage's own
-			// unique-index-backed create and conditional `WHERE state = 'active'`
-			// update DIRECTLY (see break_glass_proxy.go's package doc), preserving
-			// the #104/PR #670 concurrent-activation race fix across this HTTP hop.
+			// above) — no new privilege class. Critically,
+			// RevokeBreakGlassActivationProxy calls storage.Storage's own
+			// conditional `WHERE state = 'active'` update DIRECTLY (see
+			// break_glass_proxy.go's package doc), preserving the #104/PR #670
+			// concurrent-activation race fix across this HTTP hop.
 			// Every route here, reads included, requires system.write; there is no
 			// separate system.read tier in this group.
 			r.Get("/break-glass/{id}", catalogHandler.GetBreakGlassActivationProxy)
 			r.Get("/break-glass", catalogHandler.ListBreakGlassActivationsProxy)
-			r.Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
-			r.Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
 			r.Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
 
 			// Risk-exception storage-primitive proxy (#519). Lets a downstream
@@ -1711,13 +1668,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 			// Data-retention/purge-sweep storage-primitive proxy (finding #520). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
-			// PurgeDeletedSecretsBefore/DeleteAnomalyAlertsBefore/
-			// DeleteClosedAccessReviewsBefore/DeleteExpiredBreakGlassBefore/
-			// DeleteResolvedAccessRequestsBefore/DeleteExpiredRoleGrants/
+			// PurgeDeletedSecretsBefore/DeleteExpiredRoleGrants/
 			// DeleteExpiredShareRecords/PurgeDeletedUsersBefore/
 			// PurgeDeletedProjectsBefore/PurgeDeletedEnvironmentsBefore/
 			// ListUsersInStateBefore to THIS server's real storage backend, instead of
-			// RemoteStorage's eleven data-retention/purge-sweep methods being
+			// RemoteStorage's data-retention/purge-sweep methods being
 			// unconditional stubs (every scheduled retention/purge/lifecycle sweep —
 			// ADR-032 soft-delete purge, ADR-033/A.5.33 compliance-record retention, the
 			// JIT access-expiry sweep, ADR-025 stale-account warnings — was completely
@@ -1740,10 +1695,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// mutating route requires it too.
 			r.Get("/retention/users/stale", userHandler.ListUsersInStateBeforeProxy)
 			r.Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
-			r.Post("/retention/anomaly-alerts/purge", auditHandler.DeleteAnomalyAlertsBeforeProxy)
-			r.Post("/retention/access-reviews/purge-closed", catalogHandler.DeleteClosedAccessReviewsBeforeProxy)
-			r.Post("/retention/break-glass/purge-expired", catalogHandler.DeleteExpiredBreakGlassBeforeProxy)
-			r.Post("/retention/access-requests/purge-resolved", catalogHandler.DeleteResolvedAccessRequestsBeforeProxy)
 			r.Post("/retention/role-grants/purge-expired", rbacHandler.DeleteExpiredRoleGrantsProxy)
 			r.Post("/retention/share-records/purge-expired", shareHandler.DeleteExpiredShareRecordsProxy)
 			r.Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
@@ -1904,7 +1855,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// above. Static sub-paths ("secrets", "recovery-codes/count") are registered
 			// before their sibling {userId} routes.
 			r.Get("/mfa/secrets", authHandler.GetMFASecretProxy)
-			r.Post("/mfa/secrets", authHandler.UpsertMFASecretProxy)
 			r.Post("/mfa/secrets/{userId}/activate", authHandler.ActivateMFASecretProxy)
 			r.Delete("/mfa/users/{userId}", authHandler.DeleteMFAForUserProxy)
 			r.Put("/mfa/users/{userId}/mfa-enabled", authHandler.SetUserMFAEnabledProxy)
@@ -1921,7 +1871,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// stepup-grants/prune (store-mfa-002) backs the periodic maintenance
 			// sweep (mfa_stepup_grant_prune scheduler, server/main.go) that bounds
 			// retention of expired grant rows.
-			r.Post("/mfa/stepup-grants", authHandler.CreateMFAStepUpGrantProxy)
 			r.Post("/mfa/stepup-grants/active", authHandler.GetActiveMFAStepUpGrantProxy)
 			r.Post("/mfa/stepup-grants/prune", authHandler.PruneMFAStepUpGrantsProxy)
 			r.Delete("/mfa/stepup-grants/{userId}", authHandler.DeleteMFAStepUpGrantsForProxy)
@@ -1987,13 +1936,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/projects/by-name/{name}", catalogHandler.GetProjectByNameProxy)
 			r.Get(pathProjects, catalogHandler.ListProjectsProxy)
 			r.Get(pathProjectsID, catalogHandler.GetProjectProxy)
-			r.Put(pathProjectsID, catalogHandler.UpdateProjectProxy)
 			r.Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
 			r.Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
-			r.Post("/projects/{id}/restore", catalogHandler.RestoreProjectProxy)
 			r.Get(pathProjectMembers, catalogHandler.ListProjectMembersProxy)
 			r.Get(pathProjectEnvs, catalogHandler.ListEnvironmentsByProjectProxy)
-			r.Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironmentProxy)
 			r.Get("/environments", catalogHandler.ListEnvironmentsProxy)
 			r.Get(pathEnvironmentsID, catalogHandler.GetEnvironmentProxy)
 			r.Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironmentProxy)

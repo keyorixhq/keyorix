@@ -56,8 +56,13 @@ func TestGetMachineIdentityCredentialByIDProxy_DBError_S33(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/machine-credentials/1", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetMachineIdentityCredentialByIDProxy(w, r)
-	// GetMachineIdentityCredentialByID wraps First() errors as "not found" → 404
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// G80: GetMachineIdentityCredentialByID used to wrap EVERY First() error as
+	// "not found" regardless of cause, so a genuine storage failure (this test's
+	// closed DB) was indistinguishable from a real not-found and surfaced as 404.
+	// Fixed in local_machine_credentials.go to only report 404 for a genuine
+	// gorm.ErrRecordNotFound, matching GetUser's already-correct pattern -- a
+	// real storage error now correctly surfaces as 500.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestListMachineIdentityCredentialsProxy_DBError_S33(t *testing.T) {
@@ -137,8 +142,15 @@ func TestRemoveMachineRoleProxy_DBError_S33(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 	h.RemoveMachineRoleProxy(w, r)
-	// RemoveMachineRole: broken DB → result.Error != nil → "ErrorStorageFailed" (not "not assigned") → 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// #1542: RemoveMachineRoleProxy now routes through core.RemoveMachineRole,
+	// which calls machineInProject FIRST -- machineInProject collapses ANY
+	// GetMachineIdentity failure (including this broken-DB case, not just a
+	// genuine not-found) into a single "machine identity not found" error, by
+	// design (the caller can't distinguish "doesn't exist" from "can't
+	// confirm it exists" for authorization purposes, and both should refuse).
+	// isNotFoundErr's substring match on that text now maps this route's
+	// broken-DB case to 404, not the previous raw-storage-call 500.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestGetMachineRoleIDsAtProxy_MissingScopeQuery_S33(t *testing.T) {
@@ -183,8 +195,13 @@ func TestCreateOIDCBindingProxy_DBError_S33(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-oidc-bindings", body)
 	w := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(w, r)
-	// CreateOIDCBinding fails: not a unique-violation error → 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// G80 raw-storage-bypass fix: the handler now looks up the machine identity
+	// (to derive its real ProjectID for core.CreateOIDCBinding's admin-authority +
+	// scope check) BEFORE attempting the create — on this broken DB, that GetMachineIdentity
+	// lookup itself fails first, wrapped as "not found" (same isNotFoundErr convention
+	// GetMachineIdentityProxy/GetOIDCBindingByIDProxy use elsewhere in this file) → 404,
+	// rather than reaching the create call at all.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestGetMachineByOIDCSubjectProxy_DBError_S33(t *testing.T) {

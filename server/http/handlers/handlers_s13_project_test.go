@@ -8,8 +8,8 @@
 //     ListStaleInvitedMembershipsProxy, ListUserMembershipsProxy,
 //     CountMembershipsByUsersProxy (missing error/validation branches)
 //   - project_catalog_proxy.go: ListProjectsProxy, ListProjectsWithCountsProxy,
-//     GetProjectProxy, UpdateProjectProxy, DeleteProjectProxy,
-//     DeleteProjectIfEmptyProxy, RestoreProjectProxy, ListProjectMembersProxy
+//     GetProjectProxy, DeleteProjectProxy,
+//     DeleteProjectIfEmptyProxy, ListProjectMembersProxy
 //   - project_hygiene.go: ProjectHygiene (bad-param / no-auth)
 //   - projects_suspend.go: SuspendProjectSecrets, ResumeProjectSecrets
 //     (bad-param / no-auth error paths)
@@ -23,7 +23,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -588,68 +587,6 @@ func TestGetProjectProxy_HappyPath_S13(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestUpdateProjectProxy_BadID_S13 — non-numeric id → 400.
-func TestUpdateProjectProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	body := `{"name":"test","description":""}`
-	r := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.UpdateProjectProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestUpdateProjectProxy_BadJSON_S13 — malformed JSON → 400.
-func TestUpdateProjectProxy_BadJSON_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	r.ContentLength = 4
-	w := httptest.NewRecorder()
-	h.UpdateProjectProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestUpdateProjectProxy_HappyPath_S13 — update an existing project → 200.
-func TestUpdateProjectProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s13updateprojproxy", "")
-	require.NoError(t, err)
-
-	body := fmt.Sprintf(`{"id":%d,"name":"s13updateprojproxy-new","description":"updated"}`, proj.ID)
-	r := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.UpdateProjectProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestUpdateProjectProxy_PreservesTimestamps_G80 is the #G80 regression:
-// projectProxyWire.toModel() previously dropped CreatedAt/UpdatedAt/DeletedAt
-// even though the wire struct (and its response-leg constructor) carry them,
-// so every proxied update silently zeroed the project's CreatedAt.
-func TestUpdateProjectProxy_PreservesTimestamps_G80(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s13g80timestamps", "")
-	require.NoError(t, err)
-	require.False(t, proj.CreatedAt.IsZero(), "fixture project must have a real CreatedAt to prove it survives")
-
-	body := fmt.Sprintf(`{"id":%d,"name":"s13g80timestamps-new","description":"updated","created_at":%q}`,
-		proj.ID, proj.CreatedAt.Format(time.RFC3339Nano))
-	r := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.UpdateProjectProxy(w, r)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	updated, err := cs.Storage().GetProject(context.Background(), proj.ID)
-	require.NoError(t, err)
-	assert.False(t, updated.CreatedAt.IsZero(), "CreatedAt must not be zeroed by the proxy update")
-	assert.WithinDuration(t, proj.CreatedAt, updated.CreatedAt, time.Second)
-}
-
 // TestDeleteProjectProxy_BadID_S13 — non-numeric id → 400.
 func TestDeleteProjectProxy_BadID_S13(t *testing.T) {
 	t.Parallel()
@@ -716,26 +653,6 @@ func TestDeleteProjectIfEmptyProxy_HappyPath_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.DeleteProjectIfEmptyProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestRestoreProjectProxy_BadID_S13 — non-numeric id → 400.
-func TestRestoreProjectProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.RestoreProjectProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestRestoreProjectProxy_NotFound_S13 — non-existent / non-deleted id → 404.
-func TestRestoreProjectProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.RestoreProjectProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestListProjectMembersProxy_BadID_S13 — non-numeric id → 400.

@@ -76,7 +76,7 @@ func TestSoD_SuppressedByApprovedRiskException(t *testing.T) {
 	assert.GreaterOrEqual(t, p.AccessGovernance.SoDViolations, 1, "an unapproved exception must not suppress anything yet")
 
 	// A different actor approves it — now suppressed.
-	require.NoError(t, h.CoreService.ApproveRiskException(ctx, 2, exc.ID))
+	require.NoError(t, h.CoreService.ApproveRiskException(ctx, 2, false, exc.ID))
 	p, err = h.CoreService.GetCompliancePosture(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 0, p.AccessGovernance.SoDViolations, "an approved, matching-reference exception suppresses the violation")

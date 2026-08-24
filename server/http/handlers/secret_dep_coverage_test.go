@@ -485,29 +485,3 @@ func TestCreateSecretDependencyExclusiveProxy_DefaultStorageError_DepCov(t *test
 	// CreateSecretDependencyExclusive call this test originally exercised.
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
-
-// ── DeleteSecretDependencyProxy: internal-error path ─────────────────────────
-
-// TestDeleteSecretDependencyProxy_StorageError_DepCov — closed DB forces a
-// non-not-found error on DeleteSecretDependency → 500.
-func TestDeleteSecretDependencyProxy_StorageError_DepCov(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-	n := sDepCovCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxdep_cov_delerr_%d?mode=memory&cache=shared&_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
-
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.DeleteSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}

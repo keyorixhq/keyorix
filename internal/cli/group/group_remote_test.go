@@ -239,7 +239,7 @@ func TestGroupMembers_LocalMode(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add member (global membership: projectID=0)
-	err = svc.AddUserToGroup(ctx, 0, u.ID, g.ID, 0)
+	err = svc.AddUserToGroup(ctx, 0, false, u.ID, g.ID, 0)
 	require.NoError(t, err)
 
 	// List members

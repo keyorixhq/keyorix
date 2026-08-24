@@ -1,7 +1,8 @@
 // mfa_stepup_proxy.go — server-side endpoints backing RemoteStorage's
 // MFAStepUpGrant storage primitives:
-// CreateMFAStepUpGrant / GetActiveMFAStepUpGrant / DeleteMFAStepUpGrantsFor /
-// PruneMFAStepUpGrants.
+// GetActiveMFAStepUpGrant / DeleteMFAStepUpGrantsFor / PruneMFAStepUpGrants.
+// (CreateMFAStepUpGrantProxy was deleted — G80 liveness sweep found no live
+// caller; see docs/g80-remediation-notes.md.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049)
 // proxies these calls to this server's real storage backend so that the MFA
@@ -19,15 +20,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
-
-// mfaStepUpGrantProxyBody is the wire body for CreateMFAStepUpGrantProxy and
-// is also used to parse GetActiveMFAStepUpGrantProxy's {user_id, now} pair.
-type mfaStepUpGrantProxyBody struct {
-	UserID    uint      `json:"user_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
 
 // mfaStepUpGrantActiveProxyBody is the wire body for
 // GetActiveMFAStepUpGrantProxy. It used to also carry a caller-supplied
@@ -39,30 +32,6 @@ type mfaStepUpGrantProxyBody struct {
 // always uses its own clock for that comparison.
 type mfaStepUpGrantActiveProxyBody struct {
 	UserID uint `json:"user_id"`
-}
-
-// CreateMFAStepUpGrantProxy handles POST /api/v1/system/mfa/stepup-grants.
-// Creates a new MFAStepUpGrant row and returns it with server-assigned fields.
-func (h *AuthHandler) CreateMFAStepUpGrantProxy(w http.ResponseWriter, r *http.Request) {
-	var body mfaStepUpGrantProxyBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if body.UserID == 0 {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
-		return
-	}
-	grant := &models.MFAStepUpGrant{
-		UserID:    body.UserID,
-		ExpiresAt: body.ExpiresAt,
-	}
-	if err := h.coreService.Storage().CreateMFAStepUpGrant(r.Context(), grant); err != nil {
-		log.Printf("mfa stepup proxy: create grant failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, grant)
 }
 
 // GetActiveMFAStepUpGrantProxy handles POST

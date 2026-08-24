@@ -444,11 +444,27 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		// one. They are mutually exclusive.
 		Expiration      string `json:"expiration,omitempty"`
 		ClearExpiration bool   `json:"clear_expiration,omitempty"`
+		// Secret, when present, is RemoteStorage's full desired SecretNode state
+		// (G80 Phase 0) — it takes over the whole request and every other field
+		// above is ignored. See updateSecretViaDiff / secret_update_diff.go for
+		// why this is a separate, default-deny path rather than folded into the
+		// named fields above: those can only ever express the plain-secrets.write-
+		// safe fields (there is no JSON key for OwnerID etc.), so a caller using
+		// them was never able to smuggle a gated field through — Secret's whole
+		// point is to safely accept a caller's full local state (as RemoteStorage's
+		// internal/core callers already have it) without trusting all of it.
+		Secret *models.SecretNode `json:"secret,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
+
+	if reqBody.Secret != nil {
+		h.updateSecretViaDiff(w, r, uint(id), userCtx, reqBody.Secret)
+		return
+	}
+
 	if err := h.validator.Validate(&reqBody); err != nil {
 		h.sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return

@@ -73,22 +73,6 @@ type breakGlassActivationWire struct {
 	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
 }
 
-func newBreakGlassActivationWire(a *models.BreakGlassActivation) breakGlassActivationWire {
-	return breakGlassActivationWire{
-		ID:            a.ID,
-		ProjectID:     a.ProjectID,
-		UserID:        a.UserID,
-		RoleID:        a.RoleID,
-		RoleName:      a.RoleName,
-		Justification: a.Justification,
-		State:         a.State,
-		ExpiresAt:     a.ExpiresAt,
-		CreatedAt:     a.CreatedAt,
-		RevokedBy:     a.RevokedBy,
-		RevokedAt:     a.RevokedAt,
-	}
-}
-
 func (w breakGlassActivationWire) toModel() *models.BreakGlassActivation {
 	return &models.BreakGlassActivation{
 		ID:            w.ID,
@@ -113,43 +97,19 @@ func decodeBreakGlassActivationResponse(data []byte) (*models.BreakGlassActivati
 	return wire.toModel(), nil
 }
 
-// breakGlassAlreadyActiveCode/breakGlassNotActiveCode must match
-// server/http/handlers/break_glass_proxy.go's constants of the same name exactly
-// — the wire contract this file's error-translation logic depends on.
-const (
-	breakGlassAlreadyActiveCode = "BREAK_GLASS_ALREADY_ACTIVE"
-	breakGlassNotActiveCode     = "BREAK_GLASS_NOT_ACTIVE"
-)
+// breakGlassNotActiveCode must match
+// server/http/handlers/break_glass_proxy.go's constant of the same name exactly
+// — the wire contract RevokeBreakGlassActivation's error-translation logic
+// depends on.
+const breakGlassNotActiveCode = "BREAK_GLASS_NOT_ACTIVE"
 
-// CreateBreakGlassActivation persists an already-built activation row (every
-// field — state, ExpiresAt, RoleID/RoleName, ...) is computed by the CALLING
-// core.KeyorixCore before this is invoked, exactly as ActivateBreakGlass builds
-// one for LocalStorage) via POST /api/v1/system/break-glass. See the package doc
-// for why the upstream's real DB-level unique-index race gate
-// (CreateBreakGlassActivationProxy → storage.CreateBreakGlassActivation) is what
-// actually enforces "at most one active activation per project+user", not this
-// client.
-func (rs *RemoteStorage) CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/break-glass", newBreakGlassActivationWire(a))
-	if err != nil {
-		// #501: makeRequest turns EVERY 4xx/5xx response (including
-		// CreateBreakGlassActivationProxy's 409 Conflict) into a non-nil error
-		// before resp is ever populated, so the already-active signal must be
-		// recovered from the *remote.HTTPError itself (its ErrorType), not from
-		// resp.Error — reconstructing the SAME storage.ErrBreakGlassAlreadyActive
-		// sentinel core.ActivateBreakGlass's errors.Is check depends on, so that
-		// check-and-translate behavior survives this HTTP hop rather than
-		// silently downgrading to an opaque "failed to create activation" error.
-		var httpErr *remote.HTTPError
-		if errors.As(err, &httpErr) && httpErr.ErrorType == breakGlassAlreadyActiveCode {
-			return nil, fmt.Errorf("%w: %s", storage.ErrBreakGlassAlreadyActive, httpErr.Message)
-		}
-		return nil, fmt.Errorf("failed to create break-glass activation: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create break-glass activation failed: %s", resp.Error.Error())
-	}
-	return decodeBreakGlassActivationResponse(resp.Data)
+// CreateBreakGlassActivation used to proxy onto POST /api/v1/system/break-glass
+// (CreateBreakGlassActivationProxy), deleted in the G80 liveness sweep — no live
+// caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) CreateBreakGlassActivation(_ context.Context, _ *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
+	return nil, errUnsupportedRemote
 }
 
 // GetBreakGlassActivation retrieves an activation by ID via GET
@@ -192,21 +152,13 @@ func (rs *RemoteStorage) ListBreakGlassActivations(ctx context.Context, projectI
 	return rows, nil
 }
 
-// UpdateBreakGlassActivation persists a full-row change via PUT
-// /api/v1/system/break-glass/{id} — a raw passthrough onto
-// storage.UpdateBreakGlassActivation (local_break_glass.go's plain Save); see the
-// package doc for why there is no conditional write to preserve here, unlike
-// Create/Revoke.
-func (rs *RemoteStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
-	path := fmt.Sprintf("/api/v1/system/break-glass/%d", a.ID)
-	resp, err := rs.client.Put(ctx, path, newBreakGlassActivationWire(a))
-	if err != nil {
-		return fmt.Errorf("failed to update break-glass activation: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("update break-glass activation failed: %s", resp.Error.Error())
-	}
-	return nil
+// UpdateBreakGlassActivation used to proxy onto PUT /api/v1/system/break-glass/{id}
+// (UpdateBreakGlassActivationProxy), deleted in the G80 liveness sweep — no live
+// caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateBreakGlassActivation(_ context.Context, _ *models.BreakGlassActivation) error {
+	return errUnsupportedRemote
 }
 
 // breakGlassRevokeRequest is RevokeBreakGlassActivation's request body, matching

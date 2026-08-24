@@ -7,87 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestRemoteStorage_CreateMFAStepUpGrant_Success(t *testing.T) {
-	exp := time.Now().UTC().Add(15 * time.Minute)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/stepup-grants", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id":         uint(7),
-			"user_id":    uint(42),
-			"expires_at": exp,
-			"created_at": time.Now().UTC(),
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	grant := &models.MFAStepUpGrant{UserID: 42, ExpiresAt: exp}
-	err = rs.CreateMFAStepUpGrant(context.Background(), grant)
-	require.NoError(t, err)
-	assert.Equal(t, uint(7), grant.ID)
-	assert.Equal(t, uint(42), grant.UserID)
-}
-
-func TestRemoteStorage_CreateMFAStepUpGrant_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"success":false,"error":{"code":"STORAGE_ERROR","message":"db down"}}`))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.CreateMFAStepUpGrant(context.Background(), &models.MFAStepUpGrant{
-		UserID:    42,
-		ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
-	})
-	require.Error(t, err)
-}
-
-func TestRemoteStorage_CreateMFAStepUpGrant_SuccessFalse(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":false,"error":{"code":"CONFLICT","message":"already exists"}}`))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.CreateMFAStepUpGrant(context.Background(), &models.MFAStepUpGrant{
-		UserID:    42,
-		ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "create MFA step-up grant failed")
-}
-
-func TestRemoteStorage_CreateMFAStepUpGrant_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{bad json}}`))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.CreateMFAStepUpGrant(context.Background(), &models.MFAStepUpGrant{
-		UserID:    42,
-		ExpiresAt: time.Now().UTC().Add(15 * time.Minute),
-	})
-	require.Error(t, err)
-}
 
 func TestRemoteStorage_GetActiveMFAStepUpGrant_Success(t *testing.T) {
 	now := time.Now().UTC()

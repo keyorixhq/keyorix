@@ -103,7 +103,7 @@ func TestAssignUserRoleWithExpiry_BlocksJITSoDViolation(t *testing.T) {
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(1 * time.Hour)
-	err = h.CoreService.AssignUserRoleWithExpiry(ctx, 1, 12, 3, core.Scope{}, expiresAt)
+	err = h.CoreService.AssignUserRoleWithExpiry(ctx, 1, 12, 3, core.Scope{}, expiresAt, false)
 	require.Error(t, err, "a short-lived JIT grant that would create a toxic overlap must be blocked too, closing the timing-evasion window")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 
@@ -131,7 +131,7 @@ func TestAssignUserRoleWithExpiry_AllowsNonViolatingGrant(t *testing.T) {
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(1 * time.Hour)
-	err = h.CoreService.AssignUserRoleWithExpiry(ctx, 1, 13, 5, core.Scope{}, expiresAt) // auditor
+	err = h.CoreService.AssignUserRoleWithExpiry(ctx, 1, 13, 5, core.Scope{}, expiresAt, false) // auditor
 	require.NoError(t, err, "a non-violating time-bound grant must succeed unimpeded")
 
 	ids, gerr := h.Storage.GetUserRoleIDsAt(ctx, 13, storage.Scope{})
