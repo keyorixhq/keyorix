@@ -279,27 +279,13 @@ func (rs *RemoteStorage) GetLatestClosedAccessReviewCampaign(ctx context.Context
 	return result.Campaign.toModel(), nil
 }
 
-// UpdateAccessReviewCampaign persists a campaign state transition via PUT
-// /api/v1/system/access-review-campaigns/{id}. See the package doc for why the
-// bool this returns IS the single conditional `WHERE state = 'open'` UPDATE's
-// own RowsAffected==1 result, relayed faithfully across the wire — not
-// synthesized by this method.
-func (rs *RemoteStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error) {
-	path := fmt.Sprintf("/api/v1/system/access-review-campaigns/%d", c.ID)
-	resp, err := rs.client.Put(ctx, path, newAccessReviewCampaignWire(c))
-	if err != nil {
-		return false, fmt.Errorf("failed to update access-review campaign: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("update access-review campaign failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Updated bool `json:"updated"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Updated, nil
+// UpdateAccessReviewCampaign used to proxy onto PUT
+// /api/v1/system/access-review-campaigns/{id} (UpdateAccessReviewCampaignProxy),
+// deleted in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateAccessReviewCampaign(_ context.Context, _ *models.AccessReviewCampaign) (bool, error) {
+	return false, errUnsupportedRemote
 }
 
 // CreateAccessReviewItems bulk-persists a campaign's freshly-opened (all

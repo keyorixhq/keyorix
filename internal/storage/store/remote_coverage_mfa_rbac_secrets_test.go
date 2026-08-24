@@ -114,35 +114,6 @@ func TestRemoteCov_IssueMFAChallenge_BadJSON(t *testing.T) {
 	_ = err
 }
 
-func TestRemoteCov_UpsertMFASecret_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "store failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	s := &models.MFASecret{UserID: 1, SecretEnc: []byte("enc")}
-	err = rs.UpsertMFASecret(context.Background(), s)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "store MFA secret failed")
-}
-
-func TestRemoteCov_UpsertMFASecret_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-a-secret-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	s := &models.MFASecret{UserID: 1}
-	err = rs.UpsertMFASecret(context.Background(), s)
-	assert.Error(t, err)
-}
-
 func TestRemoteCov_GetMFASecret_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("NOT_FOUND", "secret not found"))
@@ -400,33 +371,6 @@ func TestRemoteCov_DeleteProjectIfEmpty_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_RestoreProject_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "project not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.RestoreProject(context.Background(), 99)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "restore project failed")
-}
-
-func TestRemoteCov_RestoreProject_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-an-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.RestoreProject(context.Background(), 9)
-	assert.Error(t, err)
-}
-
 func TestRemoteCov_ListGlobalAdminAssignmentsForUpdate_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "db error"))
@@ -505,33 +449,6 @@ func TestRemoteCov_GetProject_BadJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.GetProject(context.Background(), 1)
-	assert.Error(t, err)
-}
-
-func TestRemoteCov_UpdateProject_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "project not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.UpdateProject(context.Background(), &models.Project{ID: 99, Name: "test"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "update project failed")
-}
-
-func TestRemoteCov_UpdateProject_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-a-project-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.UpdateProject(context.Background(), &models.Project{ID: 1, Name: "test"})
 	assert.Error(t, err)
 }
 
@@ -615,20 +532,6 @@ func TestRemoteCov_DeleteEnvironment_APIError(t *testing.T) {
 	err = rs.DeleteEnvironment(context.Background(), 99)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "delete environment failed")
-}
-
-func TestRemoteCov_RestoreEnvironment_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "environment not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.RestoreEnvironment(context.Background(), 9, 99)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "restore environment failed")
 }
 
 func TestRemoteCov_ListEnvironmentsByProject_APIError(t *testing.T) {
@@ -715,87 +618,6 @@ func TestRemoteCov_ListConnectRefGrants_BadJSON(t *testing.T) {
 // --------------------------------------------------------------------------
 // remote_secrets.go — error paths (for functions not tested with errors yet)
 // --------------------------------------------------------------------------
-
-func TestRemoteCov_DeleteAnomalyAlertsBefore_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "purge failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.DeleteAnomalyAlertsBefore(context.Background(), time.Now(), time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "purge anomaly alerts failed")
-}
-
-func TestRemoteCov_DeleteAnomalyAlertsBefore_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-an-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.DeleteAnomalyAlertsBefore(context.Background(), time.Now(), time.Now())
-	assert.Error(t, err)
-}
-
-func TestRemoteCov_DeleteClosedAccessReviewsBefore_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "purge failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.DeleteClosedAccessReviewsBefore(context.Background(), time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "purge closed access reviews failed")
-}
-
-func TestRemoteCov_DeleteClosedAccessReviewsBefore_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-an-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.DeleteClosedAccessReviewsBefore(context.Background(), time.Now())
-	assert.Error(t, err)
-}
-
-func TestRemoteCov_DeleteResolvedAccessRequestsBefore_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "purge failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.DeleteResolvedAccessRequestsBefore(context.Background(), time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "purge resolved access requests failed")
-}
-
-func TestRemoteCov_DeleteResolvedAccessRequestsBefore_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-an-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.DeleteResolvedAccessRequestsBefore(context.Background(), time.Now())
-	assert.Error(t, err)
-}
 
 func TestRemoteCov_PostRetentionBeforeCountResp_APIError(t *testing.T) {
 	// postRetentionBeforeCountResp is exercised through PurgeDeletedSecretsBefore.

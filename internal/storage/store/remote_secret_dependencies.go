@@ -178,17 +178,13 @@ func (rs *RemoteStorage) ListSecretDependenciesForProjectForUpdate(ctx context.C
 	return decodeSecretDependencyList(resp.Data)
 }
 
-// DeleteSecretDependency removes one edge via DELETE /api/v1/system/secret-dependencies/{id}.
-func (rs *RemoteStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
-	path := fmt.Sprintf("/api/v1/system/secret-dependencies/%d", id)
-	resp, err := rs.client.Delete(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to delete secret dependency: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("delete secret dependency failed: %s", resp.Error.Error())
-	}
-	return nil
+// DeleteSecretDependency used to proxy onto DELETE
+// /api/v1/system/secret-dependencies/{id} (DeleteSecretDependencyProxy), deleted
+// in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteSecretDependency(_ context.Context, _ uint) error {
+	return errUnsupportedRemote
 }
 
 // CreateSecretDependencyExclusive persists an edge with the SAME duplicate/cycle

@@ -482,36 +482,6 @@ func TestRemoteStorage_S28_ListConnectRefGrants_APIError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteStorage_S28_CreateConnectRefGrant_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiErrResp("CONFLICT", "already exists"))
-	}))
-	defer srv.Close()
-	rs := newS28Remote(t, srv.URL)
-	_, err := rs.CreateConnectRefGrant(context.Background(), &models.ConnectRefGrant{RoleID: 1})
-	assert.Error(t, err)
-}
-
-func TestRemoteStorage_S28_CreateConnectRefGrant_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"success":true,"data":"not-object"}`))
-	}))
-	defer srv.Close()
-	rs := newS28Remote(t, srv.URL)
-	_, err := rs.CreateConnectRefGrant(context.Background(), &models.ConnectRefGrant{RoleID: 1})
-	assert.Error(t, err)
-}
-
-func TestRemoteStorage_S28_DeleteConnectRefGrant_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiErrResp("NOT_FOUND", "not found"))
-	}))
-	defer srv.Close()
-	rs := newS28Remote(t, srv.URL)
-	err := rs.DeleteConnectRefGrant(context.Background(), 99)
-	assert.Error(t, err)
-}
-
 func TestRemoteStorage_S28_GetGroupRoles_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiErrResp("NOT_FOUND", "group not found"))

@@ -29,20 +29,6 @@ import (
 // remote_break_glass.go — !resp.Success branches
 // ============================================================
 
-func TestRemoteCov_CreateBreakGlassActivation_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "server failure"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{State: "active"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "create break-glass activation failed")
-}
-
 func TestRemoteCov_GetBreakGlassActivation_NotSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("NOT_FOUND", "not found"))
@@ -55,20 +41,6 @@ func TestRemoteCov_GetBreakGlassActivation_NotSuccess(t *testing.T) {
 	_, err = rs.GetBreakGlassActivation(context.Background(), 99)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "get break-glass activation failed")
-}
-
-func TestRemoteCov_UpdateBreakGlassActivation_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "update failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{ID: 5})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "update break-glass activation failed")
 }
 
 // decodeBreakGlassActivationResponse is exercised by GetBreakGlassActivation.
@@ -632,21 +604,6 @@ func TestRemoteCov_GetSecretDependency_NotSuccess(t *testing.T) {
 	_, err = rs.GetSecretDependency(context.Background(), 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "get secret dependency failed")
-}
-
-func TestRemoteCov_DeleteSecretDependency_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodDelete, r.Method)
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "dependency not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.DeleteSecretDependency(context.Background(), 5)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "delete secret dependency failed")
 }
 
 // decodeSecretDependencyResponse is exercised by GetSecretDependency.

@@ -190,55 +190,6 @@ func TestRemoteStorage_GetLatestClosedAccessReviewCampaign_None(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-// --- UpdateAccessReviewCampaign ---
-
-func TestRemoteStorage_UpdateAccessReviewCampaign_Updated(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/access-review-campaigns/42", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"updated": true,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	c := &models.AccessReviewCampaign{
-		ID:        42,
-		ProjectID: 1,
-		Name:      "Q1 review",
-		State:     "closed",
-		CreatedBy: 7,
-		CreatedAt: time.Now(),
-	}
-	updated, err := rs.UpdateAccessReviewCampaign(context.Background(), c)
-	require.NoError(t, err)
-	assert.True(t, updated)
-}
-
-func TestRemoteStorage_UpdateAccessReviewCampaign_NotUpdated(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"updated": false,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	c := &models.AccessReviewCampaign{
-		ID:        42,
-		State:     "closed",
-		CreatedAt: time.Now(),
-	}
-	updated, err := rs.UpdateAccessReviewCampaign(context.Background(), c)
-	require.NoError(t, err)
-	assert.False(t, updated)
-}
-
 // --- CreateAccessReviewItems ---
 
 func TestRemoteStorage_CreateAccessReviewItems(t *testing.T) {

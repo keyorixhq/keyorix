@@ -161,26 +161,13 @@ func webAuthnCredentialIDQuery(credentialID []byte) string {
 	return base64.StdEncoding.EncodeToString(credentialID)
 }
 
-// CreateWebAuthnCredential persists a newly-registered passkey via POST
-// /api/v1/system/webauthn/credentials, then copies the upstream-assigned fields
-// (ID, CreatedAt) back into c — mirroring LocalStorage's own GORM Create, which
-// mutates its argument in place, so callers that read c.ID/c.CreatedAt immediately
-// after (e.g. FinishWebAuthnRegistration's audit log) see the real values under
-// either backend.
-func (rs *RemoteStorage) CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/webauthn/credentials", newWebAuthnCredentialWire(c))
-	if err != nil {
-		return fmt.Errorf("failed to create webauthn credential: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("create webauthn credential failed: %s", resp.Error.Error())
-	}
-	created, err := decodeWebAuthnCredentialResponse(resp.Data)
-	if err != nil {
-		return err
-	}
-	*c = *created
-	return nil
+// CreateWebAuthnCredential used to proxy onto POST
+// /api/v1/system/webauthn/credentials (CreateWebAuthnCredentialProxy), deleted
+// in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) CreateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
+	return errUnsupportedRemote
 }
 
 // ListWebAuthnCredentials lists a user's registered passkeys via GET
@@ -303,20 +290,14 @@ func (rs *RemoteStorage) AdvanceWebAuthnCredentialCounter(ctx context.Context, c
 	return result.Advanced, nil
 }
 
-// DeleteWebAuthnCredential removes one of the user's credentials via DELETE
-// /api/v1/system/webauthn/users/{userID}/credentials/{id} — scoped by user (in
-// the path, not just a query parameter) so a caller can't delete another user's
-// passkey by id, mirroring the local implementation's own ownership check.
-func (rs *RemoteStorage) DeleteWebAuthnCredential(ctx context.Context, userID, id uint) error {
-	path := fmt.Sprintf("/api/v1/system/webauthn/users/%d/credentials/%d", userID, id)
-	resp, err := rs.client.Delete(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to delete webauthn credential: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("delete webauthn credential failed: %s", resp.Error.Error())
-	}
-	return nil
+// DeleteWebAuthnCredential used to proxy onto DELETE
+// /api/v1/system/webauthn/users/{userID}/credentials/{id}
+// (DeleteWebAuthnCredentialProxy), deleted in the G80 liveness sweep — no live
+// caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) DeleteWebAuthnCredential(_ context.Context, _, _ uint) error {
+	return errUnsupportedRemote
 }
 
 // CountWebAuthnCredentials returns a user's registered-passkey count via GET
@@ -341,23 +322,14 @@ func (rs *RemoteStorage) CountWebAuthnCredentials(ctx context.Context, userID ui
 	return result.Count, nil
 }
 
-// setUserWebAuthnEnabledWire is the wire body for SetUserWebAuthnEnabledProxy.
-type setUserWebAuthnEnabledWire struct {
-	Enabled bool `json:"enabled"`
-}
-
-// SetUserWebAuthnEnabled flips the user's WebAuthnEnabled flag via PUT
-// /api/v1/system/webauthn/users/{userID}/webauthn-enabled.
-func (rs *RemoteStorage) SetUserWebAuthnEnabled(ctx context.Context, userID uint, enabled bool) error {
-	path := fmt.Sprintf("/api/v1/system/webauthn/users/%d/webauthn-enabled", userID)
-	resp, err := rs.client.Put(ctx, path, setUserWebAuthnEnabledWire{Enabled: enabled})
-	if err != nil {
-		return fmt.Errorf("failed to set webauthn enabled: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("set webauthn enabled failed: %s", resp.Error.Error())
-	}
-	return nil
+// SetUserWebAuthnEnabled used to proxy onto PUT
+// /api/v1/system/webauthn/users/{userID}/webauthn-enabled
+// (SetUserWebAuthnEnabledProxy), deleted in the G80 liveness sweep — no live
+// caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) SetUserWebAuthnEnabled(_ context.Context, _ uint, _ bool) error {
+	return errUnsupportedRemote
 }
 
 // CreateWebAuthnSession persists a new ceremony session via POST

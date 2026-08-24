@@ -21,15 +21,6 @@ type mfaStepUpGrantWire struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func newMFAStepUpGrantWire(g *models.MFAStepUpGrant) mfaStepUpGrantWire {
-	return mfaStepUpGrantWire{
-		ID:        g.ID,
-		UserID:    g.UserID,
-		ExpiresAt: g.ExpiresAt,
-		CreatedAt: g.CreatedAt,
-	}
-}
-
 func (w mfaStepUpGrantWire) toModel() *models.MFAStepUpGrant {
 	return &models.MFAStepUpGrant{
 		ID:        w.ID,
@@ -56,23 +47,13 @@ type mfaStepUpGrantActiveWire struct {
 	UserID uint `json:"user_id"`
 }
 
-// CreateMFAStepUpGrant persists a new MFA step-up grant via
-// POST /api/v1/system/mfa/stepup-grants, copying the upstream-assigned
-// fields (ID, CreatedAt) back into grant.
-func (rs *RemoteStorage) CreateMFAStepUpGrant(ctx context.Context, grant *models.MFAStepUpGrant) error {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/stepup-grants", newMFAStepUpGrantWire(grant))
-	if err != nil {
-		return fmt.Errorf("failed to create MFA step-up grant: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("create MFA step-up grant failed: %s", resp.Error.Error())
-	}
-	saved, err := decodeMFAStepUpGrantResponse(resp.Data)
-	if err != nil {
-		return err
-	}
-	*grant = *saved
-	return nil
+// CreateMFAStepUpGrant used to proxy onto POST /api/v1/system/mfa/stepup-grants
+// (CreateMFAStepUpGrantProxy), deleted in the G80 liveness sweep — no live
+// caller in either topology; see docs/g80-remediation-notes.md. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) CreateMFAStepUpGrant(_ context.Context, _ *models.MFAStepUpGrant) error {
+	return errUnsupportedRemote
 }
 
 // GetActiveMFAStepUpGrant returns the most recent non-expired MFA step-up

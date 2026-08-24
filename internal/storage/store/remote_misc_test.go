@@ -126,57 +126,6 @@ func TestRemoteStorage_WithAuditCheckpointLock_Unsupported(t *testing.T) {
 // remote_break_glass.go
 // ============================================================
 
-func TestRemoteStorage_CreateBreakGlassActivation(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/break-glass", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id":            10,
-			"project_id":    5,
-			"user_id":       2,
-			"role_id":       3,
-			"role_name":     "emergency-admin",
-			"justification": "incident response",
-			"state":         "active",
-			"created_at":    now,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	act, err := rs.CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{
-		ProjectID:     5,
-		UserID:        2,
-		RoleID:        3,
-		RoleName:      "emergency-admin",
-		Justification: "incident response",
-		State:         "active",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, uint(10), act.ID)
-	assert.Equal(t, "active", act.State)
-	assert.Equal(t, "emergency-admin", act.RoleName)
-}
-
-func TestRemoteStorage_CreateBreakGlassActivation_AlreadyActive(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"success":false,"error":{"code":"BREAK_GLASS_ALREADY_ACTIVE","message":"already active"}}`))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{State: "active"})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, corestorage.ErrBreakGlassAlreadyActive)
-}
-
 func TestRemoteStorage_GetBreakGlassActivation(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -237,30 +186,6 @@ func TestRemoteStorage_ListBreakGlassActivations(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, uint(1), list[0].ID)
 	assert.Equal(t, "revoked", list[0].State)
-}
-
-func TestRemoteStorage_UpdateBreakGlassActivation(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/break-glass/9", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{
-		ID:        9,
-		ProjectID: 5,
-		UserID:    2,
-		RoleID:    3,
-		State:     "expired",
-		CreatedAt: now,
-	})
-	assert.NoError(t, err)
 }
 
 func TestRemoteStorage_RevokeBreakGlassActivation(t *testing.T) {
@@ -1098,21 +1023,6 @@ func TestRemoteStorage_ListSecretDependenciesForProjectForUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, uint(11), list[0].ID)
-}
-
-func TestRemoteStorage_DeleteSecretDependency(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodDelete, r.Method)
-		assert.Equal(t, "/api/v1/system/secret-dependencies/7", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.DeleteSecretDependency(context.Background(), 7)
-	assert.NoError(t, err)
 }
 
 func TestRemoteStorage_CreateSecretDependencyExclusive(t *testing.T) {

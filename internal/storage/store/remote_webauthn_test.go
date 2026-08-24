@@ -15,41 +15,6 @@ import (
 
 // --- WebAuthn credentials ---
 
-func TestRemoteStorage_CreateWebAuthnCredential(t *testing.T) {
-	credID := []byte{0x01, 0x02, 0x03, 0x04}
-	blob := []byte(`{"id":"AQIDBA=="}`)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/webauthn/credentials", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id":              99,
-			"user_id":         7,
-			"credential_id":   credID,
-			"name":            "YubiKey 5C",
-			"credential_blob": blob,
-			"created_at":      time.Now(),
-			"disabled":        false,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	c := &models.WebAuthnCredential{
-		UserID:         7,
-		CredentialID:   credID,
-		Name:           "YubiKey 5C",
-		CredentialBlob: blob,
-	}
-	err = rs.CreateWebAuthnCredential(context.Background(), c)
-	require.NoError(t, err)
-	// The method mutates the argument in-place with upstream-assigned fields.
-	assert.Equal(t, uint(99), c.ID)
-	assert.Equal(t, "YubiKey 5C", c.Name)
-}
-
 func TestRemoteStorage_ListWebAuthnCredentials(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
@@ -185,21 +150,6 @@ func TestRemoteStorage_AdvanceWebAuthnCredentialCounter_NotAdvanced(t *testing.T
 	assert.False(t, advanced)
 }
 
-func TestRemoteStorage_DeleteWebAuthnCredential(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/api/v1/system/webauthn/users/7/credentials/99", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.DeleteWebAuthnCredential(context.Background(), 7, 99)
-	require.NoError(t, err)
-}
-
 func TestRemoteStorage_CountWebAuthnCredentials(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
@@ -215,36 +165,6 @@ func TestRemoteStorage_CountWebAuthnCredentials(t *testing.T) {
 	n, err := rs.CountWebAuthnCredentials(context.Background(), 7)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), n)
-}
-
-func TestRemoteStorage_SetUserWebAuthnEnabled(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/v1/system/webauthn/users/7/webauthn-enabled", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.SetUserWebAuthnEnabled(context.Background(), 7, true)
-	require.NoError(t, err)
-}
-
-func TestRemoteStorage_SetUserWebAuthnEnabled_Disable(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/v1/system/webauthn/users/3/webauthn-enabled", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.SetUserWebAuthnEnabled(context.Background(), 3, false)
-	require.NoError(t, err)
 }
 
 // --- WebAuthn sessions ---

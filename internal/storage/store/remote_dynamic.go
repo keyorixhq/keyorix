@@ -176,25 +176,6 @@ type dynamicSecretLeaseWire struct {
 	RevokedAt      *time.Time `json:"revoked_at"`
 }
 
-func newDynamicSecretLeaseWire(l *models.DynamicSecretLease) dynamicSecretLeaseWire {
-	return dynamicSecretLeaseWire{
-		ID:             l.ID,
-		ConfigID:       l.ConfigID,
-		LeaseID:        l.LeaseID,
-		ProjectID:      l.ProjectID,
-		EnvironmentID:  l.EnvironmentID,
-		RoleName:       l.RoleName,
-		CredentialEnc:  l.CredentialEnc,
-		CredentialMeta: l.CredentialMeta,
-		Status:         l.Status,
-		RevokeReason:   l.RevokeReason,
-		RevokeError:    l.RevokeError,
-		IssuedAt:       l.IssuedAt,
-		ExpiresAt:      l.ExpiresAt,
-		RevokedAt:      l.RevokedAt,
-	}
-}
-
 func (w dynamicSecretLeaseWire) toModel() *models.DynamicSecretLease {
 	return &models.DynamicSecretLease{
 		ID:             w.ID,
@@ -296,37 +277,23 @@ func (rs *RemoteStorage) ListDynamicSecretConfigs(ctx context.Context, projectID
 	return rows, nil
 }
 
-// UpdateDynamicSecretConfig persists the full config row (including, on the
-// second phase of a create, the now-encrypted admin-DSN ciphertext) via PUT
-// /api/v1/system/dynamic-secrets/configs/{id}. Matches LocalStorage's own
-// unconditional full-row Save semantics exactly — see the package doc for why no
-// conditional write is needed here.
-func (rs *RemoteStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error {
-	path := fmt.Sprintf("/api/v1/system/dynamic-secrets/configs/%d", c.ID)
-	resp, err := rs.client.Put(ctx, path, newDynamicSecretConfigWire(c))
-	if err != nil {
-		return fmt.Errorf("failed to update dynamic-secret config: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("update dynamic-secret config failed: %s", resp.Error.Error())
-	}
-	return nil
+// UpdateDynamicSecretConfig used to proxy onto PUT
+// /api/v1/system/dynamic-secrets/configs/{id} (UpdateDynamicSecretConfigProxy),
+// deleted in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
+	return errUnsupportedRemote
 }
 
-// TransitionDynamicSecretConfigDisabled persists c's full row via a single
-// conditional PUT to /api/v1/system/dynamic-secrets/configs/{id}/transition
-// (mirroring TransitionMachineIdentityState's #388/#518 conditional-write route
-// pattern), carrying fromDisabled alongside so the upstream applies the exact
-// SAME conditional "WHERE id = ? AND disabled = ?" write its own LocalStorage
-// would — see the interface doc's atomicity note for why this exists as a
-// single round-trip primitive rather than a generic proxied UpdateDynamicSecretConfig.
-func (rs *RemoteStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
-	path := fmt.Sprintf("/api/v1/system/dynamic-secrets/configs/%d/transition", c.ID)
-	body := struct {
-		Config       dynamicSecretConfigWire `json:"config"`
-		FromDisabled bool                    `json:"from_disabled"`
-	}{Config: newDynamicSecretConfigWire(c), FromDisabled: fromDisabled}
-	return rs.putConditionalTransition(ctx, path, body, "transition dynamic-secret config")
+// TransitionDynamicSecretConfigDisabled used to proxy onto PUT
+// /api/v1/system/dynamic-secrets/configs/{id}/transition
+// (TransitionDynamicSecretConfigDisabledProxy), deleted in the G80 liveness
+// sweep — no live caller in either topology; see docs/g80-remediation-notes.md.
+// Returns errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) TransitionDynamicSecretConfigDisabled(_ context.Context, _ *models.DynamicSecretConfig, _ bool) (bool, error) {
+	return false, errUnsupportedRemote
 }
 
 // CountDynamicSecretConfigsByClassification returns install-wide config counts
@@ -349,19 +316,13 @@ func (rs *RemoteStorage) CountDynamicSecretConfigsByClassification(ctx context.C
 	return result.Counts, nil
 }
 
-// CreateDynamicSecretLease persists an already-issued lease (the credential was
-// minted on the target and encrypted by the CALLING server's own
-// internal/core.IssueLease before this call) via POST
-// /api/v1/system/dynamic-secrets/leases.
-func (rs *RemoteStorage) CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/dynamic-secrets/leases", newDynamicSecretLeaseWire(l))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic-secret lease: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create dynamic-secret lease failed: %s", resp.Error.Error())
-	}
-	return decodeDynamicSecretLeaseResponse(resp.Data)
+// CreateDynamicSecretLease used to proxy onto POST
+// /api/v1/system/dynamic-secrets/leases (CreateDynamicSecretLeaseProxy), deleted
+// in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) CreateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {
+	return nil, errUnsupportedRemote
 }
 
 // GetDynamicSecretLease retrieves a lease by its opaque public LeaseID via GET
@@ -427,21 +388,13 @@ func (rs *RemoteStorage) CountActiveLeases(ctx context.Context, configID uint) (
 	return result.Count, nil
 }
 
-// UpdateDynamicSecretLease persists the full lease row (status transitions,
-// revoke bookkeeping, renewed expiry) via PUT
-// /api/v1/system/dynamic-secrets/leases/{leaseID}. Matches LocalStorage's own
-// unconditional full-row Save semantics exactly — see the package doc for why no
-// conditional write is needed here.
-func (rs *RemoteStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error {
-	path := fmt.Sprintf("/api/v1/system/dynamic-secrets/leases/%s", url.PathEscape(l.LeaseID))
-	resp, err := rs.client.Put(ctx, path, newDynamicSecretLeaseWire(l))
-	if err != nil {
-		return fmt.Errorf("failed to update dynamic-secret lease: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("update dynamic-secret lease failed: %s", resp.Error.Error())
-	}
-	return nil
+// UpdateDynamicSecretLease used to proxy onto PUT
+// /api/v1/system/dynamic-secrets/leases/{leaseID} (UpdateDynamicSecretLeaseProxy),
+// deleted in the G80 liveness sweep — no live caller in either topology; see
+// docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
+	return errUnsupportedRemote
 }
 
 // ListExpiredActiveLeases lists every lease past `before` that still needs its
