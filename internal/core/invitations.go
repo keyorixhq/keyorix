@@ -71,6 +71,7 @@ func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, proj
 // RequireAdminAuthorityAt exports requireAdminAuthorityAt for the /system proxy
 // layer (server/http/handlers), which cannot call unexported KeyorixCore methods
 // across the package boundary. Used to re-derive, at the hub, the SAME ceiling
+// InviteToProject/InviteGlobal/ApproveSecretAccessRequest/DeleteSoDPolicy-shaped
 // core methods already enforce locally on a downstream node before relaying a
 // state change here -- the #1542 shape, closed the same way
 // TransitionMachineIdentityStateProxy's core.IsValidMachineTransition

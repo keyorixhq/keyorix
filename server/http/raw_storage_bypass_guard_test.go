@@ -307,6 +307,28 @@ var rawStorageBypassAllowlist = map[string]string{
 		"entry -- see the FIXED comment immediately above this entry for the full reasoning.",
 	"UpdateInvitationProxy": "FIXED: re-fetches the existing row and applies only State/AcceptedAt/RevokedAt from " +
 		"the wire -- see the FIXED comment immediately above this entry for the full reasoning.",
+	// FIXED 2026-08-24 (G80 Phase 2, #1529 re-triage): CreateAccessRequestProxy no
+	// longer accepts a caller-supplied non-pending State -- every legitimate
+	// creation path (RequestProjectAccess/RequestSecretAccess) always creates
+	// with State=pending, so rejecting anything else needed no RemoteStorage
+	// wire-protocol change (the only real caller never sent anything else in the
+	// first place). UpdateAccessRequestProxy now re-derives, at the hub, the SAME
+	// ceiling the matching core method already applies before ever reaching this
+	// storage primitive locally: maker≠checker plus admin authority
+	// (core.RequireAdminAuthorityAt, secret-scoped, mirroring
+	// ApproveSecretAccessRequest) or role-grant authority
+	// (core.RequireAuthorityForRole, project/role-scoped, mirroring
+	// ApproveAccessRequestWithExpiry's own ceiling call) -- both newly exported
+	// from internal/core since the /system proxy layer can't call unexported
+	// KeyorixCore methods across the package boundary. Only the "approved"
+	// transition is gated: core.RejectAccessRequest has no actor-authority check
+	// of its own (any project member may reject), and core.WithdrawAccessRequest's
+	// self-only check has no wire-carried actor field distinct from ResolvedBy to
+	// re-derive against here -- left as-is, not silently narrowed.
+	"CreateAccessRequestProxy": "FIXED: State is forced to \"pending\" at creation -- see the FIXED comment " +
+		"immediately above this entry for the full reasoning.",
+	"UpdateAccessRequestProxy": "FIXED: re-derives maker≠checker + admin/role-grant authority on the \"approved\" " +
+		"transition -- see the FIXED comment immediately above this entry for the full reasoning.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by
@@ -331,12 +353,6 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"(TransitionMembership) gates activation with requireAuthorityForRole and grants/revokes the underlying " +
 		"role grant as a side effect neither of which this raw call performs; whether that's covered by a " +
 		"separate relayed call from the downstream's own core.TransitionMembership, or a real gap, is undetermined.",
-	"CreateAccessRequestProxy": "REAL, human-reachable, CRITICAL: State is caller-writable with no restriction -- " +
-		"POST {state:\"approved\", secret_id, user_id:self} bypasses ApproveSecretAccessRequest's admin-authority " +
-		"+ maker≠checker dual-control entirely for restricted-secret access.",
-	"UpdateAccessRequestProxy": "REAL, human-reachable, CRITICAL: same dual-control bypass as " +
-		"CreateAccessRequestProxy, applied to an EXISTING pending request via PUT {state:\"approved\", " +
-		"resolved_by:self}.",
 	// UpdateLoginLockoutStateProxy's route was deleted (G80 23-handler no-caller
 	// deletion) -- entry removed, no longer applicable.
 	// CreateMachineIdentityProxy is FIXED (moved to rawStorageBypassAllowlist);
