@@ -12,6 +12,23 @@ tool has a bug; it should not drift silently. This file is that tool's committed
 as of commit `f1861382` (worktree `fix-1524-machine-actor-fail-closed`) plus the
 then-uncommitted `docs/g80-remediation-notes.md` state, 2026-08-24.
 
+## Measured outcome: 58 → 34 (2026-08-24)
+
+Same tool, same methodology, run again later the same day against the tree after
+`#1550` (23-handler no-live-caller deletion) and `#1553` (machine-identity/OIDC-binding
+ceiling fixes) merged: **34 write-shaped candidates, down from 58 at baseline.** 23
+disappeared by deletion (no live caller in either topology — `docs/g80-remediation-notes.md`);
+1 more (`CreateMachineIdentityProxy`) disappeared by a genuine fix that routes through
+`core.CreateMachineIdentity` instead of calling storage directly, removing the raw call
+this tool detects rather than just guarding it.
+
+**This delta — 58 → 34 write-shaped candidates for the #1542 raw-storage-bypass shape —
+is this campaign's headline result for this bug class.** The re-derived arithmetic behind
+it (of the 34, how many are `real`, human-reachable, and ADR-blocked) is in
+`docs/g80-raw-storage-bypass-triage.md`'s "Re-triage against the current 34" section, not
+repeated here — this file stays the reproducible-count artifact, that one carries the
+per-candidate reasoning.
+
 ## Discrepancy resolution: 145/87/58 is correct, not 149/90/59
 
 `docs/g80-remediation-notes.md`'s #1547 entry (written 2026-08-23) records "149 flagged

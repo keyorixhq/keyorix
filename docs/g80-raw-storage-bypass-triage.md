@@ -209,3 +209,93 @@ directly to an attacker-chosen user account, no pre-existing admin-tier machine
 required). This is exactly ADR-085's own still-open "harder question" (whose authority
 a relayed action is actually exercised under), materialized as a concrete, reachable
 finding rather than a design question.
+
+## Re-triage against the current 34 (2026-08-24, post-#1550/#1553)
+
+`scripts/analysis/raw_storage_bypass_enumerate.go` reports **34 write-shaped candidates
+today, down from 58 at baseline** — the same tool, same methodology, run against the
+current tree. The 58→35/16/11 arithmetic above was derived before 23 handlers were
+deleted (G80 liveness sweep, no live caller in either topology — see
+`docs/g80-remediation-notes.md`) and `CreateMachineIdentityProxy` was fixed by routing
+through `core.CreateMachineIdentity` (no longer makes a raw storage call at all, so it
+no longer appears as a candidate — the other 23 disappeared by deletion, this one by a
+genuine fix). Nobody had re-run the arithmetic against the 34 until now. This section is
+that re-derivation, not an update to the rows above (which stay as the historical record
+of the original 58).
+
+Every one of the 34 was already carrying a verdict in
+`server/http/raw_storage_bypass_guard_test.go`'s `rawStorageBypassAllowlist` /
+`knownUnfixedRawStorageBypasses` maps before this pass — confirmed mechanically, not by
+inspection: `TestNoUnjustifiedRawStorageBypass` passes today, and that test fails on any
+candidate missing from both maps. What this pass added: per the standing practice ("a Go
+call graph is not a deployment path... trace an actual auth path, don't infer"), every
+`real`/`unresolved` entry's escalation-delta and reach claim was re-verified against
+current code, not carried forward from the maps' text unread. Two were checked for the
+first time individually (`DeleteOIDCBindingProxy` — no comment previously stated whether
+it had been through this specific test; the handler and `core.DeleteOIDCBinding` were
+read fresh) and everything else was re-read against its current line numbers to confirm
+the code the reasoning describes still exists as described.
+
+| Verdict | Count | Candidates |
+|---|---|---|
+| no-independent-ceiling | 9 | ClearProjectSecretOwnershipProxy, DeleteSecretACLsByUserAndProjectProxy, DeleteExpiredRoleGrantsProxy, MarkTOTPStepUsedProxy, DeleteEnvironmentProxy, TouchMachineIdentityCredentialProxy, DeleteExpiredShareRecordsProxy, TransitionSecretStatusProxy, SupersedeSetupTokensProxy |
+| documented-exception | 14 | RemoveGlobalAdminRoleGuardedProxy, CreateUserWithRoleGrantsProxy, DeleteProjectProxy, DeleteProjectIfEmptyProxy, CreateAccessReviewCampaignProxy, CreateAccessReviewItemsProxy, RevokeBreakGlassActivationProxy, RecordLoginAttemptProxy, CreateSetupTokenProxy, CreateSSOLoginStateProxy, ConsumeSSOLoginStateProxy, ConsumeWebAuthnSessionProxy, TransitionMachineIdentityStateProxy (FIXED — raw call preserved deliberately, now preceded by `core.IsValidMachineTransition`), UpdateMachineIdentityCredentialProxy (FIXED — narrowed to fetch-existing + apply-Classification-only) |
+| out-of-scope (not a `/system` route) | 1 | ConsumeMFAChallenge — registered outside the `/system` group (`users.write`-gated, `router.go:874`), never tracked by this guard; unchanged since the original triage |
+| unresolved | 1 | TransitionMembershipProxy — #1546, explicitly out of scope for this task, not re-investigated |
+| **real** | **9** | CreateAccessRequestProxy, UpdateAccessRequestProxy, CreateInvitationProxy, UpdateInvitationProxy, DeleteOIDCBindingProxy, UpdateUserIfActiveStateMatchesProxy, RevokeMachineIdentityCredentialProxy, CreateMachineIdentityCredentialProxy (residual), CreateOIDCBindingProxy (residual) |
+| **Total** | **34** | |
+
+**Of the 9 `real`: all 9 are human-reachable** (every one sits behind
+`RequireNodeCredentialOrPermission(system.write)`, reachable directly by any human or
+machine holding the `system.write` permission — traced via `server/http/router.go:1089`,
+not inferred from the permission's name). Zero machine-only, zero unknown-reach among the
+`real` set.
+
+**3 of the 9 are ADR-BLOCKED, set aside per instruction, not touched:**
+- `RevokeMachineIdentityCredentialProxy` — #1551 (wire contract carries no project/scope
+  parameter; closing it needs a `RemoteStorage` client-side change gated on the same
+  node-credential-relay-trust question ADR-085 hasn't resolved).
+- `CreateMachineIdentityCredentialProxy` (residual half) — #1552, node-credential path
+  only; the direct-caller half is already fixed (`core.RequireMachinePrivilegeCeiling`).
+- `CreateOIDCBindingProxy` (residual half) — #1552, node-credential path only; the
+  direct-caller half is already fixed (`core.CreateOIDCBinding`'s
+  `requireAuthorityForRole`).
+
+**6 of the 9 are real, human-reachable, and NOT ADR-blocked — the actionable set:**
+1. `CreateAccessRequestProxy` — CRITICAL. Re-verified fresh (`access_request_proxy.go:170`):
+   `body.toModel()` accepts `State` directly with no validation beyond non-empty; POST
+   `{state:"approved", secret_id, user_id:self}` bypasses `ApproveSecretAccessRequest`'s
+   admin-authority + maker≠checker dual-control entirely. Unchanged since original triage.
+2. `UpdateAccessRequestProxy` — CRITICAL. Re-verified fresh (`access_request_proxy.go:219`):
+   the AR-001 fix already landed (narrowed the writable field set to the five legitimate
+   transition fields, closing an identity-rewrite side channel) but did NOT add an
+   authority check on the `State` transition itself — `existing.State = body.State` with
+   `resolved_by: self` still bypasses the same dual-control gate as above on an existing
+   pending request.
+3. `CreateInvitationProxy` — re-verified fresh (`invitations_proxy.go:123`): accepts
+   `SystemRole`/`AssignmentsJSON` directly via `CreateProjectInvitation`, no
+   `requireAuthorityForRole` escalation check.
+4. `UpdateInvitationProxy` — re-verified fresh (`invitations_proxy.go:172`): full-row
+   `UpdateProjectInvitation` with caller-controlled `State` straight to `accepted`, no
+   grants ever applied, no audit — strands the real invitee.
+5. `DeleteOIDCBindingProxy` — **not individually confirmed before this pass.** Verified
+   fresh: the handler (`machine_identities_proxy.go:1056`) calls
+   `storage.DeleteOIDCBinding(id)` directly; `core.DeleteOIDCBinding`
+   (`internal/core/oidc.go:277`) requires `machineInProject` (the binding's machine
+   belongs to the stated project) and binding-ownership (`b.MachineIdentityID ==
+   machineID`) before deleting, plus an audit event — none of which the raw call performs.
+   Escalation-delta: `system.write`'s documented footprint doesn't extend to
+   cross-project/cross-machine OIDC-binding tampering; the raw call lets any
+   `system.write` holder delete a binding belonging to a machine outside their own
+   project scope, with no audit trail. Not ADR-blocked — this is a referential-integrity
+   check (does the binding belong to this machine/project), not a node-credential-vs-human
+   trust question; independently fixable the same way `CreateOIDCBindingProxy`'s
+   direct-caller half already was.
+6. `UpdateUserIfActiveStateMatchesProxy` — residual half. Re-verified fresh
+   (`internal/storage/store/remote_auth.go:128,168`):
+   `RevokeAllPersonalAccessTokensForUser`/`DeleteSessionsForUserExcept` are still both
+   hard-stubbed to `errUnsupportedRemote`. Not ADR-blocked — a `RemoteStorage`
+   wire-completeness gap, unrelated to node-credential trust — but the largest lift of the
+   6 (needs new system-proxy routes for PAT/session revocation, not a handler-local fix).
+
+**Answer to "how much is left" for this bug class: 6.**
