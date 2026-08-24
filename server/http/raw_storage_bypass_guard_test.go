@@ -290,6 +290,25 @@ var rawStorageBypassAllowlist = map[string]string{
 	// a caller-side concern already satisfied before the relayed call reached here.
 	"UpdateMachineIdentityCredentialProxy": "FIXED: narrowed to fetch-existing + apply-Classification-only -- see " +
 		"the FIXED comment immediately above this entry for the full reasoning.",
+	// FIXED 2026-08-24 (was in knownUnfixedRawStorageBypasses as "MOST SEVERE
+	// FINDING"): the raw storage.CreateMachineIdentityCredential call is still here
+	// deliberately -- it must persist the caller-supplied TokenHash verbatim, which
+	// a legitimate RemoteStorage relay computed itself locally (via its own
+	// core.IssueMachineToken call) and is only relaying the hash of; routing this
+	// through IssueMachineToken here would instead generate a NEW random token via
+	// crypto/rand, breaking that relay. What's added is the ceiling
+	// IssueMachineToken itself enforces before generating a token:
+	// core.RequireMachinePrivilegeCeiling (a newly-exported wrapper around the
+	// existing requireMachinePrivilegeCeiling / MACH-001 check), called before the
+	// storage write and mapped to 403. No RemoteStorage wire-protocol change: the
+	// check needs only (actorID, MachineIdentityID), both already available/on the
+	// wire. Verified via server/http/system_write_ceiling_table_test.go's
+	// CreateMachineIdentityCredentialProxy_EnforcesPrivilegeCeiling row (previously
+	// red under a real server + real auth, now green) and confirmed no regression
+	// on the base non-admin-tier-target case (system_write_ceiling_test.go).
+	"CreateMachineIdentityCredentialProxy": "FIXED: raw storage call preserved for the caller-supplied-TokenHash " +
+		"relay case, but now preceded by core.RequireMachinePrivilegeCeiling -- see the FIXED comment immediately " +
+		"above this entry for the full reasoning.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by
@@ -354,16 +373,6 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"permission from this route's system.write) and always audits; the raw proxy lets any system.write " +
 		"holder silently clear a lockout (no audit, no users.write) or force-lock any account for up to 30 days " +
 		"(DoS).",
-	"CreateMachineIdentityProxy": "REAL, human-reachable: raw proxy only checks Name/ProjectID non-empty -- " +
-		"arbitrary IdentityType/Classification/State, zero audit, versus core.CreateMachineIdentity's validation " +
-		"+ forced State=MachineActive + audit.",
-	"CreateMachineIdentityCredentialProxy": "REAL, human-reachable, MOST SEVERE FINDING -- full privilege " +
-		"escalation: IssueMachineToken enforces requireMachinePrivilegeCeiling (a non-admin cannot mint a " +
-		"credential for a machine identity holding admin-tier roles, MACH-001) and generates TokenHash itself via " +
-		"crypto/rand. The raw proxy accepts an attacker-CHOSEN TokenHash for any existing MachineIdentityID with " +
-		"NO privilege-ceiling check -- forge a working credential for an admin-tier machine identity and " +
-		"authenticate as it. Verified against the escalation-delta test: requireMachinePrivilegeCeiling checks " +
-		"IsGlobalAdmin (role-name membership), which system.write alone does not satisfy.",
 	"RevokeMachineIdentityCredentialProxy": "REAL, human-reachable, narrower: revokes by bare credential ID with " +
 		"no project-membership check, skips audit + cache-eviction hand-off. Mirrors this file's own " +
 		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation.",
