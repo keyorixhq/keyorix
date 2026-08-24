@@ -374,9 +374,10 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	// traces to). A bare node credential -- the single most widely distributed
 	// credential class in a deployment (ADR-085) -- can still forge a credential for
 	// an admin-tier machine identity by calling this route directly, with nothing
-	// distinguishing that from a genuine relay. See system_write_ceiling_table_test.go's
-	// node-credential-path rows for the live, asserted-red-in-spirit (documented
-	// current-behavior) evidence.
+	// distinguishing that from a genuine relay. Tracked under #1552 (the same
+	// AssignRoleWithExpiryProxy-precedent pattern, filed Tier 1, ranked above this
+	// finding). See system_write_ceiling_table_test.go's node-credential-path rows
+	// for the live, asserted-red-in-spirit (documented current-behavior) evidence.
 	"CreateMachineIdentityCredentialProxy": "HALF-FIXED: closed for a direct system.write-only human/machine " +
 		"caller (core.RequireMachinePrivilegeCeiling now enforced); STILL OPEN for a node-credential caller " +
 		"(isNodeCredentialRequest routes around the check to the raw storage call, on an unverified relay-trust " +
@@ -390,8 +391,8 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	// storage.CreateOIDCBinding call, same unverified relay-trust assumption as
 	// CreateMachineIdentityCredentialProxy above (and the same assumption
 	// AssignRoleWithExpiryProxy's node branch makes, rbac_role_grants_proxy.go --
-	// re-examined during this fix wave and reported, not itself changed, as a
-	// separate, real, uncatalogued instance of this exact pattern). A bare node
+	// filed as #1552, Tier 1, ranked above CreateMachineIdentityCredentialProxy: a
+	// shorter path to global admin, attacker-chosen target account). A bare node
 	// credential can still pre-claim any (issuer, subject) OIDC binding for a
 	// machine of its choosing by calling this route directly.
 	"CreateOIDCBindingProxy": "HALF-FIXED: closed for a direct system.write-only human/machine caller " +
