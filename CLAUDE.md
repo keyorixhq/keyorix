@@ -8,5 +8,6 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   trailer to PR descriptions, and do not add it to commit messages either (squash-merge
   folds commit trailers into the PR's merge commit). This overrides any default that
   appends a `Co-Authored-By: Claude` line.
-- PR bodies may end with the `🤖 Generated with [Claude Code]` line, but must not carry a
-  `Co-Authored-By: Claude` trailer.
+- PR bodies and commit messages must not include Claude attribution lines (`Generated
+  with [Claude Code]` / `Co-Authored-By: Claude`) — enforced by a PreToolUse hook that
+  blocks `gh pr create`/`gh pr edit` outright when either is present.
