@@ -10,6 +10,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
@@ -231,4 +232,103 @@ func TestRemoteStorageInvitation_ConcurrentAcceptRace_RealServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, core.InvitationAccepted, final.State)
 	assert.NotNil(t, final.AcceptedAt)
+}
+
+// TestInvitationProxy_CreateRejectsProjectAdminRoleWithoutAuthority (#1529)
+// proves CreateInvitationProxy re-derives InviteToProject's
+// requireAuthorityForRole escalation-by-proxy ceiling for a project-scoped
+// invite. RED without the fix: this create would have succeeded, minting a
+// pending admin-role invitation with no project-admin authority anywhere in
+// the chain.
+func TestInvitationProxy_CreateRejectsProjectAdminRoleWithoutAuthority(t *testing.T) {
+	upstream, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	nonAdmin, err := upstream.Storage().CreateUser(ctx, &models.User{Username: "inv1529-nonadmin", Email: "inv1529-nonadmin@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	inv := buildPendingInvitation(now, projectID, "target@example.com", "admin", nonAdmin.ID)
+	_, err = downstream.Storage().CreateProjectInvitation(ctx, inv)
+	require.Error(t, err, "a non-admin caller must not be able to create a pending admin-role invitation")
+}
+
+// TestInvitationProxy_CreateRejectsGlobalSystemRoleWithoutAuthority (#1529)
+// proves the same ceiling for a global invite's SystemRole. RED without the
+// fix: this create would have succeeded.
+func TestInvitationProxy_CreateRejectsGlobalSystemRoleWithoutAuthority(t *testing.T) {
+	upstream, downstream, _ := newUpstreamDownstreamForInvitations(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	nonAdmin, err := upstream.Storage().CreateUser(ctx, &models.User{Username: "inv1529-nonadmin2", Email: "inv1529-nonadmin2@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	expires := now.Add(14 * 24 * time.Hour)
+	inv := &models.ProjectInvitation{
+		Email: "target2@example.com", State: core.InvitationPending, InvitedBy: nonAdmin.ID,
+		SystemRole: "system_admin", ValidationModeAtInvite: core.ValidationModeOpen,
+		ExpiresAt: &expires, CreatedAt: now,
+	}
+	_, err = downstream.Storage().CreateProjectInvitation(ctx, inv)
+	require.Error(t, err, "a non-admin caller must not be able to create a pending global system_admin invitation")
+}
+
+// TestInvitationProxy_CreateAllowsAdminRoleByGenuineAdmin (#1529) is the
+// positive control: a genuine admin creating a genuine admin-role invitation
+// must still succeed end-to-end over the proxy.
+func TestInvitationProxy_CreateAllowsAdminRoleByGenuineAdmin(t *testing.T) {
+	upstream, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	admin, err := upstream.Storage().CreateUser(ctx, &models.User{Username: "inv1529-admin", Email: "inv1529-admin@example.com", IsActive: true})
+	require.NoError(t, err)
+	adminRole, err := upstream.Storage().GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, upstream.Storage().AssignRole(ctx, admin.ID, adminRole.ID, coreStorage.Scope{ProjectID: projectID}))
+
+	inv := buildPendingInvitation(now, projectID, "target3@example.com", "admin", admin.ID)
+	created, err := downstream.Storage().CreateProjectInvitation(ctx, inv)
+	require.NoError(t, err, "a genuine admin creating a genuine admin-role invitation must still succeed")
+	assert.Equal(t, "admin", created.Role)
+}
+
+// TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition
+// (#1529) proves UpdateInvitationProxy applies only the legitimate transition
+// fields (State/AcceptedAt/RevokedAt) from the wire, discarding any
+// caller-supplied identity fields (Email/Role/SystemRole/InvitedBy/ProjectID)
+// — mirroring AR-001's field-narrowing fix for UpdateAccessRequestProxy. RED
+// without the fix: the fetched row below would read the forged SystemRole
+// and Email, not the original ones.
+func TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition(t *testing.T) {
+	_, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "real-invitee@example.com", "viewer", 1))
+	require.NoError(t, err)
+
+	acceptedAt := time.Now()
+	forged := &models.ProjectInvitation{
+		ID:         inv.ID,
+		Email:      "attacker@example.com", // forged identity rewrite attempt
+		Role:       "admin",
+		SystemRole: "super_admin",
+		InvitedBy:  9999,
+		State:      core.InvitationAccepted,
+		AcceptedAt: &acceptedAt,
+	}
+	updated, err := downstream.Storage().UpdateProjectInvitation(ctx, forged)
+	require.NoError(t, err)
+	assert.True(t, updated, "the legitimate transition (pending -> accepted) must still succeed")
+
+	fetched, err := downstream.Storage().GetProjectInvitation(ctx, inv.ID)
+	require.NoError(t, err)
+	assert.Equal(t, core.InvitationAccepted, fetched.State, "the state transition itself must apply")
+	assert.Equal(t, "real-invitee@example.com", fetched.Email, "the original email must survive, not the forged one")
+	assert.Equal(t, "viewer", fetched.Role, "the original role must survive, not the forged admin role")
+	assert.Empty(t, fetched.SystemRole, "no system role was ever set on this invitation; the forged one must not appear")
+	assert.Equal(t, uint(1), fetched.InvitedBy, "the original inviter must survive, not the forged one")
+	assert.Equal(t, projectID, fetched.ProjectID, "the original project must survive")
 }
