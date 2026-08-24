@@ -195,8 +195,13 @@ func TestCreateOIDCBindingProxy_DBError_S33(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-oidc-bindings", body)
 	w := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(w, r)
-	// CreateOIDCBinding fails: not a unique-violation error → 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// G80 raw-storage-bypass fix: the handler now looks up the machine identity
+	// (to derive its real ProjectID for core.CreateOIDCBinding's admin-authority +
+	// scope check) BEFORE attempting the create — on this broken DB, that GetMachineIdentity
+	// lookup itself fails first, wrapped as "not found" (same isNotFoundErr convention
+	// GetMachineIdentityProxy/GetOIDCBindingByIDProxy use elsewhere in this file) → 404,
+	// rather than reaching the create call at all.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestGetMachineByOIDCSubjectProxy_DBError_S33(t *testing.T) {

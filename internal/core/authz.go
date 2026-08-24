@@ -493,6 +493,17 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorI
 	return nil
 }
 
+// RequireMachinePrivilegeCeiling is requireMachinePrivilegeCeiling's exported
+// form, for callers outside internal/core that need the SAME MACH-001 check
+// IssueMachineToken already runs — currently CreateMachineIdentityCredentialProxy
+// (server/http/handlers/machine_identities_proxy.go), which must preserve the
+// raw, caller-supplied TokenHash (needed for a legitimate RemoteStorage relay
+// persisting a hash it already generated locally) and therefore cannot route
+// through IssueMachineToken itself, only reuse its privilege-ceiling check.
+func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorID, machineID uint) error {
+	return c.requireMachinePrivilegeCeiling(ctx, actorID, machineID)
+}
+
 // requireEqualOrGreaterAdminAuthority refuses when targetID holds, at any scope
 // (global OR project-scoped, direct OR group-inherited), a permission actorID
 // does not ALSO effectively hold at that same scope. Unlike the single-scope

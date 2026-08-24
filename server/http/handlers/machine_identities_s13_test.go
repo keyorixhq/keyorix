@@ -571,10 +571,15 @@ func TestCreateMachineIdentityProxy_MissingFields_S13(t *testing.T) {
 
 func TestCreateMachineIdentityProxy_HappyPath_S13(t *testing.T) {
 	h, projID := machineHandlerWithProjectS13(t)
+	// identity_type must be one of core's validMachineTypes (ci|k8s|service|
+	// automation|other|node) now that CreateMachineIdentityProxy routes through
+	// core.CreateMachineIdentity (G80 raw-storage-bypass fix) instead of trusting
+	// the wire body's identity_type/state verbatim — "service_account" was never a
+	// real identity_type, the old unvalidated raw proxy just never checked.
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          "proxy-bot",
 		"project_id":    projID,
-		"identity_type": "service_account",
+		"identity_type": "service",
 		"state":         "active",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-identities",

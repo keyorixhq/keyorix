@@ -10,6 +10,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,6 +21,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // freshCatalogHandlerS21 returns a CatalogHandler backed by a fresh in-memory DB.
@@ -41,6 +47,29 @@ func decodeRemoteRespS21(t *testing.T, w *httptest.ResponseRecorder) remoteAPIRe
 func proxyBodyS21(v interface{}) *bytes.Buffer {
 	b, _ := json.Marshal(v)
 	return bytes.NewBuffer(b)
+}
+
+// withOIDCAdminCtxS21 seeds a system_admin-holding user directly against h's
+// own storage and returns r wrapped with that user's context — needed by every
+// CreateOIDCBindingProxy happy-path call since the G80 raw-storage-bypass fix
+// added core.CreateOIDCBinding's install-wide admin-authority check
+// (requireAuthorityForRole), which an unauthenticated request (actorID 0)
+// cannot satisfy.
+func withOIDCAdminCtxS21(t *testing.T, h *CatalogHandler, r *http.Request) *http.Request {
+	t.Helper()
+	ctx := context.Background()
+	_, err := h.coreService.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "Administrator"})
+	if err != nil {
+		require.Contains(t, err.Error(), "UNIQUE", "unexpected CreateRole error: %v", err) // already exists from a prior call in this test
+	}
+	uname := fmt.Sprintf("s21_oidc_admin_%d", time.Now().UnixNano())
+	user, err := h.coreService.CreateUser(ctx, &core.CreateUserRequest{
+		Username: uname, Email: uname + "@example.com", Password: "TestPassword123!",
+	})
+	require.NoError(t, err)
+	require.NoError(t, h.coreService.AssignUserRoleScoped(ctx, user.Email, "system_admin", core.Scope{}))
+	userCtx := &customMiddleware.UserContext{UserID: user.ID, Username: user.Username, Email: user.Email}
+	return r.WithContext(context.WithValue(r.Context(), customMiddleware.GetUserContextKey(), userCtx))
 }
 
 // ── CreateMachineIdentityProxy ────────────────────────────────────────────────
@@ -352,8 +381,12 @@ func TestCountMachineIdentitiesByClassificationProxy_HappyPath_S21(t *testing.T)
 // TestCountMachineIdentitiesByClassificationProxy_WithData_S21 — with seeded identities → 200 with counts.
 func TestCountMachineIdentitiesByClassificationProxy_WithData_S21(t *testing.T) {
 	h := freshCatalogHandlerS21(t)
-	// Seed some machine identities to get non-empty counts.
-	for i, class := range []string{"public", "confidential", "secret"} {
+	// Seed some machine identities to get non-empty counts. Classification must be
+	// one of core.IsValidClassification's set (public|internal|confidential|
+	// restricted) now that CreateMachineIdentityProxy routes through
+	// core.CreateMachineIdentity (G80 raw-storage-bypass fix) — "secret" was never
+	// a real classification, the old unvalidated raw proxy just never checked.
+	for i, class := range []string{"public", "confidential", "restricted"} {
 		createBody := proxyBodyS21(map[string]interface{}{
 			"name":           "count-bot-s21-" + class,
 			"project_id":     i + 1,
@@ -1143,7 +1176,7 @@ func TestCreateOIDCBindingProxy_HappyPath_S21(t *testing.T) {
 		"subject":             "sub-s21-unique-001",
 		"created_by":          1,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", body)
+	req := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", body))
 	w := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1173,13 +1206,13 @@ func TestCreateOIDCBindingProxy_DuplicateBinding_S21(t *testing.T) {
 		"created_by":          1,
 	}
 	// First creation must succeed.
-	cr2 := httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", proxyBodyS21(bindingBody))
+	cr2 := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", proxyBodyS21(bindingBody)))
 	cw2 := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(cw2, cr2)
 	require.Equal(t, http.StatusOK, cw2.Code)
 
 	// Second creation must return 409.
-	cr3 := httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", proxyBodyS21(bindingBody))
+	cr3 := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", proxyBodyS21(bindingBody)))
 	cw3 := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(cw3, cr3)
 	assert.Equal(t, http.StatusConflict, cw3.Code)
@@ -1303,7 +1336,7 @@ func TestGetOIDCBindingByIDProxy_HappyPath_S21(t *testing.T) {
 		"subject":             "getbind-sub-s21",
 		"created_by":          1,
 	})
-	cr2 := httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", createBind)
+	cr2 := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", createBind))
 	cw2 := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(cw2, cr2)
 	require.Equal(t, http.StatusOK, cw2.Code)
@@ -1373,7 +1406,7 @@ func TestDeleteOIDCBindingProxy_HappyPath_S21(t *testing.T) {
 		"subject":             "delbind-sub-s21",
 		"created_by":          1,
 	})
-	cr2 := httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", createBind)
+	cr2 := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", createBind))
 	cw2 := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(cw2, cr2)
 	require.Equal(t, http.StatusOK, cw2.Code)

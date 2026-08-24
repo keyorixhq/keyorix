@@ -123,11 +123,89 @@ facto superuser) rather than a bug count. Full content, including the fix-patter
 grouping table, is in `docs/g80-tracking-issue-draft.md` (not yet filed — `gh` auth
 blocked, see the handoff doc). The rough manual priority order below is superseded by
 that grouping table but kept for reference since two of its entries (worst blast radius)
-match the two patterns flagged standalone-and-first there too:
-1. CreateMachineIdentityCredentialProxy — privilege escalation
-2. CreateWebAuthnCredentialProxy / DeleteWebAuthnCredentialProxy / SetUserWebAuthnEnabledProxy — account takeover / 2FA bypass
-3. CreateAccessRequestProxy / UpdateAccessRequestProxy — dual-control bypass on restricted secrets
-4. CreateMFAStepUpGrantProxy — MFA gate bypass with zero verification
-5. UpdateUserIfActiveStateMatchesProxy — last-admin lockout + stale-credential bypass
-6. UpdateProjectProxy / RestoreProjectProxy — MFA-policy silent disable / admin-role resurrection
-7. Everything else in the table (24 more), roughly in the order listed above
+match the two patterns flagged standalone-and-first there too. **Re-ranked 2026-08-24**:
+`AssignRoleWithExpiryProxy`'s node-credential exemption (filed as
+[#1552](https://github.com/keyorixhq/keyorix/issues/1552), see "Re-examined" below)
+moves to #1 — a shorter path to global admin than the original #1 (grants a role
+directly to an attacker-chosen user account; CreateMachineIdentityCredentialProxy
+required an admin-tier machine identity to already exist as a target):
+1. **AssignRoleWithExpiryProxy (node-credential branch) — #1552** — arbitrary role
+   grant (including admin-tier) to an arbitrary user, via a bare node credential
+   (zero RBAC permissions by design), bypassing requireGranterHoldsRolePermissions
+   entirely. Not yet fixed.
+2. CreateMachineIdentityCredentialProxy — privilege escalation. HALF-FIXED: closed
+   for a direct caller, still open for a node credential (same #1552 pattern) — see
+   "Fix status" below.
+3. CreateWebAuthnCredentialProxy / DeleteWebAuthnCredentialProxy / SetUserWebAuthnEnabledProxy — account takeover / 2FA bypass
+4. CreateAccessRequestProxy / UpdateAccessRequestProxy — dual-control bypass on restricted secrets
+5. CreateMFAStepUpGrantProxy — MFA gate bypass with zero verification
+6. UpdateUserIfActiveStateMatchesProxy — last-admin lockout + stale-credential bypass
+7. UpdateProjectProxy / RestoreProjectProxy — MFA-policy silent disable / admin-role resurrection
+8. Everything else in the table (24 more), roughly in the order listed above
+
+## Fix status (updated 2026-08-24, machine-identity/OIDC-binding sub-wave)
+
+Authoritative current status lives in `server/http/raw_storage_bypass_guard_test.go`'s
+`knownUnfixedRawStorageBypasses` / `rawStorageBypassAllowlist` maps (CI-enforced —
+`TestNoUnjustifiedRawStorageBypass` fails if an entry stops matching reality). This
+section records what changed in this sub-wave and why, since the map's own per-entry
+comments don't carry cross-references to this doc's original investigation rows above.
+
+- **CreateMachineIdentityProxy** — FIXED (moved to `rawStorageBypassAllowlist`). Now
+  routes through `core.CreateMachineIdentity`: forces `State=MachineActive`, validates
+  `IdentityType`/`Classification`, writes an audit event. No node/direct-caller split
+  needed — `core.CreateMachineIdentity` has no actor-authority check for either.
+- **CreateMachineIdentityCredentialProxy** ("MOST SEVERE FINDING" above) — **HALF-FIXED,
+  still in `knownUnfixedRawStorageBypasses`, NOT closed.** A direct (non-node-credential)
+  `system.write` caller is now denied via `core.RequireMachinePrivilegeCeiling`
+  (MACH-001) when the target machine holds an admin-tier role. A **node-credential**
+  caller still reaches the raw storage call unconditionally — `isNodeCredentialRequest(r)`
+  routes around the new check on the theory that a genuine relay already ran it
+  downstream, an assumption with no wire-level verification (see "Re-examined" below,
+  and [#1552](https://github.com/keyorixhq/keyorix/issues/1552)). The original finding's
+  worst-case (forge a credential for an admin-tier machine identity) is still reachable
+  by anyone holding a bare node credential.
+- **CreateOIDCBindingProxy** — **HALF-FIXED, still in `knownUnfixedRawStorageBypasses`,
+  NOT closed.** Same shape as above: a direct caller now routes through
+  `core.CreateOIDCBinding`'s `requireAuthorityForRole(..., "system_admin")` check; a
+  node-credential caller still reaches the raw storage call unconditionally, on the
+  same unverified relay-trust assumption tracked in
+  [#1552](https://github.com/keyorixhq/keyorix/issues/1552).
+- **RevokeMachineIdentityCredentialProxy** — still fully open, for both caller types.
+  Deferred and filed as **[#1551](https://github.com/keyorixhq/keyorix/issues/1551)**:
+  unlike the fixes above, its wire contract (`POST .../revoke` with only a bare
+  credential ID) carries no project/scope parameter at all, so closing the
+  `machineInProject` gap needs a `RemoteStorage` client-side wire change first, not a
+  server-only fix.
+- **DeleteOIDCBindingProxy** — still open, not part of this sub-wave.
+
+### Re-examined: is the node-credential exemption itself sound?
+
+The `isNodeCredentialRequest(r)` carve-out used above (and originally established by
+`AssignRoleWithExpiryProxy`, `server/http/handlers/rbac_role_grants_proxy.go`) rests on
+an assumption stated in that file's own package doc: a node relay is "trusted... for the
+one check that can't distinguish 'the real acting human already passed this' from 'the
+node itself holds no permissions' without a wire-level actor-identity field that doesn't
+exist yet." That field does not exist. Nothing on the wire distinguishes a genuine relay
+of an already-checked downstream decision from a bare node credential calling the route
+directly with attacker-chosen parameters — the trust is asserted, not verified.
+
+For `AssignRoleWithExpiryProxy` specifically, this means: a node credential — deliberately
+designed to carry zero RBAC permissions of its own (ADR-030, `MachineTypeNode`'s doc
+comment) and the single most widely distributed credential class in a deployment
+(ADR-085) — can single-handedly grant ANY role, including admin-tier, to ANY user, in
+ANY scope, via the raw `storage.AssignRoleWithExpiry` call, entirely bypassing
+`requireGranterHoldsRolePermissions`. This was **not** re-derived when `actorIsMachine`
+awareness was added to that check (`internal/core/authz.go:588`) — the node branch skips
+`core.AssignUserRoleWithExpiry` (and therefore that check) entirely, going straight to
+raw storage. This reads as a genuine, uncatalogued instance of the exact `#1542` shape
+this campaign has been fixing, not a reviewed-safe design difference — and it is broader
+in scope than #1545 (`AssignPermissionToRole`'s self-permission-bundling check,
+`BulkDeleteSecrets`' per-secret ACL check), which covers different call sites entirely.
+**Not fixed here** — reported per explicit instruction. Filed as
+[**#1552**](https://github.com/keyorixhq/keyorix/issues/1552), Tier 1, ranked #1 above
+(shorter path to global admin than CreateMachineIdentityCredentialProxy: grants a role
+directly to an attacker-chosen user account, no pre-existing admin-tier machine
+required). This is exactly ADR-085's own still-open "harder question" (whose authority
+a relayed action is actually exercised under), materialized as a concrete, reachable
+finding rather than a design question.

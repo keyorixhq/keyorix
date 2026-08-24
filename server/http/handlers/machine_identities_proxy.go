@@ -83,6 +83,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -288,6 +289,20 @@ func newRoleProxyWire(r *models.Role) roleProxyWire {
 // --- Machine identities ---
 
 // CreateMachineIdentityProxy handles POST /api/v1/system/machine-identities.
+//
+// #1542-shape guard (G80 raw-storage-bypass triage): core.CreateMachineIdentity
+// validates IdentityType/Classification and unconditionally forces
+// State=MachineActive (a machine identity is never born in any other state) —
+// this raw proxy used to persist whatever State/IdentityType/Classification the
+// caller supplied verbatim, letting a caller mint an identity already revoked (or
+// any other state) with no validation. Fixed by routing through
+// core.CreateMachineIdentity instead of the raw storage call: State/ID/timestamps
+// are no longer caller-controlled (core.CreateMachineIdentity doesn't accept a
+// State parameter at all), and IdentityType/Classification are validated. No
+// wire-protocol change — every input core.CreateMachineIdentity needs
+// (name/project_id/identity_type/description/classification/created_by) was
+// already on the wire; only the fields a legitimate relay never had a reason to
+// set (State, arbitrary ID/timestamps) are now ignored rather than trusted.
 func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -298,10 +313,17 @@ func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "name and project_id are required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateMachineIdentity(r.Context(), body.toModel())
+	created, err := h.coreService.CreateMachineIdentity(r.Context(), body.ProjectID, body.Name, body.IdentityType, body.Description, body.Classification, body.CreatedBy)
 	if err != nil {
-		log.Printf("machine-identities proxy: create failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		msg := err.Error()
+		status := http.StatusInternalServerError
+		if strings.Contains(msg, "invalid identity_type") || strings.Contains(msg, "classification must be") || strings.Contains(msg, "required") {
+			status = http.StatusBadRequest
+		} else {
+			log.Printf("machine-identities proxy: create failed: %v", err)
+			msg = clientSafe(err)
+		}
+		writeRemoteAPIError(w, status, "STORAGE_ERROR", msg)
 		return
 	}
 	writeRemoteAPISuccess(w, newMachineIdentityProxyWire(created))
@@ -475,6 +497,36 @@ func (h *CatalogHandler) CountMachineIdentitiesByClassificationProxy(w http.Resp
 // --- Machine-token credentials ---
 
 // CreateMachineIdentityCredentialProxy handles POST /api/v1/system/machine-credentials.
+//
+// #1542-shape guard (G80 raw-storage-bypass triage, docs/g80-raw-storage-bypass-
+// triage.md — "MOST SEVERE FINDING"): core.IssueMachineToken enforces
+// requireMachinePrivilegeCeiling (MACH-001) before minting a credential — a
+// non-global-admin actor cannot mint one for a machine identity that itself holds
+// an admin-tier role, since the credential inherits the machine's roles (the same
+// escalation-by-proxy contract role grants and impersonation already enforce).
+// This raw proxy accepted an attacker-chosen TokenHash for ANY MachineIdentityID
+// with no such check — forge a working credential for an admin-tier machine and
+// authenticate as it. Fixed by reusing core.RequireMachinePrivilegeCeiling (the
+// exported form of the SAME check IssueMachineToken runs) before the storage
+// write, WITHOUT routing through IssueMachineToken itself — that would generate
+// its own random token via crypto/rand, breaking the legitimate relay case this
+// route exists for (a downstream node's own core.IssueMachineToken already
+// generated the real token locally and relays only its hash to persist here).
+// No RemoteStorage wire-protocol change: the check needs only (actorID,
+// MachineIdentityID), and MachineIdentityID was already on the wire.
+//
+// isNodeCredentialRequest(r) branch (found via the RealServer relay test that
+// exercises a genuine downstream node, not just a direct system.write caller):
+// a node credential always resolves actorID(r)==0 (catalog.go's actorID has no
+// separate "this is a trusted relay" signal), and requireMachinePrivilegeCeiling
+// denies actorID==0 outright whenever the target holds an admin-tier role — so
+// applying the check unconditionally would ALSO deny every legitimate relay of
+// an admin-authorized credential issuance, not just a direct escalation attempt.
+// Mirrors AssignRoleWithExpiryProxy's precedent (rbac_role_grants_proxy.go): a
+// genuine node relay is trusted to have already run this exact ceiling locally
+// (the downstream's own core.IssueMachineToken call already checked it against
+// the real acting human before relaying); only a direct, non-node caller reaching
+// this route via the system.write permission arm gets the check applied here.
 func (h *CatalogHandler) CreateMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityCredentialProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -484,6 +536,17 @@ func (h *CatalogHandler) CreateMachineIdentityCredentialProxy(w http.ResponseWri
 	if body.MachineIdentityID == 0 || body.TokenHash == "" {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "machine_identity_id and token_hash are required")
 		return
+	}
+	if !isNodeCredentialRequest(r) {
+		if err := h.coreService.RequireMachinePrivilegeCeiling(r.Context(), actorID(r), body.MachineIdentityID); err != nil {
+			if errors.Is(err, core.ErrMachinePrivilegeCeilingDenied) {
+				writeRemoteAPIError(w, http.StatusForbidden, "PRIVILEGE_CEILING_EXCEEDED", clientSafe(err))
+				return
+			}
+			log.Printf("machine-credentials proxy: privilege ceiling check failed: %v", err)
+			writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+			return
+		}
 	}
 	created, err := h.coreService.Storage().CreateMachineIdentityCredential(r.Context(), body.toModel())
 	if err != nil {
@@ -855,6 +918,32 @@ func (h *CatalogHandler) GetMachineRolesProxy(w http.ResponseWriter, r *http.Req
 // --- OIDC bindings ---
 
 // CreateOIDCBindingProxy handles POST /api/v1/system/machine-oidc-bindings.
+//
+// #1542-shape guard (G80 raw-storage-bypass triage): core.CreateOIDCBinding
+// requires GLOBAL admin authority (requireAuthorityForRole(..., "system_admin"),
+// #127) before creating a binding — (issuer, subject) is a global namespace (the
+// token-verify path resolves it with no project scoping), so claiming a slice of
+// it needs more than project-scoped roles.assign, which is all admin-tier-or-
+// system.write (this route's own gate) implies. This raw proxy had no such
+// check. Fixed by routing through core.CreateOIDCBinding instead of the raw
+// storage call for a DIRECT caller. The wire body carries no project_id (only
+// MachineIdentityID), so the project is derived from the machine identity's own
+// real ProjectID (never a caller-asserted value the check could be fooled by)
+// rather than requiring a wire-protocol change.
+//
+// isNodeCredentialRequest(r) branch (found via the RealServer relay test that
+// exercises a genuine downstream node, not just a direct system.write caller):
+// a node credential always resolves actorID(r)==0, and requireAuthorityForRole
+// explicitly refuses actorID==0 ("a system/unauthenticated path cannot grant an
+// admin role") — applying the check unconditionally would ALSO deny every
+// legitimate relay of an admin-authorized binding creation, not just a direct
+// escalation attempt. Mirrors AssignRoleWithExpiryProxy's precedent
+// (rbac_role_grants_proxy.go): a genuine node relay is trusted to have already
+// run this exact ceiling locally (the downstream's own core.CreateOIDCBinding
+// call already checked it against the real acting human before relaying), so it
+// still goes through the raw storage call; only a direct, non-node caller
+// reaching this route via the system.write permission arm gets routed through
+// core.CreateOIDCBinding here.
 func (h *CatalogHandler) CreateOIDCBindingProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityOIDCBindingProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -865,14 +954,34 @@ func (h *CatalogHandler) CreateOIDCBindingProxy(w http.ResponseWriter, r *http.R
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "machine_identity_id, issuer, and subject are required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateOIDCBinding(r.Context(), body.toModel())
-	if err != nil {
-		if isUniqueViolationErr(err) {
-			writeRemoteAPIError(w, http.StatusConflict, "DUPLICATE_BINDING", "a binding for this issuer/subject already exists")
+	var created *models.MachineIdentityOIDCBinding
+	var err error
+	if isNodeCredentialRequest(r) {
+		created, err = h.coreService.Storage().CreateOIDCBinding(r.Context(), body.toModel())
+	} else {
+		var machine *models.MachineIdentity
+		machine, err = h.coreService.Storage().GetMachineIdentity(r.Context(), body.MachineIdentityID)
+		if err != nil {
+			if isNotFoundErr(err) {
+				writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "machine identity not found")
+				return
+			}
+			log.Printf("machine-oidc-bindings proxy: create lookup failed: %v", err)
+			writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 			return
 		}
-		log.Printf("machine-oidc-bindings proxy: create failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		created, err = h.coreService.CreateOIDCBinding(r.Context(), machine.ProjectID, body.MachineIdentityID, body.Issuer, body.Subject, actorID(r))
+	}
+	if err != nil {
+		switch {
+		case isUniqueViolationErr(err):
+			writeRemoteAPIError(w, http.StatusConflict, "DUPLICATE_BINDING", "a binding for this issuer/subject already exists")
+		case strings.Contains(err.Error(), "admin authority is required"):
+			writeRemoteAPIError(w, http.StatusForbidden, "ADMIN_AUTHORITY_REQUIRED", clientSafe(err))
+		default:
+			log.Printf("machine-oidc-bindings proxy: create failed: %v", err)
+			writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		}
 		return
 	}
 	writeRemoteAPISuccess(w, newMachineIdentityOIDCBindingProxyWire(created))

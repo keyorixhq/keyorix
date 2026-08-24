@@ -304,12 +304,16 @@ func TestCreateOIDCBindingProxy_Success_S20(t *testing.T) {
 		"issuer":              "https://accounts.example.com",
 		"subject":             "user@example.com",
 	})
-	req := httptest.NewRequest(http.MethodPost,
+	req := withUserCtx(httptest.NewRequest(http.MethodPost,
 		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body))
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(w, req)
+	// G80 raw-storage-bypass fix: CreateOIDCBindingProxy now requires
+	// install-wide admin authority (core.CreateOIDCBinding's requireAuthorityForRole
+	// check) — withUserCtx's UserID=1 matches freshCoreS20WithAdmin's system_admin
+	// grant, so the actor holds it.
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp remoteAPIResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
@@ -332,19 +336,21 @@ func TestCreateOIDCBindingProxy_Duplicate_S20(t *testing.T) {
 		"subject":             "dup@example.com",
 	})
 
-	// First creation — should succeed.
-	req := httptest.NewRequest(http.MethodPost,
+	// First creation — should succeed. G80 raw-storage-bypass fix: requires
+	// install-wide admin authority — withUserCtx's UserID=1 matches
+	// freshCoreS20WithAdmin's system_admin grant.
+	req := withUserCtx(httptest.NewRequest(http.MethodPost,
 		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body))
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Second creation — same issuer/subject → unique-violation → 409.
-	req2 := httptest.NewRequest(http.MethodPost,
+	req2 := withUserCtx(httptest.NewRequest(http.MethodPost,
 		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body))
+		bytes.NewReader(body)))
 	req2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(w2, req2)

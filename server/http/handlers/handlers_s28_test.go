@@ -226,11 +226,16 @@ func TestCreateMachineIdentityProxy_HappyPath_S28(t *testing.T) {
 	cs := freshCoreS28(t)
 	h := NewCatalogHandler(cs)
 
+	// identity_type must be one of core's validMachineTypes (ci|k8s|service|
+	// automation|other|node) now that CreateMachineIdentityProxy routes through
+	// core.CreateMachineIdentity (G80 raw-storage-bypass fix) instead of trusting
+	// the wire body's identity_type/state verbatim — "workload" was never a real
+	// identity_type, the old unvalidated raw proxy just never checked.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-identities",
 		jsonBodyS28(t, map[string]interface{}{
 			"name":          "test-machine-s28",
 			"project_id":    1,
-			"identity_type": "workload",
+			"identity_type": "service",
 			"state":         "active",
 		}))
 	w := httptest.NewRecorder()
@@ -1270,20 +1275,21 @@ func TestCreateOIDCBindingProxy_MissingFields_S28(t *testing.T) {
 // a binding for it.
 func TestCreateOIDCBindingProxy_HappyPath_S28(t *testing.T) {
 	t.Parallel()
-	cs := freshCoreS28(t)
-	ctx := context.Background()
-	mi, err := cs.Storage().CreateMachineIdentity(ctx, &models.MachineIdentity{
-		Name: "s28-oidc-create-machine", ProjectID: 1, IdentityType: "workload", State: "active",
-	})
-	require.NoError(t, err)
+	// G80 raw-storage-bypass fix: CreateOIDCBindingProxy now requires install-wide
+	// admin authority (core.CreateOIDCBinding's requireAuthorityForRole check) —
+	// freshCoreS28WithAdmin + withUserCtx (UserID=1) matches the same pattern
+	// TestCreateOIDCBindingProxy_Success_S20 uses.
+	cs, db := freshCoreS28WithAdmin(t)
+	mi := &models.MachineIdentity{Name: "s28-oidc-create-machine", ProjectID: 1, IdentityType: "workload", State: "active"}
+	require.NoError(t, db.Create(mi).Error)
 
 	h := NewCatalogHandler(cs)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-oidc-bindings",
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-oidc-bindings",
 		jsonBodyS28(t, map[string]interface{}{
 			"machine_identity_id": mi.ID,
 			"issuer":              "https://iss.example.com",
 			"subject":             "sub-s28-create",
-		}))
+		})))
 	w := httptest.NewRecorder()
 	h.CreateOIDCBindingProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
