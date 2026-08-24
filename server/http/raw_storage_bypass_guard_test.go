@@ -352,8 +352,21 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation. " +
 		"Deferred (not a wire-compatible fix like its siblings): the wire contract carries no project/scope " +
 		"parameter at all, so closing it needs a RemoteStorage client-side change first -- filed as #1551.",
-	"DeleteOIDCBindingProxy": "REAL, human-reachable: deletes any binding ID with no ownership/project-scope " +
-		"check and no audit event, versus core.DeleteOIDCBinding's machineInProject + binding-ownership checks.",
+	// HALF-FIXED 2026-08-24 -- do NOT move to rawStorageBypassAllowlist: CLOSED for
+	// a direct, non-node-credential caller (routes through core.DeleteOIDCBinding,
+	// which resolves the binding's real owning machine/project and runs the
+	// machineInProject + binding-ownership checks, plus writes the
+	// machine_identity.oidc_unbound audit event -- see
+	// TestDeleteOIDCBindingProxy_WritesAuditEvent_S21). STILL OPEN for a
+	// node-credential caller: isNodeCredentialRequest(r) routes around all of that
+	// to the raw storage.DeleteOIDCBinding call, the same unverified relay-trust
+	// assumption CreateOIDCBindingProxy/CreateMachineIdentityCredentialProxy above
+	// make. A bare node credential can still delete any binding ID with no
+	// ownership/project-scope check and no audit event.
+	"DeleteOIDCBindingProxy": "HALF-FIXED: closed for a direct system.write-only human/machine caller " +
+		"(routes through core.DeleteOIDCBinding's machineInProject + binding-ownership checks and its audit " +
+		"event); STILL OPEN for a node-credential caller (isNodeCredentialRequest routes around the check to " +
+		"the raw storage call -- see the HALF-FIXED comment immediately above this entry).",
 	// HALF-FIXED 2026-08-24 -- do NOT move to rawStorageBypassAllowlist: CLOSED
 	// for a direct, non-node-credential caller (routes through
 	// core.RequireMachinePrivilegeCeiling, MACH-001, now denying a system.write-only

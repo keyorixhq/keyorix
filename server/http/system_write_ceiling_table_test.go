@@ -326,15 +326,16 @@ func TestSystemWriteCeiling_CreateOIDCBindingProxy_RequiresInstallWideAdminAutho
 // TestSystemWriteCeiling_DeleteOIDCBindingProxy_VerifiesOwnership is the table's
 // DeleteOIDCBindingProxy row. Ceiling: core.DeleteOIDCBinding verifies the binding
 // actually belongs to the named machine (machineInProject + a MachineIdentityID
-// match) before deleting. The raw proxy deletes any binding ID unconditionally.
-// This row is necessarily a narrower assertion than "denied outright" — deleting
-// a binding you're relaying on behalf of IS legitimate for the relay's own
-// purpose; what's missing is verifying it's the RIGHT binding, which this table
-// can only observe indirectly (the binding disappears with zero ownership check
-// performed). RED today in the sense that the check never runs at all, though the
-// single-binding-exists-and-belongs-to-itself case can't distinguish "checked and
-// passed" from "never checked" — see the fix commit for the real regression test
-// once core.DeleteOIDCBinding is wired through.
+// match) before deleting, and writes the machine_identity.oidc_unbound audit
+// event. FIXED for a direct, non-node-credential caller (see the
+// TestDeleteOIDCBindingProxy_WritesAuditEvent_S21 regression test in
+// server/http/handlers, which pins the audit trail this row's own status-code
+// assertion can't observe). This row is necessarily a narrower assertion than
+// "denied outright" — deleting a binding you're relaying on behalf of IS
+// legitimate; the fix routes through core.DeleteOIDCBinding to resolve the
+// real owning machine/project rather than trusting a caller-supplied one (this
+// proxy takes no project parameter at all, so there is no mismatched-project
+// fixture to assert a 403/404 against here).
 func TestSystemWriteCeiling_DeleteOIDCBindingProxy_VerifiesOwnership(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
 	status, body := doCeilingRequest(t, f, http.MethodDelete, fmt.Sprintf("/api/v1/system/machine-oidc-bindings/%d", f.bindingID), nil)
@@ -430,5 +431,22 @@ func TestSystemWriteCeiling_CreateOIDCBindingProxy_NodeCredential_StillBypassesA
 		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still creates an "+
 			"OIDC binding with no install-wide admin-authority check — isNodeCredentialRequest routes it around "+
 			"requireAuthorityForRole entirely, on an unverified relay-trust assumption. If this ever goes non-200, "+
+			"update this assertion — that would mean the gap closed, which is the goal, not a regression.")
+}
+
+// TestSystemWriteCeiling_DeleteOIDCBindingProxy_NodeCredential_StillBypassesOwnershipCheck
+// pins the KNOWN, OPEN gap: unlike the direct-caller row above (now routed
+// through core.DeleteOIDCBinding), a node credential still reaches the raw
+// storage.DeleteOIDCBinding call unconditionally (isNodeCredentialRequest
+// branch), so it can still delete any binding ID with no ownership/project
+// resolution and no audit event at all.
+func TestSystemWriteCeiling_DeleteOIDCBindingProxy_NodeCredential_StillBypassesOwnershipCheck(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodDelete, fmt.Sprintf("/api/v1/system/machine-oidc-bindings/%d", f.bindingID), nil)
+	t.Logf("DeleteOIDCBindingProxy(node credential): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusOK, status,
+		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still deletes an "+
+			"OIDC binding with no ownership check and no audit event — isNodeCredentialRequest routes it around "+
+			"core.DeleteOIDCBinding entirely, on an unverified relay-trust assumption. If this ever goes non-200, "+
 			"update this assertion — that would mean the gap closed, which is the goal, not a regression.")
 }

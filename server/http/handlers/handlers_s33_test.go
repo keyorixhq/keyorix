@@ -223,14 +223,20 @@ func TestListOIDCBindingsProxy_DBError_S33(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// G80: GetOIDCBindingByID used to wrap EVERY First() error (not just a real
+// gorm.ErrRecordNotFound) as "not found" -> 404, the same pre-existing bug
+// TestGetSoDPolicyProxy_DBError_S31 documented for local_sod.go. Surfaced by
+// DeleteOIDCBindingProxy's own G80 fix (it now reads the binding before
+// deleting), so GetOIDCBindingByID was fixed to distinguish a genuine
+// not-found from any other storage error -- a broken DB now correctly
+// surfaces as 500 here too.
 func TestGetOIDCBindingByIDProxy_DBError_S33(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS33(t))
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/machine-oidc-bindings/1", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetOIDCBindingByIDProxy(w, r)
-	// GetOIDCBindingByID wraps First() errors as "not found" → 404
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestDeleteOIDCBindingProxy_DBError_S33(t *testing.T) {

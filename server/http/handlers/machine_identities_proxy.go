@@ -1053,13 +1053,62 @@ func (h *CatalogHandler) GetOIDCBindingByIDProxy(w http.ResponseWriter, r *http.
 }
 
 // DeleteOIDCBindingProxy handles DELETE /api/v1/system/machine-oidc-bindings/{id}.
+//
+// G80 raw-storage-bypass triage: the raw storage.DeleteOIDCBinding call this
+// used to make unconditionally skips core.DeleteOIDCBinding's own
+// machineInProject + binding-ownership resolution (only a defense-in-depth
+// double-check there, but still real: it confirms the binding's machine
+// actually resolves) and its audit trail (logMachineEvent
+// "machine_identity.oidc_unbound") entirely — an unbind via this proxy left
+// no record a human-facing delete always leaves. Fixed the same way
+// CreateOIDCBindingProxy above was: for a DIRECT (non-node) caller, derive
+// the binding's real (project, machine) from storage and route through
+// core.DeleteOIDCBinding so the ownership check and audit event both run.
+// isNodeCredentialRequest(r) keeps the raw storage call for a genuine node
+// relay, mirroring Create's precedent — the downstream's own
+// core.DeleteOIDCBinding call already ran this exact check locally before
+// relaying, and actorID(r)==0 for a node credential would make the audit
+// event's actor attribution meaningless anyway.
 func (h *CatalogHandler) DeleteOIDCBindingProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid binding id")
 		return
 	}
-	if err := h.coreService.Storage().DeleteOIDCBinding(r.Context(), uint(id)); err != nil {
+	if isNodeCredentialRequest(r) {
+		if err := h.coreService.Storage().DeleteOIDCBinding(r.Context(), uint(id)); err != nil {
+			if isNotFoundErr(err) {
+				writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "oidc binding not found")
+				return
+			}
+			log.Printf("machine-oidc-bindings proxy: delete failed: %v", err)
+			writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+			return
+		}
+		writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
+		return
+	}
+	binding, err := h.coreService.Storage().GetOIDCBindingByID(r.Context(), uint(id))
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "oidc binding not found")
+			return
+		}
+		log.Printf("machine-oidc-bindings proxy: delete lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	machine, err := h.coreService.Storage().GetMachineIdentity(r.Context(), binding.MachineIdentityID)
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "oidc binding not found")
+			return
+		}
+		log.Printf("machine-oidc-bindings proxy: delete lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	if err := h.coreService.DeleteOIDCBinding(r.Context(), machine.ProjectID, binding.MachineIdentityID, uint(id), actorID(r)); err != nil {
 		if isNotFoundErr(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "oidc binding not found")
 			return

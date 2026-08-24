@@ -25,6 +25,7 @@ import (
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -1420,6 +1421,59 @@ func TestDeleteOIDCBindingProxy_HappyPath_S21(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	resp := decodeRemoteRespS21(t, w)
 	assert.True(t, resp.Success)
+}
+
+// G80 raw-storage-bypass fix: DeleteOIDCBindingProxy previously called
+// storage.DeleteOIDCBinding directly for every caller, writing no audit
+// trail at all -- unbinding a federated workload identity via this proxy
+// left no record. Now that a direct (non-node) caller routes through
+// core.DeleteOIDCBinding, the delete is audited exactly like the
+// human-facing route (server/http/handlers/machine_identities.go's
+// DeleteOIDCBinding).
+func TestDeleteOIDCBindingProxy_WritesAuditEvent_S21(t *testing.T) {
+	h := freshCatalogHandlerS21(t)
+	createMI := proxyBodyS21(map[string]interface{}{
+		"name": "audit-mi-s21", "project_id": 81, "state": "active",
+	})
+	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cw := httptest.NewRecorder()
+	h.CreateMachineIdentityProxy(cw, cr)
+	require.Equal(t, http.StatusOK, cw.Code)
+	var miResp remoteAPIResponse
+	require.NoError(t, json.NewDecoder(cw.Body).Decode(&miResp))
+	machineID := uint(miResp.Data.(map[string]interface{})["id"].(float64))
+
+	createBind := proxyBodyS21(map[string]interface{}{
+		"machine_identity_id": machineID,
+		"issuer":              "https://audit-issuer.example.com",
+		"subject":             "audit-sub-s21",
+		"created_by":          1,
+	})
+	cr2 := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-oidc-bindings", createBind))
+	cw2 := httptest.NewRecorder()
+	h.CreateOIDCBindingProxy(cw2, cr2)
+	require.Equal(t, http.StatusOK, cw2.Code)
+	var bindResp remoteAPIResponse
+	require.NoError(t, json.NewDecoder(cw2.Body).Decode(&bindResp))
+	bindingID := uint(bindResp.Data.(map[string]interface{})["id"].(float64))
+
+	req := withChiParam(
+		httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/system/machine-oidc-bindings/%d", bindingID), nil),
+		"id", fmt.Sprintf("%d", bindingID),
+	)
+	w := httptest.NewRecorder()
+	h.DeleteOIDCBindingProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	action := "machine_identity.oidc_unbound"
+	events, count, err := h.coreService.Storage().GetAuditLogs(context.Background(), &storage.AuditFilter{
+		Action: &action, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count, "deleting the binding via the proxy must write exactly one audit event")
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].ProjectID)
+	assert.EqualValues(t, 81, *events[0].ProjectID, "the audit event carries the binding's owning project, matching logMachineEvent's convention")
 }
 
 // ── Error helper functions (package-level, used only by proxy handlers) ────────
