@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -91,7 +92,23 @@ func (c *KeyorixCore) validateSoDReferenceIsLiveViolation(ctx context.Context, c
 // own. For category "sod", reference should be the matching SoDViolation's
 // Reference field (as returned by GET /sod/violations) so the exception, once
 // approved, suppresses that one violation specifically.
-func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, title, category, reference, justification string, expiresAt time.Time) (*models.RiskException, error) {
+//
+// #1529: actorIsMachine mirrors ApproveRiskException's own reasoning exactly —
+// "governed acceptance of a control gap" only means something if a HUMAN took
+// responsibility for proposing it; a machine credential (including a bare node
+// credential, zero RBAC permissions by design) creating the row with
+// CreatedBy==0 would also silently weaken ApproveRiskException's own
+// self-approval check (actorID != e.CreatedBy trivially passes for ANY real
+// approver against CreatedBy==0). CreateRiskException itself was missing this
+// check even though the sibling Approve function already had it — an
+// asymmetry, not a deliberate design (dual control's whole premise is two
+// humans, not "one human plus whatever created the row").
+func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, actorIsMachine bool, title, category, reference, justification string, expiresAt time.Time) (*models.RiskException, error) {
+	if actorIsMachine {
+		c.writeAuditEventFailed(ctx, EventRiskExceptionCreated, nil, nil, "",
+			"risk exception create DENIED: a machine-authenticated actor cannot propose a governed risk acceptance")
+		return nil, fmt.Errorf("only a human principal may create a risk exception")
+	}
 	if title == "" || justification == "" {
 		return nil, fmt.Errorf("title and justification are required")
 	}
@@ -183,10 +200,23 @@ func (c *KeyorixCore) CountExpiredRiskExceptions(ctx context.Context) (int, erro
 }
 
 // RevokeRiskException withdraws an exception before its expiry. actorID is the admin.
+//
+// #1529: actorID used to be threaded through ONLY for attribution (RevokedBy),
+// with no authority check at all -- unlike ApproveRiskException's own careful
+// dual-control gate, revocation got no equivalent thought. Mirrors
+// LiftLegalHold's creator-or-admin precedent exactly: only the principal who
+// created the exception, or a global-admin-tier principal, may revoke it. A
+// denied attempt is itself audited.
 func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint) error {
 	e, err := c.storage.GetRiskException(ctx, id)
 	if err != nil {
 		return err
+	}
+	if actorID != e.CreatedBy && c.isGlobalAdminRoleName(ctx, actorID) == "" {
+		c.writeAuditEventFailed(ctx, EventRiskExceptionRevoked, actorPtr(actorID), nil, "",
+			fmt.Sprintf("risk exception %d revoke DENIED: actor %d is neither the creator (%d) nor an admin-tier principal", id, actorID, e.CreatedBy))
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only the creating admin or an admin-tier principal may revoke this risk exception")
 	}
 	if e.Revoked {
 		return fmt.Errorf("risk exception %d is already revoked", id)

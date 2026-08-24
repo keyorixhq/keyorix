@@ -1429,8 +1429,13 @@ func TestListMachineIdentities_HappyPath_S26(t *testing.T) {
 
 // TestCreateSoDPolicyProxy_HappyPath_S26 verifies that creating a SoD policy
 // returns 200 (proxy path).
+//
+// #1529: CreateSoDPolicy now requires admin-tier authority, so this needs
+// freshCoreS26WithAdmin (seeds UserID=1 as admin) + withUserCtx (attaches
+// UserID=1 to the request context) instead of the plain freshCoreS26 +
+// bare-context request this test used before.
 func TestCreateSoDPolicyProxy_HappyPath_S26(t *testing.T) {
-	cs := freshCoreS26(t)
+	cs, _ := freshCoreS26WithAdmin(t)
 	h := NewCatalogHandler(cs)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -1438,8 +1443,8 @@ func TestCreateSoDPolicyProxy_HappyPath_S26(t *testing.T) {
 		"permission_a": "secrets.write",
 		"permission_b": "roles.assign",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/sod-policies",
-		bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/sod-policies",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(w, req)

@@ -36,7 +36,7 @@ func TestCreateRiskException_ValidatesAndAudits(t *testing.T) {
 	})).Return(nil)
 
 	c := riskCore(store, now)
-	_, err := c.CreateRiskException(context.Background(), 9, "accept dormant access for migration", "mfa", "alice@example.com", "temporary during cutover", now.AddDate(0, 0, 30))
+	_, err := c.CreateRiskException(context.Background(), 9, false, "accept dormant access for migration", "mfa", "alice@example.com", "temporary during cutover", now.AddDate(0, 0, 30))
 	require.NoError(t, err)
 	assert.Equal(t, EventRiskExceptionCreated, audited)
 }
@@ -45,20 +45,45 @@ func TestCreateRiskException_Rejects(t *testing.T) {
 	now := time.Now()
 	c := riskCore(new(MockStorage), now)
 
-	_, err := c.CreateRiskException(context.Background(), 1, "", "sod", "", "", now.Add(time.Hour))
+	_, err := c.CreateRiskException(context.Background(), 1, false, "", "sod", "", "", now.Add(time.Hour))
 	require.Error(t, err, "title + justification required")
 
-	_, err = c.CreateRiskException(context.Background(), 1, "t", "bogus", "", "j", now.Add(time.Hour))
+	_, err = c.CreateRiskException(context.Background(), 1, false, "t", "bogus", "", "j", now.Add(time.Hour))
 	require.Error(t, err, "invalid category")
 
-	_, err = c.CreateRiskException(context.Background(), 1, "t", "sod", "", "j", now.Add(-time.Hour))
+	_, err = c.CreateRiskException(context.Background(), 1, false, "t", "sod", "", "j", now.Add(-time.Hour))
 	require.Error(t, err, "expiry must be in the future")
 
 	// Must sunset: an expiry beyond the max duration is refused (no effectively-forever
 	// waiver).
-	_, err = c.CreateRiskException(context.Background(), 1, "t", "sod", "", "j", now.AddDate(5, 0, 0))
+	_, err = c.CreateRiskException(context.Background(), 1, false, "t", "sod", "", "j", now.AddDate(5, 0, 0))
 	require.Error(t, err, "expiry beyond the cap is rejected")
 	require.Contains(t, err.Error(), "must be within")
+}
+
+// #1529: a machine-authenticated actor (e.g. a node credential proxying a
+// call from a downstream server, or a CI machine identity) can never propose
+// a governed risk acceptance -- only a human principal may. The denial is
+// audited (Success=false) via the SAME EventRiskExceptionCreated constant a
+// successful create uses, matching this file's own creator-or-admin denial
+// convention for Revoke/Approve below.
+func TestCreateRiskException_DeniesMachineActor(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	var audited string
+	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
+		if ev.EventType == EventRiskExceptionCreated && ev.Success != nil && !*ev.Success {
+			audited = ev.EventType
+			return true
+		}
+		return false
+	})).Return(nil)
+
+	c := riskCore(store, now)
+	_, err := c.CreateRiskException(context.Background(), 9, true, "accept dormant access", "mfa", "alice@example.com", "justification", now.Add(time.Hour))
+	require.Error(t, err)
+	assert.Equal(t, EventRiskExceptionCreated, audited, "the denial must be audited")
+	store.AssertNotCalled(t, "CreateRiskException", mock.Anything, mock.Anything)
 }
 
 func TestListRiskExceptions_ComputesStatusAndFilters(t *testing.T) {
@@ -83,7 +108,10 @@ func TestListRiskExceptions_ComputesStatusAndFilters(t *testing.T) {
 func TestRevokeRiskException(t *testing.T) {
 	now := time.Now()
 	store := new(MockStorage)
-	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x"}, nil)
+	// #1529: RevokeRiskException now requires creator-or-admin. CreatedBy: 3
+	// makes actor 3 the creator, satisfying the check without needing to stand
+	// up an RBAC mock chain for the admin branch.
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
 	store.On("RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
 		return e.ID == 5 && e.Revoked && e.RevokedBy == 3 && e.RevokedAt != nil
 	})).Return(true, nil)
@@ -93,6 +121,51 @@ func TestRevokeRiskException(t *testing.T) {
 	require.NoError(t, c.RevokeRiskException(context.Background(), 3, 5))
 }
 
+// #1529: an actor who neither created the exception nor holds an admin-tier
+// role must be denied -- proves the creator-or-admin gate actually rejects
+// the negative case, not just accepts the positive one (TestRevokeRiskException
+// above only exercises the creator branch).
+func TestRevokeRiskException_DeniesNonCreatorNonAdmin(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
+	store.On("GetUserRoleIDsAt", mock.Anything, uint(7), Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", mock.Anything, uint(7), Scope{}).Return([]uint{}, nil)
+	var audited string
+	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
+		if ev.EventType == EventRiskExceptionRevoked && ev.Success != nil && !*ev.Success {
+			audited = ev.EventType
+			return true
+		}
+		return false
+	})).Return(nil)
+
+	c := riskCore(store, now)
+	err := c.RevokeRiskException(context.Background(), 7, 5)
+	require.Error(t, err)
+	assert.Equal(t, EventRiskExceptionRevoked, audited, "the denial must be audited")
+	store.AssertNotCalled(t, "RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.Anything)
+}
+
+// #1529: an admin-tier actor who did NOT create the exception may still
+// revoke it -- the OTHER half of the creator-OR-admin gate, proving admin
+// status alone is sufficient without being the creator.
+func TestRevokeRiskException_AdminNonCreatorSucceeds(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
+	store.On("GetUserRoleIDsAt", mock.Anything, uint(8), Scope{}).Return([]uint{1}, nil)
+	store.On("GetUserGroupRoleIDsAt", mock.Anything, uint(8), Scope{}).Return([]uint{}, nil)
+	store.On("GetRole", mock.Anything, uint(1)).Return(&models.Role{ID: 1, Name: "system_admin"}, nil)
+	store.On("RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
+		return e.ID == 5 && e.Revoked && e.RevokedBy == 8
+	})).Return(true, nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	c := riskCore(store, now)
+	require.NoError(t, c.RevokeRiskException(context.Background(), 8, 5))
+}
+
 // StateTransitionMissingCAS.ql: a lost race — the row's persisted revoked flag
 // moved to true between the GetRiskException read and this write (e.g. a
 // concurrent racing RevokeRiskException/ApproveRiskException) — must surface as
@@ -100,7 +173,10 @@ func TestRevokeRiskException(t *testing.T) {
 func TestRevokeRiskException_LostRaceReturnsError(t *testing.T) {
 	now := time.Now()
 	store := new(MockStorage)
-	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x"}, nil)
+	// #1529: CreatedBy: 3 makes actor 3 the creator, satisfying the
+	// creator-or-admin check so this test still exercises the lost-race path
+	// it's actually about.
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
 	store.On("RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.Anything).Return(false, nil)
 
 	c := riskCore(store, now)

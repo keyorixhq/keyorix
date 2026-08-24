@@ -54,6 +54,7 @@ func TestAddUserToGroup_BlocksSoDViolationAcrossGroupRoleSet(t *testing.T) {
 	h.AssignGroupRole(t, 50, 71, nil) // combo_write_only — combined with the
 	// above, this is the toxic pair; neither role alone carries both sides.
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -95,6 +96,7 @@ func TestAddUserToGroup_BlocksSoDViolationWithExistingRole(t *testing.T) {
 	h.CreateTestGroup(t, "existing-group", "", 51)
 	h.AssignGroupRole(t, 51, 73, nil) // existing_write_only
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -122,6 +124,7 @@ func TestAddUserToGroup_AllowsNonViolatingGroupJoin(t *testing.T) {
 	h.AssignGroupRole(t, 52, 74, nil) // safe_read_only
 	h.AssignGroupRole(t, 52, 75, nil) // safe_other_only — no policy pairs these
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 

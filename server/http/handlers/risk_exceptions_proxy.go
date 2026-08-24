@@ -123,7 +123,7 @@ func (h *DashboardHandler) CreateRiskExceptionProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "title and justification are required")
 		return
 	}
-	created, err := h.coreService.CreateRiskException(r.Context(), actorID(r), body.Title, body.Category, body.Reference, body.Justification, body.ExpiresAt)
+	created, err := h.coreService.CreateRiskException(r.Context(), actorID(r), isMachineActor(r), body.Title, body.Category, body.Reference, body.Justification, body.ExpiresAt)
 	if err != nil {
 		log.Printf("risk-exceptions proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

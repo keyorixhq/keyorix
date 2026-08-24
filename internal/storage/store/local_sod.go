@@ -4,7 +4,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -17,10 +20,23 @@ func (ls *LocalStorage) CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy
 	return p, nil
 }
 
+// GetSoDPolicy used to wrap EVERY error from First (not just a genuine
+// gorm.ErrRecordNotFound) with the "not found" i18n string -- surfaced by
+// #1529's DeleteSoDPolicy fix, which now reads the policy before deleting it
+// (to check creator-or-admin authority): a real connection failure ("database
+// is closed") got mislabeled as "not found" and the proxy handler's
+// isNotFoundErr string match (checking for "not found" in the error text) then
+// reported 404 instead of 500 for a genuine storage outage. Matches the
+// established gorm.ErrRecordNotFound-vs-everything-else pattern this package
+// already uses elsewhere (e.g. local_alert_escalation.go's GetAlertEscalationPolicy).
 func (ls *LocalStorage) GetSoDPolicy(ctx context.Context, id uint) (*models.SoDPolicy, error) {
 	var p models.SoDPolicy
-	if err := ls.db.WithContext(ctx).First(&p, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	err := ls.db.WithContext(ctx).First(&p, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &p, nil
 }

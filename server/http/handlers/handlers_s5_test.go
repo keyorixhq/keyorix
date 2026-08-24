@@ -2440,8 +2440,9 @@ func TestBreakGlassProxy_RevokeActivation_BadJSON(t *testing.T) {
 
 func TestCreateSoDPolicyProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 	body := `{"name":"policy-s5","permission_a":"secrets.read","permission_b":"secrets.write"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -2450,8 +2451,9 @@ func TestCreateSoDPolicyProxy_HappyPath(t *testing.T) {
 func TestGetSoDPolicyProxy_HappyPath(t *testing.T) {
 	// Create then Get
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 	body := `{"name":"get-test-s5","permission_a":"audit.read","permission_b":"secrets.read"}`
-	reqCreate := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	reqCreate := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
 	wCreate := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(wCreate, reqCreate)
 	require.Equal(t, http.StatusOK, wCreate.Code)

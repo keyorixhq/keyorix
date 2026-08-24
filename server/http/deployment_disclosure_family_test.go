@@ -137,7 +137,7 @@ func seedFamilyFixtures(t *testing.T, c *core.KeyorixCore) familyFixtures {
 
 	// A risk exception with free-text Reference/Justification, so /risk-exceptions
 	// (#255 bundled sub-finding) has a real row to disclose (or correctly withhold).
-	_, err = c.CreateRiskException(ctx, admin.ID, "family risk", "other", "secret:family-disclosure-canary",
+	_, err = c.CreateRiskException(ctx, admin.ID, false, "family risk", "other", "secret:family-disclosure-canary",
 		"accepted pending rotation", time.Now().Add(48*time.Hour))
 	require.NoError(t, err)
 
