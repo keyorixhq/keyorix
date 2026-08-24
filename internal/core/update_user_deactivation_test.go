@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -171,4 +173,45 @@ func TestUpdateUser_NoRevocation_WhenAlreadyInactive(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, evicted, "no evictions when user was already inactive")
+}
+
+// TestUpdateUser_Deactivation_SucceedsDespiteSessionRevocationFailure is the
+// G80 residual fix's own regression test: a DeleteSessionsForUserExcept
+// failure must NOT fail the whole deactivating UpdateUser call. Before this
+// fix, DeleteSessionsForUserExcept's error was the WithTransaction closure's
+// return value, so it propagated and UpdateUser reported total failure even
+// though the conditional write (UpdateUserIfActiveStateMatches) had already
+// matched and applied -- the deactivation itself durably succeeded, but the
+// caller was told it hadn't. This mattered most over storage.type: remote,
+// where DeleteSessionsForUserExcept/RevokeAllPersonalAccessTokensForUser were
+// BOTH hard-stubbed to errUnsupportedRemote until this fix, meaning EVERY
+// remote deactivation failed outright. Uses MockStorage (not a real SQLite
+// DB) specifically so DeleteSessionsForUserExcept can be made to fail in
+// isolation while the conditional write still succeeds -- not reproducible
+// against LocalStorage without a fault-injection seam.
+func TestUpdateUser_Deactivation_SucceedsDespiteSessionRevocationFailure(t *testing.T) {
+	ms := new(MockStorage)
+	original := &models.User{ID: 44, Username: "carol", Email: "carol@example.com", IsActive: true}
+	ms.On("GetUser", mock.Anything, uint(44)).Return(original, nil)
+	// guardLastAdminDeactivation: target holds no roles anywhere -> not a
+	// global admin -> the lockout guard returns nil immediately, same mocking
+	// shape as the #1529 authority tests in sod_external_test.go/risk_exceptions_test.go.
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(44), Scope{}).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(44), Scope{}).Return([]uint{}, nil)
+	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(44)).Return([]string{"sess-hash-1"}, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), true).Return(true, nil)
+	ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, uint(44)).Return([]string{"pat-hash-1"}, nil)
+	// The failure under test: a real error (e.g. errUnsupportedRemote over
+	// storage.type: remote, or a transient HTTP failure) from the session
+	// deletion sub-call.
+	ms.On("DeleteSessionsForUserExcept", mock.Anything, uint(44), uint(0)).Return(errors.New("simulated: session deletion transport failure"))
+
+	c := NewKeyorixCore(ms)
+	updated, err := c.UpdateUser(context.Background(), &UpdateUserRequest{
+		ID:       44,
+		IsActive: &[]bool{false}[0],
+	})
+	require.NoError(t, err, "the deactivation must succeed even though session deletion failed")
+	require.NotNil(t, updated)
+	assert.False(t, updated.IsActive, "the user must still be marked inactive")
 }

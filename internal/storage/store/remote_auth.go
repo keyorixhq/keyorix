@@ -125,8 +125,28 @@ func (rs *RemoteStorage) ListSessionsByUser(_ context.Context, _ uint) ([]*model
 	return nil, errUnsupportedRemote
 }
 
-func (rs *RemoteStorage) DeleteSessionsForUserExcept(_ context.Context, _, _ uint) error {
-	return errUnsupportedRemote
+// deleteSessionsForUserExceptWire mirrors RemoteStorage's other small JSON
+// request bodies (e.g. remote_mfa.go's markTOTPStepUsedWire) — a POST body
+// rather than a DELETE-with-query-param, since HTTPClient.Delete takes no
+// body and this call needs a second scalar (exceptSessionID) beyond the path
+// parameter.
+type deleteSessionsForUserExceptWire struct {
+	ExceptSessionID uint `json:"except_session_id"`
+}
+
+// DeleteSessionsForUserExcept proxies to POST
+// /api/v1/system/users/{id}/sessions/delete-except (G80 residual fix — see
+// users_credentials_proxy.go for the server-side authority this closes).
+func (rs *RemoteStorage) DeleteSessionsForUserExcept(ctx context.Context, userID, exceptSessionID uint) error {
+	path := fmt.Sprintf("/api/v1/system/users/%d/sessions/delete-except", userID)
+	resp, err := rs.client.Post(ctx, path, deleteSessionsForUserExceptWire{ExceptSessionID: exceptSessionID})
+	if err != nil {
+		return fmt.Errorf("failed to delete sessions for user: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete sessions for user failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
 func (rs *RemoteStorage) ListSessionTokenHashesForUser(_ context.Context, _ uint) ([]string, error) {
@@ -165,8 +185,33 @@ func (rs *RemoteStorage) RevokePersonalAccessToken(_ context.Context, _ uint) er
 	return errUnsupportedRemote
 }
 
-func (rs *RemoteStorage) RevokeAllPersonalAccessTokensForUser(_ context.Context, _ uint) ([]string, error) {
-	return nil, errUnsupportedRemote
+// revokeAllPersonalAccessTokensForUserResponse mirrors the {"hashes":[...]}
+// shape RevokeAllPersonalAccessTokensForUserProxy returns — the caller needs
+// the revoked hashes back to evict them from its own auth cache, exactly as
+// the local (non-remote) RevokeAllPersonalAccessTokensForUser caller does
+// (internal/core/users.go).
+type revokeAllPersonalAccessTokensForUserResponse struct {
+	Hashes []string `json:"hashes"`
+}
+
+// RevokeAllPersonalAccessTokensForUser proxies to POST
+// /api/v1/system/users/{id}/personal-access-tokens/revoke-all (G80 residual
+// fix — see users_credentials_proxy.go for the server-side authority this
+// closes).
+func (rs *RemoteStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
+	path := fmt.Sprintf("/api/v1/system/users/%d/personal-access-tokens/revoke-all", userID)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to revoke personal access tokens for user: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("revoke personal access tokens for user failed: %s", resp.Error.Error())
+	}
+	var result revokeAllPersonalAccessTokensForUserResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Hashes, nil
 }
 
 func (rs *RemoteStorage) TouchPersonalAccessToken(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
