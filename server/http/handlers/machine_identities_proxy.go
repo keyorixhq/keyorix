@@ -83,6 +83,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -475,6 +476,23 @@ func (h *CatalogHandler) CountMachineIdentitiesByClassificationProxy(w http.Resp
 // --- Machine-token credentials ---
 
 // CreateMachineIdentityCredentialProxy handles POST /api/v1/system/machine-credentials.
+//
+// #1542-shape guard (G80 raw-storage-bypass triage, docs/g80-raw-storage-bypass-
+// triage.md — "MOST SEVERE FINDING"): core.IssueMachineToken enforces
+// requireMachinePrivilegeCeiling (MACH-001) before minting a credential — a
+// non-global-admin actor cannot mint one for a machine identity that itself holds
+// an admin-tier role, since the credential inherits the machine's roles (the same
+// escalation-by-proxy contract role grants and impersonation already enforce).
+// This raw proxy accepted an attacker-chosen TokenHash for ANY MachineIdentityID
+// with no such check — forge a working credential for an admin-tier machine and
+// authenticate as it. Fixed by reusing core.RequireMachinePrivilegeCeiling (the
+// exported form of the SAME check IssueMachineToken runs) before the storage
+// write, WITHOUT routing through IssueMachineToken itself — that would generate
+// its own random token via crypto/rand, breaking the legitimate relay case this
+// route exists for (a downstream node's own core.IssueMachineToken already
+// generated the real token locally and relays only its hash to persist here).
+// No RemoteStorage wire-protocol change: the check needs only (actorID,
+// MachineIdentityID), and MachineIdentityID was already on the wire.
 func (h *CatalogHandler) CreateMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityCredentialProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -483,6 +501,15 @@ func (h *CatalogHandler) CreateMachineIdentityCredentialProxy(w http.ResponseWri
 	}
 	if body.MachineIdentityID == 0 || body.TokenHash == "" {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "machine_identity_id and token_hash are required")
+		return
+	}
+	if err := h.coreService.RequireMachinePrivilegeCeiling(r.Context(), actorID(r), body.MachineIdentityID); err != nil {
+		if errors.Is(err, core.ErrMachinePrivilegeCeilingDenied) {
+			writeRemoteAPIError(w, http.StatusForbidden, "PRIVILEGE_CEILING_EXCEEDED", clientSafe(err))
+			return
+		}
+		log.Printf("machine-credentials proxy: privilege ceiling check failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
 	created, err := h.coreService.Storage().CreateMachineIdentityCredential(r.Context(), body.toModel())
