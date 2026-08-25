@@ -761,7 +761,7 @@ var knownUnresolvedWireCalls = map[string]bool{
 	"remote_audit.go:28":                      true,
 	"remote_audit.go:53":                      true,
 	"remote_audit.go:95":                      true,
-	"remote_auth.go:317":                      true,
+	"remote_auth.go:362":                      true,
 	"remote_break_glass.go:135":               true,
 	"remote_connector_project_bindings.go:63": true,
 	"remote_dynamic.go:260":                   true,

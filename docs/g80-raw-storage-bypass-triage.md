@@ -299,3 +299,91 @@ not inferred from the permission's name). Zero machine-only, zero unknown-reach 
    6 (needs new system-proxy routes for PAT/session revocation, not a handler-local fix).
 
 **Answer to "how much is left" for this bug class: 6.**
+
+## Fix wave complete (2026-08-25) — all 6 actionable items addressed
+
+All 6 of the above are now fixed for a direct (non-node-credential) caller — the same
+direct-caller/node-credential split established by the earlier machine-identity/OIDC-binding
+sub-wave (see "Fix status" above), not a full close in every case. Authoritative status
+lives in `server/http/raw_storage_bypass_guard_test.go`'s maps, as always; this is a
+pointer, not a duplicate of that record.
+
+1. `CreateAccessRequestProxy`/`UpdateAccessRequestProxy` — **FIXED** (moved to
+   `rawStorageBypassAllowlist`). PR #1557: `CreateAccessRequestProxy` forces
+   `State=AccessRequestPending`; `UpdateAccessRequestProxy`'s `State=approved` transition
+   now requires maker≠checker plus admin or role-grant authority, re-deriving the same
+   ceiling `ApproveSecretAccessRequest`/`ApproveAccessRequestWithExpiry` already enforce
+   locally.
+2. `CreateInvitationProxy`/`UpdateInvitationProxy` — **FIXED** (moved to
+   `rawStorageBypassAllowlist`). PR #1558: `CreateInvitationProxy` now checks
+   `RequireAuthorityForRole` for every role the wire body would grant (`Role`,
+   `SystemRole`, each `AssignmentsJSON` entry); `UpdateInvitationProxy` narrows to the
+   legitimate transition fields (AR-001 pattern) instead of a full-row overwrite.
+3. `DeleteOIDCBindingProxy` — **HALF-FIXED, still in `knownUnfixedRawStorageBypasses`,
+   NOT closed.** PR #1560: a direct caller now routes through `core.DeleteOIDCBinding`
+   (`machineInProject` + binding-ownership + audit event, `machine_identity.oidc_unbound`).
+   A node-credential caller still reaches the raw storage call unconditionally, same
+   `isNodeCredentialRequest(r)` relay-trust assumption as `CreateOIDCBindingProxy`/
+   `CreateMachineIdentityCredentialProxy` above. Also fixed in the same PR: a pre-existing
+   bug in `GetOIDCBindingByID` (`local_machine_credentials.go`) that mislabeled every
+   storage error, not just a genuine not-found, as 404 — surfaced by this fix's new
+   pre-delete read, same root cause and fix shape as the sibling `local_sod.go`
+   `GetSoDPolicy` bug (see item 4 below).
+4. `UpdateUserIfActiveStateMatchesProxy` (PAT/session-revocation residual) —
+   **HALF-FIXED, still in `knownUnfixedRawStorageBypasses`, NOT closed.** Two new routes
+   (`POST /system/users/{id}/personal-access-tokens/revoke-all`,
+   `POST /system/users/{id}/sessions/delete-except`) replace the `RevokeAllPersonalAccessTokensForUser`/
+   `DeleteSessionsForUserExcept` hard stubs in `remote_auth.go` with real implementations.
+   Unlike every other proxy in this file, these do NOT rely on the group's blanket
+   `system.write` baseline alone for a direct caller: the ceiling was **derived, not
+   chosen** — `core.UpdateUser`/`core.DeleteUser` perform no caller-authority check of
+   their own on a deactivating transition (only `guardLastAdminDeactivation`, a
+   target-state invariant with no actor parameter); the actual ceiling governing "who may
+   deactivate a user" lives entirely at `RequirePermission(permUsersWrite)` on
+   `PUT /api/v1/users/{id}` (`server/http/router.go`). The new routes require exactly that
+   — `users.write` at global scope — for a direct caller, plus an audit event
+   (`user.credentials_revoked`) with real actor attribution (the same node-credential
+   actor-0 gap #1530 tracks still applies to the node-credential branch here). A
+   node-credential caller still reaches the raw storage calls unconditionally, the same
+   documented gap as every other HALF-FIXED entry.
+
+   Separately, this PR also fixed a pre-existing bug independent of the proxy layer:
+   `core.UpdateUser`'s deactivating branch treated `DeleteSessionsForUserExcept`'s error
+   as fatal to the whole transaction while `RevokeAllPersonalAccessTokensForUser`'s was
+   already best-effort (an unexplained asymmetry) — meaning a transient session-deletion
+   failure reported total deactivation failure even after the actual state flip had
+   already durably committed. Now best-effort on both, matching `SetAccountState`'s own
+   suspend/deactivate path, which already treated this the same way. `DeleteUser` remains
+   fully fatal on both, deliberately unchanged — a delete's revocation semantics are a
+   separate question.
+
+Not part of this wave: `RevokeMachineIdentityCredentialProxy` (#1551) and the
+`CreateMachineIdentityCredentialProxy`/`CreateOIDCBindingProxy` node-credential residuals
+(#1552) remain ADR-085-blocked, as recorded above — untouched, per instruction.
+
+## Open question: the 14 `documented-exception` verdicts are not settled (not work for now)
+
+The 34-candidate re-triage table above records **14** entries as `documented-exception`
+(row: "no-independent-ceiling | 9 ... documented-exception | 14 ..."). That verdict means
+"a code comment asserts this raw call is safe" — it does NOT mean the assertion has been
+independently verified the way every `real` finding above was (escalation-delta test:
+does an actor holding ONLY the route's gating permission gain a capability the gate did
+not already authorize, traced to a real human auth path).
+
+This matters because `AssignRoleWithExpiryProxy` (`rbac_role_grants_proxy.go`) was ALSO a
+documented exception before this campaign — its own doc comment asserted the node-credential
+relay could be trusted, an assumption stated but never verified. It became
+[#1552](https://github.com/keyorixhq/keyorix/issues/1552), the campaign's highest-severity
+finding, and its exact "assert, don't verify" shape is now the precedent this campaign cites
+for treating every OTHER node-credential relay assumption as an open half-fix (see
+`CreateOIDCBindingProxy`/`CreateMachineIdentityCredentialProxy`'s HALF-FIXED entries above).
+Fourteen routes justified by a comment, never independently re-derived, is the same shape as
+the suppression lists (`rawStorageBypassAllowlist` entries accepted on read, not re-verified)
+this campaign has spent multiple sessions dismantling elsewhere.
+
+**Not work for now** — this is a scope flag, not a to-do list. Before anyone treats the
+14-count as settled, each entry needs the same escalation-delta test applied to the 9 `real`
+findings above: trace the actual gating permission's documented footprint against what the
+raw call would let a caller holding ONLY that permission do, against a real human auth path,
+not the comment's own claim. Until that pass runs, "documented-exception" should be read as
+"unverified-exception."

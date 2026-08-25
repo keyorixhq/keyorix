@@ -172,14 +172,33 @@ func TestRemoteStorage_SessionStubs_ReturnError(t *testing.T) {
 	_, err = rs.ListSessionsByUser(ctx, 1)
 	assert.Error(t, err)
 
-	err = rs.DeleteSessionsForUserExcept(ctx, 1, 2)
-	assert.Error(t, err)
-
 	_, err = rs.ListSessionTokenHashesForUser(ctx, 1)
 	assert.Error(t, err)
 
 	err = rs.EnforceSessionLimit(ctx, 1, 5)
 	assert.Error(t, err)
+}
+
+// --- DeleteSessionsForUserExcept (G80 residual fix — was errUnsupportedRemote) ---
+
+func TestRemoteStorage_DeleteSessionsForUserExcept(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/api/v1/system/users/42/sessions/delete-except", r.URL.Path)
+		var body struct {
+			ExceptSessionID uint `json:"except_session_id"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, uint(7), body.ExceptSessionID)
+		_, _ = w.Write(apiOK(map[string]interface{}{}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	err = rs.DeleteSessionsForUserExcept(context.Background(), 42, 7)
+	require.NoError(t, err)
 }
 
 // --- TouchSession (no-op) ---
@@ -217,14 +236,29 @@ func TestRemoteStorage_PATStubs_ReturnError(t *testing.T) {
 	err = rs.RevokePersonalAccessToken(ctx, 1)
 	assert.Error(t, err)
 
-	_, err = rs.RevokeAllPersonalAccessTokensForUser(ctx, 1)
-	assert.Error(t, err)
-
 	_, err = rs.ListExpiredPATsByUser(ctx, 1, time.Now())
 	assert.Error(t, err)
 
 	_, err = rs.BulkRevokeExpiredPATsByUser(ctx, 1, time.Now())
 	assert.Error(t, err)
+}
+
+// --- RevokeAllPersonalAccessTokensForUser (G80 residual fix — was errUnsupportedRemote) ---
+
+func TestRemoteStorage_RevokeAllPersonalAccessTokensForUser(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/api/v1/system/users/42/personal-access-tokens/revoke-all", r.URL.Path)
+		_, _ = w.Write(apiOK(map[string]interface{}{"hashes": []string{"hash-a", "hash-b"}}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	hashes, err := rs.RevokeAllPersonalAccessTokensForUser(context.Background(), 42)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"hash-a", "hash-b"}, hashes)
 }
 
 // --- TouchPersonalAccessToken (no-op) ---

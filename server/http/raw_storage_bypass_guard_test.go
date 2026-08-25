@@ -425,15 +425,37 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	"UpdateUserIfActiveStateMatchesProxy": "PARTIALLY FIXED 2026-08-24 (G80 overnight campaign, Tier 1 Group A " +
 		"#3): the last-admin-lockout half is fixed -- core.GuardLastAdminDeactivation now runs before any " +
 		"deactivating transition (FromActive:true, Active:false), a target-state check needing only the target " +
-		"user ID, no RemoteStorage wire-protocol change required. STILL REAL, STILL UNFIXED: the PAT/session " +
-		"revocation half. Separately discovered while checking RemoteStorage impact before this fix: " +
-		"RemoteStorage.RevokeAllPersonalAccessTokensForUser and DeleteSessionsForUserExcept are BOTH stubbed to " +
-		"errUnsupportedRemote (remote_auth.go), and DeleteSessionsForUserExcept's error is NOT discarded -- it " +
-		"propagates and fails core.UpdateUser's whole deactivating-branch transaction. This means the 'correct' " +
-		"full deactivation flow already fails outright over RemoteStorage today, independent of this proxy -- an " +
-		"offboarding failure (cannot deactivate ANY user in connected mode, not just a missing side effect on " +
-		"this one raw call), tracked and assessed separately against the Tier 1 line, not fixed as part of this " +
-		"change.",
+		"user ID, no RemoteStorage wire-protocol change required. The PAT/session revocation half (RemoteStorage." +
+		"RevokeAllPersonalAccessTokensForUser/DeleteSessionsForUserExcept were both hard-stubbed to " +
+		"errUnsupportedRemote, so the 'correct' full deactivation flow failed outright over RemoteStorage) is now " +
+		"fixed 2026-08-25 via two new proxy routes -- see the RevokeAllPersonalAccessTokensForUserProxy/ " +
+		"DeleteSessionsForUserExceptProxy entries below (this handler itself still makes no PAT/session call; the " +
+		"fix lives in the two new routes core.UpdateUser's deactivating branch now succeeds against, and in the " +
+		"RemoteStorage client methods themselves).",
+	// HALF-FIXED 2026-08-25 -- do NOT move to rawStorageBypassAllowlist: CLOSED for
+	// a direct, non-node-credential caller (routes through
+	// core.RevokeAllPersonalAccessTokensForUser/core.DeleteSessionsForUserExcept,
+	// which require "users.write" authority at global scope -- derived, not
+	// chosen, from the ONLY caller-authority check that actually governs a user
+	// deactivation today (RequirePermission(permUsersWrite) on PUT
+	// /api/v1/users/{id}, router.go) since core.UpdateUser/core.DeleteUser
+	// perform no authority check of their own; see
+	// internal/core/users.go's requireUserCredentialsRevokeAuthority doc for the
+	// full derivation, and system_write_ceiling_table_test.go's
+	// RequiresUsersWriteAuthority rows). STILL OPEN for a node-credential
+	// caller: isNodeCredentialRequest(r) routes around the check entirely to the
+	// raw storage call, the same unverified relay-trust assumption
+	// CreateOIDCBindingProxy/CreateMachineIdentityCredentialProxy above make. A
+	// bare node credential can still revoke any user's PATs/sessions with no
+	// authority check and no audit event.
+	"RevokeAllPersonalAccessTokensForUserProxy": "HALF-FIXED: closed for a direct human/machine caller " +
+		"(core.RevokeAllPersonalAccessTokensForUser's users.write-authority check now enforced, plus an audit " +
+		"event); STILL OPEN for a node-credential caller (isNodeCredentialRequest routes around the check to the " +
+		"raw storage call -- see the HALF-FIXED comment immediately above this entry).",
+	"DeleteSessionsForUserExceptProxy": "HALF-FIXED: closed for a direct human/machine caller " +
+		"(core.DeleteSessionsForUserExcept's users.write-authority check now enforced, plus an audit event); " +
+		"STILL OPEN for a node-credential caller (isNodeCredentialRequest routes around the check to the raw " +
+		"storage call -- see the CreateOIDCBindingProxy HALF-FIXED comment above for the shared reasoning).",
 }
 
 // TestNoUnjustifiedRawStorageBypass is #1542's guard, extended by #1547 to cover

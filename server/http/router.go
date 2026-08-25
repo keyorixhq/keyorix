@@ -1504,6 +1504,23 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// onto the human-facing PUT /api/v1/users/{id} route.
 			r.Put("/users/{id}/active-transition", userHandler.UpdateUserIfActiveStateMatchesProxy)
 
+			// PAT/session bulk-revocation storage-primitive proxy (G80 residual:
+			// the active-transition proxy's own "PAT/session revocation half,"
+			// left deliberately unfixed there — see its doc comment). Lets a
+			// downstream Keyorix server booted with storage.type: remote
+			// (ADR-049) proxy RevokeAllPersonalAccessTokensForUser/
+			// DeleteSessionsForUserExcept to THIS server's real storage
+			// backend, so a deactivating UpdateUser (or any other admin-driven
+			// credential revocation) actually terminates the target user's
+			// live PATs/sessions instead of failing the whole transition
+			// outright (both were previously hard-stubbed to
+			// errUnsupportedRemote). UNLIKE every other proxy in this group,
+			// these do NOT rely solely on the group's blanket system.write
+			// baseline for a direct caller — see users_credentials_proxy.go's
+			// package doc for the derived users.write ceiling these enforce.
+			r.Post("/users/{id}/personal-access-tokens/revoke-all", userHandler.RevokeAllPersonalAccessTokensForUserProxy)
+			r.Post("/users/{id}/sessions/delete-except", userHandler.DeleteSessionsForUserExceptProxy)
+
 			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateLegalHold/GetActiveLegalHold/UpdateLegalHold to THIS server's real

@@ -416,10 +416,52 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 				return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
 			}
 			updated = user
-			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID); herr == nil {
+			var patErr, sessionErr error
+			var hashes []string
+			hashes, patErr = tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID)
+			if patErr == nil {
 				patHashes = hashes
 			}
-			return tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
+			sessionErr = tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
+			// Best-effort, not fatal: the conditional write this switch case
+			// exists for (UpdateUserIfActiveStateMatches) has ALREADY matched
+			// and applied by this point -- the deactivation itself durably
+			// succeeded. Letting a revocation failure here fail the whole
+			// WithTransaction call would report total failure for an
+			// operation that, from the target user's perspective, already
+			// happened. This matters most over storage.type: remote, where
+			// WithTransaction provides NO real atomicity at all (each
+			// sub-call is its own independent HTTP round-trip -- see
+			// remote_transaction.go) -- treating this as fatal there could
+			// never have rolled the deactivation back anyway, only hidden
+			// that it succeeded behind a misleading error.
+			//
+			// Safe specifically because a failed revocation does NOT leave a
+			// working credential: ValidateSessionToken (auth.go) and
+			// ValidatePATToken (pat.go) BOTH independently re-check the live
+			// user.IsActive/AccountLoginBlocked state on every single use of
+			// a session or PAT, cold path AND the 30s warm auth-cache path
+			// (via AccountStillUsable, server/middleware/auth.go's
+			// serveAuthCacheHit) -- already-committed IsActive=false alone
+			// blocks the credential regardless of whether its row was ever
+			// deleted. There is no session-expiry sweeper in this codebase
+			// (CleanupExpiredSessions is implemented but never scheduled), so
+			// a row a failed revocation leaves behind lingers indefinitely --
+			// but inertly: it authorizes nothing. The residual cost is
+			// orphaned-row hygiene and forensic noise, not a live credential,
+			// which is why this is audited (right below) rather than merely
+			// swallowed.
+			if patErr != nil || sessionErr != nil {
+				// nil actor: UpdateUser (unlike DeleteUser/SetAccountState) takes
+				// no actorID parameter at all -- a pre-existing gap in this
+				// function's own signature, not something this fix should
+				// silently paper over with a fabricated attribution.
+				c.writeAuditEventFailed(ctx, EventUserDeactivationCleanupFailed, nil, nil, "",
+					fmt.Sprintf("user %d deactivated, but credential cleanup was incomplete (pat_error=%v, session_error=%v) -- "+
+						"the account is already login-blocked regardless, but a stale row may remain until its own expiry",
+						req.ID, patErr, sessionErr))
+			}
+			return nil
 		})
 	case req.IsActive != nil:
 		// Not deactivating (either re-activating, or a redundant "set to the same
@@ -470,6 +512,17 @@ const (
 	EventUserDeleted  = "user.deleted"
 	EventUserRestored = "user.restored"
 )
+
+// EventUserDeactivationCleanupFailed is audited (Success=false) when
+// UpdateUser's deactivating branch's PAT/session revocation is incomplete —
+// see that branch's own comment for why this is best-effort rather than
+// fatal to the deactivation itself, and why a failure here doesn't leave a
+// working credential (ValidateSessionToken/ValidatePATToken's live
+// user.IsActive/AccountLoginBlocked re-check already blocks it). This event
+// exists purely for discoverability: with no session-expiry sweeper in this
+// codebase, a row a failed revocation leaves behind is inert but otherwise
+// invisible until an operator goes looking for it.
+const EventUserDeactivationCleanupFailed = "user.deactivation_cleanup_failed"
 
 // DeleteUser deprovisions and soft-deletes a user by ID: blocks login
 // (AccountDeprovisioned, mirroring DeprovisionSCIMUser), terminates every session,
@@ -529,6 +582,82 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	c.invalidateTokenCache(patHashes...)
 	c.writeAuditEvent(ctx, EventUserDeleted, actorPtr(actorID), nil,
 		fmt.Sprintf("deleted user %d (%s)", id, user.Username))
+	return nil
+}
+
+// EventUserCredentialsRevoked is audited when an admin-driven bulk PAT/session
+// revocation runs against a target user via RevokeAllPersonalAccessTokensForUser
+// or DeleteSessionsForUserExcept below (the /system proxy layer's direct-caller
+// path — server/http/handlers/users_credentials_proxy.go). #1530: for a
+// node-credential caller these primitives are still reached via the raw
+// storage passthrough with no audit event at all (the same node-relay
+// actor-attribution gap #1530 tracks for the sibling /system proxies) — this
+// event only covers the direct-caller half fixed here.
+const EventUserCredentialsRevoked = "user.credentials_revoked"
+
+// requireUserCredentialsRevokeAuthority is the shared ceiling for
+// RevokeAllPersonalAccessTokensForUser/DeleteSessionsForUserExcept below.
+//
+// Derived, not chosen: core.UpdateUser and core.DeleteUser perform NO
+// caller-authority check of their own on a deactivating transition (only
+// guardLastAdminDeactivation, a target-state invariant with no actor
+// parameter — see its doc in scim.go) — authority is enforced entirely by the
+// HTTP layer, at RequirePermission(permUsersWrite) on PUT /api/v1/users/{id}
+// (server/http/router.go) and identically on POST /api/v1/users/{id}/suspend.
+// "users.write" at GLOBAL scope is therefore the actual ceiling that governs
+// "who may deactivate a user" today. Revoking a user's live PATs/sessions is a
+// sub-operation of that same action (core.UpdateUser's own deactivating
+// branch already does both under a real local transaction — see
+// UpdateUser/DeleteUser above), so it inherits that SAME ceiling here rather
+// than the broader, differently-scoped system.write the /system route group
+// otherwise blanket-gates on: looser would reopen exactly the bypass shape
+// #1552 was filed for; stricter would refuse a caller the operation it
+// belongs to already permits.
+func (c *KeyorixCore) requireUserCredentialsRevokeAuthority(ctx context.Context, actorType string, actorID uint) error {
+	allowed, err := c.AuthorizePrincipal(ctx, actorType, actorID, permUsersWrite, Scope{})
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !allowed {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "revoking a user's credentials requires users.write authority")
+	}
+	return nil
+}
+
+// RevokeAllPersonalAccessTokensForUser authorizes, performs, and audits an
+// admin-driven bulk PAT revocation for targetUserID — the /system proxy
+// layer's direct-caller entry point (RevokeAllPersonalAccessTokensForUserProxy).
+// See requireUserCredentialsRevokeAuthority for the ceiling this enforces.
+func (c *KeyorixCore) RevokeAllPersonalAccessTokensForUser(ctx context.Context, actorType string, actorID, targetUserID uint) ([]string, error) {
+	if err := c.requireUserCredentialsRevokeAuthority(ctx, actorType, actorID); err != nil {
+		return nil, err
+	}
+	hashes, err := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	c.invalidateTokenCache(hashes...)
+	c.writeAuditEvent(ctx, EventUserCredentialsRevoked, actorPtr(actorID), nil,
+		fmt.Sprintf("revoked all personal access tokens for user %d", targetUserID))
+	return hashes, nil
+}
+
+// DeleteSessionsForUserExcept authorizes, performs, and audits an admin-driven
+// session termination for targetUserID (keeping exceptSessionID, if nonzero) —
+// the /system proxy layer's direct-caller entry point
+// (DeleteSessionsForUserExceptProxy). See requireUserCredentialsRevokeAuthority
+// for the ceiling this enforces.
+func (c *KeyorixCore) DeleteSessionsForUserExcept(ctx context.Context, actorType string, actorID, targetUserID, exceptSessionID uint) error {
+	if err := c.requireUserCredentialsRevokeAuthority(ctx, actorType, actorID); err != nil {
+		return err
+	}
+	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, targetUserID)
+	if err := c.storage.DeleteSessionsForUserExcept(ctx, targetUserID, exceptSessionID); err != nil {
+		return err
+	}
+	c.invalidateTokenCache(sessionHashes...)
+	c.writeAuditEvent(ctx, EventUserCredentialsRevoked, actorPtr(actorID), nil,
+		fmt.Sprintf("deleted sessions for user %d", targetUserID))
 	return nil
 }
 

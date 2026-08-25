@@ -14,4 +14,5 @@ const (
 	permSecretsWrite     = "secrets.write"
 	permSystemRead       = "system.read"
 	permUsersRead        = "users.read"
+	permUsersWrite       = "users.write"
 )
