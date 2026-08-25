@@ -1379,6 +1379,58 @@ func TestCreateSetupTokenProxy_RefusesUnmatchedSubject(t *testing.T) {
 	assert.Error(t, err, "no setup token must be persisted when the subject is unverified")
 }
 
+// TestCreateSetupTokenProxy_InvitationAccept_HappyPath closes a test-coverage
+// gap the G80 documented-exception re-verification sweep found: the
+// invitation_accept branch (GetProjectInvitation + email-match check) had zero
+// test coverage anywhere in this handler's test suite. A real, matching
+// invitation must be accepted, gated on users.write per the same sweep's fix.
+func TestCreateSetupTokenProxy_InvitationAccept_HappyPath(t *testing.T) {
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+
+	inv, err := cs.Storage().CreateProjectInvitation(context.Background(), &models.ProjectInvitation{
+		ProjectID: 1, Email: "invitee@example.com", Role: "project_developer", State: "pending",
+	})
+	require.NoError(t, err)
+
+	body := fmt.Sprintf(`{"token_hash":"invaccept1","purpose":"invitation_accept","subject_email":"invitee@example.com","invitation_id":%d,"expires_at":%q}`,
+		inv.ID, time.Now().Add(24*time.Hour).Format(time.RFC3339))
+	req := withNodeCredentialContextS13(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
+	w := httptest.NewRecorder()
+	h.CreateSetupTokenProxy(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a real, matching invitation must be accepted: %s", w.Body.String())
+	tok, err := cs.Storage().GetSetupTokenByHash(context.Background(), "invaccept1")
+	require.NoError(t, err, "the token must be persisted")
+	require.NotNil(t, tok.InvitationID)
+	assert.Equal(t, inv.ID, *tok.InvitationID)
+	assert.Nil(t, tok.SubjectUserID)
+}
+
+// TestCreateSetupTokenProxy_InvitationAccept_RefusesEmailMismatch is
+// TestCreateSetupTokenProxy_InvitationAccept_HappyPath's companion: a real
+// invitation exists, but the caller's subject_email doesn't match it — must be
+// refused, and no token persisted.
+func TestCreateSetupTokenProxy_InvitationAccept_RefusesEmailMismatch(t *testing.T) {
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+
+	inv, err := cs.Storage().CreateProjectInvitation(context.Background(), &models.ProjectInvitation{
+		ProjectID: 1, Email: "real-invitee@example.com", Role: "project_developer", State: "pending",
+	})
+	require.NoError(t, err)
+
+	body := fmt.Sprintf(`{"token_hash":"invaccept2","purpose":"invitation_accept","subject_email":"attacker@example.com","invitation_id":%d,"expires_at":%q}`,
+		inv.ID, time.Now().Add(24*time.Hour).Format(time.RFC3339))
+	req := withNodeCredentialContextS13(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
+	w := httptest.NewRecorder()
+	h.CreateSetupTokenProxy(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, "an email mismatch against the real invitation must be refused")
+	_, err = cs.Storage().GetSetupTokenByHash(context.Background(), "invaccept2")
+	assert.Error(t, err, "no setup token must be persisted on a mismatched invitation_accept request")
+}
+
 // TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant is the #G79
 // regression: CreateUserWithRoleGrantsProxy previously called
 // storage.CreateUserWithRoleGrants directly, persisting whatever grants the

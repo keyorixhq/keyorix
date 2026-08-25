@@ -1298,7 +1298,7 @@ func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
 		"expires_at":      time.Now().Add(24 * time.Hour),
 		"created_by":      1,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/system/setup-tokens", body)
+	req := withNodeCredentialContextS13(httptest.NewRequest(http.MethodPost, "/system/setup-tokens", body))
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
