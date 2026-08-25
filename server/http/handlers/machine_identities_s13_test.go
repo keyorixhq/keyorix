@@ -584,6 +584,7 @@ func TestCreateMachineIdentityProxy_HappyPath_S13(t *testing.T) {
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-identities",
 		bytes.NewReader(body))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

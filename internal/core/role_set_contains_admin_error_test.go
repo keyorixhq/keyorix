@@ -57,6 +57,6 @@ func TestRequireMachinePrivilegeCeiling_StorageErrorFailsClosed(t *testing.T) {
 	c := NewKeyorixCore(mockStorage)
 	ctx := context.Background()
 
-	err := c.requireMachinePrivilegeCeiling(ctx, 1, 7)
+	err := c.requireMachinePrivilegeCeiling(ctx, ActorTypeUser, 1, 0, 7)
 	require.Error(t, err, "a storage error resolving the machine's admin-tier membership must deny token issuance, not silently allow it")
 }

@@ -2747,6 +2747,7 @@ func TestCreateMachineIdentityProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"name":"test-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -2757,6 +2758,7 @@ func TestGetMachineIdentityProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"name":"get-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -2798,6 +2800,7 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	// First create a machine identity to own the credential.
 	bodyMI := `{"name":"cred-owner-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyMI))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -2808,6 +2811,7 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	tokenHash := fmt.Sprintf("deadbeefdeadbeefdeadbeefdeadbeef%d", s4UniqueCounter.Add(1))
 	body := fmt.Sprintf(`{"machine_identity_id":1,"token_hash":%q,"name":"cred1"}`, tokenHash)
 	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req2 = withOIDCAdminCtxS21(t, h, req2)
 	w2 := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(w2, req2)
 	assert.Equal(t, http.StatusOK, w2.Code)
@@ -2901,6 +2905,7 @@ func TestCreateOIDCBindingProxy_HappyPath(t *testing.T) {
 	// First create a machine identity to bind to.
 	bodyMI := `{"name":"oidc-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyMI))
+	req0 = withOIDCAdminCtxS21(t, h, req0)
 	w0 := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w0, req0)
 	require.Equal(t, http.StatusOK, w0.Code)
@@ -3037,6 +3042,37 @@ func TestConsumeSSOLoginStateProxy_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ConsumeSSOLoginStateProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestConsumeSSOLoginStateProxy_SecondConsumeFails is the G80 documented-
+// exception re-verification sweep's regression test for the "holds" verdict on
+// this handler's single-use claim (raw_storage_bypass_guard_test.go): the
+// underlying conditional DELETE (local_sso.go) must actually be single-use, not
+// just described as such. A second consume of the SAME state must fail — a
+// second success would mean the CAS isn't real and the state row could be
+// replayed.
+func TestConsumeSSOLoginStateProxy_SecondConsumeFails(t *testing.T) {
+	h := newAuthHandlerWithWebAuthn(t)
+
+	createBody := `{"state":"single-use-state","nonce":"n1","provider":"google","return_to":"/","expires_at":"` +
+		time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
+	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	w0 := httptest.NewRecorder()
+	h.CreateSSOLoginStateProxy(w0, req0)
+	require.Equal(t, http.StatusOK, w0.Code)
+
+	body := `{"state":"single-use-state"}`
+	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w1 := httptest.NewRecorder()
+	h.ConsumeSSOLoginStateProxy(w1, req1)
+	require.Equal(t, http.StatusOK, w1.Code, "first consume must succeed")
+
+	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w2 := httptest.NewRecorder()
+	h.ConsumeSSOLoginStateProxy(w2, req2)
+	assert.NotEqual(t, http.StatusOK, w2.Code,
+		"CEILING VIOLATED: a second consume of an already-consumed state must fail — the conditional DELETE "+
+			"this handler relies on for its single-use guarantee is not actually a CAS if this succeeds")
 }
 
 // ── mfa_management_proxy.go — happy paths ────────────────────────────────────

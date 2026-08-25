@@ -2,11 +2,55 @@
 
 ## Status
 
-**Proposed.** This ADR answers a design question raised by the G80 CI-baseline
-campaign's `actorID(r)` sweep (#1524, #1529, #1530, #1531). It makes **no
-code changes** — the two findings below are filed and, per explicit
-instruction, not patched here. Implementation, if this ADR is accepted, is
-its own follow-up work with its own review.
+**Accepted (2026-08-25).** Final decision: node-authenticated requests get
+**no privileged access**. The `RequireNodeCredentialOrPermission` OR-arm this
+ADR spent two months proposing to *narrow* is instead **removed outright** —
+`/api/v1/system` now requires the plain `system.write` RBAC permission for
+every caller, node-typed or not, with no second arm. `MachineTypeNode` is
+retained as an identity type (`keyorix machine create --type node` is still
+user-facing); only its special gate privilege is gone. See "Decision
+(Accepted, 2026-08-25)" below for the full resolution, "Why the original
+recommendation is superseded, not just unimplemented" for why this reverses
+rather than extends the Proposed-status recommendation further down this
+document, and "The wire-identity question: CLOSED" for the second question
+this ADR originally left open.
+
+**How this ADR got here, for the record — the general lesson**: this ADR was
+authored under ADR-049's "downstream Keyorix server" framing (a second server
+process, running `storage.type: remote`, relaying an already-authorized
+human's action back to an upstream's real storage). ADR-083 (Accepted)
+subsequently established that this topology **cannot exist** —
+`validateRemoteStorageNotServer` (`internal/config/config.go:2029-2058`)
+unconditionally rejects `storage.type: remote` for any server process, HTTP,
+gRPC, or scheduler-only. This ADR's own "Note" section (below, dated after
+ADR-083 landed) correctly *flagged* that its framing predated ADR-083 — but
+flagging a stale premise in a footnote is not the same as re-deriving the
+Decision from the corrected premise, and for one more full working session
+this ADR's Decision (proposed) section kept recommending a mechanism (a
+node-scoped permission set to narrow what a "downstream relay" is allowed to
+do) built entirely to serve a caller that provably does not exist. The
+general lesson: when a superseding ADR invalidates a foundational premise, the
+correction has to *drive a re-derivation of the Decision itself*, not just
+live as a cross-reference next to the old one — a note that stops at "this
+framing predates X" without asking "does the Decision survive X" leaves the
+stale conclusion standing under a corrected-sounding preamble.
+
+**What actually forced the re-derivation**: a Phase-1 liveness check (the
+same standing method this campaign used throughout: trace real callers before
+fixing or restricting a flagged route) asked the question ADR-083 made
+askable but that hadn't yet been asked of this specific gate — does *anything*
+actually authenticate with a node credential and call a `/system` route
+today? Answer: no. `createNodeToken` (the credential-minting helper this
+ADR's own evidence table and every downstream fix cited) is **test-only** in
+every one of its ~21 references across the repo. No Helm chart, no Docker
+Compose file, no CLI flow provisions a node credential for runtime use.
+`docs/REMOTE_CLI_SETUP.md` documents that a bare node token cannot reach
+anything a real deployment needs. With no live caller and no possible live
+caller (ADR-083 forecloses the only topology that would create one), there is
+nothing left to scope permissions *for* — the recommendation this ADR spent
+its "Proposed" status arguing for (give the node arm a narrower permission
+set) doesn't just remain unimplemented, it is **superseded**: the thing it
+would have scoped never has and never will exist as a real caller.
 
 **Update (2026-08-23) — central recommendation is blocked, and no longer
 launch-blocking:**
@@ -197,10 +241,25 @@ the project-scope constraint needs to be revisited first (its own separate
 decision, with its own blast-radius analysis — a global-scope machine role
 is a materially different risk than a project-scoped one).
 
-A node credential is the single most widely distributed credential class in
-a Keyorix deployment — every downstream node running `storage.type: remote`
-holds one. "Or it's a node" as an authorization arm makes that credential
-class a second, effectively unscoped admin path; the #1532 classification
+**Correction (2026-08-25): the claim below is false and is left here, struck
+through in spirit but not in text, as the record of what this ADR got wrong
+and why — see "How this ADR got here" at the top of this document.** This
+ADR originally asserted a node credential is the single most widely
+distributed credential class in a Keyorix deployment, on the premise that
+"every downstream node running `storage.type: remote` holds one." No such
+downstream node exists or can exist: ADR-083's `validateRemoteStorageNotServer`
+rejects `storage.type: remote` for any server process, and the Phase-1
+liveness check behind this ADR's final Decision found zero live callers for
+a node credential anywhere in the actual codebase (`createNodeToken` is
+test-only in every reference). The premise inflated this credential class's
+real-world blast radius from "does not exist as live traffic" to "the single
+most widely distributed" — the opposite of accurate — and that inflated
+framing is what made "give it its own scoped permission set" sound like an
+urgent mitigation for a widely-held credential, rather than what it actually
+was: permission engineering for a caller that was never there.
+
+"Or it's a node" as an authorization arm made that credential class a
+second, effectively unscoped admin path; the #1532 classification
 enumerates **13** `RequireNodeCredentialOrPermission` routes in the RBAC/
 governance-mutation scope this ADR is about, correcting the 10 originally
 counted here (of 194 total `/system` routes, most unrelated to RBAC/
@@ -233,33 +292,110 @@ the person this approval is attributed to allowed to approve this specific
 one" — those are different questions, and only the first is what this ADR
 proposes deciding now.
 
-## Decision (proposed)
+## Decision (Accepted, 2026-08-25)
 
-**Recommend: give node credentials their own narrow, scoped permission set**
-via ADR-030's existing `machine_identity_roles`/`AuthorizePrincipal`
-mechanism — e.g. a dedicated capability (not `system.write` itself, to avoid
-recreating G79's original conflation) scoped to exactly the relay operations
-a node legitimately needs — **and split this route group's two populations**
-so that routes with a genuine per-actor ceiling or dual-control check
-(admin-role reinstatement, group-membership escalation ceiling, risk-exception
-approval) either:
+**Node-authenticated requests get no privileged access.** The
+`RequireNodeCredentialOrPermission` OR-arm (`server/middleware/
+node_credential.go`) is **removed entirely** — not narrowed, not replaced
+with a scoped variant. `/api/v1/system` (`server/http/router.go`) now uses
+plain `RequirePermission(permSystemWrite)`, identically to every other
+permission-gated route group in this codebase. A node credential is
+authorized exactly like any other principal: via a real role grant it either
+holds (through ADR-030's existing `machine_identity_roles`/
+`AuthorizePrincipal` mechanism, already used by every other machine-identity
+type) or doesn't. Every `isNodeCredentialRequest(r)` branch inside individual
+`/system` handlers — the mechanism eight handlers used to skip a real ceiling
+check specifically for a node-typed caller — is removed along with it; those
+handlers now run their real ceiling unconditionally, for every caller class.
 
-- deny a node-credential caller outright when the underlying `internal/core`
-  function has no legitimate node-caller answer for that specific ceiling
-  (matching what several sites — `PlaceLegalHold`, `LiftLegalHold`,
-  `RestoreProject`/`RestoreEnvironment`/`RestoreGroup`'s admin-tier branch —
-  already do correctly today, by accident of how `IsGlobalAdmin(ctx, 0)`
-  resolves), or
-- require a separate, explicit mechanism for carrying the downstream
-  server's asserted acting-user identity across the wire, with its own trust
-  model for whether the upstream should believe that assertion — this is the
-  "harder question" above, and is its **own** follow-up decision, not
-  bundled into this one.
+`core.MachineTypeNode` **stays** as an identity type — `keyorix machine
+create --type node` remains a valid, user-facing command, and nothing about
+this decision removes the type or blocks creating node-typed machine
+identities. What's removed is the type's special *gate* privilege: holding a
+node-typed credential no longer means anything to `/system`'s authorization
+check that holding any other machine-identity type wouldn't also mean. A
+node identity that needs to reach `/system` gets there the same way a
+service-typed or CI-typed identity would: a real `MachineIdentityRole` grant
+including `system.write`.
 
-This directly reduces to reusing infrastructure ADR-030 already built and
-already runs in production for every other machine-identity type; the
-proposal is to stop excluding `MachineTypeNode` from it, not to invent a new
-mechanism.
+This reverses, rather than extends, the narrower "give the node arm a scoped
+permission set" recommendation this ADR carried under Proposed status for two
+months — see "Why the original recommendation is superseded, not just
+unimplemented" immediately below for why scoping was never going to be the
+right answer once the liveness question was actually asked.
+
+### Why the original recommendation is superseded, not just unimplemented
+
+This ADR's Proposed-status recommendation was to give the node-credential arm
+its own narrow permission set via `machine_identity_roles`/
+`AuthorizePrincipal`, so a node could do *less* than blanket `system.write`
+rather than being removed from the gate. That recommendation is not merely
+something nobody got around to building — it is **structurally blocked**,
+independent of whether anyone builds it:
+
+- `core.CreateMachineIdentity` (`internal/core/machine_identities.go:75`)
+  unconditionally rejects `projectID == 0`. Every machine identity — node-typed
+  or not — is project-scoped by construction. A "scoped permission set for
+  the node arm" cannot reach any of the *global-scope* routes this campaign's
+  own findings centered on (`AssignRoleWithExpiryProxy`/#1552,
+  `AssignMachineRoleProxy`, `RemoveGlobalAdminRoleGuardedProxy`) no matter how
+  the scoping mechanism is designed, because a node identity can never hold a
+  global-scope grant to check against in the first place.
+- The per-actor ceiling helpers several of the highest-severity findings
+  route through (`requireAdminAuthorityAt` → `scopedRoleIDs` →
+  `GetUserRoleIDsAt`/`GetUserGroupRoleIDsAt`, `internal/core/authz.go`) resolve
+  authority via a **user's** direct and group role grants specifically — not
+  `AuthorizePrincipal`'s generic actor-agnostic permission check. A scoped
+  `MachineIdentityRole` grant on a node identity is invisible to these
+  helpers regardless of what permission it carries; confirmed directly
+  against `CreateOIDCBindingProxy`'s `requireAuthorityForRole("system_admin")`
+  check in `remote_storage_machine_identities_test.go`'s
+  `OIDCBindingCreateGetListDelete_RealServer` — a node credential holding a
+  real, explicitly-granted `admin` role still cannot create an OIDC binding,
+  because the check never looks at machine-identity role grants at all.
+
+Both of these are pre-existing, structural properties of the authorization
+code this ADR's original recommendation would have had to build on top of —
+not new findings, and not things the "give it a scoped permission set"
+design could route around by being more careful. Scoping was never going to
+close the routes that actually mattered; only removing the arm and requiring
+a real grant does.
+
+### The wire-identity question: CLOSED
+
+This ADR's "second, harder question" (above, "A second, harder question this
+ADR does not resolve") asked whether a separate wire mechanism should carry
+the downstream server's asserted acting-human identity across the relay hop,
+so a per-actor ceiling could be evaluated against the real human rather than
+the relaying node. That question is now closed, not merely deferred: there is
+no downstream server relay topology for such a mechanism to serve.
+ADR-083 (Accepted) already established this for Keyorix's own server
+processes (`validateRemoteStorageNotServer`); the same architectural
+conclusion — a secondary node process should never carry write authority
+derived from "it must have already checked" — is also where every comparable
+external secrets-management product has independently converged:
+
+- HashiCorp Vault: [replication
+  architecture](https://developer.hashicorp.com/vault/docs/internals/replication) —
+  performance-standby and secondary nodes forward writes to the active
+  leader; they never locally author a privileged decision on the leader's
+  behalf.
+- CyberArk Conjur: [architecture
+  overview](https://docs.cyberark.com/secrets-manager-sh/13.2/en/content/deployment/cjr-architecture.htm) —
+  followers are read replicas; all writes go to the master.
+- OpenBao: [standby nodes handle read
+  requests](https://openbao.org/community/rfcs/standby-nodes-handle-read-requests/) —
+  standby nodes are explicitly read-only; write authority stays on the active
+  node.
+- Infisical: [Infisical
+  Gateway](https://infisical.com/blog/infisical-gateway) — a gateway relays
+  network access to private resources; it does not carry or exercise its own
+  write authority over the secrets platform's control plane.
+
+A node never writes on another actor's behalf in any of these designs. This
+ADR's Decision above reaches the same place by a different route: rather than
+building a wire mechanism to carry a relayed human's identity, remove the
+premise that a node's own authority should ever stand in for one.
 
 ### Note: this ADR's "downstream server" framing predates ADR-083 and should be read through it
 
@@ -270,19 +406,18 @@ topology **ADR-083 (Accepted) later found never actually functioned and is
 now boot-rejected** (`Config.Validate()` refuses `storage.type: remote` +
 `server.http.enabled`/`server.grpc.enabled`). ADR-083's own Status header
 says it "supersedes the 'full downstream Keyorix server' framing that had
-informally grown up around ADR-049 in later code comments" — this ADR is
-one more place that framing grew up, not yet corrected here. It does not
-change this ADR's actual proposal (node credentials still need their own
-scoped permission set regardless of who the caller is), but it changes
-**who the real caller of these routes is**: not a second server relaying a
-human's already-authorized action, but either (a) a genuine CLI one-shot
-command using `RemoteStorage` directly, in-process, no router involved (the
-one confirmed-working use of `storage.type: remote`), or (b) a human or
-node credential hitting the hub's `/system` routes directly over HTTP — the
-G80 raw-storage-bypass campaign's finding. Route-by-route, which of (a)/(b)
-is the *real* legitimate caller should be checked before assuming a fix
-would break "the downstream server" — because that server, as a distinct
-relaying process, never existed as a working thing to break.
+informally grown up around ADR-049 in later code comments" — this ADR was
+one more place that framing grew up. As the Status section above records,
+that correction sat as a footnote for a full working session before it
+drove a re-derivation of this ADR's actual Decision — see "How this ADR got
+here" at the top of this document for the general lesson. The real caller of
+these routes was always either (a) a genuine CLI one-shot command using
+`RemoteStorage` directly, in-process, no router involved (the one
+confirmed-working use of `storage.type: remote`), or (b) a human or node
+credential hitting the hub's `/system` routes directly over HTTP — the G80
+raw-storage-bypass campaign's finding, and ultimately the reason a Phase-1
+liveness check of (b) specifically for a node credential was the thing that
+actually resolved this ADR.
 
 ### Credential/MFA slice, resolved: option (b), restrict to the hub
 
@@ -390,58 +525,97 @@ recreating the conflation.
   misdiagnosed quarantine reason; not evidence for this ADR, noted only so
   it isn't conflated with the findings above (it produces a loud error, not
   a silent bypass).
-- ADR-030 — the `machine_identity_roles`/`AuthorizePrincipal` mechanism this
-  ADR proposes extending to `MachineTypeNode`.
+- ADR-030 — the `machine_identity_roles`/`AuthorizePrincipal` mechanism a
+  node identity now uses, exactly like every other machine-identity type,
+  with no special case.
 - `core.MachineTypeNode`'s doc comment (`machine_identities.go:34-39`) — the
-  current invariant this ADR proposes revisiting.
-- router.go:1052-1089 — G79's own reasoning for the current OR-gate,
-  including its self-flagged admin-role-bypass caveat.
+  "carries no implicit RBAC permission" invariant this ADR's final Decision
+  preserves rather than retires.
+- router.go:1052-1089 (pre-2026-08-25) — G79's own reasoning for the OR-gate
+  this ADR removes, including its self-flagged admin-role-bypass caveat.
+- ADR-083 (Accepted) — `validateRemoteStorageNotServer`
+  (`internal/config/config.go:2029-2058`), establishing that no Keyorix
+  server process can run `storage.type: remote`, which is what makes the
+  Phase-1 liveness check below dispositive rather than merely suggestive.
+- Phase-1 liveness check (2026-08-25) — the check that actually resolved this
+  ADR: `createNodeToken` (`server/http/integration_test.go`) is test-only in
+  every one of its ~21 references repo-wide; no Helm chart, Docker Compose
+  file, or CLI flow provisions a node credential for `/system` use at
+  runtime; `docs/REMOTE_CLI_SETUP.md` documents a bare node token as
+  insufficient for real use. No live caller found, and ADR-083 forecloses any
+  future one under the topology this ADR's Context section originally
+  assumed.
 
 ## Out of scope
 
-- Implementing the node-scoped permission set or the route-group split, if
-  this ADR is accepted — its own follow-up work with its own review.
+- The node-scoped permission set and the route-group split this ADR
+  originally proposed implementing are **not built** — see "Why the original
+  recommendation is superseded, not just unimplemented" above. There is no
+  follow-up work item for them; the Decision above is the final state.
 - The two confirmed findings (#1524's `AddGroupMemberProxy`/
   `ApproveRiskException` items) are **no longer** gated on this ADR — see
   "Update" above. They're fixed independently by a fail-closed rule for
   machine actors on per-actor-ceiling operations, not by anything this ADR
   decides.
-- Designing the downstream-actor-identity wire mechanism (the "harder
-  question"). Flagged as a second, later ADR if the team wants to pursue it;
-  not decided here.
+- The downstream-actor-identity wire mechanism (the "harder question") is
+  **closed**, not deferred to a future ADR — see "The wire-identity question:
+  CLOSED" above.
 - #1529 (no-check sites) and #1530 (unattributed audit) beyond citing them
   as evidence — both are already filed as their own issues with their own
   per-site recommendations.
 - #1531 (wire-contract mismatch) — unrelated bug, not part of this design
   question.
+- The global-tier enumeration and partition-boundary work (#1512, #1523,
+  #1530, #1531, #1540, #1541, #1545, #1546, and the campaign's other named
+  blind spots) — unrelated to this ADR's node-credential decision.
 
-## Consequences (if accepted)
+## Consequences (Accepted, 2026-08-25)
 
-- Node credentials stop being an unscoped bypass of the **node-legitimate**
-  routes in this group and become a bounded principal type like every other
-  machine identity — narrowing blast radius on routes like
-  `AssignRoleWithExpiryProxy`/`AssignMachineRoleProxy` (also implicated in
-  #1542, independent of this ADR). This does **not** close the per-actor-
-  ceiling routes (`AddGroupMemberProxy`/`ApproveRiskExceptionProxy`) — those
-  are already fixed, independently, by the fail-closed rule described in
-  "Update" above, and stay fixed regardless of this ADR's outcome.
-- The per-route classification this consequence used to require as new work
-  already exists and is enforced: #1532's table sorts all 13 in-scope routes
-  into node-legitimate / target-state-invariant / per-actor-ceiling, with
-  `server/http/node_credential_route_classification_test.go` failing CI if a
-  new route joins the gate unclassified. Accepting this ADR would add a
-  fourth per-route decision on top of that table (does this node-legitimate
-  route get a scoped permission, and which one) rather than starting the
-  classification from scratch.
-- `MachineTypeNode`'s current "carries no implicit RBAC permission" invariant
-  is retired in favor of "carries a narrow, explicitly-granted permission
-  set" for node-legitimate routes — a real behavior change for every node
-  credential in every existing deployment, requiring a migration/rollout
-  story (out of scope here, part of implementation) — and only matters once
-  the re-scoped open question ("should machine identities hold global-scope
-  roles?") is answered, since several node-legitimate routes classified for
-  #1532 are global-scope operations a project-scoped machine identity cannot
-  reach today regardless of what permission set it's given.
+- `RequireNodeCredentialOrPermission` and every handler-level
+  `isNodeCredentialRequest(r)` branch are deleted. `/api/v1/system` requires
+  `system.write` for every caller with no second arm — a node credential
+  with no role grant is refused at the group's own gate before reaching any
+  handler at all. This closes the node-credential axis on every route this
+  campaign tracked as HALF-FIXED for that reason
+  (`AssignRoleWithExpiryProxy`/#1552 — the campaign's original "MOST SEVERE
+  FINDING" — `RemoveGlobalAdminRoleGuardedProxy`, `CreateSetupTokenProxy`,
+  `CreateMachineIdentityCredentialProxy`, `CreateOIDCBindingProxy`,
+  `RevokeAllPersonalAccessTokensForUserProxy`,
+  `DeleteSessionsForUserExceptProxy`), plus `RevokeMachineIdentityCredentialProxy`'s
+  node-credential axis specifically (its own underlying cross-tenant gap,
+  #1551, is unrelated to node credentials and remains open — see
+  `docs/g80-raw-storage-bypass-triage.md`'s "ADR-085 resolution" section for
+  the full closure record). This also supersedes and closes the per-actor-
+  ceiling findings (`AddGroupMemberProxy`/`ApproveRiskExceptionProxy`) this
+  ADR was originally motivated by — already fixed independently by the
+  fail-closed rule described in "Update (2026-08-23)" above, and now
+  additionally unreachable by a bare node credential at the gate level too.
+- `MachineTypeNode`'s existing "carries no implicit RBAC permission of its
+  own" invariant (`machine_identities.go`'s doc comment) is **preserved**,
+  not retired — the opposite of what this ADR originally proposed. A node
+  identity that needs to do anything privileged now needs the same real
+  `MachineIdentityRole` grant any other machine-identity type would need; it
+  gets no default, implicit, or type-based standing.
+- The re-scoped open question ("should machine identities hold global-scope
+  roles at all?") is now moot for this ADR's purposes: it only mattered as a
+  precondition for the scoped-permission-set mechanism the Decision above no
+  longer proposes building. It remains a live question for `internal/core`'s
+  general machine-identity design (`core.CreateMachineIdentity` rejecting
+  `projectID == 0`), but is no longer this ADR's concern.
+- #1532's per-route classification table and
+  `server/http/node_credential_route_classification_test.go` remain valid
+  and continue to serve their original purpose unchanged: they pin per-actor
+  ceiling enforcement for any machine actor holding a REAL permission grant
+  (via `MachineIdentityRole`), a property orthogonal to the OR-arm's removal
+  — confirmed by running that test suite unchanged against the post-removal
+  code.
+- No migration or rollout story is needed: this decision does not require
+  any existing node credential to newly acquire a role grant it doesn't
+  already have, because the Phase-1 liveness check found no real deployment
+  relies on the removed arm in the first place. Any node credential that
+  genuinely needs `/system` access today already has, or can be given, a
+  normal `MachineIdentityRole` grant the same way any other machine identity
+  would.
 
 ## Removed implementations (2026-08-24)
 

@@ -44,7 +44,7 @@ type userCredentialsCeilingFixtures struct {
 	serverURL       string
 	sysWriteToken   string // holds ONLY system.write — must be denied by the new ceiling
 	usersWriteToken string // holds system.write + users.write — must be allowed
-	nodeToken       string // genuine node-credential relay — still allowed (known gap)
+	nodeToken       string // bare node-type credential, zero role grants — must be denied (ADR-085)
 	targetUserID    uint   // the user whose PATs/sessions the requests act on
 }
 
@@ -111,7 +111,7 @@ func setupUserCredentialsCeilingFixtures(t *testing.T) userCredentialsCeilingFix
 	createTestToken(t, testCore) // bootstrap admin + seed roles/permissions (incl. system.write/users.write)
 	sysWriteToken := createSystemWriteOnlyToken(t, testCore)
 	usersWriteToken := createUsersWriteToken(t, testCore)
-	nodeToken := createNodeToken(t, testCore)
+	nodeToken := createBareNodeToken(t, testCore)
 
 	target, err := testCore.GetUserByEmail(ctx, "sys_write_only@example.com")
 	require.NoError(t, err)
@@ -179,21 +179,18 @@ func TestSystemWriteCeiling_RevokeAllPersonalAccessTokensForUserProxy_UsersWrite
 }
 
 // TestSystemWriteCeiling_RevokeAllPersonalAccessTokensForUserProxy_NodeCredential_StillBypassesUsersWriteCheck
-// pins the KNOWN, OPEN gap: a node credential still reaches the raw
-// storage.RevokeAllPersonalAccessTokensForUser call unconditionally
-// (isNodeCredentialRequest branch), so it can still revoke any user's PATs
-// with no authority check and no audit event.
+// pins the CLOSED gap: with isNodeCredentialRequest's branch AND the
+// node-credential OR-arm both removed (ADR-085), a bare node credential is
+// refused at the /system group's own system.write gate before ever reaching
+// this route's own users.write check — it can no longer revoke another
+// user's personal access tokens.
 func TestSystemWriteCeiling_RevokeAllPersonalAccessTokensForUserProxy_NodeCredential_StillBypassesUsersWriteCheck(t *testing.T) {
 	f := setupUserCredentialsCeilingFixtures(t)
 	path := fmt.Sprintf("/api/v1/system/users/%d/personal-access-tokens/revoke-all", f.targetUserID)
 	status, body := doUserCredentialsCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, path, nil)
 	t.Logf("RevokeAllPersonalAccessTokensForUserProxy(node credential): status=%d body=%s", status, body)
-	require.Equal(t, http.StatusOK, status,
-		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still revokes a "+
-			"user's personal access tokens with no users.write-authority check and no audit event — "+
-			"isNodeCredentialRequest routes it around core.RevokeAllPersonalAccessTokensForUser entirely, on an "+
-			"unverified relay-trust assumption. If this ever goes non-200, update this assertion — that would "+
-			"mean the gap closed, which is the goal, not a regression.")
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential must not revoke another user's personal access tokens")
 }
 
 // TestSystemWriteCeiling_DeleteSessionsForUserExceptProxy_RequiresUsersWriteAuthority
@@ -220,17 +217,14 @@ func TestSystemWriteCeiling_DeleteSessionsForUserExceptProxy_UsersWriteSucceeds(
 }
 
 // TestSystemWriteCeiling_DeleteSessionsForUserExceptProxy_NodeCredential_StillBypassesUsersWriteCheck
-// pins the KNOWN, OPEN gap for DeleteSessionsForUserExceptProxy, mirroring the
+// pins the CLOSED gap for DeleteSessionsForUserExceptProxy — denied at the
+// /system group's own system.write gate, mirroring the
 // RevokeAllPersonalAccessTokensForUserProxy node-credential row above.
 func TestSystemWriteCeiling_DeleteSessionsForUserExceptProxy_NodeCredential_StillBypassesUsersWriteCheck(t *testing.T) {
 	f := setupUserCredentialsCeilingFixtures(t)
 	path := fmt.Sprintf("/api/v1/system/users/%d/sessions/delete-except", f.targetUserID)
 	status, body := doUserCredentialsCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, path, map[string]any{"except_session_id": 0})
 	t.Logf("DeleteSessionsForUserExceptProxy(node credential): status=%d body=%s", status, body)
-	require.Equal(t, http.StatusOK, status,
-		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still deletes a "+
-			"user's sessions with no users.write-authority check and no audit event — isNodeCredentialRequest "+
-			"routes it around core.DeleteSessionsForUserExcept entirely, on an unverified relay-trust assumption. "+
-			"If this ever goes non-200, update this assertion — that would mean the gap closed, which is the "+
-			"goal, not a regression.")
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential must not delete another user's sessions")
 }

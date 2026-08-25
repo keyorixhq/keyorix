@@ -7,17 +7,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
-
-// #G79 detection_idea: the /system proxy tree must be reachable by EITHER a
-// node-type machine credential OR the system.write permission (the dual-gate
-// chosen after a sole node-credential gate broke the rest of the RemoteStorage
-// surface, see node_credential.go's package doc), and refuse a caller holding
-// neither.
 
 func okHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
@@ -55,76 +50,67 @@ func TestRequireNodeCredential_NoUserContext(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
-// newNodeCredentialTestCore seeds a DB with a "sync_operator" role holding ONLY
-// system.write (no admin bypass) and a "limited" role holding an unrelated
-// permission, so the permission arm of RequireNodeCredentialOrPermission can be
-// exercised distinctly from the admin-tier bypass.
-func newNodeCredentialTestCore(t *testing.T) (*core.KeyorixCore, uint, uint) {
+// newBareNodeCredentialTestCore seeds a DB with a "sync_operator" role holding
+// ONLY system.write (no admin bypass), so TestRequirePermission_BareNodeCredentialRefused
+// below can prove a legitimate-looking, RBAC-unrelated permission grant on
+// SOMEONE ELSE doesn't leak to a node identity holding no grants of its own.
+func newBareNodeCredentialTestCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db := newScopedTestDB(t)
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "sync-operator", AccountState: "active"}).Error)
-	require.NoError(t, db.Create(&models.User{ID: 2, Username: "limited-user", AccountState: "active"}).Error)
-
 	systemWrite := &models.Permission{Name: "system.write"}
 	require.NoError(t, db.Create(systemWrite).Error)
-	secretsRead := &models.Permission{Name: "secrets.read"}
-	require.NoError(t, db.Create(secretsRead).Error)
-
 	syncRole := &models.Role{Name: "sync_operator"}
 	require.NoError(t, db.Create(syncRole).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: syncRole.ID, PermissionID: systemWrite.ID}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: syncRole.ID}).Error)
 
-	limitedRole := &models.Role{Name: "limited"}
-	require.NoError(t, db.Create(limitedRole).Error)
-	require.NoError(t, db.Create(&models.RolePermission{RoleID: limitedRole.ID, PermissionID: secretsRead.ID}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: limitedRole.ID}).Error)
-
-	return core.NewKeyorixCore(store.NewLocalStorage(db)), 1, 2
+	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
-// TestRequireNodeCredentialOrPermission_NodeCredentialPasses proves the node-credential
-// arm short-circuits before any AuthorizePrincipal DB lookup: a node identity with no
-// role/permission grants at all still passes (core service present, as always in
-// production, but empty of any grant for this principal).
-func TestRequireNodeCredentialOrPermission_NodeCredentialPasses(t *testing.T) {
-	cs, _, _ := newNodeCredentialTestCore(t)
+// TestRequirePermission_BareNodeCredentialRefused is the ADR-085 regression
+// test: /system used to be gated by RequireNodeCredentialOrPermission, which
+// admitted a node-type machine credential regardless of any RBAC grant at all.
+// That OR-arm is gone — router.go now gates /system with plain
+// RequirePermission(permSystemWrite), so a node credential with no role/
+// permission grants of its own must be refused exactly like any other
+// ungranted machine identity, not given a free pass for its credential class.
+func TestRequirePermission_BareNodeCredentialRefused(t *testing.T) {
+	cs, _ := newBareNodeCredentialTestCore(t)
 	uc := &UserContext{ActorType: core.ActorTypeMachine, MachineIdentityType: core.MachineTypeNode}
 	req := makeRequest(t, http.MethodGet, "/api/v1/system/groups", nil, uc, cs)
 	rec := httptest.NewRecorder()
-	RequireNodeCredentialOrPermission("system.write")(http.HandlerFunc(okHandler)).ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code, "a node credential must pass regardless of RBAC grants")
+	RequirePermission("system.write")(http.HandlerFunc(okHandler)).ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"CEILING VIOLATED (ADR-085): a bare node credential with no system.write grant must be refused -- "+
+			"credential CLASS alone must never substitute for holding the permission")
 }
 
-func TestRequireNodeCredentialOrPermission_PermissionHolderPasses(t *testing.T) {
-	cs, syncOperatorID, _ := newNodeCredentialTestCore(t)
-	uc := &UserContext{UserID: syncOperatorID, ActorType: core.ActorTypeUser}
+// TestRequirePermission_NodeCredentialWithGrantPasses is the companion control:
+// a machine identity that happens to be node-typed AND has been granted
+// system.write via a real machine_identity_roles row (same mechanism as any
+// other machine identity) must still reach the group -- the fix removes the
+// credential-class shortcut, not the ability for a node identity to ever hold
+// system.write the normal way.
+func TestRequirePermission_NodeCredentialWithGrantPasses(t *testing.T) {
+	cs, db := newBareNodeCredentialTestCore(t)
+	require.NoError(t, db.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityRole{}))
+
+	systemWrite := &models.Permission{}
+	require.NoError(t, db.Where("name = ?", "system.write").First(systemWrite).Error)
+	machine := &models.MachineIdentity{ProjectID: 1, Name: "test-node", IdentityType: core.MachineTypeNode, State: "active"}
+	require.NoError(t, db.Create(machine).Error)
+	nodeRole := &models.Role{Name: "node_system_writer"}
+	require.NoError(t, db.Create(nodeRole).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: nodeRole.ID, PermissionID: systemWrite.ID}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: machine.ID, RoleID: nodeRole.ID}).Error)
+
+	uc := &UserContext{ActorType: core.ActorTypeMachine, MachineIdentityType: core.MachineTypeNode, MachineIdentityID: &machine.ID}
 	req := makeRequest(t, http.MethodGet, "/api/v1/system/groups", nil, uc, cs)
 	rec := httptest.NewRecorder()
-	RequireNodeCredentialOrPermission("system.write")(http.HandlerFunc(okHandler)).ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code, "a non-node caller holding system.write must still reach the group via the permission arm")
-}
-
-func TestRequireNodeCredentialOrPermission_NeitherRefused(t *testing.T) {
-	cs, _, limitedUserID := newNodeCredentialTestCore(t)
-	uc := &UserContext{UserID: limitedUserID, ActorType: core.ActorTypeUser}
-	req := makeRequest(t, http.MethodGet, "/api/v1/system/groups", nil, uc, cs)
-	rec := httptest.NewRecorder()
-	RequireNodeCredentialOrPermission("system.write")(http.HandlerFunc(okHandler)).ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusForbidden, rec.Code, "a caller with neither a node credential nor system.write must be refused")
-}
-
-func TestRequireNodeCredentialOrPermission_NoUserContext(t *testing.T) {
-	rec := httptest.NewRecorder()
-	RequireNodeCredentialOrPermission("system.write")(http.HandlerFunc(okHandler)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-}
-
-func TestRequireNodeCredentialOrPermission_NoCoreService(t *testing.T) {
-	uc := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
-	req := makeRequest(t, http.MethodGet, "/api/v1/system/groups", nil, uc, nil)
-	rec := httptest.NewRecorder()
-	RequireNodeCredentialOrPermission("system.write")(http.HandlerFunc(okHandler)).ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
+	RequirePermission("system.write")(http.HandlerFunc(okHandler)).ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"a node-typed machine identity that genuinely holds system.write via machine_identity_roles must "+
+			"still reach the group -- the fix removes the credential-class shortcut, not machine RBAC itself")
 }

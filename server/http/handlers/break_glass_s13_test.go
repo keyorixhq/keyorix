@@ -190,10 +190,17 @@ func TestRevokeBreakGlassActivationProxy_BadJSON_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRevokeBreakGlassActivationProxy_MissingRevokedBy_S13(t *testing.T) {
+// TestRevokeBreakGlassActivationProxy_NoAuthenticatedCaller_S13 (G80
+// documented-exception re-verification sweep, 2026-08-25) supersedes the
+// old MissingRevokedBy test: revoked_by is no longer read from the wire at
+// all (it used to feed the role-removal actor, the persisted RevokedBy, and
+// the audit event with zero relation to who actually called this route), so
+// a wire body that sets it to 0 is no longer a distinct case. What must
+// still be rejected is a call with no authenticated human caller at all.
+func TestRevokeBreakGlassActivationProxy_NoAuthenticatedCaller_S13(t *testing.T) {
 	h := newCatalogHandlerBreakGlassS13(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"revoked_by":0}`)), "id", "1")
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }

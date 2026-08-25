@@ -233,6 +233,13 @@ func (h *CatalogHandler) CreateAccessReviewCampaignProxy(w http.ResponseWriter, 
 	body.ClosedBy = 0
 	body.ClosedAt = nil
 	body.ForcedIncomplete = false
+	// G80 documented-exception re-verification sweep (2026-08-25): CreatedBy
+	// used to persist verbatim from the wire while the audit event two lines
+	// below already correctly attributed to actorID(r) — the same handler
+	// trusting the caller for the compliance record but not for the audit
+	// trail, which is exactly backwards. Force both to the authenticated actor.
+	actorID := actorID(r)
+	body.CreatedBy = actorID
 	created, err := h.coreService.Storage().CreateAccessReviewCampaign(r.Context(), body.toModel())
 	if err != nil {
 		log.Printf("access-review-campaigns proxy: create campaign failed: %v", err)
@@ -241,7 +248,6 @@ func (h *CatalogHandler) CreateAccessReviewCampaignProxy(w http.ResponseWriter, 
 	}
 	// Emit the same audit event that OpenAccessReviewCampaign emits so the upstream
 	// audit trail records the campaign creation even when items are persisted separately.
-	actorID := actorID(r)
 	h.coreService.AuditCampaignCreated(r.Context(), actorID, created.ProjectID, created.ID, created.Name, 0)
 	writeRemoteAPISuccess(w, newAccessReviewCampaignProxyWire(created))
 }
@@ -457,16 +463,25 @@ func (h *CatalogHandler) UpdateAccessReviewItemProxy(w http.ResponseWriter, r *h
 		return
 	}
 	body.ID = uint(id)
-	// ARC-005: a reviewer must be identified (decided_by != 0) and must not
-	// self-certify their own user-scoped access item.
-	if body.DecidedBy == 0 {
-		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "decided_by must identify an attributable reviewer; zero is not allowed")
+	// ARC-005 (G80 documented-exception re-verification sweep, 2026-08-25):
+	// `decided_by` used to come straight off the wire — a self-certification
+	// check that trusts the caller to name their OWN reviewer is not a check
+	// at all; any system.write holder could name an arbitrary user ID as the
+	// "independent" reviewer of their own access grant, satisfying the
+	// PrincipalID-mismatch test trivially while recording someone who never
+	// looked at the request. The reviewer must be identified is a human-only
+	// decision (an "independent reviewer" concept has no meaning for a
+	// machine caller), same as CreateInvitationProxy's actorID(r) fix.
+	actorType, decidedBy := requestActorKindAndID(r)
+	if actorType != core.ActorTypeUser || decidedBy == 0 {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "decided_by must identify an attributable, authenticated human reviewer")
 		return
 	}
-	if body.PrincipalType == "user" && body.DecidedBy == body.PrincipalID {
+	if body.PrincipalType == "user" && decidedBy == body.PrincipalID {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "self-certification is not allowed; an independent reviewer is required")
 		return
 	}
+	body.DecidedBy = decidedBy
 	updated, err := h.coreService.Storage().UpdateAccessReviewItem(r.Context(), body.toModel())
 	if err != nil {
 		log.Printf("access-review-campaigns proxy: update item failed: %v", err)

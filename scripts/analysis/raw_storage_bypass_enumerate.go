@@ -91,10 +91,23 @@ func identSel(e ast.Expr) (recv, sel string, ok bool) {
 	return id.Name, se.Sel.Name, true
 }
 
-// exportedCoreStorageWrappers: every `<recv>.storage.<Method>(...)` call inside an
-// EXPORTED *KeyorixCore method body, anywhere in internal/core (excluding tests).
-func exportedCoreStorageWrappers(root string) map[string]bool {
-	wrapped := map[string]bool{}
+// keyorixCoreMethod is one (c *KeyorixCore) method's declaration plus the name
+// its receiver is bound to (varies per method, e.g. "c" almost everywhere but
+// not guaranteed) -- needed to recognize both c.storage.X(...) and c.foo(...)
+// calls correctly regardless of which identifier the method happens to use.
+type keyorixCoreMethod struct {
+	fd       *ast.FuncDecl
+	recvName string
+}
+
+// keyorixCoreMethods indexes every (c *KeyorixCore) method in internal/core
+// (exported or not) by name, for the one-level same-package call-graph hop
+// exportedCoreStorageWrappers needs: an exported method's body often does
+// nothing but call an unexported sibling that does the real work (e.g.
+// InviteMember -> inviteMemberWithMode), and the storage call this tool is
+// looking for lives in THAT sibling's body, not the exported method's own.
+func keyorixCoreMethods(root string) map[string]keyorixCoreMethod {
+	methods := map[string]keyorixCoreMethod{}
 	for _, f := range parseDir(filepath.Join(root, "internal", "core")) {
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
@@ -106,28 +119,102 @@ func exportedCoreStorageWrappers(root string) map[string]bool {
 				continue
 			}
 			id, ok := star.X.(*ast.Ident)
-			if !ok || id.Name != "KeyorixCore" || !fd.Name.IsExported() || len(fd.Recv.List[0].Names) == 0 {
+			if !ok || id.Name != "KeyorixCore" || len(fd.Recv.List[0].Names) == 0 {
 				continue
 			}
-			recvName := fd.Recv.List[0].Names[0].Name
-			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				outerSel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				innerRecv, innerSel, ok := identSel(outerSel.X)
-				if ok && innerRecv == recvName && innerSel == "storage" {
-					wrapped[outerSel.Sel.Name] = true
-				}
-				return true
-			})
+			methods[fd.Name.Name] = keyorixCoreMethod{fd: fd, recvName: fd.Recv.List[0].Names[0].Name}
+		}
+	}
+	return methods
+}
+
+// directStorageCalls returns every storage method name called as
+// `<recvName>.storage.<Method>(...)` directly in fd's body (no further
+// indirection followed).
+func directStorageCalls(fd *ast.FuncDecl, recvName string) []string {
+	var found []string
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		outerSel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		innerRecv, innerSel, ok := identSel(outerSel.X)
+		if ok && innerRecv == recvName && innerSel == "storage" {
+			found = append(found, outerSel.Sel.Name)
+		}
+		return true
+	})
+	return found
+}
+
+// calledSiblingMethods returns the names of every same-receiver KeyorixCore
+// method called as `<recvName>.<name>(...)` in fd's body (both exported and
+// unexported -- the caller decides which to follow further).
+func calledSiblingMethods(fd *ast.FuncDecl, recvName string, all map[string]keyorixCoreMethod) []string {
+	var found []string
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok || id.Name != recvName {
+			return true
+		}
+		if _, exists := all[sel.Sel.Name]; exists {
+			found = append(found, sel.Sel.Name)
+		}
+		return true
+	})
+	return found
+}
+
+// exportedCoreStorageWrappers: every `<recv>.storage.<Method>(...)` call
+// reachable from an EXPORTED *KeyorixCore method within ONE hop through an
+// UNEXPORTED same-receiver sibling method, anywhere in internal/core
+// (excluding tests). One hop only, deliberately -- see this tool's own
+// enumeration doc for what a second hop would cost and why it wasn't added
+// speculatively.
+//
+// Extended 2026-08-25 (G80 documented-exception re-verification sweep, Task
+// 3): the original version only looked at the exported method's OWN body,
+// which missed core.InviteMember -> inviteMemberWithMode (unexported) ->
+// c.storage.CreateProjectMembership -- CreateMembershipProxy's raw call to
+// that same storage primitive went undetected as a bypass because the tool
+// never saw the wrapper exists at all.
+func exportedCoreStorageWrappers(root string) map[string]bool {
+	all := keyorixCoreMethods(root)
+	wrapped := map[string]bool{}
+	for name, m := range all {
+		if !isExportedName(name) {
+			continue
+		}
+		for _, method := range directStorageCalls(m.fd, m.recvName) {
+			wrapped[method] = true
+		}
+		for _, siblingName := range calledSiblingMethods(m.fd, m.recvName, all) {
+			if isExportedName(siblingName) {
+				continue // one hop only -- an exported sibling is scanned on its own as a top-level entry anyway
+			}
+			sibling := all[siblingName]
+			for _, method := range directStorageCalls(sibling.fd, sibling.recvName) {
+				wrapped[method] = true
+			}
 		}
 	}
 	return wrapped
+}
+
+func isExportedName(name string) bool {
+	return len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'
 }
 
 // registeredHandlerNames: every exported method name referenced as `xxx.MethodName`

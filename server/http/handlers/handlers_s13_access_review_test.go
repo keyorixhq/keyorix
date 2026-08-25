@@ -769,8 +769,13 @@ func TestCreateAccessRequestApprovalProxy_InvalidJSON_S13(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "INVALID_BODY")
 }
 
-// TestCreateAccessRequestApprovalProxy_MissingApproverID_S13 — approver_id=0 → 400.
-func TestCreateAccessRequestApprovalProxy_MissingApproverID_S13(t *testing.T) {
+// TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller_S13 (G80
+// documented-exception re-verification sweep, 2026-08-25) supersedes the old
+// MissingApproverID test: approver_id is no longer read from the wire at all
+// (see access_request_proxy.go's own updated doc comment) -- a wire body
+// setting it to 0 is no longer distinct from any other value. What must
+// still be rejected is a call with no authenticated caller at all.
+func TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller_S13(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreS12(t))
 	req := withChiParam(
@@ -779,6 +784,6 @@ func TestCreateAccessRequestApprovalProxy_MissingApproverID_S13(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "FORBIDDEN")
 }

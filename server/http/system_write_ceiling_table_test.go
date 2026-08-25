@@ -19,22 +19,24 @@
 // is its definition of done.
 //
 // Scope note: this table does not cover the group's pure GET routes (no
-// escalation-relevant ceiling — the group's own system.write-or-node-credential
-// gate is the only check that applies to a read) or routes already confirmed
+// escalation-relevant ceiling — the group's own system.write gate, ADR-085,
+// is the only check that applies to a read) or routes already confirmed
 // no-independent-ceiling / documented-exception in the triage doc (e.g.
-// TouchMachineIdentityCredentialProxy, UpdateMachineIdentityProxy). It also does
-// not (yet) cover RevokeMachineIdentityCredentialProxy: the current wire contract
-// (DELETE-by-bare-credential-ID, no project/scope parameter at all) can't express
-// a scope check without a RemoteStorage client-side change first — a different,
-// harder fix shape than the other rows here; deferred and filed as #1551, not
-// asserted on below.
+// TouchMachineIdentityCredentialProxy, UpdateMachineIdentityProxy). Its
+// RevokeMachineIdentityCredentialProxy coverage
+// (RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate below) is
+// gate-level only: the current wire contract (DELETE-by-bare-credential-ID, no
+// project/scope parameter at all) can't express a per-grant scope check
+// without a RemoteStorage client-side change first — a different, harder fix
+// shape than the other rows here; filed as #1551, not closed by this table.
 //
-// A second dimension, added after the first fix pass: "Node-credential-path
-// rows" below exercise the human-caller rows' SAME three write routes again, but
-// as a genuine node-credential relay (f.nodeToken) instead of the system.write-
-// only human (f.token) — see that section's own doc for why, and
-// docs/g80-raw-storage-bypass-triage.md's "Fix status" section for the
-// authoritative half-fixed/open status these rows pin.
+// A second dimension: "Node-credential-path rows" below exercise the
+// human-caller rows' SAME write routes again, but with a bare node-type
+// credential holding zero role grants (f.nodeToken, createBareNodeToken)
+// instead of the system.write-only human (f.token) — proving a node
+// identity's type alone confers nothing (ADR-085, Accepted, 2026-08-25;
+// see docs/g80-raw-storage-bypass-triage.md's "Fix status" section for the
+// closure record).
 package http
 
 import (
@@ -60,20 +62,23 @@ import (
 // mutate state use their OWN dedicated fixture, never one another case depends on
 // reading unmutated).
 type ceilingTableFixtures struct {
-	serverURL         string
-	token             string // system.write-only human caller under test
-	nodeToken         string // genuine node-credential relay caller (createNodeToken)
-	rolesAssignToken  string // system.write + roles.assign human caller (createSystemWriteAndRolesAssignToken)
-	projectID         uint
-	plainMachine      uint // ordinary machine identity, no roles
-	adminMachine      uint // holds the admin-tier "system_admin" role at global scope
-	revokedMach       uint // machine identity already in state=revoked
-	plainCredID       uint // existing, non-revoked credential on plainMachine
-	revokedCredID     uint // existing, ALREADY-revoked credential on plainMachine
-	bindingID         uint // existing OIDC binding on plainMachine
-	normalRoleID      uint // a non-admin-tier role
-	adminRoleID       uint // system_admin's role ID
-	secondAdminUserID uint // a SECOND global-admin user (system_admin), distinct from the bootstrap admin
+	serverURL             string
+	token                 string // system.write-only human caller under test
+	nodeToken             string // bare node-type credential, zero role grants (createBareNodeToken)
+	permissionedNodeToken string // node-type credential holding real system.write (createNodeToken) — reaches the group gate
+	rolesAssignToken      string // system.write + roles.assign human caller (createSystemWriteAndRolesAssignToken)
+	projectID             uint
+	plainMachine          uint   // ordinary machine identity, no roles
+	adminMachine          uint   // holds the admin-tier "system_admin" role at global scope
+	revokedMach           uint   // machine identity already in state=revoked
+	plainCredID           uint   // existing, non-revoked credential on plainMachine
+	revokedCredID         uint   // existing, ALREADY-revoked credential on plainMachine
+	bindingID             uint   // existing OIDC binding on plainMachine
+	normalRoleID          uint   // a non-admin-tier role
+	adminRoleID           uint   // system_admin's role ID
+	secondAdminUserID     uint   // a SECOND global-admin user (system_admin), distinct from the bootstrap admin
+	usersWriteToken       string // system.write + users.write human caller (createSystemWriteAndUsersWriteToken)
+	setupTargetUserID     uint   // a real user, distinct from the caller, to target with a setup token
 }
 
 // createSystemWriteAndRolesAssignToken creates a human user holding system.write
@@ -117,6 +122,50 @@ func createSystemWriteAndRolesAssignToken(t *testing.T, c *core.KeyorixCore) str
 	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_roles_assign@example.com", "ceiling_test_system_writer_roles_assign"))
 
 	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_roles_assign", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+	return sess.SessionToken
+}
+
+// createSystemWriteAndUsersWriteToken creates a human user holding system.write
+// AND users.write, via a custom role well outside adminRoleNames (same rationale
+// as createSystemWriteOnlyToken). Represents the legitimate direct caller
+// CreateSetupTokenProxy's fix is meant to keep working: someone who actually holds
+// the same authority every other admin-facing route that mints a setup token
+// (POST /api/v1/users, POST /api/v1/users/{id}/resend-setup-link) already requires.
+func createSystemWriteAndUsersWriteToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+
+	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "sys_write_users_write", Email: "sys_write_users_write@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_users_write@example.com", "system_viewer"))
+
+	role, err := c.Storage().CreateRole(ctx, &models.Role{
+		Name: "ceiling_test_system_writer_users_write", Description: "test-only role: system.write + users.write, nothing else",
+	})
+	require.NoError(t, err)
+
+	perms, err := c.ListPermissions(ctx)
+	require.NoError(t, err)
+	var systemWriteID, usersWriteID uint
+	for _, p := range perms {
+		switch p.Name {
+		case "system.write":
+			systemWriteID = p.ID
+		case "users.write":
+			usersWriteID = p.ID
+		}
+	}
+	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
+	require.NotZero(t, usersWriteID, "users.write permission must already be seeded by bootstrap")
+
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID))
+	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_users_write@example.com", "ceiling_test_system_writer_users_write"))
+
+	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_users_write", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	return sess.SessionToken
 }
@@ -189,28 +238,42 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 	secondAdmin, err := testCore.GetUserByEmail(ctx, "ceiling-table-second-admin@example.com")
 	require.NoError(t, err)
 
+	// A real target user, distinct from every caller above, for
+	// CreateSetupTokenProxy rows to mint an account_setup token against.
+	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "ceiling-table-setup-target", Email: "ceiling-table-setup-target@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	setupTarget, err := testCore.GetUserByEmail(ctx, "ceiling-table-setup-target@example.com")
+	require.NoError(t, err)
+
 	token := createSystemWriteOnlyToken(t, testCore)
 	// createNodeToken (integration_test.go) also calls createTestToken internally —
 	// safe to call again here since createTestToken tolerates an already-initialized
 	// system (logs and continues rather than failing).
-	nodeToken := createNodeToken(t, testCore)
+	nodeToken := createBareNodeToken(t, testCore)
+	permissionedNodeToken := createNodeToken(t, testCore)
 	rolesAssignToken := createSystemWriteAndRolesAssignToken(t, testCore)
+	usersWriteToken := createSystemWriteAndUsersWriteToken(t, testCore)
 
 	return ceilingTableFixtures{
-		serverURL:         server.URL,
-		token:             token,
-		nodeToken:         nodeToken,
-		rolesAssignToken:  rolesAssignToken,
-		projectID:         projectID,
-		plainMachine:      plainMachine.ID,
-		adminMachine:      adminMachine.ID,
-		revokedMach:       revokedMachine.ID,
-		plainCredID:       plainCred.ID,
-		revokedCredID:     revokedCred.ID,
-		bindingID:         binding.ID,
-		normalRoleID:      normalRole.ID,
-		adminRoleID:       adminRole.ID,
-		secondAdminUserID: secondAdmin.ID,
+		serverURL:             server.URL,
+		token:                 token,
+		nodeToken:             nodeToken,
+		permissionedNodeToken: permissionedNodeToken,
+		rolesAssignToken:      rolesAssignToken,
+		usersWriteToken:       usersWriteToken,
+		projectID:             projectID,
+		plainMachine:          plainMachine.ID,
+		adminMachine:          adminMachine.ID,
+		revokedMach:           revokedMachine.ID,
+		plainCredID:           plainCred.ID,
+		revokedCredID:         revokedCred.ID,
+		bindingID:             binding.ID,
+		normalRoleID:          normalRole.ID,
+		adminRoleID:           adminRole.ID,
+		secondAdminUserID:     secondAdmin.ID,
+		setupTargetUserID:     setupTarget.ID,
 	}
 }
 
@@ -258,7 +321,13 @@ func doCeilingRequestAs(t *testing.T, f ceilingTableFixtures, token, method, pat
 // any other value), never having been active.
 func TestSystemWriteCeiling_CreateMachineIdentityProxy_ForcesActiveState(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
-	status, body := doCeilingRequest(t, f, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
+	// This case is about the state-forcing behavior, not about the privilege
+	// ceiling (that's TestSystemWriteCeiling_CreateMachineIdentityCredentialProxy_
+	// EnforcesPrivilegeCeiling's job) — use f.rolesAssignToken (system.write +
+	// roles.assign) so the request clears the MACH-001 ceiling check that
+	// CreateMachineIdentityProxy now runs, and reaches the state-forcing logic
+	// under test.
+	status, body := doCeilingRequestAs(t, f, f.rolesAssignToken, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
 		"name": "ceiling-table-forged-state", "project_id": f.projectID,
 		"identity_type": core.MachineTypeService, "state": core.MachineRevoked,
 	})
@@ -443,46 +512,134 @@ func TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_AllowsWithRolesAss
 			"grant — the last-admin guard passes here because the bootstrap admin survives as the remaining admin")
 }
 
+// TestSystemWriteCeiling_CreateSetupTokenProxy_DeniesWithoutUsersWrite is the
+// table's CreateSetupTokenProxy row (G80 documented-exception re-verification
+// sweep, 2026-08-25). Ceiling: minting a setup token for user X is equivalent to
+// taking control of X -- every other admin-facing route that mints one
+// (POST /api/v1/users, POST /api/v1/users/{id}/resend-setup-link) requires
+// users.write. FIXED: a direct (non-node-credential) caller now needs users.write
+// too. RED before the fix: f.token (system.write, no users.write) could mint a
+// fully-valid, immediately-redeemable account_setup token for f.setupTargetUserID.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_DeniesWithoutUsersWrite(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequest(t, f, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-forged-hash-0000000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(system.write only, target=setup-target): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusForbidden, status,
+		"CEILING VIOLATED: a system.write-only caller with no users.write must be denied minting a setup token "+
+			"for another user — the internal invitation/user cross-reference check was never the gap; the "+
+			"missing actor-authority check was")
+}
+
+// TestSystemWriteCeiling_CreateSetupTokenProxy_AllowsWithUsersWrite is this row's
+// companion control: a caller who legitimately holds users.write (the SAME
+// authority every other route that mints a setup token already requires) must
+// still be able to perform this operation.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_AllowsWithUsersWrite(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.usersWriteToken, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-legit-hash-00000000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(users.write holder, target=setup-target): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusOK, status,
+		"a caller who genuinely holds users.write must still be able to mint a setup token for another user")
+}
+
+// TestSystemWriteCeiling_CreateSetupTokenProxy_CreatedByIsAlwaysCaller closes a
+// gap the two rows above can't see: neither exercises whether
+// model.CreatedBy = userCtx.PrincipalID() (setup_tokens_proxy.go) is
+// load-bearing, since the wire body's own created_by is simply never read by
+// either. A genuine users.write holder forging created_by to a DIFFERENT real
+// user (secondAdminUserID) must still have the persisted, returned record
+// attribute the token to themselves, not the forged identity.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_CreatedByIsAlwaysCaller(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.usersWriteToken, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-createdby-hash-0000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"created_by":      f.secondAdminUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(users.write holder, created_by forged to a different real user %d): status=%d body=%s", f.secondAdminUserID, status, body)
+	require.Equal(t, http.StatusOK, status)
+
+	var parsed struct {
+		Data struct {
+			CreatedBy uint `json:"created_by"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &parsed))
+	require.NotEqual(t, f.secondAdminUserID, parsed.Data.CreatedBy, "created_by must not be the forged user ID")
+	require.NotZero(t, parsed.Data.CreatedBy, "created_by must be a real, attributable caller")
+}
+
+// TestSystemWriteCeiling_CreateSetupTokenProxy_NodeCredential_StillBypassesAuthorityCheck
+// pins the CLOSED gap: ADR-085 (Accepted, 2026-08-25) removed
+// isNodeCredentialRequest's unconditional-passthrough branch AND the
+// node-credential OR-arm from the /system group's own gate
+// (RequireNodeCredentialOrPermission → RequirePermission(system.write),
+// router.go). f.nodeToken (createBareNodeToken) holds no role grant at all,
+// so it is refused a layer earlier than the human-caller row above: at the
+// group's blanket system.write gate, never reaching this route's own
+// users.write check at all.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_NodeCredential_StillBypassesAuthorityCheck(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-node-hash-000000000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(node credential, target=setup-target): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential with no role grant must not mint a setup token for another user")
+}
+
 // ── Node-credential-path rows ────────────────────────────────────────────────
 //
-// The three rows below exercise the SAME routes above, but with f.nodeToken (a
-// genuine node-type machine credential — createNodeToken, integration_test.go)
-// instead of f.token (the system.write-only human). They exist because fixing
-// CreateMachineIdentityCredentialProxy and CreateOIDCBindingProxy for a DIRECT
-// caller (above) required an isNodeCredentialRequest(r) branch that routes a
-// node-credential caller around the new check entirely, to the raw storage
-// call — otherwise every legitimate node relay would ALSO be denied (a node
-// always resolves actorID(r)==0, and both requireMachinePrivilegeCeiling and
-// requireAuthorityForRole refuse actorID==0 outright). That branch is
-// necessary — but it also means the exemption is real, not hypothetical, and
-// needed its own visible, asserted coverage rather than living implicitly
-// inside an if-statement with no test pinning what it actually permits.
-//
-// These rows assert CURRENT behavior (allowed) exactly as it is today — this
-// is a KNOWN, DOCUMENTED GAP (see docs/g80-raw-storage-bypass-triage.md's "Fix
-// status" section and knownUnfixedRawStorageBypasses' HALF-FIXED entries for
-// CreateMachineIdentityCredentialProxy/CreateOIDCBindingProxy), NOT intended,
-// approved-safe behavior. Nothing on the wire distinguishes a genuine relay of
-// an already-checked downstream decision from a bare node credential calling
-// the route directly with attacker-chosen parameters (ADR-085's still-unresolved
-// "harder question" — see docs/adr-085-node-credential-permission-scope.md). If
-// a future fix closes this (a wire-level actor-identity field, or removing the
-// node bypass per ADR-085's proposed direction), these rows must go RED and get
-// updated to assert denial — they are pinning the gap, not blessing it.
+// The rows below exercise the SAME routes above, but with f.nodeToken (a
+// genuine node-type machine credential holding NO role grant —
+// createBareNodeToken, integration_test.go) instead of f.token (the
+// system.write-only human). ADR-085 (Accepted, 2026-08-25) found the
+// "downstream node relay" topology these routes' isNodeCredentialRequest(r)
+// branches existed to serve cannot exist in this codebase at all (ADR-083's
+// validateRemoteStorageNotServer rejects storage.type: remote for any server
+// process), and that a liveness sweep found no live caller for the branch
+// anyway (createNodeToken is test-only in every reference; no deployment
+// artifact provisions a node credential for runtime use). The branches are
+// deleted; a node credential is now authorized the SAME way any other caller
+// is, via a real role grant it either has or doesn't. These rows use a BARE
+// node credential (zero role grants) specifically to pin that a node
+// identity's type alone confers nothing.
 
 // TestSystemWriteCeiling_CreateMachineIdentityProxy_NodeCredential_AlsoForcesActiveState
-// is NOT a gap: core.CreateMachineIdentity has no actor-authority check at all
-// (only State/IdentityType/Classification validation), for ANY caller. A node
-// credential behaves identically to the human caller in the row above. Included
-// for symmetry/completeness of the node-credential dimension, not because this
-// route has a caller-class-dependent exemption to pin.
+// uses f.permissionedNodeToken (createNodeToken — a node-type credential that
+// DOES hold system.write, unlike every other row in this section) rather than
+// the bare f.nodeToken: this route's whole point is that
+// core.CreateMachineIdentity has no actor-authority check at all (only
+// State/IdentityType/Classification validation) for ANY caller who reaches
+// it, and a bare node credential can no longer reach it at all (denied at the
+// group's own system.write gate, ADR-085) — proving that would just repeat
+// every other row in this section, not this route's own, different property.
 func TestSystemWriteCeiling_CreateMachineIdentityProxy_NodeCredential_AlsoForcesActiveState(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
-	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
+	status, body := doCeilingRequestAs(t, f, f.permissionedNodeToken, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
 		"name": "ceiling-table-node-create", "project_id": f.projectID,
 		"identity_type": core.MachineTypeService, "state": core.MachineRevoked,
 	})
-	t.Logf("CreateMachineIdentityProxy(node credential, state=%s): status=%d body=%s", core.MachineRevoked, status, body)
+	t.Logf("CreateMachineIdentityProxy(permissioned node credential, state=%s): status=%d body=%s", core.MachineRevoked, status, body)
 	require.Equal(t, http.StatusOK, status, "no actor-authority check exists for either caller class on this route")
 	var parsed struct {
 		Data struct {
@@ -494,12 +651,13 @@ func TestSystemWriteCeiling_CreateMachineIdentityProxy_NodeCredential_AlsoForces
 }
 
 // TestSystemWriteCeiling_CreateMachineIdentityCredentialProxy_NodeCredential_StillBypassesPrivilegeCeiling
-// pins the KNOWN, OPEN gap: unlike the human-caller row above (now 403), a node
-// credential still reaches the raw storage.CreateMachineIdentityCredential call
-// unconditionally (isNodeCredentialRequest branch, machine_identities_proxy.go),
-// so it can still forge a working credential for f.adminMachine (holds
-// system_admin) — the campaign's original "MOST SEVERE FINDING", now reachable
-// only via a node credential instead of any system.write holder, not closed.
+// pins the CLOSED gap: with isNodeCredentialRequest's branch AND the
+// node-credential OR-arm both removed (ADR-085), a bare node credential is
+// refused at the /system group's own system.write gate before ever reaching
+// requireMachinePrivilegeCeiling — it can no longer forge a credential for
+// f.adminMachine (holds system_admin). The campaign's original "MOST SEVERE
+// FINDING" (#1552) is closed for every caller class, not just the direct
+// human one.
 func TestSystemWriteCeiling_CreateMachineIdentityCredentialProxy_NodeCredential_StillBypassesPrivilegeCeiling(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
 	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/machine-credentials", map[string]any{
@@ -508,65 +666,98 @@ func TestSystemWriteCeiling_CreateMachineIdentityCredentialProxy_NodeCredential_
 		"token_prefix":        "mid_forged_admin_node",
 	})
 	t.Logf("CreateMachineIdentityCredentialProxy(node credential, machine_identity_id=admin-tier %d): status=%d body=%s", f.adminMachine, status, body)
-	require.Equal(t, http.StatusOK, status,
-		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still forges a "+
-			"credential for an admin-tier machine identity — isNodeCredentialRequest routes it around "+
-			"requireMachinePrivilegeCeiling entirely, on an unverified relay-trust assumption. If this ever goes "+
-			"non-200, update this assertion — that would mean the gap closed, which is the goal, not a regression.")
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential must not forge a credential for an admin-tier machine identity")
 }
 
 // TestSystemWriteCeiling_CreateOIDCBindingProxy_NodeCredential_StillBypassesAdminAuthority
-// pins the KNOWN, OPEN gap: unlike the human-caller row above (now 403), a node
-// credential still reaches the raw storage.CreateOIDCBinding call unconditionally
-// (isNodeCredentialRequest branch), so it can still pre-claim any (issuer,
-// subject) pair for a machine of its choosing with no install-wide admin-authority
-// check at all.
+// pins the CLOSED gap: with isNodeCredentialRequest's branch AND the
+// node-credential OR-arm both removed (ADR-085), a bare node credential is
+// refused at the /system group's own system.write gate before ever reaching
+// requireAuthorityForRole("system_admin") — it can no longer pre-claim an
+// OIDC (issuer, subject) pair. Even a node credential that DID hold
+// system.write couldn't pass that check either: it resolves authority via
+// scopedRoleIDs (internal/core/authz.go), which walks only a USER's direct
+// and group role grants — no machine actor, bare or admin-tier, can ever
+// satisfy it (see remote_storage_machine_identities_test.go's
+// OIDCBindingCreateGetListDelete_RealServer for that finding against a
+// genuinely-permissioned machine).
 func TestSystemWriteCeiling_CreateOIDCBindingProxy_NodeCredential_StillBypassesAdminAuthority(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
 	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/machine-oidc-bindings", map[string]any{
 		"machine_identity_id": f.plainMachine, "issuer": "https://ceiling-table-node-preclaim.example", "subject": "node-preclaimed-subject",
 	})
 	t.Logf("CreateOIDCBindingProxy(node credential): status=%d body=%s", status, body)
-	require.Equal(t, http.StatusOK, status,
-		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still creates an "+
-			"OIDC binding with no install-wide admin-authority check — isNodeCredentialRequest routes it around "+
-			"requireAuthorityForRole entirely, on an unverified relay-trust assumption. If this ever goes non-200, "+
-			"update this assertion — that would mean the gap closed, which is the goal, not a regression.")
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a node credential must not pre-claim an OIDC (issuer, subject) pair with no install-wide admin-authority check")
 }
 
 // TestSystemWriteCeiling_DeleteOIDCBindingProxy_NodeCredential_StillBypassesOwnershipCheck
-// pins the KNOWN, OPEN gap: unlike the direct-caller row above (now routed
-// through core.DeleteOIDCBinding), a node credential still reaches the raw
-// storage.DeleteOIDCBinding call unconditionally (isNodeCredentialRequest
-// branch), so it can still delete any binding ID with no ownership/project
-// resolution and no audit event at all.
+// pins the CLOSED gap: with isNodeCredentialRequest's branch removed, a bare
+// node credential is refused at the /system group's own system.write gate
+// before ever reaching core.DeleteOIDCBinding — unlike the direct-caller row
+// above (which DOES hold system.write and so still succeeds:
+// core.DeleteOIDCBinding itself has no caller-authority check beyond a
+// binding-belongs-to-this-machine identity check, which trivially holds since
+// the machine is derived FROM the binding being deleted; the fix there was
+// adding the audit event the raw passthrough skipped, not an authority
+// ceiling). A bare node credential never gets that far.
 func TestSystemWriteCeiling_DeleteOIDCBindingProxy_NodeCredential_StillBypassesOwnershipCheck(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
 	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodDelete, fmt.Sprintf("/api/v1/system/machine-oidc-bindings/%d", f.bindingID), nil)
 	t.Logf("DeleteOIDCBindingProxy(node credential): status=%d body=%s", status, body)
-	require.Equal(t, http.StatusOK, status,
-		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still deletes an "+
-			"OIDC binding with no ownership check and no audit event — isNodeCredentialRequest routes it around "+
-			"core.DeleteOIDCBinding entirely, on an unverified relay-trust assumption. If this ever goes non-200, "+
-			"update this assertion — that would mean the gap closed, which is the goal, not a regression.")
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential must not reach DeleteOIDCBinding at all")
 }
 
 // TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_NodeCredential_StillBypassesAuthorityCheck
-// pins the KNOWN, OPEN gap: unlike the human-caller row above (now 403), a node
-// credential still reaches the raw storage.RemoveGlobalAdminRoleGuarded call
-// unconditionally (isNodeCredentialRequest branch, rbac_role_grants_proxy.go),
-// so it can still strip any admin's global-admin role (down to the last one) with
-// no roles.assign check and no audit event.
+// pins the CLOSED gap: with isNodeCredentialRequest's branch AND the
+// node-credential OR-arm both removed (ADR-085), a bare node credential is
+// refused at the /system group's own system.write gate before ever reaching
+// the roles.assign-at-global-scope check — it can no longer strip a named
+// admin's global-admin role.
 func TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_NodeCredential_StillBypassesAuthorityCheck(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
 	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/rbac/global-admin-role/remove-guarded", map[string]any{
 		"user_id": f.secondAdminUserID, "role_id": f.adminRoleID,
 	})
 	t.Logf("RemoveGlobalAdminRoleGuardedProxy(node credential, target=second-admin): status=%d body=%s", status, body)
-	require.Equal(t, http.StatusOK, status,
-		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still strips a "+
-			"named admin's global-admin role grant with no roles.assign check and no audit event — "+
-			"isNodeCredentialRequest routes it around the new check entirely, on an unverified relay-trust "+
-			"assumption. If this ever goes non-200, update this assertion — that would mean the gap closed, which "+
-			"is the goal, not a regression.")
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential must not strip a named admin's global-admin role grant")
+}
+
+// TestSystemWriteCeiling_AssignRoleWithExpiryProxy_NodeCredential_DeniedAtGate
+// closes #1552, the campaign's original "MOST SEVERE FINDING" (a system.write
+// caller granting itself/anyone the system_admin role via the raw
+// storage.AssignRoleWithExpiry passthrough), specifically for the
+// node-credential axis: a bare node credential attempting to self-grant
+// system_admin is refused at the /system group's own system.write gate
+// (ADR-085), never reaching AssignRoleWithExpiryProxy's own
+// requireGranterHoldsRolePermissions check at all.
+func TestSystemWriteCeiling_AssignRoleWithExpiryProxy_NodeCredential_DeniedAtGate(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/rbac/assign-role-with-expiry", map[string]any{
+		"user_id": f.secondAdminUserID, "role_id": f.adminRoleID, "expires_at": time.Now().Add(time.Hour),
+	})
+	t.Logf("AssignRoleWithExpiryProxy(node credential, role=system_admin): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential must not reach AssignRoleWithExpiryProxy at all")
+}
+
+// TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate
+// closes #1551's node-credential axis: RevokeMachineIdentityCredentialProxy
+// itself is STILL an unconditional raw storage.RevokeMachineIdentityCredential
+// passthrough with no caller-authority or project-scope check at all — that
+// deeper gap (any system.write holder can revoke any credential cross-tenant)
+// is unchanged and remains filed as #1551 (the wire contract, a bare
+// credential ID with no scope parameter, can't express a scope check without
+// a RemoteStorage client-side change first). What ADR-085 closes is narrower
+// but real: a bare node credential can no longer reach the handler AT ALL,
+// refused at the /system group's own system.write gate.
+func TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, fmt.Sprintf("/api/v1/system/machine-credentials/%d/revoke", f.plainCredID), nil)
+	t.Logf("RevokeMachineIdentityCredentialProxy(node credential): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusForbidden, status,
+		"ADR-085: a bare node credential must not reach RevokeMachineIdentityCredentialProxy at all")
 }

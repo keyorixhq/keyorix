@@ -192,12 +192,16 @@ func TestCreateAccessRequestApprovalProxy_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCreateAccessRequestApprovalProxy_MissingApproverID(t *testing.T) {
+// TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller (G80
+// documented-exception re-verification sweep, 2026-08-25) supersedes the old
+// MissingApproverID test: approver_id is no longer read from the wire at
+// all. What must still be rejected is a call with no authenticated caller.
+func TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
 	w := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestListAccessRequestApprovalsProxy_BadID(t *testing.T) {
@@ -1377,6 +1381,59 @@ func TestCreateSetupTokenProxy_RefusesUnmatchedSubject(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, "a subject_user_id with no matching user must be refused")
 	_, err := cs.Storage().GetSetupTokenByHash(context.Background(), "deadbeef")
 	assert.Error(t, err, "no setup token must be persisted when the subject is unverified")
+}
+
+// TestCreateSetupTokenProxy_InvitationAccept_HappyPath closes a test-coverage
+// gap the G80 documented-exception re-verification sweep found: the
+// invitation_accept branch (GetProjectInvitation + email-match check) had zero
+// test coverage anywhere in this handler's test suite. A real, matching
+// invitation must be accepted, gated on users.write per the same sweep's fix.
+func TestCreateSetupTokenProxy_InvitationAccept_HappyPath(t *testing.T) {
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+	seedS4AdminActor(t, cs)
+
+	inv, err := cs.Storage().CreateProjectInvitation(context.Background(), &models.ProjectInvitation{
+		ProjectID: 1, Email: "invitee@example.com", Role: "project_developer", State: "pending",
+	})
+	require.NoError(t, err)
+
+	body := fmt.Sprintf(`{"token_hash":"invaccept1","purpose":"invitation_accept","subject_email":"invitee@example.com","invitation_id":%d,"expires_at":%q}`,
+		inv.ID, time.Now().Add(24*time.Hour).Format(time.RFC3339))
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
+	w := httptest.NewRecorder()
+	h.CreateSetupTokenProxy(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a real, matching invitation must be accepted: %s", w.Body.String())
+	tok, err := cs.Storage().GetSetupTokenByHash(context.Background(), "invaccept1")
+	require.NoError(t, err, "the token must be persisted")
+	require.NotNil(t, tok.InvitationID)
+	assert.Equal(t, inv.ID, *tok.InvitationID)
+	assert.Nil(t, tok.SubjectUserID)
+}
+
+// TestCreateSetupTokenProxy_InvitationAccept_RefusesEmailMismatch is
+// TestCreateSetupTokenProxy_InvitationAccept_HappyPath's companion: a real
+// invitation exists, but the caller's subject_email doesn't match it — must be
+// refused, and no token persisted.
+func TestCreateSetupTokenProxy_InvitationAccept_RefusesEmailMismatch(t *testing.T) {
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+
+	inv, err := cs.Storage().CreateProjectInvitation(context.Background(), &models.ProjectInvitation{
+		ProjectID: 1, Email: "real-invitee@example.com", Role: "project_developer", State: "pending",
+	})
+	require.NoError(t, err)
+
+	body := fmt.Sprintf(`{"token_hash":"invaccept2","purpose":"invitation_accept","subject_email":"attacker@example.com","invitation_id":%d,"expires_at":%q}`,
+		inv.ID, time.Now().Add(24*time.Hour).Format(time.RFC3339))
+	req := withNodeCredentialContextS13(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
+	w := httptest.NewRecorder()
+	h.CreateSetupTokenProxy(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, "an email mismatch against the real invitation must be refused")
+	_, err = cs.Storage().GetSetupTokenByHash(context.Background(), "invaccept2")
+	assert.Error(t, err, "no setup token must be persisted on a mismatched invitation_accept request")
 }
 
 // TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant is the #G79
@@ -9701,13 +9758,18 @@ func TestCatalogHandler_RevokeBreakGlassActivationProxy_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCatalogHandler_RevokeBreakGlassActivationProxy_MissingRevokedBy(t *testing.T) {
+// TestCatalogHandler_RevokeBreakGlassActivationProxy_NoAuthenticatedCaller
+// (G80 documented-exception re-verification sweep, 2026-08-25) supersedes
+// the old MissingRevokedBy test: revoked_by is no longer read from the wire
+// at all (see break_glass_proxy.go's own updated doc comment). What must
+// still be rejected is a call with no authenticated human caller at all.
+func TestCatalogHandler_RevokeBreakGlassActivationProxy_NoAuthenticatedCaller(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"revoked_by":0}`
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestCatalogHandler_RevokeBreakGlassActivationProxy_NotFound(t *testing.T) {

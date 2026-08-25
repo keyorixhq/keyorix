@@ -4,30 +4,27 @@
 // "PAT/session revocation half," server/http/raw_storage_bypass_guard_test.go's
 // knownUnfixedRawStorageBypasses entry for that handler).
 //
-// A downstream Keyorix server booted with storage.type: remote (ADR-049)
-// proxies these two storage primitives to whichever upstream server it's
-// configured against, through these routes (registered in
-// server/http/router.go under /api/v1/system/users/{id}/..., inside the
-// existing /system route group). Unlike every OTHER proxy in this package,
-// these do NOT rely on the group's blanket system.write-or-node-credential
-// gate alone for a direct (non-node) caller: core.UpdateUser/core.DeleteUser
-// perform no caller-authority check of their own on a deactivating
-// transition (only guardLastAdminDeactivation, a target-state invariant with
-// no actor parameter) — the actual ceiling that governs "who may deactivate a
-// user" lives entirely at the HTTP layer, on RequirePermission(permUsersWrite)
-// at PUT /api/v1/users/{id} (server/http/router.go). Revoking a user's live
+// These routes are registered in server/http/router.go under
+// /api/v1/system/users/{id}/..., inside the /system route group. Unlike most
+// other proxies in this package, these do NOT rely on the group's blanket
+// system.write gate alone: core.UpdateUser/core.DeleteUser perform no
+// caller-authority check of their own on a deactivating transition (only
+// guardLastAdminDeactivation, a target-state invariant with no actor
+// parameter) — the actual ceiling that governs "who may deactivate a user"
+// lives entirely at the HTTP layer, on RequirePermission(permUsersWrite) at
+// PUT /api/v1/users/{id} (server/http/router.go). Revoking a user's live
 // PATs/sessions is a sub-operation of that same action (core.UpdateUser's own
 // deactivating branch already does both under a real local transaction), so
 // it must inherit that SAME ceiling, not the broader, differently-scoped
 // system.write these routes also sit behind — see
 // internal/core/users.go's requireUserCredentialsRevokeAuthority doc for the
-// full derivation. isNodeCredentialRequest(r) keeps the raw storage call for
-// a genuine node relay, mirroring every other half-fixed proxy in this
-// package (CreateOIDCBindingProxy, DeleteOIDCBindingProxy,
-// CreateMachineIdentityCredentialProxy) — a genuine relay's downstream
-// already ran this exact check locally before relaying; this remains a
-// documented, tracked HALF-FIXED gap for a node-credential caller, not a
-// full close.
+// full derivation. This check now runs unconditionally for every caller. It
+// used to be skipped for a genuine node-credential relay (mirroring what
+// CreateOIDCBindingProxy/DeleteOIDCBindingProxy/
+// CreateMachineIdentityCredentialProxy did before ADR-085) — ADR-085
+// (Accepted, 2026-08-25) found that "downstream node relay" topology cannot
+// exist in this codebase (ADR-083's validateRemoteStorageNotServer rejects
+// storage.type: remote for any server process) and removed the exemption.
 package handlers
 
 import (
@@ -81,16 +78,6 @@ func (h *UserHandler) RevokeAllPersonalAccessTokensForUserProxy(w http.ResponseW
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user id")
 		return
 	}
-	if isNodeCredentialRequest(r) {
-		hashes, err := h.coreService.Storage().RevokeAllPersonalAccessTokensForUser(r.Context(), uint(id))
-		if err != nil {
-			log.Printf("users-credentials proxy: revoke-all-pats failed: %v", err)
-			writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-			return
-		}
-		writeRemoteAPISuccess(w, map[string]interface{}{"hashes": hashes})
-		return
-	}
 	actorType, actorID := requestActorKindAndID(r)
 	hashes, err := h.coreService.RevokeAllPersonalAccessTokensForUser(r.Context(), actorType, actorID, uint(id))
 	if err != nil {
@@ -111,15 +98,6 @@ func (h *UserHandler) DeleteSessionsForUserExceptProxy(w http.ResponseWriter, r 
 	var body deleteSessionsForUserExceptProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
-		return
-	}
-	if isNodeCredentialRequest(r) {
-		if err := h.coreService.Storage().DeleteSessionsForUserExcept(r.Context(), uint(id), body.ExceptSessionID); err != nil {
-			log.Printf("users-credentials proxy: delete-sessions-except failed: %v", err)
-			writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-			return
-		}
-		writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
 		return
 	}
 	actorType, actorID := requestActorKindAndID(r)

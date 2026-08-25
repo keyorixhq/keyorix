@@ -1064,29 +1064,38 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// documented custom role (audit checkpoints, legal holds, risk exceptions, SoD
 		// policies, admin job triggers — see internal/core/auth_bootstrap.go); granting
 		// that role for its documented purpose unknowingly also handed the grantee the
-		// ability to act as a node.
+		// ability to act as a node. G79 then gated this group by
+		// RequireNodeCredentialOrPermission(permSystemWrite): a node-type machine
+		// credential (core.MachineTypeNode) OR system.write, so a node credential
+		// could substitute for the permission.
 		//
-		// Now gated by RequireNodeCredentialOrPermission(permSystemWrite)
-		// (server/middleware/node_credential.go): a node-type machine credential
-		// (core.MachineTypeNode) OR the existing system.write permission. A pure
-		// node-credential-only gate was tried and reverted — several routes nested here
-		// (legal-hold, risk-exceptions, ...) are system.write's OWN documented footprint,
-		// not RemoteStorage-sync routes, and their internal/core functions self-check for
-		// an admin-tier RBAC principal (Wave 1, PR #1397) — a bare node credential, which
-		// deliberately carries zero RBAC permissions, can never satisfy that check, so a
-		// sole node gate would have made those legitimate admin features unreachable via
-		// storage.type: remote. This does not fully close the original over-broad-grant
-		// concern on its own: adminRoleNames (authz.go) unconditionally bypass every
-		// permission check, so any admin-tier role holder still reaches this whole surface
-		// via the permission arm regardless of what's explicitly bundled into their role.
+		// ADR-085 (Accepted, 2026-08-25) REMOVED the node-credential arm. It found its
+		// own foundational premise false: the "downstream Keyorix node relaying an
+		// already-authorized human action" topology this arm existed to serve cannot
+		// exist in this codebase — ADR-083's validateRemoteStorageNotServer
+		// (internal/config/config.go) rejects storage.type: remote unconditionally for
+		// any server process, so no server-side relay of this shape has ever been
+		// constructible. A liveness sweep found no live caller for the arm at all
+		// (createNodeToken is test-only; no deployment artifact provisions a node
+		// credential for runtime). Comparable products (Vault, Conjur, OpenBao,
+		// Infisical) all converged independently on the same answer: a
+		// replica/follower/relay node never gets write authority of its own — see
+		// ADR-085 for the citations. Gated by plain RequirePermission(permSystemWrite)
+		// now, same as every other RBAC-gated route group; the MachineTypeNode identity
+		// type itself is retained (a node credential simply carries no more authority
+		// than any other machine identity — it must hold system.write via a real role
+		// grant like anyone else to reach this group, same as before G79 for humans).
+		// This does not fully close the original over-broad-grant concern on its own:
+		// adminRoleNames (authz.go) unconditionally bypass every permission check, so
+		// any admin-tier role holder still reaches this whole surface via the
+		// permission arm regardless of what's explicitly bundled into their role.
 		// Every inner route's former per-route system.write re-check has been removed as
-		// redundant now that the group itself enforces the same permission (plus the
-		// node-credential alternative).
+		// redundant now that the group itself enforces the same permission.
 		// Prior gate (system.read) was held by every user via system_viewer, exposing
 		// TOTP seed ciphertexts, WebAuthn credentials, machine token hashes, global admin
 		// roster, and setup-token data to all authenticated users (#r124).
 		r.Route("/system", func(r chi.Router) {
-			r.Use(customMiddleware.RequireNodeCredentialOrPermission(permSystemWrite))
+			r.Use(customMiddleware.RequirePermission(permSystemWrite))
 
 			// Login/password-reset rate-limit counter proxy (#452 follow-up). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) — a
@@ -1955,7 +1964,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/projects/by-name/{name}", catalogHandler.GetProjectByNameProxy)
 			r.Get(pathProjects, catalogHandler.ListProjectsProxy)
 			r.Get(pathProjectsID, catalogHandler.GetProjectProxy)
-			r.Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
+			// DeleteProjectProxy (G80 documented-exception re-verification sweep,
+			// 2026-08-25): the group's system.write gate alone let ANY holder of
+			// that permission delete ANY project on this hub — including a role
+			// granted system.write for a narrow, unrelated purpose (audit
+			// checkpoints, admin job triggers; see this group's own doc comment
+			// above), with no check that the caller is actually authorized against
+			// THIS project. Mirrors the human-facing DeleteProject route's own
+			// check (permSecretsDelete scoped to the target project, line ~436)
+			// via the same RequireScopedPermission middleware, which is already
+			// actor-kind aware (AuthorizePrincipal) so it works for both user and
+			// machine callers. Layered on top of, not replacing, the group's
+			// system.write gate.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, projectScope)).Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
 			r.Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
 			r.Get(pathProjectMembers, catalogHandler.ListProjectMembersProxy)
 			r.Get(pathProjectEnvs, catalogHandler.ListEnvironmentsByProjectProxy)

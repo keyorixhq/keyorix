@@ -207,7 +207,7 @@ func TestCreateAccessRequestApprovalProxy_Success_S9(t *testing.T) {
 	// Create approval for it
 	idStr := strconv.FormatUint(uint64(createResp.Data.ID), 10)
 	approvalBody := `{"approver_id":10}`
-	approvalReq := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(approvalBody)), "id", idStr)
+	approvalReq := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(approvalBody)), "id", idStr))
 	approvalW := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(approvalW, approvalReq)
 	assert.Equal(t, http.StatusOK, approvalW.Code)
@@ -234,7 +234,7 @@ func TestListAccessRequestApprovalsProxy_WithData_S9(t *testing.T) {
 	idStr := strconv.FormatUint(uint64(createResp.Data.ID), 10)
 
 	approvalBody := `{"approver_id":11}`
-	approvalReq := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(approvalBody)), "id", idStr)
+	approvalReq := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(approvalBody)), "id", idStr))
 	approvalW := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(approvalW, approvalReq)
 	require.Equal(t, http.StatusOK, approvalW.Code)

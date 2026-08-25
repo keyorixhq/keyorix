@@ -121,6 +121,31 @@ campaign (#1542's original 18-route version, tonight's repo-wide-within-/system 
 or the now-blocking guard). Not scanned tonight, per instruction — named as a concrete,
 evidenced gap, not a hypothetical one.
 
+## (g) Core-side interprocedural indirection — FIXED one hop (2026-08-25), mirror image of (c)
+
+The mirror image of (c): (c) is the HANDLER calling an unexported helper that
+makes raw storage calls the tool never sees; this is the CORE side —
+`exportedCoreStorageWrappers` only inspected an EXPORTED `*KeyorixCore`
+method's own body, missing the case where that method is a thin forwarder to
+an unexported same-receiver sibling that does the real `c.storage.X(...)`
+call (e.g. `InviteMember` → `inviteMemberWithMode`). `CreateMembershipProxy`'s
+raw call to `storage.CreateProjectMembership` went completely undetected as a
+bypass candidate as a direct result — not misclassified, invisible, since the
+tool never knew a wrapper existed for that primitive at all.
+
+Found and fixed during the G80 documented-exception re-verification sweep's
+Task 3 (2026-08-25): `exportedCoreStorageWrappers` now follows one hop
+through an unexported same-receiver sibling. Measured, not assumed: 30 → 42
+write-shaped candidates (`docs/g80-raw-storage-bypass-enumeration.md` has the
+full before/after and the predicted-vs-actual check). An unlimited-depth BFS
+variant was also run as a direct check of whether one hop is enough — it
+found the exact same 42 write-shaped candidates (zero additional), all its
+extra findings being read-shaped methods already excluded regardless of
+depth — so this category is now closed for the current codebase shape, not
+just reduced. Same caveat as everywhere else in this doc: not a permanent
+guarantee against a future two-hop chain, just what today's tree actually
+contains.
+
 ## Summary
 
 **Stated reach**: 57 write-shaped candidates within the `/api/v1/system` route group

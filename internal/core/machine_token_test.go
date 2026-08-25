@@ -31,6 +31,10 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 	// Active machine → token minted with the kx_machine_ prefix, hash stored.
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
+	// requireMachinePrivilegeCeiling now requires the calling actor (7) to hold
+	// roles.assign at the target's project scope — grant it via a plain,
+	// non-admin RBAC role (the standard MockStorage stub for this shape).
+	stubAuthorizedPrincipal(store, 7, Scope{ProjectID: 2}, permRolesAssign)
 	store.On("CreateMachineIdentityCredential", mock.Anything, mock.AnythingOfType("*models.MachineIdentityCredential")).
 		Return(&models.MachineIdentityCredential{ID: 5}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

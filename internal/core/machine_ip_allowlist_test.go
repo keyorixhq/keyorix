@@ -21,6 +21,10 @@ func TestIssueMachineToken_StoresCIDRs(t *testing.T) {
 		Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	// requireMachinePrivilegeCeiling checks the machine's roles before issuing.
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
+	// requireMachinePrivilegeCeiling also now requires the calling actor (9) to
+	// hold roles.assign at the target's project scope — grant it via a plain,
+	// non-admin RBAC role (the standard MockStorage stub for this shape).
+	stubAuthorizedPrincipal(store, 9, Scope{ProjectID: 2}, permRolesAssign)
 	store.On("CreateMachineIdentityCredential", mock.Anything, mock.AnythingOfType("*models.MachineIdentityCredential")).
 		Return(&models.MachineIdentityCredential{ID: 7}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -52,6 +56,10 @@ func TestIssueMachineToken_NilCIDRsOmitted(t *testing.T) {
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).
 		Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
+	// requireMachinePrivilegeCeiling also now requires the calling actor (9) to
+	// hold roles.assign at the target's project scope — grant it via a plain,
+	// non-admin RBAC role (the standard MockStorage stub for this shape).
+	stubAuthorizedPrincipal(store, 9, Scope{ProjectID: 2}, permRolesAssign)
 	store.On("CreateMachineIdentityCredential", mock.Anything, mock.AnythingOfType("*models.MachineIdentityCredential")).
 		Return(&models.MachineIdentityCredential{ID: 8}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

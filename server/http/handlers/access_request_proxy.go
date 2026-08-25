@@ -179,7 +179,12 @@ func (h *CatalogHandler) CreateAccessRequestProxy(w http.ResponseWriter, r *http
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "state must be \"pending\" -- a new access request is never created pre-resolved")
 		return
 	}
-	created, err := h.coreService.Storage().CreateAccessRequest(r.Context(), body.toModel())
+	// G80 documented-exception re-verification sweep (2026-08-25): a
+	// newly-created request is always pending, so ResolvedBy has no legitimate
+	// value yet — force it to zero rather than trust whatever the wire sent.
+	model := body.toModel()
+	model.ResolvedBy = 0
+	created, err := h.coreService.Storage().CreateAccessRequest(r.Context(), model)
 	if err != nil {
 		log.Printf("access-requests proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -270,13 +275,28 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 	// project member may reject), and core.WithdrawAccessRequest's self-only
 	// check has no wire-carried actor field distinct from ResolvedBy to
 	// re-derive against here -- out of scope for this fix.
+	//
+	// Wire-actor-identity finding (independent verification session, 2026-08-25):
+	// the checks below used to run against body.ResolvedBy -- a caller-supplied
+	// wire field -- rather than the AUTHENTICATED caller. A caller holding only
+	// system.write, naming a real admin's user ID as resolved_by, cleared both
+	// the self-approval check (they aren't the requester) and the admin-authority
+	// check (the NAMED admin genuinely has authority) without that admin ever
+	// making the call -- an approval forged in the record as someone else's
+	// decision. requestActorKindAndID(r) resolves the real caller instead;
+	// RequireAdminAuthorityAt/RequireAuthorityForRole are user-scoped checks
+	// (internal/core/authz.go's scopedRoleIDs walks user role grants only), so a
+	// machine actor's resolverID is always 0 here and correctly never passes --
+	// approving dual-control access is a human-only decision, not something
+	// ADR-085 changed.
+	resolverType, resolverID := requestActorKindAndID(r)
 	if body.State == core.AccessRequestApproved {
-		if body.ResolvedBy == existing.UserID {
+		if resolverType == core.ActorTypeUser && resolverID == existing.UserID {
 			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "a requester cannot approve their own access request")
 			return
 		}
 		if existing.SecretID != nil {
-			if err := h.coreService.RequireAdminAuthorityAt(r.Context(), body.ResolvedBy, existing.ProjectID); err != nil {
+			if err := h.coreService.RequireAdminAuthorityAt(r.Context(), resolverID, existing.ProjectID); err != nil {
 				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "only an administrator can approve access to a restricted secret: "+err.Error())
 				return
 			}
@@ -285,7 +305,7 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 			if role == "" {
 				role = existing.SuggestedRole
 			}
-			if err := h.coreService.RequireAuthorityForRole(r.Context(), body.ResolvedBy, existing.ProjectID, role); err != nil {
+			if err := h.coreService.RequireAuthorityForRole(r.Context(), resolverID, existing.ProjectID, role); err != nil {
 				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 				return
 			}
@@ -294,7 +314,12 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 	existing.State = body.State
 	existing.GrantedRole = body.GrantedRole
 	existing.Reason = body.Reason
-	existing.ResolvedBy = body.ResolvedBy
+	// ResolvedBy is now always the AUTHENTICATED caller, never the wire-supplied
+	// value -- see the finding above. A machine actor's resolverID (0) is a
+	// pre-existing, unrelated limitation of core.AccessRequest.ResolvedBy's
+	// uint-only shape (it can't distinguish "no resolver" from "machine
+	// resolver 0" either way); not something this fix changes.
+	existing.ResolvedBy = resolverID
 	existing.ResolvedAt = body.ResolvedAt
 	updated, err := h.coreService.Storage().UpdateAccessRequest(r.Context(), existing)
 	if err != nil {
@@ -337,6 +362,19 @@ func (h *CatalogHandler) ListAccessRequestsProxy(w http.ResponseWriter, r *http.
 // local_invitations.go's CreateAccessRequestApproval does, backed by the
 // DB-level unique index — a duplicate sign-off from the same approver is a
 // benign no-op here exactly as it is locally.
+//
+// G80 documented-exception re-verification sweep (2026-08-25): approver_id
+// used to come straight off the wire with no relation to the authenticated
+// caller. Because the uniqueness constraint is keyed on (request_id,
+// approver_id), a single system.write holder could POST N approvals with N
+// fabricated approver_ids and drive ApprovalsReceived past RequiredApprovals
+// (internal/core/invitations.go) with zero real, independent approvers — a
+// full dual-control/maker-checker bypass (A.5.3). Fixed the same way as
+// CreateInvitationProxy/UpdateAccessRequestProxy: the approver is now always
+// the authenticated caller, so each distinct approval row now requires a
+// distinct real caller. This does not add a permission ceiling on who may
+// approve at all (there was none before either) — that is a separate,
+// still-open gap, out of this fix's scope.
 func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -348,13 +386,14 @@ func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter,
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
-	if body.ApproverID == 0 {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "approver_id is required")
+	_, approverID := requestActorKindAndID(r)
+	if approverID == 0 {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "approver_id must identify an attributable, authenticated caller")
 		return
 	}
 	approval := &models.AccessRequestApproval{
 		RequestID:  uint(id),
-		ApproverID: body.ApproverID,
+		ApproverID: approverID,
 		CreatedAt:  body.CreatedAt,
 	}
 	if err := h.coreService.Storage().CreateAccessRequestApproval(r.Context(), approval); err != nil {

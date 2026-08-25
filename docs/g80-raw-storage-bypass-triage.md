@@ -97,7 +97,7 @@ Columns: verdict is one of `no-independent-ceiling` / `documented-exception` / `
 | sso_state_proxy.go:100 | CreateSSOLoginStateProxy | BeginSSO/BeginSAML | Pre-login CSRF-state creation, no auth/ownership check even in core. | documented-exception | — |
 | sso_state_proxy.go:133 | ConsumeSSOLoginStateProxy | validateSSOLoginState | Provider-match/expiry checks run AFTER consume, state-machine invariants identical regardless of caller. | documented-exception | — |
 | users_active_transition_proxy.go:119 | UpdateUserIfActiveStateMatchesProxy | UpdateUser deactivating branch | guardLastAdminDeactivation (fail-closed last-global-admin lockout) BEFORE conditional write; same tx revokes all PATs+sessions. | real | human-reachable — **raw proxy never calls guardLastAdminDeactivation, never revokes PATs/sessions — can deactivate the install's LAST ADMIN, or leave a "deactivated" user's live sessions/PATs valid.** |
-| users_crud.go:710 | ConsumeMFAChallenge | FinishWebAuthnLogin/VerifyMFACredentials | Assertion/crypto verification + session binding + account gates all run AFTER consume; consuming alone yields only UserID/expiry. | documented-exception | — |
+| users_crud.go:710 | ConsumeMFAChallenge | FinishWebAuthnLogin/VerifyMFACredentials | Assertion/crypto verification + session binding + account gates all run AFTER consume; consuming alone yields only UserID/expiry (`generateSecureToken`-minted, crypto/rand, unguessable — auth.go:624-625). Atomicity confirmed at storage layer (local_mfa.go:123-148, conditional `UPDATE ... WHERE used_at IS NULL AND expires_at > ?`). VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep, escalation-delta test): **holds.** | documented-exception | **CORRECTED reach**: NOT pre-auth/mid-login as the endpoint's name might suggest. The full `/api/v1` `Authentication` middleware (server/middleware/auth.go:253) — requiring a valid session/PAT/machine/OIDC token — runs BEFORE the route's `users.write` permission check (router.go:300,874). A user mid-login holds only the ephemeral MFA-challenge secret, not any of those credentials, so they cannot reach this route at all. Reachable only by an already-fully-authenticated, `users.write`-holding principal — machine-only in the intended hub-spoke design (a RemoteStorage spoke's own service credential relaying its own end users' logins), not human-mid-login-reachable. |
 | webauthn_proxy.go:171 | CreateWebAuthnCredentialProxy | FinishWebAuthnRegistration | requireReauth (re-prove password/TOTP) BEFORE storage write; doc: "must not be reachable by a bearer token alone." | real | human-reachable — **ZERO reauth — implant an attacker-controlled passkey on ANY account. SEVERE.** |
 | webauthn_proxy.go:336 | DeleteWebAuthnCredentialProxy | DeleteWebAuthnCredential | Same requireReauth ceiling before deleting. | real | human-reachable — strip any user's real passkeys without proving ownership. |
 | webauthn_proxy.go:382 | SetUserWebAuthnEnabledProxy | Only 2 core callers, both gated behind requireReauth first | No core method flips this flag standalone. | real | human-reachable — flips any user's webauthn_enabled directly, no reauth, no paired session-purge/audit — silent 2FA downgrade or bogus force-enable. |
@@ -360,6 +360,59 @@ pointer, not a duplicate of that record.
 Not part of this wave: `RevokeMachineIdentityCredentialProxy` (#1551) and the
 `CreateMachineIdentityCredentialProxy`/`CreateOIDCBindingProxy` node-credential residuals
 (#1552) remain ADR-085-blocked, as recorded above — untouched, per instruction.
+**Superseded 2026-08-25 — see "ADR-085 resolution" below: all node-credential residuals
+this paragraph deferred are now closed.**
+
+## ADR-085 resolution (2026-08-25): the node-credential OR-arm is removed
+
+A Phase-1 liveness check (see `docs/adr-085-node-credential-permission-scope.md`, now
+Accepted) found no live caller anywhere for `RequireNodeCredentialOrPermission`'s
+node-credential arm: `createNodeToken` is test-only in every reference across the repo, no
+Helm chart/compose file/CLI flow provisions a node credential for runtime use, and ADR-083's
+`validateRemoteStorageNotServer` (`internal/config/config.go`) already rejects
+`storage.type: remote` for any server process — the "downstream Keyorix node relaying an
+already-authorized human action" topology every one of this file's HALF-FIXED entries
+assumed cannot exist in this codebase at all. The arm is deleted (`server/middleware/
+node_credential.go`, `server/http/router.go`); `/api/v1/system` now requires `system.write`
+for every caller, node-typed or not, with no OR-arm exemption. Every handler's
+`isNodeCredentialRequest(r)` branch is removed along with it. This closes the
+node-credential axis on all six routes this campaign tracked as HALF-FIXED for that reason,
+plus two more found to have the identical shape during the sweep:
+
+- **`AssignRoleWithExpiryProxy`** (#1552, the campaign's original "MOST SEVERE FINDING") —
+  now routes through `core.AssignUserRoleWithExpiry` unconditionally; a bare node credential
+  is refused at the group's own `system.write` gate before ever reaching
+  `requireGranterHoldsRolePermissions`. See
+  `TestSystemWriteCeiling_AssignRoleWithExpiryProxy_NodeCredential_DeniedAtGate`
+  (`system_write_ceiling_table_test.go`).
+- **`RevokeMachineIdentityCredentialProxy`** (#1551) — the node-credential axis into it is
+  closed the same way (denied at the group gate); #1551's own underlying gap (any
+  `system.write` holder, human or machine, can revoke any credential cross-tenant with no
+  project-scope check — a wire-contract limitation, not a node-credential one) is
+  **unchanged** and remains open, tracked in `knownUnfixedRawStorageBypasses`. See
+  `TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate`.
+- **`CreateMachineIdentityCredentialProxy`** — closed for every caller; moved from
+  `knownUnfixedRawStorageBypasses` to `rawStorageBypassAllowlist` (still makes a flagged raw
+  storage call, but `core.RequireMachinePrivilegeCeiling` now runs unconditionally first).
+- **`CreateOIDCBindingProxy`** — closed at the group gate for a bare node credential; entry
+  removed from both guard-test lists (no longer makes a flagged raw call at all — routes
+  through `core.CreateOIDCBinding`). Note this route's ceiling
+  (`requireAuthorityForRole("system_admin")` → `scopedRoleIDs`) resolves authority via a
+  USER's direct/group role grants only — no machine actor, however permissioned, can ever
+  satisfy it, a pre-existing, unrelated characteristic confirmed against a genuinely
+  system.write-holding node credential in
+  `remote_storage_machine_identities_test.go`'s `OIDCBindingCreateGetListDelete_RealServer`.
+- **`RemoveGlobalAdminRoleGuardedProxy`** — closed at the group gate; entry removed (no
+  longer makes a flagged raw call — routes through `core.RemoveUserRole`).
+- **`RevokeAllPersonalAccessTokensForUserProxy`** / **`DeleteSessionsForUserExceptProxy`** —
+  closed at the group gate; entries removed (no longer make a flagged raw call).
+
+`docs/adr-085-node-credential-permission-scope.md` is Accepted and records the full
+mechanism and the general lesson (a framing inherited from a superseded ADR was never
+re-derived after the superseding ADR landed). `MachineTypeNode` itself is retained as an
+identity type (`keyorix machine create --type node` is still user-facing); only its special
+gate privilege is removed — a node identity is authorized exactly like any other caller,
+via a real role grant it either has or doesn't.
 
 ## Open question: the 14 `documented-exception` verdicts are not settled (not work for now)
 
@@ -387,3 +440,83 @@ findings above: trace the actual gating permission's documented footprint agains
 raw call would let a caller holding ONLY that permission do, against a real human auth path,
 not the comment's own claim. Until that pass runs, "documented-exception" should be read as
 "unverified-exception."
+
+## Corrections from an independent verification session (2026-08-25)
+
+**Merge-status caveat, read this before trusting any "FIXED" reference to a PR number in
+this document.** An independent verification session found that PRs #1563–#1566 all showed
+"Merged" on GitHub while none of them were actually ancestors of `origin/main` — each was
+merged into the PREVIOUS PR's feature branch, not into `main`, so the whole chain showed
+green with nothing landed. A GitHub "Merged" badge is not evidence of a merge.
+
+**Correction (second independent verification pass, 2026-08-25): the check above is right
+about #1563–#1566, but the general rule it implied is wrong, and was corrected in
+`CLAUDE.md` before this doc caught up.** `git merge-base --is-ancestor <branch>
+origin/main` is NOT a general-purpose trusted signal — this repo squash-merges every PR,
+which mints a brand-new commit SHA, so a correctly-landed branch's own pre-squash commits
+are never ancestors of that squash commit either. That check returns false unconditionally,
+for every PR, landed or not; it happened to also be false for #1563–#1566, but for the
+wrong, unreliable reason, and would have been equally false for #1557–#1562 had anyone
+checked the branch tips instead of the squash commits. The actual check for "did this PR
+land": `gh pr view <N> --json baseRefName` (a PR based on a feature branch, not `main`, did
+not reach `main`) plus `git diff <branch> origin/main --stat` (empty means the content is
+already there). **Checked, not assumed, with the correct method**: `#1557` (`2b888df7`),
+`#1558` (`28b52cfb`), `#1559` (`f83d63c6`), `#1560` (`33eaf8df`), `#1561` (`10fdb34a`), and
+`#1562` (`cb26f4f0`) are each the real squash-merge commit for its PR, and each one IS
+independently confirmed a genuine ancestor of `origin/main` — checking one specific,
+already-resolved commit SHA against `origin/main` is a sound question (is this object
+included); it is only checking a whole *branch tip* across a squash boundary that is
+unsound. The broken chain was specifically `#1563`–`#1566`, not this document's earlier
+"Fix wave complete" references. A guard enforces the six-SHA check mechanically:
+`server/http/g80_triage_doc_closure_guard_test.go`'s
+`TestG80TriageDocClosuresAreAncestorsOfHEAD` re-checks each of the six SHAs above against
+`HEAD` on every test run (a sound use of `--is-ancestor` for a resolved commit, not a
+branch), and fails loudly (not silently) if a PR reference in this document has no single
+commit to point at — exactly the shape `#1563`–`#1566` turned out to have. The re-applied
+`#1563`–`#1566` + ADR-085 content (see the corrections below) has been verified working via
+`git apply`/tests on a fresh branch off `origin/main` (`g80-fixland-main`) instead, since
+squash-merge history made the original per-PR commits unrecoverable as individually-
+attributable objects.
+
+**Items 1 and 2 in "Fix wave complete" (`CreateAccessRequestProxy`/`UpdateAccessRequestProxy`
+under #1557, `CreateInvitationProxy`/`UpdateInvitationProxy` under #1558) were fixed on the
+WRONG axis for two of the four handlers.** Both PRs correctly closed the raw-storage-bypass
+shape (#1542: an independently-gated core ceiling being skipped) that this document tracks.
+Neither touched a separate, orthogonal shape: **wire-actor-identity forgery** — the ceiling
+check itself, and the persisted actor-identity field, were re-derived from the ceiling's
+OWN logic but still read the ACTOR from the wire body (`invited_by`, `resolved_by`) instead
+of the authenticated caller. A `system.write`-only caller could name a real admin's ID in
+that field and clear the ceiling meant to require the admin to have made the call. Fixed
+2026-08-25 (`actorID(r)`/`requestActorKindAndID(r)`) — full writeup, including a third
+affected handler (`RevokeBreakGlassActivationProxy`) not part of this document's original
+58-candidate set, in `docs/g80-documented-exception-sweep-findings.md`'s "Correction: three
+handlers recorded FIXED were fixed on the wrong axis" section. This document's own
+`rawStorageBypassAllowlist`/`knownUnfixedRawStorageBypasses` entries track the raw-storage
+axis only; the wire-actor-identity axis has its OWN guard,
+`server/http/wire_actor_identity_forgery_guard_test.go`.
+
+**`DeleteProjectProxy`'s allowlist entry (`no-independent-ceiling: core.DeleteProject(force=true)...`)
+is about a DIFFERENT gap than the one closed 2026-08-25.** That reasoning is about
+`core.DeleteProject`'s own force=true branch having no actor-authority check — still true,
+unchanged. Separately found and fixed in this session: the `/system` group's blanket
+`system.write` gate was the ONLY check on this route at all — no per-project scoping,
+meaning ANY `system.write` holder (a permission intentionally grantable for narrow,
+unrelated purposes — audit checkpoints, admin job triggers, per this document's own
+`/system` group header comment) could delete ANY project on the hub, not just ones they
+hold authority over. Fixed by mirroring the human-facing `DELETE /api/v1/projects/{id}`
+route's own check (`RequireScopedPermission(permSecretsDelete, projectScope)`) at the
+router level, layered on top of the existing `system.write` gate — see
+`server/http/router.go`'s `DeleteProjectProxy` route registration and
+`server/http/delete_project_proxy_scope_test.go` for the red/green-verified test. This is
+an addition, not a correction of the existing allowlist reasoning; both remain true.
+
+**Two new wire-actor-identity-forgery findings from the same sweep, not part of this
+document's raw-storage-bypass candidate set at all** (different bug class, listed here
+only because they were found in the same pass): `CreateAccessRequestApprovalProxy`'s
+`approver_id` (a caller could POST N approvals with N fabricated approver IDs, driving
+`ApprovalsReceived` past `RequiredApprovals` with zero real, independent approvers — a
+full dual-control bypass) and `UpdateAccessReviewItemProxy`'s `decided_by` (the
+self-certification check compared two wire-supplied values against each other, so naming
+a different real reviewer trivially passed it while recording someone who never reviewed
+the item). Both fixed 2026-08-25; full detail and the sweep table in
+`docs/g80-documented-exception-sweep-findings.md`.

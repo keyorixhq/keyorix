@@ -147,22 +147,29 @@ func TestCreateAccessReviewItemsProxy_StripsDecisionFields_R128(t *testing.T) {
 
 // ── ARC-005: UpdateAccessReviewItemProxy self-certification rejection ─────────
 
-// TestUpdateAccessReviewItemProxy_RejectsSelfCertification_R128 pins ARC-005:
-// a request where decided_by == principal_id (user type) must return 403.
+// TestUpdateAccessReviewItemProxy_RejectsSelfCertification_R128 pins ARC-005.
+//
+// G80 documented-exception re-verification sweep (2026-08-25): the
+// self-certification check is now anchored to the AUTHENTICATED caller
+// (requestActorKindAndID(r)), not the wire's decided_by — decided_by is
+// ignored entirely. withUserCtx (UserID=1) authenticates the caller AS the
+// item's own principal (principal_id: 1) to trigger a genuine
+// self-certification, matching what the check now actually guards against;
+// the wire's decided_by=7 is deliberately different from 1 to prove it has
+// no effect on the outcome.
 func TestUpdateAccessReviewItemProxy_RejectsSelfCertification_R128(t *testing.T) {
 	h := freshCatalogHandlerS13(t)
 	body, _ := json.Marshal(map[string]interface{}{
 		"principal_type": "user",
-		"principal_id":   7,
+		"principal_id":   1,
 		"decision":       "attest",
-		// decided_by equals principal_id → self-certification.
-		"decided_by": 7,
+		"decided_by":     7,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/api/v1/system/access-review-campaigns/items/1",
 			bytes.NewReader(body)),
 		"itemID", "1",
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewItemProxy(w, req)
@@ -175,7 +182,11 @@ func TestUpdateAccessReviewItemProxy_RejectsSelfCertification_R128(t *testing.T)
 }
 
 // TestUpdateAccessReviewItemProxy_AllowsNonSelfCertification_R128 pins ARC-005:
-// a request where decided_by != principal_id is accepted (403 not raised).
+// a request where the AUTHENTICATED caller != principal_id is accepted (403
+// not raised). withUserCtx (UserID=1) authenticates as a genuinely different
+// reviewer than the item's principal (3) -- the wire's decided_by is now
+// ignored, so this exercises the real check, not the pre-sweep wire-trusting
+// one.
 func TestUpdateAccessReviewItemProxy_AllowsNonSelfCertification_R128(t *testing.T) {
 	cs, db := freshCoreS26WithAdmin(t)
 	h := NewCatalogHandler(cs)
@@ -206,12 +217,12 @@ func TestUpdateAccessReviewItemProxy_AllowsNonSelfCertification_R128(t *testing.
 		// decided_by (4) differs from principal_id (3) — independence check passes.
 		"decided_by": 4,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut,
 			fmt.Sprintf("/api/v1/system/access-review-campaigns/items/%d", item.ID),
 			bytes.NewReader(body)),
 		"itemID", fmt.Sprintf("%d", item.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewItemProxy(w, req)
@@ -284,12 +295,12 @@ func TestUpdateAccessReviewItemProxy_SelfCertNonUserType_R128(t *testing.T) {
 		"decision":       "attest",
 		"decided_by":     7,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut,
 			fmt.Sprintf("/api/v1/system/access-review-campaigns/items/%d", item.ID),
 			bytes.NewReader(body)),
 		"itemID", fmt.Sprintf("%d", item.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewItemProxy(w, req)

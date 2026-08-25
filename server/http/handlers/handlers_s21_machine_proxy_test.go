@@ -121,6 +121,7 @@ func TestCreateMachineIdentityProxy_HappyPath_S21(t *testing.T) {
 		"state":         "active",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/system/machine-identities", body)
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -168,6 +169,7 @@ func TestGetMachineIdentityProxy_HappyPath_S21(t *testing.T) {
 		"state":      "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createBody)
+	cr = withOIDCAdminCtxS21(t, h, cr)
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -228,6 +230,7 @@ func TestUpdateMachineIdentityProxy_HappyPath_S21(t *testing.T) {
 		"state":      "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createBody)
+	cr = withOIDCAdminCtxS21(t, h, cr)
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -395,6 +398,7 @@ func TestCountMachineIdentitiesByClassificationProxy_WithData_S21(t *testing.T) 
 			"classification": class,
 		})
 		cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createBody)
+		cr = withOIDCAdminCtxS21(t, h, cr)
 		cw := httptest.NewRecorder()
 		h.CreateMachineIdentityProxy(cw, cr)
 		require.Equal(t, http.StatusOK, cw.Code)
@@ -460,6 +464,7 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 		"state":      "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr = withOIDCAdminCtxS21(t, h, cr)
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -476,6 +481,7 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 		"token_prefix":        "kx_",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/system/machine-credentials", body)
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -508,6 +514,7 @@ func TestGetMachineIdentityCredentialByHashProxy_HappyPath_S21(t *testing.T) {
 		"name": "hash-mi-s21", "project_id": 11, "state": "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr = withOIDCAdminCtxS21(t, h, cr)
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -522,6 +529,7 @@ func TestGetMachineIdentityCredentialByHashProxy_HappyPath_S21(t *testing.T) {
 		"name":                "by-hash-cred-s21",
 	})
 	cr2 := httptest.NewRequest(http.MethodPost, "/system/machine-credentials", createCred)
+	cr2 = withOIDCAdminCtxS21(t, h, cr2)
 	cw2 := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(cw2, cr2)
 	require.Equal(t, http.StatusOK, cw2.Code)
@@ -648,6 +656,7 @@ func TestUpdateMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 		"name": "upd-cred-mi-s21", "project_id": 20, "state": "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr = withOIDCAdminCtxS21(t, h, cr)
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -661,6 +670,7 @@ func TestUpdateMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 		"name":                "upd-cred-s21",
 	})
 	cr2 := httptest.NewRequest(http.MethodPost, "/system/machine-credentials", createCred)
+	cr2 = withOIDCAdminCtxS21(t, h, cr2)
 	cw2 := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(cw2, cr2)
 	require.Equal(t, http.StatusOK, cw2.Code)
@@ -707,6 +717,7 @@ func TestCountMachineIdentityCredentialsByClassificationProxy_WithData_S21(t *te
 		"name": "count-cred-mi-s21", "project_id": 30, "state": "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr = withOIDCAdminCtxS21(t, h, cr)
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -724,6 +735,7 @@ func TestCountMachineIdentityCredentialsByClassificationProxy_WithData_S21(t *te
 			"classification":      class,
 		})
 		cr2 := httptest.NewRequest(http.MethodPost, "/system/machine-credentials", createCred)
+		cr2 = withOIDCAdminCtxS21(t, h, cr2)
 		cw2 := httptest.NewRecorder()
 		h.CreateMachineIdentityCredentialProxy(cw2, cr2)
 		require.Equal(t, http.StatusOK, cw2.Code)
@@ -779,6 +791,7 @@ func TestRevokeMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 		"name": "revoke-mi-s21", "project_id": 40, "state": "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr = withOIDCAdminCtxS21(t, h, cr)
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -792,6 +805,7 @@ func TestRevokeMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 		"name":                "revoke-cred-s21",
 	})
 	cr2 := httptest.NewRequest(http.MethodPost, "/system/machine-credentials", createCred)
+	cr2 = withOIDCAdminCtxS21(t, h, cr2)
 	cw2 := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(cw2, cr2)
 	require.Equal(t, http.StatusOK, cw2.Code)
@@ -958,6 +972,7 @@ func TestAssignMachineRoleProxy_HappyPath_S21(t *testing.T) {
 		"name": "assign-role-mi-s21", "project_id": 50, "state": "active",
 	})
 	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr = withOIDCAdminCtxS21(t, h2, cr)
 	cw := httptest.NewRecorder()
 	h2.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -1163,7 +1178,7 @@ func TestCreateOIDCBindingProxy_HappyPath_S21(t *testing.T) {
 	createMI := proxyBodyS21(map[string]interface{}{
 		"name": "oidc-mi-s21", "project_id": 60, "state": "active",
 	})
-	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI))
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -1192,7 +1207,7 @@ func TestCreateOIDCBindingProxy_DuplicateBinding_S21(t *testing.T) {
 	createMI := proxyBodyS21(map[string]interface{}{
 		"name": "oidc-dup-mi-s21", "project_id": 61, "state": "active",
 	})
-	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI))
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -1323,7 +1338,7 @@ func TestGetOIDCBindingByIDProxy_HappyPath_S21(t *testing.T) {
 	createMI := proxyBodyS21(map[string]interface{}{
 		"name": "getbind-mi-s21", "project_id": 70, "state": "active",
 	})
-	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI))
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -1393,7 +1408,7 @@ func TestDeleteOIDCBindingProxy_HappyPath_S21(t *testing.T) {
 	createMI := proxyBodyS21(map[string]interface{}{
 		"name": "delbind-mi-s21", "project_id": 80, "state": "active",
 	})
-	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI))
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)
@@ -1435,7 +1450,7 @@ func TestDeleteOIDCBindingProxy_WritesAuditEvent_S21(t *testing.T) {
 	createMI := proxyBodyS21(map[string]interface{}{
 		"name": "audit-mi-s21", "project_id": 81, "state": "active",
 	})
-	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI)
+	cr := withOIDCAdminCtxS21(t, h, httptest.NewRequest(http.MethodPost, "/system/machine-identities", createMI))
 	cw := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(cw, cr)
 	require.Equal(t, http.StatusOK, cw.Code)

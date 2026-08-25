@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -210,6 +211,66 @@ func TestRecordLoginAttemptProxy_HappyPath_S13(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	resp := decodeRemoteResp(t, w)
 	assert.True(t, resp.Success)
+}
+
+// TestRecordLoginAttemptProxy_RejectsNonIPKey_S13 is the G80 documented-
+// exception fix's regression test (2026-08-25): a caller-supplied "ip" that
+// isn't a real IP, or a known rate-limit namespace prefix followed by one,
+// must be refused rather than persisted verbatim — the field used to accept
+// ANY string with no validation at all.
+func TestRecordLoginAttemptProxy_RejectsNonIPKey_S13(t *testing.T) {
+	h := freshAuthHandlerS13(t)
+	body := proxyJSON(map[string]interface{}{"ip": "not-an-ip-or-known-prefix", "at": time.Now()})
+	req := httptest.NewRequest(http.MethodPost, "/system/login-attempts", body)
+	w := httptest.NewRecorder()
+	h.RecordLoginAttemptProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.False(t, resp.Success)
+}
+
+// TestRecordLoginAttemptProxy_AllowsKnownPrefixes_S13 is
+// TestRecordLoginAttemptProxy_RejectsNonIPKey_S13's companion control: the two
+// namespace prefixes RecordPasswordResetAttempt/RecordSSOBeginAttempt
+// legitimately produce ("pwreset:"/"sso:") followed by a real IP must still
+// be accepted — the fix must not turn into a blanket rejection of anything
+// but a bare IP.
+func TestRecordLoginAttemptProxy_AllowsKnownPrefixes_S13(t *testing.T) {
+	for _, ip := range []string{"pwreset:203.0.113.9", "sso:203.0.113.9", "203.0.113.9:54321"} {
+		h := freshAuthHandlerS13(t)
+		body := proxyJSON(map[string]interface{}{"ip": ip, "at": time.Now()})
+		req := httptest.NewRequest(http.MethodPost, "/system/login-attempts", body)
+		w := httptest.NewRecorder()
+		h.RecordLoginAttemptProxy(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, "ip=%q must still be accepted", ip)
+	}
+}
+
+// TestRecordLoginAttemptProxy_RejectsFutureTimestamp_S13 is the fix's second
+// regression test: before it, a far-future `at` created a row
+// PruneLoginAttempts (clamped to now-LoginWindow) could NEVER become eligible
+// to delete — a permanent, unrecoverable lockout of whatever key it targets.
+// Independent verification session (2026-08-25): an earlier version of this
+// fix silently CLAMPED `at` to now instead of rejecting it outright, which is
+// untestable as a rejection (a passing "the row landed near now" assertion
+// can't distinguish "correctly clamped" from "accepted verbatim and happened
+// to look right"). The fix now returns a hard 400 and persists NOTHING —
+// confirmed here by asserting zero rows exist for the key at all, not just
+// that none of them are far in the future.
+func TestRecordLoginAttemptProxy_RejectsFutureTimestamp_S13(t *testing.T) {
+	cs := freshCoreS12(t)
+	h := NewAuthHandler(cs, false)
+	farFuture := time.Now().AddDate(100, 0, 0)
+	body := proxyJSON(map[string]interface{}{"ip": "198.51.100.42", "at": farFuture})
+	req := httptest.NewRequest(http.MethodPost, "/system/login-attempts", body)
+	w := httptest.NewRecorder()
+	h.RecordLoginAttemptProxy(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"CEILING VIOLATED: a future-dated login attempt must be rejected outright (400), not silently clamped and persisted")
+
+	n, err := cs.Storage().CountRecentLoginAttempts(context.Background(), "198.51.100.42", time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n, "a rejected attempt must not be persisted at all, clamped or otherwise")
 }
 
 // ── misc_remote_proxy.go: accessActivityProxy ────────────────────────────────
@@ -1228,6 +1289,15 @@ func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
 		Username: "newuser_s13", Email: "newuser@example.com", PasswordHash: "x",
 	})
 	require.NoError(t, err)
+	// Minting a setup token requires users.write (ADR-085); seed a caller who
+	// holds it via the system_admin adminRoleNames bypass (internal/core/authz.go).
+	adminRole, err := cs.Storage().CreateRole(context.Background(), &models.Role{Name: "system_admin", Description: "admin"})
+	require.NoError(t, err)
+	admin, err := cs.Storage().CreateUser(context.Background(), &models.User{
+		Username: "admin_s13", Email: "admin_s13@example.com", PasswordHash: "x",
+	})
+	require.NoError(t, err)
+	require.NoError(t, cs.Storage().AssignRole(context.Background(), admin.ID, adminRole.ID, coreStorage.Scope{}))
 	body := proxyJSON(map[string]interface{}{
 		"token_hash":      "deadbeef1234567890abcdef",
 		"purpose":         "account_setup",
@@ -1237,7 +1307,7 @@ func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
 		"expires_at":      time.Now().Add(24 * time.Hour),
 		"created_by":      1,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/system/setup-tokens", body)
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/system/setup-tokens", body), admin.ID, "admin_s13")
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

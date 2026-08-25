@@ -28,9 +28,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 // CanonicalIP returns addr's IP address in canonical (net.IP.String()) form,
@@ -117,6 +119,82 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 		return
 	}
 	_ = c.storage.RecordLoginAttempt(ctx, CanonicalIP(ip), c.now())
+}
+
+// ErrInvalidLoginAttemptKey is returned by RecordLoginAttemptRelay when the
+// caller-supplied key is neither a valid IP address nor a known namespace
+// prefix followed by one.
+var ErrInvalidLoginAttemptKey = errors.New("ip must be a valid IP address, optionally prefixed with a known rate-limit namespace")
+
+// ErrFutureLoginAttemptTimestamp is returned by RecordLoginAttemptRelay when
+// the caller-supplied `at` is later than this server's own clock. See that
+// function's doc for why this is a hard rejection, not a silent clamp.
+var ErrFutureLoginAttemptTimestamp = errors.New("at must not be later than the current time")
+
+// loginAttemptRelayPrefixes are the only namespace prefixes a legitimate relay
+// (RecordLoginAttemptRelay's caller) ever needs to report: the same two
+// RecordPasswordResetAttempt/RecordSSOBeginAttempt apply before writing to the
+// shared login_attempts table. Anything else is not a real rate-limit key this
+// codebase produces.
+var loginAttemptRelayPrefixes = []string{passwordResetRateLimitPrefix, ssoRateLimitPrefix}
+
+// RecordLoginAttemptRelay persists a login/password-reset/SSO-begin attempt
+// relayed from a downstream server's own RecordFailedLogin/
+// RecordPasswordResetAttempt/RecordSSOBeginAttempt call
+// (server/http/handlers/login_attempts_proxy.go's RecordLoginAttemptProxy is
+// the only caller — an attacker-influenced HTTP body, not a value this
+// process derived itself). Two gaps closed here (G80 documented-exception
+// re-verification sweep, found six weeks after PruneLoginAttemptsProxy's
+// sibling CORE-RATE-003 fix in this same file — the "record" endpoint's own
+// fields were never given the equivalent scrutiny at the time):
+//
+//  1. The wire "ip" field was never validated to actually BE an IP, or a
+//     known-prefix + IP. A caller holding only system.write could submit the
+//     LITERAL string "pwreset:<victim-ip>" or "sso:<victim-ip>" as the whole
+//     key, corrupting a DIFFERENT rate limiter's bucket for a victim IP the
+//     caller doesn't control — e.g. ten such calls lock that victim out of
+//     password-reset or SSO/SAML login initiation, without ever touching the
+//     ordinary login limiter at all.
+//  2. `at` was accepted completely unbounded. PruneLoginAttempts (this file)
+//     can only ever delete rows with `attempted_at < now-LoginWindow` — a
+//     caller setting `at` to a far-future value (e.g. year 2099) creates a
+//     row NO maintenance sweep can ever become eligible to remove: a
+//     PERMANENT, unrecoverable lockout of whatever key it targets, strictly
+//     worse than the bounded-window abuse case CORE-RATE-003 closed for prune.
+//
+// A KNOWN prefix is stripped if present and the remainder is canonicalized
+// via CanonicalIP and REQUIRED to parse as a real IP — an unprefixed,
+// non-IP key is rejected outright rather than persisted verbatim. `at` in
+// the future is REJECTED outright (ErrFutureLoginAttemptTimestamp), not
+// silently clamped to now: a relay reports an event that already happened on
+// the downstream server's own clock, so a future `at` is either a clock
+// skew large enough to be worth surfacing, or a caller deliberately probing
+// how far the field is trusted — a silent substitution answers that
+// question for them with no signal on this end that anything was rejected,
+// and (independent verification session, 2026-08-25) is untestable as a
+// rejection: a test asserting "the write succeeded with some clamped value"
+// cannot distinguish "correctly clamped" from "accepted verbatim and just
+// happens to look right," which is exactly how this gap went unnoticed the
+// first time.
+func (c *KeyorixCore) RecordLoginAttemptRelay(ctx context.Context, key string, at time.Time) error {
+	prefix, remainder := "", key
+	for _, p := range loginAttemptRelayPrefixes {
+		if rest, ok := strings.CutPrefix(key, p); ok {
+			prefix, remainder = p, rest
+			break
+		}
+	}
+	canon := CanonicalIP(remainder)
+	if net.ParseIP(canon) == nil {
+		return ErrInvalidLoginAttemptKey
+	}
+	if at.After(c.now()) {
+		return ErrFutureLoginAttemptTimestamp
+	}
+	if err := c.storage.RecordLoginAttempt(ctx, prefix+canon, at); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
 }
 
 // PruneLoginAttempts removes login/password-reset rate-limit rows older than

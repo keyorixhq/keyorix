@@ -1,38 +1,28 @@
-// node_credential.go — #G79 structural fix: the RemoteStorage-sync proxy tree
-// (server/http/handlers/*_proxy.go, mounted under /api/v1/system) used to be gated only
-// by RequirePermission(system.write) — a plain RBAC permission string, not a check that
-// the caller is actually a trusted downstream Keyorix node. system.write is intentionally
-// grantable to a narrow, documented custom role (audit checkpoints, legal holds, risk
-// exceptions, SoD policies, admin job triggers — see internal/core/auth_bootstrap.go); an
-// operator granting that role for its documented purpose was unknowingly also handing the
-// grantee the ability to act as a node (mint admin accounts, forge setup tokens, bypass
-// dual-control on risk exceptions, etc. — the underlying handlers now route through
-// internal/core's own guards, but the router-level gate remained just the permission).
+// node_credential.go — #G79 structural fix, superseded by ADR-085 (Accepted,
+// 2026-08-25): the RemoteStorage-sync proxy tree (server/http/handlers/*_proxy.go,
+// mounted under /api/v1/system) used to be gated by RequirePermission(system.write)
+// alone, then for a time by RequireNodeCredentialOrPermission — a node-type
+// machine credential (core.MachineTypeNode) as an alternative to system.write.
+// That OR-arm is REMOVED. ADR-085 found its own foundational premise false: the
+// "downstream Keyorix node relaying an already-authorized human action" topology
+// it was built to serve cannot exist in this codebase — ADR-083's
+// validateRemoteStorageNotServer (internal/config/config.go) rejects
+// storage.type: remote unconditionally for any server process (HTTP, gRPC, or
+// scheduler-only), so no server-side relay of this shape has ever been
+// constructible. A liveness sweep (createNodeToken: test-only in all 21
+// references; no Helm chart, compose file, or CLI flow provisions a node
+// credential for runtime; docs/REMOTE_CLI_SETUP.md documents a bare node token as
+// insufficient for real use) found no live caller for the OR-arm at all. See
+// ADR-085 for the full finding and the competitor research (Vault/Conjur/
+// OpenBao/Infisical) informing the replacement decision: node-authenticated
+// requests get no privileged access; /system requires system.write like every
+// other RBAC-gated route in this codebase.
 //
-// RequireNodeCredential gates on a credential-CLASS check: the caller must be
-// authenticated as a machine identity whose IdentityType is core.MachineTypeNode
-// (internal/core/machine_identities.go). This is deliberately NOT an RBAC permission — no
-// role, including admin/system_admin, grants node status; it can only come from being
-// issued that specific credential type.
-//
-// RequireNodeCredentialOrPermission is the group's actual gate. A sole node-credential
-// gate turned out to be too narrow: roughly half of the routes RemoteStorage backs (role/
-// user/secret lookups, notifications, login/MFA proxying, legal holds, RBAC catalog, ...)
-// sit OUTSIDE the /system proxy tree on their own ordinary RBAC-permission routes, and a
-// downstream node's sync credential needs to reach those too — but a machine identity can
-// never be granted a role at global scope (only project scope, see AssignMachineRole), so
-// a bare node credential can satisfy /system but nothing else, while an admin-style PAT/
-// session can satisfy everything else but not the node-only /system gate. No single
-// credential could satisfy both. So /system stays reachable by EITHER a node credential OR
-// the given permission (typically permSystemWrite) — matching the original plan's "add a
-// node-identity credential check ... so a compromised or over-granted RBAC principal still
-// can't act as a node" alongside a scoped permission, not a sole-credential replacement of
-// it. This does NOT fully close the original concern on its own: adminRoleNames (authz.go)
-// unconditionally bypass every permission check, so any admin-tier role holder still
-// reaches this surface via the permission arm regardless of what's explicitly bundled into
-// that role — narrowing which roles list system.write explicitly only stops accidental
-// over-grants to NON-admin custom roles, not the admin bypass itself. Closing that fully
-// would mean excluding this permission from the admin bypass, a separate, larger change.
+// The MachineTypeNode identity type itself is RETAINED (ADR-085's decision) —
+// `keyorix machine create --type node` remains a valid, user-facing command, and
+// removing the type forecloses a real node component being built properly later.
+// What's removed is only the OR-arm that let holding that credential type
+// substitute for holding system.write.
 package middleware
 
 import (
@@ -44,6 +34,14 @@ import (
 // RequireNodeCredential gates a route group on the caller holding a node-type machine
 // credential. Rejects session/PAT/OIDC principals and every other machine identity type
 // (ci/k8s/service/automation/other) with 403, and an unauthenticated request with 401.
+//
+// Pre-existing, unrelated to the ADR-085 change above: this sole-credential gate
+// has never been used to gate any real route (router.go never calls it; the
+// group's gate was RequireNodeCredentialOrPermission, now plain RequirePermission)
+// — a leftover from an earlier, already-reverted design iteration (see router.go's
+// own "a pure node-credential-only gate was tried and reverted" history). Left in
+// place, not deleted, since removing it is unrelated to this change and it is
+// exercised by its own unit tests below.
 func RequireNodeCredential() func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,26 +60,7 @@ func RequireNodeCredential() func(next http.Handler) http.Handler {
 }
 
 // isNodeCredential reports whether userCtx is a node-type machine identity.
+// Kept for RequireNodeCredential above (its only remaining caller).
 func isNodeCredential(userCtx *UserContext) bool {
 	return userCtx.ActorKind() == core.ActorTypeMachine && userCtx.MachineIdentityType == core.MachineTypeNode
-}
-
-// RequireNodeCredentialOrPermission gates a route group on EITHER the caller holding a
-// node-type machine credential OR the given permission at global scope — see the package
-// doc above for why this stays dual-gated instead of node-credential-only.
-func RequireNodeCredentialOrPermission(permission string) func(next http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userCtx, cs, ok := requireUserAndCore(w, r)
-			if !ok {
-				return
-			}
-			if isNodeCredential(userCtx) {
-				next.ServeHTTP(w, r)
-				return
-			}
-			allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
-			finishScopedPermissionRequest(next, w, r, cs, core.Scope{}, allowed, err)
-		})
-	}
 }
