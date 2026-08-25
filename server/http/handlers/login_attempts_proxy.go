@@ -9,18 +9,28 @@
 // client already needs for every other proxied call, e.g. full user CRUD, so this
 // introduces no new privilege class).
 //
-// These are thin passthroughs onto the SAME storage.Storage primitives
-// (RecordLoginAttempt/CountRecentLoginAttempts/PruneLoginAttempts) the local
-// /auth/login path already uses (ADR-040) — no rate-limiting POLICY decision (the
-// threshold, the window) is made here; that stays entirely in the CALLING server's
-// own internal/core.KeyorixCore, exactly as it does against a local backend. This
-// file only persists/counts/prunes the raw (key, timestamp) rows. The one exception
-// is PruneLoginAttemptsProxy (CORE-RATE-003): it deliberately does NOT call
-// storage.Storage.PruneLoginAttempts directly, because the request body's `before`
-// is attacker-influenced and an unbounded passthrough let any system.write
-// principal wipe the entire table on demand. It routes through
-// core.KeyorixCore.PruneLoginAttempts instead, which clamps the cutoff and audits
-// the deletion — see that handler's own doc comment.
+// CountLoginAttemptsProxy remains a thin passthrough onto storage.Storage's
+// CountRecentLoginAttempts (a pure read — no rate-limiting POLICY decision, the
+// threshold/window, is made here; that stays entirely in the CALLING server's
+// own internal/core.KeyorixCore, exactly as it does against a local backend).
+// RecordLoginAttemptProxy and PruneLoginAttemptsProxy are NOT thin passthroughs:
+// both had a wire-body field an attacker-influenced caller controls, unvalidated,
+// with concrete abuse consequences.
+//
+//   - PruneLoginAttemptsProxy (CORE-RATE-003): the request body's `before` let
+//     any system.write principal wipe the entire table on demand. Routes through
+//     core.KeyorixCore.PruneLoginAttempts instead, which clamps the cutoff and
+//     audits the deletion — see that handler's own doc comment.
+//   - RecordLoginAttemptProxy (found 6 weeks later, in the G80 documented-
+//     exception re-verification sweep — its own "no policy decision" framing
+//     was true but beside the point): the `ip`/`at` fields were completely
+//     unvalidated, letting a caller poison a DIFFERENT rate limiter's namespace
+//     with a fabricated key, or set `at` to a far-future timestamp that
+//     PruneLoginAttempts (clamped to now-LoginWindow) could never become
+//     eligible to delete — a permanent lockout. Routes through
+//     core.KeyorixCore.RecordLoginAttemptRelay instead, which
+//     validates/canonicalizes the key and clamps the timestamp — see that
+//     method's own doc comment (internal/core/rate_limit.go).
 //
 // Response envelope: these three handlers deliberately do NOT use the package's
 // generic sendSuccess/sendError helpers. Those write {"data":...}/{"error":"...",
@@ -33,10 +43,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -84,6 +96,23 @@ type loginAttemptPruneBody struct {
 }
 
 // RecordLoginAttemptProxy handles POST /api/v1/system/login-attempts.
+//
+// FALSE justification, found and fixed (G80 documented-exception re-
+// verification sweep, 2026-08-25): this handler's "no rate-limit POLICY
+// decision is made here" claim (package doc above) is true but beside the
+// point — it used to call storage.RecordLoginAttempt directly with the wire
+// body's `ip`/`at` fields completely unvalidated. That let a system.write-only
+// or node-credential caller (a) inject a fabricated key under ANOTHER rate
+// limiter's namespace ("pwreset:<victim-ip>"/"sso:<victim-ip>") to lock a
+// victim IP out of password-reset/SSO rather than ordinary login, and (b) set
+// `at` to a far-future timestamp, creating a row PruneLoginAttempts (clamped
+// to now-LoginWindow) can never become eligible to delete — a permanent
+// lockout. Its sibling PruneLoginAttemptsProxy (below) got the equivalent
+// validation as CORE-RATE-003, six weeks before this handler's own fields were
+// looked at; that gap in scrutiny, not a different threat model, is why this
+// one went unnoticed. Now routes through core.KeyorixCore.RecordLoginAttemptRelay,
+// which validates/canonicalizes the key and clamps the timestamp — see its own
+// doc comment (internal/core/rate_limit.go) for the full reasoning.
 func (h *AuthHandler) RecordLoginAttemptProxy(w http.ResponseWriter, r *http.Request) {
 	var body loginAttemptRecordBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -94,7 +123,11 @@ func (h *AuthHandler) RecordLoginAttemptProxy(w http.ResponseWriter, r *http.Req
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "ip is required")
 		return
 	}
-	if err := h.coreService.Storage().RecordLoginAttempt(r.Context(), body.IP, body.At); err != nil {
+	if err := h.coreService.RecordLoginAttemptRelay(r.Context(), body.IP, body.At); err != nil {
+		if errors.Is(err, core.ErrInvalidLoginAttemptKey) {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
+			return
+		}
 		log.Printf("login-attempts proxy: record failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

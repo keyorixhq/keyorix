@@ -64,23 +64,23 @@ var defaultPermissions = []bootstrapPermissionDef{
 	// triggers (rotation/expiry reminders, anomaly alerts, compliance digest). It
 	// ALSO still reaches the RemoteStorage-sync proxy tree
 	// (server/http/handlers/*_proxy.go, mounted under /api/v1/system) — that surface
-	// used to be reachable by system.write ALONE, so a custom role granted this
-	// permission for its documented purpose unknowingly also gained the ability to
-	// act as a downstream node. As of #G79 the proxy tree is gated by
-	// RequireNodeCredentialOrPermission(server/middleware/node_credential.go):
-	// EITHER this permission OR a machine-identity credential of IdentityType
-	// "node" (no role, including admin/system_admin, grants that identity type). A
-	// sole node-credential gate was tried and reverted: several routes nested under
-	// /system — including this permission's own documented footprint above — self-
-	// check for an admin-tier RBAC principal inside internal/core, which a bare
-	// node credential (zero RBAC by design) can never satisfy, and a large share of
-	// RemoteStorage's OTHER backing routes live outside /system entirely on
-	// ordinary RBAC-gated paths a node credential can't reach either (see
-	// docs/REMOTE_CLI_SETUP.md). Note this dual-gate does not fully close the
-	// original over-broad-grant concern by itself: adminRoleNames (authz.go)
-	// unconditionally bypass every permission check, so any admin-tier role holder
-	// still reaches the proxy tree via the permission arm regardless of what's
-	// explicitly bundled into their role.
+	// is reachable by system.write ALONE, so a custom role granted this
+	// permission for its documented purpose unknowingly also gains the ability to
+	// act as a relay. From #G79 through 2026-08-25 the proxy tree was ALSO gated by
+	// RequireNodeCredentialOrPermission: EITHER this permission OR a machine-identity
+	// credential of IdentityType "node" (no role, including admin/system_admin,
+	// granted that identity type) — that OR-arm is REMOVED (ADR-085, Accepted,
+	// 2026-08-25: the "downstream Keyorix node relaying an already-authorized human
+	// action" topology it existed to serve cannot exist in this codebase; see
+	// server/http/router.go's /system group comment and docs/adr-085-node-credential-
+	// permission-scope.md for the full history). The proxy tree is now gated by plain
+	// system.write, same as every other route this permission covers; a node-type
+	// machine identity gets no special standing and must hold system.write via a
+	// real role grant like any other machine identity to reach it. Note this still
+	// does not fully close the original over-broad-grant concern by itself:
+	// adminRoleNames (authz.go) unconditionally bypass every permission check, so
+	// any admin-tier role holder still reaches the proxy tree via the permission arm
+	// regardless of what's explicitly bundled into their role.
 	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", "system", "write"},
 	{"connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 	// ADR-082 branch 4: narrows scope: platform connector reads, which connect.read

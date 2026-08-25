@@ -97,7 +97,7 @@ Columns: verdict is one of `no-independent-ceiling` / `documented-exception` / `
 | sso_state_proxy.go:100 | CreateSSOLoginStateProxy | BeginSSO/BeginSAML | Pre-login CSRF-state creation, no auth/ownership check even in core. | documented-exception | — |
 | sso_state_proxy.go:133 | ConsumeSSOLoginStateProxy | validateSSOLoginState | Provider-match/expiry checks run AFTER consume, state-machine invariants identical regardless of caller. | documented-exception | — |
 | users_active_transition_proxy.go:119 | UpdateUserIfActiveStateMatchesProxy | UpdateUser deactivating branch | guardLastAdminDeactivation (fail-closed last-global-admin lockout) BEFORE conditional write; same tx revokes all PATs+sessions. | real | human-reachable — **raw proxy never calls guardLastAdminDeactivation, never revokes PATs/sessions — can deactivate the install's LAST ADMIN, or leave a "deactivated" user's live sessions/PATs valid.** |
-| users_crud.go:710 | ConsumeMFAChallenge | FinishWebAuthnLogin/VerifyMFACredentials | Assertion/crypto verification + session binding + account gates all run AFTER consume; consuming alone yields only UserID/expiry. | documented-exception | — |
+| users_crud.go:710 | ConsumeMFAChallenge | FinishWebAuthnLogin/VerifyMFACredentials | Assertion/crypto verification + session binding + account gates all run AFTER consume; consuming alone yields only UserID/expiry (`generateSecureToken`-minted, crypto/rand, unguessable — auth.go:624-625). Atomicity confirmed at storage layer (local_mfa.go:123-148, conditional `UPDATE ... WHERE used_at IS NULL AND expires_at > ?`). VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep, escalation-delta test): **holds.** | documented-exception | **CORRECTED reach**: NOT pre-auth/mid-login as the endpoint's name might suggest. The full `/api/v1` `Authentication` middleware (server/middleware/auth.go:253) — requiring a valid session/PAT/machine/OIDC token — runs BEFORE the route's `users.write` permission check (router.go:300,874). A user mid-login holds only the ephemeral MFA-challenge secret, not any of those credentials, so they cannot reach this route at all. Reachable only by an already-fully-authenticated, `users.write`-holding principal — machine-only in the intended hub-spoke design (a RemoteStorage spoke's own service credential relaying its own end users' logins), not human-mid-login-reachable. |
 | webauthn_proxy.go:171 | CreateWebAuthnCredentialProxy | FinishWebAuthnRegistration | requireReauth (re-prove password/TOTP) BEFORE storage write; doc: "must not be reachable by a bearer token alone." | real | human-reachable — **ZERO reauth — implant an attacker-controlled passkey on ANY account. SEVERE.** |
 | webauthn_proxy.go:336 | DeleteWebAuthnCredentialProxy | DeleteWebAuthnCredential | Same requireReauth ceiling before deleting. | real | human-reachable — strip any user's real passkeys without proving ownership. |
 | webauthn_proxy.go:382 | SetUserWebAuthnEnabledProxy | Only 2 core callers, both gated behind requireReauth first | No core method flips this flag standalone. | real | human-reachable — flips any user's webauthn_enabled directly, no reauth, no paired session-purge/audit — silent 2FA downgrade or bogus force-enable. |
@@ -360,6 +360,59 @@ pointer, not a duplicate of that record.
 Not part of this wave: `RevokeMachineIdentityCredentialProxy` (#1551) and the
 `CreateMachineIdentityCredentialProxy`/`CreateOIDCBindingProxy` node-credential residuals
 (#1552) remain ADR-085-blocked, as recorded above — untouched, per instruction.
+**Superseded 2026-08-25 — see "ADR-085 resolution" below: all node-credential residuals
+this paragraph deferred are now closed.**
+
+## ADR-085 resolution (2026-08-25): the node-credential OR-arm is removed
+
+A Phase-1 liveness check (see `docs/adr-085-node-credential-permission-scope.md`, now
+Accepted) found no live caller anywhere for `RequireNodeCredentialOrPermission`'s
+node-credential arm: `createNodeToken` is test-only in every reference across the repo, no
+Helm chart/compose file/CLI flow provisions a node credential for runtime use, and ADR-083's
+`validateRemoteStorageNotServer` (`internal/config/config.go`) already rejects
+`storage.type: remote` for any server process — the "downstream Keyorix node relaying an
+already-authorized human action" topology every one of this file's HALF-FIXED entries
+assumed cannot exist in this codebase at all. The arm is deleted (`server/middleware/
+node_credential.go`, `server/http/router.go`); `/api/v1/system` now requires `system.write`
+for every caller, node-typed or not, with no OR-arm exemption. Every handler's
+`isNodeCredentialRequest(r)` branch is removed along with it. This closes the
+node-credential axis on all six routes this campaign tracked as HALF-FIXED for that reason,
+plus two more found to have the identical shape during the sweep:
+
+- **`AssignRoleWithExpiryProxy`** (#1552, the campaign's original "MOST SEVERE FINDING") —
+  now routes through `core.AssignUserRoleWithExpiry` unconditionally; a bare node credential
+  is refused at the group's own `system.write` gate before ever reaching
+  `requireGranterHoldsRolePermissions`. See
+  `TestSystemWriteCeiling_AssignRoleWithExpiryProxy_NodeCredential_DeniedAtGate`
+  (`system_write_ceiling_table_test.go`).
+- **`RevokeMachineIdentityCredentialProxy`** (#1551) — the node-credential axis into it is
+  closed the same way (denied at the group gate); #1551's own underlying gap (any
+  `system.write` holder, human or machine, can revoke any credential cross-tenant with no
+  project-scope check — a wire-contract limitation, not a node-credential one) is
+  **unchanged** and remains open, tracked in `knownUnfixedRawStorageBypasses`. See
+  `TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate`.
+- **`CreateMachineIdentityCredentialProxy`** — closed for every caller; moved from
+  `knownUnfixedRawStorageBypasses` to `rawStorageBypassAllowlist` (still makes a flagged raw
+  storage call, but `core.RequireMachinePrivilegeCeiling` now runs unconditionally first).
+- **`CreateOIDCBindingProxy`** — closed at the group gate for a bare node credential; entry
+  removed from both guard-test lists (no longer makes a flagged raw call at all — routes
+  through `core.CreateOIDCBinding`). Note this route's ceiling
+  (`requireAuthorityForRole("system_admin")` → `scopedRoleIDs`) resolves authority via a
+  USER's direct/group role grants only — no machine actor, however permissioned, can ever
+  satisfy it, a pre-existing, unrelated characteristic confirmed against a genuinely
+  system.write-holding node credential in
+  `remote_storage_machine_identities_test.go`'s `OIDCBindingCreateGetListDelete_RealServer`.
+- **`RemoveGlobalAdminRoleGuardedProxy`** — closed at the group gate; entry removed (no
+  longer makes a flagged raw call — routes through `core.RemoveUserRole`).
+- **`RevokeAllPersonalAccessTokensForUserProxy`** / **`DeleteSessionsForUserExceptProxy`** —
+  closed at the group gate; entries removed (no longer make a flagged raw call).
+
+`docs/adr-085-node-credential-permission-scope.md` is Accepted and records the full
+mechanism and the general lesson (a framing inherited from a superseded ADR was never
+re-derived after the superseding ADR landed). `MachineTypeNode` itself is retained as an
+identity type (`keyorix machine create --type node` is still user-facing); only its special
+gate privilege is removed — a node identity is authorized exactly like any other caller,
+via a real role grant it either has or doesn't.
 
 ## Open question: the 14 `documented-exception` verdicts are not settled (not work for now)
 

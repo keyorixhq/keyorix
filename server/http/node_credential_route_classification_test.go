@@ -1,8 +1,16 @@
 // node_credential_route_classification_test.go — #1524/ADR-085's per-actor-
 // ceiling vs target-state-invariant distinction encoded as data, not just ADR
-// prose, with a completeness test cross-checking it against the real
-// RequireNodeCredentialOrPermission route set in router.go. Mirrors the
-// shape of the #1511 AST wire-route-coverage guard
+// prose, with a completeness test cross-checking it against the real /system
+// route set in router.go (gated by RequireNodeCredentialOrPermission when
+// this file was authored; ADR-085, Accepted, 2026-08-25, removed that
+// function's node-credential arm, so the SAME route set is now gated by plain
+// RequirePermission(permSystemWrite) — see that ADR's Status section). This
+// file's per-actor-ceiling vs target-state-invariant classification, and the
+// tests built on it, are UNAFFECTED by that removal: they pin how each
+// route's own internal/core ceiling treats ANY machine actor holding a real
+// permission grant, a property orthogonal to whether a node credential could
+// once substitute for that permission entirely. Mirrors the shape of the
+// #1511 AST wire-route-coverage guard
 // (internal/storage/store/remote_wire_route_coverage_test.go): a hand-copied
 // list that nobody re-checks against the source is exactly how server/http
 // sat excluded from CI for ~4 months and #1524's 9-route enumeration missed
@@ -82,7 +90,7 @@ var classifiedNodeCredentialRoutes = []nodeRouteEntry{
 	{"POST", "/api/v1/system/users/with-role-grants", classPerActorCeiling,
 		"CreateUserWithRoleGrantsProxy: ValidateRoleGrantAuthority(actorID(r), grants) -- escalation-by-proxy, genuinely actor-dependent"},
 	{"POST", "/api/v1/system/rbac/assign-role-with-expiry", classNodeLegitimate,
-		"AssignRoleWithExpiryProxy: #1542 FIXED -- routes through core.AssignUserRoleWithExpiry for a direct system.write caller (real ceiling runs against their own authority), still calls storage.AssignRoleWithExpiry directly ONLY for a genuine node-credential relay (isNodeCredentialRequest)"},
+		"AssignRoleWithExpiryProxy: #1542/#1552 FIXED -- routes through core.AssignUserRoleWithExpiry unconditionally for every caller (the isNodeCredentialRequest branch that used to call storage.AssignRoleWithExpiry directly for a node-credential relay is removed, ADR-085); the real ceiling (requireGranterHoldsRolePermissions) now runs against every caller's own authority, node-typed or not"},
 	{"POST", "/api/v1/system/rbac/assign-role-to-group-with-expiry", classNodeLegitimate,
 		"AssignRoleToGroupWithExpiryProxy: #1542 FIXED -- routes through core.AssignGroupRoleWithExpiry unconditionally (requireAuthorityForRole is admin-tier-only and already actorID==0-safe, no node/direct branch needed)"},
 	{"POST", "/api/v1/system/machine-identities/{id}/roles/{roleId}", classNodeLegitimate,

@@ -47,24 +47,21 @@ func isMachineActor(r *http.Request) bool {
 	return u != nil && u.ActorKind() == core.ActorTypeMachine
 }
 
-// isNodeCredentialRequest reports whether this request authenticated with a
-// genuine MachineTypeNode credential (a RemoteStorage relay), as opposed to a
-// human or a non-node machine identity (ci/k8s/service/automation/other)
-// reaching the route via the system.write PERMISSION arm of
-// RequireNodeCredentialOrPermission. Both arms satisfy that gate identically,
-// but they mean different things for a route with a genuine per-actor
-// ceiling downstream: a real node relay is trusted to have already run the
-// ceiling check locally, against the real acting human, before deciding to
-// relay the already-authorized write (see rbac_role_grants_proxy.go's
-// package doc) — re-running the ceiling here would check it against the
-// node's OWN (by-design, permission-free) authority, the wrong principal,
-// not a stronger check. A system.write holder without a node credential is
-// NOT relaying anyone else's decision — they ARE the decision, and the real
-// ceiling must run against their own authority. #1542.
-func isNodeCredentialRequest(r *http.Request) bool {
-	u := middleware.GetUserFromContext(r.Context())
-	return u != nil && u.ActorKind() == core.ActorTypeMachine && u.MachineIdentityType == core.MachineTypeNode
-}
+// isNodeCredentialRequest is REMOVED (ADR-085, Accepted, 2026-08-25). It used
+// to report whether a request authenticated with a genuine MachineTypeNode
+// credential, so a handful of /system handlers could trust that call
+// unconditionally on the theory that a node relays an already-authorized
+// downstream decision. ADR-085 found that "downstream node relay" topology
+// cannot exist in this codebase (ADR-083's validateRemoteStorageNotServer
+// rejects storage.type: remote for any server process) and a liveness sweep
+// found no live caller for the exemption at all — every former call site
+// (AssignRoleWithExpiryProxy, RemoveGlobalAdminRoleGuardedProxy,
+// CreateMachineIdentityCredentialProxy, CreateOIDCBindingProxy,
+// DeleteOIDCBindingProxy, CreateSetupTokenProxy,
+// RevokeAllPersonalAccessTokensForUserProxy, DeleteSessionsForUserExceptProxy)
+// now runs its real ceiling check unconditionally, for every caller. The
+// MachineTypeNode identity type itself is RETAINED (a node credential simply
+// carries no more authority than any other machine identity now).
 
 // CatalogHandler handles project and environment endpoints.
 type CatalogHandler struct {

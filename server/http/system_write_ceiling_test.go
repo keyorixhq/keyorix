@@ -2,19 +2,22 @@
 // question the G80 raw-storage-bypass triage (docs/g80-raw-storage-bypass-triage.md)
 // depended on but never tested directly: is the /system RemoteStorage-sync proxy
 // tier (server/http/router.go's `r.Route("/system", ...)`, gated by
-// RequireNodeCredentialOrPermission(permSystemWrite) — server/middleware/
-// node_credential.go) reachable by a HUMAN principal holding ONLY the system.write
-// permission — no admin-tier role, no node credential?
+// RequirePermission(permSystemWrite) — server/middleware/auth.go) reachable by a
+// HUMAN principal holding ONLY the system.write permission — no admin-tier role?
 //
-// RequireNodeCredentialOrPermission's code already documents the answer
-// (router.go's comment above r.Route("/system", ...): "a node-type machine
-// credential ... OR the existing system.write permission"), and ADR-085
-// independently confirms system.write is intentionally grantable to a narrow,
-// documented custom role (audit checkpoints, legal holds, risk exceptions, SoD
-// policies, admin job triggers) — not admin-only. This test proves reachability
-// end-to-end through the real router + real auth + a real RBAC-gated storage
-// backend, and system_write_ceiling_table_test.go builds on the SAME harness to
-// cover the rest of the machine-identity/credential/OIDC-binding proxy surface.
+// At the time this test was written the group was gated by
+// RequireNodeCredentialOrPermission (server/middleware/node_credential.go): a
+// node-type machine credential OR the existing system.write permission. ADR-085
+// (Accepted, 2026-08-25) removed the node-credential arm entirely — the group now
+// requires plain system.write for every caller, node-typed or not — but the
+// question this test answers (does a system.write-only human, no admin-tier role,
+// reach this group) is unaffected by that removal, and ADR-085 independently
+// confirms system.write is intentionally grantable to a narrow, documented custom
+// role (audit checkpoints, legal holds, risk exceptions, SoD policies, admin job
+// triggers) — not admin-only. This test proves reachability end-to-end through the
+// real router + real auth + a real RBAC-gated storage backend, and
+// system_write_ceiling_table_test.go builds on the SAME harness to cover the rest
+// of the machine-identity/credential/OIDC-binding proxy surface.
 package http
 
 import (
@@ -156,19 +159,23 @@ func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	t.Logf("Control — POST %s as the SAME system.write-only human: status=%d body=%s",
 		controlURL, controlResp.StatusCode, controlBuf.String())
 
-	// Assertions follow the empirically observed behavior of RequireNodeCredentialOrPermission
-	// (server/middleware/node_credential.go): its permission arm calls
-	// AuthorizePrincipal(ctx, actorKind, principalID, "system.write", core.Scope{}) with NO
-	// further per-route check, so a system.write holder — human or machine, admin or not —
-	// passes it exactly like a node credential would. This assertion documents the CURRENT
-	// (unfixed) behavior of CreateMachineIdentityCredentialProxy — see
-	// system_write_ceiling_table_test.go's EnforcesPrivilegeCeiling row for the
-	// fix-wave acceptance criterion this row is expected to eventually violate (i.e.
-	// go red) once that handler is fixed; this file stays as the original empirical
-	// finding, not the regression gate.
+	// Assertions follow the empirically observed behavior of the group's own gate
+	// (RequirePermission(permSystemWrite), server/middleware/auth.go, since ADR-085
+	// removed the RequireNodeCredentialOrPermission arm this test was originally
+	// written against): it calls AuthorizePrincipal(ctx, actorKind, principalID,
+	// "system.write", core.Scope{}) with NO further per-route check, so a
+	// system.write holder — human or machine, admin or not — reaches the handler.
+	// CreateMachineIdentityCredentialProxy itself is FIXED as of this ADR
+	// (core.RequireMachinePrivilegeCeiling now runs unconditionally,
+	// rawStorageBypassAllowlist) — this call still succeeds (200) because
+	// targetMI is an ordinary, non-admin-tier machine identity, so the ceiling
+	// has nothing to refuse; system_write_ceiling_table_test.go's
+	// EnforcesPrivilegeCeiling/StillBypassesPrivilegeCeiling rows cover the
+	// admin-tier-target case this test does not.
 	assert.Equal(t, http.StatusOK, resp.StatusCode,
-		"a system.write-only human is expected to reach CreateMachineIdentityCredentialProxy: "+
-			"RequireNodeCredentialOrPermission's permission arm makes no further per-caller check "+
+		"a system.write-only human is expected to reach CreateMachineIdentityCredentialProxy for a "+
+			"non-admin-tier target machine: the group's own gate makes no further per-caller check, and "+
+			"core.RequireMachinePrivilegeCeiling has nothing to refuse against a non-admin-tier target "+
 			"(writeRemoteAPISuccess never calls WriteHeader, so success is 200, not 201)")
 	assert.True(t, respBuf.Len() > 0 && bytes.Contains(respBuf.Bytes(), []byte(`"success":true`)),
 		"expected a real created-credential response body, not just a 200 status")

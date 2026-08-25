@@ -23,6 +23,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -106,14 +107,11 @@ func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	return session.SessionToken
 }
 
-// createNodeToken mints a #G79 node-type machine-identity bearer token — the
-// credential RequireNodeCredential (server/middleware/node_credential.go) now requires
-// to reach the /api/v1/system/* RemoteStorage-sync proxy tree. Bootstraps the system
-// (via createTestToken) to get an admin actor authorized to create the identity and
-// issue its token; only the node token is returned; the admin session itself no longer
-// has any special access to the proxy tree, matching production (no role, including
-// admin, grants node status).
-func createNodeToken(t *testing.T, c *core.KeyorixCore) string {
+// createNodeIdentityAndAdmin bootstraps the system (via createTestToken),
+// creates a node-type machine identity in the seeded default project, and
+// returns it alongside the admin actor that created it and that project's ID
+// — the shared setup behind createNodeToken and createBareNodeToken below.
+func createNodeIdentityAndAdmin(t *testing.T, c *core.KeyorixCore) (mi *models.MachineIdentity, admin *models.User, projectID uint) {
 	t.Helper()
 	ctx := context.Background()
 	_ = createTestToken(t, c) // bootstraps admin user/roles/project as a side effect
@@ -122,9 +120,49 @@ func createNodeToken(t *testing.T, c *core.KeyorixCore) string {
 	projects, err := c.Storage().ListProjects(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, projects, "createTestToken must have seeded a default project")
-	mi, err := c.CreateMachineIdentity(ctx, projects[0].ID, "test-node", core.MachineTypeNode, "test node credential", "", admin.ID)
+	mi, err = c.CreateMachineIdentity(ctx, projects[0].ID, "test-node", core.MachineTypeNode, "test node credential", "", admin.ID)
 	require.NoError(t, err)
-	result, err := c.IssueMachineToken(ctx, projects[0].ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "test-node-token"})
+	return mi, admin, projects[0].ID
+}
+
+// createBareNodeToken mints a node-type machine-identity bearer token holding
+// NO role grant at all — the zero-RBAC credential ADR-085 (Accepted,
+// 2026-08-25) requires /api/v1/system/* to now refuse, since the OR-arm that
+// used to let a bare node credential reach it regardless of permissions is
+// removed. Used only where a test's whole point is pinning that refusal (the
+// system-write-ceiling table, node_credential_route_classification_test.go);
+// everything else that just needs a working credential to drive RemoteStorage
+// against a real router should use createNodeToken instead.
+func createBareNodeToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	mi, admin, projectID := createNodeIdentityAndAdmin(t, c)
+	result, err := c.IssueMachineToken(context.Background(), projectID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "test-node-token"})
+	require.NoError(t, err)
+	return result.PlainToken
+}
+
+// createNodeToken mints a node-type machine-identity bearer token holding
+// system.write at global scope — the credential /api/v1/system/* now requires
+// (ADR-085, Accepted, 2026-08-25: the prior node-credential OR-arm that let a
+// bare node credential reach /system with zero RBAC is removed; a node
+// identity is authorized the same way any other caller is, via a real role
+// grant). The role grant itself is written directly at the storage layer
+// rather than through KeyorixCore.AssignMachineRole, because that core-layer
+// method's ceiling requires scope.ProjectID to match the machine identity's
+// own project (machineInProject, internal/core/machine_token.go) and so can
+// never itself grant a machine identity a truly global-scope permission — the
+// same structural wall ADR-085 found blocking its earlier "scoped global
+// machine-identity roles" proposal. Only the node token is returned; the
+// admin session itself has no special access to the proxy tree, matching
+// production (no role, including admin, grants node status).
+func createNodeToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+	mi, admin, projectID := createNodeIdentityAndAdmin(t, c)
+	adminRole, err := c.Storage().GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, c.Storage().AssignMachineRole(ctx, mi.ID, adminRole.ID, coreStorage.Scope{}))
+	result, err := c.IssueMachineToken(ctx, projectID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "test-node-token"})
 	require.NoError(t, err)
 	return result.PlainToken
 }

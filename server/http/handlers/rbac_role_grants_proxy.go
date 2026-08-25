@@ -16,23 +16,23 @@
 // Most of these were originally thin passthroughs straight onto storage.Storage,
 // on the theory that no RBAC POLICY decision needs to be made here because the
 // CALLING server's own internal/core.KeyorixCore already made it before
-// deciding to relay the write. #1542: that theory only holds for a genuine
-// node-credential relay — this route group's gate
-// (RequireNodeCredentialOrPermission) also admits any caller (human or
-// machine) holding the system.write PERMISSION directly, with no node
-// credential at all, and THAT caller is not relaying anyone's already-checked
-// decision. A raw storage passthrough gave such a caller a clean path to
-// global admin with zero ceiling checks of any kind. AssignRoleWithExpiryProxy/
-// AssignRoleToGroupWithExpiryProxy/AssignMachineRoleProxy/
-// RemoveAllProjectRoleGrantsProxy now route through the SAME internal/core
-// functions (AssignUserRoleWithExpiry, AssignGroupRoleWithExpiry,
-// AssignMachineRole, RemoveProjectMember) a local backend would use, so their
-// real ceiling checks run for a direct system.write caller. A genuine node
-// relay is still trusted for the one check (requireGranterHoldsRolePermissions)
-// that can't distinguish "the real acting human already passed this" from "the
-// node itself holds no permissions" without a wire-level actor-identity field
-// that doesn't exist yet (isNodeCredentialRequest, catalog.go) — see each
-// handler's own doc for why the others need no such carve-out.
+// deciding to relay the write. #1542: that theory never held for a direct
+// system.write caller (human or machine) — this route group's gate admits any
+// such caller, and a raw storage passthrough gave them a clean path to global
+// admin with zero ceiling checks of any kind. It also, for a while, carved out
+// an exemption for a genuine node-credential relay (isNodeCredentialRequest),
+// on the theory that a node relays an already-authorized downstream decision.
+// ADR-085 (Accepted, 2026-08-25) found that theory false too — the "downstream
+// Keyorix node" topology it depended on cannot exist in this codebase
+// (ADR-083's validateRemoteStorageNotServer rejects storage.type: remote for
+// any server process) — and removed the node-credential exemption entirely.
+// AssignRoleWithExpiryProxy/AssignRoleToGroupWithExpiryProxy/
+// AssignMachineRoleProxy/RemoveAllProjectRoleGrantsProxy/
+// RemoveGlobalAdminRoleGuardedProxy now ALL route through the SAME
+// internal/core functions (AssignUserRoleWithExpiry, AssignGroupRoleWithExpiry,
+// AssignMachineRole, RemoveProjectMember, RemoveUserRole) a local backend would
+// use, unconditionally — for every caller, node-typed or not — so their real
+// ceiling checks always run.
 //
 // This is deliberately NOT a reuse of RBACHandler/GroupHandler's existing
 // human-facing routes (POST /groups/{id}/members, DELETE
@@ -46,21 +46,19 @@
 // same reasoning the #519/#520/#527 proxies in this package already established.
 //
 // One exception with its own atomicity story: RemoveGlobalAdminRoleGuardedProxy
-// calls storage.RemoveGlobalAdminRoleGuarded (for a node-credential relay) or
-// core.RemoveUserRole (for a direct caller) rather than a plain passthrough —
-// not because that's this server's OWN policy decision, but because no real
-// transaction can span the HTTP hop back to the calling server (RemoteStorage.
+// calls core.RemoveUserRole rather than a plain passthrough — not because
+// that's this server's OWN policy decision, but because no real transaction
+// can span the HTTP hop back to the calling server (RemoteStorage.
 // WithTransaction is a no-op passthrough), so whichever server ultimately owns
 // the row is the only one that CAN enforce the last-global-admin invariant
 // atomically. See the storage.Storage interface doc (internal/core/storage/
 // interface.go) and internal/core/rbac_management.go's RemoveUserRole doc for
 // the full reasoning — the same pattern CreateSecretDependencyExclusiveProxy
 // (#260) and AdvanceWebAuthnCredentialCounterProxy (#306/#517) already
-// established for their own TOCTOU classes. HALF-FIXED, see the handler's own
-// doc: the atomicity claim was always true, but it said nothing about WHO may
-// invoke the removal — a direct caller now needs roles.assign at global scope
-// (matching the human-facing DELETE /api/v1/user-roles gate); a node-credential
-// relay is still trusted unconditionally (ADR-085, not yet closed).
+// established for their own TOCTOU classes. The atomicity claim was always
+// true, but it originally said nothing about WHO may invoke the removal — a
+// caller now needs roles.assign at global scope (matching the human-facing
+// DELETE /api/v1/user-roles gate), enforced unconditionally since ADR-085.
 //
 // Response envelope: like the other proxies, these do NOT use the package's
 // generic sendSuccess/sendError helpers — they construct the exact
@@ -69,7 +67,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -119,13 +116,16 @@ func (h *RBACHandler) GetGroupRoleGrantsProxy(w http.ResponseWriter, r *http.Req
 //
 // #1542: previously called storage.AssignRoleWithExpiry directly, bypassing
 // every core ceiling (requireGranterHoldsRolePermissions, #419 SoD) for ANY
-// system.write holder, human or machine — reaching global admin. A genuine
-// node-credential relay is trusted to have already run that ceiling locally
-// against the real acting human (see the package doc); a caller reaching
-// this route via the system.write PERMISSION arm without a node credential
-// is not relaying anyone's decision, so it's routed through
-// core.AssignUserRoleWithExpiry, running the real ceiling against ITS OWN
-// authority instead.
+// system.write holder, human or machine — reaching global admin. #1552
+// (closed by ADR-085, 2026-08-25): a genuine node-credential relay used to be
+// trusted to have already run that ceiling locally against the real acting
+// human, on the theory that a node credential relays an already-authorized
+// downstream decision. ADR-085 found that topology cannot exist in this
+// codebase (ADR-083's validateRemoteStorageNotServer rejects storage.type:
+// remote for any server process) and removed the node-credential exemption
+// entirely — every caller, node-typed or not, now routes through
+// core.AssignUserRoleWithExpiry, running the real ceiling against its OWN
+// authority.
 func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.Request) {
 	var body roleWithExpiryProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -137,12 +137,7 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	var err error
-	if isNodeCredentialRequest(r) {
-		err = h.coreService.Storage().AssignRoleWithExpiry(r.Context(), body.UserID, body.RoleID, scope, body.ExpiresAt)
-	} else {
-		err = h.coreService.AssignUserRoleWithExpiry(r.Context(), actorID(r), body.UserID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r))
-	}
+	err := h.coreService.AssignUserRoleWithExpiry(r.Context(), actorID(r), body.UserID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r))
 	if err != nil {
 		log.Printf("rbac role-grants proxy: assign role with expiry failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -349,39 +344,17 @@ func (h *RBACHandler) ListGlobalAdminAssignmentsForUpdateProxy(w http.ResponseWr
 
 // removeGlobalAdminRoleGuardedProxyWire is the request body for
 // RemoveGlobalAdminRoleGuardedProxy. AdminRoleIDs is accepted for wire
-// compatibility with older RemoteStorage clients but is IGNORED — see
-// resolveInstallAdminRoleIDsProxy's doc for why (#G79).
+// compatibility with older RemoteStorage clients but is IGNORED and unused —
+// ADR-085 (2026-08-25) removed the last raw storage.RemoveGlobalAdminRoleGuarded
+// call this field ever fed (the node-credential branch); every caller now goes
+// through core.RemoveUserRole, which resolves the install-admin-role set itself
+// (installAdminRoleIDSet, rbac_management.go) and never trusts a caller-supplied
+// set for the last-admin count (the original #G79 concern this field's
+// resolution logic existed to close).
 type removeGlobalAdminRoleGuardedProxyWire struct {
 	UserID       uint   `json:"user_id"`
 	RoleID       uint   `json:"role_id"`
 	AdminRoleIDs []uint `json:"admin_role_ids"`
-}
-
-// resolveInstallAdminRoleIDsProxy resolves installAdminRoleNames
-// (internal/core/rbac_management.go's unexported admin-role-name list,
-// duplicated here — identical to breakGlassContainmentAdminRoleNames in
-// break_glass_proxy.go) to role IDs against THIS server's own role table.
-//
-// #G79: RemoveGlobalAdminRoleGuardedProxy previously took the admin-role-ID
-// set straight from the wire body (removeGlobalAdminRoleGuardedProxyWire.
-// AdminRoleIDs) and passed it directly to storage.RemoveGlobalAdminRoleGuarded,
-// which uses that set to count how many OTHER admin-conferring grants the
-// target user holds before allowing the removal. core.RemoveUserRole's local
-// equivalent (RemoveUserRole, rbac_management.go) never trusts a
-// caller-supplied set for this — it always resolves installAdminRoleIDSet
-// itself. A caller reachable directly via system.write (bypassing the calling
-// server's own RemoveUserRole) could otherwise submit an incomplete or empty
-// admin_role_ids list, making the last-admin count undercount and letting the
-// guard silently strand (or fail to detect stranding) the install's last
-// global admin. Resolve the set server-side instead of trusting the wire.
-func resolveInstallAdminRoleIDsProxy(ctx context.Context, st coreStorage.Storage) []uint {
-	ids := make([]uint, 0, len(breakGlassContainmentAdminRoleNames))
-	for _, name := range breakGlassContainmentAdminRoleNames {
-		if role, err := st.GetRoleByName(ctx, name); err == nil && role != nil {
-			ids = append(ids, role.ID)
-		}
-	}
-	return ids
 }
 
 // removeGlobalAdminRoleGuardedRefusedCode/notAssignedCode are the machine-readable
@@ -400,30 +373,27 @@ const (
 // RemoveGlobalAdminRoleGuardedProxy handles POST
 // /api/v1/system/rbac/global-admin-role/remove-guarded. See the package doc and
 // the storage.Storage interface doc for the atomic last-global-admin invariant
-// this preserves across the HTTP hop (both branches below).
+// this preserves across the HTTP hop.
 //
-// HALF-FIXED (found during the G80 documented-exception re-verification sweep,
-// same shape as CreateMachineIdentityCredentialProxy/CreateOIDCBindingProxy):
-// the atomicity of the guard was never in question, but the package doc's
-// "deliberate exception" reasoning only defended THAT — it never argued who is
-// allowed to invoke the removal at all, and the raw call had no actor check of
-// any kind. The human-facing equivalent (DELETE /api/v1/user-roles) is gated on
+// Found during the G80 documented-exception re-verification sweep, same shape
+// as CreateMachineIdentityCredentialProxy/CreateOIDCBindingProxy: the atomicity
+// of the guard was never in question, but the package doc's "deliberate
+// exception" reasoning only defended THAT — it never argued who is allowed to
+// invoke the removal at all, and the raw call had no actor check of any kind.
+// The human-facing equivalent (DELETE /api/v1/user-roles) is gated on
 // roles.assign AT THE TARGET SCOPE (router.go's user-roles route, #342); this
-// route's own gate is only system.write (RequireNodeCredentialOrPermission),
-// materially weaker and, per auth_bootstrap.go's own doc, granted for unrelated
-// reasons (audit checkpoints, legal holds, SoD policies) — a system.write-only
-// caller with no roles.assign, or a bare node credential, could strip a named
-// admin's global-admin role with no audit trail. A direct (non-node-credential)
-// caller is now routed through core.RemoveUserRole after an explicit
-// roles.assign-at-global-scope check (mirroring the human-facing gate), which
-// also closes the missing-audit-event gap for free (RemoveUserRole calls
-// LogRoleRemoved + evictUserSessionCache). A genuine node-credential relay is
-// STILL trusted unconditionally, on the same ADR-085 relay-trust assumption
-// AssignRoleWithExpiryProxy's node branch makes (isNodeCredentialRequest always
-// resolves actorID(r)==0, and AuthorizePrincipal would deny a node's own
-// by-design-permission-free identity outright, denying every legitimate relay
-// too) — NOT closed, tracked the same way as the machine-identity/OIDC-binding
-// HALF-FIXED entries in raw_storage_bypass_guard_test.go.
+// route's own gate was only system.write, materially weaker and, per
+// auth_bootstrap.go's own doc, granted for unrelated reasons (audit
+// checkpoints, legal holds, SoD policies) — a system.write-only caller with no
+// roles.assign, or a bare node credential, could strip a named admin's
+// global-admin role with no audit trail. Every caller is now routed through
+// core.RemoveUserRole after an explicit roles.assign-at-global-scope check
+// (mirroring the human-facing gate), which also closes the missing-audit-event
+// gap for free (RemoveUserRole calls LogRoleRemoved + evictUserSessionCache).
+// A node-credential relay used to be trusted unconditionally here — ADR-085
+// (Accepted, 2026-08-25) found no live caller for that exemption anywhere and
+// removed it; a node credential now needs the same roles.assign grant as any
+// other caller, closing this CLEAN (not half).
 func (h *RBACHandler) RemoveGlobalAdminRoleGuardedProxy(w http.ResponseWriter, r *http.Request) {
 	var body removeGlobalAdminRoleGuardedProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -435,24 +405,18 @@ func (h *RBACHandler) RemoveGlobalAdminRoleGuardedProxy(w http.ResponseWriter, r
 		return
 	}
 
-	var err error
-	if isNodeCredentialRequest(r) {
-		adminRoleIDs := resolveInstallAdminRoleIDsProxy(r.Context(), h.coreService.Storage())
-		err = h.coreService.Storage().RemoveGlobalAdminRoleGuarded(r.Context(), body.UserID, body.RoleID, adminRoleIDs)
-	} else {
-		userCtx := middleware.GetUserFromContext(r.Context())
-		if userCtx == nil {
-			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
-				"removing a global-admin role grant requires the roles.assign permission at global scope")
-			return
-		}
-		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", coreStorage.Scope{}); aerr != nil || !ok {
-			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
-				"removing a global-admin role grant requires the roles.assign permission at global scope")
-			return
-		}
-		err = h.coreService.RemoveUserRole(r.Context(), actorID(r), body.UserID, body.RoleID, coreStorage.Scope{})
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
+			"removing a global-admin role grant requires the roles.assign permission at global scope")
+		return
 	}
+	if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", coreStorage.Scope{}); aerr != nil || !ok {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
+			"removing a global-admin role grant requires the roles.assign permission at global scope")
+		return
+	}
+	err := h.coreService.RemoveUserRole(r.Context(), actorID(r), body.UserID, body.RoleID, coreStorage.Scope{})
 	if err != nil {
 		switch {
 		case errors.Is(err, coreStorage.ErrWouldStrandLastAdmin):
