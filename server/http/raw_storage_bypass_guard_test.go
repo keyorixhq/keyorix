@@ -230,10 +230,25 @@ var rawStorageBypassAllowlist = map[string]string{
 	"CreateAccessReviewItemsProxy": "documented-exception: the only caller-relevant invariant (a fresh item starts " +
 		"Decision=pending/DecidedBy=0) is already enforced server-side by the handler (ARC-004); item content " +
 		"mirrors a live snapshot, not a core-enforced authorization ceiling.",
-	"RevokeBreakGlassActivationProxy": "documented-exception, per this file's own package doc (lines 15-26, " +
-		"38-42): the role-removal side effect (RemoveUserRole) travels through its own separate proxied call " +
-		"chain, not through RevokeBreakGlassActivation; the conditional WHERE state='active' update this handler " +
-		"performs is faithfully preserved.",
+	// CORRECTED 2026-08-25 (G80 documented-exception re-verification sweep): the
+	// prior "documented-exception" reason here was FALSE. The claimed "separate
+	// proxied call chain" (core.RevokeBreakGlass's RemoveUserRole step) does not
+	// exist end-to-end: for a project-scoped role it resolves to POST
+	// /api/v1/rbac/remove-role, a route that was never registered
+	// (remote_wire_route_coverage_test.go's knownMissingRoutes, #1511) --
+	// confirmed checked in BEFORE this classification was originally written.
+	// Under storage.type: remote, this raw proxy was the ONLY path that could
+	// ever complete a revoke with a live grant, and it left the role grant LIVE
+	// in user_roles with no audit event. FIXED: the handler is now
+	// self-contained (state guard, RemoveUserRole, conditional revoke, new
+	// LogBreakGlassRevoked audit call) -- see its own doc comment
+	// (break_glass_proxy.go) for the full reasoning, including why it does NOT
+	// call core.RevokeBreakGlass directly (would break this route's own wire
+	// error-code contract).
+	"RevokeBreakGlassActivationProxy": "FIXED: was a false documented-exception (the offsetting role-removal " +
+		"chain it claimed to travel through never existed end-to-end, #1511) -- now self-contained (state guard " +
+		"+ RemoveUserRole + conditional revoke + LogBreakGlassRevoked audit), see the FIXED comment immediately " +
+		"above this entry.",
 	"RecordLoginAttemptProxy": "documented-exception, per this file's own package doc: the real rate-limit policy " +
 		"(threshold/window) lives in the separate IsLoginRateLimited READ path, not in the record path -- " +
 		"RecordFailedLogin itself does nothing but canonicalize the IP and persist.",

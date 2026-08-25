@@ -285,9 +285,20 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, projectID, 
 		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	c.auditProjectScoped(ctx, EventBreakGlassRevoked, actorID, projectID,
-		fmt.Sprintf("break-glass: revoked activation %d (user %d, role %q) early", activation.ID, activation.UserID, activation.RoleName))
+	c.LogBreakGlassRevoked(ctx, actorID, projectID, activation.ID, activation.UserID, activation.RoleID, activation.RoleName)
 	return nil
+}
+
+// LogBreakGlassRevoked records an EventBreakGlassRevoked audit event for an early
+// (pre-TTL) break-glass revocation. Exported so a raw storage-primitive proxy
+// (RevokeBreakGlassActivationProxy, server/http/handlers/break_glass_proxy.go) that
+// deliberately does not call RevokeBreakGlass itself — the proxy must not rerun
+// this server's own project-affiliation validation against a caller relaying
+// another server's already-decided revoke — can still record the same audit
+// event RevokeBreakGlass does, instead of silently skipping it.
+func (c *KeyorixCore) LogBreakGlassRevoked(ctx context.Context, actorID, projectID, activationID, userID, roleID uint, roleName string) {
+	c.auditProjectScoped(ctx, EventBreakGlassRevoked, actorID, projectID,
+		fmt.Sprintf("break-glass: revoked activation %d (user %d, role %q) early", activationID, userID, roleName))
 }
 
 // notifyBreakGlassAdmins alerts the project's approver-role members that emergency

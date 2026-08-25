@@ -207,13 +207,20 @@ func TestListAccessRequestApprovalsProxy_DBError_S31(t *testing.T) {
 
 // ── CatalogHandler / break_glass_proxy.go ─────────────────────────────────────
 
+// TestGetBreakGlassActivationProxy_DBError_S31 was asserting 404 before the G80
+// documented-exception fix corrected GetBreakGlassActivation's error wrapping
+// (local_break_glass.go): it used to wrap EVERY error, including a genuine
+// storage failure, with the same "not found" prefix isNotFoundErr string-
+// matches on. A closed/unreachable DB is a real 500, not a 404 — see
+// GetMachineIdentityCredentialByID's identical, already-fixed precedent
+// (local_machine_credentials.go) for the same bug class.
 func TestGetBreakGlassActivationProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS31(t))
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/break-glass/1", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetBreakGlassActivationProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestListBreakGlassActivationsProxy_DBError_S31(t *testing.T) {

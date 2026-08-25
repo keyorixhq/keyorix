@@ -15,16 +15,24 @@
 //
 // These are thin passthroughs onto the SAME storage.Storage primitives
 // internal/core/break_glass.go already uses against a local backend — NO
-// break-glass POLICY decision (policy-enabled check, project-affiliation check,
-// emergency-role containment checks, TTL clamping, the actual JIT role grant) is
-// made here; all of that stays entirely in the CALLING server's own
-// internal/core.KeyorixCore, exactly as it does against a local backend. The
-// existing human-facing /api/v1/projects/{id}/break-glass routes
-// (server/http/handlers/break_glass.go, CatalogHandler.ActivateBreakGlass/
+// break-glass ACTIVATION policy decision (policy-enabled check, project-
+// affiliation check, emergency-role containment checks, TTL clamping, the
+// actual JIT role grant) is made here; all of that stays entirely in the
+// CALLING server's own internal/core.KeyorixCore, exactly as it does against a
+// local backend. The existing human-facing /api/v1/projects/{id}/break-glass
+// routes (server/http/handlers/break_glass.go, CatalogHandler.ActivateBreakGlass/
 // ListBreakGlassActivations/RevokeBreakGlass) are NOT reused for this proxy: they
 // run this server's OWN core.ActivateBreakGlass/RevokeBreakGlass against the HTTP
 // caller's own identity, which is the wrong semantics for a raw storage-primitive
 // passthrough whose caller already ran all of that on the downstream side.
+//
+// One exception: RevokeBreakGlassActivationProxy is NOT a thin passthrough (see
+// its own doc). A prior version of this comment claimed the role-removal
+// side effect of a revoke "travels through its own separate proxied call
+// chain" — that claim was false (the chain's wire route was never registered,
+// #1511) and the raw passthrough it justified left revoked activations with a
+// still-live role grant and no audit trail. The handler now performs the
+// state guard + role removal + audit inline itself.
 //
 // Atomicity note — the critical property for this subsystem (docs/security/
 // BUGS.md #104, PR #670): RevokeBreakGlassActivation is a single conditional
@@ -49,6 +57,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -170,12 +179,40 @@ type breakGlassRevokeProxyRequest struct {
 }
 
 // RevokeBreakGlassActivationProxy handles POST
-// /api/v1/system/break-glass/{id}/revoke. Calls storage.RevokeBreakGlassActivation
-// DIRECTLY — the SAME single conditional `UPDATE ... WHERE id = ? AND
-// state = 'active'` local_break_glass.go's RevokeBreakGlassActivation performs —
-// rather than a client-side "GET, check state, then PUT" sequence, which would
-// reopen the exact double-revoke TOCTOU race that conditional write exists to
-// close. One HTTP round trip maps to one atomic server-side conditional UPDATE.
+// /api/v1/system/break-glass/{id}/revoke.
+//
+// FALSE justification, found and fixed (G80 documented-exception re-verification
+// sweep): this handler used to call storage.RevokeBreakGlassActivation ALONE, on
+// the theory that the offsetting role-removal effect "travels through its own
+// separate proxied call chain" (core.RevokeBreakGlass's own RemoveUserRole step).
+// That chain does not exist end-to-end: core.RevokeBreakGlass's RemoveUserRole
+// call, for a project-scoped role, resolves to RemoteStorage.RemoveRole POSTing
+// to /api/v1/rbac/remove-role — a route that was never registered
+// (remote_wire_route_coverage_test.go's knownMissingRoutes, #1511). Under
+// storage.type: remote, that means core.RevokeBreakGlass could never actually
+// complete a revoke with a live role grant at all; this raw proxy — independently
+// reachable by anyone holding system.write, per #1542's router-group reasoning —
+// was the ONLY path that succeeded, and it left the emergency role grant LIVE in
+// user_roles (the table RBAC actually reads) while reporting the activation
+// revoked, with no audit event. Fixed by making the proxy self-contained: it now
+// performs the same effects core.RevokeBreakGlass would (state guard, role
+// removal, conditional revoke, audit), inline, with no new wire hop — mirroring
+// the precedent this same #1542 campaign already set for
+// AssignRoleWithExpiryProxy/RemoveAllProjectRoleGrantsProxy on this same
+// RequireNodeCredentialOrPermission gate. It deliberately does NOT call
+// core.RevokeBreakGlass directly: that function wraps storage.ErrBreakGlassNotActive
+// in a new plain-text error rather than propagating it via %w, which would break
+// this route's wire contract (breakGlassNotActiveCode, which
+// RemoteStorage.RevokeBreakGlassActivation's client depends on to reconstruct the
+// sentinel) — the raw conditional-UPDATE call and its existing error translation
+// are kept exactly as they were; only the missing role-removal and audit steps
+// were added around it.
+//
+// The missing /api/v1/rbac/remove-role route itself (#1511) is a separate,
+// broader fix — internal/core.RemoveUserRole's OTHER project-scoped callers (SSO
+// deprovisioning, project-member removal, access-review revocation, invitation
+// cleanup, the direct RBAC handler, the gRPC role service) are equally affected
+// under storage.type: remote — tracked there, not fixed here.
 func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -191,6 +228,41 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "revoked_by is required")
 		return
 	}
+
+	activation, err := h.coreService.Storage().GetBreakGlassActivation(r.Context(), uint(id))
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "break-glass activation not found")
+			return
+		}
+		log.Printf("break-glass proxy: revoke activation: get failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+
+	// Fast-path guard BEFORE touching the role grant, mirroring core.RevokeBreakGlass's
+	// own ordering: without this, a stale/duplicate revoke replayed against an
+	// ALREADY-revoked activation would still remove RoleID from UserID even if that
+	// same role had since been re-granted for an unrelated, legitimate reason — the
+	// conditional UPDATE below only protects the STATE TRANSITION from a concurrent
+	// double-revoke race, not this sequential case.
+	if activation.State != core.BreakGlassActive {
+		writeRemoteAPIError(w, http.StatusConflict, breakGlassNotActiveCode, coreStorage.ErrBreakGlassNotActive.Error())
+		return
+	}
+
+	// Remove the grant early — best-effort, mirroring core.RevokeBreakGlass: it may
+	// already be gone (auto-expired, or a racing revoke's own removal already ran);
+	// only a genuine storage failure aborts here, since proceeding to mark the
+	// record revoked while removal itself failed would leave the grant LIVE in
+	// user_roles but reported revoked everywhere else.
+	scope := coreStorage.Scope{ProjectID: activation.ProjectID}
+	if err := h.coreService.RemoveUserRole(r.Context(), body.RevokedBy, activation.UserID, activation.RoleID, scope); err != nil && !errors.Is(err, coreStorage.ErrRoleNotAssigned) {
+		log.Printf("break-glass proxy: revoke activation: role removal failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+
 	if err := h.coreService.Storage().RevokeBreakGlassActivation(r.Context(), uint(id), body.RevokedBy, body.RevokedAt); err != nil {
 		if errors.Is(err, coreStorage.ErrBreakGlassNotActive) {
 			writeRemoteAPIError(w, http.StatusConflict, breakGlassNotActiveCode, coreStorage.ErrBreakGlassNotActive.Error())
@@ -200,5 +272,6 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
+	h.coreService.LogBreakGlassRevoked(r.Context(), body.RevokedBy, activation.ProjectID, activation.ID, activation.UserID, activation.RoleID, activation.RoleName)
 	writeRemoteAPISuccess(w, map[string]bool{"revoked": true})
 }
