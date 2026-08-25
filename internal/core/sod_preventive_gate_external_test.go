@@ -39,6 +39,7 @@ func TestAssignUserRole_BlocksNewSoDViolation(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 4, nil) // viewer (global) → secrets.read, users.read
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -66,6 +67,7 @@ func TestAssignUserRole_AllowsNonViolatingGrant(t *testing.T) {
 	h.CreateTestUser(t, "bob", 11)
 	h.AssignUserRole(t, 11, 4, nil) // viewer → secrets.read, users.read
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -99,6 +101,7 @@ func TestAssignUserRoleWithExpiry_BlocksJITSoDViolation(t *testing.T) {
 	// specifically, not the ceiling check).
 	h.AssignUserRole(t, 1, 2, nil)
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -127,6 +130,7 @@ func TestAssignUserRoleWithExpiry_AllowsNonViolatingGrant(t *testing.T) {
 	// ceiling check's admin bypass applies.
 	h.AssignUserRole(t, 1, 2, nil)
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -153,6 +157,7 @@ func TestAssignRoleToGroup_BlocksNewSoDViolationForMember(t *testing.T) {
 	h.CreateTestGroup(t, "writers", "", 30)
 	h.AssignUserToGroup(t, 14, 30)
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -182,6 +187,7 @@ func TestAssignRoleToGroup_AllowsNonViolatingGrant(t *testing.T) {
 	h.CreateTestGroup(t, "auditors", "", 31)
 	h.AssignUserToGroup(t, 15, 31)
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -209,6 +215,7 @@ func TestCreateUserWithAssignments_BlocksNewSoDViolationAcrossGrantSet(t *testin
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
 	ctx := context.Background()
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -234,6 +241,7 @@ func TestCreateUserWithAssignments_AllowsNonViolatingGrantSet(t *testing.T) {
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
 	ctx := context.Background()
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -268,6 +276,7 @@ func TestActivateBreakGlass_NotBlockedBySoD(t *testing.T) {
 
 	// This policy would ordinarily block granting "editor" (secrets.write) to a
 	// principal who already holds secrets.read.
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -293,6 +302,7 @@ func TestAssignUserRole_AdminBypassNotBlockedBySoD(t *testing.T) {
 	h.CreateTestUser(t, "judy", 17)
 	h.AssignUserRole(t, 17, 2, nil) // admin (permission-bypass)
 
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
@@ -321,6 +331,7 @@ func TestAssignUserRole_ProjectScopedAdminNotExemptFromSoD(t *testing.T) {
 
 	// Policy pairs secrets.write (already in kim's project-scoped admin bundle)
 	// with audit.admin (only "auditor", role 5, bundles it).
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-audit-admin", "", "secrets.write", "audit.admin")
 	require.NoError(t, err)
 

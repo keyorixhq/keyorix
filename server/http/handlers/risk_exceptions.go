@@ -54,7 +54,7 @@ func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Re
 		sendError(w, "InvalidParameter", "expires_at must be an RFC3339 timestamp", http.StatusBadRequest, nil)
 		return
 	}
-	exc, err := h.coreService.CreateRiskException(r.Context(), actor.UserID, body.Title, body.Category, body.Reference, body.Justification, expiresAt)
+	exc, err := h.coreService.CreateRiskException(r.Context(), actor.UserID, isMachineActor(r), body.Title, body.Category, body.Reference, body.Justification, expiresAt)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

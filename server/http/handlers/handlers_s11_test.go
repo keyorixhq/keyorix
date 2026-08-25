@@ -223,9 +223,17 @@ func TestRotationPolicyCreate_ValidationError_S11(t *testing.T) {
 func TestRotationPolicyCreate_Forbidden_S11(t *testing.T) {
 	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
-	// global scope (project_id=0) — AuthorizePrincipal will fail for bare user
+	// global scope (project_id=0) — AuthorizePrincipal will fail for bare user.
+	// Can't use withUserCtx's hardcoded UserID:1 here: this handler is backed
+	// by sharedS4Core, reused across the whole package, and ID 1 is whichever
+	// user a concurrent test's bootstrap happens to auto-assign first — which
+	// can be a real super_admin, making this negative-permission check flaky.
+	// Sentinel ID mirrors s4AdminActorID's approach in handlers_s4_test.go.
+	const unprivilegedActorID uint = 900000099
+	userCtx := &middleware.UserContext{UserID: unprivilegedActorID, Username: "s11-unpriv", Email: "s11-unpriv@example.com"}
 	body := `{"name":"test-pol","scope":"project","interval_days":30}`
-	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/rotation-policies", strings.NewReader(body)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rotation-policies", strings.NewReader(body))
+	r := req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), userCtx))
 	w := httptest.NewRecorder()
 	h.Create(w, r)
 	// shared-DB user has no permissions → 403

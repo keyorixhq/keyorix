@@ -169,7 +169,7 @@ func TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential(t *testing.T) 
 	ctx := context.Background()
 
 	const humanCreator = uint(5)
-	exc, err := upstream.CreateRiskException(ctx, humanCreator, "Human-created, node must not approve",
+	exc, err := upstream.CreateRiskException(ctx, humanCreator, false, "Human-created, node must not approve",
 		"other", "", "seeded directly on upstream for #1524 (c) regression coverage", time.Now().Add(30*24*time.Hour))
 	require.NoError(t, err)
 	require.Equal(t, humanCreator, exc.CreatedBy)

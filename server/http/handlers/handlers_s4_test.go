@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -779,6 +780,35 @@ var (
 // the sN DBCounter DSN-uniqueness vars elsewhere in this package) because all
 // of s4/s5/s9 write into the SAME sharedS4Core DB, not independent ones.
 var s4UniqueCounter atomic.Int64
+
+// s4AdminActorID is a fixed, deliberately-out-of-range UserID reserved for
+// the one admin-tier actor seeded into the shared sharedS4Core DB (see
+// seedS4AdminActor below) -- chosen high enough to never collide with any
+// other s4/s5/s9 test's hardcoded actor ID.
+const s4AdminActorID uint = 900000001
+
+var seedS4AdminActorOnce sync.Once
+
+// seedS4AdminActor grants s4AdminActorID a global-admin-tier role in the
+// shared sharedS4Core DB, exactly once for the whole test binary. #1529:
+// CreateSoDPolicy/DeleteSoDPolicy now require admin-tier authority, so any
+// s4/s5/s9 test exercising CreateSoDPolicyProxy/DeleteSoDPolicyProxy against
+// the shared core needs a real admin actor in request context -- mirrors
+// sod_s13_test.go's own inline admin seed, but done once (idempotently) since
+// this DB is shared across many test functions rather than fresh per test.
+func seedS4AdminActor(t *testing.T, cs *core.KeyorixCore) {
+	t.Helper()
+	seedS4AdminActorOnce.Do(func() {
+		ctx := context.Background()
+		role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "shared S4 admin fixture"})
+		if err != nil {
+			panic("seedS4AdminActor: CreateRole: " + err.Error())
+		}
+		if err := cs.Storage().AssignRole(ctx, s4AdminActorID, role.ID, corestorage.Scope{}); err != nil {
+			panic("seedS4AdminActor: AssignRole: " + err.Error())
+		}
+	})
+}
 
 // newHandlerCoreS4 returns a shared *core.KeyorixCore backed by a single
 // in-memory SQLite DB whose schema is migrated exactly once per test binary.
@@ -11655,8 +11685,9 @@ func TestCatalogHandler_CreateSoDPolicyProxy_MissingFields(t *testing.T) {
 
 func TestCatalogHandler_CreateSoDPolicyProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 	body := `{"name":"test","permission_a":"read","permission_b":"write"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -11670,10 +11701,19 @@ func TestCatalogHandler_CreateSoDPolicyProxy_HappyPath(t *testing.T) {
 func TestCreateSoDPolicyProxy_WritesAuditEvent(t *testing.T) {
 	db := openHandlerTestDB(t)
 	require.NoError(t, i18n.InitializeForTesting())
-	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h := NewCatalogHandler(cs)
+
+	// #1529: CreateSoDPolicy now requires admin-tier authority -- this test's
+	// DB is fresh per-run (openHandlerTestDB), so seed it directly rather than
+	// via the shared-DB seedS4AdminActor helper.
+	ctx := context.Background()
+	role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "admin"})
+	require.NoError(t, err)
+	require.NoError(t, cs.Storage().AssignRole(ctx, 500, role.ID, corestorage.Scope{}))
 
 	body := `{"name":"test-audit","permission_a":"read","permission_b":"write"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), 500, "audituser")
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)

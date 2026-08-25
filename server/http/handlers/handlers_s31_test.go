@@ -248,13 +248,20 @@ func TestCreateSoDPolicyProxy_DBError_S31(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// #1529: local_sod.go's GetSoDPolicy used to wrap EVERY storage error (not
+// just gorm.ErrRecordNotFound) with the "not found" i18n string, so a genuine
+// outage like this test's broken DB got mislabeled as 404 -- the same
+// pre-existing bug DeleteSoDPolicyProxy_DBError_S31 below already expects 500
+// for. Now that GetSoDPolicy distinguishes a real not-found from any other
+// error (matching local_alert_escalation.go's established pattern), a broken
+// DB correctly surfaces as 500 here too.
 func TestGetSoDPolicyProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS31(t))
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/sod-policies/1", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetSoDPolicyProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestDeleteSoDPolicyProxy_DBError_S31(t *testing.T) {

@@ -4,12 +4,16 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // newCatalogHandlerSoDSodS13 returns a CatalogHandler backed by a fresh isolated DB.
@@ -128,10 +132,19 @@ func TestCreateSoDPolicyProxy_MissingFields_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// #1529: CreateSoDPolicy now requires admin-tier authority. freshCoreS12 seeds
+// no roles at all, so this seeds a minimal admin role + UserID=1 assignment
+// directly (matching withUserCtx's hardcoded UserID=1) rather than pulling in
+// a whole new fixture helper for one test.
 func TestCreateSoDPolicyProxy_HappyPath_S13(t *testing.T) {
 	h := newCatalogHandlerSoDSodS13(t)
-	req := httptest.NewRequest(http.MethodPost, "/",
-		strings.NewReader(`{"name":"proxy-pol","permission_a":"secrets.read","permission_b":"secrets.write"}`))
+	ctx := context.Background()
+	adminRole, err := h.coreService.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "Administrator"})
+	require.NoError(t, err)
+	require.NoError(t, h.coreService.Storage().AssignRole(ctx, 1, adminRole.ID, storage.Scope{}))
+
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/",
+		strings.NewReader(`{"name":"proxy-pol","permission_a":"secrets.read","permission_b":"secrets.write"}`)))
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

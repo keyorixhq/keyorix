@@ -16,7 +16,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// SoD audit event types.
+// SoD audit event types. Create/Delete denial paths below reuse these SAME
+// constants (Success=false via writeAuditEventFailed distinguishes a denied
+// attempt from a successful one) — the established convention this file's own
+// PlaceLegalHold/LiftLegalHold precedent uses, not a separate "_denied" event
+// type per action.
 const (
 	EventSoDPolicyCreated         = "sod.policy_created"          // #nosec G101 -- audit event type, not a credential
 	EventSoDPolicyDeleted         = "sod.policy_deleted"          // #nosec G101 -- audit event type, not a credential
@@ -80,6 +84,18 @@ func (r *SoDViolationsReport) degrade(area string, err error) {
 
 // CreateSoDPolicy defines a toxic-combination rule. The two permissions must be
 // present and distinct. actorID is the creating admin.
+//
+// #1529: actorID used to be threaded through ONLY for audit attribution, with
+// no authority check at all -- any system.write holder (the route's own gate;
+// this is also reachable via the /system proxy, where "any caller" widens to
+// include a bare node credential, actorID==0) could unilaterally define a new
+// deployment-wide governance control. Defining a toxic-permission-pair rule is
+// a policy-SETTING action with no existing object to compare a "creator" against
+// (unlike delete/revoke below), so it mirrors PlaceLegalHold's admin-tier gate,
+// not LiftLegalHold's creator-or-admin one. A denied attempt is itself audited,
+// distinctly from a successful create -- confirmed via CI: no test asserted a
+// non-admin could create a policy, so this was an oversight, not a documented
+// design choice.
 func (c *KeyorixCore) CreateSoDPolicy(ctx context.Context, actorID uint, name, description, permA, permB string) (*models.SoDPolicy, error) {
 	name = strings.TrimSpace(name)
 	permA = strings.TrimSpace(permA)
@@ -92,6 +108,15 @@ func (c *KeyorixCore) CreateSoDPolicy(ctx context.Context, actorID uint, name, d
 	}
 	if permA == permB {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the two permissions must be different")
+	}
+	// #1529 authority check runs AFTER field validation (mirrors PlaceLegalHold's
+	// own order: cheap input checks before a DB-backed authority resolution) --
+	// see this function's doc comment above for the full reasoning.
+	if c.isGlobalAdminRoleName(ctx, actorID) == "" {
+		c.writeAuditEventFailed(ctx, EventSoDPolicyCreated, actorPtr(actorID), nil, "",
+			fmt.Sprintf("SoD policy create DENIED: actor %d is not an admin-tier principal", actorID))
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only an admin-tier principal may define a SoD policy")
 	}
 	policy, err := c.storage.CreateSoDPolicy(ctx, &models.SoDPolicy{
 		Name: name, Description: description, PermissionA: permA, PermissionB: permB,
@@ -124,7 +149,23 @@ func (c *KeyorixCore) ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy,
 }
 
 // DeleteSoDPolicy retires a policy. actorID is the acting admin.
+//
+// #1529: same gap as CreateSoDPolicy above, but retiring an EXISTING policy has
+// a natural "creator" to compare against (unlike defining a new one), so this
+// mirrors LiftLegalHold's creator-or-admin precedent exactly: only the
+// principal who originally created the policy, or a global-admin-tier
+// principal, may delete it. A denied attempt is itself audited.
 func (c *KeyorixCore) DeleteSoDPolicy(ctx context.Context, actorID, id uint) error {
+	policy, err := c.storage.GetSoDPolicy(ctx, id)
+	if err != nil {
+		return err
+	}
+	if actorID != policy.CreatedBy && c.isGlobalAdminRoleName(ctx, actorID) == "" {
+		c.writeAuditEventFailed(ctx, EventSoDPolicyDeleted, actorPtr(actorID), nil, "",
+			fmt.Sprintf("SoD policy %d delete DENIED: actor %d is neither the creator (%d) nor an admin-tier principal", id, actorID, policy.CreatedBy))
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only the creating admin or an admin-tier principal may delete this SoD policy")
+	}
 	if err := c.storage.DeleteSoDPolicy(ctx, id); err != nil {
 		return err
 	}

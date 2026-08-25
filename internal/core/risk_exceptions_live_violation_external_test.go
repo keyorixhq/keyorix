@@ -32,6 +32,7 @@ func TestCreateRiskException_RejectsNonExistentSoDReference(t *testing.T) {
 	// (sod:policy:<id>:<principalType>:<principalID>) from public policy/user
 	// IDs, which is exactly the exploit: a bogus or future-looking reference
 	// naming a (policy, principal) pair that has no live violation yet.
+	h.AssignUserRole(t, 1, 1, nil) // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-useradmin", "", "secrets.write", "users.read")
 	require.NoError(t, err)
 
@@ -40,7 +41,7 @@ func TestCreateRiskException_RejectsNonExistentSoDReference(t *testing.T) {
 	require.Empty(t, sod.Violations, "no one holds both sides yet")
 
 	bogusRef := "sod:policy:1:user:9999" // matches the reference format, but no such violation exists
-	_, err = h.CoreService.CreateRiskException(ctx, 1, "pre-authorize future SoD gap", "sod", bogusRef, "just in case", time.Now().Add(30*24*time.Hour))
+	_, err = h.CoreService.CreateRiskException(ctx, 1, false, "pre-authorize future SoD gap", "sod", bogusRef, "just in case", time.Now().Add(30*24*time.Hour))
 	require.Error(t, err, "a reference that names no live SoD violation must be refused")
 	assert.Contains(t, err.Error(), "does not match any currently-detected SoD violation")
 }
@@ -55,6 +56,7 @@ func TestCreateRiskException_AcceptsLiveSoDReference(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, nil) // editor → secrets.write + users.read
+	h.AssignUserRole(t, 1, 1, nil)  // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-useradmin", "", "secrets.write", "users.read")
 	require.NoError(t, err)
 
@@ -63,7 +65,7 @@ func TestCreateRiskException_AcceptsLiveSoDReference(t *testing.T) {
 	require.NotEmpty(t, sod.Violations)
 	ref := sod.Violations[0].Reference
 
-	exc, err := h.CoreService.CreateRiskException(ctx, 1, "accept for Q3 migration", "sod", ref, "temporary", time.Now().Add(30*24*time.Hour))
+	exc, err := h.CoreService.CreateRiskException(ctx, 1, false, "accept for Q3 migration", "sod", ref, "temporary", time.Now().Add(30*24*time.Hour))
 	require.NoError(t, err, "a reference matching a live violation must be accepted")
 	assert.Equal(t, ref, exc.Reference)
 }
@@ -80,6 +82,7 @@ func TestApproveRiskException_RejectsSoDReferenceThatWentStale(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, nil) // editor → secrets.write + users.read
+	h.AssignUserRole(t, 1, 1, nil)  // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-useradmin", "", "secrets.write", "users.read")
 	require.NoError(t, err)
 
@@ -88,7 +91,7 @@ func TestApproveRiskException_RejectsSoDReferenceThatWentStale(t *testing.T) {
 	require.NotEmpty(t, sod.Violations)
 	ref := sod.Violations[0].Reference
 
-	exc, err := h.CoreService.CreateRiskException(ctx, 1, "accept for Q3 migration", "sod", ref, "temporary", time.Now().Add(30*24*time.Hour))
+	exc, err := h.CoreService.CreateRiskException(ctx, 1, false, "accept for Q3 migration", "sod", ref, "temporary", time.Now().Add(30*24*time.Hour))
 	require.NoError(t, err)
 
 	// The violation resolves before anyone approves the exception (e.g. alice's

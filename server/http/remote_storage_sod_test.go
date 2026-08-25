@@ -28,7 +28,13 @@ func newUpstreamDownstreamForSoD(t *testing.T) (upstream *core.KeyorixCore, down
 	t.Cleanup(i18n.ResetForTesting)
 
 	upstream = newTestCore(t)
-	upstreamToken := createNodeToken(t, upstream)
+	// #1529: CreateSoDPolicy/DeleteSoDPolicy now require admin-tier authority
+	// (a bare node credential, zero RBAC permissions by design, can no longer
+	// define or retire a governance control) -- use a real admin session token
+	// (createTestToken's "testadmin", admin-tier, bypasses permission checks
+	// including system.write) instead of a node token, so this file's tests
+	// keep proving the CRUD round-trip, unaffected by the new authority gate.
+	upstreamToken := createTestToken(t, upstream)
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{

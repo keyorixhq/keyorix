@@ -24,6 +24,7 @@ func TestSoD_SurfacesInPostureAndEvidence(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, nil) // editor → secrets.write + users.read
+	h.AssignUserRole(t, 1, 1, nil)  // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-useradmin", "", "secrets.write", "users.read")
 	require.NoError(t, err)
 
@@ -54,6 +55,7 @@ func TestSoD_SuppressedByApprovedRiskException(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, nil) // editor → secrets.write + users.read
+	h.AssignUserRole(t, 1, 1, nil)  // #1529: actor 1 must now be admin-tier to manage SoD policies
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-useradmin", "", "secrets.write", "users.read")
 	require.NoError(t, err)
 
@@ -69,7 +71,7 @@ func TestSoD_SuppressedByApprovedRiskException(t *testing.T) {
 	require.NotEmpty(t, ref, "every violation must carry a stable reference to except against")
 
 	// Create the exception — NOT yet approved. Still counts.
-	exc, err := h.CoreService.CreateRiskException(ctx, 1, "accept for Q3 migration", "sod", ref, "temporary", time.Now().Add(30*24*time.Hour))
+	exc, err := h.CoreService.CreateRiskException(ctx, 1, false, "accept for Q3 migration", "sod", ref, "temporary", time.Now().Add(30*24*time.Hour))
 	require.NoError(t, err)
 	p, err = h.CoreService.GetCompliancePosture(ctx)
 	require.NoError(t, err)
