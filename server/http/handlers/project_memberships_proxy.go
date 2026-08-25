@@ -109,7 +109,13 @@ func (h *CatalogHandler) CreateMembershipProxy(w http.ResponseWriter, r *http.Re
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, user_id, role, and state are required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateProjectMembership(r.Context(), body.toModel())
+	// G80 documented-exception re-verification sweep (2026-08-25): InvitedBy
+	// used to persist verbatim from the wire — forgeable attribution that
+	// feeds notification routing (internal/core/notifications.go) and the
+	// audit trail. Force it to the authenticated caller.
+	model := body.toModel()
+	model.InvitedBy = actorID(r)
+	created, err := h.coreService.Storage().CreateProjectMembership(r.Context(), model)
 	if err != nil {
 		if errors.Is(err, coreStorage.ErrDuplicateActiveMembership) {
 			writeRemoteAPIError(w, http.StatusConflict, duplicateActiveMembershipCode, coreStorage.ErrDuplicateActiveMembership.Error())

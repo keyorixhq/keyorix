@@ -36,8 +36,12 @@ import (
 // *core.KeyorixCore configured with storage.type: remote (ADR-049), pointed
 // at "upstream" over real HTTP via store.RemoteStorage. Returns the upstream
 // core and a live project ID (BootstrapSystem seeds one) alongside both
-// cores.
-func newUpstreamDownstreamForAccessRequests(t *testing.T) (upstream, downstream *core.KeyorixCore, projectID uint) {
+// cores, plus the upstream's own base URL so callers can mint additional,
+// independently-authenticated RemoteStorage clients against it (see
+// newDeleteProjectScopeRemoteClient) — needed by the UpdateAccessRequestProxy
+// wire-actor-identity tests below, which must authenticate AS a specific
+// human actor rather than merely naming one in the request body.
+func newUpstreamDownstreamForAccessRequests(t *testing.T) (upstream, downstream *core.KeyorixCore, projectID uint, baseURL string) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
@@ -69,7 +73,7 @@ func newUpstreamDownstreamForAccessRequests(t *testing.T) (upstream, downstream 
 	})
 	require.NoError(t, err)
 	downstream = core.NewKeyorixCore(rs)
-	return upstream, downstream, projectID
+	return upstream, downstream, projectID, upstreamSrv.URL
 }
 
 // buildAccessRequest mirrors what internal/core/invitations.go's
@@ -95,7 +99,7 @@ func buildAccessRequest(now time.Time, projectID, userID uint, suggestedRole str
 // DOWNSTREAM's RemoteStorage, retrievable by ID, and listed by project — all
 // via storage.type: remote against a real router, not a protocol mock.
 func TestRemoteStorageAccessRequest_CreateGetList_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForAccessRequests(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForAccessRequests(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -138,7 +142,7 @@ func TestRemoteStorageAccessRequest_CreateGetList_RealServer(t *testing.T) {
 // not-found error (not a panic, not a garbage 500) for a request that was
 // never created.
 func TestRemoteStorageAccessRequest_GetUnknown_RealServer(t *testing.T) {
-	_, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
+	_, downstream, _, _ := newUpstreamDownstreamForAccessRequests(t)
 	ctx := context.Background()
 
 	_, err := downstream.Storage().GetAccessRequest(ctx, 999999)
@@ -154,7 +158,7 @@ func TestRemoteStorageAccessRequest_GetUnknown_RealServer(t *testing.T) {
 // clobbering it — the #277 race guarantee ApproveAccessRequestWithExpiry/
 // RejectAccessRequest/WithdrawAccessRequest all depend on.
 func TestRemoteStorageAccessRequest_UpdateConditional_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessRequests(t)
+	_, downstream, projectID, _ := newUpstreamDownstreamForAccessRequests(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -201,7 +205,7 @@ func TestRemoteStorageAccessRequest_UpdateConditional_RealServer(t *testing.T) {
 // this race. Mirrors #521's
 // TestRemoteStorageSSOState_ConcurrentConsumeRace_RealServer exactly.
 func TestRemoteStorageAccessRequest_ConcurrentUpdateRace_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessRequests(t)
+	_, downstream, projectID, _ := newUpstreamDownstreamForAccessRequests(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -250,10 +254,30 @@ func TestRemoteStorageAccessRequest_ConcurrentUpdateRace_RealServer(t *testing.T
 // ON CONFLICT (request_id, approver_id) DO NOTHING guard survives the HTTP
 // hop: a duplicate sign-off from the same approver is a benign no-op, not a
 // second row (which would defeat the M-of-K dual-control count).
+//
+// G80 documented-exception re-verification sweep (2026-08-25):
+// CreateAccessRequestApprovalProxy no longer trusts a wire-supplied
+// approver_id — the approver is always the AUTHENTICATED caller now — so
+// getting two distinct approval rows requires two distinct authenticated
+// identities, not just two different IDs in the body.
 func TestRemoteStorageAccessRequest_Approvals_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessRequests(t)
+	upstream, downstream, projectID, baseURL := newUpstreamDownstreamForAccessRequests(t)
 	ctx := context.Background()
 	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+
+	approver1, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "ar-approver-1", Email: "ar-approver-1@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, approver1.ID)
+	sess1, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "ar-approver-1", Password: pw})
+	require.NoError(t, err)
+	approver2, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "ar-approver-2", Email: "ar-approver-2@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, approver2.ID)
+	sess2, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "ar-approver-2", Password: pw})
+	require.NoError(t, err)
+	asApprover1 := newDeleteProjectScopeRemoteClient(t, baseURL, sess1.SessionToken)
+	asApprover2 := newDeleteProjectScopeRemoteClient(t, baseURL, sess2.SessionToken)
 
 	req := buildAccessRequest(now, projectID, 21, "developer")
 	created, err := downstream.Storage().CreateAccessRequest(ctx, req)
@@ -263,31 +287,70 @@ func TestRemoteStorageAccessRequest_Approvals_RealServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, approvals)
 
-	err = downstream.Storage().CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: created.ID, ApproverID: 100, CreatedAt: now,
+	err = asApprover1.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+		RequestID: created.ID, CreatedAt: now,
 	})
 	require.NoError(t, err)
-	err = downstream.Storage().CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: created.ID, ApproverID: 200, CreatedAt: now,
+	err = asApprover2.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+		RequestID: created.ID, CreatedAt: now,
 	})
 	require.NoError(t, err)
 
-	approvals, err = downstream.Storage().ListAccessRequestApprovals(ctx, created.ID)
+	// Verified against the upstream's own storage directly, not re-read through
+	// `downstream` — asApprover1/asApprover2 are SEPARATE client instances from
+	// `downstream`, and internal/storage/remote.HTTPClient's GET cache is only
+	// invalidated by a write through THAT SAME client instance (see its own
+	// doc comment on cache invalidation); a write through a different client
+	// legitimately would not clear `downstream`'s already-cached empty result
+	// for this exact path from the check above. Reading the ground truth
+	// directly sidesteps that unrelated cache-coherency limitation.
+	approvals, err = upstream.Storage().ListAccessRequestApprovals(ctx, created.ID)
 	require.NoError(t, err)
 	require.Len(t, approvals, 2)
 	approverIDs := []uint{approvals[0].ApproverID, approvals[1].ApproverID}
-	assert.ElementsMatch(t, []uint{100, 200}, approverIDs)
+	assert.ElementsMatch(t, []uint{approver1.ID, approver2.ID}, approverIDs)
 
-	// Duplicate sign-off from approver 100 must be a benign no-op, not a
-	// second row.
-	err = downstream.Storage().CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: created.ID, ApproverID: 100, CreatedAt: now.Add(time.Second),
+	// Duplicate sign-off from approver1 must be a benign no-op, not a second row.
+	err = asApprover1.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+		RequestID: created.ID, CreatedAt: now.Add(time.Second),
 	})
 	require.NoError(t, err)
 
-	approvals, err = downstream.Storage().ListAccessRequestApprovals(ctx, created.ID)
+	approvals, err = upstream.Storage().ListAccessRequestApprovals(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Len(t, approvals, 2, "a duplicate approver sign-off must not insert a second row")
+}
+
+// grantSystemWrite creates (if needed) a test-only role holding ONLY
+// system.write and assigns it to userID globally, via a role name well
+// outside adminRoleNames (same rationale as createSystemWriteOnlyToken in
+// system_write_ceiling_test.go). The /system route group's own gate
+// (RequirePermission(permSystemWrite)) is unconditional — any caller
+// authenticating directly against a /system/... route (as these tests now
+// must, per the wire-actor-identity fix) needs this baseline regardless of
+// whatever narrower business-logic authority they hold or lack.
+func grantSystemWrite(t *testing.T, upstream *core.KeyorixCore, userID uint) {
+	t.Helper()
+	ctx := context.Background()
+	st := upstream.Storage()
+
+	role, err := st.GetRoleByName(ctx, "ar_test_system_writer")
+	if err != nil {
+		role, err = st.CreateRole(ctx, &models.Role{Name: "ar_test_system_writer", Description: "test-only role: system.write and nothing else"})
+		require.NoError(t, err)
+		perms, err := upstream.ListPermissions(ctx)
+		require.NoError(t, err)
+		var systemWriteID uint
+		for _, p := range perms {
+			if p.Name == "system.write" {
+				systemWriteID = p.ID
+				break
+			}
+		}
+		require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
+		require.NoError(t, upstream.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
+	}
+	require.NoError(t, st.AssignRole(ctx, userID, role.ID, coreStorage.Scope{}))
 }
 
 // seedAccessRequestSecretFixture creates a project, a requester (owner of the
@@ -296,28 +359,45 @@ func TestRemoteStorageAccessRequest_Approvals_RealServer(t *testing.T) {
 // internal/core/classification_gate_test.go's seedClassificationGateFixture
 // exactly, against the upstream's own storage so the fixture is real rows,
 // not a mock.
-func seedAccessRequestSecretFixture(t *testing.T, upstream *core.KeyorixCore) (secretID, requesterID, nonAdminID, adminID, projectID uint) {
+//
+// G80 documented-exception re-verification sweep (2026-08-25): users are now
+// created via upstream.CreateUser (core-level, WITH a real password) instead
+// of a raw storage.CreateUser, and real session tokens are returned alongside
+// each ID. UpdateAccessRequestProxy no longer trusts a wire-supplied
+// ResolvedBy — the resolver is now always the AUTHENTICATED caller — so the
+// self-approval/non-admin-approver/genuine-admin tests below must actually
+// authenticate AS each identity instead of merely naming it in the body.
+func seedAccessRequestSecretFixture(t *testing.T, upstream *core.KeyorixCore) (secretID, requesterID, nonAdminID, adminID, projectID uint, requesterToken, nonAdminToken, adminToken string) {
 	t.Helper()
 	ctx := context.Background()
 	st := upstream.Storage()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
 
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "ar-1529-fixture"})
 	require.NoError(t, err)
 
-	requester, err := st.CreateUser(ctx, &models.User{Username: "ar1529-requester", Email: "ar1529-requester@example.com", IsActive: true})
+	requester, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "ar1529-requester", Email: "ar1529-requester@example.com", Password: pw})
 	require.NoError(t, err)
 	viewerRole, err := st.GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, requester.ID, viewerRole.ID, coreStorage.Scope{ProjectID: proj.ID}))
-
-	nonAdmin, err := st.CreateUser(ctx, &models.User{Username: "ar1529-nonadmin", Email: "ar1529-nonadmin@example.com", IsActive: true})
+	grantSystemWrite(t, upstream, requester.ID)
+	requesterSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "ar1529-requester", Password: pw})
 	require.NoError(t, err)
 
-	admin, err := st.CreateUser(ctx, &models.User{Username: "ar1529-admin", Email: "ar1529-admin@example.com", IsActive: true})
+	nonAdmin, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "ar1529-nonadmin", Email: "ar1529-nonadmin@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, nonAdmin.ID)
+	nonAdminSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "ar1529-nonadmin", Password: pw})
+	require.NoError(t, err)
+
+	admin, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "ar1529-admin", Email: "ar1529-admin@example.com", Password: pw})
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, admin.ID, adminRole.ID, coreStorage.Scope{}))
+	adminSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "ar1529-admin", Password: pw})
+	require.NoError(t, err)
 
 	secret, err := st.CreateSecret(ctx, &models.SecretNode{
 		Name: "ar1529-secret", ProjectID: proj.ID, EnvironmentID: 1, Type: "password",
@@ -329,7 +409,7 @@ func seedAccessRequestSecretFixture(t *testing.T, upstream *core.KeyorixCore) (s
 	})
 	require.NoError(t, err)
 
-	return secret.ID, requester.ID, nonAdmin.ID, admin.ID, proj.ID
+	return secret.ID, requester.ID, nonAdmin.ID, admin.ID, proj.ID, requesterSess.SessionToken, nonAdminSess.SessionToken, adminSess.SessionToken
 }
 
 // TestAccessRequestProxy_CreateRejectsNonPendingState (#1529) proves
@@ -340,8 +420,8 @@ func seedAccessRequestSecretFixture(t *testing.T, upstream *core.KeyorixCore) (s
 // CRITICAL finding. RED without the fix: the create below would have
 // succeeded and the fetched row would have read State=="approved".
 func TestAccessRequestProxy_CreateRejectsNonPendingState(t *testing.T) {
-	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
-	secretID, requesterID, _, _, projectID := seedAccessRequestSecretFixture(t, upstream)
+	upstream, downstream, _, _ := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, _, _, projectID, _, _, _ := seedAccessRequestSecretFixture(t, upstream)
 	ctx := context.Background()
 	sid := secretID
 
@@ -356,9 +436,15 @@ func TestAccessRequestProxy_CreateRejectsNonPendingState(t *testing.T) {
 // TestAccessRequestProxy_UpdateApprove_RejectsSelfApproval (#1529) proves
 // UpdateAccessRequestProxy re-derives ApproveSecretAccessRequest's maker≠checker
 // check. RED without the fix: this update would have succeeded.
+//
+// G80 documented-exception re-verification sweep (2026-08-25):
+// UpdateAccessRequestProxy no longer trusts a wire-supplied ResolvedBy — the
+// resolver is always the AUTHENTICATED caller now — so this test must
+// authenticate AS the requester (via their own real session token) rather
+// than merely naming requesterID in the body.
 func TestAccessRequestProxy_UpdateApprove_RejectsSelfApproval(t *testing.T) {
-	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
-	secretID, requesterID, _, _, projectID := seedAccessRequestSecretFixture(t, upstream)
+	upstream, downstream, _, baseURL := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, _, _, projectID, requesterToken, _, _ := seedAccessRequestSecretFixture(t, upstream)
 	ctx := context.Background()
 	sid := secretID
 
@@ -368,10 +454,10 @@ func TestAccessRequestProxy_UpdateApprove_RejectsSelfApproval(t *testing.T) {
 	require.NoError(t, err)
 
 	req.State = "approved"
-	req.ResolvedBy = requesterID // the requester approving their own request
 	now := time.Now()
 	req.ResolvedAt = &now
-	_, err = downstream.Storage().UpdateAccessRequest(ctx, req)
+	asRequester := newDeleteProjectScopeRemoteClient(t, baseURL, requesterToken)
+	_, err = asRequester.UpdateAccessRequest(ctx, req)
 	require.Error(t, err, "a requester approving their own access request must be refused")
 }
 
@@ -382,8 +468,8 @@ func TestAccessRequestProxy_UpdateApprove_RejectsSelfApproval(t *testing.T) {
 // admin authority at all) could approve access to a restricted secret via
 // this raw call. RED without the fix: this update would have succeeded.
 func TestAccessRequestProxy_UpdateApprove_RejectsNonAdminApprover(t *testing.T) {
-	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
-	secretID, requesterID, nonAdminID, _, projectID := seedAccessRequestSecretFixture(t, upstream)
+	upstream, downstream, _, baseURL := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, _, _, projectID, _, nonAdminToken, _ := seedAccessRequestSecretFixture(t, upstream)
 	ctx := context.Background()
 	sid := secretID
 
@@ -393,10 +479,10 @@ func TestAccessRequestProxy_UpdateApprove_RejectsNonAdminApprover(t *testing.T) 
 	require.NoError(t, err)
 
 	req.State = "approved"
-	req.ResolvedBy = nonAdminID // real user, real account, zero admin authority
 	now := time.Now()
 	req.ResolvedAt = &now
-	_, err = downstream.Storage().UpdateAccessRequest(ctx, req)
+	asNonAdmin := newDeleteProjectScopeRemoteClient(t, baseURL, nonAdminToken)
+	_, err = asNonAdmin.UpdateAccessRequest(ctx, req)
 	require.Error(t, err, "a non-admin approver must not be able to approve access to a restricted secret")
 
 	// The row must still read pending — the rejected attempt must not have
@@ -411,8 +497,8 @@ func TestAccessRequestProxy_UpdateApprove_RejectsNonAdminApprover(t *testing.T) 
 // request must still succeed end-to-end over the proxy — the fix closes the
 // bypass without breaking the legitimate path.
 func TestAccessRequestProxy_UpdateApprove_AllowsAdminApprover(t *testing.T) {
-	upstream, downstream, _ := newUpstreamDownstreamForAccessRequests(t)
-	secretID, requesterID, _, adminID, projectID := seedAccessRequestSecretFixture(t, upstream)
+	upstream, downstream, _, baseURL := newUpstreamDownstreamForAccessRequests(t)
+	secretID, requesterID, _, adminID, projectID, _, _, adminToken := seedAccessRequestSecretFixture(t, upstream)
 	ctx := context.Background()
 	sid := secretID
 
@@ -422,10 +508,10 @@ func TestAccessRequestProxy_UpdateApprove_AllowsAdminApprover(t *testing.T) {
 	require.NoError(t, err)
 
 	req.State = "approved"
-	req.ResolvedBy = adminID
 	now := time.Now()
 	req.ResolvedAt = &now
-	updated, err := downstream.Storage().UpdateAccessRequest(ctx, req)
+	asAdmin := newDeleteProjectScopeRemoteClient(t, baseURL, adminToken)
+	updated, err := asAdmin.UpdateAccessRequest(ctx, req)
 	require.NoError(t, err, "a genuine admin approving a genuine request must still succeed")
 	assert.True(t, updated)
 

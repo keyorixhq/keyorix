@@ -440,3 +440,68 @@ findings above: trace the actual gating permission's documented footprint agains
 raw call would let a caller holding ONLY that permission do, against a real human auth path,
 not the comment's own claim. Until that pass runs, "documented-exception" should be read as
 "unverified-exception."
+
+## Corrections from an independent verification session (2026-08-25)
+
+**Merge-status caveat, read this before trusting any "FIXED" reference to a PR number in
+this document.** An independent verification session found that PRs #1563–#1566 all showed
+"Merged" on GitHub while none of them were actually ancestors of `origin/main` — each was
+merged into the PREVIOUS PR's feature branch, not into `main`, so the whole chain showed
+green with nothing landed. A GitHub "Merged" badge is not evidence of a merge; the only
+trusted signal is `git fetch origin && git merge-base --is-ancestor <branch> origin/main`
+(now also stated in `CLAUDE.md`). **Checked, not assumed**: `#1557` (`2b888df7`), `#1558`
+(`28b52cfb`), `#1559` (`f83d63c6`), `#1560` (`33eaf8df`), `#1561` (`10fdb34a`), and `#1562`
+(`cb26f4f0`) were all individually verified as real ancestors of `origin/main` — the broken
+chain was specifically `#1563`–`#1566`, not this document's earlier "Fix wave complete"
+references. A guard now enforces this mechanically:
+`server/http/g80_triage_doc_closure_guard_test.go`'s
+`TestG80TriageDocClosuresAreAncestorsOfHEAD` re-checks each of the six SHAs above against
+`HEAD` on every test run, and fails loudly (not silently) if a PR reference in this
+document has no single commit to point at — exactly the shape `#1563`–`#1566` turned out to
+have. The re-applied `#1563`–`#1566` + ADR-085 content (see the corrections below) has been
+verified working via `git apply`/tests on a fresh branch off `origin/main`
+(`g80-fixland-main`) instead, since squash-merge history made the original per-PR commits
+unrecoverable as individually-attributable objects.
+
+**Items 1 and 2 in "Fix wave complete" (`CreateAccessRequestProxy`/`UpdateAccessRequestProxy`
+under #1557, `CreateInvitationProxy`/`UpdateInvitationProxy` under #1558) were fixed on the
+WRONG axis for two of the four handlers.** Both PRs correctly closed the raw-storage-bypass
+shape (#1542: an independently-gated core ceiling being skipped) that this document tracks.
+Neither touched a separate, orthogonal shape: **wire-actor-identity forgery** — the ceiling
+check itself, and the persisted actor-identity field, were re-derived from the ceiling's
+OWN logic but still read the ACTOR from the wire body (`invited_by`, `resolved_by`) instead
+of the authenticated caller. A `system.write`-only caller could name a real admin's ID in
+that field and clear the ceiling meant to require the admin to have made the call. Fixed
+2026-08-25 (`actorID(r)`/`requestActorKindAndID(r)`) — full writeup, including a third
+affected handler (`RevokeBreakGlassActivationProxy`) not part of this document's original
+58-candidate set, in `docs/g80-documented-exception-sweep-findings.md`'s "Correction: three
+handlers recorded FIXED were fixed on the wrong axis" section. This document's own
+`rawStorageBypassAllowlist`/`knownUnfixedRawStorageBypasses` entries track the raw-storage
+axis only; the wire-actor-identity axis has its OWN guard,
+`server/http/wire_actor_identity_forgery_guard_test.go`.
+
+**`DeleteProjectProxy`'s allowlist entry (`no-independent-ceiling: core.DeleteProject(force=true)...`)
+is about a DIFFERENT gap than the one closed 2026-08-25.** That reasoning is about
+`core.DeleteProject`'s own force=true branch having no actor-authority check — still true,
+unchanged. Separately found and fixed in this session: the `/system` group's blanket
+`system.write` gate was the ONLY check on this route at all — no per-project scoping,
+meaning ANY `system.write` holder (a permission intentionally grantable for narrow,
+unrelated purposes — audit checkpoints, admin job triggers, per this document's own
+`/system` group header comment) could delete ANY project on the hub, not just ones they
+hold authority over. Fixed by mirroring the human-facing `DELETE /api/v1/projects/{id}`
+route's own check (`RequireScopedPermission(permSecretsDelete, projectScope)`) at the
+router level, layered on top of the existing `system.write` gate — see
+`server/http/router.go`'s `DeleteProjectProxy` route registration and
+`server/http/delete_project_proxy_scope_test.go` for the red/green-verified test. This is
+an addition, not a correction of the existing allowlist reasoning; both remain true.
+
+**Two new wire-actor-identity-forgery findings from the same sweep, not part of this
+document's raw-storage-bypass candidate set at all** (different bug class, listed here
+only because they were found in the same pass): `CreateAccessRequestApprovalProxy`'s
+`approver_id` (a caller could POST N approvals with N fabricated approver IDs, driving
+`ApprovalsReceived` past `RequiredApprovals` with zero real, independent approvers — a
+full dual-control bypass) and `UpdateAccessReviewItemProxy`'s `decided_by` (the
+self-certification check compared two wire-supplied values against each other, so naming
+a different real reviewer trivially passed it while recording someone who never reviewed
+the item). Both fixed 2026-08-25; full detail and the sweep table in
+`docs/g80-documented-exception-sweep-findings.md`.

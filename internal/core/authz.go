@@ -462,46 +462,86 @@ func (c *KeyorixCore) requireStillAuthorizedToImpersonate(ctx context.Context, a
 	return c.requireEqualOrGreaterAdminAuthority(ctx, actorID, targetID, "impersonate")
 }
 
-// requireMachinePrivilegeCeiling refuses to issue a token for machineID when the
-// machine holds any admin-tier role and the actor is not a global admin (MACH-001).
-// A token inherits the machine's roles, so issuing one is equivalent to granting
-// the actor those roles — the same privilege-ceiling contract enforced for user
-// impersonation and role grants.
-func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorID, machineID uint) error {
-	roles, err := c.storage.GetMachineRoles(ctx, machineID)
-	if err != nil {
-		return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+// requireMachinePrivilegeCeiling refuses to hand actorType/principalID control
+// over machineID — via minting it a credential, or (machineID==0) via creating
+// it in the first place — when doing so would hand the actor more standing
+// than their own privileges justify (MACH-001). Two branches:
+//
+//   - machineID's CURRENT roles already include an admin-tier role: the actor
+//     must be a global admin. A machine actor can never satisfy this — ADR-030:
+//     "a machine is never a global admin," so a machine holding an admin-tier
+//     role itself can never mint a credential for ANOTHER admin-tier machine,
+//     regardless of what that role's explicit permission bundle contains.
+//   - Otherwise (machineID doesn't hold an admin-tier role today, OR
+//     machineID==0 because the identity doesn't exist yet): the actor must
+//     still hold roles.assign at the machine's own project scope — the SAME
+//     authority the human-facing creation route (POST
+//     /projects/{id}/machine-identities, RequireScopedPermission(roles.assign,
+//     projectScope)) already requires. Examining only the target's CURRENT
+//     roles, as this check originally did, let an actor with NO authority over
+//     machine identities at all create a fresh one, mint themselves a working
+//     credential for it (trivially clearing the "not admin-tier yet" branch,
+//     since a brand-new identity holds no roles by construction), and reach
+//     every /system route requiring only that credential — the actor's own
+//     standing was never inspected in that branch at all. Minting a working
+//     credential for ANY machine identity is equivalent to being able to act
+//     as that machine within its project for as long as the credential lives,
+//     including whatever roles it is granted later by anyone who separately
+//     holds that same roles.assign authority — so the ceiling for "may this
+//     actor control this identity's credential" is derived from the SAME
+//     authority that already governs "may this actor bring this identity into
+//     existence," not picked independently per call site.
+func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorType string, principalID, projectID, machineID uint) error {
+	if machineID != 0 {
+		roles, err := c.storage.GetMachineRoles(ctx, machineID)
+		if err != nil {
+			return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+		}
+		roleIDs := make([]uint, len(roles))
+		for i, r := range roles {
+			roleIDs[i] = r.ID
+		}
+		containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
+		if err != nil {
+			return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+		}
+		if containsAdmin {
+			isAdmin := false
+			if actorType != ActorTypeMachine {
+				var err error
+				isAdmin, err = c.IsGlobalAdmin(ctx, principalID)
+				if err != nil {
+					return fmt.Errorf("failed to verify actor authority: %w", err)
+				}
+			}
+			if !isAdmin {
+				return fmt.Errorf("%w: issuing a token for a machine identity that holds administrative roles requires administrative authority", ErrMachinePrivilegeCeilingDenied)
+			}
+			return nil
+		}
 	}
-	roleIDs := make([]uint, len(roles))
-	for i, r := range roles {
-		roleIDs[i] = r.ID
-	}
-	containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
-	if err != nil {
-		return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
-	}
-	if !containsAdmin {
-		return nil
-	}
-	isAdmin, err := c.IsGlobalAdmin(ctx, actorID)
+	allowed, err := c.AuthorizePrincipal(ctx, actorType, principalID, permRolesAssign, Scope{ProjectID: projectID})
 	if err != nil {
 		return fmt.Errorf("failed to verify actor authority: %w", err)
 	}
-	if !isAdmin {
-		return fmt.Errorf("%w: issuing a token for a machine identity that holds administrative roles requires administrative authority", ErrMachinePrivilegeCeilingDenied)
+	if !allowed {
+		return fmt.Errorf("%w: creating a machine identity, or minting a credential for one, requires roles.assign at the project scope", ErrMachinePrivilegeCeilingDenied)
 	}
 	return nil
 }
 
 // RequireMachinePrivilegeCeiling is requireMachinePrivilegeCeiling's exported
 // form, for callers outside internal/core that need the SAME MACH-001 check
-// IssueMachineToken already runs — currently CreateMachineIdentityCredentialProxy
-// (server/http/handlers/machine_identities_proxy.go), which must preserve the
-// raw, caller-supplied TokenHash (needed for a legitimate RemoteStorage relay
-// persisting a hash it already generated locally) and therefore cannot route
-// through IssueMachineToken itself, only reuse its privilege-ceiling check.
-func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorID, machineID uint) error {
-	return c.requireMachinePrivilegeCeiling(ctx, actorID, machineID)
+// IssueMachineToken already runs — CreateMachineIdentityCredentialProxy and
+// CreateMachineIdentityProxy (server/http/handlers/machine_identities_proxy.go).
+// CreateMachineIdentityCredentialProxy must preserve the raw, caller-supplied
+// TokenHash (needed for a legitimate RemoteStorage relay persisting a hash it
+// already generated locally) and therefore cannot route through
+// IssueMachineToken itself, only reuse its privilege-ceiling check.
+// CreateMachineIdentityProxy passes machineID==0 (the identity doesn't exist
+// yet) to run the creation-time half of the same check.
+func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorType string, principalID, projectID, machineID uint) error {
+	return c.requireMachinePrivilegeCeiling(ctx, actorType, principalID, projectID, machineID)
 }
 
 // requireEqualOrGreaterAdminAuthority refuses when targetID holds, at any scope

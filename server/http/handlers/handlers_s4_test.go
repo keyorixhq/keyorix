@@ -192,12 +192,16 @@ func TestCreateAccessRequestApprovalProxy_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCreateAccessRequestApprovalProxy_MissingApproverID(t *testing.T) {
+// TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller (G80
+// documented-exception re-verification sweep, 2026-08-25) supersedes the old
+// MissingApproverID test: approver_id is no longer read from the wire at
+// all. What must still be rejected is a call with no authenticated caller.
+func TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
 	w := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestListAccessRequestApprovalsProxy_BadID(t *testing.T) {
@@ -9754,13 +9758,18 @@ func TestCatalogHandler_RevokeBreakGlassActivationProxy_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCatalogHandler_RevokeBreakGlassActivationProxy_MissingRevokedBy(t *testing.T) {
+// TestCatalogHandler_RevokeBreakGlassActivationProxy_NoAuthenticatedCaller
+// (G80 documented-exception re-verification sweep, 2026-08-25) supersedes
+// the old MissingRevokedBy test: revoked_by is no longer read from the wire
+// at all (see break_glass_proxy.go's own updated doc comment). What must
+// still be rejected is a call with no authenticated human caller at all.
+func TestCatalogHandler_RevokeBreakGlassActivationProxy_NoAuthenticatedCaller(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"revoked_by":0}`
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestCatalogHandler_RevokeBreakGlassActivationProxy_NotFound(t *testing.T) {

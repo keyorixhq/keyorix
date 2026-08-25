@@ -145,14 +145,26 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "email and state are required")
 		return
 	}
+	// Wire-actor-identity finding (independent verification session, 2026-08-25):
+	// these three checks used to run against body.InvitedBy -- a caller-supplied
+	// wire field -- rather than the AUTHENTICATED caller. A caller holding only
+	// system.write, naming a real admin's user ID as invited_by, cleared every
+	// one of these RequireAuthorityForRole checks (the NAMED admin genuinely has
+	// authority) without that admin ever making the call -- one request planted
+	// a live, pending system_admin invitation to an attacker-controlled email,
+	// falsely attributed in the record to a real administrator. actorID(r)
+	// resolves the real caller instead; RequireAuthorityForRole is a
+	// user-scoped check (internal/core/authz.go's scopedRoleIDs walks user role
+	// grants only), so a machine actor's actorID(r) is always 0 here and
+	// correctly never passes -- inviting someone is a human-only decision.
 	if body.Role != "" {
-		if err := h.coreService.RequireAuthorityForRole(r.Context(), body.InvitedBy, body.ProjectID, body.Role); err != nil {
+		if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), body.ProjectID, body.Role); err != nil {
 			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 			return
 		}
 	}
 	if body.SystemRole != "" {
-		if err := h.coreService.RequireAuthorityForRole(r.Context(), body.InvitedBy, 0, body.SystemRole); err != nil {
+		if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), 0, body.SystemRole); err != nil {
 			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 			return
 		}
@@ -164,13 +176,17 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 			return
 		}
 		for _, a := range assignments {
-			if err := h.coreService.RequireAuthorityForRole(r.Context(), body.InvitedBy, a.ProjectID, a.Role); err != nil {
+			if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), a.ProjectID, a.Role); err != nil {
 				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 				return
 			}
 		}
 	}
-	created, err := h.coreService.Storage().CreateProjectInvitation(r.Context(), body.toModel())
+	model := body.toModel()
+	// InvitedBy is now always the AUTHENTICATED caller, never the wire-supplied
+	// value -- see the finding above.
+	model.InvitedBy = actorID(r)
+	created, err := h.coreService.Storage().CreateProjectInvitation(r.Context(), model)
 	if err != nil {
 		log.Printf("invitations proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

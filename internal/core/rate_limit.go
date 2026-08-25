@@ -126,6 +126,11 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 // prefix followed by one.
 var ErrInvalidLoginAttemptKey = errors.New("ip must be a valid IP address, optionally prefixed with a known rate-limit namespace")
 
+// ErrFutureLoginAttemptTimestamp is returned by RecordLoginAttemptRelay when
+// the caller-supplied `at` is later than this server's own clock. See that
+// function's doc for why this is a hard rejection, not a silent clamp.
+var ErrFutureLoginAttemptTimestamp = errors.New("at must not be later than the current time")
+
 // loginAttemptRelayPrefixes are the only namespace prefixes a legitimate relay
 // (RecordLoginAttemptRelay's caller) ever needs to report: the same two
 // RecordPasswordResetAttempt/RecordSSOBeginAttempt apply before writing to the
@@ -159,9 +164,18 @@ var loginAttemptRelayPrefixes = []string{passwordResetRateLimitPrefix, ssoRateLi
 //
 // A KNOWN prefix is stripped if present and the remainder is canonicalized
 // via CanonicalIP and REQUIRED to parse as a real IP — an unprefixed,
-// non-IP key is rejected outright rather than persisted verbatim. `at` is
-// clamped to now: a relay reports an event that already happened on the
-// downstream server's own clock, never one in the future.
+// non-IP key is rejected outright rather than persisted verbatim. `at` in
+// the future is REJECTED outright (ErrFutureLoginAttemptTimestamp), not
+// silently clamped to now: a relay reports an event that already happened on
+// the downstream server's own clock, so a future `at` is either a clock
+// skew large enough to be worth surfacing, or a caller deliberately probing
+// how far the field is trusted — a silent substitution answers that
+// question for them with no signal on this end that anything was rejected,
+// and (independent verification session, 2026-08-25) is untestable as a
+// rejection: a test asserting "the write succeeded with some clamped value"
+// cannot distinguish "correctly clamped" from "accepted verbatim and just
+// happens to look right," which is exactly how this gap went unnoticed the
+// first time.
 func (c *KeyorixCore) RecordLoginAttemptRelay(ctx context.Context, key string, at time.Time) error {
 	prefix, remainder := "", key
 	for _, p := range loginAttemptRelayPrefixes {
@@ -174,8 +188,8 @@ func (c *KeyorixCore) RecordLoginAttemptRelay(ctx context.Context, key string, a
 	if net.ParseIP(canon) == nil {
 		return ErrInvalidLoginAttemptKey
 	}
-	if now := c.now(); at.After(now) {
-		at = now
+	if at.After(c.now()) {
+		return ErrFutureLoginAttemptTimestamp
 	}
 	if err := c.storage.RecordLoginAttempt(ctx, prefix+canon, at); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

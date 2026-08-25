@@ -13,6 +13,14 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   blocks `gh pr create`/`gh pr edit` outright when either is present.
 - Before starting a PR series, run `scripts/preflight.sh` (checks the branch base is
   current against `origin/main`) — see `docs/g80-remediation-notes.md` for why.
+- **A merge badge is not a merge.** GitHub can report a PR as "Merged" while its
+  branch was actually merged into a PREVIOUS PR's feature branch, never into `main` —
+  a chain of branch-into-branch merges can make every PR in the chain show "Merged"
+  with none of them ever reaching `main`. Verify closure with
+  `git fetch origin && git merge-base --is-ancestor <branch> origin/main` — never
+  against a PR's reported state, a "Merged" label, or an approval. This is the ONLY
+  trusted signal for "is this actually on main." Found 2026-08-25: PRs #1563–#1566 all
+  showed "Merged" on GitHub; none were ancestors of `origin/main`.
 
 ## Engineering practices
 
@@ -40,6 +48,16 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
     "safe," until the fix's actual effect on the scheduler path was confirmed — only
     then reclassified to no-caller/delete.
 - Ask of any mechanism: what does it silently skip, and does it say so?
+- **A ceiling that inspects only the target is not a ceiling.** A privilege-ceiling
+  check must derive the ceiling from the ACTOR's own effective privileges as well as
+  the target's — checking only the target (e.g. "does the machine identity being
+  minted a credential currently hold a higher role than the one requested") lets an
+  attacker with zero standing self-mint into an empty/attacker-controlled target and
+  pass trivially. Derive a ceiling, don't pick one: creating a principal inherits the
+  ceiling of the privilege that principal can come to hold, checked against the
+  ACTOR requesting the creation, and applied at creation time, not only at
+  credential-mint time. Found 2026-08-25: `RequireMachinePrivilegeCeiling` checked
+  only the target machine identity's current roles, never the calling actor's.
 - Verify a repaired test by breaking its subject and confirming it goes red.
 - A test whose premise turns out to be untested is a coverage gap, not a stale test —
   fix the fixture or quarantine it; never adjust the assertion to match behaviour.

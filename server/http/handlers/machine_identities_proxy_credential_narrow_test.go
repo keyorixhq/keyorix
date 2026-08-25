@@ -35,7 +35,10 @@ func TestUpdateMachineIdentityCredentialProxy_IgnoresTokenHashAndRevoked_RealSer
 	require.NoError(t, err)
 	m, err := cs.CreateMachineIdentity(ctx, proj.ID, "g80-credential-narrow-machine", core.MachineTypeOther, "", "", 0)
 	require.NoError(t, err)
-	issued, err := cs.IssueMachineToken(ctx, proj.ID, m.ID, 0, core.IssueMachineTokenParams{
+	// actorID must belong to a real user holding admin/roles.assign authority
+	// now that IssueMachineToken enforces RequireMachinePrivilegeCeiling; user
+	// ID 1 is the system_admin seeded by freshCoreS12WithAdmin.
+	issued, err := cs.IssueMachineToken(ctx, proj.ID, m.ID, 1, core.IssueMachineTokenParams{
 		Name: "g80-credential-narrow-cred", Classification: "internal",
 	})
 	require.NoError(t, err)

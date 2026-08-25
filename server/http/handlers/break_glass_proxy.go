@@ -226,8 +226,17 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
-	if body.RevokedBy == 0 {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "revoked_by is required")
+	// G80 documented-exception re-verification sweep (2026-08-25): this
+	// handler was already touched by this same campaign (the FIXED entry
+	// above, "actually revoke role") but kept trusting the wire's
+	// revoked_by for the role-removal actor, the persisted RevokedBy, and the
+	// audit event -- a non-repudiation break letting any system.write holder
+	// revoke an emergency access grant while attributing it to an arbitrary
+	// user ID. Revocation authority here is a human decision, same as
+	// CreateInvitationProxy's actorID(r) fix.
+	revokedBy := actorID(r)
+	if revokedBy == 0 {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "revoking a break-glass activation requires an attributable, authenticated human caller")
 		return
 	}
 
@@ -259,13 +268,13 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 	// record revoked while removal itself failed would leave the grant LIVE in
 	// user_roles but reported revoked everywhere else.
 	scope := coreStorage.Scope{ProjectID: activation.ProjectID}
-	if err := h.coreService.RemoveUserRole(r.Context(), body.RevokedBy, activation.UserID, activation.RoleID, scope); err != nil && !errors.Is(err, coreStorage.ErrRoleNotAssigned) {
+	if err := h.coreService.RemoveUserRole(r.Context(), revokedBy, activation.UserID, activation.RoleID, scope); err != nil && !errors.Is(err, coreStorage.ErrRoleNotAssigned) {
 		log.Printf("break-glass proxy: revoke activation: role removal failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
 
-	if err := h.coreService.Storage().RevokeBreakGlassActivation(r.Context(), uint(id), body.RevokedBy, body.RevokedAt); err != nil {
+	if err := h.coreService.Storage().RevokeBreakGlassActivation(r.Context(), uint(id), revokedBy, body.RevokedAt); err != nil {
 		if errors.Is(err, coreStorage.ErrBreakGlassNotActive) {
 			writeRemoteAPIError(w, http.StatusConflict, breakGlassNotActiveCode, coreStorage.ErrBreakGlassNotActive.Error())
 			return
@@ -274,6 +283,6 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
-	h.coreService.LogBreakGlassRevoked(r.Context(), body.RevokedBy, activation.ProjectID, activation.ID, activation.UserID, activation.RoleID, activation.RoleName)
+	h.coreService.LogBreakGlassRevoked(r.Context(), revokedBy, activation.ProjectID, activation.ID, activation.UserID, activation.RoleID, activation.RoleName)
 	writeRemoteAPISuccess(w, map[string]bool{"revoked": true})
 }

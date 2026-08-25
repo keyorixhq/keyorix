@@ -2747,6 +2747,7 @@ func TestCreateMachineIdentityProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"name":"test-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -2757,6 +2758,7 @@ func TestGetMachineIdentityProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"name":"get-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -2798,6 +2800,7 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	// First create a machine identity to own the credential.
 	bodyMI := `{"name":"cred-owner-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyMI))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -2808,6 +2811,7 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	tokenHash := fmt.Sprintf("deadbeefdeadbeefdeadbeefdeadbeef%d", s4UniqueCounter.Add(1))
 	body := fmt.Sprintf(`{"machine_identity_id":1,"token_hash":%q,"name":"cred1"}`, tokenHash)
 	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req2 = withOIDCAdminCtxS21(t, h, req2)
 	w2 := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(w2, req2)
 	assert.Equal(t, http.StatusOK, w2.Code)
@@ -2901,6 +2905,7 @@ func TestCreateOIDCBindingProxy_HappyPath(t *testing.T) {
 	// First create a machine identity to bind to.
 	bodyMI := `{"name":"oidc-machine","project_id":1,"identity_type":"service","state":"active"}`
 	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyMI))
+	req0 = withOIDCAdminCtxS21(t, h, req0)
 	w0 := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w0, req0)
 	require.Equal(t, http.StatusOK, w0.Code)

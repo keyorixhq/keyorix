@@ -26,7 +26,7 @@ import (
 // *core.KeyorixCore configured with storage.type: remote (ADR-049), pointed at
 // "upstream" over real HTTP via store.RemoteStorage. Mirrors
 // remote_storage_login_rate_limit_test.go's harness exactly.
-func newUpstreamDownstreamForInvitations(t *testing.T) (upstream *core.KeyorixCore, downstream *core.KeyorixCore, projectID uint) {
+func newUpstreamDownstreamForInvitations(t *testing.T) (upstream *core.KeyorixCore, downstream *core.KeyorixCore, projectID uint, baseURL string) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
@@ -57,7 +57,7 @@ func newUpstreamDownstreamForInvitations(t *testing.T) (upstream *core.KeyorixCo
 	ctx := context.Background()
 	project, err := upstream.CreateProject(ctx, "Invitations Test Project", "")
 	require.NoError(t, err)
-	return upstream, downstream, project.ID
+	return upstream, downstream, project.ID, upstreamSrv.URL
 }
 
 // buildPendingInvitation mirrors exactly what internal/core/invitations.go's
@@ -91,7 +91,7 @@ func buildPendingInvitation(now time.Time, projectID uint, email, role string, i
 // RemoteStorage, fetchable by ID, and listed — all via storage.type: remote
 // against a real router, not a protocol mock.
 func TestRemoteStorageInvitation_CreateGetList_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -140,7 +140,7 @@ func TestRemoteStorageInvitation_CreateGetList_RealServer(t *testing.T) {
 // TestRemoteStorageInvitation_GetNotFound_RealServer proves a clean not-found
 // error (not a panic, not a garbage 500) for a nonexistent invitation ID.
 func TestRemoteStorageInvitation_GetNotFound_RealServer(t *testing.T) {
-	_, downstream, _ := newUpstreamDownstreamForInvitations(t)
+	_, downstream, _, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 
 	_, err := downstream.Storage().GetProjectInvitation(ctx, 999999)
@@ -152,7 +152,7 @@ func TestRemoteStorageInvitation_GetNotFound_RealServer(t *testing.T) {
 // error) once an invitation is no longer pending — exactly the signal
 // RevokeInvitation/completeInvitationAccept rely on to detect a lost race.
 func TestRemoteStorageInvitation_UpdateAlreadyResolved_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -192,7 +192,7 @@ func TestRemoteStorageInvitation_UpdateAlreadyResolved_RealServer(t *testing.T) 
 // on, even across a network hop — not a client-side
 // "GET, check state, then PUT" sequence, which would reopen exactly this race.
 func TestRemoteStorageInvitation_ConcurrentAcceptRace_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	_, downstream, projectID, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -241,7 +241,7 @@ func TestRemoteStorageInvitation_ConcurrentAcceptRace_RealServer(t *testing.T) {
 // pending admin-role invitation with no project-admin authority anywhere in
 // the chain.
 func TestInvitationProxy_CreateRejectsProjectAdminRoleWithoutAuthority(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -257,7 +257,7 @@ func TestInvitationProxy_CreateRejectsProjectAdminRoleWithoutAuthority(t *testin
 // proves the same ceiling for a global invite's SystemRole. RED without the
 // fix: this create would have succeeded.
 func TestInvitationProxy_CreateRejectsGlobalSystemRoleWithoutAuthority(t *testing.T) {
-	upstream, downstream, _ := newUpstreamDownstreamForInvitations(t)
+	upstream, downstream, _, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -277,21 +277,41 @@ func TestInvitationProxy_CreateRejectsGlobalSystemRoleWithoutAuthority(t *testin
 // TestInvitationProxy_CreateAllowsAdminRoleByGenuineAdmin (#1529) is the
 // positive control: a genuine admin creating a genuine admin-role invitation
 // must still succeed end-to-end over the proxy.
+//
+// G80 documented-exception re-verification sweep (2026-08-25):
+// CreateInvitationProxy no longer trusts a wire-supplied InvitedBy — the
+// inviter is now always the AUTHENTICATED caller, via actorID(r), which is
+// human-only by design (invitation authority is a human decision) and
+// returns 0 for a machine actor. `downstream`'s shared client authenticates
+// as a MACHINE credential (createNodeToken), so it can no longer stand in
+// for "a genuine human admin" here — this test must authenticate AS the
+// admin user via their own real session token instead.
 func TestInvitationProxy_CreateAllowsAdminRoleByGenuineAdmin(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	upstream, _, projectID, baseURL := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
 
-	admin, err := upstream.Storage().CreateUser(ctx, &models.User{Username: "inv1529-admin", Email: "inv1529-admin@example.com", IsActive: true})
+	admin, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "inv1529-admin", Email: "inv1529-admin@example.com", Password: pw})
 	require.NoError(t, err)
 	adminRole, err := upstream.Storage().GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
 	require.NoError(t, upstream.Storage().AssignRole(ctx, admin.ID, adminRole.ID, coreStorage.Scope{ProjectID: projectID}))
+	// The /system group's own gate (RequirePermission(permSystemWrite)) checks
+	// at GLOBAL scope unconditionally; the admin role above is deliberately
+	// PROJECT-scoped (matching what RequireAuthorityForRole's project-scoped
+	// authority check for this specific invite needs) and does not itself
+	// satisfy a global-scope check. Both are required, for different reasons.
+	grantSystemWrite(t, upstream, admin.ID)
+	adminSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "inv1529-admin", Password: pw})
+	require.NoError(t, err)
+	asAdmin := newDeleteProjectScopeRemoteClient(t, baseURL, adminSess.SessionToken)
 
 	inv := buildPendingInvitation(now, projectID, "target3@example.com", "admin", admin.ID)
-	created, err := downstream.Storage().CreateProjectInvitation(ctx, inv)
+	created, err := asAdmin.CreateProjectInvitation(ctx, inv)
 	require.NoError(t, err, "a genuine admin creating a genuine admin-role invitation must still succeed")
 	assert.Equal(t, "admin", created.Role)
+	assert.Equal(t, admin.ID, created.InvitedBy, "InvitedBy must be the authenticated admin, not the wire-supplied value")
 }
 
 // TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition
@@ -301,12 +321,29 @@ func TestInvitationProxy_CreateAllowsAdminRoleByGenuineAdmin(t *testing.T) {
 // — mirroring AR-001's field-narrowing fix for UpdateAccessRequestProxy. RED
 // without the fix: the fetched row below would read the forged SystemRole
 // and Email, not the original ones.
+//
+// G80 documented-exception re-verification sweep (2026-08-25): the invitation
+// is now created via a real human's authenticated session rather than
+// `downstream`'s shared MACHINE credential — CreateInvitationProxy's
+// actorID(r) fix (this same sweep) returns 0 for a machine actor, so the
+// original hardcoded InvitedBy assertion (uint(1), the OLD wire-trusted
+// value) no longer reflects what a real create persists. This test's actual
+// subject is the UPDATE path's field-narrowing, which is unaffected — only
+// the fixture's inviter identity needed to become real.
 func TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForInvitations(t)
+	upstream, downstream, projectID, baseURL := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
 
-	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "real-invitee@example.com", "viewer", 1))
+	inviter, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "inv-real-inviter", Email: "inv-real-inviter@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, inviter.ID)
+	inviterSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "inv-real-inviter", Password: pw})
+	require.NoError(t, err)
+	asInviter := newDeleteProjectScopeRemoteClient(t, baseURL, inviterSess.SessionToken)
+
+	inv, err := asInviter.CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "real-invitee@example.com", "viewer", 1))
 	require.NoError(t, err)
 
 	acceptedAt := time.Now()
@@ -329,6 +366,6 @@ func TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition(t *t
 	assert.Equal(t, "real-invitee@example.com", fetched.Email, "the original email must survive, not the forged one")
 	assert.Equal(t, "viewer", fetched.Role, "the original role must survive, not the forged admin role")
 	assert.Empty(t, fetched.SystemRole, "no system role was ever set on this invitation; the forged one must not appear")
-	assert.Equal(t, uint(1), fetched.InvitedBy, "the original inviter must survive, not the forged one")
+	assert.Equal(t, inviter.ID, fetched.InvitedBy, "the original inviter must survive, not the forged one")
 	assert.Equal(t, projectID, fetched.ProjectID, "the original project must survive")
 }

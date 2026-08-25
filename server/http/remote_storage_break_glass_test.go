@@ -161,6 +161,71 @@ func TestRemoteStorageBreakGlass_GetNotFound_RealServer(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestRemoteStorageBreakGlass_RevokeActuallyRemovesTheRoleGrant is the
+// independent verification session's finding (2026-08-25): a prior version of
+// RevokeBreakGlassActivationProxy flipped the activation's State to "revoked"
+// and returned success, but never called RemoveUserRole, leaving the granted
+// role fully live in user_roles — core.Authorize kept returning true for the
+// "revoked" user indefinitely. TestRemoteStorageBreakGlass_RevokeThenRevoke
+// AgainFails_RealServer above only ever asserted the STATUS transition, which
+// is exactly why this gap went unnoticed — a passing test whose assertion
+// never touched the thing that mattered. This test seeds a REAL role grant
+// matching the activation (the missing piece the other test's raw-storage-only
+// activation never had a matching grant to remove in the first place), then
+// asserts the grant is actually gone after revoke, not just that the status
+// flipped.
+// G80 documented-exception re-verification sweep (2026-08-25):
+// RevokeBreakGlassActivationProxy no longer trusts a wire-supplied
+// revoked_by -- the revoker is always the AUTHENTICATED caller now, via
+// actorID(r), which is human-only by design. `downstream`'s shared client
+// authenticates as a MACHINE credential (createNodeToken), so it can no
+// longer perform a revoke at all; the revoke call now goes through a real
+// human's own client instead.
+func TestRemoteStorageBreakGlass_RevokeActuallyRemovesTheRoleGrant(t *testing.T) {
+	upstream, _, projectID, baseURL, _ := newUpstreamDownstreamForBreakGlass(t)
+	ctx := context.Background()
+	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+	revoker, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "bg-revoker-1", Email: "bg-revoker-1@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, revoker.ID)
+	revokerSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "bg-revoker-1", Password: pw})
+	require.NoError(t, err)
+	asRevoker := newBreakGlassRemoteClient(t, baseURL, revokerSess.SessionToken)
+
+	editorRole, err := upstream.Storage().GetRoleByName(ctx, "editor")
+	require.NoError(t, err)
+
+	holder, err := upstream.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "bg-grant-holder", Email: "bg-grant-holder@example.com", Password: "Bg9!Qr7#Kp2$Lm5@",
+	})
+	require.NoError(t, err)
+	require.NoError(t, upstream.AssignUserRole(ctx, 0, holder.ID, editorRole.ID, coreStorage.Scope{ProjectID: projectID}))
+
+	stillHasIt, err := upstream.Authorize(ctx, holder.ID, "secrets.write", coreStorage.Scope{ProjectID: projectID})
+	require.NoError(t, err)
+	require.True(t, stillHasIt, "test setup sanity check: the holder must actually have the editor grant before revoke")
+
+	act, err := upstream.Storage().CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: projectID, UserID: holder.ID, RoleID: editorRole.ID, RoleName: "editor",
+		Justification: "prod incident #43", State: core.BreakGlassActive,
+		ExpiresAt: ptrTime(now.Add(4 * time.Hour)), CreatedAt: now,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, time.Now()))
+
+	final, err := upstream.Storage().GetBreakGlassActivation(ctx, act.ID)
+	require.NoError(t, err)
+	assert.Equal(t, core.BreakGlassRevoked, final.State, "status must flip to revoked")
+
+	stillHasIt, err = upstream.Authorize(ctx, holder.ID, "secrets.write", coreStorage.Scope{ProjectID: projectID})
+	require.NoError(t, err)
+	assert.False(t, stillHasIt, "the editor grant break-glass conferred must actually be gone after revoke, not just marked revoked in the activation record")
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
 // TestRemoteStorageBreakGlass_RevokeThenRevokeAgainFails_RealServer proves
 // RevokeBreakGlassActivationProxy's conditional `WHERE state = 'active'` update
 // (and its 409/BREAK_GLASS_NOT_ACTIVE wire-code translation) round-trips
@@ -169,21 +234,31 @@ func TestRemoteStorageBreakGlass_GetNotFound_RealServer(t *testing.T) {
 // errors.Is check depends on. The activation is seeded directly against the
 // upstream's real storage (CreateBreakGlassActivationProxy was deleted -- G80
 // liveness sweep found no live caller; see docs/g80-remediation-notes.md).
+// G80 documented-exception re-verification sweep (2026-08-25): same
+// correction as TestRemoteStorageBreakGlass_RevokeActuallyRemovesTheRoleGrant
+// -- revoking now requires a real, human, authenticated caller.
 func TestRemoteStorageBreakGlass_RevokeThenRevokeAgainFails_RealServer(t *testing.T) {
-	upstream, downstream, projectID, _, _ := newUpstreamDownstreamForBreakGlass(t)
+	upstream, downstream, projectID, baseURL, _ := newUpstreamDownstreamForBreakGlass(t)
 	ctx := context.Background()
 	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+	revoker, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "bg-revoker-2", Email: "bg-revoker-2@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, revoker.ID)
+	revokerSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "bg-revoker-2", Password: pw})
+	require.NoError(t, err)
+	asRevoker := newBreakGlassRemoteClient(t, baseURL, revokerSess.SessionToken)
 
 	act, err := upstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 7))
 	require.NoError(t, err)
 
-	require.NoError(t, downstream.Storage().RevokeBreakGlassActivation(ctx, act.ID, 1, time.Now()))
+	require.NoError(t, asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, time.Now()))
 
 	final, err := downstream.Storage().GetBreakGlassActivation(ctx, act.ID)
 	require.NoError(t, err)
 	assert.Equal(t, core.BreakGlassRevoked, final.State)
 
-	err = downstream.Storage().RevokeBreakGlassActivation(ctx, act.ID, 1, time.Now())
+	err = asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, time.Now())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, coreStorage.ErrBreakGlassNotActive), "got %v", err)
 }
@@ -198,10 +273,22 @@ func TestRemoteStorageBreakGlass_RevokeThenRevokeAgainFails_RealServer(t *testin
 // against the upstream's real storage (CreateBreakGlassActivationProxy was
 // deleted -- G80 liveness sweep found no live caller; see
 // docs/g80-remediation-notes.md).
+// G80 documented-exception re-verification sweep (2026-08-25): same
+// correction as the two tests above -- revoking now requires a real, human,
+// authenticated caller, so every racer authenticates as that same human
+// (identity uniqueness across racers was never the point here; per-racer
+// CLIENT isolation, for the circuit-breaker reason below, still is).
 func TestRemoteStorageBreakGlass_ConcurrentRevokeRace_RealServer(t *testing.T) {
-	upstream, downstream, projectID, baseURL, apiKey := newUpstreamDownstreamForBreakGlass(t)
+	upstream, downstream, projectID, baseURL, _ := newUpstreamDownstreamForBreakGlass(t)
 	ctx := context.Background()
 	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+	revoker, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "bg-revoker-3", Email: "bg-revoker-3@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, revoker.ID)
+	revokerSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "bg-revoker-3", Password: pw})
+	require.NoError(t, err)
+	apiKey := revokerSess.SessionToken
 
 	act, err := upstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 55))
 	require.NoError(t, err)
