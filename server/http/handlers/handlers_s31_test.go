@@ -133,10 +133,12 @@ func TestGetAccessReviewItemProxy_DBError_S31(t *testing.T) {
 func TestUpdateAccessReviewItemProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS31(t))
-	// decided_by (2) != principal_id (1) so ARC-005 passes; broken storage then
-	// returns 500.
-	body := bytes.NewBufferString(`{"principal_id":1,"principal_type":"user","decision":"attest","decided_by":2}`)
-	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-review-campaigns/items/1", body), "itemID", "1")
+	// principal_id (5) != withUserCtx's authenticated caller (UserID=1) so
+	// ARC-005 passes; broken storage then returns 500. G80 documented-
+	// exception re-verification sweep (2026-08-25): the self-certification
+	// check is now anchored to the authenticated caller, not decided_by.
+	body := bytes.NewBufferString(`{"principal_id":5,"principal_type":"user","decision":"attest"}`)
+	r := withUserCtx(withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-review-campaigns/items/1", body), "itemID", "1"))
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewItemProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -190,7 +192,7 @@ func TestCreateAccessRequestApprovalProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS31(t))
 	body := bytes.NewBufferString(`{"approver_id":2}`)
-	r := withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-requests/1/approvals", body), "id", "1")
+	r := withUserCtx(withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-requests/1/approvals", body), "id", "1"))
 	w := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -236,7 +238,7 @@ func TestRevokeBreakGlassActivationProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS31(t))
 	body := bytes.NewBufferString(fmt.Sprintf(`{"revoked_by":1,"revoked_at":"%s"}`, time.Now().UTC().Format(time.RFC3339)))
-	r := withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass/1/revoke", body), "id", "1")
+	r := withUserCtx(withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass/1/revoke", body), "id", "1"))
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, r)
 	// broken DB returns generic error (not ErrBreakGlassNotActive), so 500

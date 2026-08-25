@@ -246,13 +246,18 @@ func TestRecordLoginAttemptProxy_AllowsKnownPrefixes_S13(t *testing.T) {
 	}
 }
 
-// TestRecordLoginAttemptProxy_ClampsFutureTimestamp_S13 is the fix's second
+// TestRecordLoginAttemptProxy_RejectsFutureTimestamp_S13 is the fix's second
 // regression test: before it, a far-future `at` created a row
 // PruneLoginAttempts (clamped to now-LoginWindow) could NEVER become eligible
 // to delete — a permanent, unrecoverable lockout of whatever key it targets.
-// Confirmed by checking the row lands within the real (recent) window a
-// legitimate call would use, not 100 years in the future.
-func TestRecordLoginAttemptProxy_ClampsFutureTimestamp_S13(t *testing.T) {
+// Independent verification session (2026-08-25): an earlier version of this
+// fix silently CLAMPED `at` to now instead of rejecting it outright, which is
+// untestable as a rejection (a passing "the row landed near now" assertion
+// can't distinguish "correctly clamped" from "accepted verbatim and happened
+// to look right"). The fix now returns a hard 400 and persists NOTHING —
+// confirmed here by asserting zero rows exist for the key at all, not just
+// that none of them are far in the future.
+func TestRecordLoginAttemptProxy_RejectsFutureTimestamp_S13(t *testing.T) {
 	cs := freshCoreS12(t)
 	h := NewAuthHandler(cs, false)
 	farFuture := time.Now().AddDate(100, 0, 0)
@@ -260,18 +265,12 @@ func TestRecordLoginAttemptProxy_ClampsFutureTimestamp_S13(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/system/login-attempts", body)
 	w := httptest.NewRecorder()
 	h.RecordLoginAttemptProxy(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"CEILING VIOLATED: a future-dated login attempt must be rejected outright (400), not silently clamped and persisted")
 
-	// A cutoff strictly AFTER "now" only counts the row if its AttemptedAt is
-	// itself in the future — i.e. NOT clamped. (A ">= since" cutoff in the past
-	// would trivially count a far-future row too, so it can't distinguish
-	// "clamped to now" from "left 100 years in the future" — this must query
-	// forward of now instead.)
-	n, err := cs.Storage().CountRecentLoginAttempts(context.Background(), "198.51.100.42", time.Now().Add(time.Hour))
+	n, err := cs.Storage().CountRecentLoginAttempts(context.Background(), "198.51.100.42", time.Now().Add(-time.Hour))
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), n,
-		"CEILING VIOLATED: the recorded attempt's timestamp must be clamped to now, not persisted 100 years in "+
-			"the future where no maintenance sweep can ever reach it")
+	assert.Equal(t, int64(0), n, "a rejected attempt must not be persisted at all, clamped or otherwise")
 }
 
 // ── misc_remote_proxy.go: accessActivityProxy ────────────────────────────────

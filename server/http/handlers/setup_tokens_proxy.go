@@ -221,7 +221,13 @@ func (h *AuthHandler) CreateSetupTokenProxy(w http.ResponseWriter, r *http.Reque
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "minting a setup token requires the users.write permission")
 		return
 	}
-	created, err := h.coreService.Storage().CreateSetupToken(r.Context(), body.toModel())
+	// G80 documented-exception re-verification sweep (2026-08-25): CreatedBy
+	// used to persist verbatim from the wire and feed the setup_token.issued
+	// audit event's actor field. This route's own gating decision (users.write
+	// above) was already correctly context-derived; force provenance to match.
+	model := body.toModel()
+	model.CreatedBy = userCtx.PrincipalID()
+	created, err := h.coreService.Storage().CreateSetupToken(r.Context(), model)
 	if err != nil {
 		log.Printf("setup-tokens proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

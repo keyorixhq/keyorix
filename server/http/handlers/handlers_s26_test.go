@@ -949,9 +949,14 @@ func TestUpdateAccessReviewItemProxy_HappyPath_S26(t *testing.T) {
 		CreatedBy: 1,
 	}
 	require.NoError(t, db.Create(campaign).Error)
+	// PrincipalID (5) deliberately differs from withUserCtx's authenticated
+	// caller (UserID=1) -- G80 documented-exception re-verification sweep
+	// (2026-08-25): the self-certification check is now anchored to the
+	// AUTHENTICATED caller, not the wire's decided_by, so the reviewer and
+	// the item's subject must genuinely be different principals here.
 	item := &models.AccessReviewItem{
 		CampaignID:    campaign.ID,
-		PrincipalID:   1,
+		PrincipalID:   5,
 		PrincipalType: "user",
 		Decision:      "pending",
 	}
@@ -960,18 +965,16 @@ func TestUpdateAccessReviewItemProxy_HappyPath_S26(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"id":             item.ID,
 		"campaign_id":    campaign.ID,
-		"principal_id":   1,
+		"principal_id":   5,
 		"principal_type": "user",
 		"decision":       "attest",
-		// decided_by must differ from principal_id (ARC-005: no self-certification).
-		"decided_by": 2,
 	})
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPut,
 			fmt.Sprintf("/api/v1/system/access-review-campaigns/items/%d", item.ID),
 			bytes.NewReader(body)),
 		"itemID", uintStrS26(item.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewItemProxy(w, req)
@@ -1089,11 +1092,11 @@ func TestRevokeBreakGlassActivationProxy_NotFound_S26(t *testing.T) {
 		"revoked_by": 1,
 		"revoked_at": time.Now(),
 	})
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass-activations/99999/revoke",
 			bytes.NewReader(body)),
 		"id", "99999",
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
@@ -1121,11 +1124,11 @@ func TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26(t *testing.T) {
 		"revoked_by": 1,
 		"revoked_at": time.Now(),
 	})
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
 			bytes.NewReader(body)),
 		"id", fmt.Sprintf("%d", activation.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
@@ -1165,11 +1168,11 @@ func TestRevokeBreakGlassActivationProxy_RemovesRoleGrant(t *testing.T) {
 		"revoked_by": 1,
 		"revoked_at": time.Now(),
 	})
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
 			bytes.NewReader(body)),
 		"id", fmt.Sprintf("%d", activation.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
@@ -1420,12 +1423,12 @@ func TestCreateAccessRequestApprovalProxy_HappyPath_S26(t *testing.T) {
 		"approver_id":       1,
 		"decision":          "approved",
 	})
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPost,
 			fmt.Sprintf("/api/v1/system/access-requests/%d/approvals", ar.ID),
 			bytes.NewReader(body)),
 		"id", uintStrS26(ar.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(w, req)

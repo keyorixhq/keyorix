@@ -1962,7 +1962,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/projects/by-name/{name}", catalogHandler.GetProjectByNameProxy)
 			r.Get(pathProjects, catalogHandler.ListProjectsProxy)
 			r.Get(pathProjectsID, catalogHandler.GetProjectProxy)
-			r.Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
+			// DeleteProjectProxy (G80 documented-exception re-verification sweep,
+			// 2026-08-25): the group's system.write gate alone let ANY holder of
+			// that permission delete ANY project on this hub — including a role
+			// granted system.write for a narrow, unrelated purpose (audit
+			// checkpoints, admin job triggers; see this group's own doc comment
+			// above), with no check that the caller is actually authorized against
+			// THIS project. Mirrors the human-facing DeleteProject route's own
+			// check (permSecretsDelete scoped to the target project, line ~436)
+			// via the same RequireScopedPermission middleware, which is already
+			// actor-kind aware (AuthorizePrincipal) so it works for both user and
+			// machine callers. Layered on top of, not replacing, the group's
+			// system.write gate.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, projectScope)).Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
 			r.Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
 			r.Get(pathProjectMembers, catalogHandler.ListProjectMembersProxy)
 			r.Get(pathProjectEnvs, catalogHandler.ListEnvironmentsByProjectProxy)

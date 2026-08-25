@@ -39,6 +39,89 @@ closed on an expired/orphaned row.
 
 ---
 
+## Correction: three handlers recorded FIXED were fixed on the wrong axis
+
+**Context**: an independent verification session (2026-08-25) found that three
+`/system` proxy handlers, each previously recorded FIXED (a PR reference or
+this same sweep's own `rawStorageBypassAllowlist` entry
+(`server/http/raw_storage_bypass_guard_test.go`)), were fixed against the
+RAW-STORAGE-BYPASS shape (#1542: does an independently-gated core ceiling get
+skipped) but NOT against a separate, orthogonal shape this doc had not yet
+named: **wire-actor-identity forgery** — a handler authorizing or persisting
+an actor identity (who performed this action) from a value the CALLER
+supplied on the wire, instead of the AUTHENTICATED request context. All three
+are now fixed on both axes as of this sweep (2026-08-25); recorded here so
+the "FIXED" label on the original PRs/entries isn't read as covering ground
+it never actually covered.
+
+- **`CreateInvitationProxy`** (`server/http/handlers/invitations_proxy.go`).
+  Recorded FIXED under #1558 (re-derives `requireAuthorityForRole`'s
+  escalation-by-proxy ceiling). That fix did not touch this axis at all: the
+  ceiling check itself, and the persisted `InvitedBy` field, both still read
+  the wire body's `invited_by` — a caller holding only `system.write` could
+  name a real administrator's ID in that field and clear the ceiling meant to
+  require the ADMIN to have made the call, while also mis-attributing the
+  invitation. Fixed by deriving both from `actorID(r)` (invitation authority
+  is a human-only decision).
+- **`UpdateAccessRequestProxy`** (`server/http/handlers/access_request_proxy.go`).
+  Recorded FIXED under #1557 (re-derives maker≠checker + admin/role-grant
+  authority). Same correction: the self-approval check and both authority
+  checks read the wire body's `resolved_by`, not the authenticated caller —
+  a system.write-only caller could name a real admin as `resolved_by` and
+  approve access to a restricted secret. Fixed via
+  `requestActorKindAndID(r)` (actor-kind aware — this check must work for
+  both human and machine callers).
+- **`RevokeBreakGlassActivationProxy`** (`server/http/handlers/break_glass_proxy.go`).
+  Recorded FIXED in this same sweep's earlier pass ("actually revoke role" —
+  the role-removal + audit-event gap, #1511-adjacent). That fix kept trusting
+  the wire body's `revoked_by` for the role-removal actor, the persisted
+  `RevokedBy` field, and the audit event — a non-repudiation break letting
+  any `system.write` holder revoke an emergency access grant while
+  attributing it, in both the activation record and the audit trail, to an
+  arbitrary user ID. Fixed via `actorID(r)` (revocation authority is a human
+  decision).
+
+**Root cause, generalized**: a handler can be genuinely fixed against the
+specific vulnerability an audit named, while an adjacent, differently-shaped
+vulnerability in the same code survives untouched because it was never named
+as a separate axis. "FIXED" in a PR title or an allowlist entry is a claim
+about the axis that PR addressed, not a claim that the handler has no other
+problems — worth remembering before trusting a FIXED label to mean "this
+handler is now safe" rather than "this ONE finding is closed."
+
+**Full sweep table** (every `/system` proxy handler and every handler with an
+actor-shaped body field, checked — not just the hits; a sweep that reports
+only hits is indistinguishable from one that didn't look):
+
+| Handler | Wire field(s) | Used for | Status | Notes |
+|---|---|---|---|---|
+| `CreateInvitationProxy` | `invited_by` | auth check + persisted | FIXED | `actorID(r)` |
+| `UpdateAccessRequestProxy` | `resolved_by` | auth check + persisted | FIXED | `requestActorKindAndID(r)` |
+| `UpdateAccessReviewItemProxy` | `decided_by` | auth check (self-cert) + persisted | FIXED (new hit) | was comparing two wire values against each other |
+| `CreateAccessRequestApprovalProxy` | `approver_id` | persisted, feeds dual-control count | FIXED (new hit) | no auth check existed at all; dual-control bypass |
+| `RevokeBreakGlassActivationProxy` | `revoked_by` | role-removal actor + persisted + audit | FIXED (new hit) | already touched by this campaign, wrong axis |
+| `CreateMachineIdentityProxy` | `created_by` | persisted only | FIXED (new hit) | ceiling check 2 lines above was already correct |
+| `UpdateMachineIdentityProxy` / `TransitionMachineIdentityStateProxy` | `created_by` | persisted (full-row overwrite) | FIXED (new hit) | same field, reachable a second way |
+| `CreateAccessReviewCampaignProxy` | `created_by` | persisted | FIXED (new hit) | audit event was already correct; only the row wasn't |
+| `CreateMembershipProxy` | `invited_by` | persisted only | FIXED (new hit) | feeds notification routing + audit, no privilege by itself |
+| `CreateSetupTokenProxy` | `created_by` | persisted, feeds audit actor | FIXED (new hit) | the route's own gating (users.write) was already correct |
+| `CreateAccessRequestProxy` | `resolved_by` | persisted at creation, unused | FIXED (new hit) | cosmetic — state is always forced to pending |
+| `CreateDynamicSecretConfigProxy` | `created_by` | persisted (display string) | **NOT FIXED, tracked** | low severity, no auth decision reads it back; see `wire_actor_identity_forgery_guard_test.go`'s own doc comment for why the guard structurally cannot see this one |
+| `IngestAuditEventProxy` | full `AuditEvent` incl. actor fields | persisted (the audit record itself) | ACKNOWLEDGED, DEFERRED | pre-existing, explicitly documented, tracked separately ("Wave 4") |
+| `CreateUserWithRoleGrantsProxy` | — | `actorID(r)` used correctly | CORRECT EXAMPLE | the positive pattern every fix above now matches |
+| `DeleteProjectProxy` | — | `RequireScopedPermission` middleware, not a wire field | CORRECT EXAMPLE | fixed in this same session for a related but distinct finding (see the raw-storage-bypass triage doc) |
+| groups/rbac-role-grants/risk-exceptions/most of machine-identities/users-credentials/legal-hold proxies | — | `actorID(r)`/`isMachineActor(r)`/context-derived throughout | CORRECT EXAMPLE (~20 handlers) | already using the right pattern before this sweep |
+| ~115 remaining GET/List/Count/plain-CRUD `/system` routes | — | no actor-shaped field influences an auth decision or persisted attribution | NOT APPLICABLE | — |
+
+**Guard added**: `server/http/wire_actor_identity_forgery_guard_test.go`
+(`TestNoUnjustifiedActorIdentityForgery`) — same allowlist/known-unfixed
+shape as `raw_storage_bypass_guard_test.go`, scanning every `/system` handler
+for a wire-supplied actor-shaped field (`invited_by`, `resolved_by`,
+`created_by`, `decided_by`, `approver_id`, `revoked_by`) read directly
+instead of derived from the authenticated caller.
+
+---
+
 ## Comment on #1511 (missing `/api/v1/rbac/remove-role` wire route)
 
 **Context**: #1511 already tracks that `POST /api/v1/rbac/remove-role` and

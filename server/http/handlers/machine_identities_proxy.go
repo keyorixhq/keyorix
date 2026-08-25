@@ -303,6 +303,19 @@ func newRoleProxyWire(r *models.Role) roleProxyWire {
 // (name/project_id/identity_type/description/classification/created_by) was
 // already on the wire; only the fields a legitimate relay never had a reason to
 // set (State, arbitrary ID/timestamps) are now ignored rather than trusted.
+//
+// Second finding (independent verification session, 2026-08-25): this route had
+// no actor-authority check of any kind, unlike its human-facing equivalent (POST
+// /projects/{id}/machine-identities, RequireScopedPermission(roles.assign,
+// projectScope)). A caller holding no authority over machine identities at all
+// could create one here for free, then mint themselves a credential for it
+// (CreateMachineIdentityCredentialProxy's OWN ceiling only inspected the
+// target's CURRENT roles, always empty on a brand-new identity) — two /system
+// calls from any system.write holder to a fresh, attacker-controlled machine
+// credential. Now runs requireMachinePrivilegeCeiling with machineID==0 (the
+// identity doesn't exist yet), which collapses to the same roles.assign-at-
+// project-scope requirement the human-facing route enforces at the HTTP layer —
+// derived from that same authority, not a new, independently-chosen rule.
 func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -313,7 +326,22 @@ func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "name and project_id are required")
 		return
 	}
-	created, err := h.coreService.CreateMachineIdentity(r.Context(), body.ProjectID, body.Name, body.IdentityType, body.Description, body.Classification, body.CreatedBy)
+	actorType, principalID := requestActorKindAndID(r)
+	if err := h.coreService.RequireMachinePrivilegeCeiling(r.Context(), actorType, principalID, body.ProjectID, 0); err != nil {
+		if errors.Is(err, core.ErrMachinePrivilegeCeilingDenied) {
+			writeRemoteAPIError(w, http.StatusForbidden, "PRIVILEGE_CEILING_EXCEEDED", clientSafe(err))
+			return
+		}
+		log.Printf("machine-identities proxy: privilege ceiling check failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	// G80 documented-exception re-verification sweep (2026-08-25): CreatedBy
+	// used to persist verbatim from the wire despite principalID (the actor
+	// this SAME function just ceiling-checked two lines above) already being
+	// available — force provenance to match the actor that was actually
+	// authorized to perform this create.
+	created, err := h.coreService.CreateMachineIdentity(r.Context(), body.ProjectID, body.Name, body.IdentityType, body.Description, body.Classification, principalID)
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusInternalServerError
@@ -371,7 +399,27 @@ func (h *CatalogHandler) UpdateMachineIdentityProxy(w http.ResponseWriter, r *ht
 		return
 	}
 	body.ID = uint(id)
-	if err := h.coreService.Storage().UpdateMachineIdentity(r.Context(), body.toModel()); err != nil {
+	// G80 documented-exception re-verification sweep (2026-08-25): this is a
+	// raw full-row Save, and CreatedBy used to travel through it unguarded — a
+	// caller-forged CreatedBy on this route would silently rewrite an existing
+	// machine identity's recorded creator, reachable a second way beyond
+	// CreateMachineIdentityProxy's own (separately fixed) create-time
+	// provenance. Preserve the EXISTING row's CreatedBy rather than trust the
+	// wire's, matching how core.ClassifyMachineIdentity's actual use of this
+	// path only ever intends to change Classification, never provenance.
+	existing, err := h.coreService.Storage().GetMachineIdentity(r.Context(), body.ID)
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "machine identity not found")
+			return
+		}
+		log.Printf("machine-identities proxy: update lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	model := body.toModel()
+	model.CreatedBy = existing.CreatedBy
+	if err := h.coreService.Storage().UpdateMachineIdentity(r.Context(), model); err != nil {
 		log.Printf("machine-identities proxy: update failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
@@ -412,6 +460,20 @@ func (h *CatalogHandler) TransitionMachineIdentityStateProxy(w http.ResponseWrit
 	}
 	body.MachineIdentity.ID = uint(id)
 	m := body.MachineIdentity.toModel()
+	// G80 documented-exception re-verification sweep (2026-08-25): the CAS
+	// write below (Select("*").Updates(m)) persists EVERY column of m,
+	// including CreatedBy — a caller-forged CreatedBy here would silently
+	// rewrite an existing machine identity's recorded creator, the same class
+	// CreateMachineIdentityProxy was separately fixed against, reachable a
+	// second way through this route. Preserve the EXISTING row's CreatedBy
+	// when there IS an existing row; a lookup miss is not treated as fatal
+	// here — the CAS write's own WHERE clause already reports matched=false
+	// for a nonexistent/already-transitioned row (this route's own documented
+	// contract, exercised by TransitionMachineIdentityStateProxy_HappyPath_S21
+	// against an empty DB), and CreatedBy is moot when nothing matches anyway.
+	if existing, lookupErr := h.coreService.Storage().GetMachineIdentity(r.Context(), m.ID); lookupErr == nil {
+		m.CreatedBy = existing.CreatedBy
+	}
 	// #1542-shape guard (G80 overnight campaign): the raw CAS write below has no
 	// legality check of its own — revoked is supposed to be terminal, but nothing
 	// stopped a caller from un-revoking a machine identity or jumping straight from
@@ -523,6 +585,18 @@ func (h *CatalogHandler) CountMachineIdentitiesByClassificationProxy(w http.Resp
 // (Accepted, 2026-08-25) found that "downstream node relay" topology cannot
 // exist in this codebase (ADR-083's validateRemoteStorageNotServer rejects
 // storage.type: remote for any server process) and removed the exemption.
+//
+// Second finding (independent verification session, 2026-08-25, post-ADR-085):
+// removing the node arm closed the relay exemption but not the underlying
+// ceiling gap. requireMachinePrivilegeCeiling only ever inspected the TARGET
+// machine's CURRENT roles — an actor holding no authority over machine
+// identities at all could create a fresh, zero-role machine identity via
+// CreateMachineIdentityProxy (which ran no check of its own either) and mint
+// themselves a working credential for it, since a brand-new identity never
+// holds an admin-tier role at the moment of minting. The ceiling now also
+// requires the actor to hold roles.assign at the target's project scope
+// (mirroring the human-facing creation route's own ceiling) whenever the
+// target isn't already admin-tier — see requireMachinePrivilegeCeiling's doc.
 func (h *CatalogHandler) CreateMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityCredentialProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -533,7 +607,18 @@ func (h *CatalogHandler) CreateMachineIdentityCredentialProxy(w http.ResponseWri
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "machine_identity_id and token_hash are required")
 		return
 	}
-	if err := h.coreService.RequireMachinePrivilegeCeiling(r.Context(), actorID(r), body.MachineIdentityID); err != nil {
+	target, err := h.coreService.Storage().GetMachineIdentity(r.Context(), body.MachineIdentityID)
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "machine identity not found")
+			return
+		}
+		log.Printf("machine-credentials proxy: create lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	actorType, principalID := requestActorKindAndID(r)
+	if err := h.coreService.RequireMachinePrivilegeCeiling(r.Context(), actorType, principalID, target.ProjectID, body.MachineIdentityID); err != nil {
 		if errors.Is(err, core.ErrMachinePrivilegeCeilingDenied) {
 			writeRemoteAPIError(w, http.StatusForbidden, "PRIVILEGE_CEILING_EXCEEDED", clientSafe(err))
 			return

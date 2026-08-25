@@ -97,8 +97,10 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	}
 	// MACH-001: enforce a privilege ceiling — a non-admin cannot issue a token for
 	// a machine that holds admin-tier roles, since the token would carry those roles
-	// and the actor could use it to escalate their own effective privileges.
-	if err := c.requireMachinePrivilegeCeiling(ctx, actorID, machineID); err != nil {
+	// and the actor could use it to escalate their own effective privileges. Every
+	// caller of IssueMachineToken (CLI, gRPC, HTTP) passes a real user's ID, never a
+	// machine principal's, so ActorTypeUser is exact here, not a default.
+	if err := c.requireMachinePrivilegeCeiling(ctx, ActorTypeUser, actorID, projectID, machineID); err != nil {
 		return nil, err
 	}
 	classification := params.Classification

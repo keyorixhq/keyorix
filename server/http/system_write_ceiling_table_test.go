@@ -321,7 +321,13 @@ func doCeilingRequestAs(t *testing.T, f ceilingTableFixtures, token, method, pat
 // any other value), never having been active.
 func TestSystemWriteCeiling_CreateMachineIdentityProxy_ForcesActiveState(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
-	status, body := doCeilingRequest(t, f, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
+	// This case is about the state-forcing behavior, not about the privilege
+	// ceiling (that's TestSystemWriteCeiling_CreateMachineIdentityCredentialProxy_
+	// EnforcesPrivilegeCeiling's job) — use f.rolesAssignToken (system.write +
+	// roles.assign) so the request clears the MACH-001 ceiling check that
+	// CreateMachineIdentityProxy now runs, and reaches the state-forcing logic
+	// under test.
+	status, body := doCeilingRequestAs(t, f, f.rolesAssignToken, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
 		"name": "ceiling-table-forged-state", "project_id": f.projectID,
 		"identity_type": core.MachineTypeService, "state": core.MachineRevoked,
 	})

@@ -108,13 +108,22 @@ func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	require.NoError(t, err)
 
 	token := createSystemWriteOnlyToken(t, testCore)
+	// Task 1's caller needs roles.assign too now that CreateMachineIdentityCredentialProxy
+	// runs core.RequireMachinePrivilegeCeiling (MACH-001) unconditionally, not only
+	// system.write — createSystemWriteAndRolesAssignToken (system_write_ceiling_table_test.go,
+	// same package) grants exactly that, at global scope, via a custom role outside
+	// adminRoleNames (so this stays a genuine roles.assign-holder, not an admin-tier bypass).
+	rolesAssignToken := createSystemWriteAndRolesAssignToken(t, testCore)
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	// --- Task 1: the finding under test ---
-	// CreateMachineIdentityCredentialProxy performs no per-caller authorization check
-	// of its own (machine_identities_proxy.go's package doc: "NO authorization/
-	// business-logic decision is made here"). If system.write alone reaches this
-	// handler, the request must succeed and mint a real credential.
+	// CreateMachineIdentityCredentialProxy performs no PER-ROUTE authorization check
+	// of its own beyond core.RequireMachinePrivilegeCeiling (MACH-001, added by the
+	// independent-verification fix): the caller must hold roles.assign at the target
+	// project's scope (or the target must be admin-tier, which forces global-admin
+	// instead — not the case here, targetMI is an ordinary machine). system.write
+	// alone is no longer sufficient to reach a successful mint; system.write +
+	// roles.assign is.
 	reqBody, err := json.Marshal(map[string]any{
 		"machine_identity_id": targetMI.ID,
 		"token_hash":          "0000000000000000000000000000000000000000000000000000000000000001",
@@ -123,7 +132,7 @@ func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/system/machine-credentials", bytes.NewReader(reqBody))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+rolesAssignToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -131,18 +140,19 @@ func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	var respBuf bytes.Buffer
 	_, err = respBuf.ReadFrom(resp.Body)
 	require.NoError(t, err)
-	t.Logf("Task 1 — POST /api/v1/system/machine-credentials as a system.write-only human (no admin role, no node credential): status=%d body=%s",
+	t.Logf("Task 1 — POST /api/v1/system/machine-credentials as a system.write+roles.assign human (no admin role, no node credential): status=%d body=%s",
 		resp.StatusCode, respBuf.String())
 
-	// --- Task 2 (control): the SAME caller/token against a route with its ceiling intact ---
+	// --- Task 2 (control): the ORIGINAL system.write-ONLY caller (no roles.assign) against
+	// a route with its ceiling intact ---
 	// IssueMachineToken (server/http/handlers/machine_identities.go — the direct/
 	// human-facing endpoint backing CreateMachineIdentityCredentialProxy's CLI
 	// equivalent) requires roles.assign in the TARGET project's scope
 	// (RequireScopedPermission(permRolesAssign, projectScope), router.go). This caller
 	// holds neither roles.assign nor any project-scoped role at all — a 403 here proves
-	// the harness genuinely constructed a scoped, non-admin caller (not one silently
-	// treated as admin everywhere), which is what makes Task 1's result meaningful
-	// rather than an artifact of a broken test fixture.
+	// the harness genuinely constructed a scoped, non-admin, non-roles.assign caller (not
+	// one silently treated as admin everywhere), which is what makes Task 1's roles.assign
+	// grant meaningful (an ADDED authority, not a fixture that was already omnipotent).
 	controlBody, err := json.Marshal(map[string]any{"name": "ceiling-test-control-token"})
 	require.NoError(t, err)
 	controlURL := fmt.Sprintf("%s/api/v1/projects/%d/machine-identities/%d/tokens", server.URL, projects[0].ID, targetMI.ID)
@@ -156,7 +166,7 @@ func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	var controlBuf bytes.Buffer
 	_, err = controlBuf.ReadFrom(controlResp.Body)
 	require.NoError(t, err)
-	t.Logf("Control — POST %s as the SAME system.write-only human: status=%d body=%s",
+	t.Logf("Control — POST %s as the ORIGINAL system.write-only human (no roles.assign): status=%d body=%s",
 		controlURL, controlResp.StatusCode, controlBuf.String())
 
 	// Assertions follow the empirically observed behavior of the group's own gate
@@ -165,18 +175,19 @@ func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	// written against): it calls AuthorizePrincipal(ctx, actorKind, principalID,
 	// "system.write", core.Scope{}) with NO further per-route check, so a
 	// system.write holder — human or machine, admin or not — reaches the handler.
-	// CreateMachineIdentityCredentialProxy itself is FIXED as of this ADR
-	// (core.RequireMachinePrivilegeCeiling now runs unconditionally,
-	// rawStorageBypassAllowlist) — this call still succeeds (200) because
-	// targetMI is an ordinary, non-admin-tier machine identity, so the ceiling
-	// has nothing to refuse; system_write_ceiling_table_test.go's
-	// EnforcesPrivilegeCeiling/StillBypassesPrivilegeCeiling rows cover the
-	// admin-tier-target case this test does not.
+	// CreateMachineIdentityCredentialProxy itself now ALSO runs
+	// core.RequireMachinePrivilegeCeiling (MACH-001, independent-verification fix,
+	// 2026-08-25) unconditionally: the caller must additionally hold roles.assign in
+	// the target project's scope (targetMI is an ordinary, non-admin-tier machine, so
+	// the admin-tier-target branch of the ceiling doesn't apply here — that case is
+	// covered by system_write_ceiling_table_test.go's EnforcesPrivilegeCeiling/
+	// StillBypassesPrivilegeCeiling rows). Hence Task 1 uses rolesAssignToken
+	// (system.write + roles.assign) rather than the plain system.write-only token.
 	assert.Equal(t, http.StatusOK, resp.StatusCode,
-		"a system.write-only human is expected to reach CreateMachineIdentityCredentialProxy for a "+
-			"non-admin-tier target machine: the group's own gate makes no further per-caller check, and "+
-			"core.RequireMachinePrivilegeCeiling has nothing to refuse against a non-admin-tier target "+
-			"(writeRemoteAPISuccess never calls WriteHeader, so success is 200, not 201)")
+		"a system.write+roles.assign human is expected to reach CreateMachineIdentityCredentialProxy for a "+
+			"non-admin-tier target machine: the group's own gate requires only system.write, and "+
+			"core.RequireMachinePrivilegeCeiling is satisfied by the caller's roles.assign grant at the "+
+			"target project scope (writeRemoteAPISuccess never calls WriteHeader, so success is 200, not 201)")
 	assert.True(t, respBuf.Len() > 0 && bytes.Contains(respBuf.Bytes(), []byte(`"success":true`)),
 		"expected a real created-credential response body, not just a 200 status")
 	assert.Equal(t, http.StatusForbidden, controlResp.StatusCode,

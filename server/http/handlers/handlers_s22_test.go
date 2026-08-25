@@ -651,7 +651,11 @@ func TestCreateAccessRequestApprovalProxy_BadID_S22(t *testing.T) {
 
 // TestCreateAccessRequestApprovalProxy_MissingApproverID_S22 verifies the 400
 // branch when approver_id is zero.
-func TestCreateAccessRequestApprovalProxy_MissingApproverID_S22(t *testing.T) {
+// TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller_S22 (G80
+// documented-exception re-verification sweep, 2026-08-25) supersedes the old
+// MissingApproverID test: approver_id is no longer read from the wire at all.
+// What must still be rejected is a call with no authenticated caller at all.
+func TestCreateAccessRequestApprovalProxy_NoAuthenticatedCaller_S22(t *testing.T) {
 	cs := freshCoreS12(t)
 	h := NewCatalogHandler(cs)
 
@@ -664,8 +668,8 @@ func TestCreateAccessRequestApprovalProxy_MissingApproverID_S22(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateAccessRequestApprovalProxy(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "approver_id is required")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "FORBIDDEN")
 }
 
 // TestListAccessRequestApprovalsProxy_BadID_S22 verifies the 400 branch.
@@ -1145,9 +1149,13 @@ func TestRevokeBreakGlassActivationProxy_BadID_S22(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestRevokeBreakGlassActivationProxy_MissingRevokedBy_S22 verifies the 400
-// branch when revoked_by is zero.
-func TestRevokeBreakGlassActivationProxy_MissingRevokedBy_S22(t *testing.T) {
+// TestRevokeBreakGlassActivationProxy_NoAuthenticatedCaller_S22 (G80
+// documented-exception re-verification sweep, 2026-08-25) supersedes the old
+// MissingRevokedBy test: revoked_by is no longer read from the wire at all
+// (see break_glass_proxy.go's own updated doc comment) -- a wire body
+// setting it to 0 is no longer distinct from any other value. What must
+// still be rejected is a call with no authenticated human caller at all.
+func TestRevokeBreakGlassActivationProxy_NoAuthenticatedCaller_S22(t *testing.T) {
 	cs := freshCoreS12(t)
 	h := NewCatalogHandler(cs)
 
@@ -1163,6 +1171,5 @@ func TestRevokeBreakGlassActivationProxy_MissingRevokedBy_S22(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "revoked_by is required")
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }

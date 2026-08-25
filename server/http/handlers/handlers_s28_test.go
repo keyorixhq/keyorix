@@ -238,6 +238,7 @@ func TestCreateMachineIdentityProxy_HappyPath_S28(t *testing.T) {
 			"identity_type": "service",
 			"state":         "active",
 		}))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -457,6 +458,7 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath_S28(t *testing.T) {
 			"token_hash":          "deadbeef0123456789abcdef01234567",
 			"name":                "s28-cred",
 		}))
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

@@ -24,7 +24,7 @@ import (
 // configured with storage.type: remote (ADR-049), pointed at "upstream" over
 // real HTTP via store.RemoteStorage. Mirrors
 // newUpstreamDownstreamForMemberships exactly.
-func newUpstreamDownstreamForAccessReviewCampaigns(t *testing.T) (upstream *core.KeyorixCore, downstream *core.KeyorixCore, projectID uint) {
+func newUpstreamDownstreamForAccessReviewCampaigns(t *testing.T) (upstream *core.KeyorixCore, downstream *core.KeyorixCore, projectID uint, baseURL string) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
@@ -55,7 +55,7 @@ func newUpstreamDownstreamForAccessReviewCampaigns(t *testing.T) (upstream *core
 	ctx := context.Background()
 	project, err := upstream.CreateProject(ctx, "Access Review Campaign Test Project", "")
 	require.NoError(t, err)
-	return upstream, downstream, project.ID
+	return upstream, downstream, project.ID, upstreamSrv.URL
 }
 
 // TestRemoteStorageAccessReviewCampaign_CreateGetList_RealServer proves the
@@ -65,7 +65,7 @@ func newUpstreamDownstreamForAccessReviewCampaigns(t *testing.T) (upstream *core
 // listed — all via storage.type: remote against a real router, not a
 // protocol mock.
 func TestRemoteStorageAccessReviewCampaign_CreateGetList_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForAccessReviewCampaigns(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -120,7 +120,7 @@ func TestRemoteStorageAccessReviewCampaign_CreateGetList_RealServer(t *testing.T
 // not-found error (not a panic, not a garbage 500) for a nonexistent
 // campaign ID.
 func TestRemoteStorageAccessReviewCampaign_GetNotFound_RealServer(t *testing.T) {
-	_, downstream, _ := newUpstreamDownstreamForAccessReviewCampaigns(t)
+	_, downstream, _, _ := newUpstreamDownstreamForAccessReviewCampaigns(t)
 	ctx := context.Background()
 
 	_, err := downstream.Storage().GetAccessReviewCampaign(ctx, 999999)
@@ -136,7 +136,7 @@ func TestRemoteStorageAccessReviewCampaign_GetNotFound_RealServer(t *testing.T) 
 // live caller; see docs/g80-remediation-notes.md) — only the two Get* queries
 // under test go over the downstream's RemoteStorage wire.
 func TestRemoteStorageAccessReviewCampaign_OpenAndLatestClosed_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForAccessReviewCampaigns(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -190,10 +190,25 @@ func TestRemoteStorageAccessReviewCampaign_OpenAndLatestClosed_RealServer(t *tes
 // CreateAccessReviewItems/ListAccessReviewItems/CountPendingAccessReviewItems/
 // GetAccessReviewItem/UpdateAccessReviewItem round-trip over storage.type:
 // remote.
+// G80 documented-exception re-verification sweep (2026-08-25):
+// UpdateAccessReviewItemProxy's self-certification check is now anchored to
+// the AUTHENTICATED caller (requestActorKindAndID(r)), not the wire's
+// decided_by -- `downstream`'s shared client authenticates as a MACHINE
+// credential (createNodeToken), so it can no longer decide an item at all
+// (the check requires a human actor). This test's actual subject is the
+// conditional-update round trip, not who may decide, so the decide call now
+// goes through a real human reviewer's own client instead.
 func TestRemoteStorageAccessReviewCampaign_ItemsRoundTrip_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
+	upstream, downstream, projectID, baseURL := newUpstreamDownstreamForAccessReviewCampaigns(t)
 	ctx := context.Background()
 	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+	reviewer, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "arc-items-reviewer", Email: "arc-items-reviewer@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, reviewer.ID)
+	reviewerSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "arc-items-reviewer", Password: pw})
+	require.NoError(t, err)
+	asReviewer := newDeleteProjectScopeRemoteClient(t, baseURL, reviewerSess.SessionToken)
 
 	c, err := downstream.Storage().CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
 		ProjectID: projectID, Name: "items campaign", State: core.CampaignStateOpen, CreatedBy: 1, CreatedAt: now,
@@ -223,20 +238,28 @@ func TestRemoteStorageAccessReviewCampaign_ItemsRoundTrip_RealServer(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, target.PrincipalName, fetched.PrincipalName)
 
-	// Decide it (attest) via UpdateAccessReviewItem's conditional UPDATE.
+	// Decide it (attest) via UpdateAccessReviewItem's conditional UPDATE, as a
+	// genuinely different authenticated reviewer (item principal is 42).
 	decidedAt := time.Now()
 	fetched.Decision = core.ReviewItemAttested
-	fetched.DecidedBy = 7
 	fetched.DecidedAt = &decidedAt
-	updated, err := downstream.Storage().UpdateAccessReviewItem(ctx, fetched)
+	updated, err := asReviewer.UpdateAccessReviewItem(ctx, fetched)
 	require.NoError(t, err)
 	assert.True(t, updated, "deciding a still-pending item in an open campaign must succeed")
 
-	pending, err = downstream.Storage().CountPendingAccessReviewItems(ctx, c.ID)
+	// Verified against the upstream's own storage directly, not re-read
+	// through `downstream` -- `asReviewer` is a SEPARATE client instance from
+	// `downstream`, and internal/storage/remote.HTTPClient's GET cache is
+	// only invalidated by a write through THAT SAME client instance; a write
+	// through a different client would not clear `downstream`'s already-
+	// cached results from the reads above. See
+	// TestRemoteStorageAccessRequest_Approvals_RealServer's identical
+	// comment for the full reasoning.
+	pending, err = upstream.Storage().CountPendingAccessReviewItems(ctx, c.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, pending, "the decided item no longer counts as pending")
 
-	refetched, err := downstream.Storage().GetAccessReviewItem(ctx, target.ID)
+	refetched, err := upstream.Storage().GetAccessReviewItem(ctx, target.ID)
 	require.NoError(t, err)
 	assert.Equal(t, core.ReviewItemAttested, refetched.Decision)
 }
@@ -246,17 +269,28 @@ func TestRemoteStorageAccessReviewCampaign_ItemsRoundTrip_RealServer(t *testing.
 // campaign_id IN (... WHERE state = 'open')` UPDATE survives the HTTP hop
 // faithfully: a second decision on an already-decided item must report
 // updated=false, not silently flip the recorded decision (#319).
+// G80 documented-exception re-verification sweep (2026-08-25): same
+// correction as TestRemoteStorageAccessReviewCampaign_ItemsRoundTrip_RealServer
+// -- deciding an item now requires a real, human, non-self reviewer.
 func TestRemoteStorageAccessReviewCampaign_UpdateItemRejectsWhenAlreadyDecided_RealServer(t *testing.T) {
-	_, downstream, projectID := newUpstreamDownstreamForAccessReviewCampaigns(t)
+	upstream, downstream, projectID, baseURL := newUpstreamDownstreamForAccessReviewCampaigns(t)
 	ctx := context.Background()
 	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+	reviewer, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "arc-redecide-reviewer", Email: "arc-redecide-reviewer@example.com", Password: pw})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, reviewer.ID)
+	reviewerSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "arc-redecide-reviewer", Password: pw})
+	require.NoError(t, err)
+	asReviewer := newDeleteProjectScopeRemoteClient(t, baseURL, reviewerSess.SessionToken)
 
 	c, err := downstream.Storage().CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
 		ProjectID: projectID, Name: "redecide", State: core.CampaignStateOpen, CreatedBy: 1, CreatedAt: now,
 	})
 	require.NoError(t, err)
+	// PrincipalID (999) deliberately differs from the reviewer's own real ID.
 	items := []*models.AccessReviewItem{
-		{CampaignID: c.ID, PrincipalType: "user", PrincipalID: 1, Source: "role", AccessLevel: "read", EnvironmentID: 1, Decision: core.ReviewItemPending},
+		{CampaignID: c.ID, PrincipalType: "user", PrincipalID: 999, Source: "role", AccessLevel: "read", EnvironmentID: 1, Decision: core.ReviewItemPending},
 	}
 	require.NoError(t, downstream.Storage().CreateAccessReviewItems(ctx, items))
 	rows, err := downstream.Storage().ListAccessReviewItems(ctx, c.ID)
@@ -265,13 +299,13 @@ func TestRemoteStorageAccessReviewCampaign_UpdateItemRejectsWhenAlreadyDecided_R
 	item := rows[0]
 
 	decidedAt := time.Now()
-	first := &models.AccessReviewItem{ID: item.ID, CampaignID: c.ID, PrincipalType: "user", PrincipalID: 1, Source: "role", AccessLevel: "read", EnvironmentID: 1, Decision: core.ReviewItemAttested, DecidedBy: 5, DecidedAt: &decidedAt}
-	updated, err := downstream.Storage().UpdateAccessReviewItem(ctx, first)
+	first := &models.AccessReviewItem{ID: item.ID, CampaignID: c.ID, PrincipalType: "user", PrincipalID: 999, Source: "role", AccessLevel: "read", EnvironmentID: 1, Decision: core.ReviewItemAttested, DecidedAt: &decidedAt}
+	updated, err := asReviewer.UpdateAccessReviewItem(ctx, first)
 	require.NoError(t, err)
 	assert.True(t, updated, "the first decision must win")
 
-	second := &models.AccessReviewItem{ID: item.ID, CampaignID: c.ID, PrincipalType: "user", PrincipalID: 1, Source: "role", AccessLevel: "read", EnvironmentID: 1, Decision: core.ReviewItemRevoked, DecidedBy: 6, DecidedAt: &decidedAt}
-	updated, err = downstream.Storage().UpdateAccessReviewItem(ctx, second)
+	second := &models.AccessReviewItem{ID: item.ID, CampaignID: c.ID, PrincipalType: "user", PrincipalID: 999, Source: "role", AccessLevel: "read", EnvironmentID: 1, Decision: core.ReviewItemRevoked, DecidedAt: &decidedAt}
+	updated, err = asReviewer.UpdateAccessReviewItem(ctx, second)
 	require.NoError(t, err, "a lost race is reported via the bool, not an error")
 	assert.False(t, updated, "a second decision on an already-decided item must be rejected")
 

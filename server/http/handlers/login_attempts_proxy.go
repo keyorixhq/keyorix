@@ -124,7 +124,7 @@ func (h *AuthHandler) RecordLoginAttemptProxy(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := h.coreService.RecordLoginAttemptRelay(r.Context(), body.IP, body.At); err != nil {
-		if errors.Is(err, core.ErrInvalidLoginAttemptKey) {
+		if errors.Is(err, core.ErrInvalidLoginAttemptKey) || errors.Is(err, core.ErrFutureLoginAttemptTimestamp) {
 			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
 			return
 		}
