@@ -1789,8 +1789,37 @@ func TestDoImport_Success(t *testing.T) {
 	entries := []secretEntry{
 		{Name: "MY_SECRET", Value: "myvalue"},
 	}
-	err := doImport(context.Background(), rc, entries, 1, 1)
+	err := doImport(context.Background(), rc, entries, 1, 1, 0)
 	require.NoError(t, err)
+}
+
+// TestDoImport_SourceSkippedFoldsIntoSummary verifies that secrets a live
+// source already dropped (sourceSkipped, e.g. Azure/GCP entries with no
+// accessible value) are folded into the same final "imported N, skipped M"
+// summary as destination-side skips — a non-zero source-skip count must be
+// visible in doImport's own printed output, not just logged separately where
+// it could be missed.
+func TestDoImport_SourceSkippedFoldsIntoSummary(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"id":1,"name":"MY_SECRET","type":"generic","project_id":1,"environment_id":1,"created_by":"cli","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "tok")
+
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+
+	entries := []secretEntry{
+		{Name: "MY_SECRET", Value: "myvalue"},
+	}
+	var err error
+	out := captureStdout(t, func() {
+		err = doImport(context.Background(), rc, entries, 1, 1, 2)
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "Imported 1/3 secrets", "total must include the 2 secrets skipped before doImport ever saw them")
+	assert.Contains(t, out, "2 skipped")
 }
 
 func TestDoImport_SkipExisting(t *testing.T) {
@@ -1814,7 +1843,7 @@ func TestDoImport_SkipExisting(t *testing.T) {
 		{Name: "MY_SECRET", Value: "myvalue"},
 	}
 	// With skip-existing=true and 409 → no error (skipped).
-	err := doImport(context.Background(), rc, entries, 1, 1)
+	err := doImport(context.Background(), rc, entries, 1, 1, 0)
 	_ = err // may succeed or fail depending on error message parsing
 }
 
@@ -1837,7 +1866,7 @@ func TestDoImport_FailedEntry(t *testing.T) {
 	entries := []secretEntry{
 		{Name: "FAIL_SECRET", Value: "value"},
 	}
-	err := doImport(context.Background(), rc, entries, 1, 1)
+	err := doImport(context.Background(), rc, entries, 1, 1, 0)
 	require.Error(t, err) // 1 failed
 	assert.Contains(t, err.Error(), "failed to import")
 }

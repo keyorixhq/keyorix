@@ -40,7 +40,11 @@ func fetchFromAzure(ctx context.Context) ([]secretEntry, error) {
 	return collectAzure(ctx, &azureClientAdapter{c: client})
 }
 
-// collectAzure lists and reads secrets from any azureSecretsAPI.
+// collectAzure lists and reads secrets from any azureSecretsAPI. A secret with
+// no accessible value (disabled, or a certificate-only secret with nothing in
+// resp.Value) is skipped rather than fatal — but every skip is printed by name
+// as it happens and tallied in sourceSkipCount, mirroring collectGCP's
+// reporting, so a dropped secret is never silent.
 func collectAzure(ctx context.Context, api azureSecretsAPI) ([]secretEntry, error) {
 	names, err := api.listNames(ctx)
 	if err != nil {
@@ -53,6 +57,8 @@ func collectAzure(ctx context.Context, api azureSecretsAPI) ([]secretEntry, erro
 			return nil, fmt.Errorf("read azure secret %q: %w", name, err)
 		}
 		if val == "" {
+			fmt.Printf("  ~ Skipped  %-30s (no accessible value)\n", name)
+			sourceSkipCount++
 			continue
 		}
 		entries = append(entries, explodeValue(name, val)...)

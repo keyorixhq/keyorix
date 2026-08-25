@@ -128,14 +128,26 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Only meaningful for --source imports (fetchFromSource resets it before
+	// each dispatch); zero for --file imports, which have no source-side skip
+	// concept of their own.
+	sourceSkipped := sourceSkipCount
 
 	if len(entries) == 0 {
-		fmt.Println("No secrets found.")
+		if sourceSkipped > 0 {
+			fmt.Printf("No secrets found (%d skipped — see above for details).\n", sourceSkipped)
+		} else {
+			fmt.Println("No secrets found.")
+		}
 		return nil
 	}
 
 	if importDryRun {
-		fmt.Printf("Dry run — would import %d secret(s):\n\n", len(entries))
+		fmt.Printf("Dry run — would import %d secret(s)", len(entries))
+		if sourceSkipped > 0 {
+			fmt.Printf(" (%d skipped at source — see above)", sourceSkipped)
+		}
+		fmt.Printf(":\n\n")
 		for _, e := range entries {
 			// #G58: a dry run must never put real secret bytes on the
 			// operator's terminal (scrollback, tmux/screen logging, screen
@@ -160,7 +172,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return doImport(ctx, rc, entries, nsID, envID)
+	return doImport(ctx, rc, entries, nsID, envID, sourceSkipped)
 }
 
 // collectEntries gathers the secrets to import from exactly one of the two
@@ -255,8 +267,8 @@ func resolveEnvironmentID(ctx context.Context, rc *common.RemoteClient, projectI
 
 // ── Import logic ──────────────────────────────────────────────────────────────
 
-func doImport(ctx context.Context, rc *common.RemoteClient, entries []secretEntry, nsID, envID uint) error {
-	imported, skipped, failed := 0, 0, 0
+func doImport(ctx context.Context, rc *common.RemoteClient, entries []secretEntry, nsID, envID uint, sourceSkipped int) error {
+	imported, skipped, failed := 0, sourceSkipped, 0
 
 	for _, e := range entries {
 		displayName := sanitizeForTerminal(e.Name)

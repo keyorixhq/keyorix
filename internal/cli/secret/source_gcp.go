@@ -62,6 +62,7 @@ func collectGCP(ctx context.Context, api gcpSecretsAPI, project string) ([]secre
 		if !ok {
 			// No enabled/accessible version (e.g. all versions destroyed/disabled).
 			fmt.Printf("  ~ Skipped  %-30s (no accessible version)\n", short)
+			sourceSkipCount++
 			continue
 		}
 		entries = append(entries, explodeValue(short, val)...)
@@ -95,7 +96,7 @@ func (a gcpClientAdapter) accessLatest(ctx context.Context, name string) (string
 	})
 	if err != nil {
 		// A secret with no enabled latest version is skipped, not fatal.
-		if s, ok := status.FromError(err); ok && (s.Code() == codes.NotFound || s.Code() == codes.FailedPrecondition) {
+		if isNoAccessibleVersion(err) {
 			return "", false, nil
 		}
 		return "", false, err
@@ -104,4 +105,17 @@ func (a gcpClientAdapter) accessLatest(ctx context.Context, name string) (string
 		return "", false, nil
 	}
 	return string(resp.GetPayload().GetData()), true, nil
+}
+
+// isNoAccessibleVersion reports whether err is the gRPC status Secret Manager
+// returns for "this secret has no enabled/accessible version" (NotFound —
+// secret or version doesn't exist — or FailedPrecondition — e.g. the only
+// version is DESTROYED/DISABLED). accessLatest treats that as a skip, not an
+// import failure. Named and pulled out on its own so the mapping itself is
+// unit-testable without a live GCP client: any OTHER status (PermissionDenied,
+// Unavailable, …) must propagate as an error rather than silently vanish as a
+// skip, and this function is what pins that boundary.
+func isNoAccessibleVersion(err error) bool {
+	s, ok := status.FromError(err)
+	return ok && (s.Code() == codes.NotFound || s.Code() == codes.FailedPrecondition)
 }
