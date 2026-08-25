@@ -237,13 +237,13 @@ func TestListProjectMachineRoleAssignmentsProxy_DBError_S30(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestListGlobalAdminAssignmentsForUpdateProxy_DBError_S30(t *testing.T) {
+func TestListGlobalAdminAssignmentsSnapshotProxy_DBError_S30(t *testing.T) {
 	t.Parallel()
 	h := NewRBACHandler(freshCoreBrokenS30(t))
 	// role_ids=1 forces the storage call; empty role_ids short-circuits with nil,nil
 	req := httptest.NewRequest(http.MethodGet, "/?role_ids=1", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 

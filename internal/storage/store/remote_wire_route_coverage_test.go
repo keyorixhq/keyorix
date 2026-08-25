@@ -783,7 +783,7 @@ var knownUnresolvedWireCalls = map[string]bool{
 	"remote_rbac.go:810":                      true,
 	"remote_rbac.go:1088":                     true,
 	"remote_secret_dependencies.go:151":       true,
-	"remote_secret_dependencies.go:171":       true,
+	"remote_secret_dependencies.go:176":       true,
 	"remote_secrets.go:148":                   true,
 	"remote_secrets.go:421":                   true,
 	"remote_secrets.go:441":                   true,

@@ -231,19 +231,27 @@ func (h *SecretHandler) ListSecretDependenciesForProjectProxy(w http.ResponseWri
 	writeRemoteAPISuccess(w, map[string]interface{}{"dependencies": newSecretDependencyProxyWireList(rows)})
 }
 
-// ListSecretDependenciesForProjectForUpdateProxy handles GET
-// /api/v1/system/secret-dependencies/for-update?project_id=X (a static path, registered
-// before /secret-dependencies/{id} in router.go). Kept for interface parity — see this
-// method's doc on RemoteStorage (remote_secret_dependencies.go) for why it takes no
-// lock over this hop.
-func (h *SecretHandler) ListSecretDependenciesForProjectForUpdateProxy(w http.ResponseWriter, r *http.Request) {
+// ListSecretDependenciesForProjectSnapshotProxy handles GET
+// /api/v1/system/secret-dependencies/snapshot?project_id=X (a static path, registered
+// before /secret-dependencies/{id} in router.go). Named Snapshot, not ForUpdate — the
+// deliberately outdated Go interface method backing it
+// (RemoteStorage.ListSecretDependenciesForProjectForUpdate, remote_secret_dependencies.go)
+// is kept named after LocalStorage's real, lock-holding sibling for interface parity,
+// but no HTTP endpoint can hold a Postgres row lock across a request boundary: a
+// separate connection serves each call, so a "ForUpdate" name on the route itself
+// would advertise a guarantee this transport structurally cannot provide, and would
+// invite a caller to read this, decide, and write back on a second request believing
+// the first locked something. It never does. This is a PLAIN, unlocked read; safety
+// comes entirely from CreateSecretDependencyExclusiveProxy's atomic conditional
+// write, in ONE request.
+func (h *SecretHandler) ListSecretDependenciesForProjectSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 	projectID, ok := parseProxyProjectIDQuery(w, r)
 	if !ok {
 		return
 	}
 	rows, err := h.coreService.Storage().ListSecretDependenciesForProjectForUpdate(r.Context(), projectID)
 	if err != nil {
-		log.Printf("secret-dependencies proxy: list-for-update failed: %v", err)
+		log.Printf("secret-dependencies proxy: list-snapshot failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
@@ -259,7 +267,7 @@ func newSecretDependencyProxyWireList(rows []*models.SecretDependency) []secretD
 }
 
 // parseProxyProjectIDQuery parses the required project_id query parameter shared by
-// ListSecretDependenciesForProjectProxy/ListSecretDependenciesForProjectForUpdateProxy.
+// ListSecretDependenciesForProjectProxy/ListSecretDependenciesForProjectSnapshotProxy.
 func parseProxyProjectIDQuery(w http.ResponseWriter, r *http.Request) (projectID uint, ok bool) {
 	v := r.URL.Query().Get("project_id")
 	if v == "" {
