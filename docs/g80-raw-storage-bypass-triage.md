@@ -447,21 +447,36 @@ not the comment's own claim. Until that pass runs, "documented-exception" should
 this document.** An independent verification session found that PRs #1563–#1566 all showed
 "Merged" on GitHub while none of them were actually ancestors of `origin/main` — each was
 merged into the PREVIOUS PR's feature branch, not into `main`, so the whole chain showed
-green with nothing landed. A GitHub "Merged" badge is not evidence of a merge; the only
-trusted signal is `git fetch origin && git merge-base --is-ancestor <branch> origin/main`
-(now also stated in `CLAUDE.md`). **Checked, not assumed**: `#1557` (`2b888df7`), `#1558`
-(`28b52cfb`), `#1559` (`f83d63c6`), `#1560` (`33eaf8df`), `#1561` (`10fdb34a`), and `#1562`
-(`cb26f4f0`) were all individually verified as real ancestors of `origin/main` — the broken
-chain was specifically `#1563`–`#1566`, not this document's earlier "Fix wave complete"
-references. A guard now enforces this mechanically:
+green with nothing landed. A GitHub "Merged" badge is not evidence of a merge.
+
+**Correction (second independent verification pass, 2026-08-25): the check above is right
+about #1563–#1566, but the general rule it implied is wrong, and was corrected in
+`CLAUDE.md` before this doc caught up.** `git merge-base --is-ancestor <branch>
+origin/main` is NOT a general-purpose trusted signal — this repo squash-merges every PR,
+which mints a brand-new commit SHA, so a correctly-landed branch's own pre-squash commits
+are never ancestors of that squash commit either. That check returns false unconditionally,
+for every PR, landed or not; it happened to also be false for #1563–#1566, but for the
+wrong, unreliable reason, and would have been equally false for #1557–#1562 had anyone
+checked the branch tips instead of the squash commits. The actual check for "did this PR
+land": `gh pr view <N> --json baseRefName` (a PR based on a feature branch, not `main`, did
+not reach `main`) plus `git diff <branch> origin/main --stat` (empty means the content is
+already there). **Checked, not assumed, with the correct method**: `#1557` (`2b888df7`),
+`#1558` (`28b52cfb`), `#1559` (`f83d63c6`), `#1560` (`33eaf8df`), `#1561` (`10fdb34a`), and
+`#1562` (`cb26f4f0`) are each the real squash-merge commit for its PR, and each one IS
+independently confirmed a genuine ancestor of `origin/main` — checking one specific,
+already-resolved commit SHA against `origin/main` is a sound question (is this object
+included); it is only checking a whole *branch tip* across a squash boundary that is
+unsound. The broken chain was specifically `#1563`–`#1566`, not this document's earlier
+"Fix wave complete" references. A guard enforces the six-SHA check mechanically:
 `server/http/g80_triage_doc_closure_guard_test.go`'s
 `TestG80TriageDocClosuresAreAncestorsOfHEAD` re-checks each of the six SHAs above against
-`HEAD` on every test run, and fails loudly (not silently) if a PR reference in this
-document has no single commit to point at — exactly the shape `#1563`–`#1566` turned out to
-have. The re-applied `#1563`–`#1566` + ADR-085 content (see the corrections below) has been
-verified working via `git apply`/tests on a fresh branch off `origin/main`
-(`g80-fixland-main`) instead, since squash-merge history made the original per-PR commits
-unrecoverable as individually-attributable objects.
+`HEAD` on every test run (a sound use of `--is-ancestor` for a resolved commit, not a
+branch), and fails loudly (not silently) if a PR reference in this document has no single
+commit to point at — exactly the shape `#1563`–`#1566` turned out to have. The re-applied
+`#1563`–`#1566` + ADR-085 content (see the corrections below) has been verified working via
+`git apply`/tests on a fresh branch off `origin/main` (`g80-fixland-main`) instead, since
+squash-merge history made the original per-PR commits unrecoverable as individually-
+attributable objects.
 
 **Items 1 and 2 in "Fix wave complete" (`CreateAccessRequestProxy`/`UpdateAccessRequestProxy`
 under #1557, `CreateInvitationProxy`/`UpdateInvitationProxy` under #1558) were fixed on the

@@ -4,9 +4,18 @@
 // number is not itself evidence the fix reached `main` — see this session's
 // own headline finding: PRs #1563-#1566 all showed "Merged" on GitHub while
 // each was actually merged into the PREVIOUS PR's feature branch, never
-// `main` (CLAUDE.md's "a merge badge is not a merge"). The only trusted
-// signal is `git merge-base --is-ancestor`, applied here against every
-// closure claim this document makes that names a real, resolvable commit.
+// `main` (CLAUDE.md's "a merge badge is not a merge").
+//
+// IMPORTANT scope note (corrected 2026-08-25, see CLAUDE.md's fuller
+// correction): `git merge-base --is-ancestor <sha> HEAD` is sound HERE
+// because every claim below names one specific, already-resolved commit SHA
+// -- checking whether a known object is included in HEAD's history is a
+// valid question regardless of squash-merge. It would NOT be sound to run
+// `--is-ancestor <branch-tip> origin/main` instead: this repo squash-merges
+// every PR, minting a brand-new commit, so a correctly-landed branch's own
+// pre-squash commits are never ancestors of that squash commit either --
+// that check returns false unconditionally, landed or not. This guard never
+// does that; it only ever checks named, resolved SHAs, never a branch ref.
 //
 // This is NOT a claim that every referenced commit fixes what it says it
 // fixes -- that's the triage doc's own job. This guard only checks the
