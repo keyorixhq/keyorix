@@ -190,16 +190,83 @@ var rawStorageBypassAllowlist = map[string]string{
 	"DeleteExpiredRoleGrantsProxy": "false positive: the exported core wrapper (RemoveExpiredRoleGrants) has no " +
 		"actor ceiling either -- an unconditional, time-bounded system sweep. Its only extra value over the raw " +
 		"call is per-grant audit-event writing, an audit-completeness gap (#1529 territory), not a policy bypass.",
-	"CreateUserWithRoleGrantsProxy": "deliberate exception (C2), documented in its own handler doc: must be ONE " +
-		"atomic DB transaction (ADR-028), which a naive validate-via-core-then-create-via-core two-call proxy " +
-		"would break. ValidateRoleGrantAuthority re-applies the same escalation-ceiling + SoD checks the core " +
-		"wrapper (CreateUserWithAssignments, a different exported method than the storage method name this " +
-		"guard matched) uses, before the single atomic raw-storage create.",
-	"DeleteProjectProxy": "deliberate exception, same reasoning as RemoveGlobalAdminRoleGuardedProxy above: no " +
-		"real transaction spans the HTTP hop, so a guard here couldn't be atomic anyway.",
-	"DeleteProjectIfEmptyProxy": "false positive / by design: DeleteProjectIfEmpty is a purpose-built atomic " +
-		"storage-layer primitive that enforces DeleteProject(force=false)'s guard across the hop (#528) -- the " +
-		"raw call IS the guard, not a bypass of it.",
+	// VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep,
+	// escalation-delta test): this is the highest-suspicion item in the whole
+	// bucket -- "create a user AND grant roles atomically" is structurally the
+	// closest sibling to #1552 (AssignRoleWithExpiryProxy's node branch, a bare
+	// node credential granting ANY role including admin-tier with zero ceiling).
+	// Gate: system.write. Ceiling requireAuthorityForRole would apply for an
+	// admin-tier grant. Adversarial checks performed, not assumed: (1) node-
+	// credential bypass -- grepped the whole file for isNodeCredentialRequest:
+	// ZERO matches. ValidateRoleGrantAuthority (users.go:315-331) runs
+	// unconditionally for EVERY caller, human or machine, with no special-case
+	// branch. (2) per-grant enforcement -- ValidateRoleGrantAuthority loops over
+	// EVERY grant in the request (users.go:325), not just the first, calling
+	// requireAuthorityForRole per grant, then requireGrantSetNoSoDViolation over
+	// the full set (users.go:330) -- byte-identical to CreateUserWithAssignments'
+	// own enforcement (users.go:228,297), confirmed by direct code comparison.
+	// (3) actorID==0 (a node credential's UserID) -- requireAuthorityForRole ->
+	// requireAdminAuthorityAt (invitations.go:61-90) queries actual role
+	// assignments for ID 0, finds none, fails closed for any admin-tier grant --
+	// the OPPOSITE of #1552's shape (there the raw call skipped the ceiling
+	// entirely; here the ceiling runs and correctly denies actorID 0).
+	// (4) ADR-028 atomicity -- LocalStorage.CreateUserWithRoleGrants
+	// (internal/storage/store/local_users.go:80-105) wraps the user insert +
+	// every grant insert in ONE real gorm.DB.Transaction; remote_users.go's own
+	// doc explicitly reasons about the RemoteStorage.WithTransaction-no-op trap
+	// this campaign found elsewhere and explains why this design (one
+	// server-side POST) avoids it -- a correct, load-bearing choice, not blind
+	// reuse of an unrelated precedent. Residual, NOT specific to this handler:
+	// requireAuthorityForRole only ceilings hardcoded admin role NAMES
+	// (isAdminRoleName) -- a custom-named role bundling equivalent admin
+	// permissions passes with no ceiling check, identically in both this proxy
+	// and its human-facing sibling. Pre-existing, shared characteristic of the
+	// whole requireAuthorityForRole design, not a gap this handler introduces.
+	"CreateUserWithRoleGrantsProxy": "holds: ValidateRoleGrantAuthority (users.go:315-331) runs unconditionally " +
+		"for every caller (grepped -- zero isNodeCredentialRequest branches in this file), per-grant, and fails " +
+		"closed for actorID 0 via requireAdminAuthorityAt (invitations.go:61-90) -- the opposite of #1552's " +
+		"shape. ADR-028 atomicity is real (local_users.go:80-105, one gorm.DB.Transaction), not a WithTransaction-" +
+		"no-op trap.",
+	// CORRECTED 2026-08-25 (G80 documented-exception re-verification sweep): the
+	// prior reason here ("same reasoning as RemoveGlobalAdminRoleGuardedProxy --
+	// no real transaction spans the HTTP hop") was FALSE, not just imprecise --
+	// it borrowed an atomicity argument that doesn't apply to this call at all.
+	// This handler backs core.DeleteProject's force=TRUE path (see its own doc
+	// comment, project_catalog_proxy.go), which internal/core/catalog.go:186-191
+	// documents as intentionally skipping the guard+cascade atomicity problem
+	// entirely -- force=true has never had a guard to make atomic; it's a plain
+	// unconditional cascade with zero actor-authority check in core.DeleteProject
+	// either. The real, verified reason this route is safe: no-independent-
+	// ceiling -- there is nothing for the raw call to bypass, because
+	// core.DeleteProject(force=true) doesn't check anything beyond what
+	// already-runs storage.DeleteProject does. (RemoveGlobalAdminRoleGuardedProxy's
+	// atomicity story is real for THAT handler -- storage.RemoveGlobalAdminRoleGuarded
+	// genuinely folds a check-then-delete into one atomic call -- it just never
+	// applied here.)
+	"DeleteProjectProxy": "no-independent-ceiling: core.DeleteProject(force=true) (internal/core/catalog.go:186-191) " +
+		"intentionally skips the force=false guard+cascade atomicity problem entirely and calls the plain, " +
+		"unconditional storage.DeleteProject cascade -- no actor-authority check of any kind exists at the core " +
+		"layer for this path, so there's nothing for the raw call to bypass.",
+	// VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep,
+	// escalation-delta test): gate is system.write; ceiling is "zero secrets"
+	// before deleting a non-forced project, which core.DeleteProject(force=false)
+	// would otherwise check via a WithTransaction-wrapped guard-then-cascade
+	// pair -- broken under storage.type: remote (RemoteStorage.WithTransaction
+	// is a no-op) per #528's own commit message (b6e46050, 2026-07-07, "Closes
+	// #528": "the guard-count and the cascade... would have reopened a TOCTOU
+	// window" as a plain two-call pair). Adversarial check: is
+	// DeleteProjectIfEmpty ACTUALLY atomic, or just named "atomic"? Confirmed at
+	// internal/storage/store/local_secrets.go:272-290 -- the secret-count check
+	// and deleteProjectCascade both run inside ONE .Transaction() call, no
+	// separate earlier read. core.DeleteProject's force=false branch
+	// (catalog.go:192-199) does nothing beyond calling this primitive and
+	// checking the returned blocking count -- no additional ceiling is skipped
+	// by the raw call.
+	"DeleteProjectIfEmptyProxy": "holds: internal/storage/store/local_secrets.go:272-290 runs the secret-count " +
+		"guard and the cascade delete inside ONE .Transaction() call, no TOCTOU window across the HTTP hop -- " +
+		"purpose-built for exactly this (#528, commit b6e46050) after the WithTransaction-wrapped two-call " +
+		"version proved unsafe under storage.type: remote; core.DeleteProject(force=false) adds nothing beyond " +
+		"calling this same primitive.",
 	// The following 9 were classified no-independent-ceiling in the 2026-08-23/24
 	// overnight triage (docs/g80-raw-storage-bypass-triage.md has full evidence per
 	// entry; reasons here are condensed, not abbreviated to the point of losing the
@@ -223,13 +290,51 @@ var rawStorageBypassAllowlist = map[string]string{
 	"SupersedeSetupTokensProxy": "no-independent-ceiling: the IssueSetupToken step this backs " +
 		"(SupersedeActiveSetupTokens) has no caller-authorization gate of its own -- an unconditional exact-match " +
 		"(purpose, email[, project]) bulk state-flip.",
-	// The following 8 were classified documented-exception in the overnight triage.
-	"CreateAccessReviewCampaignProxy": "documented-exception: OpenAccessReviewCampaign is explicitly NOT gated on " +
-		"a human actor (opening a campaign is a scheduled/automatic action); State=open always, which the handler " +
-		"itself already forces server-side (ARC-003).",
-	"CreateAccessReviewItemsProxy": "documented-exception: the only caller-relevant invariant (a fresh item starts " +
-		"Decision=pending/DecidedBy=0) is already enforced server-side by the handler (ARC-004); item content " +
-		"mirrors a live snapshot, not a core-enforced authorization ceiling.",
+	// VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep, escalation-
+	// delta test): gate is system.write (this route group's baseline); the ceiling
+	// OpenAccessReviewCampaign would otherwise apply is "lifecycle fields must start
+	// fresh" -- not an authority check at all, so there is no delta to test. Adversarial
+	// check performed: does the handler actually FORCE those fields, or just claim to?
+	// access_review_campaigns_proxy.go:230-235 unconditionally overwrites State/
+	// ClosedBy/ClosedAt/ForcedIncomplete on the decoded body before persisting,
+	// regardless of what the caller sent -- confirmed by reading the code, not the
+	// comment. That hardening landed in commit 778a027e (2026-07-27, PR #1175, r128,
+	// "fabricated campaigns, pre-decided items, self-certification"), with regression
+	// tests TestCreateAccessReviewCampaignProxy_IgnoresClosedState_R128/
+	// ..._IgnoresForcedIncomplete_R128 (access_review_campaigns_proxy_r128_test.go) --
+	// this is a tested property, not an assertion. Residual, non-blocking gap: the
+	// `CreatedBy` field is NOT stripped (toModel(), line 113) -- a caller can attribute
+	// a campaign to an arbitrary user ID. The real audit event (AuditCampaignCreated,
+	// line 244-245) correctly uses the authenticated caller's own actorID(r), so the
+	// audit trail itself isn't spoofable; only the campaign row's cosmetic `created_by`
+	// display field is. No authorization decision reads CreatedBy back -- not a
+	// privilege escalation, worth a low-priority follow-up ticket if that field is
+	// ever trusted for anything beyond display.
+	"CreateAccessReviewCampaignProxy": "holds: OpenAccessReviewCampaign is explicitly NOT gated on a human actor " +
+		"(ARC-003) -- the only caller-relevant invariant is that lifecycle fields (State/ClosedBy/ClosedAt/" +
+		"ForcedIncomplete) start fresh, and access_review_campaigns_proxy.go:230-235 unconditionally forces all " +
+		"four before persisting (tested: TestCreateAccessReviewCampaignProxy_IgnoresClosedState_R128). Residual, " +
+		"non-blocking: CreatedBy is not stripped (cosmetic attribution only, no authz decision reads it back).",
+	// VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep, escalation-
+	// delta test): same gate (system.write), same "no independent authority check to
+	// bypass" shape as the campaign-create row above -- OpenAccessReviewCampaign's
+	// item-generation step has no actor-dependent decision, only a fresh-item-state
+	// invariant (ARC-004). Adversarial check: access_review_campaigns_proxy.go:358-360
+	// unconditionally overwrites Decision/DecidedBy/DecidedAt on every item before
+	// persisting (tested: TestCreateAccessReviewItemsProxy_StripsDecisionFields_R128,
+	// same 778a027e/#1175/r128 commit as the campaign-create fix -- this file's prior
+	// version, 793f702fc, had NO stripping at all, so this is a real, verified fix, not
+	// a stale assertion). All OTHER item fields (PrincipalType/PrincipalID/RoleID/
+	// AccessLevel/EnvironmentID/SecretID) remain fully caller-controlled, matching the
+	// package doc's own explicit disclosure that no campaign-lifecycle POLICY decision
+	// is made here -- fabricated item content can't itself grant/revoke access (that
+	// logic lives entirely downstream, out of reach of this route), so this doesn't
+	// widen what system.write already permits in this group.
+	"CreateAccessReviewItemsProxy": "holds: the only caller-relevant invariant (a fresh item starts " +
+		"Decision=pending/DecidedBy=0/DecidedAt=nil) is unconditionally forced server-side " +
+		"(access_review_campaigns_proxy.go:358-360, tested: TestCreateAccessReviewItemsProxy_StripsDecisionFields_R128) " +
+		"-- other item fields are caller-controlled by design (package doc), but fabricated content can't itself " +
+		"grant/revoke access, so this introduces no new privilege beyond the route's own system.write gate.",
 	// CORRECTED 2026-08-25 (G80 documented-exception re-verification sweep): the
 	// prior "documented-exception" reason here was FALSE. The claimed "separate
 	// proxied call chain" (core.RevokeBreakGlass's RemoveUserRole step) does not
@@ -257,17 +362,71 @@ var rawStorageBypassAllowlist = map[string]string{
 	// (not moved) -- the handler now routes through core.RecordLoginAttemptRelay
 	// instead of calling Storage().RecordLoginAttempt directly, so this guard's
 	// AST scan no longer flags it at all.
-	"CreateSetupTokenProxy": "documented-exception: the handler's own #G79 comment explicitly re-derives and " +
-		"closes the gap a naive raw call would have (a direct system.write caller minting a takeover token) by " +
-		"implementing the invitation/user cross-reference check itself before persisting.",
-	"CreateSSOLoginStateProxy": "documented-exception, per this file's own package doc: no SSO policy decision is " +
-		"made here; BeginSSO/BeginSAML have no caller-dependent check either (pre-login CSRF-state creation).",
-	"ConsumeSSOLoginStateProxy": "documented-exception, per this file's own package doc: the atomic read-then-" +
-		"conditional-delete single-use guarantee is preserved verbatim; provider-match/expiry checks are state-" +
-		"machine invariants identical regardless of caller, and run downstream of consume either way.",
-	"ConsumeWebAuthnSessionProxy": "documented-exception, per this file's own package doc: mirrors " +
-		"ConsumeSetupTokenProxy's #510 precedent -- the atomic single-use consume is preserved verbatim, and the " +
-		"actual assertion/attestation crypto verification runs downstream, never in this call.",
+	// VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep,
+	// escalation-delta test): gate is system.write; there is no actor-authority
+	// ceiling for BeginSSO/BeginSAML to bypass (pre-login CSRF-state creation is
+	// not gated on identity in the local path either), so the real question is
+	// injection, not authority. Adversarial check performed: models.SSOLoginState
+	// (internal/storage/models/models.go:174-182) carries State (random CSRF
+	// token)/Nonce/Provider/ReturnTo/ExpiresAt/CreatedAt -- NO user/session-
+	// identity field of any kind. Identity is bound only at CONSUME time via
+	// IdP-signed crypto: verifyIDToken (sso.go:839-867, issuer-pinned JWKS,
+	// RS256/ES256/PS256) for OIDC, a vetted SAML-assertion-signature library for
+	// SAML. So even a caller who fully controls this create call's fields cannot
+	// forge a login for another user -- they would still need a genuine,
+	// IdP-signed assertion. No injection path found; file unmodified since
+	// introduction (efd0abdc, 2026-07-07).
+	"CreateSSOLoginStateProxy": "holds: SSOLoginState carries no identity-binding field " +
+		"(internal/storage/models/models.go:174-182) -- identity is anchored entirely by IdP-signed crypto at " +
+		"consume time (sso.go:839-867 for OIDC id_token/JWKS, SAML assertion-signature verification for SAML), " +
+		"so a caller controlling this create call's fields still cannot forge a login for another user.",
+	// VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep,
+	// escalation-delta test): same gate; adversarial check on the "atomic
+	// read-then-conditional-delete" claim, which is the load-bearing property
+	// here (a non-atomic version would reopen a double-consume race). Confirmed
+	// at internal/storage/store/local_sso.go:44-54: a genuine conditional
+	// `DELETE ... WHERE id = ? AND state = ?` + RowsAffected check, i.e. a real
+	// CAS, not a plain delete-by-ID -- and the proxy calls this SAME function
+	// rather than reimplementing read+delete over HTTP, so the guarantee is
+	// inherited unchanged. Provider/expiry re-validation confirmed to run
+	// downstream on EVERY path, independent of caller: validateSSOLoginState
+	// (sso.go:172-177) and CompleteSAML (sso.go:316-321) each re-check
+	// Provider/ExpiresAt on the row consume returns.
+	"ConsumeSSOLoginStateProxy": "holds: internal/storage/store/local_sso.go:44-54 is a genuine conditional " +
+		"DELETE+RowsAffected CAS (not a plain delete-by-ID) -- the proxy calls this same function rather than " +
+		"reimplementing read+delete, so the single-use guarantee is inherited unchanged; provider/expiry checks " +
+		"re-run downstream on every path (sso.go:172-177, sso.go:316-321), independent of caller.",
+	// VERIFIED 2026-08-25 (G80 documented-exception re-verification sweep,
+	// escalation-delta test): same gate; this file ALSO contains three sibling
+	// handlers (CreateWebAuthnCredentialProxy/DeleteWebAuthnCredentialProxy/
+	// SetUserWebAuthnEnabledProxy) already confirmed REAL, SEVERE bugs in this
+	// same campaign -- extra scrutiny applied here for that reason. Adversarial
+	// checks: (1) atomicity -- internal/storage/store/local_webauthn.go:160-176
+	// is a genuine transactional conditional UPDATE (WHERE used_at IS NULL AND
+	// expires_at > ?) + RowsAffected check, re-read inside the SAME transaction;
+	// the proxy makes exactly one call to this primitive, no TOCTOU reopened.
+	// (2) injection -- the consume call's only body field is `token_hash` (a
+	// lookup key, not data); the session's UserID/Data (WebAuthn challenge) were
+	// populated earlier by CreateWebAuthnSession, itself only ever called by
+	// this server's own storeWebAuthnSession during Begin*, not by this consume
+	// call. (3) crypto ordering -- FinishWebAuthnLogin additionally cross-checks
+	// sess.UserID != ch.UserID (webauthn.go:321, an independently-established
+	// MFA-challenge identity) BEFORE any signature check, and ValidateLogin/
+	// CreateCredential/ValidatePasskeyLogin all verify against credentials
+	// freshly reloaded from storage for the real user -- an attacker without
+	// the victim's authenticator private key cannot produce a valid signature
+	// regardless of what the session Data contains. Caveat carried forward: the
+	// comment's own cited "#510 precedent" (ConsumeSetupTokenProxy) is NOT
+	// actually present in either guard-test map -- it evaded detection because
+	// its raw storage call is inside an UNEXPORTED core helper
+	// (consumeInspectedToken, internal/core/setup_token.go:210-214), which this
+	// guard's AST scan only inspects EXPORTED KeyorixCore method bodies for
+	// (exportedCoreStorageWrappers, this file). Verified independently here on
+	// ConsumeWebAuthnSessionProxy's own code, not by trusting that citation.
+	"ConsumeWebAuthnSessionProxy": "holds: local_webauthn.go:160-176 is a genuine transactional conditional " +
+		"UPDATE+RowsAffected CAS, re-read in the same transaction -- no TOCTOU reopened across the HTTP hop; the " +
+		"consume call's only caller-controlled field (token_hash) is a lookup key, not injectable session data, " +
+		"and FinishWebAuthnLogin cross-checks sess.UserID != ch.UserID (webauthn.go:321) before any crypto check.",
 	// FIXED 2026-08-24 (G80 overnight campaign, Tier 1 Group A #1, was in
 	// knownUnfixedRawStorageBypasses): the raw conditional write is still here
 	// deliberately (preserves the atomic CAS across the HTTP hop, same reasoning as
@@ -366,6 +525,34 @@ var rawStorageBypassAllowlist = map[string]string{
 // originally-listed entries were deleted outright — G80 liveness sweep found no
 // live caller for any of them; see docs/g80-remediation-notes.md.)
 var knownUnfixedRawStorageBypasses = map[string]string{
+	// MOVED HERE 2026-08-25 (G80 documented-exception re-verification sweep):
+	// was classified documented-exception in rawStorageBypassAllowlist on the
+	// theory that the handler's own #G79 comment "re-derives and closes the gap"
+	// (an internal invitation/user cross-reference check before persisting).
+	// That check is real and correctly written for what it explicitly
+	// validates (existence + case-insensitive email match) -- but it enforces
+	// internal CONSISTENCY between the caller-supplied token_hash/subject_email/
+	// subject_user_id/invitation_id, not caller AUTHORIZATION to target a
+	// specific account. Because this handler lets the caller choose token_hash
+	// directly (the plaintext the caller itself generates and hashes, per its
+	// own #G79 comment -- "by design, always caller-supplied"), a caller
+	// holding only system.write who already knows (or guesses) a real target's
+	// email/user-ID can mint a fully-valid, immediately-redeemable takeover
+	// token for that target via the public POST /auth/setup/consume --
+	// overwriting the target's real password (and, for a non-MFA account,
+	// receiving a live session AS them). Escalation-delta confirmed: no other
+	// system.write-gated route in this proxy group lets a caller overwrite an
+	// EXISTING arbitrary user's password + mint a session under that identity.
+	// The invitation_accept branch (setup_tokens_proxy.go's GetProjectInvitation
+	// + email-match check) additionally has ZERO test coverage. NOT fixed here
+	// -- reported per explicit instruction, fix approach pending a decision
+	// (narrow this route to the node-credential arm only vs. a core-level
+	// re-check) since the package doc's own stated legitimate caller is a
+	// genuine RemoteStorage node, never a human/service system.write role.
+	"CreateSetupTokenProxy": "REAL, human-reachable: the #G79 cross-reference check enforces internal " +
+		"consistency of caller-supplied fields, not caller authorization to target the account those fields " +
+		"name -- a system.write holder who already knows a target's email/ID can mint and immediately redeem a " +
+		"takeover token for that target via the public /auth/setup/consume endpoint.",
 	// HALF-FIXED 2026-08-25 (G80 documented-exception re-verification sweep) --
 	// do NOT move to rawStorageBypassAllowlist: CLOSED for a direct,
 	// non-node-credential caller (now routed through core.RemoveUserRole after

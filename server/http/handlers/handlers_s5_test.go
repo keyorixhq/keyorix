@@ -3039,6 +3039,37 @@ func TestConsumeSSOLoginStateProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestConsumeSSOLoginStateProxy_SecondConsumeFails is the G80 documented-
+// exception re-verification sweep's regression test for the "holds" verdict on
+// this handler's single-use claim (raw_storage_bypass_guard_test.go): the
+// underlying conditional DELETE (local_sso.go) must actually be single-use, not
+// just described as such. A second consume of the SAME state must fail — a
+// second success would mean the CAS isn't real and the state row could be
+// replayed.
+func TestConsumeSSOLoginStateProxy_SecondConsumeFails(t *testing.T) {
+	h := newAuthHandlerWithWebAuthn(t)
+
+	createBody := `{"state":"single-use-state","nonce":"n1","provider":"google","return_to":"/","expires_at":"` +
+		time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
+	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	w0 := httptest.NewRecorder()
+	h.CreateSSOLoginStateProxy(w0, req0)
+	require.Equal(t, http.StatusOK, w0.Code)
+
+	body := `{"state":"single-use-state"}`
+	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w1 := httptest.NewRecorder()
+	h.ConsumeSSOLoginStateProxy(w1, req1)
+	require.Equal(t, http.StatusOK, w1.Code, "first consume must succeed")
+
+	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w2 := httptest.NewRecorder()
+	h.ConsumeSSOLoginStateProxy(w2, req2)
+	assert.NotEqual(t, http.StatusOK, w2.Code,
+		"CEILING VIOLATED: a second consume of an already-consumed state must fail — the conditional DELETE "+
+			"this handler relies on for its single-use guarantee is not actually a CAS if this succeeds")
+}
+
 // ── mfa_management_proxy.go — happy paths ────────────────────────────────────
 
 func TestGetMFASecretProxy_NotFound(t *testing.T) {
