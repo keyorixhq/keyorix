@@ -47,3 +47,52 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
 - A skip with a wrong reason is worse than no skip.
 - Timeouts detect hangs; they don't enforce speed. Set them generously, watch durations.
 - When determining whether something needs fixing costs more than fixing it, fix it.
+- On Postgres, catching a constraint violation after the failing statement is not
+  recovery — the transaction is already aborted at the protocol level, and a
+  subsequent COMMIT is silently downgraded to a ROLLBACK. Prevent the conflict
+  (`INSERT ... ON CONFLICT DO NOTHING`, then read back), don't catch it. A caught
+  violation that returns a non-nil error (triggering ROLLBACK) is fine — ROLLBACK
+  succeeds on an already-aborted transaction; only a caught violation that returns
+  `nil` (intending COMMIT) is dead code on Postgres. `TryAcquireSchedulerLock`
+  (`local_scheduler_lock_lease.go`) was the confirmed instance; a full-repo sweep of
+  every other `isUniqueViolation`/constraint-catch site found no other dead ones —
+  every other site either isn't inside a multi-statement transaction at all, or
+  returns a non-nil error.
+- A test named for a condition it does not create proves nothing. The original
+  `TestConcurrency_BootstrapSystem_CrossReplicaExactlyOneAdmin` handed every
+  simulated "replica" the SAME shared `storage.Storage` instance — one
+  `LocalStorage`, one process-local mutex — so it would have passed identically
+  even with the Postgres advisory lock deleted outright. The name asserted
+  cross-replica safety; the fixture could not structurally exercise it (multiple
+  independent `*gorm.DB` connections are required, not multiple wrapper objects
+  sharing one).
+- "Green when the lock is disabled" is ambiguous, and the ambiguity is unfalsifiable
+  from that observation alone: it is equally consistent with *the lock is redundant*
+  and with *this harness never exercised the lock*. Don't conclude redundancy from a
+  disabling-mutation result by itself — first confirm the harness reproduces the
+  production concurrency shape (same transaction boundaries as the real caller, same
+  call sequence), and that the assertion states an invariant that holds under EVERY
+  legal interleaving, not just the one the test author had in mind. The
+  machine-identity row-lock test failed both checks at once, and each one masked the
+  other: (1) it called `LockMachineIdentityForUpdate` and `TransitionMachineIdentityState`
+  standalone rather than inside the same `WithTransaction` the real caller
+  (`transitionMachineInTx`) uses — `SELECT ... FOR UPDATE` outside an explicit
+  transaction is a no-op on Postgres (the lock releases the instant that single
+  autocommit statement completes), so the "lock" was never actually held across the
+  read+write; (2) its assertion ("exactly one of two racing transitions may win")
+  was false as an invariant regardless of locking, because `active`→`revoked` is
+  itself a legal transition — if `active` wins the race to go first, `revoked`
+  legitimately gets a second, later, ALSO-successful write, and the assertion never
+  checked the one thing that actually mattered: that `revoked` must always win the
+  row's FINAL value. Fixing the transaction-wrapping bug alone made the flawed
+  assertion flaky (2/10); only fixing both together — real transaction boundaries AND
+  a correctly-derived invariant — made the lock's true load-bearing status visible
+  (red 13/15 runs without it). A `securefiles.safeRelComponents` vs `resolveInside`
+  case from earlier in this campaign IS genuine redundancy (confirmed by disabling
+  both layers, with a harness that correctly reproduced the real call path
+  throughout) — the lesson isn't "assume redundancy is always wrong," it's that the
+  observation alone never tells you which one you're looking at. A same-worktree
+  follow-up audit then traced every real production caller of all six FOR UPDATE
+  sites in `internal/storage/store` (not test callers) and confirmed every one
+  correctly shares one transaction with its guarded write — the standalone-lock bug
+  the test harness had was a test-only defect, not a production one.

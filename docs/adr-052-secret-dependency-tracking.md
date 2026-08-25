@@ -87,5 +87,10 @@ answer the two questions from it.
   rotation runs dependency-first automatically.
 - gRPC + CLI surfaces and a web/ graph visualisation (the API is the first
   vertical).
+- If a cycle is ever written despite the add-time guard (e.g. a future write path that
+  bypasses `CreateSecretDependencyExclusive`), `GetProjectRotationOrder` fails closed
+  permanently for that project with no code path to remove the offending edge — for a
+  secrets manager, rotation that has quietly stopped is a compliance problem worth a
+  detection/repair path even though it isn't a crash or a hang.
 - Cascade behaviour on secret soft-delete/restore (currently an edge to a deleted secret
   simply stops resolving a name; a future pass could prune or flag it).
