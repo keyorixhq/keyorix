@@ -22,7 +22,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -30,15 +29,14 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// TryAcquireSchedulerLock attempts, in one transaction (so the read-then-
-// decide-then-write below is atomic against a concurrent attempt on the same
-// key — including on Postgres, where the SELECT is taken under a row lock),
-// to take or renew the named lock for holder.
+// TryAcquireSchedulerLock attempts, in one transaction, to take or renew the
+// named lock for holder.
 //
-//   - No row exists yet: insert one. A concurrent racer's insert can still slip
-//     in between this transaction's own SELECT and INSERT; the primary key
-//     (Key) turns that into a unique-constraint violation, caught below and
-//     treated as "lost the race" rather than a hard error.
+//   - No row exists yet: the unconditional INSERT ... ON CONFLICT DO NOTHING
+//     below either creates it outright (RowsAffected == 1, we won), or a
+//     concurrent racer's insert won the conflict first (RowsAffected == 0) and
+//     execution falls through to the read-and-decide path below, exactly as
+//     if the row had already existed.
 //   - A row exists, held by holder itself (not yet expired, or expired — either
 //     way it's this holder's own lease): update ExpiresAt. This is the renewal/
 //     heartbeat path RemoteStorage.WithSchedulerLock uses to extend the lease
@@ -47,40 +45,59 @@ import (
 //     stays false — the lock is genuinely contended.
 //   - A row exists, held by a different holder but already expired: reclaim it
 //     for the new holder (crash/partition self-heal).
+//
+// This deliberately PREVENTS the concurrent-first-insert conflict via
+// ON CONFLICT DO NOTHING rather than catching a unique-constraint violation
+// after the fact (the prior shape here): on Postgres, once an INSERT inside a
+// transaction raises a unique-constraint violation, the ENTIRE transaction is
+// aborted at the protocol level — no further statement can run, and GORM's
+// subsequent COMMIT is silently downgraded to a ROLLBACK by the server. A Go
+// `if isUniqueViolation(err) { return nil }` never gets a chance to matter: by
+// the time it runs, the transaction is already unusable, and the caller sees
+// a confusing "commit unexpectedly resulted in rollback" instead of the
+// intended (false, nil) "someone else won". ON CONFLICT DO NOTHING never
+// raises an error in the first place, so there is nothing to catch and no
+// transaction to abort — the race becomes a non-event instead of an error to
+// recover from. Confirmed fixed against real Postgres (this campaign's
+// report); ON CONFLICT DO NOTHING is also GORM's standard driver-agnostic
+// idiom (see CreateBreakGlassActivation, local_break_glass.go, for the same
+// shape), so this is unchanged, not newly risky, on SQLite.
 func (ls *LocalStorage) TryAcquireSchedulerLock(ctx context.Context, key int64, holder string, ttl time.Duration) (bool, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	now := time.Now()
 	expiresAt := now.Add(ttl)
 	acquired := false
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Clauses(clause.OnConflict{DoNothing: true}).
+			Create(&models.SchedulerLockLease{Key: key, Holder: holder, ExpiresAt: expiresAt})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 1 {
+			acquired = true
+			return nil
+		}
+
+		// The row already existed — either from before this call, or a
+		// concurrent racer's insert won the conflict above. Read it (under
+		// FOR UPDATE on Postgres, so this decision serializes against a
+		// concurrent renew/reclaim on the same key) and decide.
 		q := tx
 		if tx.Dialector.Name() == "postgres" {
 			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
 		var existing models.SchedulerLockLease
-		err := q.Where("key = ?", key).Take(&existing).Error
-		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			if createErr := tx.Create(&models.SchedulerLockLease{Key: key, Holder: holder, ExpiresAt: expiresAt}).Error; createErr != nil {
-				if isUniqueViolation(createErr) {
-					return nil // lost the race to a concurrent first-time acquire; acquired stays false
-				}
-				return createErr
-			}
-			acquired = true
-			return nil
-		case err != nil:
+		if err := q.Where("key = ?", key).Take(&existing).Error; err != nil {
 			return err
-		default:
-			if existing.Holder != holder && existing.ExpiresAt.After(now) {
-				return nil // held by someone else and not yet expired — genuinely contended
-			}
-			if updErr := tx.Model(&models.SchedulerLockLease{}).Where("key = ?", key).
-				Updates(map[string]any{"holder": holder, "expires_at": expiresAt}).Error; updErr != nil {
-				return updErr
-			}
-			acquired = true
-			return nil
 		}
+		if existing.Holder != holder && existing.ExpiresAt.After(now) {
+			return nil // held by someone else and not yet expired — genuinely contended
+		}
+		if updErr := tx.Model(&models.SchedulerLockLease{}).Where("key = ?", key).
+			Updates(map[string]any{"holder": holder, "expires_at": expiresAt}).Error; updErr != nil {
+			return updErr
+		}
+		acquired = true
+		return nil
 	})
 	if err != nil {
 		return false, err
