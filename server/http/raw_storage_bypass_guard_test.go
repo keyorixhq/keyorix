@@ -249,9 +249,14 @@ var rawStorageBypassAllowlist = map[string]string{
 		"chain it claimed to travel through never existed end-to-end, #1511) -- now self-contained (state guard " +
 		"+ RemoveUserRole + conditional revoke + LogBreakGlassRevoked audit), see the FIXED comment immediately " +
 		"above this entry.",
-	"RecordLoginAttemptProxy": "documented-exception, per this file's own package doc: the real rate-limit policy " +
-		"(threshold/window) lives in the separate IsLoginRateLimited READ path, not in the record path -- " +
-		"RecordFailedLogin itself does nothing but canonicalize the IP and persist.",
+	// RecordLoginAttemptProxy: FIXED 2026-08-25 (G80 documented-exception
+	// re-verification sweep) -- was a FALSE documented-exception (ip/at were
+	// completely unvalidated, enabling cross-namespace rate-limit poisoning and
+	// a permanent future-timestamp lockout; see internal/core/rate_limit.go's
+	// RecordLoginAttemptRelay doc comment for the full finding). Entry removed
+	// (not moved) -- the handler now routes through core.RecordLoginAttemptRelay
+	// instead of calling Storage().RecordLoginAttempt directly, so this guard's
+	// AST scan no longer flags it at all.
 	"CreateSetupTokenProxy": "documented-exception: the handler's own #G79 comment explicitly re-derives and " +
 		"closes the gap a naive raw call would have (a direct system.write caller minting a takeover token) by " +
 		"implementing the invitation/user cross-reference check itself before persisting.",

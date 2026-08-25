@@ -212,6 +212,67 @@ func TestRecordLoginAttemptProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+// TestRecordLoginAttemptProxy_RejectsNonIPKey_S13 is the G80 documented-
+// exception fix's regression test (2026-08-25): a caller-supplied "ip" that
+// isn't a real IP, or a known rate-limit namespace prefix followed by one,
+// must be refused rather than persisted verbatim — the field used to accept
+// ANY string with no validation at all.
+func TestRecordLoginAttemptProxy_RejectsNonIPKey_S13(t *testing.T) {
+	h := freshAuthHandlerS13(t)
+	body := proxyJSON(map[string]interface{}{"ip": "not-an-ip-or-known-prefix", "at": time.Now()})
+	req := httptest.NewRequest(http.MethodPost, "/system/login-attempts", body)
+	w := httptest.NewRecorder()
+	h.RecordLoginAttemptProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.False(t, resp.Success)
+}
+
+// TestRecordLoginAttemptProxy_AllowsKnownPrefixes_S13 is
+// TestRecordLoginAttemptProxy_RejectsNonIPKey_S13's companion control: the two
+// namespace prefixes RecordPasswordResetAttempt/RecordSSOBeginAttempt
+// legitimately produce ("pwreset:"/"sso:") followed by a real IP must still
+// be accepted — the fix must not turn into a blanket rejection of anything
+// but a bare IP.
+func TestRecordLoginAttemptProxy_AllowsKnownPrefixes_S13(t *testing.T) {
+	for _, ip := range []string{"pwreset:203.0.113.9", "sso:203.0.113.9", "203.0.113.9:54321"} {
+		h := freshAuthHandlerS13(t)
+		body := proxyJSON(map[string]interface{}{"ip": ip, "at": time.Now()})
+		req := httptest.NewRequest(http.MethodPost, "/system/login-attempts", body)
+		w := httptest.NewRecorder()
+		h.RecordLoginAttemptProxy(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, "ip=%q must still be accepted", ip)
+	}
+}
+
+// TestRecordLoginAttemptProxy_ClampsFutureTimestamp_S13 is the fix's second
+// regression test: before it, a far-future `at` created a row
+// PruneLoginAttempts (clamped to now-LoginWindow) could NEVER become eligible
+// to delete — a permanent, unrecoverable lockout of whatever key it targets.
+// Confirmed by checking the row lands within the real (recent) window a
+// legitimate call would use, not 100 years in the future.
+func TestRecordLoginAttemptProxy_ClampsFutureTimestamp_S13(t *testing.T) {
+	cs := freshCoreS12(t)
+	h := NewAuthHandler(cs, false)
+	farFuture := time.Now().AddDate(100, 0, 0)
+	body := proxyJSON(map[string]interface{}{"ip": "198.51.100.42", "at": farFuture})
+	req := httptest.NewRequest(http.MethodPost, "/system/login-attempts", body)
+	w := httptest.NewRecorder()
+	h.RecordLoginAttemptProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// A cutoff strictly AFTER "now" only counts the row if its AttemptedAt is
+	// itself in the future — i.e. NOT clamped. (A ">= since" cutoff in the past
+	// would trivially count a far-future row too, so it can't distinguish
+	// "clamped to now" from "left 100 years in the future" — this must query
+	// forward of now instead.)
+	n, err := cs.Storage().CountRecentLoginAttempts(context.Background(), "198.51.100.42", time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n,
+		"CEILING VIOLATED: the recorded attempt's timestamp must be clamped to now, not persisted 100 years in "+
+			"the future where no maintenance sweep can ever reach it")
+}
+
 // ── misc_remote_proxy.go: accessActivityProxy ────────────────────────────────
 
 // TestAccessActivityProxy_MissingProjectID_S13 — no project_id → 400.
