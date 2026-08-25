@@ -11,16 +11,38 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// withNodeCredentialContextS13 attaches a genuine node-credential UserContext
+// (core.MachineTypeNode) to req, matching isNodeCredentialRequest's check
+// (catalog.go). RemoveGlobalAdminRoleGuardedProxy now branches on this: a
+// direct caller (no context, or a non-node context) must additionally hold
+// roles.assign at global scope (the #1552-shape fix, 2026-08-25) before
+// reaching the raw storage.RemoveGlobalAdminRoleGuarded call these tests
+// exercise -- so tests written to probe THAT call's own last-admin-guard
+// mechanics (not the new authority check) must present a node-credential
+// caller to keep reaching it, exactly as they did before the fix.
+func withNodeCredentialContextS13(req *http.Request) *http.Request {
+	nodeID := uint(9001)
+	uc := &middleware.UserContext{
+		ActorType:           core.ActorTypeMachine,
+		MachineIdentityID:   &nodeID,
+		MachineIdentityType: core.MachineTypeNode,
+	}
+	return req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
+}
 
 // ── rbac.go: ListRoles ────────────────────────────────────────────────────────
 
@@ -688,6 +710,7 @@ func TestRemoveGlobalAdminRoleGuardedProxy_NotAssigned_S13(t *testing.T) {
 		"/api/v1/system/rbac/global-admin-role/remove-guarded",
 		bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = withNodeCredentialContextS13(req)
 	w := httptest.NewRecorder()
 	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
 	// guard passes (user2 still has admin), user3 never had role → ErrRoleNotAssigned → 404
@@ -713,6 +736,7 @@ func TestRemoveGlobalAdminRoleGuardedProxy_LastAdmin_S13(t *testing.T) {
 		"/api/v1/system/rbac/global-admin-role/remove-guarded",
 		bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = withNodeCredentialContextS13(req)
 	w := httptest.NewRecorder()
 	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
 	// Only one admin → last-admin guard → 409
@@ -742,6 +766,7 @@ func TestRemoveGlobalAdminRoleGuardedProxy_IgnoresWireSuppliedAdminRoleIDs(t *te
 		"/api/v1/system/rbac/global-admin-role/remove-guarded",
 		bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = withNodeCredentialContextS13(req)
 	w := httptest.NewRecorder()
 	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
 	assert.Equal(t, http.StatusConflict, w.Code, "an empty wire-supplied admin_role_ids must not bypass the last-admin guard")
