@@ -205,6 +205,17 @@ func TestUpdateUser_Deactivation_SucceedsDespiteSessionRevocationFailure(t *test
 	// storage.type: remote, or a transient HTTP failure) from the session
 	// deletion sub-call.
 	ms.On("DeleteSessionsForUserExcept", mock.Anything, uint(44), uint(0)).Return(errors.New("simulated: session deletion transport failure"))
+	// Discoverability: a failed revocation must still be audited (Success=false)
+	// even though it doesn't fail the call -- see EventUserDeactivationCleanupFailed's
+	// doc in users.go.
+	var audited *models.AuditEvent
+	ms.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
+		if ev.EventType == EventUserDeactivationCleanupFailed {
+			audited = ev
+			return true
+		}
+		return false
+	})).Return(nil)
 
 	c := NewKeyorixCore(ms)
 	updated, err := c.UpdateUser(context.Background(), &UpdateUserRequest{
@@ -214,4 +225,8 @@ func TestUpdateUser_Deactivation_SucceedsDespiteSessionRevocationFailure(t *test
 	require.NoError(t, err, "the deactivation must succeed even though session deletion failed")
 	require.NotNil(t, updated)
 	assert.False(t, updated.IsActive, "the user must still be marked inactive")
+	require.NotNil(t, audited, "the revocation failure must be audited for discoverability")
+	require.NotNil(t, audited.Success)
+	assert.False(t, *audited.Success)
+	assert.Contains(t, audited.Description, "session deletion transport failure")
 }

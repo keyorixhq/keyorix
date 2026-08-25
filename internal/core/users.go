@@ -416,29 +416,51 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 				return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
 			}
 			updated = user
-			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID); herr == nil {
+			var patErr, sessionErr error
+			var hashes []string
+			hashes, patErr = tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID)
+			if patErr == nil {
 				patHashes = hashes
 			}
-			// Best-effort, matching RevokeAllPersonalAccessTokensForUser
-			// immediately above: the conditional write this switch case exists
-			// for (UpdateUserIfActiveStateMatches) has ALREADY matched and
-			// applied by this point -- the deactivation itself durably
-			// succeeded. Letting a PAT/session-revocation failure here fail the
-			// whole WithTransaction call would report total failure to the
-			// caller for an operation that, from the target user's perspective,
-			// already happened. This matters most over storage.type: remote,
-			// where WithTransaction provides NO real atomicity at all (each
+			sessionErr = tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
+			// Best-effort, not fatal: the conditional write this switch case
+			// exists for (UpdateUserIfActiveStateMatches) has ALREADY matched
+			// and applied by this point -- the deactivation itself durably
+			// succeeded. Letting a revocation failure here fail the whole
+			// WithTransaction call would report total failure for an
+			// operation that, from the target user's perspective, already
+			// happened. This matters most over storage.type: remote, where
+			// WithTransaction provides NO real atomicity at all (each
 			// sub-call is its own independent HTTP round-trip -- see
-			// remote_transaction.go) -- treating this as fatal there could never
-			// have rolled the deactivation back anyway, only hidden that it
-			// succeeded behind a misleading error. Matches SetAccountState's own
-			// suspend/deactivate path (account_state.go), which already treats
-			// this exact call as best-effort for the same reason -- UpdateUser
-			// was the one deactivation path still fatal on it. (DeleteUser
-			// remains fatal on both calls, deliberately out of scope here: a
-			// delete's session/PAT revocation failing partway is a different,
-			// separate question from a plain deactivation's.)
-			_ = tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
+			// remote_transaction.go) -- treating this as fatal there could
+			// never have rolled the deactivation back anyway, only hidden
+			// that it succeeded behind a misleading error.
+			//
+			// Safe specifically because a failed revocation does NOT leave a
+			// working credential: ValidateSessionToken (auth.go) and
+			// ValidatePATToken (pat.go) BOTH independently re-check the live
+			// user.IsActive/AccountLoginBlocked state on every single use of
+			// a session or PAT, cold path AND the 30s warm auth-cache path
+			// (via AccountStillUsable, server/middleware/auth.go's
+			// serveAuthCacheHit) -- already-committed IsActive=false alone
+			// blocks the credential regardless of whether its row was ever
+			// deleted. There is no session-expiry sweeper in this codebase
+			// (CleanupExpiredSessions is implemented but never scheduled), so
+			// a row a failed revocation leaves behind lingers indefinitely --
+			// but inertly: it authorizes nothing. The residual cost is
+			// orphaned-row hygiene and forensic noise, not a live credential,
+			// which is why this is audited (right below) rather than merely
+			// swallowed.
+			if patErr != nil || sessionErr != nil {
+				// nil actor: UpdateUser (unlike DeleteUser/SetAccountState) takes
+				// no actorID parameter at all -- a pre-existing gap in this
+				// function's own signature, not something this fix should
+				// silently paper over with a fabricated attribution.
+				c.writeAuditEventFailed(ctx, EventUserDeactivationCleanupFailed, nil, nil, "",
+					fmt.Sprintf("user %d deactivated, but credential cleanup was incomplete (pat_error=%v, session_error=%v) -- "+
+						"the account is already login-blocked regardless, but a stale row may remain until its own expiry",
+						req.ID, patErr, sessionErr))
+			}
 			return nil
 		})
 	case req.IsActive != nil:
@@ -490,6 +512,17 @@ const (
 	EventUserDeleted  = "user.deleted"
 	EventUserRestored = "user.restored"
 )
+
+// EventUserDeactivationCleanupFailed is audited (Success=false) when
+// UpdateUser's deactivating branch's PAT/session revocation is incomplete —
+// see that branch's own comment for why this is best-effort rather than
+// fatal to the deactivation itself, and why a failure here doesn't leave a
+// working credential (ValidateSessionToken/ValidatePATToken's live
+// user.IsActive/AccountLoginBlocked re-check already blocks it). This event
+// exists purely for discoverability: with no session-expiry sweeper in this
+// codebase, a row a failed revocation leaves behind is inert but otherwise
+// invisible until an operator goes looking for it.
+const EventUserDeactivationCleanupFailed = "user.deactivation_cleanup_failed"
 
 // DeleteUser deprovisions and soft-deletes a user by ID: blocks login
 // (AccountDeprovisioned, mirroring DeprovisionSCIMUser), terminates every session,
