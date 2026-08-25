@@ -32,10 +32,33 @@
 package http
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// g80ClosureMarker is the "still present" half of a closure claim -- an
+// ancestor-of-HEAD check on a SHA only answers "did this land"; it says
+// nothing about whether a LATER commit reverted, refactored away, or lost
+// the fix in a bad merge resolution. A later commit can't remove itself from
+// an earlier commit's ancestry, so the SHA check stays green forever even
+// after the fix is gone. Exactly one of mustExist/mustNotExist is set.
+type g80ClosureMarker struct {
+	// file is the repo-relative path the marker is checked against. Empty
+	// means repo-wide (via `git grep`) -- used for mustNotExist markers
+	// where the fix's signature is the absence of a symbol anywhere, not
+	// its presence in one particular file (the ADR-085 entry below).
+	file string
+	// mustExist is a literal substring that must still be present in `file`
+	// (or repo-wide if file is empty) for the fix to be considered intact.
+	mustExist string
+	// mustNotExist is a literal substring that must still be ABSENT from
+	// `file` (or repo-wide if file is empty) for the fix to be considered
+	// intact -- e.g. a removed function's own name.
+	mustNotExist string
+}
 
 // g80ClosureClaim is one triage-doc reference this guard verifies (or
 // explicitly declines to, with a stated reason).
@@ -53,29 +76,46 @@ type g80ClosureClaim struct {
 	// it is not a silent exemption because it appears in this file's
 	// registry and is asserted non-empty by the test below.
 	noSingleCommitReason string
+	// marker is the "still present" check, independent of the SHA's ancestry
+	// -- see g80ClosureMarker's doc. Required for every entry: an entry with
+	// no marker is exactly the unverifiable-closure shape this guard exists
+	// to catch, whether or not it also carries a SHA.
+	marker g80ClosureMarker
 }
 
 // g80TriageClosureClaims is the registry TestG80TriageDocClosuresAreAncestorsOfHEAD
 // checks. Add an entry here whenever a triage doc records a new "FIXED"
 // claim against a real commit; add a noSingleCommitReason entry instead when
-// the fix has no single commit to point at.
+// the fix has no single commit to point at. Every entry needs a marker.
 var g80TriageClosureClaims = []g80ClosureClaim{
 	// docs/g80-raw-storage-bypass-triage.md "Fix wave complete (2026-08-25)"
 	// section, verified against origin/main by this same correction pass
 	// (2026-08-25) -- see that section's own "Corrections from an
 	// independent verification session" subsection.
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1557 (CreateAccessRequestProxy/UpdateAccessRequestProxy dual-control bypass)",
-		sha: "2b888df72c322563030dbd7a7b996c022cf08061"},
+		sha: "2b888df72c322563030dbd7a7b996c022cf08061",
+		marker: g80ClosureMarker{file: "server/http/handlers/access_request_proxy.go",
+			mustExist: "RequireAdminAuthorityAt"}},
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1558 (CreateInvitationProxy/UpdateInvitationProxy escalation-by-proxy bypass)",
-		sha: "28b52cfbeec5a1acd2bf2d81e32afb42328e4590"},
+		sha: "28b52cfbeec5a1acd2bf2d81e32afb42328e4590",
+		marker: g80ClosureMarker{file: "server/http/handlers/invitations_proxy.go",
+			mustExist: "RequireAuthorityForRole"}},
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1559 (SoD policy and risk-exception authority gaps)",
-		sha: "f83d63c63a03a6bedc79a4440eb84def3805a471"},
+		sha: "f83d63c63a03a6bedc79a4440eb84def3805a471",
+		marker: g80ClosureMarker{file: "internal/core/sod.go",
+			mustExist: "isGlobalAdminRoleName"}},
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1560 (DeleteOIDCBindingProxy direct-caller routing)",
-		sha: "33eaf8df9dd5faaac77d11979b3e65c267ca9ca4"},
+		sha: "33eaf8df9dd5faaac77d11979b3e65c267ca9ca4",
+		marker: g80ClosureMarker{file: "server/http/handlers/machine_identities_proxy.go",
+			mustExist: "coreService.DeleteOIDCBinding"}},
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1561 (UpdateUser PAT/session-revocation residual)",
-		sha: "10fdb34ab705448bd6bdf6f6e0193a1555dad430"},
+		sha: "10fdb34ab705448bd6bdf6f6e0193a1555dad430",
+		marker: g80ClosureMarker{file: "server/http/router.go",
+			mustExist: "RevokeAllPersonalAccessTokensForUserProxy"}},
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1562 (RemoveGlobalAdminRoleGuardedProxy actor-authority gap)",
-		sha: "cb26f4f0baed17ffe0c89a9fc93635d613ae6307"},
+		sha: "cb26f4f0baed17ffe0c89a9fc93635d613ae6307",
+		marker: g80ClosureMarker{file: "server/http/handlers/rbac_role_grants_proxy.go",
+			mustExist: "coreService.RemoveUserRole"}},
 	// PRs #1563-#1566 (server/http proxy Tier-2 fixes) and the ADR-085
 	// node-credential-arm removal: an independent verification session's
 	// headline finding (2026-08-25) is that all four PRs showed
@@ -89,11 +129,15 @@ var g80TriageClosureClaims = []g80ClosureClaim{
 	// equivalent). There is no single commit that represents "PR #1563's
 	// fix" (or #1564/#1565/#1566's) anymore, distinct from the whole
 	// re-applied stack -- stated explicitly here, not silently exempted.
+	// Its marker is repo-wide absence of RequireNodeCredentialOrPermission,
+	// the exact function ADR-085 deletes -- the natural, and only, marker
+	// for a stack with no single commit to point at.
 	{label: "PRs #1563-#1566 + ADR-085 node-credential-arm removal",
 		noSingleCommitReason: "re-applied as one flat diff onto a fresh branch (git apply, not a rebase) after " +
 			"the original branch-into-branch merge chain was found to never reach main and the pre-squash " +
 			"commits were confirmed unrecoverable as ancestors of their post-squash equivalents; verify this " +
-			"content's presence by reading the diff/tests it introduced, not by any single commit hash"},
+			"content's presence by reading the diff/tests it introduced, not by any single commit hash",
+		marker: g80ClosureMarker{mustNotExist: "func RequireNodeCredentialOrPermission"}},
 }
 
 // ensureFullHistory deepens a shallow clone before this guard runs its
@@ -126,12 +170,111 @@ func ensureFullHistory(t *testing.T) {
 	}
 }
 
-// TestG80TriageDocClosuresAreAncestorsOfHEAD is Task 0b's guard: every claim
-// in g80TriageClosureClaims that names a commit must be an ancestor of HEAD
-// (git merge-base --is-ancestor <sha> HEAD) -- a merge badge, a PR's
-// "Merged" label, or an approval is never sufficient evidence on its own.
+// fileContains reports whether path's current working-tree content contains
+// substr in a NON-COMMENT line. path is repo-relative; this test binary runs
+// with its package directory (server/http) as cwd, so path is resolved
+// against "../..". Comment lines (trimmed content starting with "//") are
+// skipped before searching -- mirrors wire_actor_identity_forgery_guard_test.go's
+// actorFieldReads, and for the same reason: a doc comment mentioning a
+// removed symbol's name (this file's own fix commentary routinely does
+// exactly that, describing what a fix now checks) must not itself satisfy a
+// mustExist marker after the real call is gone -- that would make the
+// marker unable to fail on a genuine revert, which defeats the point of
+// having it.
+func fileContains(t *testing.T, path, substr string) bool {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", path))
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		if strings.Contains(line, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// repoContains reports whether substr appears ANYWHERE in the current
+// working tree's tracked *.go files -- used for mustNotExist markers that
+// check a symbol's absence repo-wide (a removed function could be
+// re-introduced under a different file without a single-file check catching
+// it). Excludes THIS file from the scan: a mustNotExist marker necessarily
+// spells out the exact string it's checking for as a Go string literal in
+// g80TriageClosureClaims below, which would otherwise self-match on every
+// run regardless of whether the real symbol is actually gone.
+func repoContains(t *testing.T, substr string) bool {
+	t.Helper()
+	out, err := exec.Command("git", "-C", "../..", "grep", "-q", "-F", substr, "--",
+		"*.go", ":!server/http/g80_triage_doc_closure_guard_test.go").CombinedOutput()
+	if err == nil {
+		return true
+	}
+	if len(out) == 0 {
+		return false
+	}
+	t.Fatalf("git grep failed unexpectedly for %q repo-wide: %v (%s)", substr, err, string(out))
+	return false
+}
+
+// checkMarker evaluates one g80ClosureMarker against the current working
+// tree and returns a non-empty failure description if the marker doesn't
+// hold (empty string means the marker is satisfied).
+func checkMarker(t *testing.T, m g80ClosureMarker) string {
+	t.Helper()
+	switch {
+	case m.mustExist != "" && m.mustNotExist != "":
+		return "marker malformed: both mustExist and mustNotExist set -- pick one"
+	case m.mustExist == "" && m.mustNotExist == "":
+		return "marker malformed: neither mustExist nor mustNotExist set -- every closure claim needs a marker"
+	case m.mustExist != "":
+		var present bool
+		if m.file != "" {
+			present = fileContains(t, m.file, m.mustExist)
+		} else {
+			present = repoContains(t, m.mustExist)
+		}
+		if !present {
+			where := m.file
+			if where == "" {
+				where = "anywhere in the repo"
+			}
+			return "marker NOT satisfied: " + m.mustExist + " no longer found in " + where +
+				" -- the fix this entry claims may have been reverted, refactored away, or lost in a merge"
+		}
+	case m.mustNotExist != "":
+		var present bool
+		if m.file != "" {
+			present = fileContains(t, m.file, m.mustNotExist)
+		} else {
+			present = repoContains(t, m.mustNotExist)
+		}
+		if present {
+			where := m.file
+			if where == "" {
+				where = "the repo"
+			}
+			return "marker NOT satisfied: " + m.mustNotExist + " is back in " + where +
+				" -- this entry's closure claims its removal, but it has reappeared"
+		}
+	}
+	return ""
+}
+
+// TestG80TriageDocClosuresAreAncestorsOfHEAD is Task 0b's guard, now two
+// independent checks per entry: the SHA answers "did this land" (git
+// merge-base --is-ancestor <sha> HEAD -- a merge badge, a PR's "Merged"
+// label, or an approval is never sufficient evidence on its own), and the
+// marker answers "is the fix still present" (a later commit can revert,
+// refactor away, or lose a fix in a bad merge resolution without ever
+// removing the original SHA from HEAD's ancestry, so the SHA check alone
+// stays green forever after the fix is gone -- see g80ClosureMarker's doc).
 // Every claim with no single commit must say so via noSingleCommitReason,
-// not be silently absent from this registry.
+// not be silently absent from this registry. Every claim, with or without a
+// SHA, must carry a marker.
 func TestG80TriageDocClosuresAreAncestorsOfHEAD(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available on PATH")
@@ -140,7 +283,11 @@ func TestG80TriageDocClosuresAreAncestorsOfHEAD(t *testing.T) {
 	var notAncestor []string
 	var unresolvable []string
 	var malformed []string
+	var markerFailed []string
 	for _, c := range g80TriageClosureClaims {
+		if m := checkMarker(t, c.marker); m != "" {
+			markerFailed = append(markerFailed, c.label+": "+m)
+		}
 		if c.sha == "" {
 			if strings.TrimSpace(c.noSingleCommitReason) == "" {
 				malformed = append(malformed, c.label+" (neither sha nor noSingleCommitReason set)")
@@ -168,6 +315,10 @@ func TestG80TriageDocClosuresAreAncestorsOfHEAD(t *testing.T) {
 	}
 	if len(malformed) > 0 {
 		t.Errorf("%d closure claim(s) malformed in this file's registry: %v", len(malformed), malformed)
+	}
+	if len(markerFailed) > 0 {
+		t.Errorf("%d closure claim(s) failed their marker check (SHA landed, but the fix is no longer present in "+
+			"the working tree): %v", len(markerFailed), markerFailed)
 	}
 	if len(unresolvable) > 0 {
 		t.Errorf("%d closure claim(s) reference a commit this checkout could not resolve, even after attempting "+
