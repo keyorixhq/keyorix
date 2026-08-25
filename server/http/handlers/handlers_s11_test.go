@@ -1477,13 +1477,13 @@ func TestListProjectMachineRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath_S11 — no params needed → 200.
-func TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath_S11(t *testing.T) {
+// TestListGlobalAdminAssignmentsSnapshotProxy_HappyPath_S11 — no params needed → 200.
+func TestListGlobalAdminAssignmentsSnapshotProxy_HappyPath_S11(t *testing.T) {
 	t.Parallel()
 	h := NewRBACHandler(freshCoreS11(t))
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, r)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

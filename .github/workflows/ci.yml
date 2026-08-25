@@ -401,6 +401,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # KEYORIX_TEST_PG_DSN (see internal/cli/encryption/rotate_e2e_test.go's own
+    # header comment) has existed as a developer opt-in gate since before this
+    # job ran against Postgres at all -- CI never set it, so every Postgres-
+    # gated test silently skipped here, indefinitely (the same shape as the 13
+    # HA-lock branches this container also exists to exercise: a mechanism
+    # that only ever runs against SQLite verifies nothing about the Postgres
+    # path it was written for). Declared job-level (not leg-conditional) to
+    # keep this diff to "add the container + the DSN," matching every other
+    # leg's already-generous-timeout precedent rather than hand-picking which
+    # legs need it -- a service container that isn't used by a given leg's
+    # tests costs only its own startup time, not the leg's.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: keyorix
+          POSTGRES_PASSWORD: keyorix123
+          POSTGRES_DB: keyorix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYORIX_TEST_PG_DSN: "host=localhost port=5432 dbname=keyorix user=keyorix sslmode=disable password=keyorix123"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

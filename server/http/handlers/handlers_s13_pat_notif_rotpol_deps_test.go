@@ -702,8 +702,8 @@ func TestListSecretDependenciesForProjectProxy_InvalidQuery_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestListSecretDependenciesForProjectForUpdateProxy_InvalidQuery_S13 — non-numeric project_id → 400.
-func TestListSecretDependenciesForProjectForUpdateProxy_InvalidQuery_S13(t *testing.T) {
+// TestListSecretDependenciesForProjectSnapshotProxy_InvalidQuery_S13 — non-numeric project_id → 400.
+func TestListSecretDependenciesForProjectSnapshotProxy_InvalidQuery_S13(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS12(t)
 	h, err := NewSecretHandler(cs)
@@ -711,12 +711,12 @@ func TestListSecretDependenciesForProjectForUpdateProxy_InvalidQuery_S13(t *test
 
 	req := httptest.NewRequest(http.MethodGet, "/?project_id=bad", nil)
 	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectForUpdateProxy(w, req)
+	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestListSecretDependenciesForProjectForUpdateProxy_HappyPath_S13 — valid project_id → 200.
-func TestListSecretDependenciesForProjectForUpdateProxy_HappyPath_S13(t *testing.T) {
+// TestListSecretDependenciesForProjectSnapshotProxy_HappyPath_S13 — valid project_id → 200.
+func TestListSecretDependenciesForProjectSnapshotProxy_HappyPath_S13(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS12(t)
 	h, err := NewSecretHandler(cs)
@@ -724,7 +724,7 @@ func TestListSecretDependenciesForProjectForUpdateProxy_HappyPath_S13(t *testing
 
 	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
 	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectForUpdateProxy(w, req)
+	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

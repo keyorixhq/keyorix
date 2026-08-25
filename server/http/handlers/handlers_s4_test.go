@@ -3183,13 +3183,13 @@ func TestListSecretDependenciesForProjectProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestListSecretDependenciesForProjectForUpdateProxy_MissingQuery(t *testing.T) {
+func TestListSecretDependenciesForProjectSnapshotProxy_MissingQuery(t *testing.T) {
 	cs := newHandlerCoreS4(t)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectForUpdateProxy(w, req)
+	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -3553,11 +3553,11 @@ func TestListProjectMachineRoleAssignmentsProxy_MissingQuery(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath(t *testing.T) {
+func TestListGlobalAdminAssignmentsSnapshotProxy_HappyPath(t *testing.T) {
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	// missing role_ids is valid → empty result → 200
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -10530,19 +10530,19 @@ func TestSecretHandler_GetSecretDependencyProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestSecretHandler_ListSecretDependenciesForProjectForUpdateProxy_MissingProjectID(t *testing.T) {
+func TestSecretHandler_ListSecretDependenciesForProjectSnapshotProxy_MissingProjectID(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectForUpdateProxy(w, req)
+	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestSecretHandler_ListSecretDependenciesForProjectForUpdateProxy_HappyPath(t *testing.T) {
+func TestSecretHandler_ListSecretDependenciesForProjectSnapshotProxy_HappyPath(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
 	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectForUpdateProxy(w, req)
+	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -11331,14 +11331,14 @@ func TestCatalogHandler_CreateInvitationProxy_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── rbac_role_grants_proxy.go: ListGlobalAdminAssignmentsForUpdateProxy ───────
+// ── rbac_role_grants_proxy.go: ListGlobalAdminAssignmentsSnapshotProxy ───────
 
-func TestRBACHandler_ListGlobalAdminAssignmentsForUpdateProxy_HappyPath(t *testing.T) {
+func TestRBACHandler_ListGlobalAdminAssignmentsSnapshotProxy_HappyPath(t *testing.T) {
 	c := newHandlerCoreS4(t)
 	h := NewRBACHandler(c)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

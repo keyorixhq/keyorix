@@ -319,7 +319,7 @@ func TestDoImport_SkipExistingS3(t *testing.T) {
 	defer func() { importSkipExisting = origSkip }()
 	importSkipExisting = true
 
-	err := doImport(context.Background(), rc, []secretEntry{{Name: "EXISTING", Value: "v"}}, 1, 1)
+	err := doImport(context.Background(), rc, []secretEntry{{Name: "EXISTING", Value: "v"}}, 1, 1, 0)
 	require.NoError(t, err)
 }
 

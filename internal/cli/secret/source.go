@@ -40,6 +40,19 @@ var (
 	gcpPrefix  string
 )
 
+// sourceSkipCount tallies secrets a live-source provider (collectAzure,
+// collectGCP) dropped before they ever became a secretEntry — e.g. a Key
+// Vault secret with no accessible value, or a Secret Manager entry with no
+// enabled version. Providers print each skip by name as it happens (never
+// silent); this counter lets runImport fold the total into the same
+// "imported N, skipped M" summary already used for destination-side skips
+// (already-exists), so a source-side drop is never invisible in the final
+// output either. Reset by fetchFromSource before each dispatch — safe as
+// plain package state because exactly one import runs per CLI process.
+// Tests that call collectAzure/collectGCP directly (bypassing
+// fetchFromSource) must reset it themselves before asserting on it.
+var sourceSkipCount int
+
 // fetchFromSource dispatches to the live provider named by --source and returns
 // the secrets it found, ready for the shared import path. The optional --prefix
 // is applied uniformly here so each provider need not know about it.
@@ -48,6 +61,7 @@ func fetchFromSource(ctx context.Context, source string) ([]secretEntry, error) 
 		entries []secretEntry
 		err     error
 	)
+	sourceSkipCount = 0
 	switch strings.ToLower(strings.TrimSpace(source)) {
 	case "vault":
 		entries, err = fetchFromVault(ctx)

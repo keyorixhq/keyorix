@@ -39,15 +39,20 @@ func (ls *LocalStorage) GetWebAuthnCredentialByCredID(ctx context.Context, crede
 
 // LockWebAuthnCredentialForUpdate re-reads a credential by (credential_id, user_id),
 // taking a row-level write lock on backends that support one (Postgres: SELECT …
-// FOR UPDATE). Historically used inside WithTransaction so a read-modify-write of
-// the advanced signature counter serialized against a concurrent write for the same
-// credential (#306) — that specific path now goes through
+// FOR UPDATE). Originally used inline in persistUpdatedCredential so a read-modify-
+// write of the advanced signature counter serialized against a concurrent write for
+// the same credential (#306) — that path now goes through
 // AdvanceWebAuthnCredentialCounter below instead (a single atomic call, required so
 // RemoteStorage — whose WithTransaction is a no-op passthrough — gets the same
-// guarantee, #517). This method remains for callers that need a locked read outside
-// that race (e.g. rejectIfCloned's best-effort disable). On backends without row
-// locks (SQLite) it is a plain scoped read, and the caller is responsible for its
-// own process-level serialization — mirrors LockUserForUpdate.
+// guarantee, #517), which is this method's ONE current caller, itself always inside
+// WithTransaction. (rejectIfCloned's best-effort clone-disable was formerly cited
+// here as a second caller needing a locked read outside that race; it no longer
+// calls this method at all — it uses a plain, unlocked GetWebAuthnCredentialByCredID
+// + UpdateWebAuthnCredential instead, which is correct for a best-effort disable
+// that tolerates losing a race — a Postgres FOR UPDATE contention audit confirmed
+// this doc comment had drifted from that refactor.) On backends without row locks
+// (SQLite) LockWebAuthnCredentialForUpdate is a plain scoped read, and the caller is
+// responsible for its own process-level serialization — mirrors LockUserForUpdate.
 func (ls *LocalStorage) LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error) {
 	q := ls.db.WithContext(ctx)
 	if ls.db.Dialector.Name() == "postgres" {

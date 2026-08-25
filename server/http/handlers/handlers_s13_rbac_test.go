@@ -626,7 +626,7 @@ func TestListGlobalAdminAssignmentsProxy_BadRoleIDs_S13(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/system/rbac/global-admin-assignments?role_ids=nan,2", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "INVALID_QUERY")
 }
@@ -637,7 +637,7 @@ func TestListGlobalAdminAssignmentsProxy_EmptyRoleIDs_S13(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/system/rbac/global-admin-assignments", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -647,7 +647,7 @@ func TestListGlobalAdminAssignmentsProxy_ValidRoleIDs_S13(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/system/rbac/global-admin-assignments?role_ids=1,2,3", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

@@ -1000,7 +1000,7 @@ func TestRemoteStorage_ListSecretDependenciesForProjectForUpdate(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/system/secret-dependencies/for-update", r.URL.Path)
+		assert.Equal(t, "/api/v1/system/secret-dependencies/snapshot", r.URL.Path)
 		assert.Equal(t, "5", r.URL.Query().Get("project_id"))
 		_, _ = w.Write(apiOK(map[string]interface{}{
 			"dependencies": []map[string]interface{}{

@@ -1441,9 +1441,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// passthrough) — see secret_dependencies_proxy.go's package doc and the
 			// storage.Storage interface doc for why AddSecretDependency now calls
 			// this instead of orchestrating a list-under-lock-then-create sequence
-			// itself. Static sub-paths ("for-update", "exclusive") are registered
-			// before the "{id}" wildcard.
-			r.Get("/secret-dependencies/for-update", secretHandler.ListSecretDependenciesForProjectForUpdateProxy)
+			// itself. Static sub-paths ("snapshot", "exclusive") are registered
+			// before the "{id}" wildcard. "snapshot" is a deliberate rename from
+			// "for-update" — no route boundary can hold a Postgres row lock across a
+			// request (see ListSecretDependenciesForProjectSnapshotProxy's own doc).
+			r.Get("/secret-dependencies/snapshot", secretHandler.ListSecretDependenciesForProjectSnapshotProxy)
 			r.Get("/secret-dependencies/{id}", secretHandler.GetSecretDependencyProxy)
 			r.Get("/secret-dependencies", secretHandler.ListSecretDependenciesForProjectProxy)
 			r.Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
@@ -1837,7 +1839,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/rbac/groups/{groupID}/role-assignments", rbacHandler.ListGroupRoleAssignmentsProxy)
 			r.Get("/rbac/project-role-assignments", rbacHandler.ListProjectRoleAssignmentsProxy)
 			r.Get("/rbac/project-machine-role-assignments", rbacHandler.ListProjectMachineRoleAssignmentsProxy)
-			r.Get("/rbac/global-admin-assignments", rbacHandler.ListGlobalAdminAssignmentsForUpdateProxy)
+			r.Get("/rbac/global-admin-assignments", rbacHandler.ListGlobalAdminAssignmentsSnapshotProxy)
 			r.Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
 			r.Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
 			r.Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)

@@ -328,12 +328,19 @@ func (h *RBACHandler) ListProjectMachineRoleAssignmentsProxy(w http.ResponseWrit
 	writeRemoteAPISuccess(w, assignments)
 }
 
-// ListGlobalAdminAssignmentsForUpdateProxy handles GET
-// /api/v1/system/rbac/global-admin-assignments?role_ids=1,2,3. A PLAIN read — see
-// RemoteStorage.ListGlobalAdminAssignmentsForUpdate's doc (remote_rbac.go) for why
-// no lock is taken over this hop; safety comes entirely from
-// RemoveGlobalAdminRoleGuardedProxy's atomic conditional write below.
-func (h *RBACHandler) ListGlobalAdminAssignmentsForUpdateProxy(w http.ResponseWriter, r *http.Request) {
+// ListGlobalAdminAssignmentsSnapshotProxy handles GET
+// /api/v1/system/rbac/global-admin-assignments?role_ids=1,2,3. Named Snapshot, not
+// ForUpdate — the deliberately outdated Go interface method backing it
+// (RemoteStorage.ListGlobalAdminAssignmentsForUpdate, remote_rbac.go) is kept named
+// after LocalStorage's real, lock-holding sibling method for interface parity, but
+// no HTTP endpoint can hold a Postgres row lock across a request boundary: a
+// separate connection serves each call, so any "ForUpdate" name on the route itself
+// would advertise a guarantee this transport structurally cannot provide, and
+// would invite a caller to read this, decide, and write back on a second request
+// believing the first locked something. It never does. This is a PLAIN, unlocked
+// read; safety comes entirely from RemoveGlobalAdminRoleGuardedProxy's atomic
+// conditional write below, in ONE request.
+func (h *RBACHandler) ListGlobalAdminAssignmentsSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 	roleIDs, ok := parseRBACProxyRoleIDsQuery(w, r)
 	if !ok {
 		return
@@ -485,7 +492,7 @@ func parseRBACProxyProjectIDQuery(w http.ResponseWriter, r *http.Request) (proje
 }
 
 // parseRBACProxyRoleIDsQuery parses the optional, comma-separated role_ids query
-// parameter ListGlobalAdminAssignmentsForUpdateProxy takes — an empty/absent value
+// parameter ListGlobalAdminAssignmentsSnapshotProxy takes — an empty/absent value
 // is valid (no install-admin role seeded yet) and yields an empty slice, mirroring
 // LocalStorage.ListGlobalAdminAssignmentsForUpdate's own "len(adminRoleIDs) == 0 →
 // nil, nil" short-circuit.

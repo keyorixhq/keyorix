@@ -3326,11 +3326,11 @@ func TestGetSecretDependencyProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestListSecretDependenciesForProjectForUpdateProxy_HappyPath(t *testing.T) {
+func TestListSecretDependenciesForProjectSnapshotProxy_HappyPath(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
 	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectForUpdateProxy(w, req)
+	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -3790,28 +3790,28 @@ func TestListProjectMachineRoleAssignmentsProxy_MissingProjectIDS5(t *testing.T)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestListGlobalAdminAssignmentsForUpdateProxy_HappyPathS5(t *testing.T) {
+func TestListGlobalAdminAssignmentsSnapshotProxy_HappyPathS5(t *testing.T) {
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	// Empty role_ids is valid — returns empty/nil list.
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, 200, w.Code)
 }
 
-func TestListGlobalAdminAssignmentsForUpdateProxy_WithRoleIDs(t *testing.T) {
+func TestListGlobalAdminAssignmentsSnapshotProxy_WithRoleIDs(t *testing.T) {
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	req := httptest.NewRequest("GET", "/?role_ids=1,2", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, 200, w.Code)
 }
 
-func TestListGlobalAdminAssignmentsForUpdateProxy_BadRoleIDs(t *testing.T) {
+func TestListGlobalAdminAssignmentsSnapshotProxy_BadRoleIDs(t *testing.T) {
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	req := httptest.NewRequest("GET", "/?role_ids=1,bad", nil)
 	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsForUpdateProxy(w, req)
+	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
