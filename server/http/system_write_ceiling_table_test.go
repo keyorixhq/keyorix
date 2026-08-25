@@ -74,6 +74,8 @@ type ceilingTableFixtures struct {
 	normalRoleID      uint // a non-admin-tier role
 	adminRoleID       uint // system_admin's role ID
 	secondAdminUserID uint // a SECOND global-admin user (system_admin), distinct from the bootstrap admin
+	usersWriteToken   string // system.write + users.write human caller (createSystemWriteAndUsersWriteToken)
+	setupTargetUserID uint   // a real user, distinct from the caller, to target with a setup token
 }
 
 // createSystemWriteAndRolesAssignToken creates a human user holding system.write
@@ -117,6 +119,50 @@ func createSystemWriteAndRolesAssignToken(t *testing.T, c *core.KeyorixCore) str
 	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_roles_assign@example.com", "ceiling_test_system_writer_roles_assign"))
 
 	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_roles_assign", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+	return sess.SessionToken
+}
+
+// createSystemWriteAndUsersWriteToken creates a human user holding system.write
+// AND users.write, via a custom role well outside adminRoleNames (same rationale
+// as createSystemWriteOnlyToken). Represents the legitimate direct caller
+// CreateSetupTokenProxy's fix is meant to keep working: someone who actually holds
+// the same authority every other admin-facing route that mints a setup token
+// (POST /api/v1/users, POST /api/v1/users/{id}/resend-setup-link) already requires.
+func createSystemWriteAndUsersWriteToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+
+	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "sys_write_users_write", Email: "sys_write_users_write@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_users_write@example.com", "system_viewer"))
+
+	role, err := c.Storage().CreateRole(ctx, &models.Role{
+		Name: "ceiling_test_system_writer_users_write", Description: "test-only role: system.write + users.write, nothing else",
+	})
+	require.NoError(t, err)
+
+	perms, err := c.ListPermissions(ctx)
+	require.NoError(t, err)
+	var systemWriteID, usersWriteID uint
+	for _, p := range perms {
+		switch p.Name {
+		case "system.write":
+			systemWriteID = p.ID
+		case "users.write":
+			usersWriteID = p.ID
+		}
+	}
+	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
+	require.NotZero(t, usersWriteID, "users.write permission must already be seeded by bootstrap")
+
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID))
+	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_users_write@example.com", "ceiling_test_system_writer_users_write"))
+
+	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_users_write", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	return sess.SessionToken
 }
@@ -189,18 +235,29 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 	secondAdmin, err := testCore.GetUserByEmail(ctx, "ceiling-table-second-admin@example.com")
 	require.NoError(t, err)
 
+	// A real target user, distinct from every caller above, for
+	// CreateSetupTokenProxy rows to mint an account_setup token against.
+	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "ceiling-table-setup-target", Email: "ceiling-table-setup-target@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	setupTarget, err := testCore.GetUserByEmail(ctx, "ceiling-table-setup-target@example.com")
+	require.NoError(t, err)
+
 	token := createSystemWriteOnlyToken(t, testCore)
 	// createNodeToken (integration_test.go) also calls createTestToken internally —
 	// safe to call again here since createTestToken tolerates an already-initialized
 	// system (logs and continues rather than failing).
 	nodeToken := createNodeToken(t, testCore)
 	rolesAssignToken := createSystemWriteAndRolesAssignToken(t, testCore)
+	usersWriteToken := createSystemWriteAndUsersWriteToken(t, testCore)
 
 	return ceilingTableFixtures{
 		serverURL:         server.URL,
 		token:             token,
 		nodeToken:         nodeToken,
 		rolesAssignToken:  rolesAssignToken,
+		usersWriteToken:   usersWriteToken,
 		projectID:         projectID,
 		plainMachine:      plainMachine.ID,
 		adminMachine:      adminMachine.ID,
@@ -211,6 +268,7 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 		normalRoleID:      normalRole.ID,
 		adminRoleID:       adminRole.ID,
 		secondAdminUserID: secondAdmin.ID,
+		setupTargetUserID: setupTarget.ID,
 	}
 }
 
@@ -441,6 +499,70 @@ func TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_AllowsWithRolesAss
 	require.Equal(t, http.StatusOK, status,
 		"a caller who genuinely holds roles.assign at global scope must still be able to remove another admin's "+
 			"grant — the last-admin guard passes here because the bootstrap admin survives as the remaining admin")
+}
+
+// TestSystemWriteCeiling_CreateSetupTokenProxy_DeniesWithoutUsersWrite is the
+// table's CreateSetupTokenProxy row (G80 documented-exception re-verification
+// sweep, 2026-08-25). Ceiling: minting a setup token for user X is equivalent to
+// taking control of X -- every other admin-facing route that mints one
+// (POST /api/v1/users, POST /api/v1/users/{id}/resend-setup-link) requires
+// users.write. FIXED: a direct (non-node-credential) caller now needs users.write
+// too. RED before the fix: f.token (system.write, no users.write) could mint a
+// fully-valid, immediately-redeemable account_setup token for f.setupTargetUserID.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_DeniesWithoutUsersWrite(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequest(t, f, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-forged-hash-0000000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(system.write only, target=setup-target): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusForbidden, status,
+		"CEILING VIOLATED: a system.write-only caller with no users.write must be denied minting a setup token "+
+			"for another user — the internal invitation/user cross-reference check was never the gap; the "+
+			"missing actor-authority check was")
+}
+
+// TestSystemWriteCeiling_CreateSetupTokenProxy_AllowsWithUsersWrite is this row's
+// companion control: a caller who legitimately holds users.write (the SAME
+// authority every other route that mints a setup token already requires) must
+// still be able to perform this operation.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_AllowsWithUsersWrite(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.usersWriteToken, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-legit-hash-00000000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(users.write holder, target=setup-target): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusOK, status,
+		"a caller who genuinely holds users.write must still be able to mint a setup token for another user")
+}
+
+// TestSystemWriteCeiling_CreateSetupTokenProxy_NodeCredential_StillBypassesAuthorityCheck
+// pins the KNOWN, OPEN gap: unlike the human-caller row above (now 403), a node
+// credential still reaches the raw storage.CreateSetupToken call unconditionally
+// (isNodeCredentialRequest branch, setup_tokens_proxy.go), so it can still mint a
+// setup token for any user with no users.write check.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_NodeCredential_StillBypassesAuthorityCheck(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-node-hash-000000000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(node credential, target=setup-target): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusOK, status,
+		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still mints a "+
+			"setup token for any user with no users.write check — isNodeCredentialRequest routes it around the "+
+			"new check entirely, on an unverified relay-trust assumption. If this ever goes non-200, update this "+
+			"assertion — that would mean the gap closed, which is the goal, not a regression.")
 }
 
 // ── Node-credential-path rows ────────────────────────────────────────────────

@@ -525,34 +525,54 @@ var rawStorageBypassAllowlist = map[string]string{
 // originally-listed entries were deleted outright — G80 liveness sweep found no
 // live caller for any of them; see docs/g80-remediation-notes.md.)
 var knownUnfixedRawStorageBypasses = map[string]string{
-	// MOVED HERE 2026-08-25 (G80 documented-exception re-verification sweep):
-	// was classified documented-exception in rawStorageBypassAllowlist on the
-	// theory that the handler's own #G79 comment "re-derives and closes the gap"
-	// (an internal invitation/user cross-reference check before persisting).
-	// That check is real and correctly written for what it explicitly
-	// validates (existence + case-insensitive email match) -- but it enforces
-	// internal CONSISTENCY between the caller-supplied token_hash/subject_email/
-	// subject_user_id/invitation_id, not caller AUTHORIZATION to target a
-	// specific account. Because this handler lets the caller choose token_hash
-	// directly (the plaintext the caller itself generates and hashes, per its
-	// own #G79 comment -- "by design, always caller-supplied"), a caller
-	// holding only system.write who already knows (or guesses) a real target's
-	// email/user-ID can mint a fully-valid, immediately-redeemable takeover
-	// token for that target via the public POST /auth/setup/consume --
-	// overwriting the target's real password (and, for a non-MFA account,
-	// receiving a live session AS them). Escalation-delta confirmed: no other
-	// system.write-gated route in this proxy group lets a caller overwrite an
-	// EXISTING arbitrary user's password + mint a session under that identity.
-	// The invitation_accept branch (setup_tokens_proxy.go's GetProjectInvitation
-	// + email-match check) additionally has ZERO test coverage. NOT fixed here
-	// -- reported per explicit instruction, fix approach pending a decision
-	// (narrow this route to the node-credential arm only vs. a core-level
-	// re-check) since the package doc's own stated legitimate caller is a
-	// genuine RemoteStorage node, never a human/service system.write role.
-	"CreateSetupTokenProxy": "REAL, human-reachable: the #G79 cross-reference check enforces internal " +
-		"consistency of caller-supplied fields, not caller authorization to target the account those fields " +
-		"name -- a system.write holder who already knows a target's email/ID can mint and immediately redeem a " +
-		"takeover token for that target via the public /auth/setup/consume endpoint.",
+	// HALF-FIXED 2026-08-25 (G80 documented-exception re-verification sweep) --
+	// do NOT move to rawStorageBypassAllowlist. Was classified documented-
+	// exception on the theory that the handler's own #G79 comment "re-derives
+	// and closes the gap" (an internal invitation/user cross-reference check
+	// before persisting). That check is real and correctly written for what it
+	// explicitly validates (existence + case-insensitive email match) -- but it
+	// enforces internal CONSISTENCY between the caller-supplied fields, not
+	// caller AUTHORIZATION to target the account those fields name. Confirmed
+	// exploitable: a caller holding only system.write who already knew (or
+	// guessed) a real target's email/user-ID could mint a fully-valid,
+	// immediately-redeemable takeover token via the public POST
+	// /auth/setup/consume -- overwriting the target's real password and, for a
+	// non-MFA account, receiving a live session AS them.
+	//
+	// Rejected fix: narrowing to the node-credential arm only. Liveness-checked
+	// first (per this sweep's own standing method): RemoteStorage.CreateSetupToken
+	// (internal/storage/store/remote_auth.go:211) is a genuine implementation
+	// invoked by ordinary product flows (every project invite/resend, every
+	// admin create-user/resend-setup-link action, the self-service forgot-
+	// password flow) -- not dead code, so node-only would not have been a
+	// no-op restriction. More importantly: per #1552, a bare node credential can
+	// already grant ANY role including admin-tier -- the single most widely
+	// distributed credential class in a deployment (ADR-085) -- so gatekeeping
+	// on "is this a node credential" would LOWER the effective bar, not raise
+	// it, for an account-takeover primitive.
+	//
+	// CLOSED for a direct (non-node-credential) caller instead, by deriving the
+	// ceiling from the operation: minting a setup token for user X is
+	// equivalent to taking control of X, and every other admin-facing route
+	// that mints one (POST /api/v1/users, POST /api/v1/users/{id}/resend-setup-
+	// link, router.go, RequirePermission(permUsersWrite)) already requires
+	// users.write. CreateSetupTokenProxy now requires the same for a direct
+	// caller (AuthorizePrincipal(users.write, global scope)) before persisting.
+	// STILL OPEN for a node-credential caller: isNodeCredentialRequest(r)
+	// routes around the check entirely to the raw storage.CreateSetupToken
+	// call, on the same unverified relay-trust assumption this campaign's other
+	// node branches make (ADR-085's still-unresolved "harder question"). See
+	// system_write_ceiling_table_test.go's CreateSetupTokenProxy rows for the
+	// live, asserted evidence (both the fixed direct-caller path and the
+	// still-open node-credential path). The invitation_accept branch's
+	// previously-zero test coverage is also closed
+	// (TestCreateSetupTokenProxy_InvitationAccept_HappyPath/
+	// ..._RefusesEmailMismatch, handlers_s4_test.go).
+	"CreateSetupTokenProxy": "HALF-FIXED: closed for a direct system.write-only human/machine caller " +
+		"(AuthorizePrincipal(users.write, global scope) now enforced -- derived from the operation itself, " +
+		"matching every other route that mints a setup token); STILL OPEN for a node-credential caller " +
+		"(isNodeCredentialRequest routes around the check to the raw storage call -- see the HALF-FIXED comment " +
+		"immediately above this entry).",
 	// HALF-FIXED 2026-08-25 (G80 documented-exception re-verification sweep) --
 	// do NOT move to rawStorageBypassAllowlist: CLOSED for a direct,
 	// non-node-credential caller (now routed through core.RemoveUserRole after
