@@ -113,12 +113,6 @@ func (w breakGlassActivationProxyWire) toModel() *models.BreakGlassActivation {
 	}
 }
 
-// breakGlassContainmentAdminRoleNames mirrors internal/core's unexported
-// installAdminRoleNames (rbac_management.go) — duplicated here because this
-// handler cannot call KeyorixCore's unexported containment logic directly and
-// there is no exported equivalent. Keep in sync if that list ever changes.
-var breakGlassContainmentAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
-
 // breakGlassNotActiveCode is the machine-readable error code
 // RevokeBreakGlassActivationProxy returns when the conditional
 // `WHERE state = 'active'` update matches no row (storage.ErrBreakGlassNotActive,

@@ -96,6 +96,36 @@ var g80TriageClosureClaims = []g80ClosureClaim{
 			"content's presence by reading the diff/tests it introduced, not by any single commit hash"},
 }
 
+// ensureFullHistory deepens a shallow clone before this guard runs its
+// ancestor checks. Found 2026-08-25: CI's default actions/checkout does a
+// shallow clone (fetch-depth: 1) for every job except the one gitleaks step
+// that opts into fetch-depth: 0 -- under a shallow clone, `git merge-base
+// --is-ancestor <sha> HEAD` doesn't report "not an ancestor" for an older,
+// genuinely-landed commit, it fails outright with "fatal: Not a valid commit
+// name <sha>" because the object was never fetched at all. That made this
+// guard fail unconditionally in CI regardless of whether the claims it
+// checks were true -- exactly the "a check that always fails is as useless
+// as one that always passes" anti-pattern this campaign has fought
+// elsewhere (CLAUDE.md). Confirmed via the actual CI failure log (test-suite
+// http-3, PR #1568) before writing this fix, not guessed. Self-heals here
+// instead of requiring every CI job that might run this package to carry a
+// fetch-depth: 0 override.
+func ensureFullHistory(t *testing.T) {
+	t.Helper()
+	shallow, err := exec.Command("git", "rev-parse", "--is-shallow-repository").CombinedOutput()
+	if err != nil {
+		t.Logf("could not determine shallow-repository status: %v (%s) -- proceeding as-is", err, strings.TrimSpace(string(shallow)))
+		return
+	}
+	if strings.TrimSpace(string(shallow)) != "true" {
+		return
+	}
+	if out, err := exec.Command("git", "fetch", "--unshallow", "--quiet").CombinedOutput(); err != nil {
+		t.Logf("git fetch --unshallow failed: %v (%s) -- ancestor checks below may report false negatives "+
+			"(commit unresolvable) rather than a genuine non-ancestor finding", err, strings.TrimSpace(string(out)))
+	}
+}
+
 // TestG80TriageDocClosuresAreAncestorsOfHEAD is Task 0b's guard: every claim
 // in g80TriageClosureClaims that names a commit must be an ancestor of HEAD
 // (git merge-base --is-ancestor <sha> HEAD) -- a merge badge, a PR's
@@ -106,7 +136,9 @@ func TestG80TriageDocClosuresAreAncestorsOfHEAD(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available on PATH")
 	}
+	ensureFullHistory(t)
 	var notAncestor []string
+	var unresolvable []string
 	var malformed []string
 	for _, c := range g80TriageClosureClaims {
 		if c.sha == "" {
@@ -121,6 +153,13 @@ func TestG80TriageDocClosuresAreAncestorsOfHEAD(t *testing.T) {
 			malformed = append(malformed, c.label+" (both sha and noSingleCommitReason set -- pick one)")
 			continue
 		}
+		if _, err := exec.Command("git", "cat-file", "-e", c.sha).CombinedOutput(); err != nil {
+			unresolvable = append(unresolvable, c.label+" (commit "+c.sha+" could not be resolved even after "+
+				"attempting to deepen the clone -- this is NOT evidence the commit is missing from main, only "+
+				"that this checkout couldn't fetch it; investigate the fetch failure, don't read this as a "+
+				"closure regression)")
+			continue
+		}
 		cmd := exec.Command("git", "merge-base", "--is-ancestor", c.sha, "HEAD")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -129,6 +168,10 @@ func TestG80TriageDocClosuresAreAncestorsOfHEAD(t *testing.T) {
 	}
 	if len(malformed) > 0 {
 		t.Errorf("%d closure claim(s) malformed in this file's registry: %v", len(malformed), malformed)
+	}
+	if len(unresolvable) > 0 {
+		t.Errorf("%d closure claim(s) reference a commit this checkout could not resolve, even after attempting "+
+			"to deepen a shallow clone: %v", len(unresolvable), unresolvable)
 	}
 	if len(notAncestor) > 0 {
 		t.Errorf("%d closure claim(s) reference a commit that is NOT an ancestor of HEAD -- a merge badge or PR "+
