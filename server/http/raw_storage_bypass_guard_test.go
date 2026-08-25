@@ -182,9 +182,6 @@ func isReadShapedStorageMethod(method string) bool {
 // found calling a wrapped storage method (the #1542 shape recurring), or if a
 // listed entry no longer applies (fixed and forgotten).
 var rawStorageBypassAllowlist = map[string]string{
-	"RemoveGlobalAdminRoleGuardedProxy": "deliberate exception, not a gap: no real transaction spans the HTTP hop " +
-		"back to the calling server (RemoteStorage.WithTransaction is a no-op), so the last-global-admin invariant " +
-		"can only be enforced atomically by whichever server owns the row -- see rbac_role_grants_proxy.go's package doc.",
 	"ClearProjectSecretOwnershipProxy": "false positive: the exported core wrapper (RemoveProjectMember) calls this " +
 		"storage method only as a best-effort CLEANUP side effect of removing a member, not as its own gated " +
 		"operation -- there is no independent ceiling for 'clear ownership' alone to bypass.",
@@ -349,6 +346,29 @@ var rawStorageBypassAllowlist = map[string]string{
 // originally-listed entries were deleted outright — G80 liveness sweep found no
 // live caller for any of them; see docs/g80-remediation-notes.md.)
 var knownUnfixedRawStorageBypasses = map[string]string{
+	// HALF-FIXED 2026-08-25 (G80 documented-exception re-verification sweep) --
+	// do NOT move to rawStorageBypassAllowlist: CLOSED for a direct,
+	// non-node-credential caller (now routed through core.RemoveUserRole after
+	// an explicit AuthorizePrincipal(roles.assign, global scope) check --
+	// mirroring the human-facing DELETE /api/v1/user-roles gate -- which also
+	// fixes the missing audit event, since RemoveUserRole calls LogRoleRemoved +
+	// evictUserSessionCache. STILL OPEN for a node-credential caller:
+	// isNodeCredentialRequest(r) routes around the check entirely to the raw
+	// storage.RemoveGlobalAdminRoleGuarded call, on the same unverified
+	// relay-trust assumption AssignRoleWithExpiryProxy's node branch made before
+	// #1552 (ADR-085's still-unresolved "harder question" -- the wire carries no
+	// field attesting which human/decision a relayed action actually traces to).
+	// A bare node credential -- zero RBAC permissions by design (ADR-030) --
+	// can still strip any admin's global-admin role (down to the last one) by
+	// calling this route directly, with nothing distinguishing that from a
+	// genuine relay. See system_write_ceiling_table_test.go's
+	// RemoveGlobalAdminRoleGuardedProxy rows for the live, asserted evidence
+	// (both the fixed direct-caller path and the still-open node-credential
+	// path).
+	"RemoveGlobalAdminRoleGuardedProxy": "HALF-FIXED: closed for a direct system.write-only human/machine caller " +
+		"(core.RemoveUserRole + an explicit roles.assign-at-global-scope check now enforced, which also adds the " +
+		"previously-missing audit event); STILL OPEN for a node-credential caller (isNodeCredentialRequest routes " +
+		"around the check to the raw storage call -- see the HALF-FIXED comment immediately above this entry).",
 	"TransitionMembershipProxy": "UNRESOLVED, not confirmed real or safe -- filed as #1546. The exported wrapper " +
 		"(TransitionMembership) gates activation with requireAuthorityForRole and grants/revokes the underlying " +
 		"role grant as a side effect neither of which this raw call performs; whether that's covered by a " +

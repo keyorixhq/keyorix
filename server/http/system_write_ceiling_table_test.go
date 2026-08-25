@@ -60,18 +60,65 @@ import (
 // mutate state use their OWN dedicated fixture, never one another case depends on
 // reading unmutated).
 type ceilingTableFixtures struct {
-	serverURL     string
-	token         string // system.write-only human caller under test
-	nodeToken     string // genuine node-credential relay caller (createNodeToken)
-	projectID     uint
-	plainMachine  uint // ordinary machine identity, no roles
-	adminMachine  uint // holds the admin-tier "system_admin" role at global scope
-	revokedMach   uint // machine identity already in state=revoked
-	plainCredID   uint // existing, non-revoked credential on plainMachine
-	revokedCredID uint // existing, ALREADY-revoked credential on plainMachine
-	bindingID     uint // existing OIDC binding on plainMachine
-	normalRoleID  uint // a non-admin-tier role
-	adminRoleID   uint // system_admin's role ID
+	serverURL         string
+	token             string // system.write-only human caller under test
+	nodeToken         string // genuine node-credential relay caller (createNodeToken)
+	rolesAssignToken  string // system.write + roles.assign human caller (createSystemWriteAndRolesAssignToken)
+	projectID         uint
+	plainMachine      uint // ordinary machine identity, no roles
+	adminMachine      uint // holds the admin-tier "system_admin" role at global scope
+	revokedMach       uint // machine identity already in state=revoked
+	plainCredID       uint // existing, non-revoked credential on plainMachine
+	revokedCredID     uint // existing, ALREADY-revoked credential on plainMachine
+	bindingID         uint // existing OIDC binding on plainMachine
+	normalRoleID      uint // a non-admin-tier role
+	adminRoleID       uint // system_admin's role ID
+	secondAdminUserID uint // a SECOND global-admin user (system_admin), distinct from the bootstrap admin
+}
+
+// createSystemWriteAndRolesAssignToken creates a human user holding system.write
+// AND roles.assign, via a custom role well outside adminRoleNames (same rationale
+// as createSystemWriteOnlyToken — an admin-tier role would bypass every
+// permission check and make a test asserting on roles.assign specifically
+// vacuous). Represents the legitimate direct caller RemoveGlobalAdminRoleGuardedProxy's
+// fix is meant to keep working: someone who actually holds the same authority the
+// human-facing DELETE /api/v1/user-roles route already requires for this operation.
+func createSystemWriteAndRolesAssignToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+
+	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "sys_write_roles_assign", Email: "sys_write_roles_assign@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_roles_assign@example.com", "system_viewer"))
+
+	role, err := c.Storage().CreateRole(ctx, &models.Role{
+		Name: "ceiling_test_system_writer_roles_assign", Description: "test-only role: system.write + roles.assign, nothing else",
+	})
+	require.NoError(t, err)
+
+	perms, err := c.ListPermissions(ctx)
+	require.NoError(t, err)
+	var systemWriteID, rolesAssignID uint
+	for _, p := range perms {
+		switch p.Name {
+		case "system.write":
+			systemWriteID = p.ID
+		case "roles.assign":
+			rolesAssignID = p.ID
+		}
+	}
+	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
+	require.NotZero(t, rolesAssignID, "roles.assign permission must already be seeded by bootstrap")
+
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID))
+	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_roles_assign@example.com", "ceiling_test_system_writer_roles_assign"))
+
+	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_roles_assign", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+	return sess.SessionToken
 }
 
 func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
@@ -129,25 +176,41 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 	normalRole, err := testCore.Storage().CreateRole(ctx, &models.Role{Name: "ceiling_table_normal_role", Description: "non-admin"})
 	require.NoError(t, err)
 
+	// A SECOND global admin, distinct from the bootstrap admin, so
+	// RemoveGlobalAdminRoleGuardedProxy rows can remove ITS system_admin grant
+	// without tripping the last-admin guard (the bootstrap admin survives as the
+	// remaining admin either way) -- isolating the actor-authority ceiling this
+	// row tests from the target-state ceiling other tests already cover.
+	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "ceiling-table-second-admin", Email: "ceiling-table-second-admin@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	require.NoError(t, testCore.AssignRoleToUser(ctx, "ceiling-table-second-admin@example.com", "system_admin"))
+	secondAdmin, err := testCore.GetUserByEmail(ctx, "ceiling-table-second-admin@example.com")
+	require.NoError(t, err)
+
 	token := createSystemWriteOnlyToken(t, testCore)
 	// createNodeToken (integration_test.go) also calls createTestToken internally —
 	// safe to call again here since createTestToken tolerates an already-initialized
 	// system (logs and continues rather than failing).
 	nodeToken := createNodeToken(t, testCore)
+	rolesAssignToken := createSystemWriteAndRolesAssignToken(t, testCore)
 
 	return ceilingTableFixtures{
-		serverURL:     server.URL,
-		token:         token,
-		nodeToken:     nodeToken,
-		projectID:     projectID,
-		plainMachine:  plainMachine.ID,
-		adminMachine:  adminMachine.ID,
-		revokedMach:   revokedMachine.ID,
-		plainCredID:   plainCred.ID,
-		revokedCredID: revokedCred.ID,
-		bindingID:     binding.ID,
-		normalRoleID:  normalRole.ID,
-		adminRoleID:   adminRole.ID,
+		serverURL:         server.URL,
+		token:             token,
+		nodeToken:         nodeToken,
+		rolesAssignToken:  rolesAssignToken,
+		projectID:         projectID,
+		plainMachine:      plainMachine.ID,
+		adminMachine:      adminMachine.ID,
+		revokedMach:       revokedMachine.ID,
+		plainCredID:       plainCred.ID,
+		revokedCredID:     revokedCred.ID,
+		bindingID:         binding.ID,
+		normalRoleID:      normalRole.ID,
+		adminRoleID:       adminRole.ID,
+		secondAdminUserID: secondAdmin.ID,
 	}
 }
 
@@ -343,6 +406,43 @@ func TestSystemWriteCeiling_DeleteOIDCBindingProxy_VerifiesOwnership(t *testing.
 	require.Equal(t, http.StatusOK, status, "the delete itself is expected to succeed for a binding that IS legitimately owned by its machine")
 }
 
+// TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_DeniesWithoutRolesAssign
+// is the table's RemoveGlobalAdminRoleGuardedProxy row (G80 documented-exception
+// re-verification sweep, 2026-08-25). Ceiling: the human-facing equivalent
+// (DELETE /api/v1/user-roles) requires roles.assign AT THE TARGET SCOPE
+// (router.go's user-roles route, #342); this proxy's OWN gate was only
+// system.write (RequireNodeCredentialOrPermission), materially weaker and, per
+// auth_bootstrap.go's own doc, granted for unrelated reasons (audit checkpoints,
+// legal holds, SoD policies). FIXED: a direct (non-node-credential) caller now
+// needs roles.assign at global scope. RED before the fix: f.token (system.write,
+// no roles.assign) could strip f.secondAdminUserID's system_admin grant outright.
+func TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_DeniesWithoutRolesAssign(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequest(t, f, http.MethodPost, "/api/v1/system/rbac/global-admin-role/remove-guarded", map[string]any{
+		"user_id": f.secondAdminUserID, "role_id": f.adminRoleID,
+	})
+	t.Logf("RemoveGlobalAdminRoleGuardedProxy(system.write only, target=second-admin): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusForbidden, status,
+		"CEILING VIOLATED: a system.write-only caller with no roles.assign must be denied removal of another "+
+			"user's global-admin role grant — the atomicity of the last-admin guard was never the gap; the missing "+
+			"actor-authority check was")
+}
+
+// TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_AllowsWithRolesAssign is
+// this row's companion control: a caller who legitimately holds roles.assign (the
+// SAME authority the human-facing route already requires) must still be able to
+// perform this operation — the fix must not turn into a blanket denial.
+func TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_AllowsWithRolesAssign(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.rolesAssignToken, http.MethodPost, "/api/v1/system/rbac/global-admin-role/remove-guarded", map[string]any{
+		"user_id": f.secondAdminUserID, "role_id": f.adminRoleID,
+	})
+	t.Logf("RemoveGlobalAdminRoleGuardedProxy(roles.assign holder, target=second-admin): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusOK, status,
+		"a caller who genuinely holds roles.assign at global scope must still be able to remove another admin's "+
+			"grant — the last-admin guard passes here because the bootstrap admin survives as the remaining admin")
+}
+
 // ── Node-credential-path rows ────────────────────────────────────────────────
 //
 // The three rows below exercise the SAME routes above, but with f.nodeToken (a
@@ -449,4 +549,24 @@ func TestSystemWriteCeiling_DeleteOIDCBindingProxy_NodeCredential_StillBypassesO
 			"OIDC binding with no ownership check and no audit event — isNodeCredentialRequest routes it around "+
 			"core.DeleteOIDCBinding entirely, on an unverified relay-trust assumption. If this ever goes non-200, "+
 			"update this assertion — that would mean the gap closed, which is the goal, not a regression.")
+}
+
+// TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_NodeCredential_StillBypassesAuthorityCheck
+// pins the KNOWN, OPEN gap: unlike the human-caller row above (now 403), a node
+// credential still reaches the raw storage.RemoveGlobalAdminRoleGuarded call
+// unconditionally (isNodeCredentialRequest branch, rbac_role_grants_proxy.go),
+// so it can still strip any admin's global-admin role (down to the last one) with
+// no roles.assign check and no audit event.
+func TestSystemWriteCeiling_RemoveGlobalAdminRoleGuardedProxy_NodeCredential_StillBypassesAuthorityCheck(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, "/api/v1/system/rbac/global-admin-role/remove-guarded", map[string]any{
+		"user_id": f.secondAdminUserID, "role_id": f.adminRoleID,
+	})
+	t.Logf("RemoveGlobalAdminRoleGuardedProxy(node credential, target=second-admin): status=%d body=%s", status, body)
+	require.Equal(t, http.StatusOK, status,
+		"KNOWN GAP (not intended, pending ADR-085's wire-identity decision): a node credential still strips a "+
+			"named admin's global-admin role grant with no roles.assign check and no audit event — "+
+			"isNodeCredentialRequest routes it around the new check entirely, on an unverified relay-trust "+
+			"assumption. If this ever goes non-200, update this assertion — that would mean the gap closed, which "+
+			"is the goal, not a regression.")
 }
