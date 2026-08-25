@@ -554,6 +554,36 @@ func TestSystemWriteCeiling_CreateSetupTokenProxy_AllowsWithUsersWrite(t *testin
 		"a caller who genuinely holds users.write must still be able to mint a setup token for another user")
 }
 
+// TestSystemWriteCeiling_CreateSetupTokenProxy_CreatedByIsAlwaysCaller closes a
+// gap the two rows above can't see: neither exercises whether
+// model.CreatedBy = userCtx.PrincipalID() (setup_tokens_proxy.go) is
+// load-bearing, since the wire body's own created_by is simply never read by
+// either. A genuine users.write holder forging created_by to a DIFFERENT real
+// user (secondAdminUserID) must still have the persisted, returned record
+// attribute the token to themselves, not the forged identity.
+func TestSystemWriteCeiling_CreateSetupTokenProxy_CreatedByIsAlwaysCaller(t *testing.T) {
+	f := setupCeilingTableFixtures(t)
+	status, body := doCeilingRequestAs(t, f, f.usersWriteToken, http.MethodPost, "/api/v1/system/setup-tokens", map[string]any{
+		"token_hash":      "ceiling-table-createdby-hash-0000000000000000000000000001",
+		"purpose":         "account_setup",
+		"subject_email":   "ceiling-table-setup-target@example.com",
+		"subject_user_id": f.setupTargetUserID,
+		"created_by":      f.secondAdminUserID,
+		"expires_at":      time.Now().Add(time.Hour),
+	})
+	t.Logf("CreateSetupTokenProxy(users.write holder, created_by forged to a different real user %d): status=%d body=%s", f.secondAdminUserID, status, body)
+	require.Equal(t, http.StatusOK, status)
+
+	var parsed struct {
+		Data struct {
+			CreatedBy uint `json:"created_by"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &parsed))
+	require.NotEqual(t, f.secondAdminUserID, parsed.Data.CreatedBy, "created_by must not be the forged user ID")
+	require.NotZero(t, parsed.Data.CreatedBy, "created_by must be a real, attributable caller")
+}
+
 // TestSystemWriteCeiling_CreateSetupTokenProxy_NodeCredential_StillBypassesAuthorityCheck
 // pins the CLOSED gap: ADR-085 (Accepted, 2026-08-25) removed
 // isNodeCredentialRequest's unconditional-passthrough branch AND the

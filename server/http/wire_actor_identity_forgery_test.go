@@ -61,6 +61,43 @@ func TestWireActorForgery_CreateInvitationProxy_RealAdminSucceeds(t *testing.T) 
 	require.Equal(t, http.StatusOK, status, "a genuine admin authenticating as themselves must still be able to create a system_admin invitation")
 }
 
+// TestWireActorForgery_CreateInvitationProxy_PersistedInvitedByIsAlwaysCaller
+// closes a gap in the two tests above: both only exercise a FORBIDDEN path
+// (system_admin is admin-tier, so requireAuthorityForRole rejects the request
+// before model.InvitedBy is ever assigned), so neither can tell whether the
+// persisted attribution fix (model.InvitedBy = actorID(r), invitations_proxy.go)
+// is load-bearing or dead code. A non-admin role clears requireAuthorityForRole
+// for ANY system.write caller by design (see that function's doc), so this
+// drives a request that actually SUCCEEDS with a forged invited_by, then reads
+// the persisted row back and asserts it names the real caller, not the forgery.
+func TestWireActorForgery_CreateInvitationProxy_PersistedInvitedByIsAlwaysCaller(t *testing.T) {
+	f := newMachinePrivilegeCeilingFixture(t)
+	ctx := context.Background()
+	caller, err := f.core.GetUserByEmail(ctx, "sys_write_only@example.com")
+	require.NoError(t, err)
+
+	status, body := f.do(t, f.swToken, http.MethodPost, "/api/v1/system/invitations", map[string]any{
+		"project_id": f.projectID, "email": "attribution-forge-target@example.com", "state": "pending",
+		"role": "ceiling_test_non_admin_invitee_role", "invited_by": f.adminID,
+		"expires_at": time.Now().Add(24 * time.Hour),
+	})
+	t.Logf("POST /system/invitations (system.write-only, non-admin role, invited_by forged to real admin %d): status=%d body=%s", f.adminID, status, body)
+	require.Equal(t, http.StatusOK, status, "a non-admin-role invite must succeed for a system.write caller -- this test needs the request to actually persist to check attribution")
+
+	invitations, err := f.core.Storage().ListProjectInvitations(ctx, f.projectID)
+	require.NoError(t, err)
+	var found *models.ProjectInvitation
+	for _, inv := range invitations {
+		if inv.Email == "attribution-forge-target@example.com" {
+			found = inv
+			break
+		}
+	}
+	require.NotNil(t, found, "the invitation must have been persisted")
+	require.Equal(t, caller.ID, found.InvitedBy, "InvitedBy must record the authenticated caller, not the wire-supplied forgery")
+	require.NotEqual(t, f.adminID, found.InvitedBy, "InvitedBy must not be the forged admin ID")
+}
+
 // TestWireActorForgery_UpdateAccessRequestProxy_CannotForgeResolvedBy is the
 // same class against UpdateAccessRequestProxy: a system.write-only caller,
 // naming a real admin as resolved_by, must not be able to approve someone
@@ -94,6 +131,44 @@ func TestWireActorForgery_UpdateAccessRequestProxy_CannotForgeResolvedBy(t *test
 	updated, err := f.core.Storage().GetAccessRequest(ctx, req.ID)
 	require.NoError(t, err)
 	require.Equal(t, core.AccessRequestPending, updated.State, "the request must remain pending, not silently approved")
+}
+
+// TestWireActorForgery_UpdateAccessRequestProxy_PersistedResolvedByIsAlwaysCaller
+// closes the same gap as the invitation-proxy counterpart above: the SecretID!=nil
+// (restricted-secret) path used by CannotForgeResolvedBy is denied by
+// RequireAdminAuthorityAt before ResolvedBy is ever assigned, so it can't tell
+// whether `existing.ResolvedBy = resolverID` is load-bearing. The
+// project/role-scoped path (SecretID==nil) clears RequireAuthorityForRole for
+// ANY caller when the suggested role is non-admin, exactly like
+// CreateInvitationProxy's non-admin-role path -- drive that path to a real
+// 200 with a forged resolved_by and check the persisted row.
+func TestWireActorForgery_UpdateAccessRequestProxy_PersistedResolvedByIsAlwaysCaller(t *testing.T) {
+	f := newMachinePrivilegeCeilingFixture(t)
+	ctx := context.Background()
+	caller, err := f.core.GetUserByEmail(ctx, "sys_write_only@example.com")
+	require.NoError(t, err)
+
+	_, err = f.core.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "wire_forge_requester3", Email: "wire_forge_requester3@example.com", Password: "Rq9!Qr7#Kp2$Lm5@",
+	})
+	require.NoError(t, err)
+	requester, err := f.core.GetUserByEmail(ctx, "wire_forge_requester3@example.com")
+	require.NoError(t, err)
+
+	req, err := f.core.RequestProjectAccess(ctx, f.projectID, requester.ID, "project_viewer", "need role access for a task, at least 20 chars")
+	require.NoError(t, err)
+
+	status, body := f.do(t, f.swToken, http.MethodPut, fmt.Sprintf("/api/v1/system/access-requests/%d", req.ID), map[string]any{
+		"id": req.ID, "project_id": f.projectID, "user_id": requester.ID, "granted_role": "project_viewer",
+		"state": "approved", "reason": "approved", "resolved_by": f.adminID, "resolved_at": time.Now(),
+	})
+	t.Logf("PUT /system/access-requests/%d (system.write-only, non-admin role, resolved_by forged to real admin %d): status=%d body=%s", req.ID, f.adminID, status, body)
+	require.Equal(t, http.StatusOK, status, "a non-admin-role project access approval must succeed for a system.write caller -- this test needs the request to actually persist to check attribution")
+
+	updated, err := f.core.Storage().GetAccessRequest(ctx, req.ID)
+	require.NoError(t, err)
+	require.Equal(t, caller.ID, updated.ResolvedBy, "ResolvedBy must record the authenticated caller, not the wire-supplied forgery")
+	require.NotEqual(t, f.adminID, updated.ResolvedBy, "ResolvedBy must not be the forged admin ID")
 }
 
 // TestWireActorForgery_UpdateAccessRequestProxy_RealAdminSucceeds proves the
