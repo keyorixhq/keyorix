@@ -385,23 +385,25 @@ func TestRemoteStorageMachineIdentities_RoleGrantAssignRemoveListIDs_RealServer(
 }
 
 // TestRemoteStorageMachineIdentities_OIDCBindingCreateGetListDelete_RealServer
-// proves the fix for CreateOIDCBinding/GetMachineByOIDCSubject/
-// ListOIDCBindings/GetOIDCBindingByID/DeleteOIDCBinding.
+// proves the fix for GetMachineByOIDCSubject/ListOIDCBindings/
+// GetOIDCBindingByID/DeleteOIDCBinding, and confirms CreateOIDCBinding's fix.
 //
-// Caveat (2026-08-24, G80 raw-storage-bypass fix wave): `downstream` authenticates
-// to `upstream` as a genuine node credential, and the create call below succeeds
-// via CreateOIDCBindingProxy's isNodeCredentialRequest(r) branch — the same branch
-// that routes AROUND core.CreateOIDCBinding's install-wide admin-authority check
-// (see server/http/handlers/machine_identities_proxy.go's CreateOIDCBindingProxy
-// doc, and #1552 / docs/g80-raw-storage-bypass-triage.md's "Re-examined" section).
-// This test's "creating an oidc binding must succeed via storage.type: remote"
-// assertion may therefore be encoding that open vulnerability (a node credential
-// can create a binding with no admin-authority check at all) rather than
-// validating genuinely intended behavior — the two are indistinguishable from
-// this test's vantage point, since nothing here asserts WHY the create succeeded.
-// Pending ADR-085's wire-identity decision / #1552's resolution. Not changed or
-// reverted here per explicit instruction — the node-credential exemption itself
-// stays as-is; this is a note for whoever revisits it next.
+// ADR-085 (Accepted, 2026-08-25) closed CreateOIDCBindingProxy's
+// isNodeCredentialRequest(r) exemption — the branch this test used to exercise
+// let ANY node credential route around core.CreateOIDCBinding's install-wide
+// admin-authority check (requireAuthorityForRole against "system_admin"). That
+// check resolves authority via scopedRoleIDs (internal/core/authz.go), which
+// walks ONLY a user's direct and group role grants — a machine identity's own
+// MachineIdentityRole grants were never in that resolution path, bypass or no
+// bypass. So closing the exemption doesn't narrow machine-actor creation to
+// "admin-tier machines only" — no machine actor, however permissioned, can
+// ever satisfy this specific ceiling; only a human system_admin user can. The
+// binding used for the rest of this test (Get/List/Delete round-trip) is
+// therefore seeded directly on the upstream, and the downstream create is
+// asserted denied — the ceiling-table row
+// (TestSystemWriteCeiling_CreateOIDCBindingProxy_NodeCredential_StillBypassesAdminAuthority,
+// system_write_ceiling_table_test.go) pins the same denial for a bare node
+// credential specifically.
 func TestRemoteStorageMachineIdentities_OIDCBindingCreateGetListDelete_RealServer(t *testing.T) {
 	upstream, downstream, projectID := newUpstreamDownstreamForMachineIdentities(t)
 	ctx := context.Background()
@@ -410,13 +412,21 @@ func TestRemoteStorageMachineIdentities_OIDCBindingCreateGetListDelete_RealServe
 	m, err := downstream.Storage().CreateMachineIdentity(ctx, buildMachineIdentity(now, projectID, "oidc-test"))
 	require.NoError(t, err)
 
-	binding, err := downstream.Storage().CreateOIDCBinding(ctx, &models.MachineIdentityOIDCBinding{
+	_, err = downstream.Storage().CreateOIDCBinding(ctx, &models.MachineIdentityOIDCBinding{
 		MachineIdentityID: m.ID,
 		Issuer:            "https://issuer.example",
 		Subject:           "system:serviceaccount:default:ci-runner",
 		CreatedAt:         now,
 	})
-	require.NoError(t, err, "creating an oidc binding must succeed via storage.type: remote")
+	require.Error(t, err, "ADR-085: no machine actor, however permissioned, can create an OIDC binding — only a human system_admin can")
+
+	binding, err := upstream.Storage().CreateOIDCBinding(ctx, &models.MachineIdentityOIDCBinding{
+		MachineIdentityID: m.ID,
+		Issuer:            "https://issuer.example",
+		Subject:           "system:serviceaccount:default:ci-runner",
+		CreatedAt:         now,
+	})
+	require.NoError(t, err)
 	require.NotZero(t, binding.ID)
 
 	// A REAL row on the upstream.

@@ -89,17 +89,22 @@ storage:
 > credential can do (a machine identity can never be granted a role at global
 > scope, only per-project), so a bare machine token is NOT sufficient on its own.
 >
-> `/api/v1/system/*` specifically (#G79) additionally accepts a node-type
-> machine-identity credential as an alternative to holding `system.write` — useful
-> if you want the proxy tree itself reachable by a credential with no other RBAC
-> permissions at all:
-> ```
-> keyorix machine create --project <project-name> --name "my-node" --type node
-> keyorix machine token issue "my-node" --project <project-name> --name "my-node-token"
-> ```
-> but that node token by itself will fail every route outside `/system` (403), so
-> for full `storage.type: remote` functionality use an admin-tier user credential
-> as `api_key`/`KEYORIX_REMOTE_API_KEY`, not the node token alone.
+> `/api/v1/system/*` requires `system.write` for every caller (ADR-085,
+> Accepted, 2026-08-25) — a node-type machine-identity credential gets no
+> special standing there. A prior version of this guide documented a
+> node-credential exemption to `system.write` on this route group; that
+> exemption is removed (the "downstream Keyorix server" topology it was meant
+> to serve was found to never actually exist — see ADR-083 and ADR-085's
+> Status sections). `keyorix machine create --type node` still exists as a
+> command — the `node` identity type itself is retained — but a node
+> credential now needs the SAME `system.write` role grant any other machine
+> identity would need to reach `/system`, and gets nothing beyond that. A bare
+> node token with no role grant reaches nothing under `/api/v1/system/*`, and
+> reaches nothing outside it either (every other route requires its own
+> RBAC permission, same as before). For `storage.type: remote` to actually
+> work, use an admin-tier user credential as `api_key`/`KEYORIX_REMOTE_API_KEY` —
+> a bare machine token of ANY type, node or otherwise, is not sufficient on
+> its own, per the paragraph above.
 
 Supported environment variables:
 - `KEYORIX_API_KEY`

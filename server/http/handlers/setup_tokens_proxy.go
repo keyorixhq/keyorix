@@ -21,6 +21,12 @@
 // on survives this HTTP hop unchanged; there is no separate "check active, then
 // write" sequence here to reintroduce that TOCTOU.
 //
+// One exception: CreateSetupTokenProxy is NOT a thin passthrough — see its own
+// doc comment. Minting a setup token for user X is equivalent to taking
+// control of X, so it now requires the SAME users.write authority every other
+// admin-facing route that mints one already requires (POST /api/v1/users,
+// POST /api/v1/users/{id}/resend-setup-link), for every caller.
+//
 // Response envelope: like invitations_proxy.go/login_attempts_proxy.go, these do
 // NOT use the package's generic sendSuccess/sendError helpers — they construct the
 // exact {"success":bool,"data":...,"error":{"code","message"}} shape
@@ -36,7 +42,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // setupTokenProxyWire mirrors models.SetupToken's fields exactly (snake_case) — the
@@ -112,24 +120,58 @@ const maxSetupTokenProxyTTL = 30 * 24 * time.Hour
 // CreateSetupTokenProxy handles POST /api/v1/system/setup-tokens. The caller (the
 // downstream server's own core.KeyorixCore.IssueSetupToken) has already computed
 // every field — the hash, purpose, TTL, subject — exactly as it would for
-// LocalStorage; this is otherwise a raw persist, no policy decision.
+// LocalStorage; this is otherwise a raw persist, no POLICY decision (which fields
+// a real IssueSetupToken call would compute).
 //
 // #G79: token_hash is, by design, always caller-supplied — the raw token is
 // generated with crypto/rand on whichever node calls IssueSetupToken (local or
 // remote), and only its hash ever crosses this wire; there is no way to
 // regenerate or independently verify it here without defeating the entire
-// point of hashing (the plaintext must never reach this layer). What WAS
-// missing is any check tying the token to a real, already-vetted record: a
-// caller reachable directly via system.write (bypassing the calling server's
-// own IssueSetupToken) could otherwise mint an active token binding an
-// arbitrary token_hash of a plaintext value it already knows to an arbitrary
-// subject_email, then immediately redeem it via the public, unauthenticated
-// /auth/setup/consume endpoint — full account takeover with no invitation or
-// existing account required at all. Every legitimate IssueSetupToken call site
-// (invitations.go/auth.go/setup_delivery.go) either supplies an InvitationID
-// referencing a real, matching-email invitation (invitation_accept) or a
-// SubjectUserID referencing a real, matching-email user (account_setup/
-// password_reset_link) — never neither, never both. Re-verify that shape here.
+// point of hashing (the plaintext must never reach this layer). The
+// invitation/user cross-reference check below ties the token to a real,
+// already-vetted record — but it only enforces INTERNAL CONSISTENCY between
+// the caller-supplied fields, never caller AUTHORITY to target the account
+// those fields name.
+//
+// G80 documented-exception re-verification sweep (2026-08-25): confirmed
+// exploitable as a result. Every human-facing operation that mints a setup
+// token for an admin-CHOSEN target requires users.write elsewhere in this
+// codebase -- POST /api/v1/users (CreateUser -> CreateUserWithSetupLink/
+// CreateUserWithOneTimePassword, router.go, RequirePermission(permUsersWrite))
+// and POST /api/v1/users/{id}/resend-setup-link (ResendSetupLink ->
+// ResendAccountSetupLink, same gate) -- but this route's own gate was only
+// system.write, a narrower-scoped permission per auth_bootstrap.go's own
+// documented footprint (audit checkpoints/legal holds/risk exceptions/SoD
+// policies, not user credential control). A caller holding only system.write
+// who already knew (or guessed) a real target's email/user-ID could mint a
+// fully-valid, immediately-redeemable takeover token for that target via the
+// public, unauthenticated POST /auth/setup/consume -- overwriting the
+// target's real password and, for a non-MFA account, receiving a live
+// session AS them.
+//
+// Rejected fix: narrowing this route to the node-credential arm only. Two
+// reasons. First, that reasoning is the SAME "the package doc says so" class
+// of claim this sweep already disproved 3 times elsewhere (verify, don't
+// trust the doc) -- and liveness-checking it here confirms the opposite: a
+// node-credential relay of THIS specific route is real and load-bearing
+// (RemoteStorage.CreateSetupToken, internal/storage/store/remote_auth.go:211,
+// is a genuine implementation invoked by ordinary product flows -- every
+// project invite, every admin "create user"/"resend setup link" action, the
+// self-service forgot-password flow -- not dead code). Second, and more
+// important: per #1552, a bare node credential could already be used to
+// grant ANY role including admin-tier before ADR-085 -- it is the single
+// most widely distributed credential class in a deployment, not a stronger
+// boundary than system.write. Narrowing an account-takeover primitive to
+// node-credential-only would have LOWERED the effective bar, not raised it.
+//
+// Fixed by deriving the ceiling from the operation itself: every caller must
+// hold users.write (global scope, matching the human-facing routes above)
+// before this handler persists a token. This check now runs unconditionally
+// for every caller. It used to be skipped for a genuine node-credential relay
+// -- ADR-085 (Accepted, 2026-08-25) found that "downstream node relay"
+// topology cannot exist in this codebase (ADR-083's
+// validateRemoteStorageNotServer rejects storage.type: remote for any server
+// process) and removed the exemption.
 func (h *AuthHandler) CreateSetupTokenProxy(w http.ResponseWriter, r *http.Request) {
 	var body setupTokenProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -169,6 +211,15 @@ func (h *AuthHandler) CreateSetupTokenProxy(w http.ResponseWriter, r *http.Reque
 			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "subject_user_id does not reference a matching user")
 			return
 		}
+	}
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "minting a setup token requires the users.write permission")
+		return
+	}
+	if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "users.write", coreStorage.Scope{}); aerr != nil || !ok {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "minting a setup token requires the users.write permission")
+		return
 	}
 	created, err := h.coreService.Storage().CreateSetupToken(r.Context(), body.toModel())
 	if err != nil {

@@ -4,12 +4,14 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -42,7 +44,20 @@ func (ls *LocalStorage) CreateBreakGlassActivation(ctx context.Context, a *model
 func (ls *LocalStorage) GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error) {
 	var a models.BreakGlassActivation
 	if err := ls.db.WithContext(ctx).First(&a, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		// Was an unconditional "not found" wrap regardless of the underlying error,
+		// so a genuine storage failure (e.g. a closed/unreachable DB) read
+		// identically to a real not-found to any caller doing the same string-match
+		// server/http/handlers.isNotFoundErr does -- RevokeBreakGlassActivationProxy
+		// (server/http/handlers/break_glass_proxy.go), which started calling this
+		// method as part of the G80 documented-exception fix, surfaced this as a
+		// wrong 404 instead of 500 for a real storage error. Distinguish genuine
+		// not-found (gorm.ErrRecordNotFound) from everything else, matching
+		// GetMachineIdentityCredentialByID's (local_machine_credentials.go) already-
+		// established pattern for the same bug class.
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &a, nil
 }

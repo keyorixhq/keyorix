@@ -16,6 +16,17 @@ factory); ADR-083 is the explicit, formal retirement of that assumption
 wherever it was informally anchored to this ADR number. See ADR-083 for the
 investigation.
 
+**Also see ADR-085** (node-credential `/system` gate, **Accepted**): ADR-085
+was itself authored under the "full downstream Keyorix server" framing this
+note retires, carried the stale premise through its own Context and Decision
+sections for two working sessions after ADR-083 landed, and records that as
+a general lesson in its own Status section — a correction noted as a
+footnote next to a stale premise doesn't automatically re-derive the
+conclusion built on that premise; it has to be applied. Anyone who finds
+another place this ADR number's "downstream server" framing grew up should
+check whether it's driving a conclusion the way it drove ADR-085's original
+Decision, not just whether it's mentioned.
+
 ## Context
 
 Keyorix has a single storage seam: `storage.NewStorageFactory().CreateStorage(cfg)`
