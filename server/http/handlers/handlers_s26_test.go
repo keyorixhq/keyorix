@@ -18,6 +18,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1069,9 +1070,18 @@ func TestListBreakGlassActivationsProxy_HappyPath_S26(t *testing.T) {
 
 // ── RevokeBreakGlassActivationProxy happy path ───────────────────────────────
 
-// TestRevokeBreakGlassActivationProxy_NotActive_S26 verifies 409 when revoke
-// targets a non-existent (or already revoked) activation.
-func TestRevokeBreakGlassActivationProxy_NotActive_S26(t *testing.T) {
+// TestRevokeBreakGlassActivationProxy_NotFound_S26 verifies 404 when revoke
+// targets a non-existent activation.
+//
+// Was asserting 409 (ErrBreakGlassNotActive) before the G80 documented-exception
+// fix added a GetBreakGlassActivation lookup ahead of the conditional revoke: the
+// old raw single-conditional-UPDATE passthrough couldn't distinguish "no such
+// row" from "row exists but isn't active" — both looked like zero rows affected.
+// The fix's existence check makes that distinction correctly; a truly
+// non-existent ID is now 404, not 409. See
+// TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26 below for the 409 case
+// this test used to also (imprecisely) cover.
+func TestRevokeBreakGlassActivationProxy_NotFound_S26(t *testing.T) {
 	cs := freshCoreS26(t)
 	h := NewCatalogHandler(cs)
 
@@ -1088,8 +1098,88 @@ func TestRevokeBreakGlassActivationProxy_NotActive_S26(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlassActivationProxy(w, req)
 
-	// Non-existent activation → ErrBreakGlassNotActive → 409 Conflict
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26 verifies 409 when revoke
+// targets an activation that exists but is already in state=revoked — the case
+// TestRevokeBreakGlassActivationProxy_NotFound_S26 used to (imprecisely) assert
+// via a non-existent ID instead.
+func TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26(t *testing.T) {
+	cs := freshCoreS26(t)
+	h := NewCatalogHandler(cs)
+
+	revokedAt := time.Now().UTC()
+	activation, err := cs.Storage().CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 1, RoleID: 1, RoleName: "test_role",
+		Justification: "already revoked fixture", State: "revoked",
+		RevokedBy: 1, RevokedAt: &revokedAt,
+	})
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"revoked_by": 1,
+		"revoked_at": time.Now(),
+	})
+	req := withChiParam_S25(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
+			bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", activation.ID),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.RevokeBreakGlassActivationProxy(w, req)
+
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// TestRevokeBreakGlassActivationProxy_RemovesRoleGrant is the G80 documented-
+// exception fix's own regression test: before the fix, this handler flipped the
+// activation to state=revoked WITHOUT ever removing the underlying role
+// assignment (its offsetting effect was claimed to travel through a separate
+// call chain that turned out not to exist — the missing /api/v1/rbac/remove-role
+// wire route, #1511). A live emergency role grant must actually be gone from
+// user_roles (the table RBAC reads) after a successful revoke, not just
+// reported revoked in the activation row.
+func TestRevokeBreakGlassActivationProxy_RemovesRoleGrant(t *testing.T) {
+	cs := freshCoreS26(t)
+	h := NewCatalogHandler(cs)
+	ctx := context.Background()
+
+	role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "s26_break_glass_emergency_role"})
+	require.NoError(t, err)
+	scope := core.Scope{ProjectID: 1}
+	require.NoError(t, cs.Storage().AssignRole(ctx, 1, role.ID, scope))
+
+	roleIDs, err := cs.Storage().GetUserRoleIDsAt(ctx, 1, scope)
+	require.NoError(t, err)
+	require.Contains(t, roleIDs, role.ID, "fixture setup: role grant must exist before the revoke")
+
+	activation, err := cs.Storage().CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 1, RoleID: role.ID, RoleName: role.Name,
+		Justification: "regression test for the role-removal fix", State: "active",
+	})
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"revoked_by": 1,
+		"revoked_at": time.Now(),
+	})
+	req := withChiParam_S25(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
+			bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", activation.ID),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.RevokeBreakGlassActivationProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "revoke of a genuinely active activation must succeed: %s", w.Body.String())
+
+	roleIDs, err = cs.Storage().GetUserRoleIDsAt(ctx, 1, scope)
+	require.NoError(t, err)
+	assert.NotContains(t, roleIDs, role.ID,
+		"CEILING VIOLATED: the emergency role grant must be removed from user_roles by a successful revoke, "+
+			"not merely reported revoked in the activation row")
 }
 
 // ── catalog.go: DeleteEnvironment error branches ──────────────────────────────
