@@ -238,12 +238,30 @@ the code the reasoning describes still exists as described.
 
 | Verdict | Count | Candidates |
 |---|---|---|
-| no-independent-ceiling | 9 | ClearProjectSecretOwnershipProxy, DeleteSecretACLsByUserAndProjectProxy, DeleteExpiredRoleGrantsProxy, MarkTOTPStepUsedProxy, DeleteEnvironmentProxy, TouchMachineIdentityCredentialProxy, DeleteExpiredShareRecordsProxy, TransitionSecretStatusProxy, SupersedeSetupTokensProxy |
-| documented-exception | 14 | RemoveGlobalAdminRoleGuardedProxy, CreateUserWithRoleGrantsProxy, DeleteProjectProxy, DeleteProjectIfEmptyProxy, CreateAccessReviewCampaignProxy, CreateAccessReviewItemsProxy, RevokeBreakGlassActivationProxy, RecordLoginAttemptProxy, CreateSetupTokenProxy, CreateSSOLoginStateProxy, ConsumeSSOLoginStateProxy, ConsumeWebAuthnSessionProxy, TransitionMachineIdentityStateProxy (FIXED — raw call preserved deliberately, now preceded by `core.IsValidMachineTransition`), UpdateMachineIdentityCredentialProxy (FIXED — narrowed to fetch-existing + apply-Classification-only) |
+| no-independent-ceiling | 10 | ClearProjectSecretOwnershipProxy, DeleteSecretACLsByUserAndProjectProxy, DeleteExpiredRoleGrantsProxy, MarkTOTPStepUsedProxy, DeleteEnvironmentProxy, TouchMachineIdentityCredentialProxy, DeleteExpiredShareRecordsProxy, TransitionSecretStatusProxy, SupersedeSetupTokensProxy, DeleteProjectProxy (moved here 2026-08-26 — see note below) |
+| documented-exception | 13 | RemoveGlobalAdminRoleGuardedProxy, CreateUserWithRoleGrantsProxy, DeleteProjectIfEmptyProxy, CreateAccessReviewCampaignProxy, CreateAccessReviewItemsProxy, RevokeBreakGlassActivationProxy, RecordLoginAttemptProxy, CreateSetupTokenProxy, CreateSSOLoginStateProxy, ConsumeSSOLoginStateProxy, ConsumeWebAuthnSessionProxy, TransitionMachineIdentityStateProxy (FIXED — raw call preserved deliberately, now preceded by `core.IsValidMachineTransition`), UpdateMachineIdentityCredentialProxy (FIXED — narrowed to fetch-existing + apply-Classification-only) |
 | out-of-scope (not a `/system` route) | 1 | ConsumeMFAChallenge — registered outside the `/system` group (`users.write`-gated, `router.go:874`), never tracked by this guard; unchanged since the original triage |
 | unresolved | 1 | TransitionMembershipProxy — #1546, explicitly out of scope for this task, not re-investigated |
 | **real** | **9** | CreateAccessRequestProxy, UpdateAccessRequestProxy, CreateInvitationProxy, UpdateInvitationProxy, DeleteOIDCBindingProxy, UpdateUserIfActiveStateMatchesProxy, RevokeMachineIdentityCredentialProxy, CreateMachineIdentityCredentialProxy (residual), CreateOIDCBindingProxy (residual) |
 | **Total** | **34** | |
+
+**`DeleteProjectProxy` reclassified from `documented-exception` to `no-independent-ceiling`
+(2026-08-26, final documented-exception sweep).** This table previously listed it under
+`documented-exception`, contradicting its own authoritative source
+(`server/http/raw_storage_bypass_guard_test.go`'s `rawStorageBypassAllowlist` entry, which
+has read `"no-independent-ceiling: core.DeleteProject(force=true)..."` since the
+2026-08-25 correction below was written) — two classifications for the same handler in
+the same document. Resolved by matching the code's own authoritative classification, not
+by a fresh judgment call: `core.DeleteProject(force=true)` has no actor-authority check of
+its own to bypass at the raw-storage-axis this table tracks — that has not changed. The
+separate, REAL ceiling this handler now has (`RequireScopedPermission(permSecretsDelete,
+projectScope)`, confirmed by observation: a system.write-only caller with no
+`secrets.delete` gets 403, project untouched — final sweep claim 10,
+`server/http/g80_final_sweep_test.go`) is enforced at the ROUTER/middleware level, layered
+on top of a handler that itself still has nothing to check — exactly what the
+"Corrections from an independent verification session" section below already concluded
+("this is an addition, not a correction of the existing allowlist reasoning; both remain
+true"). That correction just never propagated to this table's own count.
 
 **Of the 9 `real`: all 9 are human-reachable** (every one sits behind
 `RequireNodeCredentialOrPermission(system.write)`, reachable directly by any human or
@@ -414,32 +432,66 @@ identity type (`keyorix machine create --type node` is still user-facing); only 
 gate privilege is removed — a node identity is authorized exactly like any other caller,
 via a real role grant it either has or doesn't.
 
-## Open question: the 14 `documented-exception` verdicts are not settled (not work for now)
+## Settled 2026-08-26: the 14 `documented-exception` verdicts, adversarially tested
 
-The 34-candidate re-triage table above records **14** entries as `documented-exception`
+**Previously an open question (history below, kept for the reasoning); now settled.** The
+34-candidate re-triage table above originally recorded 14 entries as `documented-exception`
+— "a code comment asserts this raw call is safe," not independently verified. This section
+recorded that gap as a scope flag, not a to-do list, on 2026-08-24/25.
+
+**Method and result**: on 2026-08-26, a final documented-exception sweep tested all 14
+entries from that list adversarially against a clean checkout of `origin/main` at commit
+`f53fe404`, in its own worktree — construct the caller class each claim's own gate implies,
+make real HTTP requests against a real httptest server + real storage + real router/
+middleware chain, check the database directly rather than trust the response body alone
+(the same discipline the escalation-delta test on the 9 `real` findings used, and the one
+this section originally called for). **Result: 14 tested, 14 upheld, 0 refuted, 0
+unresolvable.** Harness: `server/http/g80_final_sweep_test.go` (`TestG80Sweep01` through
+`TestG80Sweep14`, landed on `main`, run automatically by the `http-1..6` CI legs — no
+separate wiring needed, confirmed via this repo's own `scripts/ci-test-legs.sh` dynamic
+test-name discovery before landing). One of the 14 (`DeleteProjectProxy`) was reclassified
+to `no-independent-ceiling` as part of this pass — see the note above the summary table;
+the sweep still tested it (claim 10) and it upheld regardless of which bucket it belongs in.
+Two non-security discrepancies were found and corrected in the same pass:
+`ConsumeWebAuthnSessionProxy`'s handler comment cited a stale reason for why an expiry
+comparison is safe (fixed to cite the actual mechanism, `webauthn_proxy.go`), and this
+table's own internal disagreement over `DeleteProjectProxy`'s classification (fixed above).
+
+**What this settlement does NOT cover — three items remain genuinely open, unrelated to
+the 14 tested here:**
+- `TransitionMembershipProxy` — `unresolved`, filed as #1546, reach still undetermined
+  (may be safe-by-design or a real gap; not re-investigated by this sweep, was explicitly
+  out of scope for it).
+- `RevokeMachineIdentityCredentialProxy` — `real`, filed as #1551, deferred on a wire-contract
+  limitation (no project/scope parameter in the wire body) unrelated to node-credential trust.
+- `UpdateUserIfActiveStateMatchesProxy` — `real`, residual half tracked in
+  `knownUnfixedRawStorageBypasses`; the last-admin-lockout half is fixed, the
+  PAT/session-revocation half is not.
+
+All three are tracked in `server/http/raw_storage_bypass_guard_test.go`'s
+`knownUnfixedRawStorageBypasses` map, not the `documented-exception` list this section
+settles. A clean sweep result does not mean nothing is open — it means these 14 specific
+claims are no longer merely asserted.
+
+### History (2026-08-24/25, kept for the reasoning that motivated the sweep)
+
+The 34-candidate re-triage table above originally recorded 14 entries as `documented-exception`
 (row: "no-independent-ceiling | 9 ... documented-exception | 14 ..."). That verdict means
 "a code comment asserts this raw call is safe" — it does NOT mean the assertion has been
 independently verified the way every `real` finding above was (escalation-delta test:
 does an actor holding ONLY the route's gating permission gain a capability the gate did
 not already authorize, traced to a real human auth path).
 
-This matters because `AssignRoleWithExpiryProxy` (`rbac_role_grants_proxy.go`) was ALSO a
+This mattered because `AssignRoleWithExpiryProxy` (`rbac_role_grants_proxy.go`) was ALSO a
 documented exception before this campaign — its own doc comment asserted the node-credential
 relay could be trusted, an assumption stated but never verified. It became
 [#1552](https://github.com/keyorixhq/keyorix/issues/1552), the campaign's highest-severity
-finding, and its exact "assert, don't verify" shape is now the precedent this campaign cites
+finding, and its exact "assert, don't verify" shape became the precedent this campaign cited
 for treating every OTHER node-credential relay assumption as an open half-fix (see
 `CreateOIDCBindingProxy`/`CreateMachineIdentityCredentialProxy`'s HALF-FIXED entries above).
-Fourteen routes justified by a comment, never independently re-derived, is the same shape as
+Fourteen routes justified by a comment, never independently re-derived, was the same shape as
 the suppression lists (`rawStorageBypassAllowlist` entries accepted on read, not re-verified)
-this campaign has spent multiple sessions dismantling elsewhere.
-
-**Not work for now** — this is a scope flag, not a to-do list. Before anyone treats the
-14-count as settled, each entry needs the same escalation-delta test applied to the 9 `real`
-findings above: trace the actual gating permission's documented footprint against what the
-raw call would let a caller holding ONLY that permission do, against a real human auth path,
-not the comment's own claim. Until that pass runs, "documented-exception" should be read as
-"unverified-exception."
+this campaign spent multiple sessions dismantling elsewhere — until the sweep above closed it.
 
 ## Corrections from an independent verification session (2026-08-25)
 

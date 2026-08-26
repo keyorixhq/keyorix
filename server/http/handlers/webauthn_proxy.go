@@ -369,10 +369,18 @@ func (h *AuthHandler) ConsumeWebAuthnSessionProxy(w http.ResponseWriter, r *http
 		return
 	}
 	// This server's own clock, never a caller-supplied value — see
-	// webAuthnSessionConsumeProxyBody's doc comment. No .UTC(): no
-	// BeforeSave hook normalizes models.WebAuthnSession.ExpiresAt, so writes
-	// (internal/core/webauthn.go's c.now()) and reads must share the same
-	// (local) Location convention.
+	// webAuthnSessionConsumeProxyBody's doc comment. Passed as this
+	// process's local time, not pre-converted to UTC here: G80 final
+	// documented-exception sweep (2026-08-26) found this comment previously
+	// claimed "no BeforeSave hook normalizes models.WebAuthnSession.ExpiresAt,
+	// so writes and reads must share the same (local) Location convention" —
+	// that was stale even at the time it was written. models.WebAuthnSession
+	// DOES have a BeforeSave hook (models.go:603) that normalizes ExpiresAt
+	// to UTC on every write. The comparison is safe for a different reason
+	// than the old text claimed: ConsumeWebAuthnSession itself independently
+	// calls `now.UTC()` before comparing (local_webauthn.go:163), so this
+	// handler's local `time.Now()` is normalized at the storage layer
+	// regardless of what Location it carries when it arrives here.
 	sess, err := h.coreService.Storage().ConsumeWebAuthnSession(r.Context(), body.TokenHash, time.Now())
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "invalid or expired webauthn session")
