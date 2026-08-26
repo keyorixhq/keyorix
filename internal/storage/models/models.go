@@ -1299,6 +1299,17 @@ type AuditEvent struct {
 	// so legacy rows and back-compat writers read as human-actored.
 	ActorType string `gorm:"default:user"`
 
+	// MachineIdentityID records WHICH machine identity acted, when ActorType
+	// is "machine_identity" (G80 #1530). UserID is always nil for a machine
+	// caller (machine tokens carry no human user ID by construction), so
+	// before this field existed, ActorType correctly recorded "a machine did
+	// this" while nothing recorded which one -- a real, structural gap, not a
+	// bug in the writer: the audit model had no field to hold a machine
+	// actor. Indexed so "everything this identity did" is a real, queryable
+	// answer, not just a per-row curiosity -- an attribution field a security
+	// review can't query is only half the control.
+	MachineIdentityID *uint `gorm:"index"`
+
 	// Tamper-evidence hash chain (ADR-029). PrevHash is the EntryHash of the
 	// immediately preceding chained event (a fixed genesis constant for the
 	// first chained event); EntryHash is SHA256(canonical(fields) ‖ PrevHash).

@@ -1,4 +1,5 @@
-// audit_context.go — propagation of impersonation attribution through context.
+// audit_context.go — propagation of impersonation and machine-actor
+// attribution through context.
 //
 // When an admin acts inside an impersonation session, every audit event written
 // during that session must record who really acted. The auth middleware tags the
@@ -6,6 +7,19 @@
 // and stamps ImpersonatedBy/ActingAs/Impersonation on the row. Because audit
 // writes happen in detached goroutines (context.Background()), handlers use
 // DetachedAuditContext to carry the tag past request cancellation.
+//
+// G80 #1530: the same mechanism, mirrored, closes a sibling gap. ActorType
+// already distinguished a machine caller from a human one, but nothing carried
+// WHICH machine identity — audit.UserID is nil for actorID==0 (every machine
+// caller, by construction: middleware/auth.go's UserContext.UserID is 0 for
+// any machine token), so a machine-attributable mutation produced a row
+// correctly tagged ActorType="machine_identity" but with no identity to go
+// with it. WithMachineActor/machineActorFromContext follow WithImpersonation's
+// exact shape (not a new pattern) because that one is the working case of this
+// same problem, already threaded through context and already stamped
+// centrally in the writers -- copying a mechanism that demonstrably works is
+// not the same claim as "matches existing precedent" when the precedent is
+// itself the defect.
 package core
 
 import (
@@ -25,6 +39,8 @@ const (
 type impersonationKey struct{}
 
 type actorTypeKey struct{}
+
+type machineActorKey struct{}
 
 // WithActorType tags ctx with the principal kind for the current request
 // (ActorTypeUser/ActorTypeMachine/ActorTypeSystem). The auth middleware sets it
@@ -46,6 +62,26 @@ func actorTypeFromContext(ctx context.Context) string {
 	return ActorTypeUser
 }
 
+// WithMachineActor tags ctx with the machine identity ID authenticated for
+// the current request (ADR-030). A zero machineID is treated as "no machine
+// actor" -- same shape as WithImpersonation. The auth middleware sets this
+// alongside WithActorType(ctx, ActorTypeMachine); writeAuditEvent* reads it
+// and stamps MachineIdentityID on the row, so a machine-attributable mutation
+// records WHICH machine, not just that a machine did it.
+func WithMachineActor(ctx context.Context, machineID uint) context.Context {
+	if machineID == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, machineActorKey{}, machineID)
+}
+
+// machineActorFromContext returns the tagged machine identity ID and whether
+// the current context carries one.
+func machineActorFromContext(ctx context.Context) (uint, bool) {
+	machineID, ok := ctx.Value(machineActorKey{}).(uint)
+	return machineID, ok && machineID != 0
+}
+
 // WithImpersonation tags ctx with the admin user ID that initiated the current
 // impersonation session. A zero adminID is treated as "no impersonation".
 func WithImpersonation(ctx context.Context, adminID uint) context.Context {
@@ -63,8 +99,11 @@ func impersonatorFromContext(ctx context.Context) (uint, bool) {
 }
 
 // DetachedAuditContext returns a background-rooted context that preserves any
-// impersonation tag from parent. Audit writes run in goroutines that must
-// outlive the request, but still need to record the impersonating admin.
+// impersonation, actor-type, and machine-actor tag from parent. Audit writes
+// run in goroutines that must outlive the request, but still need to record
+// the impersonating admin / acting machine identity -- a detached write that
+// dropped the machine-actor tag would silently reintroduce #1530's gap for
+// every fire-and-forget audit call.
 func DetachedAuditContext(parent context.Context) context.Context {
 	ctx := context.Background() // NOSONAR
 	if adminID, ok := impersonatorFromContext(parent); ok {
@@ -72,6 +111,9 @@ func DetachedAuditContext(parent context.Context) context.Context {
 	}
 	if t, ok := parent.Value(actorTypeKey{}).(string); ok && t != "" {
 		ctx = WithActorType(ctx, t)
+	}
+	if machineID, ok := machineActorFromContext(parent); ok {
+		ctx = WithMachineActor(ctx, machineID)
 	}
 	return ctx
 }
