@@ -430,9 +430,9 @@ func TestG80Sweep09_UpdateMachineIdentityCredentialProxy_OnlyClassificationAppli
 	status, body := f.do(t, f.swToken, http.MethodPut,
 		fmt.Sprintf("/api/v1/system/machine-credentials/%d", cred.ID), map[string]any{
 			"id": cred.ID, "machine_identity_id": machine.ID, "name": "g80sweep09-cred",
-			"token_hash":  "g80sweep09-FORGED-hash-00000000000000000000000000000002",
-			"revoked":     false,
-			"expires_at":  nil,
+			"token_hash":     "g80sweep09-FORGED-hash-00000000000000000000000000000002",
+			"revoked":        false,
+			"expires_at":     nil,
 			"classification": "internal",
 		})
 	t.Logf("[claim 9] UpdateMachineIdentityCredentialProxy(un-revoke + forged token_hash + cleared expiry): status=%d body=%s", status, body)
