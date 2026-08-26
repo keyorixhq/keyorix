@@ -989,9 +989,13 @@ func buildRequestContext(parent context.Context, userCtx *UserContext, coreServi
 		ctx = core.WithImpersonation(ctx, *userCtx.ImpersonatedBy)
 	}
 	// Tag machine requests so every audit event they produce is actored as a
-	// machine identity (ADR-023/030 plumbing).
+	// machine identity (ADR-023/030 plumbing), AND record which one (G80
+	// #1530) -- ActorType alone said "a machine did this"; WithMachineActor
+	// is the field that says which machine, mirroring WithImpersonation two
+	// lines above exactly (same mechanism, not a new one).
 	if userCtx != nil && userCtx.MachineIdentityID != nil {
 		ctx = core.WithActorType(ctx, core.ActorTypeMachine)
+		ctx = core.WithMachineActor(ctx, *userCtx.MachineIdentityID)
 	}
 	// Carry a PAT's least-privilege restriction (ADR-042) so core.Authorize
 	// enforces it on every authorization check this request makes.

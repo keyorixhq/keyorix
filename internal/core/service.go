@@ -467,8 +467,18 @@ func truncateAuditField(s string, maxLen int) string {
 // All core audit writers funnel through here so SIEM forwarding is uniform —
 // which also makes it the single choke point to cap Description/Diff length
 // (#381), independent of which helper (writeAuditEvent*, writeImpersonationEvent,
-// AuditLicenseState, ...) produced the event.
+// AuditLicenseState, ...) produced the event. G80 #1530: the same choke point
+// closes the machine-actor-attribution gap for every one of those callers at
+// once, not just the two that happened to be checked first -- a machine
+// identity's own ID is stamped here from context (WithMachineActor,
+// audit_context.go) whenever the event is already actor-typed "machine_identity"
+// and no caller explicitly set MachineIdentityID itself.
 func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
+	if event.ActorType == ActorTypeMachine && event.MachineIdentityID == nil {
+		if machineID, ok := machineActorFromContext(ctx); ok {
+			event.MachineIdentityID = &machineID
+		}
+	}
 	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
 	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
 	if err := c.storage.LogAuditEvent(ctx, event); err != nil {
