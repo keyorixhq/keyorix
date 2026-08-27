@@ -25,7 +25,7 @@ import (
 // *core.KeyorixCore configured with storage.type: remote (ADR-049), pointed at
 // "upstream" over real HTTP via store.RemoteStorage. Mirrors
 // newUpstreamDownstreamForInvitations exactly.
-func newUpstreamDownstreamForMemberships(t *testing.T) (upstream *core.KeyorixCore, downstream *core.KeyorixCore, projectID uint) {
+func newUpstreamDownstreamForMemberships(t *testing.T) (upstream *core.KeyorixCore, downstream *core.KeyorixCore, projectID uint, baseURL string) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
@@ -56,7 +56,7 @@ func newUpstreamDownstreamForMemberships(t *testing.T) (upstream *core.KeyorixCo
 	ctx := context.Background()
 	project, err := upstream.CreateProject(ctx, "Memberships Test Project", "")
 	require.NoError(t, err)
-	return upstream, downstream, project.ID
+	return upstream, downstream, project.ID, upstreamSrv.URL
 }
 
 // buildInvitedMembership mirrors what internal/core/membership_lifecycle.go's
@@ -95,7 +95,7 @@ func mustCreateUser(t *testing.T, c *core.KeyorixCore, username, email string) u
 // RemoteStorage, fetchable by ID, and listed — all via storage.type: remote
 // against a real router, not a protocol mock.
 func TestRemoteStorageMembership_CreateGetList_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForMemberships(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "invitee1", "invitee1@example.com")
@@ -145,7 +145,7 @@ func TestRemoteStorageMembership_CreateGetList_RealServer(t *testing.T) {
 // TestRemoteStorageMembership_GetNotFound_RealServer proves a clean not-found
 // error (not a panic, not a garbage 500) for a nonexistent membership ID.
 func TestRemoteStorageMembership_GetNotFound_RealServer(t *testing.T) {
-	_, downstream, _ := newUpstreamDownstreamForMemberships(t)
+	_, downstream, _, _ := newUpstreamDownstreamForMemberships(t)
 	ctx := context.Background()
 
 	_, err := downstream.Storage().GetProjectMembership(ctx, 999999)
@@ -158,7 +158,7 @@ func TestRemoteStorageMembership_GetNotFound_RealServer(t *testing.T) {
 // doc for why no conditional-write guarantee is needed here, unlike
 // UpdateProjectInvitation).
 func TestRemoteStorageMembership_Update_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForMemberships(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "activatee", "activatee@example.com")
@@ -189,7 +189,7 @@ func TestRemoteStorageMembership_Update_RealServer(t *testing.T) {
 // — the read inviteMemberWithMode uses to reject a duplicate onboarding (#309) —
 // finds a non-revoked row and stops finding it once revoked.
 func TestRemoteStorageMembership_GetActive_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForMemberships(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "activeuser", "activeuser@example.com")
@@ -224,7 +224,7 @@ func TestRemoteStorageMembership_GetActive_RealServer(t *testing.T) {
 // sentinel inviteMemberWithMode's errors.Is check depends on — not an opaque,
 // unclassifiable storage error.
 func TestRemoteStorageMembership_DuplicateActiveMembership_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForMemberships(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "dupuser", "dupuser@example.com")
@@ -246,7 +246,7 @@ func TestRemoteStorageMembership_DuplicateActiveMembership_RealServer(t *testing
 // ListStaleInvitedMemberships (ADR-022 stale-invite warnings) round-trips over
 // storage.type: remote.
 func TestRemoteStorageMembership_ListStaleInvited_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForMemberships(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
 	ctx := context.Background()
 	old := time.Now().Add(-10 * 24 * time.Hour)
 	fresh := time.Now()
@@ -275,7 +275,7 @@ func TestRemoteStorageMembership_ListStaleInvited_RealServer(t *testing.T) {
 // ListUserProjectMemberships and CountProjectMembershipsByUsers (ADR-025 per-user
 // assignments/user-list views) round-trip over storage.type: remote.
 func TestRemoteStorageMembership_ListByUserAndCounts_RealServer(t *testing.T) {
-	upstream, downstream, projectID := newUpstreamDownstreamForMemberships(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "multiuser", "multiuser@example.com")
@@ -308,4 +308,93 @@ func TestRemoteStorageMembership_ListByUserAndCounts_RealServer(t *testing.T) {
 	require.Contains(t, counts, otherUserID)
 	assert.Equal(t, 0, counts[otherUserID].Active)
 	assert.Equal(t, 1, counts[otherUserID].Total)
+}
+
+// TestMembershipProxy_CreateRejectsAdminRoleWithoutAuthority (#1578) proves
+// CreateMembershipProxy re-derives inviteMemberWithMode's requireAuthorityForRole
+// escalation-by-proxy ceiling before persisting a new membership row. `downstream`
+// authenticates as a MACHINE credential (createNodeToken) — it holds system.write
+// (the gate on the whole /system group) but no roles.assign and no admin-tier
+// role anywhere, exactly the credential class this proxy is meant to serve. RED
+// without the fix: this create would have succeeded, minting an admin-tier ACTIVE
+// membership with no admin authority anywhere in the chain.
+func TestMembershipProxy_CreateRejectsAdminRoleWithoutAuthority(t *testing.T) {
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
+	ctx := context.Background()
+	now := time.Now()
+	userID := mustCreateUser(t, upstream, "mem1578-target", "mem1578-target@example.com")
+
+	m := buildInvitedMembership(now, projectID, userID, "admin", 0)
+	m.State = core.MembershipActive
+	activatedAt := now
+	m.ActivatedAt = &activatedAt
+	_, err := downstream.Storage().CreateProjectMembership(ctx, m)
+	require.Error(t, err, "a system.write-only caller with no admin authority must not be able to grant an admin-tier active membership")
+}
+
+// TestMembershipProxy_CreateAllowsAdminRoleByGenuineAdmin (#1578) is the positive
+// control: a genuine project admin creating a genuine admin-role membership must
+// still succeed end-to-end over the proxy — mirrors
+// TestInvitationProxy_CreateAllowsAdminRoleByGenuineAdmin exactly, including why
+// the actor must authenticate as a real human session rather than the shared
+// machine credential (RequireAuthorityForRole's ceiling is keyed off actorID(r),
+// which is human-only by design and returns 0 for a machine actor).
+func TestMembershipProxy_CreateAllowsAdminRoleByGenuineAdmin(t *testing.T) {
+	upstream, _, projectID, baseURL := newUpstreamDownstreamForMemberships(t)
+	ctx := context.Background()
+	now := time.Now()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+
+	admin, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "mem1578-admin", Email: "mem1578-admin@example.com", Password: pw})
+	require.NoError(t, err)
+	adminRole, err := upstream.Storage().GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, upstream.Storage().AssignRole(ctx, admin.ID, adminRole.ID, coreStorage.Scope{ProjectID: projectID}))
+	grantSystemWrite(t, upstream, admin.ID)
+	adminSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "mem1578-admin", Password: pw})
+	require.NoError(t, err)
+	asAdmin := newDeleteProjectScopeRemoteClient(t, baseURL, adminSess.SessionToken)
+
+	target, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "mem1578-grantee", Email: "mem1578-grantee@example.com", Password: pw})
+	require.NoError(t, err)
+
+	m := buildInvitedMembership(now, projectID, target.ID, "admin", admin.ID)
+	m.State = core.MembershipActive
+	activatedAt := now
+	m.ActivatedAt = &activatedAt
+	created, err := asAdmin.CreateProjectMembership(ctx, m)
+	require.NoError(t, err, "a genuine admin creating a genuine admin-role membership must still succeed")
+	assert.Equal(t, "admin", created.Role)
+	assert.Equal(t, admin.ID, created.InvitedBy, "InvitedBy must be the authenticated admin, not the wire-supplied value")
+}
+
+// TestMembershipProxy_UpdateRejectsAdminRoleWithoutAuthority (#1578) proves
+// UpdateMembershipProxy carries the same ceiling as CreateMembershipProxy. It is
+// the more direct route: UpdateProjectMembership is a plain Save of the full row
+// (see the proxy's doc comment), so it is the only code path anywhere — proxy or
+// human-facing — that can rewrite an EXISTING membership's Role. The human-facing
+// path never mutates Role post-invite (TransitionMembership only ever touches
+// State). RED without the fix: this update would have succeeded, promoting an
+// existing "viewer" membership straight to an active admin-tier one with no
+// admin authority anywhere in the chain.
+func TestMembershipProxy_UpdateRejectsAdminRoleWithoutAuthority(t *testing.T) {
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
+	ctx := context.Background()
+	now := time.Now()
+	userID := mustCreateUser(t, upstream, "mem1578-updatee", "mem1578-updatee@example.com")
+
+	m, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "viewer", 0))
+	require.NoError(t, err)
+
+	activatedAt := time.Now()
+	m.Role = "admin"
+	m.State = core.MembershipActive
+	m.ActivatedAt = &activatedAt
+	err = downstream.Storage().UpdateProjectMembership(ctx, m)
+	require.Error(t, err, "a system.write-only caller with no admin authority must not be able to promote an existing membership to an admin-tier role")
+
+	// The row must be untouched by the rejected update.
+	direct, err := upstream.Storage().GetProjectMembership(ctx, m.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "viewer", direct.Role, "a rejected update must not leave the role changed")
 }

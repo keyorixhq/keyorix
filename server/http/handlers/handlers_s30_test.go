@@ -162,7 +162,10 @@ func TestCountMachineIdentityCredentialsByClassificationProxy_DBError_S30(t *tes
 func TestCreateMembershipProxy_DBError_S30(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	body := bytes.NewBufferString(`{"project_id":1,"user_id":1,"role":"admin","state":"active"}`)
+	// #1578: role must be non-admin so this reaches the broken-DB path this test
+	// is actually about, rather than being rejected earlier by
+	// RequireAuthorityForRole (this request has no authenticated actor at all).
+	body := bytes.NewBufferString(`{"project_id":1,"user_id":1,"role":"viewer","state":"active"}`)
 	req := httptest.NewRequest(http.MethodPost, "/", body)
 	w := httptest.NewRecorder()
 	h.CreateMembershipProxy(w, req)

@@ -64,6 +64,59 @@ server/http/handlers$|SHARDED|runs in its own dedicated handlers-1..4 matrix leg
 EOF
 }
 
+# coverage_floor_exclusions: SAME shape and discipline as exclusion_entries()
+# above (pipe-delimited <pattern>|<kind>|<reason>|<issue>|<date-added>, kind
+# TEMPORARY/PERMANENT, TEMPORARY subject to the same 30-day freshness check),
+# but a DIFFERENT axis: exclusion_entries() controls whether a PACKAGE runs in
+# any CI leg at all; this controls whether coverage.out LINES matching
+# <pattern> (a package that DOES run) are filtered out of the coverage-FLOOR
+# sum specifically ("Merge coverage profiles", ci.yml). A package excluded
+# here still runs, still gets tested, still gets its own coverage.out lines --
+# those lines are just not counted toward the floor. A package excluded via
+# exclusion_entries() never reaches coverage.out in the first place, so an
+# entry here for it would be inert -- the two tables are disjoint by
+# construction, not by convention.
+#
+# server/proto/pb's *.pb.go PERMANENT entry replaces what was, before this
+# table existed, only a bare `grep -v '\.pb\.go:'` in ci.yml with a prose
+# comment restating the reasoning inline (added alongside #1541, G80 Wave 1,
+# 2026-08-25) -- the exact "asserted, not machine-checked" shape #1541's own
+# comment above criticizes scripts/ci-test-legs.sh for having FIXED, applied
+# here to itself: the reasoning now lives in one enforced place instead of a
+# comment nobody re-reads.
+coverage_floor_exclusions() {
+  cat <<'EOF'
+\.pb\.go:|PERMANENT|generated protobuf/gRPC code (protoc-gen-go/protoc-gen-go-grpc), ~16.7k lines, ~0% covered by design -- its one real test (server/proto/pb/generated_code_test.go's TestEveryFileIsGenerated) checks file headers, not the generated marshal/unmarshal/gRPC logic itself; same principle gosec's own -exclude-generated flag already applies to this same package|#1541|2026-08-25
+EOF
+}
+
+# coverage_floor_grep_patterns: just the regex column, for ci.yml's "Merge
+# coverage profiles" step to build its `grep -v` args from -- so the pattern
+# lives in exactly one place instead of the registry and the grep flag
+# drifting apart.
+coverage_floor_grep_patterns() {
+  coverage_floor_exclusions | cut -d'|' -f1
+}
+
+# check_coverage_floor_exclusion_freshness: same discipline as
+# check_exclusion_freshness below, applied to coverage_floor_exclusions
+# instead of exclusion_entries.
+check_coverage_floor_exclusion_freshness() {
+  local today_epoch failed=0
+  today_epoch=$(date -u -d "$(date -u +%Y-%m-%d)" +%s)
+  while IFS='|' read -r pattern kind reason issue added; do
+    [ "$kind" = "TEMPORARY" ] || continue
+    local added_epoch age_days
+    added_epoch=$(date -u -d "$added" +%s)
+    age_days=$(( (today_epoch - added_epoch) / 86400 ))
+    if [ "$age_days" -gt 30 ]; then
+      echo "STALE COVERAGE-FLOOR EXCLUSION (${age_days}d > 30d budget): $pattern -- $reason ($issue, added $added)"
+      failed=1
+    fi
+  done < <(coverage_floor_exclusions)
+  return $failed
+}
+
 # exclusion_patterns: just the regex column, one per line -- the set of
 # patterns root_base() excludes from the root/core legs entirely (every kind:
 # a SHARDED package must not ALSO run via root_base's catch-all, even though
