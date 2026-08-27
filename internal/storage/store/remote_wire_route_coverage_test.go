@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // routeKey is a normalized (HTTP method, path template) pair. Path parameters are
@@ -676,7 +677,7 @@ func TestRemoteStorageWireCalls_HaveMatchingRoute(t *testing.T) {
 		loc := fmt.Sprintf("%s:%d", filepath.Base(c.File), c.Line)
 		if !c.Resolved {
 			seenUnresolved[loc] = true
-			if !knownUnresolvedWireCalls[loc] {
+			if _, known := knownUnresolvedWireCalls[loc]; !known {
 				unknownUnresolved = append(unknownUnresolved, fmt.Sprintf("%s (method=%s, path unresolvable — "+
 					"triage under https://github.com/keyorixhq/keyorix/issues/1511 and add to knownUnresolvedWireCalls, "+
 					"or make the path statically resolvable)", loc, c.Method))
@@ -734,66 +735,291 @@ func TestRemoteStorageWireCalls_HaveMatchingRoute(t *testing.T) {
 	}
 }
 
-// knownUnresolvedWireCalls is the set of RemoteStorage wire call sites (as of this
-// writing) whose path argument this tool cannot statically resolve — almost entirely
-// paths built via string concatenation with a caller-supplied parameter or a
-// url.Values query builder, rather than a literal/fmt.Sprintf/local-var-from-one (see
-// pathTemplate). NONE of these have been individually verified against router.go —
-// that triage is tracked as visible backlog in
-// https://github.com/keyorixhq/keyorix/issues/1511, not decided here. This allowlist
-// exists so an unresolvable call is a visible, enumerated, must-be-triaged item
-// instead of a silent gap: TestRemoteStorageWireCalls_HaveMatchingRoute fails on any
-// NEW unresolvable call not listed here, and fails on any entry here that no longer
-// reproduces (became resolvable or was removed) — so this list can't silently drift
-// from reality in either direction, matching knownMissingRoutes' own discipline.
-var knownUnresolvedWireCalls = map[string]bool{
-	// putConditionalTransition's OWN rs.client.Put call (entry.go) — path is a plain
-	// parameter, genuinely unresolvable without seeing a specific caller. Each CALLER
-	// (RevokeRiskExceptionIfNotRevoked, ApproveRiskExceptionIfPending, remote_risk_
-	// exceptions.go) resolves independently via the wrapper-forwarding mechanism
-	// (findWrapperMethods) and is checked against router.go normally — this entry is
-	// only the wrapper definition itself, not a second copy of those two calls.
-	"entry.go:160":                            true,
-	"remote_access_activity.go:64":            true,
-	"remote_access_review_campaigns.go:210":   true,
-	"remote_access_review_campaigns.go:237":   true,
-	"remote_access_review_campaigns.go:263":   true,
-	"remote_audit.go:28":                      true,
-	"remote_audit.go:53":                      true,
-	"remote_audit.go:95":                      true,
-	"remote_auth.go:362":                      true,
-	"remote_break_glass.go:135":               true,
-	"remote_connector_project_bindings.go:63": true,
-	"remote_dynamic.go:260":                   true,
-	"remote_dynamic.go:348":                   true,
-	"remote_dynamic.go:375":                   true,
-	"remote_dynamic.go:408":                   true,
-	"remote_invitations.go:229":               true,
-	"remote_invitations.go:396":               true,
-	"remote_login_attempts.go:52":             true,
-	"remote_machine_identities.go:344":        true,
-	"remote_machine_identities.go:688":        true,
-	"remote_memberships.go:211":               true,
-	"remote_memberships.go:230":               true,
-	"remote_memberships.go:247":               true,
-	"remote_memberships.go:286":               true,
-	"remote_mfa.go:145":                       true,
-	"remote_mfa.go:270":                       true,
-	"remote_rbac.go:497":                      true,
-	"remote_rbac.go:810":                      true,
-	"remote_rbac.go:1088":                     true,
-	"remote_secret_dependencies.go:151":       true,
-	"remote_secret_dependencies.go:176":       true,
-	"remote_secrets.go:148":                   true,
-	"remote_secrets.go:421":                   true,
-	"remote_secrets.go:441":                   true,
-	"remote_users.go:225":                     true,
-	"remote_users.go:518":                     true,
-	"remote_users.go:554":                     true,
-	"remote_users.go:978":                     true,
-	"remote_webauthn.go:179":                  true,
-	"remote_webauthn.go:209":                  true,
-	"remote_webauthn.go:309":                  true,
+// wireCallExclusionFreshnessBudgetDays mirrors scripts/ci-test-legs.sh's own
+// hardcoded 30-day TEMPORARY-exclusion budget (C5) — kept as the same number
+// deliberately, not re-derived, so the two ratchets read as one convention
+// applied twice rather than two conventions that happen to agree today.
+const wireCallExclusionFreshnessBudgetDays = 30
+
+// TestKnownUnresolvedWireCallsAreDisciplined is #1540's guard: every
+// knownUnresolvedWireCalls entry must carry a real Reason, Issue, and
+// DateAdded (no blank fields, regardless of Kind), and every kindTemporary
+// entry must be no older than wireCallExclusionFreshnessBudgetDays — a hard
+// failure, not a warning, mirroring check_exclusion_freshness's own stated
+// reasoning: a warning is exactly what the bare `map[string]bool` this
+// replaces amounted to in practice (a comment nobody re-reads), which is how
+// 41 unverified backlog items sat here with nothing surfacing them. This
+// does not replace the router.go-triage backlog #1511 tracks — passing this
+// test means "the exclusion is honestly documented and still fresh enough to
+// not need re-justifying," not "the underlying route has been verified to
+// exist."
+func TestKnownUnresolvedWireCallsAreDisciplined(t *testing.T) {
+	now := time.Now().UTC()
+	var missingFields, stalePermanent []string
+	var expired []string
+
+	for loc, ex := range knownUnresolvedWireCalls {
+		var missing []string
+		if ex.Reason == "" {
+			missing = append(missing, "Reason")
+		}
+		if ex.Issue == "" {
+			missing = append(missing, "Issue")
+		}
+		if ex.DateAdded == "" {
+			missing = append(missing, "DateAdded")
+		}
+		if len(missing) > 0 {
+			missingFields = append(missingFields, fmt.Sprintf("%s (missing: %s)", loc, strings.Join(missing, ", ")))
+			continue // can't check freshness without a valid DateAdded
+		}
+
+		added, err := time.Parse("2006-01-02", ex.DateAdded)
+		if err != nil {
+			missingFields = append(missingFields, fmt.Sprintf("%s (DateAdded %q is not YYYY-MM-DD: %v)", loc, ex.DateAdded, err))
+			continue
+		}
+
+		switch ex.Kind {
+		case kindTemporary:
+			ageDays := int(now.Sub(added).Hours() / 24)
+			if ageDays > wireCallExclusionFreshnessBudgetDays {
+				expired = append(expired, fmt.Sprintf("%s (%dd > %dd budget, added %s, %s, %s) — re-verify against "+
+					"router.go and either move to knownMissingRoutes/confirm-fine, or bump DateAdded with a note on "+
+					"why it's still open", loc, ageDays, wireCallExclusionFreshnessBudgetDays, ex.DateAdded, ex.Issue, ex.Reason))
+			}
+		case kindPermanent:
+			// Exempt from the freshness check by definition — but still worth a
+			// cheap sanity pass: a kindPermanent entry claiming a "helper
+			// function's return value" or "url.Values" reason instead of the
+			// one genuinely-permanent shape (a plain function parameter) is
+			// probably miscategorized and should have been kindTemporary.
+			if !strings.Contains(ex.Reason, "parameter") {
+				stalePermanent = append(stalePermanent, fmt.Sprintf("%s (kindPermanent but Reason %q doesn't "+
+					"mention a function parameter — double check this wasn't meant to be kindTemporary)", loc, ex.Reason))
+			}
+		}
+	}
+
+	sort.Strings(missingFields)
+	if len(missingFields) > 0 {
+		t.Errorf("%d knownUnresolvedWireCalls entr(y/ies) have missing/invalid required field(s): %v",
+			len(missingFields), missingFields)
+	}
+	sort.Strings(expired)
+	if len(expired) > 0 {
+		t.Errorf("%d knownUnresolvedWireCalls entr(y/ies) past the %d-day freshness budget: %v",
+			len(expired), wireCallExclusionFreshnessBudgetDays, expired)
+	}
+	sort.Strings(stalePermanent)
+	if len(stalePermanent) > 0 {
+		t.Errorf("%d knownUnresolvedWireCalls entr(y/ies) flagged for review: %v", len(stalePermanent), stalePermanent)
+	}
+}
+
+// wireCallExclusionKind mirrors scripts/ci-test-legs.sh's exclusion_entries()
+// kind column (C5's ratchet pattern) — see wireCallExclusion's doc comment.
+type wireCallExclusionKind int
+
+const (
+	// kindTemporary means: this specific call site's path COULD in principle be
+	// made statically resolvable (or independently verified against router.go
+	// and moved to knownMissingRoutes / confirmed fine), it just hasn't been
+	// done yet. Subject to the freshness check below — an entry older than 30
+	// days fails the build, so a real backlog item cannot sit forever
+	// unnoticed the way the pre-C5/pre-#1540 bare `map[string]bool` did.
+	kindTemporary wireCallExclusionKind = iota
+	// kindPermanent means: this exact call site can never be made statically
+	// resolvable by construction (its path argument is a plain function
+	// PARAMETER — see entry.go:160's own entry below for the one case that
+	// currently qualifies), independent of whether router.go triage has
+	// happened. Exempt from the freshness check for the same reason C5's
+	// PERMANENT kind is: there is no fix to "land" that changes this.
+	kindPermanent
+)
+
+// wireCallExclusion is one knownUnresolvedWireCalls entry, in the same shape as
+// scripts/ci-test-legs.sh's exclusion_entries() row (G80 C5's ratchet pattern,
+// applied here per #1540): Reason, Issue, and DateAdded are all mandatory —
+// TestKnownUnresolvedWireCallsAreDisciplined fails the build if any is empty,
+// not just if the entry is missing outright. This is deliberately independent
+// of Go's own missing-field zero-value behavior: an entry with every field
+// left blank still compiles and would otherwise sit silently as "documented"
+// when it isn't.
+type wireCallExclusion struct {
+	Kind      wireCallExclusionKind
+	Reason    string // WHY this specific call site's path is unresolvable — the AST shape, not "it's complicated"
+	Issue     string // e.g. "#1511" — never "n/a" for kindTemporary; a real backlog item needs a home
+	DateAdded string // YYYY-MM-DD, when THIS entry (with Reason/Issue) was captured, not necessarily
+	// when the underlying gap first appeared — see the doc comment on
+	// knownUnresolvedWireCalls for why back-dating would be actively wrong.
+}
+
+// knownUnresolvedWireCalls is the set of RemoteStorage wire call sites whose path
+// argument this tool cannot statically resolve. NONE have been individually
+// verified against router.go — that triage is tracked as visible backlog in
+// https://github.com/keyorixhq/keyorix/issues/1511, not decided here. This
+// allowlist exists so an unresolvable call is a visible, enumerated,
+// must-be-triaged item instead of a silent gap:
+// TestRemoteStorageWireCalls_HaveMatchingRoute fails on any NEW unresolvable
+// call not listed here, and on any entry here that no longer reproduces
+// (became resolvable or was removed) — so this list can't silently drift from
+// reality in either direction, matching knownMissingRoutes' own discipline.
+//
+// G80 Wave 1 (#1540): every entry below now carries a real Reason (the exact
+// AST shape that defeats pathTemplate/resolvePath — see each category's
+// comment), not a bare `true`. Reasons were reconstructed by reading the
+// actual source at each site, not invented: five categories cover all 41,
+// confirmed by reading pathTemplate/resolvePath's own implementation
+// (this file) rather than assumed from the pattern.
+//
+// DateAdded is 2026-08-28 for every entry below — the day this ratchet was
+// introduced, not backdated to when #1511's original triage first listed
+// these (which would fail the freshness check on the very PR that introduces
+// it, the same reasoning scripts/ci-test-legs.sh's own exclusion_entries()
+// comment already gives for its own three C5 entries). The pre-existing age
+// of this backlog isn't hidden by that choice — it's on record in #1511
+// itself and in this comment.
+var knownUnresolvedWireCalls = map[string]wireCallExclusion{
+	// Category: plain function PARAMETER. putConditionalTransition's OWN
+	// rs.client.Put call (entry.go) takes path as a parameter — genuinely
+	// unresolvable without seeing a specific caller, not a tool gap. Each
+	// CALLER (RevokeRiskExceptionIfNotRevoked, ApproveRiskExceptionIfPending,
+	// remote_risk_exceptions.go) resolves independently via the
+	// wrapper-forwarding mechanism (findWrapperMethods) and is checked against
+	// router.go normally — this entry is only the wrapper definition itself,
+	// not a second copy of those two calls. kindPermanent: no code change
+	// makes a generic forwarding helper's own parameter a literal.
+	"entry.go:160": {kindPermanent, "path is a function parameter (putConditionalTransition's own signature) — " +
+		"genuinely caller-dependent by design; each real caller resolves independently via findWrapperMethods",
+		"#1511", "2026-08-28"},
+	// postRetentionBeforeCountResp's OWN rs.client.Put call (remote_secrets.go) —
+	// same shape as entry.go:160 above: a generic POST-with-count-response
+	// helper taking path as a parameter, four real callers (PurgeDeleted*Before,
+	// remote_secrets.go/remote_users.go) each resolve independently.
+	"remote_secrets.go:421": {kindPermanent, "path is a function parameter (postRetentionBeforeCountResp's own " +
+		"signature) — genuinely caller-dependent by design, same shape as entry.go:160",
+		"#1511", "2026-08-28"},
+
+	// Category: query-string built via "literal" + url.Values{}.Encode() — a
+	// BinaryExpr (string concatenation), which pathTemplate does not evaluate
+	// at all (it only resolves a bare BasicLit or a fmt.Sprintf call whose
+	// first arg is a literal — confirmed by reading pathTemplate's own two
+	// switch cases, this file). The base path before "?" is always a static
+	// literal in every one of these; only the query string is dynamic.
+	// kindTemporary: resolvePath COULD be extended to resolve the literal
+	// prefix of a "lit + q.Encode()" BinaryExpr and ignore the dynamic
+	// suffix (query params don't affect route matching) — a real, scoped
+	// tool enhancement, not a structural impossibility.
+	"remote_access_activity.go:64":          urlValuesEntry(),
+	"remote_access_review_campaigns.go:210": urlValuesEntry(),
+	"remote_access_review_campaigns.go:237": urlValuesEntry(),
+	"remote_access_review_campaigns.go:263": urlValuesEntry(),
+	"remote_auth.go:362":                    urlValuesEntry(),
+	"remote_break_glass.go:135":             urlValuesEntry(),
+	"remote_dynamic.go:260":                 urlValuesEntry(),
+	"remote_dynamic.go:348":                 urlValuesEntry(),
+	"remote_dynamic.go:375":                 urlValuesEntry(),
+	"remote_dynamic.go:408":                 urlValuesEntry(),
+	"remote_invitations.go:229":             urlValuesEntry(),
+	"remote_invitations.go:396":             urlValuesEntry(),
+	"remote_login_attempts.go:52":           urlValuesEntry(),
+	"remote_machine_identities.go:344":      urlValuesEntry(),
+	"remote_machine_identities.go:688":      urlValuesEntry(),
+	"remote_memberships.go:211":             urlValuesEntry(),
+	"remote_memberships.go:230":             urlValuesEntry(),
+	"remote_memberships.go:247":             urlValuesEntry(),
+	"remote_memberships.go:286":             urlValuesEntry(),
+	"remote_mfa.go:145":                     urlValuesEntry(),
+	"remote_mfa.go:270":                     urlValuesEntry(),
+	"remote_secret_dependencies.go:151":     urlValuesEntry(),
+	"remote_secret_dependencies.go:176":     urlValuesEntry(),
+	"remote_users.go:554":                   urlValuesEntry(),
+	"remote_webauthn.go:179":                urlValuesEntry(),
+	"remote_webauthn.go:209":                urlValuesEntry(),
+	"remote_webauthn.go:309":                urlValuesEntry(),
+
+	// Category: path SEGMENT built via "literal" + a helper call
+	// (url.PathEscape/url.QueryEscape/joinUintsCSV) — same BinaryExpr root
+	// cause as the query-string category above, but escaping a path segment
+	// rather than building a query string, so the "ignore the dynamic suffix"
+	// enhancement wouldn't apply here (the dynamic part IS the route-matching-
+	// relevant path, not an ignorable query string). kindTemporary: still a
+	// real, scoped tool enhancement (resolve the literal prefix, represent the
+	// escaped segment as a wildcard "*" the way normalizeChiPath already does
+	// for a chi {param}), just a different one than the query-string case.
+	"remote_connector_project_bindings.go:63": pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
+	"remote_rbac.go:497":                      pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
+	"remote_rbac.go:810":                      pathEscapeEntry("url.PathEscape(name) path-segment concatenation"),
+	"remote_rbac.go:1088":                     pathEscapeEntry("joinUintsCSV(adminRoleIDs) query-string concatenation (a local helper, not url.Values)"),
+	"remote_users.go:978":                     pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
+
+	// Category: the ENTIRE path is a bare call to a locally-defined helper
+	// function (buildAuditFilterPath/buildRBACAuditFilterPath/
+	// buildSecretFilterPath/buildUserFilterPath), not string concatenation at
+	// all. pathTemplate's CallExpr case matches ONLY fmt.Sprintf (confirmed by
+	// reading it) — any other function call, however simple its own body, is
+	// invisible to it. kindTemporary: resolving a locally-defined helper's
+	// return value would need the tool to parse and symbolically evaluate that
+	// helper's own body (each one builds a "?query=..." string from filter
+	// struct fields) — real, scoped, but more work than the BinaryExpr cases
+	// above, which is exactly why this campaign's own past attempts stopped at
+	// literal/Sprintf/local-var and never reached this category.
+	"remote_audit.go:53":    helperReturnEntry("buildAuditFilterPath(filter)"),
+	"remote_audit.go:95":    helperReturnEntry("buildRBACAuditFilterPath(filter)"),
+	"remote_secrets.go:441": helperReturnEntry("buildSecretFilterPath(filter)"),
+	"remote_users.go:518":   helperReturnEntry("buildUserFilterPath(filter)"),
+
+	// Category: the path is a bare reference to a package-level `const`
+	// declared in internal/storage/store/constants.go — a DIFFERENT file from
+	// the call site. resolvePath's Ident case only checks localPaths, a
+	// per-function map populated by walking `name := "literal"` DEFINE
+	// assignments WITHIN THE SAME FUNCTION BODY (confirmed by reading
+	// extractWireCallsInFunc, this file) — it has no equivalent of
+	// extractRouterRoutes' own constPaths (which DOES resolve router.go's own
+	// package-level consts, just for that one file). apiAuditIngestPath/
+	// apiSecretsPath/apiUsersPath are perfectly static, human-verifiable
+	// literals; the tool just never learned to look outside the current
+	// function for them. kindTemporary: a real, scoped, mechanical fix --
+	// give extractWireCalls a constants.go-scoped constPaths map, the same
+	// shape extractRouterRoutes already has for router.go.
+	"remote_audit.go:28":    constRefEntry("apiAuditIngestPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
+	"remote_secrets.go:148": constRefEntry("apiSecretsPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
+	"remote_users.go:225":   constRefEntry("apiUsersPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
+}
+
+// urlValuesEntry, pathEscapeEntry, helperReturnEntry, and constRefEntry are
+// small constructors for knownUnresolvedWireCalls' four TEMPORARY categories,
+// so 30+ near-identical entries don't each hand-type the same Kind/Issue/Date
+// triple (and risk one of them drifting).
+func urlValuesEntry() wireCallExclusion {
+	return wireCallExclusion{kindTemporary,
+		"query string built via \"literal\" + url.Values{}.Encode() — a BinaryExpr concatenation pathTemplate " +
+			"does not evaluate; the base path before \"?\" is a static literal in every instance, only the query " +
+			"string is dynamic",
+		"#1511", "2026-08-28"}
+}
+
+func pathEscapeEntry(shape string) wireCallExclusion {
+	return wireCallExclusion{kindTemporary,
+		"path/query built via \"literal\" + " + shape + " — a BinaryExpr concatenation pathTemplate does not " +
+			"evaluate",
+		"#1511", "2026-08-28"}
+}
+
+func helperReturnEntry(call string) wireCallExclusion {
+	return wireCallExclusion{kindTemporary,
+		"entire path is the bare return value of " + call + ", a locally-defined helper — pathTemplate's " +
+			"CallExpr case matches only fmt.Sprintf, not an arbitrary function call",
+		"#1511", "2026-08-28"}
+}
+
+func constRefEntry(constRef string) wireCallExclusion {
+	return wireCallExclusion{kindTemporary,
+		"path is a bare reference to " + constRef + " — resolvePath's Ident case only checks localPaths " +
+			"(per-function := assignments), with no cross-file package-const resolution the way " +
+			"extractRouterRoutes has for router.go's own consts",
+		"#1511", "2026-08-28"}
 }
 
 // knownMissingRoutes is the set of RemoteStorage wire calls confirmed (as of this
