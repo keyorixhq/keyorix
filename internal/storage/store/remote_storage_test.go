@@ -133,6 +133,33 @@ func TestRemoteStorage_ListSecrets(t *testing.T) {
 	assert.Equal(t, "secret1", secrets[0].Name)
 }
 
+// TestRemoteStorage_Health_RealServerShape mirrors the ACTUAL, unwrapped body
+// server/http/handlers/health.go writes for GET /health — {"status":"healthy",
+// "timestamp":...,"uptime":...}, no {"success":...,"data":...} envelope, since
+// /health is an unauthenticated liveness probe outside /api/v1/*, not a normal
+// API route. G80 Wave 0c: the sibling test below (apiOK-wrapped) was passing
+// against a shape the real server never produces, masking a real bug —
+// RemoteStorage.Health() reported every genuinely healthy server as unhealthy.
+// Confirmed red before the fix (Health checked resp.Success, which is false
+// for this unwrapped body), green after (Health now only checks for a
+// transport/4xx/5xx error, which rs.client.Get already surfaces).
+func TestRemoteStorage_Health_RealServerShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/health", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "healthy",
+			"timestamp": "2026-08-27T00:00:00Z",
+			"uptime":    "1h0m0s",
+		})
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+	assert.NoError(t, rs.Health(context.Background()))
+}
+
 func TestRemoteStorage_Health(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/health", r.URL.Path)

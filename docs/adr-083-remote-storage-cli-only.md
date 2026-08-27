@@ -12,6 +12,18 @@ config-validation time. Full removal of the topology's now-dead-weight code
 factory itself remaining valid for its actual use) is explicitly **deferred**
 to its own branch — see "Deferred work" below.
 
+**Partially corrected by ADR-086 (2026-08-28).** This ADR's evidence table
+traced `AuthorizePrincipal` (the HTTP/gRPC-middleware entry point) and
+correctly found `GetUserRoleIDsAt`/`GetUserGroupRoleIDsAt`/
+`RoleSetHasPermission` dead through it. It did not examine `core.Authorize`
+— a second, independent entry point into the same stub chain, called
+directly (no router, no middleware) by several CLI commands under
+`storage.type: remote`. Those three methods are therefore NOT part of the
+"Deferred work" cleanup surface below — see ADR-086
+(`docs/adr-086-cli-authorize-stubs-stay.md`) for the full evidence and
+decision. The rest of this ADR (the topology gate itself, and the
+route-registration/proxy-tier cleanup surface) is unaffected.
+
 ## Context
 
 ADR-082 branch 4 (`connect.platform.use`) added a new `AuthorizePrincipal`

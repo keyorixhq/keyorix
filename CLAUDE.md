@@ -132,3 +132,27 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
   sites in `internal/storage/store` (not test callers) and confirmed every one
   correctly shares one transaction with its guarded write — the standalone-lock bug
   the test harness had was a test-only defect, not a production one.
+- **An enumeration is only as complete as the idioms it knows about.** Before
+  trusting an exclusion-by-pattern (a grep/regex that says "these are safe/dead
+  because they only match caller shape X"), derive the full set of shapes the
+  target behavior can take from the code itself, don't assume the first one found
+  is the only one — and state how the list was established to be complete, not
+  just what it found. Third instance of this exact failure in this campaign (an
+  enumerator that missed unexported helpers; a completeness guard whose regex
+  matched only one stub-call shape and missed 13 raw ones — see
+  `docs/g80-wave0-remote-storage-partition.md`): the G80 Wave 0 partition excluded
+  a CLI command from `RemoteStorage`'s live-caller set by grepping for
+  `common.NewRemoteClient()` as *the* raw-HTTP-passthrough guard idiom — but
+  `internal/cli/run/run.go` calls `common.ResolveRemote()` directly instead, a
+  second idiom the grep never knew existed, so `run` was wrongly classified as an
+  unconditional, `RemoteStorage`-reaching command. That single miss produced a
+  "flagship command is broken in its primary deployment shape" finding
+  (`GetLatestSecretVersion` marked LIVE) that turned out, on direct live testing,
+  to be wrong — the command works fine, because the second idiom guards it exactly
+  like the first guards everything else. The fix wasn't "check more carefully"; it
+  was deriving the complete idiom set first (grep every exported function in
+  `internal/cli/common` that builds a raw remote client or resolves remote
+  credentials, confirm no command rolls its own `net/http` client outside that
+  package, confirm no command branches on `Storage.Type`/`IsClientMode()` directly)
+  and re-running the exclusion against that set — which is what should have
+  happened before the first partition, not after a false finding forced a redo.
