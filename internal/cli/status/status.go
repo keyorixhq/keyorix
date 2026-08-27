@@ -27,8 +27,17 @@ var PingCmd = &cobra.Command{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	// Load configuration
-	cfg, err := config.Load("keyorix.yaml")
+	// Load configuration. Pass "" (not the literal "keyorix.yaml") so this
+	// resolves via config.Load's normal KEYORIX_CONFIG_PATH → ./keyorix.yaml
+	// fallback chain — the same resolution common.InitializeCoreService() below
+	// uses. G80 Wave 0c: the hardcoded literal ignored KEYORIX_CONFIG_PATH
+	// entirely, so under a container/env-var-configured deployment this always
+	// fell through to "No configuration found, using defaults" and displayed
+	// "Storage Type: Local" even when InitializeCoreService() (which does
+	// respect KEYORIX_CONFIG_PATH) was actually running against remote storage
+	// two lines later — the displayed storage type and the one actually used
+	// for the health check could silently disagree.
+	cfg, err := config.Load("")
 	if err != nil {
 		fmt.Printf("⚠️  No configuration found, using defaults\n")
 		cfg = &config.Config{
@@ -84,8 +93,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runPing(cmd *cobra.Command, args []string) error {
-	// Load configuration
-	cfg, err := config.Load("keyorix.yaml")
+	// Load configuration. Same KEYORIX_CONFIG_PATH-respecting fix as runStatus.
+	cfg, err := config.Load("")
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}

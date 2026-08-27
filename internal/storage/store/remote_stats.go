@@ -56,13 +56,25 @@ func (rs *RemoteStorage) GetPreviousDeploymentStatsSnapshot(_ context.Context) (
 }
 
 // Health checks whether the remote Keyorix server is reachable.
+//
+// G80 Wave 0c: unlike every other RemoteStorage call, /health is NOT an
+// /api/v1/* route and does not use the {"success":...,"data":...} envelope —
+// it's an unauthenticated, k8s-probe-style liveness endpoint (same convention
+// as its sibling /readyz), deliberately minimal by design
+// (server/http/handlers/health.go), returning a raw
+// {"status":"healthy","timestamp":...,"uptime":...} body. Checking resp.Success
+// here was wrong: unmarshaling that body into APIResponse succeeds (its fields
+// are all optional) but leaves Success at its zero value false, so this method
+// reported every genuinely healthy server as unhealthy
+// ("UPSTREAM_UNSUCCESSFUL: upstream returned an unsuccessful response with no
+// error detail") — confirmed live against a real server. rs.client.Get already
+// treats any 4xx/5xx as an error (see HTTPClient.makeRequest), so err == nil
+// here already means a 2xx round trip; that alone is the correct signal for
+// this one non-enveloped endpoint.
 func (rs *RemoteStorage) Health(ctx context.Context) error {
-	resp, err := rs.client.Get(ctx, "/health")
+	_, err := rs.client.Get(ctx, "/health")
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("health check failed: %s", resp.Error.Error())
 	}
 	return nil
 }
