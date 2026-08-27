@@ -109,6 +109,18 @@ func (h *CatalogHandler) CreateMembershipProxy(w http.ResponseWriter, r *http.Re
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, user_id, role, and state are required")
 		return
 	}
+	// #1578: this used to persist an arbitrary Role straight from the wire —
+	// the human-facing path (inviteMemberWithMode, membership_lifecycle.go)
+	// gates an admin-tier grant on RequireAuthorityForRole before it ever
+	// reaches storage; this proxy skipped that gate entirely, so any
+	// system.write-only caller (the RemoteStorage federation credential, not
+	// a project-admin credential) could mint itself or anyone else an
+	// admin-tier active membership. Derive the same ceiling the human-facing
+	// path uses, by reference, rather than re-deriving an equivalent check.
+	if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), body.ProjectID, body.Role); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		return
+	}
 	// G80 documented-exception re-verification sweep (2026-08-25): InvitedBy
 	// used to persist verbatim from the wire — forgeable attribution that
 	// feeds notification routing (internal/core/notifications.go) and the
@@ -164,6 +176,23 @@ func (h *CatalogHandler) UpdateMembershipProxy(w http.ResponseWriter, r *http.Re
 	var body membershipProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if body.ProjectID == 0 || body.UserID == 0 || body.Role == "" || body.State == "" {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, user_id, role, and state are required")
+		return
+	}
+	// #1578: same gap as CreateMembershipProxy, and arguably the more direct
+	// route — this is a plain Save of the full row (see doc comment above),
+	// so it is the only code path in the repo that can rewrite an EXISTING
+	// membership's Role after creation (the human-facing path never mutates
+	// Role post-invite: TransitionMembership only touches State). Requiring
+	// ProjectID/Role above first closes the projectID==0 case, where
+	// requireAuthorityForRole would otherwise check global-scope admin
+	// authority instead of the target project's — a caller must state a real
+	// project to be checked against it.
+	if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), body.ProjectID, body.Role); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 		return
 	}
 	body.ID = uint(id)

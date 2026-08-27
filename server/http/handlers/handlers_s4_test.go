@@ -10921,7 +10921,12 @@ func TestCatalogHandler_DeleteProjectIfEmptyProxy_HappyPath(t *testing.T) {
 
 func TestCatalogHandler_UpdateMembershipProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	body := `{"role":"viewer"}`
+	// #1578: project_id/user_id/state must be populated too — UpdateMembershipProxy
+	// now requires all four fields (mirroring CreateMembershipProxy) before it will
+	// even reach RequireAuthorityForRole's check, closing the projectID==0
+	// global-scope loophole. role stays non-admin so the authority check itself
+	// short-circuits, same as before the fix.
+	body := `{"project_id":1,"user_id":1,"role":"viewer","state":"invited"}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateMembershipProxy(w, req)

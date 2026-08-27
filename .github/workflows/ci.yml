@@ -511,6 +511,11 @@ jobs:
           source scripts/ci-test-legs.sh
           check_exclusion_freshness
 
+      - name: Check coverage-floor exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        run: |
+          source scripts/ci-test-legs.sh
+          check_coverage_floor_exclusion_freshness
+
   # G80 C5: fails when any package in `go list ./...` is covered by NEITHER
   # a CI test-suite leg NOR an entry in scripts/ci-test-legs.sh's exclusion
   # table -- the guard against a package silently landing in zero legs, the
@@ -633,26 +638,15 @@ jobs:
       - name: Merge coverage profiles
         run: |
           echo "mode: atomic" > coverage_merged.out
-          # Exclude generated code (server/proto/pb's two *.pb.go files, ~16,700
-          # lines, essentially 0% covered by design -- their one real test,
-          # TestEveryFileIsGenerated, checks file headers, not the generated
-          # marshal/unmarshal/gRPC logic itself) from the coverage FLOOR
-          # calculation specifically. #1541 (G80 Wave 1): this package was
-          # PERMANENTLY excluded from every CI leg (never ran, never measured)
-          # until the PERMANENT exclusion in scripts/ci-test-legs.sh was
-          # removed in the same change that added that real test -- which
-          # means its instrumented-but-near-entirely-generated lines would
-          # otherwise land in coverage.out for the first time and drag the
-          # floor down by nothing the test suite actually failed to cover in
-          # any meaningful sense. Same principle gosec's own -exclude-generated
-          # flag already applies (ci.yml's gosec steps) -- generated code isn't
-          # a coverage gap, it's not something anyone writes tests against line
-          # by line. Filtered by filename suffix (*.pb.go), the same protoc-
-          # gen-go/protoc-gen-go-grpc convention TestEveryFileIsGenerated's own
-          # header check verifies those two files actually satisfy --
-          # generated_code_test.go itself is NOT named *.pb.go, so it stays in
-          # the measured set (it's a real, hand-written test).
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v '\.pb\.go:' >> coverage_merged.out
+          # File-pattern exclusions from the coverage-FLOOR sum (as opposed to
+          # exclusion_entries() above, which controls whether a PACKAGE runs in
+          # a CI leg at all) are a machine-checked, reasoned registry --
+          # scripts/ci-test-legs.sh's coverage_floor_exclusions() -- not a bare
+          # `grep -v` here with the reasoning only asserted in a comment.
+          source scripts/ci-test-legs.sh
+          grep_args=()
+          while IFS= read -r pattern; do grep_args+=(-e "$pattern"); done < <(coverage_floor_grep_patterns)
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
