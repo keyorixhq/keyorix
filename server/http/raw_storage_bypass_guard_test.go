@@ -8,9 +8,10 @@
 // handler wasn't taking the storage-primitive-name-matches-a-core-method-name
 // coincidence as a signal that a real policy path exists for that operation.
 //
-// Scope: EVERY route in the /api/v1/system group (extractSystemGroupRoutes), not
-// the 18-route classifiedNodeCredentialRoutes subset this guard originally shipped
-// with. That narrower scope was #1547's own finding: a repo-wide re-run of this
+// Scope: EVERY route in router.go (extractAllRouterRoutes), repo-wide -- not the
+// 18-route classifiedNodeCredentialRoutes subset this guard originally shipped
+// with, and not the /api/v1/system-only scope it was later widened to. That
+// narrower 18-route scope was #1547's own finding: a repo-wide re-run of this
 // exact detection logic found 149 flagged call sites (an estimate later corrected
 // to 145 -- see docs/g80-raw-storage-bypass-enumeration.md for the reproducible
 // count and why the original 149/59 figures don't hold up), 87 of them read-shaped
@@ -18,6 +19,21 @@
 // access, so there's no ceiling to bypass) and 58 write-shaped. #1545 and #1546
 // were both found BY HAND in code the 18-route scope didn't watch -- direct
 // evidence the narrowing lost real coverage.
+//
+// G80 Wave 1 (#1547): widened from /system-only to every route in router.go.
+// Re-running the SAME detection logic (exportedCoreStorageWrappers +
+// handlerStorageCalls + isReadShapedStorageMethod) against all 504 distinct
+// handlers repo-wide (extractAllRouterRoutes, 527 total route registrations)
+// found exactly ONE handler outside /system flagged: ConsumeMFAChallenge
+// (users.write-gated, router.go:874) -- already independently triaged and
+// verified safe (docs/g80-raw-storage-bypass-triage.md, "VERIFIED
+// 2026-08-25... holds": consuming the MFA challenge alone yields only an
+// unguessable UserID/expiry pair, real assertion/crypto verification runs
+// AFTER consume, and the route requires an already-authenticated
+// users.write-holding principal to reach at all). Added to
+// rawStorageBypassAllowlist below. No other repo-wide handler was newly
+// flagged -- the /system-scoped classification below already covers every
+// OTHER write-shaped wrapped call site that exists anywhere in the router.
 //
 // An overnight session (2026-08-23/24) individually triaged all 58: full results
 // in docs/g80-raw-storage-bypass-triage.md. One of the 58 (ConsumeMFAChallenge)
@@ -66,6 +82,9 @@
 package http
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -74,19 +93,194 @@ import (
 	"testing"
 )
 
-// exportedCoreStorageWrappers scans every non-test *.go file in internal/core
-// and returns the set of storage.Storage method names called (as
-// c.storage.X(...)) from within at least one EXPORTED (c *KeyorixCore) method
-// body -- i.e., a real, reachable core-level path exists for that storage
-// primitive, not just an incidental reference from an unexported helper no
-// handler could ever be near.
-func exportedCoreStorageWrappers(t *testing.T) map[string]bool {
+// extractAllRouterRoutes is extractSystemGroupRoutes' repo-wide sibling: every
+// (method, path, handler) registration anywhere in router.go, not just inside
+// r.Route("/system", ...). G80 Wave 1 (#1547): re-measuring
+// TestNoUnjustifiedRawStorageBypass's detection logic against every handler in
+// server/http/handlers (not just the /system group's ~194 routes) found
+// exactly ONE new candidate outside what the /system-scoped guard already
+// covers — ConsumeMFAChallenge (users.write-gated, router.go, outside
+// /system) — already independently triaged and verified safe
+// (docs/g80-raw-storage-bypass-triage.md line 100, "VERIFIED 2026-08-25...
+// holds"), now added to rawStorageBypassAllowlist below. The other 503
+// distinct handlers repo-wide either don't call a wrapped write-shaped
+// storage method at all, or are already covered by the existing /system
+// classification. This function drives TestNoUnjustifiedRawStorageBypass's
+// permanent repo-wide scope going forward — extractSystemGroupRoutes stays,
+// unchanged, for node_credential_route_classification_test.go's narrower
+// 18-route node-credential classification, which is a different question
+// (is this route reachable by a bare node credential) than this guard's (does
+// this handler bypass a wrapped core ceiling).
+func extractAllRouterRoutes(t *testing.T, path string) []routerRoute {
 	t.Helper()
-	wrapped := map[string]bool{}
-	coreFuncRe := regexp.MustCompile(`^func \(c \*KeyorixCore\) ([A-Z][A-Za-z0-9_]*)\(`)
-	storageCallRe := regexp.MustCompile(`c\.storage\.([A-Za-z0-9_]+)\(`)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
 
-	entries, err := os.ReadDir(filepath.Join("..", "..", "internal", "core"))
+	constPaths := map[string]string{}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+				continue
+			}
+			lit, ok := vs.Values[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				continue
+			}
+			if s, ok := unquoteRouterLit(lit.Value); ok {
+				constPaths[vs.Names[0].Name] = s
+			}
+		}
+	}
+
+	var resolvePathArg func(arg ast.Expr) (string, bool)
+	resolvePathArg = func(arg ast.Expr) (string, bool) {
+		switch e := arg.(type) {
+		case *ast.BasicLit:
+			if e.Kind != token.STRING {
+				return "", false
+			}
+			return unquoteRouterLit(e.Value)
+		case *ast.Ident:
+			s, ok := constPaths[e.Name]
+			return s, ok
+		case *ast.BinaryExpr:
+			if e.Op != token.ADD {
+				return "", false
+			}
+			l, lok := resolvePathArg(e.X)
+			r, rok := resolvePathArg(e.Y)
+			if !lok || !rok {
+				return "", false
+			}
+			return l + r, true
+		}
+		return "", false
+	}
+
+	var routes []routerRoute
+	httpMethods := map[string]string{"Get": "GET", "Post": "POST", "Put": "PUT", "Patch": "PATCH", "Delete": "DELETE"}
+
+	var walkBlock func(prefix string, body *ast.BlockStmt, depth int)
+	var walkCall func(prefix string, expr ast.Expr, depth int)
+
+	walkBlock = func(prefix string, body *ast.BlockStmt, depth int) {
+		if body == nil {
+			return
+		}
+		for _, stmt := range body.List {
+			exprStmt, ok := stmt.(*ast.ExprStmt)
+			if !ok {
+				continue
+			}
+			walkCall(prefix, exprStmt.X, depth)
+		}
+	}
+
+	walkCall = func(prefix string, expr ast.Expr, depth int) {
+		call, ok := expr.(*ast.CallExpr)
+		if !ok {
+			return
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return
+		}
+		switch sel.Sel.Name {
+		case "Route", "Group":
+			var sub *ast.FuncLit
+			var subPrefix string
+			if sel.Sel.Name == "Route" {
+				if len(call.Args) != 2 {
+					return
+				}
+				p, ok := resolvePathArg(call.Args[0])
+				if !ok {
+					return
+				}
+				subPrefix = prefix + p
+				lit, ok := call.Args[1].(*ast.FuncLit)
+				if !ok {
+					return
+				}
+				sub = lit
+			} else {
+				if len(call.Args) != 1 {
+					return
+				}
+				lit, ok := call.Args[0].(*ast.FuncLit)
+				if !ok {
+					return
+				}
+				sub = lit
+				subPrefix = prefix
+			}
+			walkBlock(subPrefix, sub.Body, depth+1)
+		case "Get", "Post", "Put", "Patch", "Delete":
+			if len(call.Args) < 2 {
+				return
+			}
+			p, ok := resolvePathArg(call.Args[0])
+			if !ok {
+				return
+			}
+			handlerName := ""
+			if hsel, ok := call.Args[1].(*ast.SelectorExpr); ok {
+				handlerName = hsel.Sel.Name
+			}
+			routes = append(routes, routerRoute{Method: httpMethods[sel.Sel.Name], Path: normalizeRouterPath(prefix + p), Handler: handlerName})
+		}
+		if _, known := httpMethods[sel.Sel.Name]; !known && sel.Sel.Name != "Route" && sel.Sel.Name != "Group" {
+			// r.With(mw...).Post(...) -- recurse into the X of the outer selector
+			// as if it were its own call chain root, so the wrapped call is
+			// still found regardless of how many With(...) links precede it.
+			if inner, ok := sel.X.(*ast.CallExpr); ok {
+				walkCall(prefix, inner, depth)
+			}
+			return
+		}
+	}
+
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		walkBlock("", fn.Body, 0)
+	}
+
+	if len(routes) < 400 {
+		t.Fatalf("extractAllRouterRoutes found only %d routes -- the AST walk likely broke silently "+
+			"(router.go registers 500+); fix the walker before trusting this guard", len(routes))
+	}
+	return routes
+}
+
+// keyorixCoreMethod is one (c *KeyorixCore) method's declaration plus the name
+// its receiver is bound to (varies per method, e.g. "c" almost everywhere but
+// not guaranteed) -- needed to recognize both c.storage.X(...) and c.foo(...)
+// calls correctly regardless of which identifier the method happens to use.
+type keyorixCoreMethod struct {
+	fd       *ast.FuncDecl
+	recvName string
+}
+
+// keyorixCoreMethods indexes every (c *KeyorixCore) method in internal/core
+// (exported or not) by name, for the one-hop same-package call-graph walk
+// exportedCoreStorageWrappers needs.
+func keyorixCoreMethods(t *testing.T) map[string]keyorixCoreMethod {
+	t.Helper()
+	fset := token.NewFileSet()
+	methods := map[string]keyorixCoreMethod{}
+	dir := filepath.Join("..", "..", "internal", "core")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("reading internal/core: %v", err)
 	}
@@ -95,35 +289,138 @@ func exportedCoreStorageWrappers(t *testing.T) map[string]bool {
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join("..", "..", "internal", "core", name))
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 		if err != nil {
-			t.Fatalf("reading %s: %v", name, err)
+			t.Fatalf("parsing %s: %v", name, err)
 		}
-		inExported := false
-		depth := 0
-		for _, line := range strings.Split(string(b), "\n") {
-			if depth == 0 {
-				if m := coreFuncRe.FindStringSubmatch(line); m != nil {
-					inExported = true
-				} else if strings.HasPrefix(line, "func ") {
-					inExported = false
-				}
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv == nil || len(fd.Recv.List) != 1 || fd.Body == nil {
+				continue
 			}
-			depth += strings.Count(line, "{") - strings.Count(line, "}")
-			if depth < 0 {
-				depth = 0
+			star, ok := fd.Recv.List[0].Type.(*ast.StarExpr)
+			if !ok {
+				continue
 			}
-			if inExported {
-				for _, m := range storageCallRe.FindAllStringSubmatch(line, -1) {
-					wrapped[m[1]] = true
-				}
+			id, ok := star.X.(*ast.Ident)
+			if !ok || id.Name != "KeyorixCore" || len(fd.Recv.List[0].Names) == 0 {
+				continue
 			}
-			if depth == 0 {
-				inExported = false
+			methods[fd.Name.Name] = keyorixCoreMethod{fd: fd, recvName: fd.Recv.List[0].Names[0].Name}
+		}
+	}
+	return methods
+}
+
+func identSel(e ast.Expr) (recv, sel string, ok bool) {
+	se, isSel := e.(*ast.SelectorExpr)
+	if !isSel {
+		return "", "", false
+	}
+	id, isIdent := se.X.(*ast.Ident)
+	if !isIdent {
+		return "", "", false
+	}
+	return id.Name, se.Sel.Name, true
+}
+
+// directStorageCalls returns every storage method name called as
+// `<recvName>.storage.<Method>(...)` directly in fd's body (no further
+// indirection followed).
+func directStorageCalls(fd *ast.FuncDecl, recvName string) []string {
+	var found []string
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		outerSel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		innerRecv, innerSel, ok := identSel(outerSel.X)
+		if ok && innerRecv == recvName && innerSel == "storage" {
+			found = append(found, outerSel.Sel.Name)
+		}
+		return true
+	})
+	return found
+}
+
+// calledSiblingMethods returns the names of every same-receiver KeyorixCore
+// method called as `<recvName>.<name>(...)` in fd's body (both exported and
+// unexported -- the caller decides which to follow further).
+func calledSiblingMethods(fd *ast.FuncDecl, recvName string, all map[string]keyorixCoreMethod) []string {
+	var found []string
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok || id.Name != recvName {
+			return true
+		}
+		if _, exists := all[sel.Sel.Name]; exists {
+			found = append(found, sel.Sel.Name)
+		}
+		return true
+	})
+	return found
+}
+
+// exportedCoreStorageWrappers returns every storage.Storage method name
+// reachable from an EXPORTED (c *KeyorixCore) method within ONE hop through
+// an UNEXPORTED same-receiver sibling method -- i.e., a real, reachable
+// core-level path exists for that storage primitive, not just an incidental
+// reference from an unexported helper no handler could ever be near.
+//
+// G80 Wave 1 (#1547): rewritten from a regex/brace-depth line scan (which
+// only ever looked at an exported method's OWN body) to a real AST walk with
+// one-hop delegation-following, porting the fix
+// scripts/analysis/raw_storage_bypass_enumerate.go already had (added
+// 2026-08-25, G80 documented-exception re-verification sweep) into the
+// LIVE, CI-enforced guard, which never received it -- the guard was passing
+// green on a wrapped-method set that missed core.InviteMember ->
+// inviteMemberWithMode (unexported) -> c.storage.CreateProjectMembership,
+// so CreateMembershipProxy's raw call to that exact primitive was invisible
+// to this test the whole time it existed, not classified either way. One hop
+// only, deliberately: docs/g80-raw-storage-bypass-enumeration.md measured an
+// unlimited-depth variant against the same tree and found zero additional
+// write-shaped candidates beyond one hop (11 more read-shaped methods only,
+// already excluded regardless of depth) -- a second hop would add real
+// implementation cost (cycle detection for mutually-recursive unexported
+// helpers) for zero additional security-relevant findings today.
+func exportedCoreStorageWrappers(t *testing.T) map[string]bool {
+	t.Helper()
+	all := keyorixCoreMethods(t)
+	wrapped := map[string]bool{}
+	for name, m := range all {
+		if !isExportedCoreMethodName(name) {
+			continue
+		}
+		for _, method := range directStorageCalls(m.fd, m.recvName) {
+			wrapped[method] = true
+		}
+		for _, siblingName := range calledSiblingMethods(m.fd, m.recvName, all) {
+			if isExportedCoreMethodName(siblingName) {
+				continue // one hop only -- an exported sibling is scanned on its own as a top-level entry anyway
+			}
+			sibling := all[siblingName]
+			for _, method := range directStorageCalls(sibling.fd, sibling.recvName) {
+				wrapped[method] = true
 			}
 		}
 	}
 	return wrapped
+}
+
+func isExportedCoreMethodName(name string) bool {
+	return len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'
 }
 
 // handlerStorageCalls returns the set of storage.Storage method names called
@@ -197,6 +494,76 @@ func isReadShapedStorageMethod(method string) bool {
 // found calling a wrapped storage method (the #1542 shape recurring), or if a
 // listed entry no longer applies (fixed and forgotten).
 var rawStorageBypassAllowlist = map[string]string{
+	// G80 Wave 1 (#1547): the one new candidate the repo-wide extension found,
+	// outside /system. VERIFIED 2026-08-25 (G80 documented-exception
+	// re-verification sweep, escalation-delta test), docs/g80-raw-storage-
+	// bypass-triage.md line 100: consuming the MFA challenge alone yields only
+	// UserID/expiry (generateSecureToken-minted, crypto/rand, unguessable) --
+	// the real assertion/crypto verification and session binding all run in
+	// FinishWebAuthnLogin/VerifyMFACredentials, AFTER consume. Atomicity
+	// confirmed at the storage layer (local_mfa.go:123-148, a genuine
+	// conditional UPDATE ... WHERE used_at IS NULL AND expires_at > ?, not a
+	// plain unconditional write). Reach: gated by the full /api/v1
+	// Authentication middleware (server/middleware/auth.go:253) PLUS
+	// users.write (router.go:300,874), both of which run BEFORE this handler
+	// -- a user mid-login holds only the ephemeral MFA-challenge secret, not
+	// a session/PAT/machine/OIDC credential, so they cannot reach this route
+	// at all. Reachable only by an already-fully-authenticated,
+	// users.write-holding principal (machine-only in the intended hub-spoke
+	// design), not human-mid-login-reachable despite the name suggesting
+	// otherwise.
+	"ConsumeMFAChallenge": "holds: consume alone yields only an unguessable UserID/expiry pair; real crypto/" +
+		"assertion verification runs downstream in FinishWebAuthnLogin/VerifyMFACredentials; storage-layer " +
+		"atomicity confirmed (local_mfa.go:123-148, conditional UPDATE); gated by full Authentication middleware " +
+		"+ users.write, both running before this handler, so a mid-login (unauthenticated) caller cannot reach it.",
+	// G80 Wave 1 (#1547 one-hop interprocedural fix, 2026-08-27): the 8 entries
+	// below were newly surfaced when exportedCoreStorageWrappers gained
+	// one-hop delegation-following (previously only inspected an exported
+	// method's OWN body, missing storage calls made by an unexported sibling
+	// it calls -- see that function's doc comment). Each verified individually
+	// against the actual unexported wrapper's body, not assumed from the
+	// pattern alone.
+	"AdvanceWebAuthnCredentialCounterProxy": "no-independent-ceiling: persistUpdatedCredential " +
+		"(internal/core/webauthn.go:566-576) is a marshal + mutex + the SAME storage.AdvanceWebAuthnCredentialCounter " +
+		"call, no additional check -- the proxy's own extensive doc comment already establishes the atomic " +
+		"row-locked CAS property (the actual security-relevant invariant) is preserved exactly.",
+	"CreateWebAuthnSessionProxy": "no-independent-ceiling: storeWebAuthnSession (internal/core/webauthn.go:87-101) " +
+		"is a marshal + token-generation + the SAME storage.CreateWebAuthnSession call, no additional check -- " +
+		"session data isn't privilege-bearing until consumed (same shape as the already-verified " +
+		"CreateSSOLoginStateProxy: identity is anchored at consume time, not creation time).",
+	"UpdateWebAuthnCredentialProxy": "no-independent-ceiling: the proxy's own doc comment establishes it backs " +
+		"rejectIfCloned's best-effort 'mark disabled' write -- a defensive, capability-REDUCING action (disabling " +
+		"a suspected-cloned credential), not an authorization gate to bypass.",
+	"CreateRole": "no-independent-ceiling: the exported wrapper reachable via one hop is bootstrapSystemLocked " +
+		"(internal/core/auth_bootstrap.go:226-292, called only from system-init bootstrap), which creates a FIXED, " +
+		"hardcoded set of default roles -- unrelated in content to this HTTP route's actual authorization gate " +
+		"(RequirePermission(permRolesWrite), router.go:962), which already independently governs arbitrary " +
+		"caller-supplied role creation.",
+	"ExpireSetupTokenProxy": "no-independent-ceiling: marking a setup token expired only REDUCES future capability " +
+		"(revokes an outstanding token early) -- there is no privilege to gain by skipping whatever ceiling " +
+		"inspectActiveSetupToken's lazy-expiry path would otherwise apply, since expiry is itself the safe " +
+		"direction.",
+	// VERIFIED 2026-08-27 (G80 Wave 1): both self-attribution gaps this entry
+	// depends on were already independently found and fixed by name in a
+	// PRIOR round (2026-08-25, G80 documented-exception re-verification
+	// sweep) -- re-read directly against current source, not assumed from
+	// this entry's own age. approver_id is forced to the authenticated
+	// caller (access_request_proxy.go:389-396); the remaining "who may
+	// approve at all has no authority ceiling" gap is explicitly named in
+	// the handler's own doc comment as pre-existing and out of scope for
+	// that fix, not something the raw storage call itself introduces.
+	"CreateAccessRequestApprovalProxy": "no-independent-ceiling (fixed 2026-08-25): approver_id is forced to the " +
+		"authenticated caller, closing the maker-checker/fabricated-approver bypass; the residual 'no ceiling on " +
+		"who may approve' is a named, pre-existing, out-of-scope gap unrelated to this raw call specifically.",
+	"UpdateAccessReviewItemProxy": "no-independent-ceiling (fixed 2026-08-25, ARC-005): decided_by is forced to " +
+		"the authenticated caller and self-certification is explicitly rejected; persistItemDecision " +
+		"(internal/core/access_review_campaign.go:234-249) applies no additional authority ceiling beyond the " +
+		"item-pending + campaign-open atomic CAS this proxy already replicates exactly.",
+	"CreateConnectorProjectBindingProxy": "no-independent-ceiling: the flagged LogAuditEvent call " +
+		"(connector_project_bindings_proxy.go:152-160) is entirely server-constructed -- EventType, ProjectID, " +
+		"Description, Success, EventTime, and ActorType are all hardcoded/derived server-side, zero caller-" +
+		"controlled content. Different call site, different question from IngestAuditEventProxy's LogAuditEvent " +
+		"below (knownUnfixedRawStorageBypasses) -- that one persists a caller-supplied event wholesale.",
 	"ClearProjectSecretOwnershipProxy": "false positive: the exported core wrapper (RemoveProjectMember) calls this " +
 		"storage method only as a best-effort CLEANUP side effect of removing a member, not as its own gated " +
 		"operation -- there is no independent ceiling for 'clear ownership' alone to bypass.",
@@ -572,6 +939,84 @@ var rawStorageBypassAllowlist = map[string]string{
 // originally-listed entries were deleted outright — G80 liveness sweep found no
 // live caller for any of them; see docs/g80-remediation-notes.md.)
 var knownUnfixedRawStorageBypasses = map[string]string{
+	// G80 Wave 1 (#1547 repo-wide extension + one-hop interprocedural fix,
+	// 2026-08-27): REAL, HIGH-severity escalation-by-proxy bypass, same class
+	// as #1552 (AssignRoleWithExpiryProxy's original finding). The exported
+	// wrapper chain (InviteMember -> inviteMemberWithMode,
+	// internal/core/membership_lifecycle.go:169-172) applies a real ceiling
+	// BEFORE persisting: `requireAuthorityForRole(ctx, invitedBy, projectID,
+	// role)` -- "onboarding a member as an admin role requires the inviter to
+	// hold admin authority at the project." CreateMembershipProxy
+	// (server/http/handlers/project_memberships_proxy.go:102) calls
+	// Storage().CreateProjectMembership directly with the wire body's Role and
+	// State as-is -- no role-authority check of any kind. A caller holding
+	// only this route's system.write gate can POST an arbitrary UserID with
+	// an admin-tier Role AND State:"active" (bypassing whatever
+	// invite/accept state-machine gating initialMembershipStateForMode would
+	// otherwise apply) and grant instant, active, admin-tier project
+	// membership to any user. Filed as #1578.
+	"CreateMembershipProxy": "REAL, human-reachable, HIGH severity: bypasses requireAuthorityForRole entirely " +
+		"(membership_lifecycle.go:172) -- any system.write holder can grant an arbitrary user an active admin-tier " +
+		"project membership via a single POST, with Role and State fully caller-controlled. Filed as #1578.",
+	// G80 Wave 1 (#1547 repo-wide extension, 2026-08-27): REAL bypass, narrow
+	// impact (availability, not escalation). consumeInspectedToken
+	// (internal/core/setup_token.go:210-213) checks `tok.Purpose !=
+	// expectedPurpose` before calling storage.MarkSetupTokenConsumed;
+	// ConsumeSetupTokenProxy (server/http/handlers/setup_tokens_proxy.go:309)
+	// relays the same storage primitive directly, keyed only on token ID, with
+	// no purpose parameter on the wire at all. Any system.write holder who can
+	// enumerate/guess an active setup-token ID can consume it regardless of
+	// its intended purpose (burning a legitimate password-reset/invitation-
+	// accept token before the real recipient uses it) -- a targeted DoS
+	// primitive against account-provisioning flows, not a privilege
+	// escalation (consuming alone confers no access; MarkSetupTokenConsumed
+	// is a bare state-transition CAS, not a credential grant). Filed as
+	// #1579.
+	"ConsumeSetupTokenProxy": "REAL, human-reachable, narrow: consume is purpose-blind (no purpose parameter on " +
+		"the wire), so a system.write holder can burn any active setup token by ID regardless of intended use -- " +
+		"availability/DoS against provisioning flows, not an escalation. Filed as #1579.",
+	// G80 Wave 1 (#1547 repo-wide extension, 2026-08-27): REAL bypass,
+	// reference-confusion class (explicitly not a value-leak, per
+	// core.CreateDynamicSecretConfig's own doc comment,
+	// internal/core/dynamic_secrets.go:225-242). That exported method checks
+	// `env.ProjectID != req.ProjectID` before persisting -- a config's
+	// EnvironmentID must actually belong to its own ProjectID.
+	// CreateDynamicSecretConfigProxy
+	// (server/http/handlers/dynamic_secrets_proxy.go:216) persists the wire
+	// body directly with no cross-reference check, so a caller-supplied
+	// (ProjectID, EnvironmentID) pair naming DIFFERENT projects persists
+	// without error. Downstream reads/leases stay keyed off the config's own
+	// stored ProjectID (confirmed in the core method's own doc comment), so
+	// this is not a cross-project secret-value leak -- it's a config an
+	// operator believes is scoped to (A, envX) actually referencing an
+	// environment belonging to a project the creator may have no visibility
+	// into. Filed as #1580.
+	"CreateDynamicSecretConfigProxy": "REAL, human-reachable, reference-confusion class (not a value leak per the " +
+		"core method's own doc comment): skips the EnvironmentID-belongs-to-ProjectID cross-reference check " +
+		"(dynamic_secrets.go:238-241), so a config can be created referencing an environment from a different, " +
+		"possibly invisible-to-the-caller project. Filed as #1580.",
+	// Pre-existing, already fully documented and deferred -- not a new G80
+	// Wave 1 finding, just newly VISIBLE to this guard (the one-hop fix
+	// surfaced LogAuditEvent as a wrapped method for the first time). See
+	// server/http/handlers/audit_ingest_proxy.go's own #G79 doc comment
+	// (lines 46-60): LogAuditEvent computes EntryHash over whatever fields
+	// it's given, so a system.write holder reaching this endpoint directly
+	// (bypassing the emitting server's own core.KeyorixCore.emitAudit
+	// decision) can submit a fully fabricated, self-consistent event (wrong
+	// actor, wrong description, wrong outcome) that passes VerifyAuditChain --
+	// a hash chain detects tampering with entries already written, not that a
+	// NEW entry's content is genuine. Closing this fully needs a way to
+	// attest the submitter is a legitimate downstream node (a node-identity
+	// credential distinct from the RBAC permission tier), explicitly deferred
+	// to "Wave 4" in the existing comment. What IS already closed: clock-skew
+	// bounding and required-field validation reject the cruder abuse (an
+	// arbitrary event_time planting a forged entry at an arbitrary forensic
+	// timeline point).
+	"IngestAuditEventProxy": "REAL, already documented and deferred (audit_ingest_proxy.go's own #G79 comment): a " +
+		"system.write holder can submit a fully fabricated, self-consistent audit event that passes " +
+		"VerifyAuditChain -- closing this needs node-identity attestation infrastructure, deferred to Wave 4. " +
+		"Not a new finding; newly visible to this guard because the one-hop fix (G80 Wave 1) surfaced " +
+		"LogAuditEvent as a wrapped storage method for the first time.",
 	// HALF-FIXED 2026-08-25 (G80 documented-exception re-verification sweep) --
 	// do NOT move to rawStorageBypassAllowlist. Was classified documented-
 	// exception on the theory that the handler's own #G79 comment "re-derives
@@ -635,9 +1080,10 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"RemoteStorage client methods themselves).",
 }
 
-// TestNoUnjustifiedRawStorageBypass is #1542's guard, extended by #1547 to cover
-// every route in the /api/v1/system group (not just the 18-route subset this
-// guard originally shipped with): for every such route, if its handler calls
+// TestNoUnjustifiedRawStorageBypass is #1542's guard, widened by #1547 to cover
+// every route in router.go, repo-wide (not just the 18-route subset this guard
+// originally shipped with, and not just the /api/v1/system group it was later
+// widened to): for every such route, if its handler calls
 // h.coreService.Storage().X(...) for a write-shaped storage method X that an
 // EXPORTED internal/core method also wraps, that handler must have an entry in
 // rawStorageBypassAllowlist (reviewed safe) or knownUnfixedRawStorageBypasses
@@ -649,7 +1095,7 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 func TestNoUnjustifiedRawStorageBypass(t *testing.T) {
 	wrapped := exportedCoreStorageWrappers(t)
 	routerPath := filepath.Join(".", "router.go")
-	actual := extractSystemGroupRoutes(t, routerPath)
+	actual := extractAllRouterRoutes(t, routerPath)
 
 	// handlerFlagged[handler] = true iff that handler currently makes at least one
 	// call to a write-shaped storage method an exported core method also wraps.
@@ -677,7 +1123,7 @@ func TestNoUnjustifiedRawStorageBypass(t *testing.T) {
 	sort.Strings(flagged)
 
 	if len(flagged) > 0 {
-		t.Errorf("found %d /system handler(s) bypassing a wrapped core ceiling via raw storage (the #1542 "+
+		t.Errorf("found %d handler(s) bypassing a wrapped core ceiling via raw storage (the #1542 "+
 			"shape): %v\nEither route the handler through the core method that wraps this storage call, or add a "+
 			"reasoned entry to rawStorageBypassAllowlist (if genuinely safe) or knownUnfixedRawStorageBypasses "+
 			"(if it's a real, tracked, not-yet-fixed gap) in this file.", len(flagged), flagged)
@@ -697,7 +1143,7 @@ func TestNoUnjustifiedRawStorageBypass(t *testing.T) {
 				}
 			}
 			if !found {
-				stale = append(stale, handler+" (no longer registered under /system)")
+				stale = append(stale, handler+" (no longer registered anywhere in router.go)")
 				continue
 			}
 			if !handlerFlagged[handler] {
