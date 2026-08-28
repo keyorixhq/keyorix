@@ -5,17 +5,33 @@
 // notifications_handler.go) is real and proxied below for ListNotifications/
 // CountUnreadNotifications/MarkNotificationRead/MarkAllNotificationsRead.
 //
-// CreateNotification/HasUnreadNotification/GetUnreadNotification/
-// UpdateNotification stay unconditional stubs: these are the reminder/dedup
-// write path (internal/core/notifications.go's notify(), and the escalation
-// dedup in rotation_reminders.go et al.), invoked only from server-internal
-// background jobs and the system.write-gated POST /admin/jobs/* on-demand
-// triggers — both of which always run against the server's own LocalStorage,
-// never against a remote client's storage.Storage. There is no self-scoped route
-// that lets an authenticated end user create/escalate an arbitrary notification
-// for themselves (rightly so: that would let a self-scoped-only credential forge
-// notifications, e.g. impersonate a "your access was approved" system message),
-// so there is nothing for these four to proxy to.
+// HasUnreadNotification/GetUnreadNotification/UpdateNotification stay
+// unconditional stubs correctly: these three back ONLY the escalation-aware
+// reminder dedup path (upgradeReminder, notifications.go; the various
+// *_reminders.go/*_expiry.go/*_alerts.go schedulers), invoked exclusively from
+// server-internal background jobs and the system.write-gated POST
+// /admin/jobs/* on-demand triggers — both of which always run against the
+// server's own LocalStorage, never against a remote client's storage.Storage.
+// There is no self-scoped route that lets an authenticated end user
+// create/escalate an arbitrary notification for themselves (rightly so: that
+// would let a self-scoped-only credential forge notifications, e.g.
+// impersonate a "your access was approved" system message), so there is
+// nothing for these three to proxy to.
+//
+// CreateNotification is a DIFFERENT case, and the claim above does not extend
+// to it: it backs notify()/notifyWithSeverity() generally, not just the
+// reminder/dedup path — every notification-worthy core action (access
+// requests, membership activation, secret sharing, ...) calls through it, and
+// several of those ARE reachable from an unguarded CLI command running
+// embedded against `storage.type: remote` (`keyorix request access`/`request
+// secret-access`/`request review`, none behind a NewRemoteClient()-family
+// guard). Confirmed LIVE, and it FAILS OPEN: notifyWithSeverity swallows
+// whatever error this stub returns, so the triggering action (e.g. the access
+// request itself) reports success while the notification is silently never
+// created. Filed as #1589, not fixed pending a Wave 2 design decision
+// (implement the write over the wire vs. make the failure visible some other
+// way) — see docs/adr-087-remote-storage-deletion-pass.md and the #1589
+// liveness re-confirmation this comment was corrected alongside.
 //
 // For the local (GORM) equivalent see local_notifications.go.
 package store
