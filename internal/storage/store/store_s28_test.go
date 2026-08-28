@@ -252,25 +252,9 @@ func TestRemoteStorage_S28_ListRoles_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteStorage_S28_AssignRole_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiErrResp("CONFLICT", "already assigned"))
-	}))
-	defer srv.Close()
-	rs := newS28Remote(t, srv.URL)
-	err := rs.AssignRole(context.Background(), 1, 1, coreScope())
-	assert.Error(t, err)
-}
-
-func TestRemoteStorage_S28_RemoveRole_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiErrResp("NOT_FOUND", "assignment not found"))
-	}))
-	defer srv.Close()
-	rs := newS28Remote(t, srv.URL)
-	err := rs.RemoveRole(context.Background(), 1, 1, coreScope())
-	assert.Error(t, err)
-}
+// AssignRole/RemoveRole are permanent stubs as of the #1511/G80 deletion
+// pass — see TestRemoteStorage_AssignRole_Unsupported/
+// TestRemoteStorage_RemoveRole_Unsupported (remote_rbac_test.go).
 
 func TestRemoteStorage_S28_GetGroupRoleGrants_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -79,16 +79,13 @@ func (rs *RemoteStorage) DeleteSession(ctx context.Context, id uint) error {
 	return nil
 }
 
-// CleanupExpiredSessions triggers server-side session cleanup via remote API.
-func (rs *RemoteStorage) CleanupExpiredSessions(ctx context.Context) error {
-	resp, err := rs.client.Post(ctx, "/api/v1/sessions/cleanup", nil)
-	if err != nil {
-		return fmt.Errorf("failed to cleanup expired sessions: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("cleanup expired sessions failed: %s", resp.Error.Error())
-	}
-	return nil
+// CleanupExpiredSessions: #1511/G80 deletion pass — POST
+// /api/v1/sessions/cleanup has no matching route, and the core method itself
+// has zero callers in any topology (internal/core/users.go's own doc comment
+// already noted "implemented but never scheduled"). See
+// docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) CleanupExpiredSessions(_ context.Context) error {
+	return remoteUnsupported("CleanupExpiredSessions")
 }
 
 // --- Sessions (My Account) + Personal Access Tokens ---

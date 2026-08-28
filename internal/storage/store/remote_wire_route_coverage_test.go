@@ -915,7 +915,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_access_review_campaigns.go:210": urlValuesEntry(),
 	"remote_access_review_campaigns.go:237": urlValuesEntry(),
 	"remote_access_review_campaigns.go:263": urlValuesEntry(),
-	"remote_auth.go:362":                    urlValuesEntry(),
+	"remote_auth.go:359":                    urlValuesEntry(),
 	"remote_break_glass.go:135":             urlValuesEntry(),
 	"remote_dynamic.go:260":                 urlValuesEntry(),
 	"remote_dynamic.go:348":                 urlValuesEntry(),
@@ -949,9 +949,9 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// escaped segment as a wildcard "*" the way normalizeChiPath already does
 	// for a chi {param}), just a different one than the query-string case.
 	"remote_connector_project_bindings.go:63": pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
-	"remote_rbac.go:497":                      pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
-	"remote_rbac.go:810":                      pathEscapeEntry("url.PathEscape(name) path-segment concatenation"),
-	"remote_rbac.go:1088":                     pathEscapeEntry("joinUintsCSV(adminRoleIDs) query-string concatenation (a local helper, not url.Values)"),
+	"remote_rbac.go:485":                      pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
+	"remote_rbac.go:798":                      pathEscapeEntry("url.PathEscape(name) path-segment concatenation"),
+	"remote_rbac.go:1076":                     pathEscapeEntry("joinUintsCSV(adminRoleIDs) query-string concatenation (a local helper, not url.Values)"),
 	"remote_users.go:978":                     pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
 
 	// Category: the ENTIRE path is a bare call to a locally-defined helper
@@ -1030,18 +1030,11 @@ func constRefEntry(constRef string) wireCallExclusion {
 // HaveMatchingRoute fails on any entry that no longer reproduces, so this can't silently
 // go stale. Do not add a new entry here to silence a genuinely new gap — file it as its
 // own issue-1511 item first.
-var knownMissingRoutes = map[routeKey]bool{
-	{Method: "POST", Path: "/api/v1/secrets/*/versions"}:                     true, // CreateSecretVersion — the G80 Phase 0 discovery
-	{Method: "POST", Path: "/api/v1/sessions/cleanup"}:                       true,
-	{Method: "POST", Path: "/api/v1/rbac/assign-role"}:                       true,
-	{Method: "POST", Path: "/api/v1/rbac/remove-role"}:                       true,
-	{Method: "PUT", Path: "/api/v1/system/risk-exceptions/*"}:                true,
-	{Method: "POST", Path: "/api/v1/shares"}:                                 true, // confirmed real: /shares group has no POST
-	{Method: "GET", Path: "/api/v1/shares/*"}:                                true, // confirmed real: /shares group has no GET/{id}
-	{Method: "GET", Path: "/api/v1/stats"}:                                   true, // confirmed real: only scoped */stats variants exist
-	{Method: "GET", Path: "/api/v1/secrets/*/versions/*"}:                    true,
-	{Method: "GET", Path: "/api/v1/secrets/*/versions/latest"}:               true,
-	{Method: "POST", Path: "/api/v1/secret-versions/*/increment-read-count"}: true,
-	{Method: "GET", Path: "/api/v1/users/*/shared-secrets"}:                  true, // confirmed real: only GET /shared-secrets (caller's own) exists
-	{Method: "GET", Path: "/api/v1/secrets/*/permissions"}:                   true,
-}
+//
+// Empty as of the G80 deletion pass (docs/adr-087-remote-storage-deletion-pass.md):
+// all 13 entries this map ever held (#1511's full list) were converted from a live,
+// permanently-404ing wire call to a remoteUnsupported() stub — see
+// remote_deletion_pass_completeness_test.go's addRemoteUnsupported
+// entries for the per-method DEAD evidence. A future genuinely-new gap gets a
+// fresh entry here, triaged the same way, not by resurrecting these.
+var knownMissingRoutes = map[routeKey]bool{}

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -598,31 +599,17 @@ func TestRemoteStorage_GetRiskException(t *testing.T) {
 	assert.Equal(t, "Rotation skip", exc.Title)
 }
 
-func TestRemoteStorage_UpdateRiskException(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	exp := now.Add(30 * 24 * time.Hour)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/risk-exceptions/6", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_UpdateRiskException_Unsupported: #1511/G80 deletion pass
+// — no matching route (#G79 already removed it server-side, confirmed
+// UpdateRiskExceptionProxy is not registered in router.go); zero production
+// callers. See docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_UpdateRiskException_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	err = rs.UpdateRiskException(context.Background(), &models.RiskException{
-		ID:            6,
-		Title:         "updated",
-		Category:      "mfa",
-		Justification: "still needed",
-		CreatedBy:     1,
-		CreatedAt:     now,
-		ExpiresAt:     exp,
-		Revoked:       true,
-	})
-	require.NoError(t, err)
+	err = rs.UpdateRiskException(context.Background(), &models.RiskException{ID: 6})
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 // TestRemoteStorage_RevokeRiskExceptionIfNotRevoked proves the conditional
@@ -1276,31 +1263,8 @@ func TestRemoteStorage_ConsumeSSOLoginState(t *testing.T) {
 // remote_stats.go
 // ============================================================
 
-func TestRemoteStorage_GetStats(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/stats", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"total_secrets":       5,
-			"total_users":         3,
-			"total_roles":         2,
-			"total_sessions":      1,
-			"total_audit_logs":    100,
-			"database_size_bytes": 4096,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	stats, err := rs.GetStats(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, stats)
-	assert.Equal(t, int64(5), stats.TotalSecrets)
-	assert.Equal(t, int64(3), stats.TotalUsers)
-	assert.Equal(t, int64(2), stats.TotalRoles)
-}
+// GetStats is a permanent stub as of the #1511/G80 deletion pass — see
+// TestRemoteCov_GetStats_Unsupported (remote_coverage_test.go).
 
 func TestRemoteStorage_SaveStatsSnapshot_NoOp(t *testing.T) {
 	// SaveStatsSnapshot is a no-op in remote mode — no HTTP call is made.

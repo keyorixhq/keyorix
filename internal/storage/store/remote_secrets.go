@@ -514,38 +514,13 @@ func buildSecretFilterPath(filter *storage.SecretFilter) string {
 
 // --- Version operations ---
 
-// CreateSecretVersion creates a new version of a secret via remote API.
-func (rs *RemoteStorage) CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
-	path := fmt.Sprintf("/api/v1/secrets/%d/versions", version.SecretNodeID)
-	resp, err := rs.client.Post(ctx, path, version)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create secret version: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create secret version failed: %s", resp.Error.Error())
-	}
-	var result models.SecretVersion
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
-}
-
-// GetSecretVersion retrieves a specific version of a secret via remote API.
-func (rs *RemoteStorage) GetSecretVersion(ctx context.Context, secretID uint, version int) (*models.SecretVersion, error) {
-	path := fmt.Sprintf("/api/v1/secrets/%d/versions/%d", secretID, version)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get secret version: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("get secret version failed: %s", resp.Error.Error())
-	}
-	var result models.SecretVersion
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+// CreateSecretVersion: #1511/G80 deletion pass — POST /api/v1/secrets/*/versions
+// has no matching route (confirmed absent, router.go); every core caller
+// (storeSecretVersion/storeNextSecretVersion, reached via CreateSecret/
+// UpdateSecret/CopySecret/RotateSecret) is either behind a NewRemoteClient()
+// CLI guard or server-only. See docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) CreateSecretVersion(_ context.Context, _ *models.SecretVersion) (*models.SecretVersion, error) {
+	return nil, remoteUnsupported("CreateSecretVersion")
 }
 
 // ListSecretVersions lists all versions of a secret via remote API.
@@ -570,40 +545,30 @@ func (rs *RemoteStorage) GetSecretVersions(ctx context.Context, secretID uint) (
 	return rs.ListSecretVersions(ctx, secretID)
 }
 
-// GetLatestSecretVersion retrieves the most recent version of a secret via remote API.
 // SetSecretCertNotAfter is a server-side concern (the certificate scan runs on the
 // server); the remote client never invokes it.
 func (rs *RemoteStorage) SetSecretCertNotAfter(_ context.Context, _ uint, _ *time.Time) error {
 	return remoteUnsupported("SetSecretCertNotAfter")
 }
 
-func (rs *RemoteStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
-	path := fmt.Sprintf("/api/v1/secrets/%d/versions/latest", secretID)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get latest secret version: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("get latest secret version failed: %s", resp.Error.Error())
-	}
-	var result models.SecretVersion
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+// GetLatestSecretVersion: #1511/G80 deletion pass — GET
+// /api/v1/secrets/*/versions/latest has no matching route. The one CLI path
+// that looked unguarded (run/run.go) is not: run.go:102 calls
+// common.ResolveRemote() directly (Wave 0c correction), so it never reaches
+// this method under any complete storage.type: remote config. Every other
+// caller is behind a NewRemoteClient() guard or server-only. See
+// docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) GetLatestSecretVersion(_ context.Context, _ uint) (*models.SecretVersion, error) {
+	return nil, remoteUnsupported("GetLatestSecretVersion")
 }
 
-// IncrementSecretReadCount increments the read counter for a secret version via remote API.
-func (rs *RemoteStorage) IncrementSecretReadCount(ctx context.Context, versionID uint) error {
-	path := fmt.Sprintf("/api/v1/secret-versions/%d/increment-read-count", versionID)
-	resp, err := rs.client.Post(ctx, path, nil)
-	if err != nil {
-		return fmt.Errorf("failed to increment read count: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("increment read count failed: %s", resp.Error.Error())
-	}
-	return nil
+// IncrementSecretReadCount: #1511/G80 deletion pass — POST
+// /api/v1/secret-versions/*/increment-read-count has no matching route and
+// zero callers anywhere in internal/core (distinct from the separate,
+// already-classified TryIncrementSecretReadCount below). See
+// docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) IncrementSecretReadCount(_ context.Context, _ uint) error {
+	return remoteUnsupported("IncrementSecretReadCount")
 }
 
 // TryIncrementSecretReadCount is the max-reads burn-after-N-reads gate

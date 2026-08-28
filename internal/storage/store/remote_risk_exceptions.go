@@ -176,20 +176,15 @@ func (rs *RemoteStorage) GetRiskException(ctx context.Context, id uint) (*models
 	return decodeRiskExceptionResponse(resp.Data)
 }
 
-// UpdateRiskException persists the full exception row (revoke/approve
-// bookkeeping) via PUT /api/v1/system/risk-exceptions/{id}. Matches
-// LocalStorage's own unconditional full-row Save semantics exactly — see the
-// package doc for why no conditional write is needed here.
-func (rs *RemoteStorage) UpdateRiskException(ctx context.Context, e *models.RiskException) error {
-	path := fmt.Sprintf("/api/v1/system/risk-exceptions/%d", e.ID)
-	resp, err := rs.client.Put(ctx, path, newRiskExceptionWire(e))
-	if err != nil {
-		return fmt.Errorf("failed to update risk exception: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("update risk exception failed: %s", resp.Error.Error())
-	}
-	return nil
+// UpdateRiskException: #1511/G80 deletion pass — PUT
+// /api/v1/system/risk-exceptions/{id} has no matching route. UpdateRiskExceptionProxy
+// was deliberately never registered (#G79, server/http/handlers/risk_exceptions_proxy.go) —
+// a repo-wide search found no caller of it anywhere, local or remote. This
+// entry in #1511's list was already stale (the route removal already
+// happened server-side); this pass closes it client-side too. See
+// docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) UpdateRiskException(_ context.Context, _ *models.RiskException) error {
+	return remoteUnsupported("UpdateRiskException")
 }
 
 // RevokeRiskExceptionIfNotRevoked persists e's full row via a single conditional
