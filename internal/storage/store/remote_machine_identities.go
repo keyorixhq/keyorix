@@ -288,22 +288,15 @@ func (rs *RemoteStorage) LockMachineIdentityForUpdate(ctx context.Context, id ui
 	return decodeMachineIdentityResponse(resp.Data)
 }
 
-// UpdateMachineIdentity persists the full row via PUT
-// /api/v1/system/machine-identities/{id}. Matches LocalStorage's own
-// unconditional full-row Save semantics exactly — used by
-// core.ClassifyMachineIdentity, which has no state-machine invariant to protect.
-// core.TransitionMachineIdentity does NOT use this method — see
-// TransitionMachineIdentityState below for why.
-func (rs *RemoteStorage) UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error {
-	path := fmt.Sprintf("/api/v1/system/machine-identities/%d", m.ID)
-	resp, err := rs.client.Put(ctx, path, newMachineIdentityWire(m))
-	if err != nil {
-		return fmt.Errorf("failed to update machine identity: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("update machine identity failed: %s", resp.Error.Error())
-	}
-	return nil
+// UpdateMachineIdentity used to persist the full row via PUT
+// /api/v1/system/machine-identities/{id} (UpdateMachineIdentityProxy),
+// deleted (#1585, docs/adr-090-stale-fork-proxy-deletion.md) — no live
+// caller: core.ClassifyMachineIdentity, this method's only historically
+// claimed caller, was fixed under G42 to call TransitionMachineIdentityState
+// instead. Returns errUnsupportedRemote like every other known-unsupported
+// RemoteStorage operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateMachineIdentity(_ context.Context, _ *models.MachineIdentity) error {
+	return remoteUnsupported("UpdateMachineIdentity")
 }
 
 // TransitionMachineIdentityState persists m's full row via a single conditional

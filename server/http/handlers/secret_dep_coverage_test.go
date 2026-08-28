@@ -9,7 +9,6 @@
 //   - GetProjectRotationOrder: storage-error path (lines 174-177)
 //   - GetProjectRotationPlan: storage-error path (lines 195-198)
 //   - GetDeploymentRotationPlan: storage-error path (lines 212-215)
-//   - CreateSecretDependencyProxy: storage-error path (lines 122-126)
 //   - CreateSecretDependencyExclusiveProxy: duplicate + cycle + default error
 //     branches (lines 149-153)
 //   - GetSecretDependencyProxy: internal-error path (lines 173-175)
@@ -274,41 +273,6 @@ func TestGetDeploymentRotationPlan_StorageError_DepCov(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// ── CreateSecretDependencyProxy: storage-error path ──────────────────────────
-
-// TestCreateSecretDependencyProxy_StorageError_DepCov — closed DB causes
-// CreateSecretDependency to fail; proxy returns 500.
-func TestCreateSecretDependencyProxy_StorageError_DepCov(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-	n := sDepCovCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxdep_cov_proxcrerr_%d?mode=memory&cache=shared&_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
-
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-
-	body, _ := json.Marshal(map[string]any{
-		"project_id":           1,
-		"dependent_secret_id":  2,
-		"depends_on_secret_id": 3,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyProxy(w, req)
-	// #G79: crossReferenceSecretDependencyProxy now runs first and fails closed
-	// on ANY GetSecret error (including a broken-DB storage error) — so this
-	// never reaches the storage.CreateSecretDependency call this test
-	// originally exercised.
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── CreateSecretDependencyExclusiveProxy: duplicate / cycle / default errors ─
 
 // TestCreateSecretDependencyExclusiveProxy_Duplicate_DepCov — inserting the
@@ -368,34 +332,6 @@ func TestCreateSecretDependencyExclusiveProxy_Cycle_DepCov(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateSecretDependencyProxy_RefusesCrossProjectMismatch is the #G79
-// regression: both secrets are real, but depends_on_secret_id actually
-// belongs to a DIFFERENT project than project_id claims. Previously accepted
-// with no cross-reference at all; must now be refused.
-func TestCreateSecretDependencyProxy_RefusesCrossProjectMismatch(t *testing.T) {
-	cs, db := freshDepCovCore(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	projectA, envA := seedProjectEnv(t, db)
-	dependent := mkDepSecret(t, db, projectA, envA, "dependent")
-	projectB := &models.Project{Name: "dep-cov-project-b"}
-	require.NoError(t, db.Create(projectB).Error)
-	envB := &models.Environment{ProjectID: projectB.ID, Name: "dep-cov-env-b"}
-	require.NoError(t, db.Create(envB).Error)
-	foreignSecret := mkDepSecret(t, db, projectB.ID, envB.ID, "foreign")
-
-	body, _ := json.Marshal(map[string]any{
-		"project_id":           projectA,
-		"dependent_secret_id":  dependent,
-		"depends_on_secret_id": foreignSecret,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code, "a depends_on_secret_id from a different project must be refused")
 }
 
 // TestCreateSecretDependencyExclusiveProxy_ConcurrentCycleRace is the #G79

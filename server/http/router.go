@@ -1256,7 +1256,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Machine-identity storage-primitive proxy (finding #518). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
 			// proxy CreateMachineIdentity/GetMachineIdentity/
-			// LockMachineIdentityForUpdate/UpdateMachineIdentity/ListMachineIdentities/
+			// LockMachineIdentityForUpdate/TransitionMachineIdentityState/ListMachineIdentities/
 			// ListAllMachineIdentities/CountMachineIdentitiesByClassification/
 			// CreateMachineIdentityCredential/GetMachineIdentityCredentialByHash/
 			// GetMachineIdentityCredentialByID/ListMachineIdentityCredentials/
@@ -1291,6 +1291,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// it remains an intentional RemoteStorage stub (the #393 grouped
 			// hygiene-rollup query stays server-side, out of this finding's scope).
 			//
+			// UpdateMachineIdentityProxy (a generic raw Update, PUT
+			// /machine-identities/{id}) was DELETED (#1585,
+			// docs/adr-090-stale-fork-proxy-deletion.md) — no caller: a liveness
+			// check found nothing in internal/core calls raw UpdateMachineIdentity
+			// anymore, under any topology. TransitionMachineIdentityState above is
+			// the safe route and is unaffected.
+			//
 			// Static sub-paths ("all", "classification-counts", "active", "by-hash/
 			// {hash}", "by-subject", and "roles/ids") are registered ahead of their
 			// sibling {id}/{roleId} routes, matching chi's static-before-dynamic
@@ -1301,7 +1308,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/machine-identities", catalogHandler.ListMachineIdentitiesProxy)
 			r.Post("/machine-identities", catalogHandler.CreateMachineIdentityProxy)
 			r.Get("/machine-identities/{id}", catalogHandler.GetMachineIdentityProxy)
-			r.Put("/machine-identities/{id}", catalogHandler.UpdateMachineIdentityProxy)
 			r.Put("/machine-identities/{id}/transition", catalogHandler.TransitionMachineIdentityStateProxy)
 			r.Get("/machine-identities/{id}/credentials", catalogHandler.ListMachineIdentityCredentialsProxy)
 			r.Get("/machine-identities/{id}/roles/ids", catalogHandler.GetMachineRoleIDsAtProxy)
@@ -1423,7 +1429,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/project-memberships/{id}", catalogHandler.GetMembershipProxy)
 			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
 			r.Post("/project-memberships", catalogHandler.CreateMembershipProxy)
-			r.Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
+			// UpdateMembershipProxy (a generic raw Update, PUT
+			// /project-memberships/{id}) was DELETED (#1586,
+			// docs/adr-090-stale-fork-proxy-deletion.md) — no caller: a liveness
+			// check found nothing in internal/core calls raw UpdateProjectMembership
+			// anymore, and no CLI command surface for project memberships exists at
+			// all. TransitionMembershipProxy below is the safe route and is
+			// unaffected.
 			r.Put("/project-memberships/{id}/transition", catalogHandler.TransitionMembershipProxy)
 
 			// Secret-dependency storage-primitive proxy (finding #519). Lets a
@@ -1457,7 +1469,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/secret-dependencies/snapshot", secretHandler.ListSecretDependenciesForProjectSnapshotProxy)
 			r.Get("/secret-dependencies/{id}", secretHandler.GetSecretDependencyProxy)
 			r.Get("/secret-dependencies", secretHandler.ListSecretDependenciesForProjectProxy)
-			r.Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
+			// CreateSecretDependencyProxy (a raw, unconditional persist, POST
+			// /secret-dependencies) was DELETED (#1587,
+			// docs/adr-090-stale-fork-proxy-deletion.md) — no caller: a liveness
+			// check found nothing in internal/core calls raw CreateSecretDependency
+			// anymore, and the one real CLI command for this feature
+			// (`keyorix secret deps add`) structurally cannot reach it (requires
+			// NewRemoteClient(), no embedded fallback, POSTs to the human-facing
+			// endpoint instead). CreateSecretDependencyExclusiveProxy below is the
+			// safe route and is unaffected.
 			r.Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
 
 			// WebAuthn / passkey storage-primitive proxy (finding #517). Lets a

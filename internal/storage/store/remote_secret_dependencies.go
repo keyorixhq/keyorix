@@ -112,21 +112,16 @@ const (
 	secretDependencyCycleCode     = "SECRET_DEPENDENCY_CYCLE"
 )
 
-// CreateSecretDependency persists an already-built edge row as-is (a raw storage-layer
-// create, no duplicate/cycle check) via POST /api/v1/system/secret-dependencies. Kept
-// for parity with LocalStorage's own unconditional CreateSecretDependency — the
-// dependency graph's actual add path (AddSecretDependency) calls
-// CreateSecretDependencyExclusive below instead, exactly as it does against a local
-// backend.
-func (rs *RemoteStorage) CreateSecretDependency(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/secret-dependencies", newSecretDependencyWire(d))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create secret dependency: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create secret dependency failed: %s", resp.Error.Error())
-	}
-	return decodeSecretDependencyResponse(resp.Data)
+// CreateSecretDependency used to persist an already-built edge row as-is (a
+// raw storage-layer create, no duplicate/cycle check) via POST
+// /api/v1/system/secret-dependencies (CreateSecretDependencyProxy), deleted
+// (#1587, docs/adr-090-stale-fork-proxy-deletion.md) — no live caller:
+// AddSecretDependency (internal/core/secret_dependencies.go) already calls
+// CreateSecretDependencyExclusive directly, citing #260. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) CreateSecretDependency(_ context.Context, _ *models.SecretDependency) (*models.SecretDependency, error) {
+	return nil, remoteUnsupported("CreateSecretDependency")
 }
 
 // GetSecretDependency retrieves one edge by ID via GET /api/v1/system/secret-dependencies/{id}.

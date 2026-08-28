@@ -152,39 +152,6 @@ func TestRemoteStorageMembership_GetNotFound_RealServer(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestRemoteStorageMembership_Update_RealServer proves UpdateProjectMembership
-// round-trips a state transition over the real HTTP hop — a single passthrough
-// PUT onto local_memberships.go's plain Save (see remote_memberships.go's package
-// doc for why no conditional-write guarantee is needed here, unlike
-// UpdateProjectInvitation).
-func TestRemoteStorageMembership_Update_RealServer(t *testing.T) {
-	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
-	ctx := context.Background()
-	now := time.Now()
-	userID := mustCreateUser(t, upstream, "activatee", "activatee@example.com")
-
-	m, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "viewer", 1))
-	require.NoError(t, err)
-
-	activatedAt := time.Now()
-	m.State = core.MembershipActive
-	m.ActivatedAt = &activatedAt
-	err = downstream.Storage().UpdateProjectMembership(ctx, m)
-	require.NoError(t, err)
-
-	fetched, err := downstream.Storage().GetProjectMembership(ctx, m.ID)
-	require.NoError(t, err)
-	assert.Equal(t, core.MembershipActive, fetched.State)
-	require.NotNil(t, fetched.ActivatedAt)
-	assert.WithinDuration(t, activatedAt, *fetched.ActivatedAt, time.Second)
-
-	// Directly against the upstream's own storage too, proving this isn't an
-	// artifact of RemoteStorage's response cache.
-	direct, err := upstream.Storage().GetProjectMembership(ctx, m.ID)
-	require.NoError(t, err)
-	assert.Equal(t, core.MembershipActive, direct.State)
-}
-
 // TestRemoteStorageMembership_GetActive_RealServer proves GetActiveProjectMembership
 // — the read inviteMemberWithMode uses to reject a duplicate onboarding (#309) —
 // finds a non-revoked row and stops finding it once revoked.
@@ -208,10 +175,23 @@ func TestRemoteStorageMembership_GetActive_RealServer(t *testing.T) {
 	// write via a different client/instance wouldn't invalidate it, which is a
 	// pre-existing, documented characteristic of the cache (see remote_users.go's
 	// LockUserForUpdate comment), not something this test is trying to exercise.
+	// UpdateProjectMembership/UpdateMembershipProxy was DELETED (#1586,
+	// docs/adr-090-stale-fork-proxy-deletion.md) -- calling the safe conditional
+	// write directly at the storage layer (TransitionProjectMembershipState,
+	// the same primitive the deleted proxy's live sibling
+	// TransitionMembershipProxy exposes), not core.KeyorixCore.TransitionMembership:
+	// the core method's own revoke branch unconditionally calls
+	// RemoveProjectMember, which depends on GetUserRoleIDsExact -- itself one of
+	// the ~154 RemoteStorage methods with no real caller and no wire route
+	// (G80's separate classification pass, #1590) -- an orthogonal, pre-existing
+	// gap this test has no reason to exercise (this membership was never
+	// activated, so it never held a role grant to remove in the first place).
 	revokedAt := time.Now()
 	m.State = core.MembershipRevoked
 	m.RevokedAt = &revokedAt
-	require.NoError(t, downstream.Storage().UpdateProjectMembership(ctx, m))
+	matched, err := downstream.Storage().TransitionProjectMembershipState(ctx, m, core.MembershipInvited)
+	require.NoError(t, err)
+	require.True(t, matched)
 
 	_, err = downstream.Storage().GetActiveProjectMembership(ctx, projectID, userID)
 	assert.Error(t, err, "a revoked membership must not be reported as active")
@@ -284,12 +264,18 @@ func TestRemoteStorageMembership_ListByUserAndCounts_RealServer(t *testing.T) {
 	project2, err := upstream.CreateProject(ctx, "Second Project", "")
 	require.NoError(t, err)
 
-	m1, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "viewer", 1))
-	require.NoError(t, err)
+	// Built already-active (rather than created invited then transitioned to
+	// active): UpdateProjectMembership/UpdateMembershipProxy was DELETED
+	// (#1586, docs/adr-090-stale-fork-proxy-deletion.md), and
+	// CreateProjectMembership is a raw passthrough that persists whatever
+	// initial state the caller builds, exactly as inviteMemberWithMode does
+	// for LocalStorage.
 	activatedAt := time.Now()
-	m1.State = core.MembershipActive
-	m1.ActivatedAt = &activatedAt
-	require.NoError(t, downstream.Storage().UpdateProjectMembership(ctx, m1))
+	m1Data := buildInvitedMembership(now, projectID, userID, "viewer", 1)
+	m1Data.State = core.MembershipActive
+	m1Data.ActivatedAt = &activatedAt
+	_, err = downstream.Storage().CreateProjectMembership(ctx, m1Data)
+	require.NoError(t, err)
 
 	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, project2.ID, userID, "viewer", 1))
 	require.NoError(t, err)
@@ -366,35 +352,4 @@ func TestMembershipProxy_CreateAllowsAdminRoleByGenuineAdmin(t *testing.T) {
 	require.NoError(t, err, "a genuine admin creating a genuine admin-role membership must still succeed")
 	assert.Equal(t, "admin", created.Role)
 	assert.Equal(t, admin.ID, created.InvitedBy, "InvitedBy must be the authenticated admin, not the wire-supplied value")
-}
-
-// TestMembershipProxy_UpdateRejectsAdminRoleWithoutAuthority (#1578) proves
-// UpdateMembershipProxy carries the same ceiling as CreateMembershipProxy. It is
-// the more direct route: UpdateProjectMembership is a plain Save of the full row
-// (see the proxy's doc comment), so it is the only code path anywhere — proxy or
-// human-facing — that can rewrite an EXISTING membership's Role. The human-facing
-// path never mutates Role post-invite (TransitionMembership only ever touches
-// State). RED without the fix: this update would have succeeded, promoting an
-// existing "viewer" membership straight to an active admin-tier one with no
-// admin authority anywhere in the chain.
-func TestMembershipProxy_UpdateRejectsAdminRoleWithoutAuthority(t *testing.T) {
-	upstream, downstream, projectID, _ := newUpstreamDownstreamForMemberships(t)
-	ctx := context.Background()
-	now := time.Now()
-	userID := mustCreateUser(t, upstream, "mem1578-updatee", "mem1578-updatee@example.com")
-
-	m, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "viewer", 0))
-	require.NoError(t, err)
-
-	activatedAt := time.Now()
-	m.Role = "admin"
-	m.State = core.MembershipActive
-	m.ActivatedAt = &activatedAt
-	err = downstream.Storage().UpdateProjectMembership(ctx, m)
-	require.Error(t, err, "a system.write-only caller with no admin authority must not be able to promote an existing membership to an admin-tier role")
-
-	// The row must be untouched by the rejected update.
-	direct, err := upstream.Storage().GetProjectMembership(ctx, m.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "viewer", direct.Role, "a rejected update must not leave the role changed")
 }

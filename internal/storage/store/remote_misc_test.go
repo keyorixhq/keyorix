@@ -896,37 +896,6 @@ func TestRemoteStorage_WithSchedulerLock_NotAcquired(t *testing.T) {
 // remote_secret_dependencies.go
 // ============================================================
 
-func TestRemoteStorage_CreateSecretDependency(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/secret-dependencies", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id":                   10,
-			"project_id":           5,
-			"dependent_secret_id":  1,
-			"depends_on_secret_id": 2,
-			"note":                 "db password",
-			"created_at":           now,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	dep, err := rs.CreateSecretDependency(context.Background(), &models.SecretDependency{
-		ProjectID:         5,
-		DependentSecretID: 1,
-		DependsOnSecretID: 2,
-		Note:              "db password",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, uint(10), dep.ID)
-	assert.Equal(t, "db password", dep.Note)
-}
-
 func TestRemoteStorage_GetSecretDependency(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 

@@ -614,32 +614,6 @@ func TestGetMachineIdentityProxy_NotFound_S13(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── machine_identities_proxy.go: UpdateMachineIdentityProxy ──────────────────
-
-func TestUpdateMachineIdentityProxy_BadID_S13(t *testing.T) {
-	h := machineHandlerS13(t)
-	body, _ := json.Marshal(map[string]string{"name": "updated"})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/machine-identities/bad", bytes.NewReader(body)),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUpdateMachineIdentityProxy_InvalidBody_S13(t *testing.T) {
-	h := machineHandlerS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/machine-identities/1",
-			strings.NewReader("{{not json")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── machine_identities_proxy.go: TransitionMachineIdentityStateProxy ─────────
 
 func TestTransitionMachineIdentityStateProxy_BadID_S13(t *testing.T) {

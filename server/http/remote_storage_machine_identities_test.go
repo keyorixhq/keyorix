@@ -72,11 +72,13 @@ func buildMachineIdentity(now time.Time, projectID uint, name string) *models.Ma
 
 // TestRemoteStorageMachineIdentities_CreateGetListUpdate_RealServer proves the
 // fix for CreateMachineIdentity/GetMachineIdentity/ListMachineIdentities/
-// ListAllMachineIdentities/UpdateMachineIdentity/
-// CountMachineIdentitiesByClassification: a machine identity is genuinely
-// persisted on the upstream server via the DOWNSTREAM's RemoteStorage, fetchable
-// by ID, listed, and updatable — all via storage.type: remote against a real
-// router, not a protocol mock.
+// ListAllMachineIdentities/CountMachineIdentitiesByClassification: a machine
+// identity is genuinely persisted on the upstream server via the DOWNSTREAM's
+// RemoteStorage, fetchable by ID, and listed — all via storage.type: remote
+// against a real router, not a protocol mock. Classification is set directly
+// via CreateMachineIdentity's own row rather than a follow-up update:
+// UpdateMachineIdentity/UpdateMachineIdentityProxy was DELETED (#1585,
+// docs/adr-090-stale-fork-proxy-deletion.md) -- no live caller.
 func TestRemoteStorageMachineIdentities_CreateGetListUpdate_RealServer(t *testing.T) {
 	upstream, downstream, projectID := newUpstreamDownstreamForMachineIdentities(t)
 	ctx := context.Background()
@@ -113,12 +115,16 @@ func TestRemoteStorageMachineIdentities_CreateGetListUpdate_RealServer(t *testin
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(all), 2)
 
-	// UpdateMachineIdentity persists a classification change via the downstream.
-	fetched.Classification = "confidential"
-	require.NoError(t, downstream.Storage().UpdateMachineIdentity(ctx, fetched))
-	reFetched, err := upstream.Storage().GetMachineIdentity(ctx, m.ID)
+	// Classification is set at creation time (UpdateMachineIdentity, the only
+	// way to change it post-create, was deleted -- #1585) and is genuinely
+	// persisted on the upstream.
+	confidential := buildMachineIdentity(now, projectID, "classified-runner")
+	confidential.Classification = "confidential"
+	createdConfidential, err := downstream.Storage().CreateMachineIdentity(ctx, confidential)
 	require.NoError(t, err)
-	assert.Equal(t, "confidential", reFetched.Classification, "the update must be visible directly on the upstream's own storage")
+	reFetched, err := upstream.Storage().GetMachineIdentity(ctx, createdConfidential.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "confidential", reFetched.Classification, "the classification must be visible directly on the upstream's own storage")
 
 	counts, err := downstream.Storage().CountMachineIdentitiesByClassification(ctx)
 	require.NoError(t, err)

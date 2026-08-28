@@ -169,21 +169,16 @@ func (rs *RemoteStorage) GetProjectMembership(ctx context.Context, id uint) (*mo
 	return decodeMembershipResponse(resp.Data)
 }
 
-// UpdateProjectMembership persists a membership's current state via PUT
-// /api/v1/system/project-memberships/{id} — a single round trip mapping directly
-// onto local_memberships.go's plain Save. #G42: this must NEVER be used for a
-// state-machine transition (State/ActivatedAt/RevokedAt) — see
-// TransitionProjectMembershipState, which exists specifically for that.
-func (rs *RemoteStorage) UpdateProjectMembership(ctx context.Context, m *models.ProjectMembership) error {
-	path := fmt.Sprintf("/api/v1/system/project-memberships/%d", m.ID)
-	resp, err := rs.client.Put(ctx, path, newMembershipWire(m))
-	if err != nil {
-		return fmt.Errorf("failed to update membership: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("update membership failed: %s", resp.Error.Error())
-	}
-	return nil
+// UpdateProjectMembership used to persist a membership's current state via
+// PUT /api/v1/system/project-memberships/{id} (UpdateMembershipProxy),
+// deleted (#1586, docs/adr-090-stale-fork-proxy-deletion.md) — no live
+// caller: nothing in internal/core calls raw UpdateProjectMembership
+// anymore; membership_lifecycle.go was fixed under G42 to call
+// TransitionProjectMembershipState instead. Returns errUnsupportedRemote
+// like every other known-unsupported RemoteStorage operation (see
+// remote_auth.go's package doc).
+func (rs *RemoteStorage) UpdateProjectMembership(_ context.Context, _ *models.ProjectMembership) error {
+	return remoteUnsupported("UpdateProjectMembership")
 }
 
 // TransitionProjectMembershipState persists m's full row via a single

@@ -160,49 +160,16 @@ func (h *CatalogHandler) GetMembershipProxy(w http.ResponseWriter, r *http.Reque
 	writeRemoteAPISuccess(w, newMembershipProxyWire(m))
 }
 
-// UpdateMembershipProxy handles PUT /api/v1/system/project-memberships/{id}. This
-// is a raw passthrough onto storage.UpdateProjectMembership (local_memberships.go's
-// plain Save). #G42: this must NEVER be used for a state-machine transition
-// (State/ActivatedAt/RevokedAt) — the calling core.KeyorixCore's canTransition
-// legality check running before this is invoked does NOT close the TOCTOU a
-// concurrent transition on the same membership races; see
-// TransitionMembershipProxy below, which exists specifically for that.
-func (h *CatalogHandler) UpdateMembershipProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid membership ID")
-		return
-	}
-	var body membershipProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
-		return
-	}
-	if body.ProjectID == 0 || body.UserID == 0 || body.Role == "" || body.State == "" {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, user_id, role, and state are required")
-		return
-	}
-	// #1578: same gap as CreateMembershipProxy, and arguably the more direct
-	// route — this is a plain Save of the full row (see doc comment above),
-	// so it is the only code path in the repo that can rewrite an EXISTING
-	// membership's Role after creation (the human-facing path never mutates
-	// Role post-invite: TransitionMembership only touches State). Requiring
-	// ProjectID/Role above first closes the projectID==0 case, where
-	// requireAuthorityForRole would otherwise check global-scope admin
-	// authority instead of the target project's — a caller must state a real
-	// project to be checked against it.
-	if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), body.ProjectID, body.Role); err != nil {
-		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
-		return
-	}
-	body.ID = uint(id)
-	if err := h.coreService.Storage().UpdateProjectMembership(r.Context(), body.toModel()); err != nil {
-		log.Printf("project-memberships proxy: update failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
-}
+// UpdateMembershipProxy was DELETED (#1586, docs/adr-090-stale-fork-proxy-deletion.md):
+// a raw passthrough onto storage.UpdateProjectMembership (local_memberships.go's
+// plain Save) reproducing the exact TOCTOU TransitionProjectMembershipState
+// was rewritten to close (#G42) — the adjacent TransitionMembershipProxy's own
+// doc comment named this exact route as the race it was built to avoid. A
+// repo-wide liveness check found ZERO callers of storage.UpdateProjectMembership
+// anywhere in internal/core, and no CLI command surface for project
+// memberships at all: nothing calls this raw primitive under any topology.
+// See the ADR for the full liveness chain. TransitionMembershipProxy below is
+// the safe route and is unaffected.
 
 // TransitionMembershipProxy handles PUT
 // /api/v1/system/project-memberships/{id}/transition — the server-side

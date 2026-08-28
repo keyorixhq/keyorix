@@ -630,16 +630,6 @@ func TestRemoteStorage_S28_LockMachineIdentityForUpdate_APIError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteStorage_S28_UpdateMachineIdentity_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiErrResp("NOT_FOUND", "not found"))
-	}))
-	defer srv.Close()
-	rs := newS28Remote(t, srv.URL)
-	err := rs.UpdateMachineIdentity(context.Background(), &models.MachineIdentity{ID: 99})
-	assert.Error(t, err)
-}
-
 func TestRemoteStorage_S28_TransitionMachineIdentityState_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiErrResp("CONFLICT", "conflict"))

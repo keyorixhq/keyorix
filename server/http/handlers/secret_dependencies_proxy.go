@@ -111,12 +111,13 @@ const (
 // are both real secrets that actually belong to projectID and share the same
 // environment — the same same-project/same-environment check
 // core.AddSecretDependency applies (secret_dependencies.go) before it will
-// accept an edge. #G79: without this, CreateSecretDependencyProxy/
-// CreateSecretDependencyExclusiveProxy accepted any ProjectID/
-// DependentSecretID/DependsOnSecretID combination the caller supplied, with
-// no cross-reference to what those IDs actually resolve to — letting a
-// caller record a dependency edge that names secrets in an entirely
-// different project/environment than the one it claims.
+// accept an edge. #G79: without this, CreateSecretDependencyExclusiveProxy
+// (CreateSecretDependencyProxy, the plain raw version, was deleted -- #1587,
+// docs/adr-090-stale-fork-proxy-deletion.md -- no caller) accepted any
+// ProjectID/DependentSecretID/DependsOnSecretID combination the caller
+// supplied, with no cross-reference to what those IDs actually resolve to —
+// letting a caller record a dependency edge that names secrets in an
+// entirely different project/environment than the one it claims.
 func crossReferenceSecretDependencyProxy(ctx context.Context, h *SecretHandler, projectID, dependentID, dependsOnID uint) error {
 	dependent, err := h.coreService.Storage().GetSecret(ctx, dependentID)
 	if err != nil || dependent.ProjectID != projectID {
@@ -129,32 +130,19 @@ func crossReferenceSecretDependencyProxy(ctx context.Context, h *SecretHandler, 
 	return nil
 }
 
-// CreateSecretDependencyProxy handles POST /api/v1/system/secret-dependencies. A raw,
-// unconditional persist (storage.Storage.CreateSecretDependency), kept for interface
-// parity — AddSecretDependency's real add path goes through
-// CreateSecretDependencyExclusiveProxy below instead.
-func (h *SecretHandler) CreateSecretDependencyProxy(w http.ResponseWriter, r *http.Request) {
-	var body secretDependencyProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
-		return
-	}
-	if body.ProjectID == 0 || body.DependentSecretID == 0 || body.DependsOnSecretID == 0 {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, dependent_secret_id, and depends_on_secret_id are required")
-		return
-	}
-	if err := crossReferenceSecretDependencyProxy(r.Context(), h, body.ProjectID, body.DependentSecretID, body.DependsOnSecretID); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
-		return
-	}
-	created, err := h.coreService.Storage().CreateSecretDependency(r.Context(), body.toModel())
-	if err != nil {
-		log.Printf("secret-dependencies proxy: create failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newSecretDependencyProxyWire(created))
-}
+// CreateSecretDependencyProxy was DELETED (#1587,
+// docs/adr-090-stale-fork-proxy-deletion.md): a raw, unconditional persist
+// (storage.Storage.CreateSecretDependency) reopening the pre-#260 cycle-check
+// TOCTOU CreateSecretDependencyExclusive was built to close, while the safe
+// route sat right beside it. A repo-wide liveness check found ZERO callers
+// of storage.CreateSecretDependency anywhere in internal/core — AddSecretDependency
+// already calls CreateSecretDependencyExclusive directly — and the one real
+// CLI command for this feature (`keyorix secret deps add`) requires
+// common.NewRemoteClient() with no embedded fallback, POSTing to the
+// human-facing /api/v1/secrets/{id}/dependencies endpoint instead: it
+// structurally cannot reach this route. See the ADR for the full liveness
+// chain. CreateSecretDependencyExclusiveProxy below is the safe route and is
+// unaffected.
 
 // CreateSecretDependencyExclusiveProxy handles POST
 // /api/v1/system/secret-dependencies/exclusive. See the package doc and the
