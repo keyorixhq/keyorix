@@ -61,8 +61,8 @@ func newDownstreamRemoteStorage(t *testing.T, srv *httptest.Server, token string
 
 // createTestSecretID creates a real secret in project 1's default environment and
 // returns its ID. Secret-dependency edges reference dependent/depends-on secrets by
-// ID, and CreateSecretDependencyProxy validates the referenced secret actually
-// belongs to the given project — a check the fixtures below predate, when a
+// ID, and CreateSecretDependencyExclusiveProxy validates the referenced secret
+// actually belongs to the given project — a check the fixtures below predate, when a
 // plausible-looking but nonexistent ID (501, 502, 601, ...) still passed. It no
 // longer does, so every edge below needs a real row.
 func createTestSecretID(t *testing.T, c *core.KeyorixCore, name string) uint {
@@ -79,13 +79,19 @@ func createTestSecretID(t *testing.T, c *core.KeyorixCore, name string) uint {
 }
 
 // TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer proves the fix for
-// CreateSecretDependency/GetSecretDependency/ListSecretDependenciesForProject/
+// GetSecretDependency/ListSecretDependenciesForProject/
 // ListSecretDependenciesForProjectForUpdate: an edge is genuinely persisted on
 // the upstream via the downstream's RemoteStorage, fetchable by ID, and listed
 // both ways — all via storage.type: remote against a real router, not a
-// protocol mock. The delete itself is applied directly against the upstream's
-// real storage (DeleteSecretDependencyProxy was deleted -- G80 liveness sweep
-// found no live caller; see docs/g80-remediation-notes.md).
+// protocol mock. Seeding uses CreateSecretDependencyExclusive rather than the
+// plain CreateSecretDependency: CreateSecretDependency/CreateSecretDependencyProxy
+// was DELETED (#1587, docs/adr-090-stale-fork-proxy-deletion.md) -- no live
+// caller; CreateSecretDependencyExclusive is the safe sibling every real
+// caller (AddSecretDependency) already uses, and persists an edge identically
+// for a non-duplicate, non-cyclic pair like the ones built here. The delete
+// itself is applied directly against the upstream's real storage
+// (DeleteSecretDependencyProxy was deleted -- G80 liveness sweep found no live
+// caller; see docs/g80-remediation-notes.md).
 func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testing.T) {
 	upstream, srv, token := newUpstreamForSecretDependencies(t)
 	downstream := newDownstreamRemoteStorage(t, srv, token)
@@ -95,7 +101,7 @@ func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testi
 	secretB := createTestSecretID(t, upstream, "db-password")
 	secretC := createTestSecretID(t, upstream, "third-secret")
 
-	created, err := downstream.Storage().CreateSecretDependency(ctx, &models.SecretDependency{
+	created, err := downstream.Storage().CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
 		ProjectID: 1, DependentSecretID: secretA, DependsOnSecretID: secretB, Note: "app token derives from db password", CreatedBy: 10,
 	})
 	require.NoError(t, err, "creating a secret dependency must succeed via storage.type: remote")
@@ -118,7 +124,7 @@ func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testi
 
 	// A second edge, then list both back via the downstream's
 	// ListSecretDependenciesForProject / ListSecretDependenciesForProjectForUpdate.
-	second, err := downstream.Storage().CreateSecretDependency(ctx, &models.SecretDependency{
+	second, err := downstream.Storage().CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
 		ProjectID: 1, DependentSecretID: secretC, DependsOnSecretID: secretA,
 	})
 	require.NoError(t, err)

@@ -2927,16 +2927,6 @@ func TestGetMachineByOIDCSubjectProxy_HappyPath(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-func TestUpdateMachineIdentityProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"name":"updated-machine","project_id":1,"state":"active"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	// 200 even when row doesn't exist (GORM Save upserts).
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── retention_proxy.go — happy paths for all Before handlers ─────────────────
 
 func TestDeleteExpiredRoleGrantsProxy_HappyPath(t *testing.T) {

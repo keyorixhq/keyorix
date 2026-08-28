@@ -2555,14 +2555,6 @@ func TestGetMembershipProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestUpdateMembershipProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{}")), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestListMembershipsProxy_MissingQuery(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -2869,14 +2861,6 @@ func TestGetMachineIdentityProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestUpdateMachineIdentityProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{}")), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestTransitionMachineIdentityStateProxy_BadID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{}")), "id", "bad")
@@ -3120,27 +3104,6 @@ func TestParseProxyProjectIDQuery_Valid(t *testing.T) {
 	id, ok := parseProxyProjectIDQuery(w, req)
 	assert.True(t, ok)
 	assert.Equal(t, uint(5), id)
-}
-
-func TestCreateSecretDependencyProxy_BadJSON(t *testing.T) {
-	cs := newHandlerCoreS4(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateSecretDependencyProxy_MissingFields(t *testing.T) {
-	cs := newHandlerCoreS4(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-	body, _ := json.Marshal(map[string]any{"source_id": 0})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCreateSecretDependencyExclusiveProxy_BadJSON(t *testing.T) {
@@ -10118,24 +10081,6 @@ func TestRBACHandler_ListPermissions_UnauthorizedS4(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// ── machine_identities_proxy.go: UpdateMachineIdentityProxy ─────────────────
-
-func TestCatalogHandler_UpdateMachineIdentityProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_UpdateMachineIdentityProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── machine_identities_proxy.go: UpdateMachineIdentityCredentialProxy ─────────
 
 func TestCatalogHandler_UpdateMachineIdentityCredentialProxy_BadID(t *testing.T) {
@@ -10265,24 +10210,6 @@ func TestCatalogHandler_DeleteProjectIfEmptyProxy_BadID(t *testing.T) {
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
 	w := httptest.NewRecorder()
 	h.DeleteProjectIfEmptyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// ── project_memberships_proxy.go: UpdateMembershipProxy ─────────────────────
-
-func TestCatalogHandler_UpdateMembershipProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_UpdateMembershipProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateMembershipProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -10753,23 +10680,6 @@ func TestCatalogHandler_DeleteProjectIfEmptyProxy_HappyPath(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-// ── project_memberships_proxy.go: UpdateMembershipProxy happy paths ───────────
-
-func TestCatalogHandler_UpdateMembershipProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	// #1578: project_id/user_id/state must be populated too — UpdateMembershipProxy
-	// now requires all four fields (mirroring CreateMembershipProxy) before it will
-	// even reach RequireAuthorityForRole's check, closing the projectID==0
-	// global-scope loophole. role stays non-admin so the authority check itself
-	// short-circuits, same as before the fix.
-	body := `{"project_id":1,"user_id":1,"role":"viewer","state":"invited"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateMembershipProxy(w, req)
-	// not found from empty DB
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── environment_catalog_proxy.go: GetEnvironmentProxy ────────────────────────
 
 func TestCatalogHandler_GetEnvironmentProxy_NotFound(t *testing.T) {
@@ -11170,14 +11080,6 @@ func TestCatalogHandler_CreateMachineIdentityProxy_BadJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateMachineIdentityProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_UpdateMachineIdentityProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"test-machine"}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCatalogHandler_CreateMachineIdentityCredentialProxy_BadJSON(t *testing.T) {
@@ -11811,24 +11713,6 @@ func TestAuthHandler_CreateSetupTokenProxy_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-// ── secret_dependencies_proxy.go: CreateSecretDependencyProxy ────────────────
-
-func TestSecretHandler_CreateSecretDependencyProxy_BadJSON(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSecretHandler_CreateSecretDependencyProxy_MissingFields(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── retention_proxy.go: ListUsersInStateBeforeProxy ──────────────────────────

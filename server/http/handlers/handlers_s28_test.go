@@ -1195,56 +1195,6 @@ func TestGetOIDCBindingByIDProxy_HappyPath_S28(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "sub-s28-get")
 }
 
-// ── machine_identities_proxy.go: UpdateMachineIdentityProxy ──────────────────
-
-// TestUpdateMachineIdentityProxy_BadID_S28 — non-numeric {id} → 400.
-func TestUpdateMachineIdentityProxy_BadID_S28(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS28(t)
-	h := NewCatalogHandler(cs)
-
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/",
-		jsonBodyS28(t, map[string]string{"name": "x"})), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestUpdateMachineIdentityProxy_BadBody_S28 — invalid JSON → 400.
-func TestUpdateMachineIdentityProxy_BadBody_S28(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS28(t)
-	h := NewCatalogHandler(cs)
-
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/",
-		bytes.NewBufferString("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestUpdateMachineIdentityProxy_HappyPath_S28 — updates an existing machine
-// identity.
-func TestUpdateMachineIdentityProxy_HappyPath_S28(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS28(t)
-	ctx := context.Background()
-	mi, err := cs.Storage().CreateMachineIdentity(ctx, &models.MachineIdentity{
-		Name: "s28-update-machine", ProjectID: 1, IdentityType: "workload", State: "active",
-	})
-	require.NoError(t, err)
-
-	h := NewCatalogHandler(cs)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/",
-		jsonBodyS28(t, map[string]interface{}{
-			"name": "s28-updated-machine", "project_id": 1,
-		})), "id", uintStrS28(mi.ID))
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "updated")
-}
-
 // ── machine_identities_proxy.go: CreateOIDCBindingProxy ─────────────────────
 
 // TestCreateOIDCBindingProxy_BadBody_S28 — invalid JSON → 400.

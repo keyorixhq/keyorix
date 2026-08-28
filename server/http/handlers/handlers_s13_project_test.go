@@ -4,7 +4,7 @@
 //   - project_memberships.go: ListProjectMemberships, InviteMember,
 //     TransitionMembership, membershipActionState
 //   - project_memberships_proxy.go: CreateMembershipProxy, GetMembershipProxy,
-//     UpdateMembershipProxy, ListMembershipsProxy, GetActiveMembershipProxy,
+//     ListMembershipsProxy, GetActiveMembershipProxy,
 //     ListStaleInvitedMembershipsProxy, ListUserMembershipsProxy,
 //     CountMembershipsByUsersProxy (missing error/validation branches)
 //   - project_catalog_proxy.go: ListProjectsProxy, ListProjectsWithCountsProxy,
@@ -396,28 +396,6 @@ func TestGetMembershipProxy_BadID_S13(t *testing.T) {
 	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notnum")
 	w := httptest.NewRecorder()
 	h.GetMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestUpdateMembershipProxy_BadID_S13 — non-numeric membership ID → 400.
-func TestUpdateMembershipProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	body := `{"project_id":1,"user_id":1,"role":"viewer","state":"active"}`
-	r := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.UpdateMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestUpdateMembershipProxy_BadJSON_S13 — malformed JSON body → 400.
-func TestUpdateMembershipProxy_BadJSON_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	r.ContentLength = 4
-	w := httptest.NewRecorder()
-	h.UpdateMembershipProxy(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

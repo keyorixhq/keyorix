@@ -381,60 +381,17 @@ func (h *CatalogHandler) GetMachineIdentityProxy(w http.ResponseWriter, r *http.
 	writeRemoteAPISuccess(w, newMachineIdentityProxyWire(m))
 }
 
-// UpdateMachineIdentityProxy handles PUT /api/v1/system/machine-identities/{id}.
-// A raw persist (storage.Storage.UpdateMachineIdentity is an unconditional
-// full-row Save, matching LocalStorage's own semantics exactly).
-//
-// CORRECTED (#1592 stale-fork sweep, #1585): this comment used to claim
-// core.ClassifyMachineIdentity backs this path. That was false when checked
-// directly — ClassifyMachineIdentity (machine_identities.go) was fixed under
-// G42 to call c.storage.TransitionMachineIdentityState instead, precisely to
-// avoid the blind-Save race this raw call still reproduces. A repo-wide
-// grep (excluding this file and comments) finds ZERO callers of
-// storage.UpdateMachineIdentity anywhere in internal/core — this raw
-// primitive currently has no known legitimate caller under any topology.
-// See #1585 for the finding and its resolution (pending as of this
-// correction). core.TransitionMachineIdentity does NOT use this path
-// either — see TransitionMachineIdentityStateProxy below.
-func (h *CatalogHandler) UpdateMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
-		return
-	}
-	var body machineIdentityProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.ID = uint(id)
-	// G80 documented-exception re-verification sweep (2026-08-25): this is a
-	// raw full-row Save, and CreatedBy used to travel through it unguarded — a
-	// caller-forged CreatedBy on this route would silently rewrite an existing
-	// machine identity's recorded creator, reachable a second way beyond
-	// CreateMachineIdentityProxy's own (separately fixed) create-time
-	// provenance. Preserve the EXISTING row's CreatedBy rather than trust the
-	// wire's, matching how core.ClassifyMachineIdentity's actual use of this
-	// path only ever intends to change Classification, never provenance.
-	existing, err := h.coreService.Storage().GetMachineIdentity(r.Context(), body.ID)
-	if err != nil {
-		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "machine identity not found")
-			return
-		}
-		log.Printf("machine-identities proxy: update lookup failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	model := body.toModel()
-	model.CreatedBy = existing.CreatedBy
-	if err := h.coreService.Storage().UpdateMachineIdentity(r.Context(), model); err != nil {
-		log.Printf("machine-identities proxy: update failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
-}
+// UpdateMachineIdentityProxy was DELETED (#1585, docs/adr-090-stale-fork-proxy-deletion.md):
+// a raw, unconditional full-row Save reproducing over HTTP the exact race
+// TransitionMachineIdentityState was rewritten to close. Its own doc comment
+// used to claim core.ClassifyMachineIdentity backed this path -- false when
+// checked directly (ClassifyMachineIdentity was fixed under G42 to call
+// TransitionMachineIdentityState instead) -- and a repo-wide liveness check
+// found ZERO callers of storage.UpdateMachineIdentity anywhere in
+// internal/core: nothing calls this raw primitive under any topology. See
+// the ADR for the full liveness chain and the low-hazard revival note.
+// TransitionMachineIdentityStateProxy below is the safe route and is
+// unaffected.
 
 // transitionMachineIdentityStateBody is the request body
 // TransitionMachineIdentityStateProxy expects: the full machine-identity row the

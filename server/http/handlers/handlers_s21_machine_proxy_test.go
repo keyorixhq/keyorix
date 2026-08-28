@@ -190,67 +190,6 @@ func TestGetMachineIdentityProxy_HappyPath_S21(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-// ── UpdateMachineIdentityProxy ────────────────────────────────────────────────
-
-// TestUpdateMachineIdentityProxy_BadID_S21 — non-numeric id → 400.
-func TestUpdateMachineIdentityProxy_BadID_S21(t *testing.T) {
-	h := freshCatalogHandlerS21(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/machine-identities/bad", strings.NewReader("{}")),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteRespS21(t, w)
-	assert.Equal(t, "INVALID_PARAMETER", resp.Error.Code)
-}
-
-// TestUpdateMachineIdentityProxy_BadBody_S21 — malformed JSON body → 400.
-func TestUpdateMachineIdentityProxy_BadBody_S21(t *testing.T) {
-	h := freshCatalogHandlerS21(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/machine-identities/1", strings.NewReader("{bad")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteRespS21(t, w)
-	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
-}
-
-// TestUpdateMachineIdentityProxy_HappyPath_S21 — valid update → 200 updated:true.
-func TestUpdateMachineIdentityProxy_HappyPath_S21(t *testing.T) {
-	h := freshCatalogHandlerS21(t)
-	// Seed a machine identity first.
-	createBody := proxyBodyS21(map[string]interface{}{
-		"name":       "upd-bot-s21",
-		"project_id": 3,
-		"state":      "active",
-	})
-	cr := httptest.NewRequest(http.MethodPost, "/system/machine-identities", createBody)
-	cr = withOIDCAdminCtxS21(t, h, cr)
-	cw := httptest.NewRecorder()
-	h.CreateMachineIdentityProxy(cw, cr)
-	require.Equal(t, http.StatusOK, cw.Code)
-
-	body := proxyBodyS21(map[string]interface{}{
-		"name":       "upd-bot-s21-renamed",
-		"project_id": 3,
-		"state":      "active",
-	})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/machine-identities/1", body),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteRespS21(t, w)
-	assert.True(t, resp.Success)
-}
-
 // ── TransitionMachineIdentityStateProxy ──────────────────────────────────────
 
 // TestTransitionMachineIdentityStateProxy_BadID_S21 — non-numeric id → 400.

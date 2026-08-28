@@ -1267,25 +1267,6 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	// retention/purge command). See the ADR for why this took three
 	// liveness passes to get right, and what reviving any of these 9 would
 	// require before it's safe to.
-	// G80 Wave 2 (blind-spot-2 fix, ADR-088): these 3 were invisible for the
-	// OPPOSITE reason from the 9 above -- not a missed wrapper, but the
-	// former "no wrapper -> not considered" inference. All three are named
-	// and reasoned in docs/adr-088-system-proxy-layer-design.md's "3 live
-	// findings" section: internal/core deliberately offers no wrapper for
-	// the raw shape each of these three uses, BECAUSE the safe operation
-	// looks different (a conditional transition, not a blind write) -- core
-	// correctly refusing an unsafe primitive is not the same as there being
-	// nothing to bypass.
-	"UpdateMachineIdentityProxy": "REAL, filed as #1585 (see docs/adr-088-system-proxy-layer-design.md): " +
-		"performs a raw full-row Save, reproducing over HTTP the exact race TransitionMachineIdentityState was " +
-		"rewritten to close (machine_identities.go:168-172's own comment explains why).",
-	"UpdateMembershipProxy": "REAL, filed as #1586 (see docs/adr-088-system-proxy-layer-design.md): a blind write " +
-		"of the wire body with no lock-then-read step at all -- the adjacent TransitionMembershipProxy's own doc " +
-		"comment names this exact route as the race it was built to avoid (project_memberships_proxy.go:210-214).",
-	"CreateSecretDependencyProxy": "REAL, filed as #1587 (see docs/adr-088-system-proxy-layer-design.md): calls " +
-		"the raw, non-exclusive CreateSecretDependency, reopening the #260 cycle-check TOCTOU " +
-		"CreateSecretDependencyExclusive was built to close -- the safe route already exists at a different path " +
-		"(secret_dependencies_proxy.go:163), unused by this one.",
 }
 
 // TestNoUnjustifiedRawStorageBypass is #1542's guard, widened by #1547 to cover

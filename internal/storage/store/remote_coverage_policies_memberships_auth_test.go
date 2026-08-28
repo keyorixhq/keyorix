@@ -92,20 +92,6 @@ func TestRemoteCov_GetProjectMembership_NotSuccess(t *testing.T) {
 	assert.Contains(t, err.Error(), "get membership failed")
 }
 
-func TestRemoteCov_UpdateProjectMembership_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "update failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateProjectMembership(context.Background(), &models.ProjectMembership{ID: 7, ProjectID: 1, UserID: 2})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "update membership failed")
-}
-
 func TestRemoteCov_ListProjectMemberships_NotSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "list failed"))
@@ -532,24 +518,6 @@ func TestRemoteCov_WithSchedulerLock_NotAcquired(t *testing.T) {
 // ============================================================
 // remote_secret_dependencies.go — !resp.Success branches
 // ============================================================
-
-func TestRemoteCov_CreateSecretDependency_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/secret-dependencies", r.URL.Path)
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "create failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateSecretDependency(context.Background(), &models.SecretDependency{
-		ProjectID: 1, DependentSecretID: 2, DependsOnSecretID: 3,
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "create secret dependency failed")
-}
 
 func TestRemoteCov_GetSecretDependency_NotSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

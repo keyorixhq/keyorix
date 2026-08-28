@@ -65,22 +65,6 @@ func TestRemoteStorage_GetProjectMembership(t *testing.T) {
 	assert.Equal(t, uint(7), result.ID)
 }
 
-func TestRemoteStorage_UpdateProjectMembership(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPut, r.Method)
-		assert.Equal(t, "/api/v1/system/project-memberships/7", r.URL.Path)
-		_, _ = w.Write(apiOK(membershipWireBody(7, 10, 5)))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	m := &models.ProjectMembership{ID: 7, ProjectID: 10, UserID: 5, Role: "viewer", State: "active"}
-	err = rs.UpdateProjectMembership(context.Background(), m)
-	require.NoError(t, err)
-}
-
 func TestRemoteStorage_TransitionProjectMembershipState(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPut, r.Method)

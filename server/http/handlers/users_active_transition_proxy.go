@@ -26,8 +26,10 @@
 // passthrough whose caller has already done all of that validation itself
 // against proxied reads and only needs the final persist to be atomic. See
 // remote_users.go's UpdateUserIfActiveStateMatches doc for the full reasoning
-// (mirrors machine_identities_proxy.go's TransitionMachineIdentityStateProxy
-// vs. UpdateMachineIdentityProxy distinction exactly).
+// (the same conditional-vs-raw distinction machine_identities_proxy.go's
+// TransitionMachineIdentityStateProxy drew against its own raw
+// UpdateMachineIdentityProxy sibling before that sibling was deleted for
+// having no live caller -- #1585, docs/adr-090-stale-fork-proxy-deletion.md).
 //
 // Response envelope: like every other proxy in this package, this does NOT use
 // the package's generic sendSuccess/sendError helpers — it constructs the

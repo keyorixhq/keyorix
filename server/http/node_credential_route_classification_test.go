@@ -117,8 +117,9 @@ var classifiedNodeCredentialRoutes = []nodeRouteEntry{
 		"ApproveRiskExceptionProxy: #1524 finding (c) -- dual control's self-approval check, now enforced for a machine actor via actorIsMachine (P1 fix)"},
 	{"POST", "/api/v1/system/project-memberships", classNodeLegitimate,
 		"CreateMembershipProxy: body.Role is required and passed straight to a raw storage.CreateProjectMembership call, no ceiling anywhere -- SAME #1542-shaped raw-storage-bypass pattern (a real ROLE field, not just a status field), NOT YET VERIFIED for reach -- noted in the P0/P2 report as a follow-up candidate, not investigated further here per scope"},
-	{"PUT", "/api/v1/system/project-memberships/{id}", classNodeLegitimate,
-		"UpdateMembershipProxy: same raw-storage shape as CreateMembershipProxy above -- same follow-up flag"},
+	// UpdateMembershipProxy (PUT /api/v1/system/project-memberships/{id}) was
+	// DELETED (#1586, docs/adr-090-stale-fork-proxy-deletion.md) -- no live
+	// caller; row removed, no route to classify.
 	{"PUT", "/api/v1/system/project-memberships/{id}/transition", classNodeLegitimate,
 		"TransitionMembershipProxy: state transition (e.g. pending->active), not a role change -- lower concern than Create/Update above but same raw-storage shape"},
 }

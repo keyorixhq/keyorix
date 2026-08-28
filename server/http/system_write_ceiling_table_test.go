@@ -22,7 +22,9 @@
 // escalation-relevant ceiling — the group's own system.write gate, ADR-085,
 // is the only check that applies to a read) or routes already confirmed
 // no-independent-ceiling / documented-exception in the triage doc (e.g.
-// TouchMachineIdentityCredentialProxy, UpdateMachineIdentityProxy). Its
+// TouchMachineIdentityCredentialProxy; UpdateMachineIdentityProxy itself was
+// later DELETED outright -- #1585, docs/adr-090-stale-fork-proxy-deletion.md
+// -- no live caller). Its
 // RevokeMachineIdentityCredentialProxy coverage
 // (RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate below) is
 // gate-level only: the current wire contract (DELETE-by-bare-credential-ID, no

@@ -82,23 +82,6 @@ func TestRemoteStorage_LockMachineIdentityForUpdate(t *testing.T) {
 	assert.Equal(t, "k8s-sa", mi.Name)
 }
 
-func TestRemoteStorage_UpdateMachineIdentity(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/v1/system/machine-identities/9", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateMachineIdentity(context.Background(), &models.MachineIdentity{
-		ID: 9, Name: "updated-runner", State: "active",
-	})
-	require.NoError(t, err)
-}
-
 func TestRemoteStorage_TransitionMachineIdentityState(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
