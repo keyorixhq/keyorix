@@ -3,11 +3,14 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,12 +121,47 @@ func TestRemoteStorage_MarkAllNotificationsRead_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestRemoteStorage_CreateNotification_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://localhost:19997"))
+func TestRemoteStorage_CreateNotification_Success(t *testing.T) {
+	pid := uint(7)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/system/notifications", r.URL.Path)
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.EqualValues(t, 42, body["user_id"])
+		assert.Equal(t, "access_request.approved", body["type"])
+		_, _ = w.Write(apiOK(notificationWireBody(99)))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.CreateNotification(context.Background(), nil)
-	assert.Error(t, err)
+	created, err := rs.CreateNotification(context.Background(), &models.Notification{
+		UserID:    42,
+		ProjectID: &pid,
+		Type:      "access_request.approved",
+		Title:     "Access request approved",
+		Message:   "Your request was approved.",
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 99, created.ID)
+}
+
+func TestRemoteStorage_CreateNotification_DuplicateReminder(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write(apiErr("DUPLICATE_REMINDER_NOTIFICATION", "an unread reminder notification already exists"))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	_, err = rs.CreateNotification(context.Background(), &models.Notification{UserID: 1})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, corestorage.ErrDuplicateReminderNotification),
+		"expected ErrDuplicateReminderNotification, got %v", err)
 }
 
 func TestRemoteStorage_HasUnreadNotification_Unsupported(t *testing.T) {

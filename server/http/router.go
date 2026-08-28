@@ -1179,6 +1179,25 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/access-requests/{id}/approvals", catalogHandler.ListAccessRequestApprovalsProxy)
 			r.Post("/access-requests/{id}/approvals", catalogHandler.CreateAccessRequestApprovalProxy)
 
+			// Notification-write storage-primitive proxy (#1589). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateNotification to THIS server's real storage backend, instead of
+			// RemoteStorage's CreateNotification having no server endpoint to call
+			// at all -- every notification-worthy core action (access requests,
+			// membership activation, secret sharing, ...) was silently losing its
+			// notification under storage.type: remote, because notify()/
+			// notifyWithSeverity() (internal/core/notifications.go) is a
+			// best-effort, error-swallowing wrapper by design and the stub failed
+			// 100% of the time. Exactly the same pattern as the access-requests
+			// proxy above: a raw passthrough onto storage.CreateNotification (no
+			// notification POLICY decision -- event type, recipient, title/message
+			// text -- is made here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore). See notification_proxy.go's package doc
+			// for why there is no wire-actor concern here (models.Notification
+			// carries no actor/origin field to misattribute). Reuses the group's
+			// existing system.write baseline -- no new privilege class.
+			r.Post("/notifications", catalogHandler.CreateNotificationProxy)
+
 			// Dynamic-secrets storage-primitive proxy (round-116 finding). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
 			// proxy CreateDynamicSecretConfig/GetDynamicSecretConfig/

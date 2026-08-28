@@ -1025,6 +1025,41 @@ var rawStorageBypassAllowlist = map[string]string{
 		"immediately above this entry for the full reasoning.",
 	"UpdateAccessRequestProxy": "FIXED: re-derives maker≠checker + admin/role-grant authority on the \"approved\" " +
 		"transition -- see the FIXED comment immediately above this entry for the full reasoning.",
+	// #1589: CreateNotificationProxy calls storage.CreateNotification directly.
+	// Verified RED then GREEN locally before this entry existed: without it,
+	// TestNoUnjustifiedRawStorageBypass failed naming exactly this handler
+	// ("CreateNotificationProxy calls Storage().CreateNotification(...)
+	// directly, but internal/core has an exported method that also wraps
+	// CreateNotification") -- proof the guard scans newly-added handler
+	// files correctly, not a blind spot for new code.
+	//
+	// No-independent-ceiling (same shape as unsafe_sibling_write_guard_test.go's
+	// UpdateWebAuthnCredentialProxy/DeleteProjectProxy entries): internal/core
+	// applies NO ceiling to notification creation at all -- there is no
+	// authorization decision for this proxy to skip. models.Notification
+	// carries no actor, sender, or origin field; UserID is the recipient, not
+	// an actor a caller could misattribute. There is nothing to derive from
+	// the authenticated caller and nothing for a system.write holder to forge.
+	//
+	// The exported wrapper this guard finds (internal/core's notify()/
+	// notifyWithSeverity() call chain, reached one hop from the scheduler
+	// entrypoints -- SendExpiryReminders, ScanLicenseExpiry, CheckReadQuotas,
+	// CheckRoleExpiry, SendRotationReminders, CheckTokenExpiry, and
+	// ValidatePATToken's emitPATExpiredNotification) is the WRONG thing to
+	// route this proxy through, not an oversight: those are the CALLING
+	// server's own event-driven notification triggers (an access request
+	// created, a reminder due, a PAT expired), each already deciding
+	// recipient/type/title/message with its own authorized context before
+	// ever making this HTTP call. Routing the proxy back through
+	// notifyWithSeverity server-side would re-run a scheduler tick or
+	// mis-attribute the notification to the hub's own service identity,
+	// exactly the double-apply/misattribution problem
+	// access_request_proxy.go's package doc names for the identical shape.
+	// See notification_proxy.go's package doc for the fuller reasoning.
+	"CreateNotificationProxy": "no-independent-ceiling: internal/core applies no authorization ceiling to " +
+		"notification creation at all, and models.Notification carries no actor/origin field to forge -- see the " +
+		"comment immediately above this entry for the full reasoning, including why routing through internal/core's " +
+		"notify()/notifyWithSeverity() chain would be wrong, not merely unwrapped.",
 	// FIXED 2026-08-25 (ADR-085, Accepted): CreateSetupTokenProxy derives its
 	// ceiling from the operation itself -- minting a setup token for user X is
 	// equivalent to taking control of X, and every other admin-facing route that

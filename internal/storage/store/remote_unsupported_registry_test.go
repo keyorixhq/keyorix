@@ -19,8 +19,6 @@ func init() {
 		"CountStaleMachineIdentitiesByProject": {statusIntentional,
 			"the #393 grouped hygiene rollup query runs server-side only; documented in-code on the method itself"},
 
-		"CreateNotification": {statusIntentional,
-			"round 116 (#516): no self-scoped route an end-user credential could hit to create/escalate an arbitrary notification, and rightly so"},
 		"HasUnreadNotification": {statusIntentional,
 			"round 116 (#516): same reasoning as CreateNotification — no legitimate remote caller for this raw check"},
 		"GetUnreadNotification": {statusIntentional,
