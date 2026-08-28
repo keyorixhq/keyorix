@@ -25,16 +25,16 @@ func TestRemoteStorage_UnsupportedSentinel(t *testing.T) {
 	calls := map[string]func() error{
 		// ListProjectInvitations (#507), CreateProjectMembership (#511),
 		// CreateGroup (#514), CreateMachineIdentity (#518), CreateAccessRequest
-		// (#523), and ListPermissions/GetPermission/GetRolePermissions (#526) now
-		// make a real HTTP call rather than stubbing out — see
-		// server/http/remote_storage_invitations_test.go,
+		// (#523), ListPermissions/GetPermission/GetRolePermissions (#526), and
+		// CreateNotification (#1589) now make a real HTTP call rather than
+		// stubbing out — see server/http/remote_storage_invitations_test.go,
 		// server/http/remote_storage_project_memberships_test.go,
 		// server/http/remote_storage_groups_test.go,
 		// server/http/remote_storage_machine_identities_test.go,
-		// server/http/remote_storage_access_request_test.go, and
-		// server/http/remote_storage_rbac_permission_catalog_test.go for their
-		// end-to-end coverage against a real router.
-		"CreateNotification": func() error { _, e := rs.CreateNotification(ctx, &models.Notification{}); return e },
+		// server/http/remote_storage_access_request_test.go,
+		// server/http/remote_storage_rbac_permission_catalog_test.go, and
+		// server/http/remote_storage_notifications_test.go for their end-to-end
+		// coverage against a real router.
 		// CountStaleMachineIdentitiesByProject (#393) legitimately stays a stub —
 		// the grouped hygiene-rollup query runs server-side, out of #518's scope
 		// (see remote_machine_identities.go's own doc comment).

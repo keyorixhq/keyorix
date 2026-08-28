@@ -5,33 +5,33 @@
 // notifications_handler.go) is real and proxied below for ListNotifications/
 // CountUnreadNotifications/MarkNotificationRead/MarkAllNotificationsRead.
 //
+// CreateNotification is ALSO real, proxied via POST /api/v1/system/notifications
+// (server/http/handlers/notification_proxy.go, #1589). It backs notify()/
+// notifyWithSeverity() (internal/core/notifications.go) generally, not just the
+// reminder/dedup path — every notification-worthy core action (access requests,
+// membership activation, secret sharing, ...) calls through it, and several are
+// reachable from an unguarded CLI command running embedded against
+// storage.type: remote (`keyorix request access`/`request secret-access`/
+// `request review`). Before this fix it was an unconditional remoteUnsupported
+// stub: notifyWithSeverity is a best-effort, error-swallowing wrapper by design
+// (the same contract as audit emission), so a 100%-failing stub composed with
+// that contract produced a silent, permanent feature outage rather than a
+// visible error — every one of those actions succeeded while its notification
+// was dropped with no signal anywhere. See #1589 for the full liveness trace
+// and docs/adr-087-remote-storage-deletion-pass.md for the classification pass
+// that found it.
+//
 // HasUnreadNotification/GetUnreadNotification/UpdateNotification stay
 // unconditional stubs correctly: these three back ONLY the escalation-aware
-// reminder dedup path (upgradeReminder, notifications.go; the various
-// *_reminders.go/*_expiry.go/*_alerts.go schedulers), invoked exclusively from
-// server-internal background jobs and the system.write-gated POST
-// /admin/jobs/* on-demand triggers — both of which always run against the
-// server's own LocalStorage, never against a remote client's storage.Storage.
-// There is no self-scoped route that lets an authenticated end user
-// create/escalate an arbitrary notification for themselves (rightly so: that
-// would let a self-scoped-only credential forge notifications, e.g.
-// impersonate a "your access was approved" system message), so there is
-// nothing for these three to proxy to.
-//
-// CreateNotification is a DIFFERENT case, and the claim above does not extend
-// to it: it backs notify()/notifyWithSeverity() generally, not just the
-// reminder/dedup path — every notification-worthy core action (access
-// requests, membership activation, secret sharing, ...) calls through it, and
-// several of those ARE reachable from an unguarded CLI command running
-// embedded against `storage.type: remote` (`keyorix request access`/`request
-// secret-access`/`request review`, none behind a NewRemoteClient()-family
-// guard). Confirmed LIVE, and it FAILS OPEN: notifyWithSeverity swallows
-// whatever error this stub returns, so the triggering action (e.g. the access
-// request itself) reports success while the notification is silently never
-// created. Filed as #1589, not fixed pending a Wave 2 design decision
-// (implement the write over the wire vs. make the failure visible some other
-// way) — see docs/adr-087-remote-storage-deletion-pass.md and the #1589
-// liveness re-confirmation this comment was corrected alongside.
+// reminder dedup path (upgradeReminder; the *_reminders.go/*_expiry.go/
+// *_alerts.go schedulers), invoked exclusively from server-internal background
+// jobs and the system.write-gated POST /admin/jobs/* on-demand triggers — both
+// of which always run against the server's own LocalStorage, never against a
+// remote client's storage.Storage. There is no self-scoped route that lets an
+// authenticated end user create/escalate an arbitrary notification for
+// themselves (rightly so: that would let a self-scoped-only credential forge
+// notifications, e.g. impersonate a "your access was approved" system
+// message), so there is nothing for these three to proxy to.
 //
 // For the local (GORM) equivalent see local_notifications.go.
 package store
@@ -39,15 +39,97 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/remote"
 )
 
-func (rs *RemoteStorage) CreateNotification(_ context.Context, _ *models.Notification) (*models.Notification, error) {
-	return nil, remoteUnsupported("CreateNotification")
+// notificationCreateWire mirrors models.Notification's PERSISTED fields
+// exactly (snake_case) — matches server/http/handlers/notification_proxy.go's
+// notificationProxyWire byte for byte (the actual wire shape POST
+// /api/v1/system/notifications sends/expects). Deliberately distinct from
+// notificationWireResponse below: that struct is the self-scoped GET
+// /notifications DISPLAY shape, which omits SecretNodeID/Severity — a create
+// needs the full persisted shape so every field notifyWithSeverity sets
+// round-trips.
+type notificationCreateWire struct {
+	ID           uint      `json:"id"`
+	UserID       uint      `json:"user_id"`
+	SecretNodeID *uint     `json:"secret_node_id,omitempty"`
+	ProjectID    *uint     `json:"project_id,omitempty"`
+	Type         string    `json:"type"`
+	Title        string    `json:"title"`
+	Message      string    `json:"message"`
+	Link         string    `json:"link"`
+	Severity     int       `json:"severity"`
+	IsRead       bool      `json:"is_read"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func newNotificationCreateWire(n *models.Notification) notificationCreateWire {
+	return notificationCreateWire{
+		UserID:       n.UserID,
+		SecretNodeID: n.SecretNodeID,
+		ProjectID:    n.ProjectID,
+		Type:         n.Type,
+		Title:        n.Title,
+		Message:      n.Message,
+		Link:         n.Link,
+		Severity:     int(n.Severity),
+		CreatedAt:    n.CreatedAt,
+	}
+}
+
+func (w notificationCreateWire) toModel() *models.Notification {
+	return &models.Notification{
+		ID:           w.ID,
+		UserID:       w.UserID,
+		SecretNodeID: w.SecretNodeID,
+		ProjectID:    w.ProjectID,
+		Type:         w.Type,
+		Title:        w.Title,
+		Message:      w.Message,
+		Link:         w.Link,
+		Severity:     models.NotificationSeverity(w.Severity),
+		IsRead:       w.IsRead,
+		CreatedAt:    w.CreatedAt,
+	}
+}
+
+// notificationDuplicateReminderCode mirrors
+// notification_proxy.go's identical constant — the wire-level signal used to
+// reconstruct storage.ErrDuplicateReminderNotification across this HTTP hop,
+// the same pattern remote_secret_dependencies.go's
+// duplicateSecretDependencyCode uses for CreateSecretDependencyExclusive.
+const notificationDuplicateReminderCode = "DUPLICATE_REMINDER_NOTIFICATION"
+
+// CreateNotification persists a notification via POST
+// /api/v1/system/notifications — see the package doc for the liveness history
+// and server/http/handlers/notification_proxy.go's package doc for why there
+// is no wire-actor concern here (models.Notification carries no actor/origin
+// field to misattribute).
+func (rs *RemoteStorage) CreateNotification(ctx context.Context, n *models.Notification) (*models.Notification, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/notifications", newNotificationCreateWire(n))
+	if err != nil {
+		var httpErr *remote.HTTPError
+		if errors.As(err, &httpErr) && httpErr.ErrorType == notificationDuplicateReminderCode {
+			return nil, fmt.Errorf("%w: %s", storage.ErrDuplicateReminderNotification, httpErr.Message)
+		}
+		return nil, fmt.Errorf("failed to create notification: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("create notification failed: %s", resp.Error.Error())
+	}
+	var wire notificationCreateWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
 }
 
 // notificationWireResponse mirrors notificationToAPI's response shape
