@@ -176,3 +176,23 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
   package, confirm no command branches on `Storage.Type`/`IsClientMode()` directly)
   and re-running the exclusion against that set — which is what should have
   happened before the first partition, not after a false finding forced a redo.
+- **To test a fails-open path, assert the effect, not the return value.** A
+  silent failure returns success at every layer by construction — the
+  triggering call succeeds, the wrapper that swallowed the error returns
+  nothing to indicate it, and every caller up the stack sees the same
+  green result a genuinely-working path would produce. No return value
+  anywhere in the chain distinguishes "it happened" from "it silently
+  didn't." Only the absence of the effect does. This is the counterpart to
+  "a mock that models a shape the real system cannot produce is not a
+  test" — here the failure mode is that a return-value assertion models a
+  signal the real system does not produce. Worked example:
+  `TestRemoteStorageCreateNotification_ClosesTheFailsOpenLoop`
+  (`server/http/remote_storage_notifications_test.go`, #1589): asserting
+  `RequestProjectAccess` returned no error would have passed both before
+  and after the fix — `notifyWithSeverity` swallows the
+  `CreateNotification` error by design, so the triggering call always
+  reports success regardless of whether the notification actually got
+  created. The test instead reads the approver's notifications directly
+  off the upstream server's own storage and asserts one exists — the only
+  assertion that could have told `CreateNotification` was a permanently-
+  failing stub from `CreateNotification` genuinely working.
