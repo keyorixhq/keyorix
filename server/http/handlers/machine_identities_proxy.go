@@ -383,10 +383,19 @@ func (h *CatalogHandler) GetMachineIdentityProxy(w http.ResponseWriter, r *http.
 
 // UpdateMachineIdentityProxy handles PUT /api/v1/system/machine-identities/{id}.
 // A raw persist (storage.Storage.UpdateMachineIdentity is an unconditional
-// full-row Save, matching LocalStorage's own semantics exactly — used by
-// core.ClassifyMachineIdentity, which has no state-machine invariant to protect).
-// core.TransitionMachineIdentity does NOT use this path — see
-// TransitionMachineIdentityStateProxy below.
+// full-row Save, matching LocalStorage's own semantics exactly).
+//
+// CORRECTED (#1592 stale-fork sweep, #1585): this comment used to claim
+// core.ClassifyMachineIdentity backs this path. That was false when checked
+// directly — ClassifyMachineIdentity (machine_identities.go) was fixed under
+// G42 to call c.storage.TransitionMachineIdentityState instead, precisely to
+// avoid the blind-Save race this raw call still reproduces. A repo-wide
+// grep (excluding this file and comments) finds ZERO callers of
+// storage.UpdateMachineIdentity anywhere in internal/core — this raw
+// primitive currently has no known legitimate caller under any topology.
+// See #1585 for the finding and its resolution (pending as of this
+// correction). core.TransitionMachineIdentity does NOT use this path
+// either — see TransitionMachineIdentityStateProxy below.
 func (h *CatalogHandler) UpdateMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
