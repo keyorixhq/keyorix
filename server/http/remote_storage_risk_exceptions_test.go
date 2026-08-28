@@ -87,7 +87,7 @@ func buildRiskException(now time.Time, createdBy uint, title, category string, e
 // see docs/adr-087-remote-storage-deletion-pass.md), not something this suite
 // exercises anymore.
 func TestRemoteStorageRiskExceptions_CreateGetList_RealServer(t *testing.T) {
-	t.Skip("#1511/G80 deletion pass fixed the original blocker (UpdateRiskException now a client-side stub, not a real 405) but un-skipping surfaced a SECOND, previously-invisible one: this harness's default credential (createNodeToken, a machine/node principal) cannot create a risk exception at all — CreateRiskExceptionProxy requires a human principal ('only a human principal may create a risk exception'). This has been true since before this pass; the original t.Skip() short-circuited before the Create call ever ran, so it was never actually observed. Out of scope for a dead-wire-call deletion pass — filed as its own follow-up, not fixed here.")
+	t.Skip("#1511/G80 deletion pass fixed the original blocker (UpdateRiskException now a client-side stub, not a real 405) but un-skipping surfaced a SECOND, previously-invisible one: this harness's default credential (createNodeToken, a machine/node principal) cannot create a risk exception at all — CreateRiskExceptionProxy requires a human principal ('only a human principal may create a risk exception'). This has been true since before this pass; the original t.Skip() short-circuited before the Create call ever ran, so it was never actually observed. Out of scope for a dead-wire-call deletion pass — filed as #1584, not fixed here.")
 	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -199,7 +199,7 @@ func TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential(t *testing.T) 
 // expired-but-not-revoked row is still returned here — core is what drops it
 // from an "active" view).
 func TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer(t *testing.T) {
-	t.Skip("Same second blocker as TestRemoteStorageRiskExceptions_CreateGetList_RealServer above: this harness's node/machine credential cannot create a risk exception at all ('only a human principal may create a risk exception'), unrelated to and not fixed by the #1511/G80 deletion pass. Quarantined here, not fixed.")
+	t.Skip("Same second blocker as TestRemoteStorageRiskExceptions_CreateGetList_RealServer above: this harness's node/machine credential cannot create a risk exception at all ('only a human principal may create a risk exception'), unrelated to and not fixed by the #1511/G80 deletion pass. Filed as #1584. Quarantined here, not fixed.")
 	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
 	ctx := context.Background()
 	now := time.Now()
