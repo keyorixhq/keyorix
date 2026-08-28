@@ -915,7 +915,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_access_review_campaigns.go:210": urlValuesEntry(),
 	"remote_access_review_campaigns.go:237": urlValuesEntry(),
 	"remote_access_review_campaigns.go:263": urlValuesEntry(),
-	"remote_auth.go:359":                    urlValuesEntry(),
+	"remote_auth.go:358":                    urlValuesEntry(),
 	"remote_break_glass.go:135":             urlValuesEntry(),
 	"remote_dynamic.go:260":                 urlValuesEntry(),
 	"remote_dynamic.go:348":                 urlValuesEntry(),
@@ -934,7 +934,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_mfa.go:270":                     urlValuesEntry(),
 	"remote_secret_dependencies.go:151":     urlValuesEntry(),
 	"remote_secret_dependencies.go:176":     urlValuesEntry(),
-	"remote_users.go:554":                   urlValuesEntry(),
+	"remote_users.go:552":                   urlValuesEntry(),
 	"remote_webauthn.go:179":                urlValuesEntry(),
 	"remote_webauthn.go:209":                urlValuesEntry(),
 	"remote_webauthn.go:309":                urlValuesEntry(),
@@ -952,7 +952,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_rbac.go:485":                      pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
 	"remote_rbac.go:798":                      pathEscapeEntry("url.PathEscape(name) path-segment concatenation"),
 	"remote_rbac.go:1076":                     pathEscapeEntry("joinUintsCSV(adminRoleIDs) query-string concatenation (a local helper, not url.Values)"),
-	"remote_users.go:978":                     pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
+	"remote_users.go:976":                     pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
 
 	// Category: the ENTIRE path is a bare call to a locally-defined helper
 	// function (buildAuditFilterPath/buildRBACAuditFilterPath/
@@ -968,7 +968,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_audit.go:53":    helperReturnEntry("buildAuditFilterPath(filter)"),
 	"remote_audit.go:95":    helperReturnEntry("buildRBACAuditFilterPath(filter)"),
 	"remote_secrets.go:441": helperReturnEntry("buildSecretFilterPath(filter)"),
-	"remote_users.go:518":   helperReturnEntry("buildUserFilterPath(filter)"),
+	"remote_users.go:516":   helperReturnEntry("buildUserFilterPath(filter)"),
 
 	// Category: the path is a bare reference to a package-level `const`
 	// declared in internal/storage/store/constants.go — a DIFFERENT file from

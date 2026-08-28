@@ -189,7 +189,7 @@ func (rs *RemoteStorage) ListSecretDependenciesForProjectForUpdate(ctx context.C
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) DeleteSecretDependency(_ context.Context, _ uint) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("DeleteSecretDependency")
 }
 
 // CreateSecretDependencyExclusive persists an edge with the SAME duplicate/cycle

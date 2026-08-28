@@ -53,7 +53,7 @@ type mfaStepUpGrantActiveWire struct {
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) CreateMFAStepUpGrant(_ context.Context, _ *models.MFAStepUpGrant) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("CreateMFAStepUpGrant")
 }
 
 // GetActiveMFAStepUpGrant returns the most recent non-expired MFA step-up

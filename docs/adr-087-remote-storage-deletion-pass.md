@@ -1,11 +1,31 @@
-# ADR-087: RemoteStorage deletion pass — a verified-dead subset, not a sweep
+# ADR-087: RemoteStorage deletion pass — from a verified-dead subset to a fully classified surface
 
 ## Status
 
-**Accepted (2026-08-28).** Executes the deletion Wave 0
-(`docs/g80-wave0-remote-storage-partition.md`) sized but explicitly held —
-"nothing gets deleted this pass," Wave 0c — pending review of its corrected
-partition. This ADR is that review, plus the deletion itself.
+**Accepted (2026-08-28), extended (2026-08-28).** Two passes, same ADR
+(updated in place per the standing instruction to correct rather than
+fork a document when the correction is to its own completeness claim, not
+its conclusions):
+
+- **Part 1** executed the deletion Wave 0 (`docs/g80-wave0-remote-storage-partition.md`)
+  sized but explicitly held — "nothing gets deleted this pass," Wave 0c —
+  pending review of its corrected partition: #1511's 13 methods, individually
+  re-verified and deleted. At the time, 158 of 171 structurally-stub methods
+  had never been examined for reachability at all — stated explicitly below,
+  not hidden.
+- **Part 2** (this update) closes that gap: all 158 classified LIVE / DEAD /
+  UNRESOLVED, 4 LIVE-and-stubbed findings filed (#1589, not fixed), 154
+  confirmed-DEAD methods deleted, and a permanent guard
+  (`TestEveryStructuralStubHasReachabilityVerdict`) added so a new stub-shaped
+  method can no longer join the registry without a verdict. See "Part 2" below.
+
+**The surface is now fully classified.** Of the 183 currently-registered
+`RemoteStorage` stub methods: 7 LIVE (kept, 3 per ADR-086 + 4 from Part 2, all
+either correct-by-design or filed as findings), 169 DEAD (12 already deleted
+by an earlier round via #1583's 13-method set minus `GetSecretVersion`'s full
+removal, 154 deleted by Part 2 — see "Part 2: the deletion" below for the
+precise count), 7 UNRESOLVED (Wave 0's original residue, still untouched —
+unresolved means kept, not "probably fine"). Zero remain unclassified.
 
 ## What this is, precisely
 
@@ -251,12 +271,230 @@ persists a Role-shaped field directly via storage without calling
 `RequireAuthorityForRole`. Verified red (against a deliberately-reintroduced
 gap in `CreateMembershipProxy`) and green (all three intact).
 
+## Part 2: the remaining 158, fully classified
+
+Classification is the deliverable of Part 2; deletion is a byproduct. The
+population is 158 structurally-stub `RemoteStorage` methods — every one of
+the 171 (post-#1576) minus Wave 0's 13 raw stubs and #1583's 12 — that had
+never been examined for reachability at all. Unclassified dead code becomes
+live code without re-review: this codebase has a concrete instance
+(`RequireNodeCredentialOrPermission`'s node arm sat with no caller until
+someone asked whether it could have one, and answering took a full
+investigation and an ADR, ADR-085). The prize is the LIVE ones, not the DEAD
+ones — #1575 found 11 CLI commands broken under `storage.type: remote`
+because they reach hard stubs, and that sweep exercised *commands*, not
+*methods*, so more #1575-class breaks could hide in an unexamined 158.
+
+### The criterion, mechanized
+
+Wave 0's partition was done by hand-tracing plus grep, and its own
+idiom-completeness miss (`ResolveRemote()`, corrected in Wave 0c) is exactly
+the failure mode a 158-method manual pass would reproduce at scale. Instead,
+`scripts/analysis/remote_storage_classify.go` (a standalone, `go:build
+ignore` analysis script — not a CI guard, run once for this pass) computes
+the same criterion mechanically:
+
+1. **Reverse reachability.** Every `(c *KeyorixCore)` method's body is parsed
+   (`internal/core/*.go`), and for each, the full transitive closure of
+   `storage.Storage` methods it can reach — through any chain of same-receiver
+   sibling calls, AND through a `storage.Storage`-typed closure parameter
+   (the `c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+   tx.Method(...) })` shape used throughout this package) — is computed,
+   memoized, cycle-safe. An earlier version of this tool missed the closure
+   shape entirely, which would have silently undercounted reachability for
+   every core method using `WithTransaction`; caught by a spot-check (see
+   "Two real gaps the tool itself had" below) and fixed before any verdict
+   was finalized.
+2. For each target storage method, every **exported** core method reaching it
+   (only exported methods are callable from outside `internal/core`) is
+   listed, then cross-referenced against `internal/cli` (does an unguarded
+   file reference it?), and against the **whole** `server/` tree — not just
+   `server/http/handlers`/`server/grpc/services`/`server/main.go`, which an
+   earlier version of the scan checked and which missed
+   `server/middleware/auth.go` and `server/grpc/interceptors/auth.go`
+   entirely (also caught and fixed — see below).
+3. A method with at least one unguarded CLI reference is `CANDIDATE-LIVE` —
+   a candidate, not a verdict. Every one of the 12 candidates the tool
+   produced was individually hand-verified (see "Ten candidates, four real"
+   below) before being called LIVE or reclassified DEAD; the tool narrows,
+   it does not decide.
+4. A method with zero exported-core-method reach gets a repo-wide plain-text
+   safety-net scan (outside `internal/storage/store` and the interface
+   declaration) before being called `DEAD-NO-CORE-CALLER` — this tool only
+   follows `*KeyorixCore`-receiver methods, and a storage call reached
+   through some OTHER helper type `KeyorixCore` constructs and hands off to
+   (confirmed real: `core.AnomalyDetector` holds its own `.storage` field,
+   unrelated to any `*KeyorixCore` receiver) would otherwise be invisible to
+   it. The safety net demoted 5 of the original 9 `DEAD-NO-CORE-CALLER`
+   results to `UNRESOLVED` for hand-tracing; all 5 resolved DEAD by hand
+   (see below), none flipped LIVE.
+
+### Two real gaps the tool itself had, both caught before finalizing
+
+Sanity-spot-checking the mechanical output — not trusting it blind, per the
+standing instruction that a manual pass is where the Wave 0 idiom error came
+from, which cuts the same way against trusting an unaudited *automated* pass
+too — found two real gaps in the classifier itself, both fixed and the full
+158-method run repeated before any verdict was finalized:
+
+- **The `WithTransaction`-closure blind spot** (above). Found by direct
+  grep after the tool reported `DeleteAuditLogsBefore`/`CreateAnomalyAlert`
+  as `DEAD-NO-CORE-CALLER` when a targeted grep found a real caller
+  (`tx.DeleteAuditLogsBefore(...)` inside a `WithTransaction` closure). Fixing
+  it changed 2 verdicts from `DEAD-NO-CORE-CALLER` to correctly-resolved DEAD
+  without manual tracing, and surfaced 2 NEW genuine reachable paths
+  (`ListPersonalAccessTokensByUser`, `SetAccountState` — both later resolved
+  DEAD by hand, see below) that the tool had wrongly called `DEAD-SERVER-ONLY`
+  before the fix.
+- **The narrow server-side scan.** Found when `GetPersonalAccessTokenByHash`
+  et al. reported `UNRESOLVED` despite obviously being consumed by
+  authentication middleware. Broadening the scan from three named
+  directories to the whole `server/` tree resolved all 3 affected methods to
+  `DEAD-SERVER-ONLY` correctly.
+
+### Ten candidates, four real
+
+The classifier flagged 12 `CANDIDATE-LIVE` methods (after the two fixes
+above). Each was individually traced by hand — reading the actual CLI command
+code, not trusting the tool's text-match — because "a Go call-graph edge is
+not a deployment path" cuts against automation exactly as much as it cuts
+against a human skim:
+
+- **3 were tool false positives.** `GetSecretAccessSchedule`,
+  `TryIncrementSecretReadCount`, `TryIncrementSecretNodeReadCount` all
+  matched `internal/cli/secret/source_aws.go`'s `api.GetSecretValue(...)` —
+  the AWS SDK's OWN `secretsmanager.Client` method, unrelated to
+  `core.KeyorixCore.GetSecretValue`, sharing only a name. Confirmed by
+  checking `source_aws.go`'s receiver type directly. Every genuine caller of
+  `core.GetSecretValue` (`secret/get.go`, `run/run.go`) is guarded.
+- **5 are DEAD via the SAME barrier `AssignRole`/`RemoveRole` were corrected
+  to (Part 1, above) — not a `NewRemoteClient()`-family guard, but a
+  fail-closed authority check that itself depends on the permanently-stubbed
+  RBAC chain (ADR-086):**
+  - `CreateRejectionReasonTemplate`, `DeleteRejectionReasonTemplate`,
+    `ListRejectionReasonTemplates` — `request rejection-templates
+    add/delete/list` all call `requireTemplateAuthority` (→ `Authorize` →
+    `GetUserRoleIDsAt`) before ever reaching these methods.
+  - `ListPersonalAccessTokensByUser`, `SetAccountState` — every unguarded
+    path reaching them (`migrate user-to-machine`, `user
+    reactivate/force-password-reset/suspend`) is blocked by
+    `requireUserAuthority`'s identical `Authorize` call first.
+  - This is the fourth+fifth+sixth+seventh+eighth confirmed instance of this
+    specific barrier shape in this campaign (after `AssignRole`/`RemoveRole`
+    in Part 1) — strong evidence the barrier is systemic, not coincidental:
+    any core action gated by a CLI `--by`-authority check
+    (`requireReviewAuthority`/`requireTemplateAuthority`/`requireUserAuthority`,
+    all sharing the `Authorize(ctx, actorID, permission, scope)` → stubbed
+    `GetUserRoleIDsAt` shape) is dead under `storage.type: remote` today,
+    durably, because ADR-086 keeps that chain stubbed by design.
+- **4 are genuinely LIVE** — see "LIVE-and-stubbed findings" below.
+
+### LIVE-and-stubbed findings (filed as #1589, not fixed)
+
+Per the standing instruction (verdict before fix; do not fix a LIVE-and-
+stubbed method in this pass — several may dissolve if Wave 2 adopts a
+proxy-delegation design, and fixing piecemeal now risks building something
+that pass discards), all 4 are filed in
+[#1589](https://github.com/keyorixhq/keyorix/issues/1589) with full evidence,
+summarized here:
+
+| Method | Command | Fails | Severity |
+|---|---|---|---|
+| `CreateNotification` | `request access` / `request secret-access` | **OPEN** — `notifyWithSeverity` swallows the error; the request succeeds, the approver is silently never notified | Most serious: silently wrong, not a clean refusal. Not a security bypass (no unauthorized access granted), but a documented side effect silently drops with zero signal. Affects every notification-worthy core action under remote mode, not just these two entry points. |
+| `ListAccessRequestsByIDs` | `request bulk-approve` / `bulk-reject` | Closed — the stub error propagates cleanly (`ListAccessRequestsByIDs` is called before any per-item processing) | Real, currently-broken feature — same class as #1575 — but a clean refusal. |
+| `ListSessionTokenHashesForUser` | `user update --active=false` | Closed / verified safe — error discarded (best-effort cache eviction only); `server/middleware/auth.go`'s `serveAuthCacheHit` independently re-checks `AccountStillUsable` on every warm-cache hit regardless | Low severity — a deactivated user is still blocked on their very next request either way; already reasoned through in `internal/core/users.go`'s own doc comment. |
+| `WithTransaction` | Same `user update --active=false` path | Closed / verified safe for this one confirmed use — no real cross-call atomicity, but the deactivation branch's own doc comment already reasons through exactly this remote-mode scenario | Standing architectural limitation (no server process, no real HTTP-spanning transaction, ever) rather than a fix target — worth recording because a FUTURE unguarded caller using `WithTransaction` less carefully would not automatically be safe. |
+
+The LIVE-and-stubbed count (4) is not large enough to warrant stopping before
+the deletion pass per the standing instruction — proceeding to deletion in
+the same pass.
+
+### Part 2: the deletion
+
+154 methods (158 minus the 4 LIVE above) converted from whatever non-network-
+reaching body they had — a real removed feature's leftover logic, a bespoke
+`fmt.Errorf` message, or in several cases a **silent no-op** (`return nil` /
+`return nil, nil` with NO error at all — e.g. `SaveStatsSnapshot`,
+`TouchSession`, `TouchPersonalAccessToken`, `AddPasswordHistory`,
+`RecentPasswordHashes`, `PrunePasswordHistory` all previously claimed success
+while doing nothing) — to the canonical `remoteUnsupported("MethodName")`
+stub, mechanically via `scripts/analysis/remote_storage_stub_rewrite.go` (an
+AST-precise surgical rewriter: replaces only each target method's parameter
+names, blanked to `_`, and body byte range; zero-values each non-error return
+position by inspecting its own type text — pointer/slice/map/interface →
+`nil`, `bool` → `false`, `string` → `""`, numeric → `0`; everything else in
+each file — doc comments, unrelated functions, formatting — untouched).
+Confirmed safe for every silent-no-op case specifically BECAUSE each is
+independently confirmed DEAD (no live caller today), so a caller-visible
+behavior change from "silently reports success" to "clean explicit error"
+has zero effect on any currently-running deployment.
+
+Full per-method list, criterion, and evidence: `git show
+pre-remote-topology-deletion-158:internal/storage/store/` for the pre-rewrite
+bodies (tag below), and
+`internal/storage/store/remote_deletion_pass_completeness_test.go`'s
+`addRemoteUnsupported` entries (Part 1's 13) plus
+`remote_reachability_registry_test.go`'s 154 corresponding entries (Part 2)
+for the individual reasoning — not restated in full here (154 one-line
+citations would dwarf this document without adding information beyond what
+the machine-checked registry already carries and enforces).
+
+**Findability.** Tag `pre-remote-topology-deletion-158`, annotated, at the
+commit immediately before Part 2's first removal — same convention as Part
+1's `pre-remote-topology-deletion` tag. The deletion commit enumerates all
+154 by name.
+
+### Kept: the UNRESOLVED residue (unchanged — Wave 0's original 7)
+
+Part 2 classified all 158 it examined; none resolved LIVE or DEAD required
+demoting to UNRESOLVED (the 5 `DEAD-NO-CORE-CALLER`→`UNRESOLVED` safety-net
+hits above all resolved DEAD by hand). The UNRESOLVED set is still exactly
+Wave 0's original 7, listed in "What was NOT deleted, and why" above:
+`IsProjectMember`, `IsGroupProjectScoped`, `GetUserRoleIDsExact`,
+`GetUserRoleScopes`, `GetMachineRoleScopes`, `GetUserGroupPermissions`,
+`AssignPermissionToRole`. Kept means kept — closing any of these still
+requires either a live-mode integration test or a deeper Connect-subtree
+trace, Wave 2 or a dedicated follow-up, not this pass.
+
+### Task 4: staying classified
+
+`internal/storage/store/remote_reachability_registry_test.go` adds
+`remoteReachabilityRegistry` — a registry deliberately SEPARATE from
+`remoteUnsupportedAllowlist` (adding a field to that struct would touch
+~183 existing call sites across ~20 files for a concern those entries were
+never about) — and `TestEveryStructuralStubHasReachabilityVerdict`: every
+method `actualRemoteUnsupportedStubs` finds must have a
+`reachabilityLive`/`reachabilityDead`/`reachabilityUnresolved` entry, no
+third state, no silent additions — same shape as
+`TestRemoteUnsupportedStubsAreAllowlisted` and as
+`scripts/ci-test-legs.sh`'s C5 ratchet. Verified red (a temporarily-removed
+entry) and green (restored). All 183 currently-registered methods have an
+entry as of this pass — the guard is satisfiable today and enforces the
+invariant going forward: a new stub-shaped method can no longer join the
+registry without a reachability verdict.
+
+### Guard population: predicted vs. actual
+
+`remoteUnsupportedAllowlist`/`actualRemoteUnsupportedStubs`: 183 before Part
+2 → 183 after (Part 2 reclassifies existing structural stubs; it does not
+create new ones — every one of the 154 rewritten methods was ALREADY
+structurally a stub, by the same "never reaches `rs.client`" definition,
+before this pass touched it). Predicted 183, actual 183, exact match.
+
+`remoteReachabilityRegistry`/`TestEveryStructuralStubHasReachabilityVerdict`:
+0 before Part 2 (registry did not exist) → 183 after. Predicted 183 (7 LIVE +
+169 DEAD + 7 UNRESOLVED), actual 183, exact match.
+
 ## Guardrail check: does anything here overturn ADR-083/ADR-086?
 
-No. ADR-083's server-topology gate is unaffected — nothing in this pass
-touches `validateRemoteStorageNotServer` or the route-registration/proxy-
-tier cleanup ADR-083 defers. ADR-086's three-method keep-list is unaffected
-and explicitly re-confirmed above. The `AssignRole`/`RemoveRole` correction
-strengthens, rather than contradicts, ADR-086's premise that the RBAC stub
-chain is a durable, by-design barrier — it's now confirmed to gate a SECOND
-call path ADR-086's own investigation didn't examine.
+No, for both parts. ADR-083's server-topology gate is unaffected throughout
+— nothing in either part touches `validateRemoteStorageNotServer` or the
+route-registration/proxy-tier cleanup ADR-083 defers; Part 2's criterion
+explicitly relies on it (current source confirmed unconditional before
+either part's classification work began). ADR-086's three-method keep-list
+is unaffected and re-confirmed in both parts. Part 1's `AssignRole`/
+`RemoveRole` correction, and Part 2's five further instances of the identical
+barrier shape, both strengthen rather than contradict ADR-086's premise that
+the RBAC stub chain is a durable, by-design barrier — Part 2 finds it gating
+FIVE more call paths ADR-086's own investigation didn't examine, all still
+correctly blocked.

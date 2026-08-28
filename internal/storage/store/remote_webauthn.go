@@ -167,7 +167,7 @@ func webAuthnCredentialIDQuery(credentialID []byte) string {
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) CreateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("CreateWebAuthnCredential")
 }
 
 // ListWebAuthnCredentials lists a user's registered passkeys via GET
@@ -297,7 +297,7 @@ func (rs *RemoteStorage) AdvanceWebAuthnCredentialCounter(ctx context.Context, c
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) DeleteWebAuthnCredential(_ context.Context, _, _ uint) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("DeleteWebAuthnCredential")
 }
 
 // CountWebAuthnCredentials returns a user's registered-passkey count via GET
@@ -329,7 +329,7 @@ func (rs *RemoteStorage) CountWebAuthnCredentials(ctx context.Context, userID ui
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) SetUserWebAuthnEnabled(_ context.Context, _ uint, _ bool) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("SetUserWebAuthnEnabled")
 }
 
 // CreateWebAuthnSession persists a new ceremony session via POST

@@ -109,7 +109,7 @@ const breakGlassNotActiveCode = "BREAK_GLASS_NOT_ACTIVE"
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) CreateBreakGlassActivation(_ context.Context, _ *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("CreateBreakGlassActivation")
 }
 
 // GetBreakGlassActivation retrieves an activation by ID via GET
@@ -158,7 +158,7 @@ func (rs *RemoteStorage) ListBreakGlassActivations(ctx context.Context, projectI
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) UpdateBreakGlassActivation(_ context.Context, _ *models.BreakGlassActivation) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("UpdateBreakGlassActivation")
 }
 
 // breakGlassRevokeRequest is RevokeBreakGlassActivation's request body, matching

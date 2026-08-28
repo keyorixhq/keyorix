@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -350,8 +351,7 @@ func TestRemoteStorage_UpdateLastLogin_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.UpdateLastLogin(context.Background(), 1, time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.ErrorIs(t, err, store.ErrRemoteUnsupported)
 }
 
 // --- SetAccountState (returns ErrRemoteUnsupported) ---
@@ -960,20 +960,26 @@ func TestRemoteStorage_ListGroupMembersByGroupIDs_Empty(t *testing.T) {
 	assert.Empty(t, result)
 }
 
-// --- Password history stubs (no-ops) ---
+// --- Password history stubs ---
+//
+// G80 158-method classification pass (docs/adr-087-remote-storage-deletion-pass.md):
+// these three used to silently no-op (claiming success / returning an empty
+// result with no error) — confirmed DEAD (no live caller under
+// storage.type: remote; the only reaching entries, CreateUser and friends,
+// are behind a NewRemoteClient() guard), converted to explicit stubs.
 
-func TestRemoteStorage_PasswordHistoryStubs_NoError(t *testing.T) {
+func TestRemoteStorage_PasswordHistoryStubs_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://localhost:19999"))
 	require.NoError(t, err)
 	ctx := context.Background()
 
 	err = rs.AddPasswordHistory(ctx, 1, "hashvalue", time.Now())
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 
 	hashes, err := rs.RecentPasswordHashes(ctx, 1, 5)
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 	assert.Nil(t, hashes)
 
 	err = rs.PrunePasswordHistory(ctx, 1, 10)
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }

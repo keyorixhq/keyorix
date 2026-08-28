@@ -45,8 +45,7 @@ import (
 // so failing loudly here is a strict improvement over a doomed 404 round-trip
 // with no explanation.
 func (rs *RemoteStorage) CreateSession(_ context.Context, _ *models.Session) (*models.Session, error) {
-	return nil, fmt.Errorf("create session is not supported as a standalone remote storage operation " +
-		"(see #508) — sessions are minted atomically as part of login verification instead")
+	return nil, remoteUnsupported("CreateSession")
 }
 
 // GetSession retrieves a session by token via remote API.
@@ -99,27 +98,27 @@ func (rs *RemoteStorage) CleanupExpiredSessions(_ context.Context) error {
 var errUnsupportedRemote = fmt.Errorf("operation not supported over remote storage")
 
 func (rs *RemoteStorage) GetSessionByID(_ context.Context, _ uint) (*models.Session, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("GetSessionByID")
 }
 
 func (rs *RemoteStorage) GetSessionAny(_ context.Context, _ string) (*models.Session, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("GetSessionAny")
 }
 
 func (rs *RemoteStorage) RotateSession(_ context.Context, _ uint, _ *models.Session, _ time.Time) (*models.Session, bool, error) {
-	return nil, false, errUnsupportedRemote
+	return nil, false, remoteUnsupported("RotateSession")
 }
 
 func (rs *RemoteStorage) ListSessionTokenHashesByFamily(_ context.Context, _ string) ([]string, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("ListSessionTokenHashesByFamily")
 }
 
 func (rs *RemoteStorage) DeleteSessionsByFamily(_ context.Context, _ string) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("DeleteSessionsByFamily")
 }
 
 func (rs *RemoteStorage) ListSessionsByUser(_ context.Context, _ uint) ([]*models.Session, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("ListSessionsByUser")
 }
 
 // deleteSessionsForUserExceptWire mirrors RemoteStorage's other small JSON
@@ -151,35 +150,35 @@ func (rs *RemoteStorage) ListSessionTokenHashesForUser(_ context.Context, _ uint
 }
 
 func (rs *RemoteStorage) EnforceSessionLimit(_ context.Context, _ uint, _ int) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("EnforceSessionLimit")
 }
 
 func (rs *RemoteStorage) TouchSession(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
-	return nil // best-effort; no-op on remote storage
+	return remoteUnsupported("TouchSession")
 }
 
 func (rs *RemoteStorage) CreatePersonalAccessToken(_ context.Context, _ *models.PersonalAccessToken) (*models.PersonalAccessToken, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("CreatePersonalAccessToken")
 }
 
 func (rs *RemoteStorage) ListPersonalAccessTokensByUser(_ context.Context, _ uint) ([]*models.PersonalAccessToken, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("ListPersonalAccessTokensByUser")
 }
 
 func (rs *RemoteStorage) ListActivePersonalAccessTokens(_ context.Context) ([]*models.PersonalAccessToken, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("ListActivePersonalAccessTokens")
 }
 
 func (rs *RemoteStorage) GetPersonalAccessTokenByID(_ context.Context, _ uint) (*models.PersonalAccessToken, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("GetPersonalAccessTokenByID")
 }
 
 func (rs *RemoteStorage) GetPersonalAccessTokenByHash(_ context.Context, _ string) (*models.PersonalAccessToken, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("GetPersonalAccessTokenByHash")
 }
 
 func (rs *RemoteStorage) RevokePersonalAccessToken(_ context.Context, _ uint) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("RevokePersonalAccessToken")
 }
 
 // revokeAllPersonalAccessTokensForUserResponse mirrors the {"hashes":[...]}
@@ -212,15 +211,15 @@ func (rs *RemoteStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Contex
 }
 
 func (rs *RemoteStorage) TouchPersonalAccessToken(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
-	return nil // best-effort; no-op on remote storage
+	return remoteUnsupported("TouchPersonalAccessToken")
 }
 
 func (rs *RemoteStorage) ListExpiredPATsByUser(_ context.Context, _ uint, _ time.Time) ([]*models.PersonalAccessToken, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("ListExpiredPATsByUser")
 }
 
 func (rs *RemoteStorage) BulkRevokeExpiredPATsByUser(_ context.Context, _ uint, _ time.Time) ([]string, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("BulkRevokeExpiredPATsByUser")
 }
 
 // Setup Token Management (ADR-028, #510).

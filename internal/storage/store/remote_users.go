@@ -425,7 +425,7 @@ func (rs *RemoteStorage) UpdateUserIfActiveStateMatches(ctx context.Context, use
 // UpdateLastLogin is not available in remote mode — last_login_at is stamped
 // server-side inside the login handler, which always runs against LocalStorage.
 func (rs *RemoteStorage) UpdateLastLogin(_ context.Context, _ uint, _ time.Time) error {
-	return fmt.Errorf("UpdateLastLogin not available in remote mode")
+	return remoteUnsupported("UpdateLastLogin")
 }
 
 // SetAccountState always hard-fails: account_state has no field in the wire format
@@ -437,8 +437,7 @@ func (rs *RemoteStorage) UpdateLastLogin(_ context.Context, _ uint, _ time.Time)
 // UpdateSCIMUser (SCIM deprovision/reactivate) must see a hard failure, not a false
 // "success" that leaves the account's login-blocking state unchanged.
 func (rs *RemoteStorage) SetAccountState(_ context.Context, _ uint, _ string, _ time.Time) error {
-	return fmt.Errorf("account_state cannot be persisted through remote storage: the "+
-		"upstream PUT /api/v1/users/{id} endpoint does not accept this field: %w", ErrRemoteUnsupported)
+	return remoteUnsupported("SetAccountState")
 }
 
 // SetPasswordHash always hard-fails: password_hash is tagged json:"-" on models.User
@@ -450,8 +449,7 @@ func (rs *RemoteStorage) SetAccountState(_ context.Context, _ uint, _ string, _ 
 // setup-token consume flow) must see a hard failure, not a false "success" that leaves
 // the stored password hash unchanged.
 func (rs *RemoteStorage) SetPasswordHash(_ context.Context, _ uint, _ string, _ time.Time) error {
-	return fmt.Errorf("password_hash cannot be persisted through remote storage: the "+
-		"upstream PUT /api/v1/users/{id} endpoint does not accept this field: %w", ErrRemoteUnsupported)
+	return remoteUnsupported("SetPasswordHash")
 }
 
 // UpdateLoginLockoutState used to proxy onto PUT
@@ -460,7 +458,7 @@ func (rs *RemoteStorage) SetPasswordHash(_ context.Context, _ uint, _ string, _ 
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) UpdateLoginLockoutState(_ context.Context, _ uint, _ int, _, _ *time.Time, _ int) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("UpdateLoginLockoutState")
 }
 
 // DeleteUser deletes a user via remote API.
@@ -1005,13 +1003,13 @@ func (rs *RemoteStorage) ListGroupMembersByGroupIDs(ctx context.Context, groupID
 // recorded and checked there; these are stubs.
 
 func (rs *RemoteStorage) AddPasswordHistory(_ context.Context, _ uint, _ string, _ time.Time) error {
-	return nil
+	return remoteUnsupported("AddPasswordHistory")
 }
 
 func (rs *RemoteStorage) RecentPasswordHashes(_ context.Context, _ uint, _ int) ([]string, error) {
-	return nil, nil
+	return nil, remoteUnsupported("RecentPasswordHashes")
 }
 
 func (rs *RemoteStorage) PrunePasswordHistory(_ context.Context, _ uint, _ int) error {
-	return nil
+	return remoteUnsupported("PrunePasswordHistory")
 }

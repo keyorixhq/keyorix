@@ -520,7 +520,7 @@ func (rs *RemoteStorage) ListConnectRefGrants(ctx context.Context) ([]*models.Co
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) CreateConnectRefGrant(_ context.Context, _ *models.ConnectRefGrant) (*models.ConnectRefGrant, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("CreateConnectRefGrant")
 }
 
 // DeleteConnectRefGrant used to proxy onto DELETE
@@ -529,7 +529,7 @@ func (rs *RemoteStorage) CreateConnectRefGrant(_ context.Context, _ *models.Conn
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("DeleteConnectRefGrant")
 }
 
 // connectRefGrantWire mirrors models.ConnectRefGrant's fields exactly (snake_case) —
@@ -811,7 +811,7 @@ func (rs *RemoteStorage) GetProjectByName(ctx context.Context, name string) (*mo
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) UpdateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("UpdateProject")
 }
 
 // DeleteProject cascade-deletes a project (unconditionally — no empty-project guard)
@@ -858,7 +858,7 @@ func (rs *RemoteStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
-	return 0, 0, errUnsupportedRemote
+	return 0, 0, remoteUnsupported("RestoreProject")
 }
 
 // environmentWire mirrors models.Environment's fields exactly (snake_case) — the
@@ -992,7 +992,7 @@ func (rs *RemoteStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) RestoreEnvironment(_ context.Context, _, _ uint) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("RestoreEnvironment")
 }
 
 // ListProjectMembers lists a project's user members via GET

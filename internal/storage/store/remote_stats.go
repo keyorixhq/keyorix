@@ -26,12 +26,12 @@ func (rs *RemoteStorage) GetStats(_ context.Context) (*storage.StorageStats, err
 
 // SaveStatsSnapshot is a no-op in remote mode — snapshots are managed server-side.
 func (rs *RemoteStorage) SaveStatsSnapshot(_ context.Context, _ *models.StatsSnapshot) error {
-	return nil
+	return remoteUnsupported("SaveStatsSnapshot")
 }
 
 // GetPreviousStatsSnapshot is not supported in remote mode.
 func (rs *RemoteStorage) GetPreviousStatsSnapshot(_ context.Context, _ uint) (*models.StatsSnapshot, error) {
-	return nil, fmt.Errorf("stats snapshots not available in remote mode")
+	return nil, remoteUnsupported("GetPreviousStatsSnapshot")
 }
 
 // SaveDeploymentStatsSnapshot is not supported in remote mode — deployment

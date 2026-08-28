@@ -1266,13 +1266,15 @@ func TestRemoteStorage_ConsumeSSOLoginState(t *testing.T) {
 // GetStats is a permanent stub as of the #1511/G80 deletion pass — see
 // TestRemoteCov_GetStats_Unsupported (remote_coverage_test.go).
 
-func TestRemoteStorage_SaveStatsSnapshot_NoOp(t *testing.T) {
-	// SaveStatsSnapshot is a no-op in remote mode — no HTTP call is made.
+// TestRemoteStorage_SaveStatsSnapshot_Unsupported: G80 158-method
+// classification pass — this used to silently no-op (return nil, claiming
+// success); confirmed DEAD, converted to an explicit stub.
+func TestRemoteStorage_SaveStatsSnapshot_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://localhost:19997"))
 	require.NoError(t, err)
 
 	err = rs.SaveStatsSnapshot(context.Background(), &models.StatsSnapshot{})
-	assert.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 func TestRemoteStorage_GetPreviousStatsSnapshot_Unsupported(t *testing.T) {
@@ -1280,9 +1282,8 @@ func TestRemoteStorage_GetPreviousStatsSnapshot_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	snap, err := rs.GetPreviousStatsSnapshot(context.Background(), 1)
-	assert.Error(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 	assert.Nil(t, snap)
-	assert.Contains(t, err.Error(), "remote mode")
 }
 
 func TestRemoteStorage_HealthCheck(t *testing.T) {
