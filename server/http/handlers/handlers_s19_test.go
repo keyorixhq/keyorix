@@ -19,9 +19,6 @@
 //   - invitations.go:232 ListAccessRequests (bad project id → 400, success → 200)
 //   - legal_hold_proxy.go:85 CreateLegalHoldProxy (bad body → 400, missing reason → 400, success → 200)
 //   - break_glass_proxy.go:142 CreateBreakGlassActivationProxy (bad body → 400, missing fields → 400, success → 200)
-//   - mfa_management_proxy.go:167 ActivateMFASecretProxy (bad user id → 400, success → 200)
-//   - mfa_management_proxy.go:183 DeleteMFAForUserProxy (bad user id → 400, success → 200)
-//   - mfa_management_proxy.go:268 DeleteMFARecoveryCodesProxy (bad user id → 400, success → 200)
 //   - project_memberships_proxy.go:102 CreateMembershipProxy (bad body → 400, missing fields → 400, success → 200)
 package handlers
 
@@ -753,101 +750,6 @@ func TestCreateLegalHoldProxy_RefusesNonAdminActor_S19(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateLegalHoldProxy(w, req)
 	assert.NotEqual(t, http.StatusOK, w.Code, "a caller with no admin-tier role must not be able to place a legal hold via the proxy")
-}
-
-// ── mfa_management_proxy.go: ActivateMFASecretProxy ─────────────────────────
-
-// TestActivateMFASecretProxy_BadUserID_S19 — non-numeric userId → 400.
-func TestActivateMFASecretProxy_BadUserID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets/bad/activate", nil),
-		"userId", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.ActivateMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
-
-// TestActivateMFASecretProxy_Success_S19 — valid userId, no secret present → storage error or 200.
-func TestActivateMFASecretProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets/1/activate", nil),
-		"userId", "1",
-	)
-	w := httptest.NewRecorder()
-	h.ActivateMFASecretProxy(w, req)
-	// May succeed or return 500 (no MFA secret to activate). Either covers the handler path.
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusInternalServerError)
-}
-
-// ── mfa_management_proxy.go: DeleteMFAForUserProxy ───────────────────────────
-
-// TestDeleteMFAForUserProxy_BadUserID_S19 — non-numeric userId → 400.
-func TestDeleteMFAForUserProxy_BadUserID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/mfa/users/bad", nil),
-		"userId", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteMFAForUserProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
-
-// TestDeleteMFAForUserProxy_Success_S19 — valid userId, no MFA to delete → idempotent 200.
-func TestDeleteMFAForUserProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/mfa/users/1", nil),
-		"userId", "1",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteMFAForUserProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
-
-// ── mfa_management_proxy.go: DeleteMFARecoveryCodesProxy ─────────────────────
-
-// TestDeleteMFARecoveryCodesProxy_BadUserID_S19 — non-numeric userId → 400.
-func TestDeleteMFARecoveryCodesProxy_BadUserID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/mfa/recovery-codes/bad", nil),
-		"userId", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
-
-// TestDeleteMFARecoveryCodesProxy_Success_S19 — valid userId, no codes → idempotent 200.
-func TestDeleteMFARecoveryCodesProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewAuthHandler(cs, false)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/mfa/recovery-codes/1", nil),
-		"userId", "1",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
 }
 
 // ── project_memberships_proxy.go: CreateMembershipProxy ─────────────────────

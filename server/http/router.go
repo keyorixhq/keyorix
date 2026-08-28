@@ -1696,22 +1696,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 			// Data-retention/purge-sweep storage-primitive proxy (finding #520). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
-			// PurgeDeletedSecretsBefore/DeleteExpiredRoleGrants/
-			// DeleteExpiredShareRecords/PurgeDeletedUsersBefore/
-			// PurgeDeletedProjectsBefore/PurgeDeletedEnvironmentsBefore/
-			// ListUsersInStateBefore to THIS server's real storage backend, instead of
-			// RemoteStorage's data-retention/purge-sweep methods being
-			// unconditional stubs (every scheduled retention/purge/lifecycle sweep —
-			// ADR-032 soft-delete purge, ADR-033/A.5.33 compliance-record retention, the
-			// JIT access-expiry sweep, ADR-025 stale-account warnings — was completely
+			// DeleteExpiredRoleGrants/DeleteExpiredShareRecords/ListUsersInStateBefore to
+			// THIS server's real storage backend, instead of RemoteStorage's
+			// data-retention/purge-sweep methods being unconditional stubs (the JIT
+			// access-expiry sweep, ADR-025 stale-account warnings — was completely
 			// non-functional under storage.type: remote). Exactly the same pattern as
 			// the SoD-policies/risk-exceptions proxies above: a thin passthrough onto
-			// storage.Storage (no retention POLICY decision — which window applies, the
-			// legal-hold guard, which rows are "in flight" and excluded — is made here;
-			// that stays entirely in the CALLING server's own internal/core.KeyorixCore,
-			// exactly as it does against a local backend), reusing the group's
-			// existing system.write baseline (not a system.read/system.write tier
-			// — see the group header comment above) — no new privilege class. See
+			// storage.Storage (no retention POLICY decision is made here; that stays
+			// entirely in the CALLING server's own internal/core.KeyorixCore, exactly as
+			// it does against a local backend), reusing the group's existing
+			// system.write baseline (not a system.read/system.write tier — see the
+			// group header comment above) — no new privilege class. See
 			// retention_proxy.go's package doc for the atomicity analysis (every method
 			// already resolves in one storage.Storage call server-side, so proxying it
 			// as one HTTP round trip preserves whatever transactional guarantee the local
@@ -1721,13 +1716,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// is destructive except the one List, which also requires system.write
 			// (there is no separate system.read tier in this group) — every
 			// mutating route requires it too.
+			//
+			// PurgeDeletedSecretsBefore/PurgeDeletedUsersBefore/PurgeDeletedProjectsBefore/
+			// PurgeDeletedEnvironmentsBefore routes were DELETED (#1593,
+			// docs/adr-089-mfa-purge-relay-deletion.md) — no caller exists: the
+			// retention scheduler that's the only caller of
+			// internal/core.PurgeExpiredSoftDeletes cannot run against RemoteStorage at
+			// all (validateRemoteStorageNotServer rejects storage.type: remote for ANY
+			// server process, explicitly including a scheduler-only one), and the CLI
+			// (the only process that CAN construct a RemoteStorage-backed core) has no
+			// retention/purge command. See the ADR before reviving any of these four.
 			r.Get("/retention/users/stale", userHandler.ListUsersInStateBeforeProxy)
-			r.Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
 			r.Post("/retention/role-grants/purge-expired", rbacHandler.DeleteExpiredRoleGrantsProxy)
 			r.Post("/retention/share-records/purge-expired", shareHandler.DeleteExpiredShareRecordsProxy)
-			r.Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
-			r.Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
-			r.Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
 
 			// Misc storage-primitive proxies (finding #531 — four independent,
 			// unrelated small gaps grouped by similar low-to-moderate severity;
@@ -1858,37 +1859,34 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 			// MFA enrolment/management storage-primitive proxy (finding #524). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
-			// UpsertMFASecret/GetMFASecret/ActivateMFASecret/DeleteMFAForUser/
-			// SetUserMFAEnabled/CreateMFARecoveryCodes/CountUnusedMFARecoveryCodes/
-			// DeleteMFARecoveryCodes to THIS server's real storage backend, instead of
-			// RemoteStorage's eight MFA storage methods having no server endpoint to call
-			// at all (BeginMFAEnrollment/ActivateMFA/DisableMFA/
-			// RegenerateMFARecoveryCodes/MFARecoveryCodesRemaining — every /auth/mfa/*
-			// route in internal/core/mfa.go except already-active MFA LOGIN, which #509
-			// already proxies separately via RemoteMFAVerifier — was completely
-			// non-functional under storage.type: remote). Exactly the same pattern as the
+			// UpsertMFASecret/GetMFASecret/CountUnusedMFARecoveryCodes to THIS server's
+			// real storage backend, instead of RemoteStorage's MFA storage methods
+			// having no server endpoint to call at all (BeginMFAEnrollment/
+			// MFARecoveryCodesRemaining — every /auth/mfa/* route in
+			// internal/core/mfa.go except already-active MFA LOGIN, which #509 already
+			// proxies separately via RemoteMFAVerifier — was completely non-functional
+			// under storage.type: remote). Exactly the same pattern as the
 			// webauthn/setup-tokens proxies above: a thin passthrough onto
-			// storage.Storage (no MFA POLICY decision — the re-auth gate, recovery-code
-			// generation/hashing, post-activation session invalidation — is made here;
-			// that stays entirely in the CALLING server's own internal/core.KeyorixCore,
-			// exactly as it does against a local backend), reusing the group's
-			// existing system.write baseline (not a system.read/system.write tier
-			// — see the group header comment above) — no new privilege class. See
-			// mfa_management_proxy.go's package doc for the atomicity analysis: every
-			// route here resolves in ONE storage.Storage call server-side (including
-			// DeleteMFAForUserProxy, which inherits local_mfa.go's own internal
-			// secret+recovery-codes transaction unchanged), so proxying each as one HTTP
-			// round trip preserves whatever guarantee the local backend already had — no
-			// new atomic primitive needed, unlike AdvanceWebAuthnCredentialCounterProxy
-			// above. Static sub-paths ("secrets", "recovery-codes/count") are registered
-			// before their sibling {userId} routes.
+			// storage.Storage (no MFA POLICY decision is made here; that stays entirely
+			// in the CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the group's existing system.write
+			// baseline (not a system.read/system.write tier — see the group header
+			// comment above) — no new privilege class. See mfa_management_proxy.go's
+			// package doc for the atomicity analysis. Static sub-paths ("secrets",
+			// "recovery-codes/count") are registered before their sibling {userId}
+			// routes.
+			//
+			// ActivateMFASecret/DeleteMFAForUser/SetUserMFAEnabled/
+			// CreateMFARecoveryCodes/DeleteMFARecoveryCodes routes were DELETED (#1593,
+			// docs/adr-089-mfa-purge-relay-deletion.md) — no caller exists: the
+			// server-side path (/auth/mfa/activate, /auth/mfa/disable) that's the only
+			// caller of these five storage methods cannot run against RemoteStorage at
+			// all (validateRemoteStorageNotServer rejects storage.type: remote for ANY
+			// server process unconditionally), and the CLI (the only process that CAN
+			// construct a RemoteStorage-backed core) has no MFA command. See the ADR
+			// before reviving any of these five.
 			r.Get("/mfa/secrets", authHandler.GetMFASecretProxy)
-			r.Post("/mfa/secrets/{userId}/activate", authHandler.ActivateMFASecretProxy)
-			r.Delete("/mfa/users/{userId}", authHandler.DeleteMFAForUserProxy)
-			r.Put("/mfa/users/{userId}/mfa-enabled", authHandler.SetUserMFAEnabledProxy)
 			r.Get("/mfa/recovery-codes/count", authHandler.CountUnusedMFARecoveryCodesProxy)
-			r.Post("/mfa/recovery-codes", authHandler.CreateMFARecoveryCodesProxy)
-			r.Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
 			r.Post("/mfa/totp-step-used", authHandler.MarkTOTPStepUsedProxy)
 
 			// MFAStepUpGrant proxy — lets a RemoteStorage spoke node persist and

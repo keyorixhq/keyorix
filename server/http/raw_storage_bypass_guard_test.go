@@ -1251,62 +1251,22 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"DeleteSessionsForUserExceptProxy entries below (this handler itself still makes no PAT/session call; the " +
 		"fix lives in the two new routes core.UpdateUser's deactivating branch now succeeds against, and in the " +
 		"RemoteStorage client methods themselves).",
-	// G80 Wave 2 (tx.X() blind-spot fix, ADR-088): these 9 were invisible to
-	// exportedCoreStorageWrappers until it learned to see a storage call made
-	// through a `tx` handle inside a WithTransaction closure -- ActivateMFA/
-	// DisableMFA/RegenerateMFARecoveryCodes (internal/core/mfa.go) all call
-	// their storage primitives via `tx`, not `c.storage` directly. REAL,
-	// same architectural gap as IngestAuditEventProxy above (deferred, Wave
-	// 4): both proxy files' own doc comments state "no POLICY decision is
-	// made here; that stays entirely in the CALLING server's own
-	// internal/core.KeyorixCore" -- an assumption that the only caller is a
-	// genuine spoke relaying an operation it already authorized locally.
-	// Nothing at the hub distinguishes that from a bare system.write holder
-	// calling the route directly. Filed as #1593 (account-security-relevant,
-	// not just audit-trail integrity like the IngestAuditEventProxy
-	// precedent): a system.write holder can disable MFA on any user
-	// (SetUserMFAEnabledProxy(enabled:false) + DeleteMFAForUserProxy), or
-	// replace an already-MFA'd account's TOTP secret/recovery codes with
-	// attacker-chosen values (ActivateMFASecretProxy +
-	// CreateMFARecoveryCodesProxy), without ever proving knowledge of that
-	// user's password or a current TOTP code -- the exact re-proof
-	// requireReauth (mfa.go) exists to require.
-	"ActivateMFASecretProxy": "REAL, human/machine-reachable, same gap as IngestAuditEventProxy (deferred, Wave " +
-		"4): bypasses requireReauth -- see the comment immediately above this entry for the full reasoning. " +
-		"Filed as #1593.",
-	"SetUserMFAEnabledProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. Filed as " +
-		"#1593.",
-	"CreateMFARecoveryCodesProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. " +
-		"Filed as #1593.",
-	"DeleteMFAForUserProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. Filed as " +
-		"#1593.",
-	"DeleteMFARecoveryCodesProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. " +
-		"Filed as #1593.",
-	// G80 Wave 2 (tx.X() blind-spot fix, ADR-088): PurgeExpiredSoftDeletes
-	// (internal/core/purge.go) checks tx.GetActiveLegalHold(ctx) FIRST and
-	// refuses to purge if a deployment-wide legal hold is active (ISO
-	// A.5.34), inside the SAME transaction as the four deletes below --
-	// invisible to the guard for the same tx.X() reason as the MFA family
-	// above. retention_proxy.go's own package doc already names the gap it
-	// accepts: "NO retention POLICY decision (... whether a legal hold
-	// blocks the sweep ...) is made here." REAL, same architectural gap as
-	// IngestAuditEventProxy/the MFA family above (deferred, Wave 4): a
-	// system.write holder can hard-delete soft-deleted users/projects/
-	// environments/secrets (secrets cascading to their ciphertext-bearing
-	// version rows) while a legal hold is active, bypassing the specific
-	// control PurgeExpiredSoftDeletes exists to enforce -- permanent,
-	// irreversible loss of records a legal hold requires be preserved.
-	// Filed as #1593 (same issue as the MFA family -- one root cause, two
-	// families).
-	"PurgeDeletedUsersBeforeProxy": "REAL, human/machine-reachable, same gap as IngestAuditEventProxy (deferred, " +
-		"Wave 4): bypasses PurgeExpiredSoftDeletes' legal-hold check -- see the comment immediately above this " +
-		"entry for the full reasoning. Filed as #1593.",
-	"PurgeDeletedProjectsBeforeProxy": "REAL: same gap, see the comment above the PurgeDeletedUsersBeforeProxy " +
-		"entry. Filed as #1593.",
-	"PurgeDeletedEnvironmentsBeforeProxy": "REAL: same gap, see the comment above the " +
-		"PurgeDeletedUsersBeforeProxy entry. Filed as #1593.",
-	"PurgeDeletedSecretsBeforeProxy": "REAL: same gap, see the comment above the PurgeDeletedUsersBeforeProxy " +
-		"entry. Filed as #1593.",
+	// G80 Wave 2 (tx.X() blind-spot fix, ADR-088): the 9 MFA-management
+	// (ActivateMFASecretProxy/SetUserMFAEnabledProxy/CreateMFARecoveryCodesProxy/
+	// DeleteMFAForUserProxy/DeleteMFARecoveryCodesProxy) and retention-purge
+	// (PurgeDeletedUsersBeforeProxy/PurgeDeletedProjectsBeforeProxy/
+	// PurgeDeletedEnvironmentsBeforeProxy/PurgeDeletedSecretsBeforeProxy)
+	// entries that were here were DELETED (#1593,
+	// docs/adr-089-mfa-purge-relay-deletion.md), not fixed: a liveness check
+	// found no caller could ever legitimately reach any of the 9 (the
+	// server-side paths that are the only callers of the corresponding
+	// internal/core methods cannot run against RemoteStorage at all --
+	// validateRemoteStorageNotServer rejects storage.type: remote for ANY
+	// server process unconditionally -- and the CLI, the only process that
+	// CAN construct a RemoteStorage-backed core, has no MFA or
+	// retention/purge command). See the ADR for why this took three
+	// liveness passes to get right, and what reviving any of these 9 would
+	// require before it's safe to.
 	// G80 Wave 2 (blind-spot-2 fix, ADR-088): these 3 were invisible for the
 	// OPPOSITE reason from the 9 above -- not a missed wrapper, but the
 	// former "no wrapper -> not considered" inference. All three are named

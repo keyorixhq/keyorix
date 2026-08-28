@@ -187,25 +187,18 @@ func TestRemoteStorage_RestoreSecret(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// --- Retention / purge proxies ---
-
-func TestRemoteStorage_PurgeDeletedSecretsBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/retention/secrets/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"purged": 3}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	purged, err := rs.PurgeDeletedSecretsBefore(context.Background(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(3), purged)
-}
-
 // --- Server-side-only operations (unsupported in remote mode) ---
+
+// TestRemoteStorage_PurgeDeletedSecretsBefore_Unsupported:
+// PurgeDeletedSecretsBeforeProxy was deleted (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md) -- no live caller.
+func TestRemoteStorage_PurgeDeletedSecretsBefore_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	require.NoError(t, err)
+
+	_, err = rs.PurgeDeletedSecretsBefore(context.Background(), time.Now())
+	assert.Error(t, err)
+}
 
 func TestRemoteStorage_ListProjectSecretsForDrift_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))

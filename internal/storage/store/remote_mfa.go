@@ -14,24 +14,31 @@
 // the storage primitives alone would still leave that whole check unreachable
 // on a spoke node.
 //
-// UpsertMFASecret/GetMFASecret/ActivateMFASecret/DeleteMFAForUser/
-// SetUserMFAEnabled/CreateMFARecoveryCodes/CountUnusedMFARecoveryCodes/
-// DeleteMFARecoveryCodes below are a DIFFERENT, CRUD-shaped problem
-// (finding #524): enrolment (BeginMFAEnrollment/ActivateMFA) and management
+// UpsertMFASecret/GetMFASecret/CountUnusedMFARecoveryCodes below are a
+// DIFFERENT, CRUD-shaped problem (finding #524): enrolment
+// (BeginMFAEnrollment/ActivateMFA) and management
 // (DisableMFA/RegenerateMFARecoveryCodes/MFARecoveryCodesRemaining,
 // internal/core/mfa.go) ALWAYS run on whichever server terminates the
 // end-user's /auth/mfa/* request — never delegated to a RemoteMFAVerifier —
-// so before this fix these eight methods being unconditional stubs made MFA
+// so before this fix these methods being unconditional stubs made MFA
 // enrolment and management 100% broken under storage.type: remote (login
 // itself, once already-active, was unaffected: it goes through the
-// RemotMFAVerifier proxy above). These are thin passthroughs onto new routes
+// RemotMFAVerifier proxy above). These are thin passthroughs onto routes
 // under /api/v1/system/mfa (server/http/handlers/mfa_management_proxy.go),
 // gated on the SAME system.read/system.write RBAC tier every other
 // RemoteStorage proxy call already uses — no new privilege class. No MFA
-// POLICY decision (re-auth gate, single-active-method enforcement, recovery
-// code generation/hashing, session invalidation on activation) is made in
-// these routes; that stays entirely in the CALLING server's own
-// internal/core.KeyorixCore, exactly as it does against a local backend.
+// POLICY decision is made in these routes; that stays entirely in the
+// CALLING server's own internal/core.KeyorixCore, exactly as it does against
+// a local backend.
+//
+// ActivateMFASecret/DeleteMFAForUser/SetUserMFAEnabled/
+// CreateMFARecoveryCodes/DeleteMFARecoveryCodes were DELETED (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md): the WithTransaction tx.X()
+// blind-spot fix (ADR-088) made these five raw storage calls visible as
+// bypassing internal/core.mfa.go's requireReauth step-up gate for the first
+// time, but a liveness check found no caller could ever legitimately reach
+// them — see the ADR for the full reasoning, and for what reviving these
+// five would require. Now return remoteUnsupported, same as UpsertMFASecret.
 //
 // Sensitive-data boundary (investigated, not assumed — mirrors
 // remote_dynamic.go's identical AdminDSN/Credential boundary exactly):
@@ -45,23 +52,6 @@
 // refuses outright when at-rest encryption is disabled — see
 // models.MFASecret's own doc — so this ciphertext is never actually plaintext
 // even in that degraded case.)
-//
-// Atomicity (checked against local_mfa.go, not assumed): every one of these
-// eight methods is ALREADY a single storage.Storage call in
-// internal/core/mfa.go — none of ActivateMFA/DisableMFA/
-// RegenerateMFARecoveryCodes wraps its several storage calls in
-// core.storage.WithTransaction (RemoteStorage.WithTransaction is a no-op
-// passthrough anyway, remote_transaction.go), and DeleteMFAForUser's OWN
-// internal secret+recovery-codes delete already happens inside ONE local GORM
-// transaction wholly inside local_mfa.go, not split across two core-level
-// calls. So proxying each of these eight as ONE HTTP round trip to the
-// upstream (which still executes local_mfa.go's own UPDATE/transaction
-// server-side) preserves whatever atomicity the local backend already had —
-// unlike AdvanceWebAuthnCredentialCounter (#517) or
-// CreateSecretDependencyExclusive (#519), no NEW combined atomic primitive is
-// needed here, because no caller here composes a Lock-then-Update (or
-// check-then-act) pair across two SEPARATE storage calls that this HTTP hop
-// could reopen a race in.
 //
 // GetActiveMFAChallenge and ConsumeMFAChallenge below are DIFFERENT again:
 // they are ordinary storage.Storage passthroughs (#522), not part of the
@@ -152,20 +142,14 @@ func (rs *RemoteStorage) GetMFASecret(ctx context.Context, userID uint) (*models
 	return decodeMFASecretResponse(resp.Data)
 }
 
-// ActivateMFASecret marks the user's pending TOTP secret activated via POST
-// /api/v1/system/mfa/secrets/{userId}/activate — an unconditional single-column
-// UPDATE, matching LocalStorage's own semantics exactly (no WHERE-activated
-// guard locally either; ActivateMFA's password/TOTP re-auth is the only gate).
-func (rs *RemoteStorage) ActivateMFASecret(ctx context.Context, userID uint) error {
-	path := fmt.Sprintf("/api/v1/system/mfa/secrets/%d/activate", userID)
-	resp, err := rs.client.Post(ctx, path, nil)
-	if err != nil {
-		return fmt.Errorf("failed to activate MFA secret: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("activate MFA secret failed: %s", resp.Error.Error())
-	}
-	return nil
+// ActivateMFASecret used to proxy onto POST
+// /api/v1/system/mfa/secrets/{userId}/activate (ActivateMFASecretProxy),
+// deleted (#1593, docs/adr-089-mfa-purge-relay-deletion.md) — no live caller;
+// see this file's package doc. Returns errUnsupportedRemote like every other
+// known-unsupported RemoteStorage operation (see remote_auth.go's package
+// doc).
+func (rs *RemoteStorage) ActivateMFASecret(_ context.Context, _ uint) error {
+	return remoteUnsupported("ActivateMFASecret")
 }
 
 // markTOTPStepUsedWire mirrors MarkTOTPStepUsedProxy's request body.
@@ -197,64 +181,28 @@ func (rs *RemoteStorage) MarkTOTPStepUsed(ctx context.Context, userID uint, step
 	return result.Fresh, nil
 }
 
-// DeleteMFAForUser clears a user's secret and all recovery codes via DELETE
-// /api/v1/system/mfa/users/{userId} — ONE HTTP round trip onto the upstream's
-// own DeleteMFAForUser, so this inherits local_mfa.go's internal
-// secret-then-codes GORM transaction unchanged; there is no separate
-// "delete secret, then delete codes" sequence here to reopen a partial-delete
-// gap across the HTTP hop.
-func (rs *RemoteStorage) DeleteMFAForUser(ctx context.Context, userID uint) error {
-	path := fmt.Sprintf("/api/v1/system/mfa/users/%d", userID)
-	resp, err := rs.client.Delete(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to delete MFA for user: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("delete MFA for user failed: %s", resp.Error.Error())
-	}
-	return nil
+// DeleteMFAForUser used to proxy onto DELETE /api/v1/system/mfa/users/{userId}
+// (DeleteMFAForUserProxy), deleted (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md) — no live caller; see this file's
+// package doc.
+func (rs *RemoteStorage) DeleteMFAForUser(_ context.Context, _ uint) error {
+	return remoteUnsupported("DeleteMFAForUser")
 }
 
-// setUserMFAEnabledWire is the wire body for SetUserMFAEnabledProxy, mirroring
-// setUserWebAuthnEnabledWire exactly.
-type setUserMFAEnabledWire struct {
-	Enabled bool `json:"enabled"`
+// SetUserMFAEnabled used to proxy onto PUT
+// /api/v1/system/mfa/users/{userId}/mfa-enabled (SetUserMFAEnabledProxy),
+// deleted (#1593, docs/adr-089-mfa-purge-relay-deletion.md) — no live caller;
+// see this file's package doc.
+func (rs *RemoteStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error {
+	return remoteUnsupported("SetUserMFAEnabled")
 }
 
-// SetUserMFAEnabled flips the user's MFAEnabled flag via PUT
-// /api/v1/system/mfa/users/{userId}/mfa-enabled.
-func (rs *RemoteStorage) SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error {
-	path := fmt.Sprintf("/api/v1/system/mfa/users/%d/mfa-enabled", userID)
-	resp, err := rs.client.Put(ctx, path, setUserMFAEnabledWire{Enabled: enabled})
-	if err != nil {
-		return fmt.Errorf("failed to set MFA enabled: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("set MFA enabled failed: %s", resp.Error.Error())
-	}
-	return nil
-}
-
-// createMFARecoveryCodesWire is the wire body for CreateMFARecoveryCodesProxy.
-type createMFARecoveryCodesWire struct {
-	CodeHashes []string `json:"code_hashes"`
-}
-
-// CreateMFARecoveryCodes bulk-inserts the user's hashed recovery codes via
-// POST /api/v1/system/mfa/recovery-codes. The plaintext codes themselves never
-// cross the wire — ActivateMFA/RegenerateMFARecoveryCodes
-// (internal/core/mfa.go) hash them locally first, exactly as they do against a
-// local backend.
-func (rs *RemoteStorage) CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error {
-	path := fmt.Sprintf("/api/v1/system/mfa/recovery-codes?user_id=%d", userID)
-	resp, err := rs.client.Post(ctx, path, createMFARecoveryCodesWire{CodeHashes: codeHashes})
-	if err != nil {
-		return fmt.Errorf("failed to store MFA recovery codes: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("store MFA recovery codes failed: %s", resp.Error.Error())
-	}
-	return nil
+// CreateMFARecoveryCodes used to proxy onto POST
+// /api/v1/system/mfa/recovery-codes (CreateMFARecoveryCodesProxy), deleted
+// (#1593, docs/adr-089-mfa-purge-relay-deletion.md) — no live caller; see
+// this file's package doc.
+func (rs *RemoteStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []string) error {
+	return remoteUnsupported("CreateMFARecoveryCodes")
 }
 
 func (rs *RemoteStorage) ConsumeMFARecoveryCode(_ context.Context, _ uint, _ string, _ time.Time) (bool, error) {
@@ -283,19 +231,12 @@ func (rs *RemoteStorage) CountUnusedMFARecoveryCodes(ctx context.Context, userID
 	return result.Count, nil
 }
 
-// DeleteMFARecoveryCodes removes ALL of a user's recovery codes via DELETE
-// /api/v1/system/mfa/recovery-codes/{userId} — the regenerate flow's "clear old
-// codes" half.
-func (rs *RemoteStorage) DeleteMFARecoveryCodes(ctx context.Context, userID uint) error {
-	path := fmt.Sprintf("/api/v1/system/mfa/recovery-codes/%d", userID)
-	resp, err := rs.client.Delete(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to delete MFA recovery codes: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("delete MFA recovery codes failed: %s", resp.Error.Error())
-	}
-	return nil
+// DeleteMFARecoveryCodes used to proxy onto DELETE
+// /api/v1/system/mfa/recovery-codes/{userId} (DeleteMFARecoveryCodesProxy),
+// deleted (#1593, docs/adr-089-mfa-purge-relay-deletion.md) — no live caller;
+// see this file's package doc.
+func (rs *RemoteStorage) DeleteMFARecoveryCodes(_ context.Context, _ uint) error {
+	return remoteUnsupported("DeleteMFARecoveryCodes")
 }
 
 func (rs *RemoteStorage) CreateMFAChallenge(_ context.Context, _ *models.MFAChallenge) error {

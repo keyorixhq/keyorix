@@ -405,72 +405,6 @@ func TestGetMFASecretProxy_NotFound_S13(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestActivateMFASecretProxy_BadIDParam_S13 — invalid userId path param → 400.
-func TestActivateMFASecretProxy_BadIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets/bad/activate", nil)
-	r = withChiParams(r, map[string]string{"userId": "bad"})
-	w := httptest.NewRecorder()
-	h.ActivateMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestDeleteMFAForUserProxy_BadIDParam_S13 — invalid userId path param → 400.
-func TestDeleteMFAForUserProxy_BadIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete, "/api/v1/system/mfa/users/bad", nil)
-	r = withChiParams(r, map[string]string{"userId": "bad"})
-	w := httptest.NewRecorder()
-	h.DeleteMFAForUserProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestSetUserMFAEnabledProxy_BadIDParam_S13 — invalid userId path param → 400.
-func TestSetUserMFAEnabledProxy_BadIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/system/mfa/users/bad/mfa-enabled", nil)
-	r = withChiParams(r, map[string]string{"userId": "bad"})
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestSetUserMFAEnabledProxy_BadJSON_S13 — valid id but malformed body → 400.
-func TestSetUserMFAEnabledProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/system/mfa/users/1/mfa-enabled",
-		bytes.NewBufferString("not-json"))
-	r = withChiParams(r, map[string]string{"userId": "1"})
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateMFARecoveryCodesProxy_MissingUserID_S13 — missing user_id → 400.
-func TestCreateMFARecoveryCodesProxy_MissingUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/recovery-codes", nil)
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestCreateMFARecoveryCodesProxy_BadJSON_S13 — valid user_id but bad JSON → 400.
-func TestCreateMFARecoveryCodesProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/recovery-codes?user_id=1",
-		bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // TestCountUnusedMFARecoveryCodesProxy_MissingUserID_S13 — missing user_id → 400.
 func TestCountUnusedMFARecoveryCodesProxy_MissingUserID_S13(t *testing.T) {
 	cs := freshCoreS12(t)
@@ -488,17 +422,6 @@ func TestCountUnusedMFARecoveryCodesProxy_InvalidUserID_S13(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/mfa/recovery-codes/count?user_id=abc", nil)
 	w := httptest.NewRecorder()
 	h.CountUnusedMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestDeleteMFARecoveryCodesProxy_BadIDParam_S13 — invalid userId path param → 400.
-func TestDeleteMFARecoveryCodesProxy_BadIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete, "/api/v1/system/mfa/recovery-codes/bad", nil)
-	r = withChiParams(r, map[string]string{"userId": "bad"})
-	w := httptest.NewRecorder()
-	h.DeleteMFARecoveryCodesProxy(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

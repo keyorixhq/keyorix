@@ -172,24 +172,6 @@ func TestCreateMembershipProxy_DBError_S30(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestPurgeDeletedProjectsBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.PurgeDeletedProjectsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestPurgeDeletedEnvironmentsBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.PurgeDeletedEnvironmentsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── DashboardHandler ──────────────────────────────────────────────────────────
 
 func TestCreateLegalHoldProxy_DBError_S30(t *testing.T) {
@@ -283,16 +265,6 @@ func TestRunExpiryReminders_DBError_S30(t *testing.T) {
 
 // ── SecretHandler ─────────────────────────────────────────────────────────────
 
-func TestPurgeDeletedSecretsBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h, err := NewSecretHandler(freshCoreBrokenS30(t))
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.PurgeDeletedSecretsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── DynamicSecretHandler ──────────────────────────────────────────────────────
 
 func TestCountActiveLeasesProxy_DBError_S30(t *testing.T) {
@@ -341,16 +313,6 @@ func TestDeleteExpiredShareRecordsProxy_DBError_S30(t *testing.T) {
 }
 
 // ── UserHandler ───────────────────────────────────────────────────────────────
-
-func TestPurgeDeletedUsersBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h, err := NewUserHandler(freshCoreBrokenS30(t))
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.PurgeDeletedUsersBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 func TestListUsersInStateBeforeProxy_DBError_S30(t *testing.T) {
 	t.Parallel()

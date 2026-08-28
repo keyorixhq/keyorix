@@ -245,64 +245,6 @@ func TestFinishWebAuthnPasswordlessLogin_RateLimited_S13B(t *testing.T) {
 
 // ── mfa_management_proxy.go: success paths ───────────────────────────────────
 
-// TestActivateMFASecretProxy_Success_S13B — upsert a secret first, then
-// activate it → 200.
-func TestActivateMFASecretProxy_Success_S13B(t *testing.T) {
-	h, _, db := setupMFAReauthTest(t)
-	// Seed an MFA secret directly.
-	require.NoError(t, db.Create(&models.MFASecret{
-		UserID:    1,
-		SecretEnc: []byte("enc"),
-	}).Error)
-
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/secrets/1/activate", nil)
-	r = withChiParams(r, map[string]string{"userId": "1"})
-	w := httptest.NewRecorder()
-	h.ActivateMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestDeleteMFAForUserProxy_Success_S13B — calls DeleteMFAForUser on a user
-// with no MFA data; storage handles missing-data gracefully (no error).
-func TestDeleteMFAForUserProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete, "/api/v1/system/mfa/users/42", nil)
-	r = withChiParams(r, map[string]string{"userId": "42"})
-	w := httptest.NewRecorder()
-	h.DeleteMFAForUserProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestSetUserMFAEnabledProxy_Success_S13B — valid userId + valid body →
-// SetUserMFAEnabled succeeds → 200.
-func TestSetUserMFAEnabledProxy_Success_S13B(t *testing.T) {
-	h, _, db := setupMFAReauthTest(t)
-	// user 1 already seeded by setupMFAReauthTest.
-	_ = db
-	body, _ := json.Marshal(map[string]bool{"enabled": true})
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/system/mfa/users/1/mfa-enabled",
-		bytes.NewReader(body))
-	r = withChiParams(r, map[string]string{"userId": "1"})
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestCreateMFARecoveryCodesProxy_Success_S13B — valid user_id and empty
-// code_hashes list → CreateMFARecoveryCodes succeeds → 200.
-func TestCreateMFARecoveryCodesProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{"code_hashes": []string{}})
-	r := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/mfa/recovery-codes?user_id=1",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // TestCountUnusedMFARecoveryCodesProxy_Success_S13B — valid user_id, no
 // recovery codes → count = 0 → 200.
 func TestCountUnusedMFARecoveryCodesProxy_Success_S13B(t *testing.T) {
@@ -312,19 +254,6 @@ func TestCountUnusedMFARecoveryCodesProxy_Success_S13B(t *testing.T) {
 		"/api/v1/system/mfa/recovery-codes/count?user_id=1", nil)
 	w := httptest.NewRecorder()
 	h.CountUnusedMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestDeleteMFARecoveryCodesProxy_Success_S13B — valid userId, no codes to
-// delete → storage returns nil → 200.
-func TestDeleteMFARecoveryCodesProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/system/mfa/recovery-codes/1", nil)
-	r = withChiParams(r, map[string]string{"userId": "1"})
-	w := httptest.NewRecorder()
-	h.DeleteMFARecoveryCodesProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

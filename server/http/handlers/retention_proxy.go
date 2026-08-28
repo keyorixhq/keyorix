@@ -1,13 +1,28 @@
 // retention_proxy.go — server-side endpoints backing RemoteStorage's
 // data-retention/purge-sweep storage primitives (finding #520):
-// PurgeDeletedSecretsBefore (remote_secrets.go); DeleteExpiredRoleGrants
-// (remote_rbac.go); DeleteExpiredShareRecords (remote_sharing.go);
-// PurgeDeletedUsersBefore/PurgeDeletedProjectsBefore/
-// PurgeDeletedEnvironmentsBefore/ListUsersInStateBefore (remote_users.go).
+// DeleteExpiredRoleGrants (remote_rbac.go); DeleteExpiredShareRecords
+// (remote_sharing.go); ListUsersInStateBefore (remote_users.go).
 // (DeleteAnomalyAlertsBeforeProxy/DeleteClosedAccessReviewsBeforeProxy/
 // DeleteExpiredBreakGlassBeforeProxy/DeleteResolvedAccessRequestsBeforeProxy
 // were deleted -- G80 liveness sweep found no live caller for any of them; see
 // docs/g80-remediation-notes.md.)
+//
+// PurgeDeletedSecretsBeforeProxy/PurgeDeletedProjectsBeforeProxy/
+// PurgeDeletedEnvironmentsBeforeProxy/PurgeDeletedUsersBeforeProxy (and
+// refuseIfLegalHoldActive, their only caller) were DELETED (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md): the WithTransaction tx.X()
+// blind-spot fix (ADR-088) made these four raw storage calls visible as
+// bypassing internal/core.purge.go's legal-hold check for the first time,
+// but a liveness check found no caller could ever legitimately reach them —
+// the retention scheduler (server/main.go's startSchedulers, the only
+// caller of internal/core.PurgeExpiredSoftDeletes) cannot run against
+// RemoteStorage at all (validateRemoteStorageNotServer,
+// internal/config/config.go, rejects storage.type: remote for ANY server
+// process unconditionally, EXPLICITLY including "a scheduler-only
+// process"), and the CLI (the only process that CAN construct a
+// RemoteStorage-backed core) has no retention/purge command. See the ADR
+// for why this is a deletion, not a fix, and what reviving these four
+// would require.
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // its scheduled retention/purge/lifecycle-sweep storage calls to whichever
@@ -25,27 +40,26 @@
 // hold blocks the sweep, which rows are "in flight" and therefore excluded) is
 // made here; all of that stays entirely in the CALLING server's own
 // internal/core.KeyorixCore, exactly as it does against a local backend. There is
-// no competing human-facing HTTP surface for any of these eleven methods to avoid
+// no competing human-facing HTTP surface for any of these three methods to avoid
 // (unlike groups/machine-identities, these are purely internal scheduler-driven
 // primitives), so — unlike several proxies before this one — there is no
 // "don't reuse the human-facing route" caveat to document.
 //
-// Atomicity note: every one of these eleven local (GORM) implementations already
+// Atomicity note: every one of these three local (GORM) implementations already
 // resolves its "gather eligible rows, then delete/return them" work in ONE
 // storage.Storage method call, either as a single SQL statement (e.g.
-// PurgeDeletedEnvironmentsBefore, DeleteAnomalyAlertsBefore, ListUsersInStateBefore)
-// or as several statements wrapped in the LOCAL backend's own db.Transaction
-// (e.g. PurgeDeletedSecretsBefore's node+version+edge cascade,
-// DeleteExpiredRoleGrants' gather-then-delete-then-report). Proxying each as a
-// single HTTP round trip preserves that guarantee exactly: the transaction (where
-// one exists) runs entirely inside the upstream server's own process, on its own
-// database, in response to this ONE request — RemoteStorage.WithTransaction being
-// a no-op passthrough (internal/storage/store/remote_transaction.go) is irrelevant
-// here, because none of these eleven methods ever needed to SPAN multiple
+// ListUsersInStateBefore) or as several statements wrapped in the LOCAL
+// backend's own db.Transaction (e.g. DeleteExpiredRoleGrants'
+// gather-then-delete-then-report). Proxying each as a single HTTP round trip
+// preserves that guarantee exactly: the transaction (where one exists) runs
+// entirely inside the upstream server's own process, on its own database, in
+// response to this ONE request — RemoteStorage.WithTransaction being a no-op
+// passthrough (internal/storage/store/remote_transaction.go) is irrelevant
+// here, because none of these three methods ever needed to SPAN multiple
 // RemoteStorage calls inside one client-side transaction in the first place (unlike
 // WebAuthn's counter race, Machine Identities' state-transition invariant, or
 // Secret Dependencies' cycle check, which each combined several separate storage
-// calls under one lock). No new atomic primitive was needed for any of the eleven.
+// calls under one lock). No new atomic primitive was needed for any of the three.
 //
 // Two methods return the deleted rows themselves, not just a count, because their
 // CALLING core function writes one audit-log entry per removed row —
@@ -84,6 +98,15 @@
 // the sweep (used .Local() against UserRole/GroupRole.ExpiresAt, which has been
 // UTC-hooked since before this sweep started — no existing test's cutoff was
 // tight enough to catch it).
+//
+// #1593: the four deleted_at-comparing handlers (PurgeDeletedSecretsBeforeProxy/
+// PurgeDeletedUsersBeforeProxy/PurgeDeletedProjectsBeforeProxy/
+// PurgeDeletedEnvironmentsBeforeProxy) were the only remaining .Local() callers
+// in this file and are now deleted (see the package doc above) — every call
+// site left below uses .UTC(). decodeRetentionBeforeBody is kept
+// general-purpose (raw, unconverted) rather than narrowed to always-UTC, since
+// narrowing a shared helper is not this deletion's job and a future
+// deleted_at-comparing route would need the dual-path behavior back.
 //
 // Response envelope: like the other proxies, these do NOT use the package's
 // generic sendSuccess/sendError helpers — they construct the exact
@@ -154,99 +177,6 @@ func decodeRetentionBeforeBody(w http.ResponseWriter, r *http.Request) (time.Tim
 		return time.Time{}, false
 	}
 	return body.Before, true
-}
-
-// refuseIfLegalHoldActive is #G52: PurgeExpiredSoftDeletes (internal/core/purge.go)
-// gates its user/project/environment/secret purges behind ONE combined
-// GetActiveLegalHold check (ISO A.5.34 — no destroying potentially
-// litigation-relevant data while a hold is active). The four retention-proxy
-// routes below reach the SAME underlying storage.Storage purge primitives
-// directly, with no core-layer involvement at all, so without this they
-// completely bypass that guard — a storage.type: remote caller holding
-// system.write (the same credential a legitimate RemoteStorage client needs)
-// could purge exactly the data a legal hold exists to protect. Returns true
-// (and has already written the HTTP response) if the caller should stop.
-func refuseIfLegalHoldActive(w http.ResponseWriter, r *http.Request, storage coreStorage.Storage) bool {
-	hold, err := storage.GetActiveLegalHold(r.Context())
-	if err != nil {
-		log.Printf("retention proxy: could not confirm legal-hold status: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", "could not confirm legal-hold status")
-		return true
-	}
-	if hold != nil {
-		writeRemoteAPIError(w, http.StatusConflict, "LEGAL_HOLD_ACTIVE", "refusing to purge: a deployment-wide legal hold is active")
-		return true
-	}
-	return false
-}
-
-// --- SecretHandler: PurgeDeletedSecretsBefore (ADR-032) ---
-
-// PurgeDeletedSecretsBeforeProxy handles POST /api/v1/system/retention/secrets/purge.
-func (h *SecretHandler) PurgeDeletedSecretsBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	before, ok := decodeRetentionBeforeBody(w, r)
-	if !ok {
-		return
-	}
-	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
-		return
-	}
-	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
-	// BeforeSave hook — .Local() to match.
-	n, err := h.coreService.Storage().PurgeDeletedSecretsBefore(r.Context(), before.Local())
-	if err != nil {
-		log.Printf("retention proxy: purge deleted secrets failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"purged": n})
-}
-
-// --- CatalogHandler: projects / environments purges. CatalogHandler already
-// owns the human-facing CRUD for both of these subsystems (catalog.go's
-// Project/Environment CRUD), so it is the natural owner of each subsystem's
-// own retention sweep too. ---
-
-// PurgeDeletedProjectsBeforeProxy handles POST
-// /api/v1/system/retention/projects/purge.
-func (h *CatalogHandler) PurgeDeletedProjectsBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	before, ok := decodeRetentionBeforeBody(w, r)
-	if !ok {
-		return
-	}
-	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
-		return
-	}
-	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
-	// BeforeSave hook — .Local() to match.
-	n, err := h.coreService.Storage().PurgeDeletedProjectsBefore(r.Context(), before.Local())
-	if err != nil {
-		log.Printf("retention proxy: purge deleted projects failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"purged": n})
-}
-
-// PurgeDeletedEnvironmentsBeforeProxy handles POST
-// /api/v1/system/retention/environments/purge.
-func (h *CatalogHandler) PurgeDeletedEnvironmentsBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	before, ok := decodeRetentionBeforeBody(w, r)
-	if !ok {
-		return
-	}
-	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
-		return
-	}
-	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
-	// BeforeSave hook — .Local() to match.
-	n, err := h.coreService.Storage().PurgeDeletedEnvironmentsBefore(r.Context(), before.Local())
-	if err != nil {
-		log.Printf("retention proxy: purge deleted environments failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"purged": n})
 }
 
 // --- RBACHandler: DeleteExpiredRoleGrants (JIT access expiry) ---
@@ -368,26 +298,6 @@ func newUserRetentionProxyWire(u *models.User) userRetentionProxyWire {
 		w.DeletedAt = &t
 	}
 	return w
-}
-
-// PurgeDeletedUsersBeforeProxy handles POST /api/v1/system/retention/users/purge.
-func (h *UserHandler) PurgeDeletedUsersBeforeProxy(w http.ResponseWriter, r *http.Request) {
-	before, ok := decodeRetentionBeforeBody(w, r)
-	if !ok {
-		return
-	}
-	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
-		return
-	}
-	// deleted_at (gorm.DeletedAt) is set by GORM's own local NowFunc, not a G81
-	// BeforeSave hook — .Local() to match.
-	n, err := h.coreService.Storage().PurgeDeletedUsersBefore(r.Context(), before.Local())
-	if err != nil {
-		log.Printf("retention proxy: purge deleted users failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]int64{"purged": n})
 }
 
 // ListUsersInStateBeforeProxy handles GET

@@ -2939,48 +2939,6 @@ func TestUpdateMachineIdentityProxy_HappyPathS5(t *testing.T) {
 
 // ── retention_proxy.go — happy paths for all Before handlers ─────────────────
 
-func TestPurgeDeletedSecretsBeforeProxy_MissingBefore(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedSecretsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPurgeDeletedProjectsBeforeProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedProjectsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestPurgeDeletedProjectsBeforeProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedProjectsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPurgeDeletedEnvironmentsBeforeProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedEnvironmentsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestPurgeDeletedEnvironmentsBeforeProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedEnvironmentsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestDeleteExpiredRoleGrantsProxy_HappyPath(t *testing.T) {
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
@@ -3013,15 +2971,6 @@ func TestDeleteExpiredShareRecordsProxy_BadJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.DeleteExpiredShareRecordsProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPurgeDeletedUsersBeforeProxy_HappyPath(t *testing.T) {
-	h := newUserHandlerS5(t)
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedUsersBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // ── sso_state_proxy.go — SSO login state happy paths ─────────────────────────
@@ -3105,32 +3054,6 @@ func TestGetMFASecretProxy_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GetMFASecretProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCreateMFARecoveryCodesProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"code_hashes":["hash1","hash2"]}`
-	req := httptest.NewRequest(http.MethodPost, "/?user_id=1", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCreateMFARecoveryCodesProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/?user_id=1", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateMFARecoveryCodesProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"code_hashes":["hash1"]}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCountUnusedMFARecoveryCodesProxy_HappyPath(t *testing.T) {
@@ -3642,15 +3565,6 @@ func TestListUsersInStateBeforeProxy_MissingBefore(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListUsersInStateBeforeProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPurgeDeletedSecretsBeforeProxy_HappyPathS5(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	body := `{"before":"` + time.Now().Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedSecretsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // ── login_attempts_proxy.go — additional paths ───────────────────────────────

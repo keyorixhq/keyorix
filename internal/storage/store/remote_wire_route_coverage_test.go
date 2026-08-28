@@ -893,13 +893,11 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"entry.go:160": {kindPermanent, "path is a function parameter (putConditionalTransition's own signature) — " +
 		"genuinely caller-dependent by design; each real caller resolves independently via findWrapperMethods",
 		"#1511", "2026-08-28"},
-	// postRetentionBeforeCountResp's OWN rs.client.Put call (remote_secrets.go) —
-	// same shape as entry.go:160 above: a generic POST-with-count-response
-	// helper taking path as a parameter, four real callers (PurgeDeleted*Before,
-	// remote_secrets.go/remote_users.go) each resolve independently.
-	"remote_secrets.go:421": {kindPermanent, "path is a function parameter (postRetentionBeforeCountResp's own " +
-		"signature) — genuinely caller-dependent by design, same shape as entry.go:160",
-		"#1511", "2026-08-28"},
+	// postRetentionBeforeCountResp (remote_secrets.go) -- the generic
+	// POST-with-count-response helper this entry used to describe -- was
+	// DELETED along with its last caller, PurgeDeletedSecretsBefore (#1593,
+	// docs/adr-089-mfa-purge-relay-deletion.md). Entry removed, not
+	// renumbered: there is no longer a function-parameter path to track here.
 
 	// Category: query-string built via "literal" + url.Values{}.Encode() — a
 	// BinaryExpr (string concatenation), which pathTemplate does not evaluate
@@ -930,11 +928,11 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_memberships.go:230":             urlValuesEntry(),
 	"remote_memberships.go:247":             urlValuesEntry(),
 	"remote_memberships.go:286":             urlValuesEntry(),
-	"remote_mfa.go:145":                     urlValuesEntry(),
-	"remote_mfa.go:270":                     urlValuesEntry(),
+	"remote_mfa.go:135":                     urlValuesEntry(),
+	"remote_mfa.go:218":                     urlValuesEntry(),
 	"remote_secret_dependencies.go:151":     urlValuesEntry(),
 	"remote_secret_dependencies.go:176":     urlValuesEntry(),
-	"remote_users.go:552":                   urlValuesEntry(),
+	"remote_users.go:550":                   urlValuesEntry(),
 	"remote_webauthn.go:179":                urlValuesEntry(),
 	"remote_webauthn.go:209":                urlValuesEntry(),
 	"remote_webauthn.go:309":                urlValuesEntry(),
@@ -952,7 +950,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_rbac.go:485":                      pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
 	"remote_rbac.go:798":                      pathEscapeEntry("url.PathEscape(name) path-segment concatenation"),
 	"remote_rbac.go:1076":                     pathEscapeEntry("joinUintsCSV(adminRoleIDs) query-string concatenation (a local helper, not url.Values)"),
-	"remote_users.go:976":                     pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
+	"remote_users.go:974":                     pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
 
 	// Category: the ENTIRE path is a bare call to a locally-defined helper
 	// function (buildAuditFilterPath/buildRBACAuditFilterPath/
@@ -967,8 +965,8 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// literal/Sprintf/local-var and never reached this category.
 	"remote_audit.go:53":    helperReturnEntry("buildAuditFilterPath(filter)"),
 	"remote_audit.go:95":    helperReturnEntry("buildRBACAuditFilterPath(filter)"),
-	"remote_secrets.go:441": helperReturnEntry("buildSecretFilterPath(filter)"),
-	"remote_users.go:516":   helperReturnEntry("buildUserFilterPath(filter)"),
+	"remote_secrets.go:422": helperReturnEntry("buildSecretFilterPath(filter)"),
+	"remote_users.go:514":   helperReturnEntry("buildUserFilterPath(filter)"),
 
 	// Category: the path is a bare reference to a package-level `const`
 	// declared in internal/storage/store/constants.go — a DIFFERENT file from

@@ -352,24 +352,22 @@ func (rs *RemoteStorage) RestoreSecret(ctx context.Context, id uint) error {
 }
 
 // --- Retention/purge-sweep proxies (finding #520) ---
-//
-// These proxy onto NEW server-side routes under /api/v1/system/retention
-// (server/http/handlers/retention_proxy.go), the SAME "RemoteStorage stub -> thin
-// proxy route" pattern established for login-attempts (#452), project
-// invitations (#507), and dynamic secrets (round 116): a raw passthrough onto
-// storage.Storage's own retention primitives — no purge/retention POLICY decision
-// (which window applies, the legal-hold guard, which rows are "in flight" and
-// therefore excluded) is made server-side; that stays entirely in the CALLING
-// server's own internal/core.KeyorixCore, exactly as it does against a local
-// backend. Gated on the SAME system.read/system.write tier every other
-// RemoteStorage call already needs — no new privilege class. See
-// retention_proxy.go's package doc for the full atomicity and timezone analysis
-// (short version: each of these already resolves in ONE storage.Storage call
-// server-side, so one HTTP round trip preserves whatever transactional guarantee
-// the local implementation has; RemoteStorage.WithTransaction's no-op status is
-// irrelevant here since none of these needed to span multiple calls).
-func (rs *RemoteStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
-	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/secrets/purge", before, "purge deleted secrets")
+
+// PurgeDeletedSecretsBefore used to proxy onto POST
+// /api/v1/system/retention/secrets/purge (PurgeDeletedSecretsBeforeProxy),
+// deleted (#1593, docs/adr-089-mfa-purge-relay-deletion.md) — no live caller:
+// the retention scheduler that's the only caller of
+// internal/core.PurgeExpiredSoftDeletes cannot run against RemoteStorage at
+// all (validateRemoteStorageNotServer rejects storage.type: remote for ANY
+// server process, explicitly including a scheduler-only one), and the CLI
+// (the only process that CAN construct a RemoteStorage-backed core) has no
+// retention/purge command. Same reasoning closes
+// PurgeDeletedUsersBefore/PurgeDeletedProjectsBefore/
+// PurgeDeletedEnvironmentsBefore in remote_users.go. Returns
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) PurgeDeletedSecretsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedSecretsBefore")
 }
 
 // DeleteAnomalyAlertsBefore used to proxy onto POST
@@ -411,28 +409,11 @@ func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(_ context.Context, _
 	return 0, 0, remoteUnsupported("DeleteResolvedAccessRequestsBefore")
 }
 
-// postRetentionBeforeCountResp is the shared shape for every retention-purge
-// route whose body is a single {"before": ...} timestamp and whose response is a
-// single {"purged": <count>} integer.
-func postRetentionBeforeCountResp(ctx context.Context, rs *RemoteStorage, path string, before time.Time, verb string) (int64, error) {
-	body := struct {
-		Before time.Time `json:"before"`
-	}{Before: before}
-	resp, err := rs.client.Post(ctx, path, body)
-	if err != nil {
-		return 0, fmt.Errorf("failed to %s: %w", verb, err)
-	}
-	if !resp.Success {
-		return 0, fmt.Errorf("%s failed: %s", verb, resp.Error.Error())
-	}
-	var result struct {
-		Purged int64 `json:"purged"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Purged, nil
-}
+// postRetentionBeforeCountResp (the shared shape for every retention-purge
+// route whose body was a single {"before": ...} timestamp and whose response
+// was a single {"purged": <count>} integer) was removed (#1593) alongside
+// its last caller (PurgeDeletedSecretsBefore above) — see this file's doc
+// for the full reasoning.
 
 // ListSecrets lists secrets with optional filtering via remote API.
 // Query parameters are built from the non-nil fields of filter.
