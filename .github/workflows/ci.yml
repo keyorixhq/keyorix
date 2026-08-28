@@ -193,6 +193,20 @@ jobs:
           fi
           echo "OK: no root-level pnpm workspace files."
 
+  # Not gated by docs_only: docs/adr-*.md files ARE classified as docs, but
+  # this check is a single find|sed|sort pass, cheap enough to always run
+  # regardless of what this specific PR touches, matching
+  # pnpm-workspace-root-guard's reasoning for staying ungated.
+  adr-numbers:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert every docs/adr-NNN-*.md number is unique
+        run: ./scripts/check-adr-numbers.sh
+
   # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
   # not a replacement for it. That hook is the PRIMARY guard: it runs on the
   # contributor's own machine before a broken workflow file is ever pushed,

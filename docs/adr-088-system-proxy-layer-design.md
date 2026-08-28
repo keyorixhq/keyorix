@@ -1,9 +1,15 @@
-# ADR-087: What the `/system` proxy layer is for — narrow-primitive delegation, not full-operation delegation
+# ADR-088: What the `/system` proxy layer is for — narrow-primitive delegation, not full-operation delegation
 
 ## Status
 
-**Proposed (2026-08-28).** Wave 2 design pass. Investigation and this ADR
+**Accepted (2026-08-28).** Wave 2 design pass. Investigation and this ADR
 only — no production code changes in this pass.
+
+Renumbered from ADR-087 to ADR-088 during review: that number was already
+taken by `docs/adr-087-remote-storage-deletion-pass.md` (landed in #1583).
+Two ADRs sharing a number is the same species of defect as everything else
+this document is about — an identifier that does not identify. See
+`scripts/check-adr-numbers.sh` (added alongside this fix) for the guard.
 
 ## Summary
 
@@ -132,6 +138,35 @@ classification — it is exactly the question this ADR's enforcement
 mechanism (below) is designed to force someone to answer, instead of a
 proxy silently reaching for raw storage because it was the shortest path to
 green.
+
+## What the proxy layer actually is
+
+The three findings above are not three independent oversights — they share
+a shape. `UpdateMachineIdentityProxy` reproduces, over HTTP, the exact race
+`TransitionMachineIdentityState` was rewritten to close. `UpdateMembershipProxy`
+races the adjacent, already-fixed `TransitionMembershipProxy` — the
+adjacent handler's own doc comment names the bug it reproduces. `CreateSecretDependencyProxy`
+calls the pre-#260 unsafe primitive while the safe
+`CreateSecretDependencyExclusive` route sits beside it in the same file,
+unused. In each case, `internal/core` was rewritten at some point to fix a
+race or correctness bug, and the proxy calling into storage directly was
+never updated to match — it is still calling the shape that existed
+*before* the fix.
+
+That makes the `/system` proxy layer, in aggregate, **a set of stale forks
+of `internal/core`, each frozen at whatever revision existed when it was
+written.** A proxy doesn't rot the usual way, by going unmaintained — it
+rots by `internal/core` moving on without it.
+
+That reframing turns three findings into a bounded, mechanical sweep rather
+than a guess: **for every `internal/core` primitive that was rewritten to
+fix a race or correctness bug — #518, #G42, #260, and whatever else the
+commit history surfaces — check whether the corresponding `/system` proxy
+carries the fix.** That list is derivable from history (find each
+primitive's own fix commit, diff it against its current proxy caller), not
+from re-auditing all 55 handlers from scratch. This is framed here and
+filed as its own tracking issue; it is explicitly **not run in this pass**
+— Wave 2's scope is investigation and rule-setting, not the sweep itself.
 
 ## Costing the rule against #1546, #1551, #1572
 
@@ -274,6 +309,27 @@ write. Full delegation to a high-grain `internal/core` operation is
 correct only when that operation is already a true 1:1 passthrough (rare —
 1 of 55 measured).
 
+## Precondition this rule depends on
+
+This rule is not a general law about proxy architecture. It holds only
+under the current split of responsibility between the CLI and the hub:
+**the CLI executes `internal/core`, and the hub receives the resulting
+writes as separate proxy calls.** That split is *why* full delegation is
+wrong — the side effects a full-grain `internal/core` operation would run
+have already run once, on the spoke that originated the call. A relay
+endpoint replaying the same operation duplicates them.
+
+If operation ownership moves to the hub instead — the CLI sends an intent,
+the hub executes `internal/core` itself, the direction ADR-086's own
+resolution of #1575 already points — the double-execution problem this
+rule exists to prevent disappears, because there is no longer a second
+execution to duplicate against. **This rule is void the moment that
+happens, and must be re-derived, not inherited.** This is the ADR-083 →
+ADR-085 lesson applied prospectively: a superseding architectural decision
+invalidates the reasoning built on top of it, and the only protection
+available at decision time is writing the dependency down before it's
+forgotten.
+
 **Alternatives considered and rejected:**
 
 1. **Full retroactive refactor of all 55 (or "34").** Rejected by the
@@ -292,6 +348,19 @@ correct only when that operation is already a true 1:1 passthrough (rare —
    #1575; reaffirmed here as also wrong for (b) — it would make the CLIENT
    decide permissions using fetched data, the fat-client pattern this whole
    campaign has been closing off. Not reconsidered.
+4. **The reviewer's original "34 handlers" figure.** Not reproducible from
+   the codebase or its commit history; superseded here by the mechanically
+   derived, rerunnable count of 55. Recorded by name rather than left to
+   quietly disappear, since a number nobody can trace becomes a trap for
+   whoever next tries to reconcile a different count against it.
+5. **The reviewer's original hypothesis — "a `/system` proxy should be a
+   thin transport shim over `internal/core`, never a parallel
+   implementation."** Rejected on correctness grounds, not cost: it did not
+   account for `internal/core` operations bundling side effects (audit
+   writes, role grants, cascades, notifications) that already ran once on
+   the spoke that originated the call. Full delegation would duplicate them
+   on the hub. See "Costing the rule" above for the three concrete cases
+   this was tested against and lost.
 
 **Enforcement:** extend `server/http/raw_storage_bypass_guard_test.go`'s
 existing shape rather than build a parallel mechanism. Today's guard
@@ -316,6 +385,25 @@ encodes "flag a write-shaped raw call, require a reasoned entry," which is
 this rule's enforcement mechanism. What's missing is closing its two blind
 spots (tx-handle calls, and the fact that "no wrapper" isn't automatically
 safe), not a new mechanism.
+
+**This rule is not enforced until both blind spots close.** A guard that
+misses 9 real wrappers because they're called through `tx.X()`, and that
+treats "no wrapper visible" as "no ceiling to bypass," is exactly the guard
+shape that let the three live findings above go unnoticed. Until both are
+fixed, "the guard didn't flag it" does not mean "safe" — it may mean
+"invisible to the guard." Recording a rule the guard cannot yet see is the
+same failure this campaign has spent a month cataloguing: a check that
+can't fail on the case it exists for is worth nothing.
+
+**Sequence, in order:**
+
+1. Close the guard's two blind spots (`tx.X()` call-shape recognition; stop
+   treating "no wrapper found" as an automatic pass).
+2. Only then does rule enforcement start counting: new or touched handlers
+   must satisfy the rule or carry a reasoned allowlist entry.
+3. Retroactive conversion of already-existing handlers happens only where a
+   finding forces the question (as #1546/#1551/#1572 and #1585/#1586/#1587
+   already have) — never as a scheduled sweep.
 
 ## Out of scope for this ADR
 

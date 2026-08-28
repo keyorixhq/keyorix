@@ -137,10 +137,21 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
   because they only match caller shape X"), derive the full set of shapes the
   target behavior can take from the code itself, don't assume the first one found
   is the only one — and state how the list was established to be complete, not
-  just what it found. Third instance of this exact failure in this campaign (an
-  enumerator that missed unexported helpers; a completeness guard whose regex
-  matched only one stub-call shape and missed 13 raw ones — see
-  `docs/g80-wave0-remote-storage-partition.md`): the G80 Wave 0 partition excluded
+  just what it found. State which call forms the enumeration recognises
+  explicitly, in the code or the doc that defines it — that list is itself
+  something a reviewer can check, not an implicit assumption. This is the
+  third instance of this exact failure in this campaign (unexported helpers;
+  a stub-completeness regex that matched only one stub-call shape and missed
+  13 raw ones — see `docs/g80-wave0-remote-storage-partition.md`), with two
+  more since: the raw-storage-bypass guard's own `/system`-only route
+  scoping (fourth), and `raw_storage_bypass_guard_test.go`'s
+  `exportedCoreStorageWrappers`, which recognizes `c.storage.X()` and
+  one-hop unexported-sibling calls but not a call through a `tx` handle
+  inside `WithTransaction` — invisible to it for 9 real wrappers,
+  `ActivateMFA`/`DisableMFA`/`RegenerateMFARecoveryCodes`/
+  `PurgeExpiredSoftDeletes` among them (fifth, see
+  `docs/adr-088-system-proxy-layer-design.md`). The third instance, in
+  detail: the G80 Wave 0 partition excluded
   a CLI command from `RemoteStorage`'s live-caller set by grepping for
   `common.NewRemoteClient()` as *the* raw-HTTP-passthrough guard idiom — but
   `internal/cli/run/run.go` calls `common.ResolveRemote()` directly instead, a
