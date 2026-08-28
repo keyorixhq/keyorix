@@ -72,13 +72,27 @@
 // knownUnfixedRawStorageBypasses -- #1551's cross-tenant gap is unaffected;
 // only the node-credential axis into it closed.
 //
-// TestNoUnjustifiedRawStorageBypass fails on: (a) any /system handler with a
-// wrapped write-shaped storage call not in EITHER list (a brand new, unreviewed
-// instance of the #1542 shape), (b) any listed entry whose handler no longer
-// exists under /system, or (c) any listed entry whose handler no longer makes ANY
-// flagged wrapped write-shaped call (fixed and forgotten -- remove it from
-// whichever list it's in, or move it from knownUnfixedRawStorageBypasses to
-// rawStorageBypassAllowlist with a reason if the fix landed here first).
+// TestNoUnjustifiedRawStorageBypass fails on: (a) any /system handler with an
+// unreviewed write-shaped raw storage call, wrapped or not (a brand new
+// instance of the #1542 shape, or ADR-088's "no wrapper" shape -- see below),
+// (b) any listed entry whose handler no longer exists under /system, or (c)
+// any listed entry whose handler no longer makes ANY flagged write-shaped
+// call (fixed and forgotten -- remove it from whichever list it's in, or
+// move it from knownUnfixedRawStorageBypasses to rawStorageBypassAllowlist
+// with a reason if the fix landed here first).
+//
+// Recognized call forms (G80 Wave 2, closing this guard's two known blind
+// spots -- ADR-088): this guard has two halves, each with its own doc
+// comment naming exactly what it recognizes and why that list is complete --
+// directStorageCalls below (the internal/core side, building the `wrapped`
+// set: recv.storage.X(...), a one-hop unexported sibling, and any
+// storage.Storage-typed identifier including a WithTransaction closure's
+// `tx` parameter, to any nesting depth) and handlerStorageCalls further down
+// (the server/http/handlers side, building what a given handler calls:
+// h.coreService.Storage().X(...) and the local-alias form, with the
+// struct-field-wrapper and parameterized-helper forms confirmed absent by
+// grep rather than assumed). Read those two comments for the full
+// derivation before changing either function.
 package http
 
 import (
@@ -87,7 +101,6 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -324,27 +337,102 @@ func identSel(e ast.Expr) (recv, sel string, ok bool) {
 	return id.Name, se.Sel.Name, true
 }
 
-// directStorageCalls returns every storage method name called as
-// `<recvName>.storage.<Method>(...)` directly in fd's body (no further
-// indirection followed).
+// storageTypedParamNames returns the names of every parameter in fl declared
+// with the exact type storage.Storage. This is ONE fact spelled two ways in
+// this codebase: a WithTransaction closure's own parameter
+// (func(tx storage.Storage) error) and a named helper's transaction-handle
+// parameter (transitionMachineInTx(ctx context.Context, tx storage.Storage,
+// ...), scimUpdateUserTx, persistAuditRetentionAnchor) are both "an
+// identifier bound to a storage.Storage value," so both are recognized by
+// this one function rather than two separate special cases.
+func storageTypedParamNames(fl *ast.FieldList) map[string]bool {
+	names := map[string]bool{}
+	if fl == nil {
+		return names
+	}
+	for _, field := range fl.List {
+		sel, ok := field.Type.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		pkgIdent, ok := sel.X.(*ast.Ident)
+		if !ok || pkgIdent.Name != "storage" || sel.Sel.Name != "Storage" {
+			continue
+		}
+		for _, n := range field.Names {
+			names[n.Name] = true
+		}
+	}
+	return names
+}
+
+// directStorageCalls returns every storage method name reachable from fd's
+// body through a storage.Storage-typed identifier. Three call forms collapse
+// into one mechanism here (see this file's "Recognized call forms" comment
+// above TestNoUnjustifiedRawStorageBypass for the full derivation):
+//
+//   - `<recvName>.storage.<Method>(...)` -- the receiver's own storage field.
+//   - `<param>.<Method>(...)` where <param> is one of fd's OWN parameters
+//     declared storage.Storage -- the transitionMachineInTx/scimUpdateUserTx/
+//     persistAuditRetentionAnchor shape: a same-receiver helper that
+//     receives a transaction handle rather than reading c.storage itself.
+//   - `<param>.<Method>(...)` where <param> is the parameter of a nested
+//     `func(tx storage.Storage) error` literal passed to WithTransaction --
+//     the ActivateMFA/DisableMFA/RegenerateMFARecoveryCodes/
+//     PurgeExpiredSoftDeletes shape: the closure body IS the call site, no
+//     separate named helper exists to find as a "sibling."
+//
+// All three are the same underlying fact (an identifier of type
+// storage.Storage), tracked uniformly by walking the body with a live set of
+// such identifiers that gets EXTENDED (not replaced -- Go closures capture
+// the enclosing scope) on entering a nested FuncLit, recursively, to any
+// depth. No depth limit is imposed here, unlike the one-hop sibling-method
+// limit in exportedCoreStorageWrappers below: that limit exists to bound a
+// call-GRAPH search across many methods, which is a real combinatorial
+// concern; this is a lexical-scope walk within a single function body, which
+// is not.
 func directStorageCalls(fd *ast.FuncDecl, recvName string) []string {
 	var found []string
-	ast.Inspect(fd.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+	walkForStorageCalls(fd.Body, recvName, storageTypedParamNames(fd.Type.Params), &found)
+	return found
+}
+
+// walkForStorageCalls implements directStorageCalls' walk (see its doc
+// comment) as a standalone function so it can recurse into nested FuncLits
+// with an extended identifier set without re-deriving fd's own parameters.
+func walkForStorageCalls(n ast.Node, recvName string, storageIdents map[string]bool, found *[]string) {
+	ast.Inspect(n, func(node ast.Node) bool {
+		if lit, ok := node.(*ast.FuncLit); ok {
+			nested := storageIdents
+			if params := storageTypedParamNames(lit.Type.Params); len(params) > 0 {
+				nested = make(map[string]bool, len(storageIdents)+len(params))
+				for k := range storageIdents {
+					nested[k] = true
+				}
+				for k := range params {
+					nested[k] = true
+				}
+			}
+			walkForStorageCalls(lit.Body, recvName, nested, found)
+			return false // walked manually above with the (possibly extended) set; don't double-visit
+		}
+		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		outerSel, ok := call.Fun.(*ast.SelectorExpr)
+		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
-		innerRecv, innerSel, ok := identSel(outerSel.X)
-		if ok && innerRecv == recvName && innerSel == "storage" {
-			found = append(found, outerSel.Sel.Name)
+		if innerRecv, innerSel, ok := identSel(sel.X); ok && innerRecv == recvName && innerSel == "storage" {
+			*found = append(*found, sel.Sel.Name)
+			return true
+		}
+		if id, ok := sel.X.(*ast.Ident); ok && storageIdents[id.Name] {
+			*found = append(*found, sel.Sel.Name)
 		}
 		return true
 	})
-	return found
 }
 
 // calledSiblingMethods returns the names of every same-receiver KeyorixCore
@@ -424,48 +512,98 @@ func isExportedCoreMethodName(name string) bool {
 }
 
 // handlerStorageCalls returns the set of storage.Storage method names called
-// as h.coreService.Storage().X(...) (or a local var equivalent — the proxy
-// files in this repo always use the receiver form) from within the named
-// handler method's body, searched across every non-test *.go file in
-// server/http/handlers.
+// from within the named handler method's body, searched across every
+// non-test *.go file in server/http/handlers. Rewritten from a regex/brace-
+// depth line scan to an AST walk (G80 Wave 2, guard blind-spot closure): a
+// regex can't state what it does NOT match, an AST walk's recognized node
+// shapes can be named and reviewed. Two forms are recognized:
+//
+//   - `h.coreService.Storage().X(...)` -- the chained form every real
+//     handler in this codebase currently uses.
+//   - `v := h.coreService.Storage(); v.X(...)` -- a local alias, then a call
+//     through it.
+//
+// No third form exists today: confirmed by two independent checks -- a
+// literal grep for the alias-assignment shape (`:= h.coreService.Storage()`)
+// across server/http/handlers found zero hits, and this same AST walk (which
+// would catch it structurally, not by pattern-matching the specific spelling)
+// also finds zero. storage.Storage is never used as an explicit parameter or
+// struct field anywhere in server/http/handlers either (confirmed by grep),
+// so the transaction-handle and struct-field forms tracked on the
+// internal/core side (see directStorageCalls above) have no handler-side
+// counterpart to track. If a handler is ever written using either, this
+// function will not see it -- tracked here as a stated, checked absence, not
+// an unstated assumption.
 func handlerStorageCalls(t *testing.T, handlerName string) []string {
 	t.Helper()
-	funcRe := regexp.MustCompile(`^func \([a-zA-Z]+ \*[A-Za-z]+\) ` + regexp.QuoteMeta(handlerName) + `\(`)
-	storageCallRe := regexp.MustCompile(`Storage\(\)\.([A-Za-z0-9_]+)\(`)
-
 	dir := filepath.Join("..", "..", "server", "http", "handlers")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("reading server/http/handlers: %v", err)
 	}
+	fset := token.NewFileSet()
 	var calls []string
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(dir, name))
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 		if err != nil {
-			t.Fatalf("reading %s: %v", name, err)
+			t.Fatalf("parsing %s: %v", name, err)
 		}
-		inFunc := false
-		depth := 0
-		for _, line := range strings.Split(string(b), "\n") {
-			if !inFunc && funcRe.MatchString(line) {
-				inFunc = true
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Name.Name != handlerName || fd.Recv == nil || fd.Body == nil {
+				continue
 			}
-			if inFunc {
-				depth += strings.Count(line, "{") - strings.Count(line, "}")
-				for _, m := range storageCallRe.FindAllStringSubmatch(line, -1) {
-					calls = append(calls, m[1])
-				}
-				if depth <= 0 {
-					inFunc = false
-				}
-			}
+			calls = append(calls, handlerBodyStorageCalls(fd.Body)...)
 		}
 	}
 	return calls
+}
+
+// handlerBodyStorageCalls recognizes the two forms documented on
+// handlerStorageCalls above within a single handler body.
+func handlerBodyStorageCalls(body *ast.BlockStmt) []string {
+	var found []string
+	aliases := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		if assign, ok := n.(*ast.AssignStmt); ok && len(assign.Lhs) == len(assign.Rhs) {
+			for i, rhs := range assign.Rhs {
+				call, ok := rhs.(*ast.CallExpr)
+				if !ok {
+					continue
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Storage" {
+					continue
+				}
+				if id, ok := assign.Lhs[i].(*ast.Ident); ok {
+					aliases[id.Name] = true
+				}
+			}
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if inner, ok := sel.X.(*ast.CallExpr); ok {
+			if innerSel, ok := inner.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "Storage" {
+				found = append(found, sel.Sel.Name)
+				return true
+			}
+		}
+		if id, ok := sel.X.(*ast.Ident); ok && aliases[id.Name] {
+			found = append(found, sel.Sel.Name)
+		}
+		return true
+	})
+	return found
 }
 
 // readShapedStoragePrefixes are storage-method name prefixes mechanically
@@ -919,6 +1057,41 @@ var rawStorageBypassAllowlist = map[string]string{
 	"CreateMachineIdentityCredentialProxy": "FIXED: core.RequireMachinePrivilegeCeiling now enforced " +
 		"unconditionally for every caller -- see the FIXED comment immediately above this entry for the full " +
 		"reasoning.",
+	// G80 Wave 2 (blind-spot-2 fix, ADR-088): newly IN SCOPE because this test no
+	// longer skips a storage method with no exported core wrapper at all --
+	// previously "no wrapper" meant "not considered," which is exactly the
+	// inference ADR-088's own #1585/#1586/#1587 findings disproved. These 5 are
+	// the benign side of that widened scope: verified individually below, not
+	// assumed safe by pattern-matching the shape.
+	"AcquireSchedulerLockProxy": "no-independent-ceiling: scheduler_lock_proxy.go's own doc comment establishes " +
+		"this is pure distributed-lock coordination infrastructure (ADR-039), not a policy decision -- " +
+		"TryAcquireSchedulerLock performs its entire acquire-or-renew-or-reclaim decision atomically server-side, " +
+		"with no actor-authority dimension to bypass (which key, how long to hold it, is decided entirely by the " +
+		"CALLING server's own WithSchedulerLock, not by this raw call).",
+	"ReleaseSchedulerLockProxy": "no-independent-ceiling: same reasoning as AcquireSchedulerLockProxy immediately " +
+		"above -- a release-iff-still-owned is a no-op for a non-owning holder, no capability to gain by calling it.",
+	"DeleteMFAStepUpGrantsForProxy": "no-independent-ceiling: removes step-up grants for a user (session " +
+		"revocation / incident response) -- capability-REDUCING, same shape as ExpireSetupTokenProxy/" +
+		"DeleteExpiredRoleGrantsProxy above. No privilege to gain by skipping whatever ceiling a wrapper might " +
+		"otherwise apply, since revocation is itself the safe direction.",
+	// UpdateRole/DeleteRole are NOT /system proxies -- they're the original
+	// human-facing RBAC handlers (server/http/handlers/rbac.go, registered at
+	// PUT/DELETE /api/v1/roles/{id}, gated by RequirePermission(permRolesWrite),
+	// router.go:974-975), newly flagged by this guard's repo-wide scope now that
+	// "no wrapper" no longer means "not considered." internal/core has no
+	// exported wrapper for role update/delete at all -- there is no separate
+	// operation for this raw call to bypass, matching the existing "CreateRole"
+	// entry above exactly (same file, same absence of a core-level equivalent,
+	// same reasoning). Each handler carries its own built-in-role protection
+	// inline (core.IsBuiltinRole check, rbac.go:328/426) and, for UpdateRole,
+	// its own permission-bundling authorization (authorizeAndCollectPermissions,
+	// rbac.go:374-391) before ever reaching the raw call.
+	"UpdateRole": "no-independent-ceiling: internal/core has no exported wrapper for role update at all (same " +
+		"absence as the existing \"CreateRole\" entry above) -- this route (PUT /api/v1/roles/{id}, " +
+		"RequirePermission(permRolesWrite)) IS the authoritative implementation, with its own built-in-role guard " +
+		"(rbac.go:328) and permission-bundling authorization (rbac.go:374-391) already inline.",
+	"DeleteRole": "no-independent-ceiling: same reasoning as UpdateRole immediately above -- no core-level " +
+		"equivalent exists to bypass; this route's own built-in-role guard (rbac.go:426) already runs inline.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by
@@ -1078,27 +1251,120 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 		"DeleteSessionsForUserExceptProxy entries below (this handler itself still makes no PAT/session call; the " +
 		"fix lives in the two new routes core.UpdateUser's deactivating branch now succeeds against, and in the " +
 		"RemoteStorage client methods themselves).",
+	// G80 Wave 2 (tx.X() blind-spot fix, ADR-088): these 9 were invisible to
+	// exportedCoreStorageWrappers until it learned to see a storage call made
+	// through a `tx` handle inside a WithTransaction closure -- ActivateMFA/
+	// DisableMFA/RegenerateMFARecoveryCodes (internal/core/mfa.go) all call
+	// their storage primitives via `tx`, not `c.storage` directly. REAL,
+	// same architectural gap as IngestAuditEventProxy above (deferred, Wave
+	// 4): both proxy files' own doc comments state "no POLICY decision is
+	// made here; that stays entirely in the CALLING server's own
+	// internal/core.KeyorixCore" -- an assumption that the only caller is a
+	// genuine spoke relaying an operation it already authorized locally.
+	// Nothing at the hub distinguishes that from a bare system.write holder
+	// calling the route directly. Filed as #1593 (account-security-relevant,
+	// not just audit-trail integrity like the IngestAuditEventProxy
+	// precedent): a system.write holder can disable MFA on any user
+	// (SetUserMFAEnabledProxy(enabled:false) + DeleteMFAForUserProxy), or
+	// replace an already-MFA'd account's TOTP secret/recovery codes with
+	// attacker-chosen values (ActivateMFASecretProxy +
+	// CreateMFARecoveryCodesProxy), without ever proving knowledge of that
+	// user's password or a current TOTP code -- the exact re-proof
+	// requireReauth (mfa.go) exists to require.
+	"ActivateMFASecretProxy": "REAL, human/machine-reachable, same gap as IngestAuditEventProxy (deferred, Wave " +
+		"4): bypasses requireReauth -- see the comment immediately above this entry for the full reasoning. " +
+		"Filed as #1593.",
+	"SetUserMFAEnabledProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. Filed as " +
+		"#1593.",
+	"CreateMFARecoveryCodesProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. " +
+		"Filed as #1593.",
+	"DeleteMFAForUserProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. Filed as " +
+		"#1593.",
+	"DeleteMFARecoveryCodesProxy": "REAL: same gap, see the comment above the ActivateMFASecretProxy entry. " +
+		"Filed as #1593.",
+	// G80 Wave 2 (tx.X() blind-spot fix, ADR-088): PurgeExpiredSoftDeletes
+	// (internal/core/purge.go) checks tx.GetActiveLegalHold(ctx) FIRST and
+	// refuses to purge if a deployment-wide legal hold is active (ISO
+	// A.5.34), inside the SAME transaction as the four deletes below --
+	// invisible to the guard for the same tx.X() reason as the MFA family
+	// above. retention_proxy.go's own package doc already names the gap it
+	// accepts: "NO retention POLICY decision (... whether a legal hold
+	// blocks the sweep ...) is made here." REAL, same architectural gap as
+	// IngestAuditEventProxy/the MFA family above (deferred, Wave 4): a
+	// system.write holder can hard-delete soft-deleted users/projects/
+	// environments/secrets (secrets cascading to their ciphertext-bearing
+	// version rows) while a legal hold is active, bypassing the specific
+	// control PurgeExpiredSoftDeletes exists to enforce -- permanent,
+	// irreversible loss of records a legal hold requires be preserved.
+	// Filed as #1593 (same issue as the MFA family -- one root cause, two
+	// families).
+	"PurgeDeletedUsersBeforeProxy": "REAL, human/machine-reachable, same gap as IngestAuditEventProxy (deferred, " +
+		"Wave 4): bypasses PurgeExpiredSoftDeletes' legal-hold check -- see the comment immediately above this " +
+		"entry for the full reasoning. Filed as #1593.",
+	"PurgeDeletedProjectsBeforeProxy": "REAL: same gap, see the comment above the PurgeDeletedUsersBeforeProxy " +
+		"entry. Filed as #1593.",
+	"PurgeDeletedEnvironmentsBeforeProxy": "REAL: same gap, see the comment above the " +
+		"PurgeDeletedUsersBeforeProxy entry. Filed as #1593.",
+	"PurgeDeletedSecretsBeforeProxy": "REAL: same gap, see the comment above the PurgeDeletedUsersBeforeProxy " +
+		"entry. Filed as #1593.",
+	// G80 Wave 2 (blind-spot-2 fix, ADR-088): these 3 were invisible for the
+	// OPPOSITE reason from the 9 above -- not a missed wrapper, but the
+	// former "no wrapper -> not considered" inference. All three are named
+	// and reasoned in docs/adr-088-system-proxy-layer-design.md's "3 live
+	// findings" section: internal/core deliberately offers no wrapper for
+	// the raw shape each of these three uses, BECAUSE the safe operation
+	// looks different (a conditional transition, not a blind write) -- core
+	// correctly refusing an unsafe primitive is not the same as there being
+	// nothing to bypass.
+	"UpdateMachineIdentityProxy": "REAL, filed as #1585 (see docs/adr-088-system-proxy-layer-design.md): " +
+		"performs a raw full-row Save, reproducing over HTTP the exact race TransitionMachineIdentityState was " +
+		"rewritten to close (machine_identities.go:168-172's own comment explains why).",
+	"UpdateMembershipProxy": "REAL, filed as #1586 (see docs/adr-088-system-proxy-layer-design.md): a blind write " +
+		"of the wire body with no lock-then-read step at all -- the adjacent TransitionMembershipProxy's own doc " +
+		"comment names this exact route as the race it was built to avoid (project_memberships_proxy.go:210-214).",
+	"CreateSecretDependencyProxy": "REAL, filed as #1587 (see docs/adr-088-system-proxy-layer-design.md): calls " +
+		"the raw, non-exclusive CreateSecretDependency, reopening the #260 cycle-check TOCTOU " +
+		"CreateSecretDependencyExclusive was built to close -- the safe route already exists at a different path " +
+		"(secret_dependencies_proxy.go:163), unused by this one.",
 }
 
 // TestNoUnjustifiedRawStorageBypass is #1542's guard, widened by #1547 to cover
 // every route in router.go, repo-wide (not just the 18-route subset this guard
 // originally shipped with, and not just the /api/v1/system group it was later
 // widened to): for every such route, if its handler calls
-// h.coreService.Storage().X(...) for a write-shaped storage method X that an
-// EXPORTED internal/core method also wraps, that handler must have an entry in
-// rawStorageBypassAllowlist (reviewed safe) or knownUnfixedRawStorageBypasses
-// (reviewed real, tracked, not yet fixed) explaining why. A newly-added route (or
-// a regression in an already-fixed one) that reintroduces this shape fails
-// immediately, instead of waiting for the next manual audit round to notice --
-// and neither list can silently drift from reality: a stale entry (handler gone,
-// or the flagged call site no longer reproduces) fails too.
+// h.coreService.Storage().X(...) for a write-shaped storage method X, that
+// handler must have an entry in rawStorageBypassAllowlist (reviewed safe) or
+// knownUnfixedRawStorageBypasses (reviewed real, tracked, not yet fixed)
+// explaining why. A newly-added route (or a regression in an already-fixed
+// one) that reintroduces this shape fails immediately, instead of waiting for
+// the next manual audit round to notice -- and neither list can silently
+// drift from reality: a stale entry (handler gone, or the flagged call site
+// no longer reproduces) fails too.
+//
+// Second blind spot closed (G80 Wave 2, ADR-088): this test used to skip a
+// storage method entirely when wrapped[storageMethod] was false -- "no
+// exported core wrapper exists for this" was read as "nothing to bypass, so
+// nothing to review." That inference is false. ADR-088's #1585/#1586/#1587
+// are exactly the counter-examples: internal/core deliberately offers no
+// wrapper for the raw shape those three handlers use, BECAUSE the safe
+// operation looks different (a conditional transition, not a blind write) --
+// the absence of a wrapper was core correctly refusing an unsafe primitive,
+// and the proxies calling that unsafe primitive directly were the bug. A
+// handler calling storage with no wrapper in sight is not safer than one
+// calling a wrapped method without going through the wrapper -- it is more
+// direct, and it still needs someone to say why that's fine. So every
+// write-shaped raw call now requires a list entry, wrapped or not; the two
+// lists' existing "no-independent-ceiling" reasoning already covers the
+// unwrapped case (it was always framed as "there's nothing for this call to
+// bypass," which doesn't logically depend on a wrapper existing) -- only the
+// SKIP was wrong, not the classification vocabulary.
 func TestNoUnjustifiedRawStorageBypass(t *testing.T) {
 	wrapped := exportedCoreStorageWrappers(t)
 	routerPath := filepath.Join(".", "router.go")
 	actual := extractAllRouterRoutes(t, routerPath)
 
 	// handlerFlagged[handler] = true iff that handler currently makes at least one
-	// call to a write-shaped storage method an exported core method also wraps.
+	// write-shaped raw storage call, wrapped or not (see the blind-spot-2 note above).
 	handlerFlagged := map[string]bool{}
 	seenHandlers := map[string]bool{}
 	var flagged []string
@@ -1108,25 +1374,31 @@ func TestNoUnjustifiedRawStorageBypass(t *testing.T) {
 		}
 		seenHandlers[r.Handler] = true
 		for _, storageMethod := range handlerStorageCalls(t, r.Handler) {
-			if !wrapped[storageMethod] || isReadShapedStorageMethod(storageMethod) {
+			if isReadShapedStorageMethod(storageMethod) {
 				continue
 			}
 			handlerFlagged[r.Handler] = true
 			_, safe := rawStorageBypassAllowlist[r.Handler]
 			_, unfixed := knownUnfixedRawStorageBypasses[r.Handler]
-			if !safe && !unfixed {
-				flagged = append(flagged, r.Handler+" calls Storage()."+storageMethod+"(...) directly, but "+
-					"internal/core has an exported method that also wraps "+storageMethod)
+			if safe || unfixed {
+				continue
 			}
+			reason := "internal/core has an exported method that also wraps " + storageMethod
+			if !wrapped[storageMethod] {
+				reason = "internal/core has NO exported wrapper for " + storageMethod + " at all -- absence of a " +
+					"wrapper is not evidence of safety, it means nobody has stated why this raw call needs no ceiling"
+			}
+			flagged = append(flagged, r.Handler+" calls Storage()."+storageMethod+"(...) directly, but "+reason)
 		}
 	}
 	sort.Strings(flagged)
 
 	if len(flagged) > 0 {
-		t.Errorf("found %d handler(s) bypassing a wrapped core ceiling via raw storage (the #1542 "+
-			"shape): %v\nEither route the handler through the core method that wraps this storage call, or add a "+
-			"reasoned entry to rawStorageBypassAllowlist (if genuinely safe) or knownUnfixedRawStorageBypasses "+
-			"(if it's a real, tracked, not-yet-fixed gap) in this file.", len(flagged), flagged)
+		t.Errorf("found %d handler(s) making an unreviewed write-shaped raw storage call (the #1542 shape, "+
+			"wrapped or not -- see this test's own doc comment for why unwrapped calls are in scope too): %v\n"+
+			"Either route the handler through a core method that applies the right ceiling, or add a reasoned "+
+			"entry to rawStorageBypassAllowlist (if genuinely safe) or knownUnfixedRawStorageBypasses (if it's a "+
+			"real, tracked, not-yet-fixed gap) in this file.", len(flagged), flagged)
 	}
 
 	// Staleness: an allowlist/unfixed-list entry is stale if its handler is no
