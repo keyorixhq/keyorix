@@ -165,8 +165,11 @@ commit history surfaces — check whether the corresponding `/system` proxy
 carries the fix.** That list is derivable from history (find each
 primitive's own fix commit, diff it against its current proxy caller), not
 from re-auditing all 55 handlers from scratch. This is framed here and
-filed as its own tracking issue; it is explicitly **not run in this pass**
-— Wave 2's scope is investigation and rule-setting, not the sweep itself.
+filed as **#1592**; it is explicitly **not run in this pass** — Wave 2's
+scope is investigation and rule-setting, not the sweep itself. #1592 is
+itself sequenced behind the guard blind-spot fixes below, for the same
+reason: a sweep run against an incomplete guard reopens the exact blind
+spot that let #1585/#1586/#1587 go unnoticed.
 
 ## Costing the rule against #1546, #1551, #1572
 
@@ -415,6 +418,8 @@ can't fail on the case it exists for is worth nothing.
   (as #1546/#1551/#1572 already have), not as a scheduled sweep.
 - **The 9-handler `tx.X()` guard blind spot and the 3 live findings**
   (#1585/#1586/#1587) — filed, not fixed here.
+- **The mechanical stale-fork sweep (#1592)** — framed above, filed, not
+  run here; sequenced behind the guard blind-spot fixes.
 - **Fixing #1546/#1551/#1572 themselves** — costed above, not implemented;
   a later pass, scoped by this ADR.
 
