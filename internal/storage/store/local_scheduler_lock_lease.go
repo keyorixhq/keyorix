@@ -92,6 +92,16 @@ func (ls *LocalStorage) TryAcquireSchedulerLock(ctx context.Context, key int64, 
 		if existing.Holder != holder && existing.ExpiresAt.After(now) {
 			return nil // held by someone else and not yet expired — genuinely contended
 		}
+		// #1507: this raw-map Updates (like the Create above) bypasses model
+		// hooks entirely, so expires_at carries whatever Location expiresAt
+		// itself has (currently always local time.Now().Add(ttl), line 66-67).
+		// No SQL range query reads this column today (the only read is
+		// TryAcquireSchedulerLock's own Where("key = ?") equality Take above,
+		// compared in Go via .After() — Location-independent). If a future
+		// "clean up stale leases" sweep ever adds a SQL WHERE expires_at < ?
+		// query, normalize explicitly at BOTH write sites (the Create above and
+		// this Updates) before trusting that comparison — a hook can't reach
+		// either one.
 		if updErr := tx.Model(&models.SchedulerLockLease{}).Where("key = ?", key).
 			Updates(map[string]any{"holder": holder, "expires_at": expiresAt}).Error; updErr != nil {
 			return updErr

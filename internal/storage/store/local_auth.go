@@ -213,6 +213,14 @@ func (ls *LocalStorage) ListSessionTokenHashesForUser(ctx context.Context, userI
 
 // TouchSession bumps last_seen_at only if the stored value is older than staleness
 // (or NULL), keeping the auth hot path from writing on every request.
+//
+// #1507: this UpdateColumn write bypasses model hooks too, but unlike
+// PersonalAccessToken.LastUsedAt/MachineIdentityCredential.LastUsedAt there is
+// no separate consumer to diverge from — the WHERE bound and the SET value
+// below both come from this function's own seenAt parameter, in the same
+// call. If a future range query on last_seen_at is ever added elsewhere
+// (there is none today — verified repo-wide), it would need the same
+// call-site normalization the other two #1507 fields document.
 func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
 	cutoff := seenAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.Session{}).
@@ -315,6 +323,15 @@ func (ls *LocalStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context
 
 // TouchPersonalAccessToken bumps last_used_at only when older than staleness (or NULL),
 // keeping the auth hot path from writing on every request (mirrors TouchSession).
+//
+// #1507: this UpdateColumn write bypasses model hooks, so last_used_at is
+// whatever Location usedAt itself carries (currently always c.now(), the same
+// accessor CountStalePATs (local_hygiene_counts.go) uses to derive its own
+// range-query bound) — safe ONLY as long as every last_used_at reader keeps
+// using that same source. If a future range query on this column is added
+// anywhere using a differently-sourced time (e.g. a raw time.Now().UTC()),
+// normalize explicitly at this call site (there is no BeforeSave hook that
+// can reach an UpdateColumn write) before trusting the comparison.
 func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
 	cutoff := usedAt.Add(-staleness)
 	return ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).

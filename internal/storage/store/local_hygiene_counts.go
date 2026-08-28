@@ -74,6 +74,14 @@ func (ls *LocalStorage) CountExpiredPATs(ctx context.Context) (int, error) {
 // An active machine identity is "stale" when its most-recent credential
 // LastUsedAt is NULL or before threshold.
 func (ls *LocalStorage) CountStaleMachineCredentials(ctx context.Context, threshold time.Time) (int, error) {
+	// #1507 (MachineIdentityCredential.LastUsedAt): last_used_at's sole write
+	// path (TouchMachineIdentityCredential) bypasses model hooks via
+	// UpdateColumn, so this range query is safe only as long as threshold and
+	// the write both keep coming from the same c.now() accessor — see
+	// TouchMachineIdentityCredential's own #1507 comment (local_machine_credentials.go)
+	// for the normalization point if that ever stops being true. Same shape as
+	// CountStalePATs's #1507 comment just below for PersonalAccessToken.LastUsedAt.
+	//
 	// Subquery: machine identity IDs that have at least one credential used
 	// since threshold (i.e. NOT stale).
 	// We count active machine identities NOT in that set.
