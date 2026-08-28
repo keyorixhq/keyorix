@@ -128,6 +128,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	// who relies on that built-in role. The HTTP handler applies the identical guard
 	// (handlers/rbac.go); without it here the guard is bypassable by switching transport.
 	if core.IsBuiltinRole(role.Name) {
+		s.core.LogRoleUpdateDenied(ctx, actor.UserID, role.ID, role.Name, "target is a built-in role")
 		return nil, status.Errorf(codes.FailedPrecondition, "cannot update built-in role: %s", role.Name)
 	}
 
@@ -184,6 +185,7 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 	// invalidate live assignments and can lock every administrator out. Without
 	// this the guard is bypassable by switching transport.
 	if core.IsBuiltinRole(role.Name) {
+		s.core.LogRoleDeleteDenied(ctx, actor.UserID, role.ID, role.Name, "target is a built-in role")
 		return nil, status.Errorf(codes.FailedPrecondition, "cannot delete built-in role: %s", role.Name)
 	}
 	if err := s.core.Storage().DeleteRole(ctx, uint(req.GetId())); err != nil {

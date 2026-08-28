@@ -178,6 +178,26 @@ func (c *KeyorixCore) LogRoleDeleted(ctx context.Context, actorID, roleID uint, 
 	c.logRoleDefinitionChange(ctx, EventRoleDeleted, "deleted", actorID, roleID, name)
 }
 
+// LogRoleUpdateDenied / LogRoleDeleteDenied record a DENIED attempt to update
+// or delete a role -- #1503: UpdateRole/DeleteRole refuse a built-in role
+// (core.IsBuiltinRole) on both transports (server/http/handlers/rbac.go,
+// server/grpc/services/role_service.go), but until now that refusal left no
+// audit trail at all, unlike every other RBAC/Connect deny path. Callable
+// from either handler package since writeAuditEventFailed itself is
+// unexported. Reuses EventRoleUpdated/EventRoleDeleted rather than minting a
+// "_denied" event type per action -- Success=false already distinguishes a
+// denied attempt from a completed one, the same convention CreateSoDPolicy/
+// PlaceLegalHold established (see sod.go's package-level comment).
+func (c *KeyorixCore) LogRoleUpdateDenied(ctx context.Context, actorID, roleID uint, name, reason string) {
+	c.writeAuditEventFailed(ctx, EventRoleUpdated, actorPtr(actorID), nil, "",
+		fmt.Sprintf("role update DENIED for %q (id %d): %s", name, roleID, reason))
+}
+
+func (c *KeyorixCore) LogRoleDeleteDenied(ctx context.Context, actorID, roleID uint, name, reason string) {
+	c.writeAuditEventFailed(ctx, EventRoleDeleted, actorPtr(actorID), nil, "",
+		fmt.Sprintf("role delete DENIED for %q (id %d): %s", name, roleID, reason))
+}
+
 func (c *KeyorixCore) logRoleDefinitionChange(ctx context.Context, eventType, verb string, actorID, roleID uint, name string) {
 	desc := fmt.Sprintf("role %q (id %d) %s", name, roleID, verb)
 	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{RoleID: roleID})
