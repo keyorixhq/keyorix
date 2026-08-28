@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -41,41 +42,28 @@ func shareRecordData(id, secretID, ownerID, recipientID uint) map[string]interfa
 
 // --- CreateShareRecord ---
 
-func TestRemoteStorage_CreateShareRecord(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/shares", r.URL.Path)
-		_, _ = w.Write(apiOK(shareRecordData(1, 10, 2, 3)))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_CreateShareRecord_Unsupported: #1511/G80 deletion pass —
+// no matching route; see docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_CreateShareRecord_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	result, err := rs.CreateShareRecord(context.Background(), testShareRecord(0, 10, 2, 3))
-	require.NoError(t, err)
-	assert.Equal(t, uint(1), result.ID)
-	assert.Equal(t, uint(10), result.SecretID)
-	assert.Equal(t, uint(3), result.RecipientID)
+	_, err = rs.CreateShareRecord(context.Background(), testShareRecord(0, 10, 2, 3))
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- GetShareRecord ---
 
-func TestRemoteStorage_GetShareRecord(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/shares/1", r.URL.Path)
-		_, _ = w.Write(apiOK(shareRecordData(1, 10, 2, 3)))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_GetShareRecord_Unsupported: #1511/G80 deletion pass — no
+// matching route; see docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_GetShareRecord_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	result, err := rs.GetShareRecord(context.Background(), 1)
-	require.NoError(t, err)
-	assert.Equal(t, uint(1), result.ID)
-	assert.Equal(t, uint(10), result.SecretID)
+	_, err = rs.GetShareRecord(context.Background(), 1)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- UpdateShareRecord ---
@@ -233,44 +221,29 @@ func TestRemoteStorage_ListSharesByGroup(t *testing.T) {
 
 // --- ListSharedSecrets ---
 
-func TestRemoteStorage_ListSharedSecrets(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/users/3/shared-secrets", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
-			{"id": 10, "name": "db-password", "type": "password"},
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_ListSharedSecrets_Unsupported: #1511/G80 deletion pass —
+// no matching route; see docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_ListSharedSecrets_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	results, err := rs.ListSharedSecrets(context.Background(), 3)
-	require.NoError(t, err)
-	assert.Len(t, results, 1)
-	assert.Equal(t, "db-password", results[0].Name)
+	_, err = rs.ListSharedSecrets(context.Background(), 3)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- CheckSharePermission ---
 
-func TestRemoteStorage_CheckSharePermission(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/secrets/10/permissions", r.URL.Path)
-		assert.Equal(t, "3", r.URL.Query().Get("user_id"))
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"permission": "write",
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_CheckSharePermission_Unsupported: #1511/G80 deletion pass
+// — no matching route, and core.CheckSharePermission itself has zero callers
+// anywhere; see docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_CheckSharePermission_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	perm, err := rs.CheckSharePermission(context.Background(), 10, 3)
-	require.NoError(t, err)
-	assert.Equal(t, "write", perm)
+	_, err = rs.CheckSharePermission(context.Background(), 10, 3)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- DeleteExpiredShareRecords ---

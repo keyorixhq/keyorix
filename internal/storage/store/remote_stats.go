@@ -10,27 +10,18 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// GetStats retrieves storage statistics via remote API.
-func (rs *RemoteStorage) GetStats(ctx context.Context) (*storage.StorageStats, error) {
-	resp, err := rs.client.Get(ctx, "/api/v1/stats")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get stats: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("get stats failed: %s", resp.Error.Error())
-	}
-	var result storage.StorageStats
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+// GetStats: #1511/G80 deletion pass — GET /api/v1/stats has no matching
+// route (confirmed real: only scoped */stats variants exist). Sole caller
+// GetDashboardStats is server-only (server/http/handlers/dashboard.go) — no
+// CLI path at all. See docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) GetStats(_ context.Context) (*storage.StorageStats, error) {
+	return nil, remoteUnsupported("GetStats")
 }
 
 // SaveStatsSnapshot is a no-op in remote mode — snapshots are managed server-side.

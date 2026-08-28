@@ -134,22 +134,19 @@ func (rs *RemoteStorage) ListRoles(ctx context.Context) ([]*models.Role, error) 
 
 // --- RBAC assignment ---
 
-// AssignRole assigns a role to a user at scope via remote API.
-func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
-	payload := map[string]uint{
-		"user_id":        userID,
-		"role_id":        roleID,
-		"project_id":     scope.ProjectID,
-		"environment_id": scope.EnvironmentID,
-	}
-	resp, err := rs.client.Post(ctx, "/api/v1/rbac/assign-role", payload)
-	if err != nil {
-		return fmt.Errorf("failed to assign role: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("assign role failed: %s", resp.Error.Error())
-	}
-	return nil
+// AssignRole: #1511/G80 deletion pass — POST /api/v1/rbac/assign-role has no
+// matching route. Every unguarded CLI path into this method (via
+// core.AssignUserRole/AssignUserRoleScoped, reached from
+// rbac/assign_role.go, user/create.go, and request/review.go's access-request
+// approval flow) is dead today: request/review.go's own requireReviewAuthority
+// AND core.ApproveAccessRequestWithExpiry's own requireAuthorityForRole both
+// independently fail closed against the SAME three RBAC primitives
+// (GetUserRoleIDsAt/GetUserGroupRoleIDsAt/RoleSetHasPermission) ADR-086 keeps
+// permanently stubbed — so this is dead via two independent barriers on a
+// permanent stub chain, not merely "guarded by a CLI dual-path check" as
+// originally recorded. See docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) AssignRole(_ context.Context, _, _ uint, _ storage.Scope) error {
+	return remoteUnsupported("AssignRole")
 }
 
 // GetGroupRoleGrants is a thin passthrough onto GET
@@ -262,22 +259,13 @@ func (rs *RemoteStorage) DeleteExpiredRoleGrants(ctx context.Context, before tim
 	return result.Removed, nil
 }
 
-// RemoveRole removes a role from a user at scope via remote API.
-func (rs *RemoteStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
-	payload := map[string]uint{
-		"user_id":        userID,
-		"role_id":        roleID,
-		"project_id":     scope.ProjectID,
-		"environment_id": scope.EnvironmentID,
-	}
-	resp, err := rs.client.Post(ctx, "/api/v1/rbac/remove-role", payload)
-	if err != nil {
-		return fmt.Errorf("failed to remove role: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("remove role failed: %s", resp.Error.Error())
-	}
-	return nil
+// RemoveRole: #1511/G80 deletion pass — same DEAD verdict and evidence as
+// AssignRole above (POST /api/v1/rbac/remove-role has no matching route; the
+// one unguarded caller path, the access-request-approval race-revert branch
+// in core.finalizeAccessRequestApproval, is blocked by the same permanent
+// RBAC stub chain). See docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) RemoveRole(_ context.Context, _, _ uint, _ storage.Scope) error {
+	return remoteUnsupported("RemoveRole")
 }
 
 // RemoveAllProjectRoleGrants proxies onto POST

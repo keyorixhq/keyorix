@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -120,19 +121,16 @@ func TestRemoteStorage_DeleteSession_Error(t *testing.T) {
 
 // --- CleanupExpiredSessions ---
 
-func TestRemoteStorage_CleanupExpiredSessions(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/sessions/cleanup", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_CleanupExpiredSessions_Unsupported: #1511/G80 deletion
+// pass — no matching route, zero callers in any topology; see
+// docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_CleanupExpiredSessions_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.CleanupExpiredSessions(context.Background())
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- CreateSession (unsupported stub) ---

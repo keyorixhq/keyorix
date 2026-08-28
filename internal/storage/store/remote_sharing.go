@@ -17,37 +17,21 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// CreateShareRecord creates a new share record via remote API.
-func (rs *RemoteStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/shares", share)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create share record: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create share record failed: %s", resp.Error.Error())
-	}
-	var result models.ShareRecord
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+// CreateShareRecord: #1511/G80 deletion pass — POST /api/v1/shares has no
+// matching route (confirmed real: the /shares group has no POST). Every
+// caller (ShareSecret/ShareSecretWithGroup) is behind share/create.go's
+// NewRemoteClient() guard. See docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) CreateShareRecord(_ context.Context, _ *models.ShareRecord) (*models.ShareRecord, error) {
+	return nil, remoteUnsupported("CreateShareRecord")
 }
 
-// GetShareRecord retrieves a share record by ID via remote API.
-func (rs *RemoteStorage) GetShareRecord(ctx context.Context, shareID uint) (*models.ShareRecord, error) {
-	path := fmt.Sprintf("/api/v1/shares/%d", shareID)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get share record: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("get share record failed: %s", resp.Error.Error())
-	}
-	var result models.ShareRecord
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+// GetShareRecord: #1511/G80 deletion pass — GET /api/v1/shares/{id} has no
+// matching route (confirmed real: the /shares group has no GET/{id}). Every
+// caller (UpdateSharePermission, RevokeShare) is behind a NewRemoteClient()
+// guard in share/update.go, share/revoke.go. See
+// docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) GetShareRecord(_ context.Context, _ uint) (*models.ShareRecord, error) {
+	return nil, remoteUnsupported("GetShareRecord")
 }
 
 // UpdateShareRecord updates an existing share record via remote API.
@@ -192,40 +176,22 @@ func (rs *RemoteStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([
 	return result, nil
 }
 
-// ListSharedSecrets lists all secrets shared with userID via remote API.
-func (rs *RemoteStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
-	path := fmt.Sprintf("/api/v1/users/%d/shared-secrets", userID)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list shared secrets: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("list shared secrets failed: %s", resp.Error.Error())
-	}
-	var result []*models.SecretNode
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result, nil
+// ListSharedSecrets: #1511/G80 deletion pass — GET
+// /api/v1/users/*/shared-secrets has no matching route (confirmed real: only
+// GET /shared-secrets, the caller's own, exists). Sole CLI caller
+// (share/shared_secrets.go) is behind a NewRemoteClient() guard. See
+// docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) ListSharedSecrets(_ context.Context, _ uint) ([]*models.SecretNode, error) {
+	return nil, remoteUnsupported("ListSharedSecrets")
 }
 
-// CheckSharePermission returns the permission level a user has on a secret via remote API.
-func (rs *RemoteStorage) CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error) {
-	path := fmt.Sprintf("/api/v1/secrets/%d/permissions?user_id=%d", secretID, userID)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return "", fmt.Errorf("failed to check share permission: %w", err)
-	}
-	if !resp.Success {
-		return "", fmt.Errorf("check share permission failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Permission string `json:"permission"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Permission, nil
+// CheckSharePermission: #1511/G80 deletion pass — GET
+// /api/v1/secrets/*/permissions has no matching route, and core.CheckSharePermission
+// itself has zero callers anywhere (no HTTP handler, no gRPC service, no CLI)
+// — orphaned server-side, not just under storage.type: remote. See
+// docs/adr-087-remote-storage-deletion-pass.md.
+func (rs *RemoteStorage) CheckSharePermission(_ context.Context, _, _ uint) (string, error) {
+	return "", remoteUnsupported("CheckSharePermission")
 }
 
 // DeleteExpiredShareRecords proxies onto POST

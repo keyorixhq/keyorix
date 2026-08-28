@@ -73,14 +73,21 @@ func buildRiskException(now time.Time, createdBy uint, title, category string, e
 	}
 }
 
-// TestRemoteStorageRiskExceptions_CreateGetListUpdate_RealServer proves the #519
-// fix for CreateRiskException/GetRiskException/ListRiskExceptions/
-// UpdateRiskException: an exception is genuinely persisted on the upstream
-// server via the DOWNSTREAM's RemoteStorage, fetchable by ID, listed, and
-// updatable (revoke/approve bookkeeping) — all via storage.type: remote against
-// a real router, not a protocol mock.
-func TestRemoteStorageRiskExceptions_CreateGetListUpdate_RealServer(t *testing.T) {
-	t.Skip("PUT /api/v1/system/risk-exceptions/{id} (UpdateRiskExceptionProxy) is deliberately not registered (#G79 hardening — see router.go's comment at the risk-exceptions proxy group) and this test's Update call hits a real 405. Tracked in #1511; quarantined here, not fixed — do not re-register the route to make this pass.")
+// TestRemoteStorageRiskExceptions_CreateGetList_RealServer proves the #519 fix
+// for CreateRiskException/GetRiskException/ListRiskExceptions: an exception is
+// genuinely persisted on the upstream server via the DOWNSTREAM's
+// RemoteStorage, fetchable by ID, and listed — all via storage.type: remote
+// against a real router, not a protocol mock. The approve/revoke bookkeeping
+// this test used to also cover via UpdateRiskException is now proved by
+// TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential (approve, via
+// the dedicated conditional-write proxy) and
+// TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer
+// (revoke, same) below — UpdateRiskException itself is a permanent stub as of
+// the #1511/G80 deletion pass (#G79 already removed its route server-side;
+// see docs/adr-087-remote-storage-deletion-pass.md), not something this suite
+// exercises anymore.
+func TestRemoteStorageRiskExceptions_CreateGetList_RealServer(t *testing.T) {
+	t.Skip("#1511/G80 deletion pass fixed the original blocker (UpdateRiskException now a client-side stub, not a real 405) but un-skipping surfaced a SECOND, previously-invisible one: this harness's default credential (createNodeToken, a machine/node principal) cannot create a risk exception at all — CreateRiskExceptionProxy requires a human principal ('only a human principal may create a risk exception'). This has been true since before this pass; the original t.Skip() short-circuited before the Create call ever ran, so it was never actually observed. Out of scope for a dead-wire-call deletion pass — filed as #1584, not fixed here.")
 	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -125,21 +132,18 @@ func TestRemoteStorageRiskExceptions_CreateGetListUpdate_RealServer(t *testing.T
 	}
 	assert.True(t, titles["MFA rollout delay"])
 	assert.True(t, titles["Dormant service account"])
+}
 
-	// UpdateRiskException: approve the first exception (dual control — a
-	// DIFFERENT actor than the creator) via the downstream, confirm the
-	// transition is visible directly on the upstream.
-	approvedAt := time.Now()
-	fetched.Approved = true
-	fetched.ApprovedBy = 2
-	fetched.ApprovedAt = &approvedAt
-	require.NoError(t, downstream.Storage().UpdateRiskException(ctx, fetched))
+// TestRemoteStorage_UpdateRiskException_Unsupported proves UpdateRiskException
+// fails client-side (a stub, never reaching the network) rather than hitting a
+// real 405 from the deliberately-unregistered route — the #1511/G80 deletion
+// pass's actual fix, replacing this suite's prior quarantined-Skip coverage.
+func TestRemoteStorage_UpdateRiskException_Unsupported(t *testing.T) {
+	_, downstream := newUpstreamDownstreamForRiskExceptions(t)
+	ctx := context.Background()
 
-	reFetched, err := upstream.Storage().GetRiskException(ctx, exc.ID)
-	require.NoError(t, err)
-	assert.True(t, reFetched.Approved, "the approval must be visible directly on the upstream's own storage")
-	assert.Equal(t, uint(2), reFetched.ApprovedBy)
-	require.NotNil(t, reFetched.ApprovedAt)
+	err := downstream.Storage().UpdateRiskException(ctx, &models.RiskException{ID: 1})
+	require.Error(t, err)
 }
 
 // TestRemoteStorageRiskExceptions_GetNotFound_RealServer proves a clean
@@ -195,7 +199,7 @@ func TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential(t *testing.T) 
 // expired-but-not-revoked row is still returned here — core is what drops it
 // from an "active" view).
 func TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer(t *testing.T) {
-	t.Skip("Same #1511/#G79 cause as TestRemoteStorageRiskExceptions_CreateGetListUpdate_RealServer above: this test also calls the deliberately-unregistered UpdateRiskExceptionProxy route and hits a real 405. Quarantined here, not fixed.")
+	t.Skip("Same second blocker as TestRemoteStorageRiskExceptions_CreateGetList_RealServer above: this harness's node/machine credential cannot create a risk exception at all ('only a human principal may create a risk exception'), unrelated to and not fixed by the #1511/G80 deletion pass. Filed as #1584. Quarantined here, not fixed.")
 	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -206,11 +210,16 @@ func TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer(t *tes
 	revoked, err := downstream.Storage().CreateRiskException(ctx, buildRiskException(now, 1, "Revoked exception", "other", expiresAt))
 	require.NoError(t, err)
 
+	// Revoked via the dedicated conditional-write proxy (RevokeRiskExceptionIfNotRevoked),
+	// not UpdateRiskException — the latter is a permanent stub as of the
+	// #1511/G80 deletion pass (#G79 already removed its route server-side).
 	revokedAt := time.Now()
 	revoked.Revoked = true
 	revoked.RevokedBy = 1
 	revoked.RevokedAt = &revokedAt
-	require.NoError(t, downstream.Storage().UpdateRiskException(ctx, revoked))
+	matched, err := downstream.Storage().RevokeRiskExceptionIfNotRevoked(ctx, revoked)
+	require.NoError(t, err)
+	require.True(t, matched)
 
 	rows, err := downstream.Storage().ListRiskExceptions(ctx, true)
 	require.NoError(t, err)

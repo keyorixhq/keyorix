@@ -22,6 +22,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -54,38 +55,15 @@ func apiNotOK(code, message string) []byte {
 
 // ─── remote_stats.go ────────────────────────────────────────────────────────
 
-func TestRemoteCov_GetStats_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/stats", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]any{
-			"total_secrets": float64(42),
-			"total_users":   float64(7),
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	stats, err := rs.GetStats(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, stats)
-}
-
-func TestRemoteCov_GetStats_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// HTTP 200 + success:false is the only way to reach the !resp.Success branch.
-		_, _ = w.Write(apiNotOK("INTERNAL", "stats unavailable"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteCov_GetStats_Unsupported: #1511/G80 deletion pass — no matching
+// route, server-only caller; see docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteCov_GetStats_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetStats(context.Background())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "get stats failed")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 // ─── remote_sod.go ──────────────────────────────────────────────────────────
@@ -409,19 +387,8 @@ func TestRemoteCov_CreateWebAuthnSession_Error(t *testing.T) {
 
 // ─── remote_sharing.go ──────────────────────────────────────────────────────
 
-func TestRemoteCov_CheckSharePermission_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "share not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CheckSharePermission(context.Background(), 10, 3)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "check share permission failed")
-}
+// CheckSharePermission is a permanent stub as of the #1511/G80 deletion pass
+// — see TestRemoteStorage_CheckSharePermission_Unsupported (remote_sharing_test.go).
 
 func TestRemoteCov_DeleteExpiredShareRecords_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -502,33 +469,9 @@ func TestRemoteCov_decodeUserResponse_BadJSON(t *testing.T) {
 
 // ─── Additional error paths for existing sharing functions ──────────────────
 
-func TestRemoteCov_CreateShareRecord_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL", "db error"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateShareRecord(context.Background(), &models.ShareRecord{SecretID: 1, OwnerID: 2})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "create share record failed")
-}
-
-func TestRemoteCov_GetShareRecord_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "share not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.GetShareRecord(context.Background(), 999)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "get share record failed")
-}
+// CreateShareRecord/GetShareRecord are permanent stubs as of the #1511/G80
+// deletion pass — see TestRemoteStorage_CreateShareRecord_Unsupported/
+// TestRemoteStorage_GetShareRecord_Unsupported (remote_sharing_test.go).
 
 func TestRemoteCov_UpdateShareRecord_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -600,19 +543,8 @@ func TestRemoteCov_ListSharesByGroup_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "list shares by group failed")
 }
 
-func TestRemoteCov_ListSharedSecrets_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "user not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.ListSharedSecrets(context.Background(), 999)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "list shared secrets failed")
-}
+// ListSharedSecrets is a permanent stub as of the #1511/G80 deletion pass —
+// see TestRemoteStorage_ListSharedSecrets_Unsupported (remote_sharing_test.go).
 
 // ─── LogAuditEvent error path ─────────────────────────────────────────────
 

@@ -342,22 +342,9 @@ func TestRemoteCov_GetRiskException_NotSuccess(t *testing.T) {
 	assert.Contains(t, err.Error(), "get risk exception failed")
 }
 
-func TestRemoteCov_UpdateRiskException_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "update failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.UpdateRiskException(context.Background(), &models.RiskException{
-		ID: 6, Title: "test", Category: "sod", Justification: "still needed", CreatedBy: 1,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "update risk exception failed")
-}
+// UpdateRiskException is a permanent stub as of the #1511/G80 deletion pass
+// (#G79 already removed its server route) — see
+// TestRemoteStorage_UpdateRiskException_Unsupported (remote_misc_test.go).
 
 // decodeRiskExceptionResponse is exercised by GetRiskException.
 // Test that a bad JSON body returns an error from the decode helper.
@@ -379,36 +366,9 @@ func TestRemoteCov_DecodeRiskExceptionResponse_BadJSON(t *testing.T) {
 // remote_auth.go — !resp.Success branches
 // ============================================================
 
-func TestRemoteCov_CleanupExpiredSessions_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/sessions/cleanup", r.URL.Path)
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "cleanup failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.CleanupExpiredSessions(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cleanup expired sessions failed")
-}
-
-func TestRemoteCov_CleanupExpiredSessions_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/sessions/cleanup", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.CleanupExpiredSessions(context.Background())
-	require.NoError(t, err)
-}
+// CleanupExpiredSessions is a permanent stub as of the #1511/G80 deletion
+// pass — see TestRemoteStorage_CleanupExpiredSessions_Unsupported
+// (remote_auth_test.go).
 
 // decodeSetupTokenResponse: exercise by CreateSetupToken returning a valid body.
 func TestRemoteCov_DecodeSetupTokenResponse_BadJSON(t *testing.T) {

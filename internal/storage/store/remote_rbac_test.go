@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -122,34 +123,26 @@ func TestRemoteStorage_ListRoles(t *testing.T) {
 
 // --- RBAC assignment ---
 
-func TestRemoteStorage_AssignRole(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/rbac/assign-role", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_AssignRole_Unsupported: #1511/G80 deletion pass — no
+// matching route; see docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_AssignRole_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.AssignRole(context.Background(), 10, 1, corestorage.Scope{ProjectID: 0, EnvironmentID: 0})
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
-func TestRemoteStorage_RemoveRole(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/rbac/remove-role", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_RemoveRole_Unsupported: #1511/G80 deletion pass — no
+// matching route; see docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_RemoveRole_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.RemoveRole(context.Background(), 10, 1, corestorage.Scope{ProjectID: 0, EnvironmentID: 0})
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 func TestRemoteStorage_GetGroupRoleGrants(t *testing.T) {

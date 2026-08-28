@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -291,44 +292,17 @@ func TestRemoteStorage_TryIncrementSecretNodeReadCount_Unsupported(t *testing.T)
 
 // --- Secret version operations ---
 
-func TestRemoteStorage_CreateSecretVersion(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/secrets/42/versions", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"ID": 100, "SecretNodeID": 42, "VersionNumber": 1, "ReadCount": 0,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_CreateSecretVersion_Unsupported: #1511/G80 deletion pass
+// — POST /api/v1/secrets/*/versions has no matching route (confirmed DEAD,
+// see docs/adr-087-remote-storage-deletion-pass.md); the method is now a
+// permanent stub, no HTTP server needed.
+func TestRemoteStorage_CreateSecretVersion_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	version, err := rs.CreateSecretVersion(context.Background(), &models.SecretVersion{
-		SecretNodeID:  42,
-		VersionNumber: 1,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, version.VersionNumber)
-}
-
-func TestRemoteStorage_GetSecretVersion(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/v1/secrets/42/versions/2", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"ID": 200, "SecretNodeID": 42, "VersionNumber": 2, "ReadCount": 3,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	version, err := rs.GetSecretVersion(context.Background(), 42, 2)
-	require.NoError(t, err)
-	assert.Equal(t, 2, version.VersionNumber)
-	assert.Equal(t, 3, version.ReadCount)
+	_, err = rs.CreateSecretVersion(context.Background(), &models.SecretVersion{SecretNodeID: 42})
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 func TestRemoteStorage_ListSecretVersions(t *testing.T) {
@@ -404,36 +378,29 @@ func TestRemoteStorage_GetSecretVersions(t *testing.T) {
 	require.Len(t, versions, 1)
 }
 
-func TestRemoteStorage_GetLatestSecretVersion(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/v1/secrets/42/versions/latest", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"ID": 300, "SecretNodeID": 42, "VersionNumber": 3, "ReadCount": 5,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_GetLatestSecretVersion_Unsupported: #1511/G80 deletion
+// pass — GET /api/v1/secrets/*/versions/latest has no matching route
+// (confirmed DEAD, Wave 0c's run.go/ResolveRemote() correction re-verified
+// intact; see docs/adr-087-remote-storage-deletion-pass.md); the method is
+// now a permanent stub.
+func TestRemoteStorage_GetLatestSecretVersion_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	version, err := rs.GetLatestSecretVersion(context.Background(), 42)
-	require.NoError(t, err)
-	assert.Equal(t, 3, version.VersionNumber)
-	assert.Equal(t, 5, version.ReadCount)
+	_, err = rs.GetLatestSecretVersion(context.Background(), 42)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
-func TestRemoteStorage_IncrementSecretReadCount(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/secret-versions/100/increment-read-count", r.URL.Path)
-		_, _ = w.Write(apiOK(nil))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_IncrementSecretReadCount_Unsupported: #1511/G80 deletion
+// pass — POST /api/v1/secret-versions/*/increment-read-count has no matching
+// route and zero callers anywhere in internal/core; see
+// docs/adr-087-remote-storage-deletion-pass.md.
+func TestRemoteStorage_IncrementSecretReadCount_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.IncrementSecretReadCount(context.Background(), 100)
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }

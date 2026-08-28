@@ -674,60 +674,6 @@ func TestRemoteCov_ListSecrets_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_CreateSecretVersion_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "create failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateSecretVersion(context.Background(), &models.SecretVersion{SecretNodeID: 42, VersionNumber: 1})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "create secret version failed")
-}
-
-func TestRemoteCov_CreateSecretVersion_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-a-version-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateSecretVersion(context.Background(), &models.SecretVersion{SecretNodeID: 1, VersionNumber: 1})
-	assert.Error(t, err)
-}
-
-func TestRemoteCov_GetSecretVersion_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "version not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.GetSecretVersion(context.Background(), 42, 99)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "get secret version failed")
-}
-
-func TestRemoteCov_GetSecretVersion_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-a-version-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.GetSecretVersion(context.Background(), 1, 1)
-	assert.Error(t, err)
-}
-
 func TestRemoteCov_ListSecretVersions_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("NOT_FOUND", "secret not found"))
@@ -753,47 +699,6 @@ func TestRemoteCov_ListSecretVersions_BadJSON(t *testing.T) {
 
 	_, err = rs.ListSecretVersions(context.Background(), 1)
 	assert.Error(t, err)
-}
-
-func TestRemoteCov_GetLatestSecretVersion_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "no versions found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.GetLatestSecretVersion(context.Background(), 99)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "get latest secret version failed")
-}
-
-func TestRemoteCov_GetLatestSecretVersion_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-a-version-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.GetLatestSecretVersion(context.Background(), 1)
-	assert.Error(t, err)
-}
-
-func TestRemoteCov_IncrementSecretReadCount_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "version not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.IncrementSecretReadCount(context.Background(), 999)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "increment read count failed")
 }
 
 // --------------------------------------------------------------------------
