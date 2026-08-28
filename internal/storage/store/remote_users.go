@@ -488,26 +488,24 @@ func (rs *RemoteStorage) RestoreUser(ctx context.Context, id uint) error {
 }
 
 // PurgeDeletedUsersBefore, PurgeDeletedProjectsBefore, PurgeDeletedEnvironmentsBefore
-// (finding #520) proxy onto NEW server-side routes under
-// /api/v1/system/retention (server/http/handlers/retention_proxy.go) — the SAME
-// "RemoteStorage stub -> thin proxy route" pattern established for login-attempts
-// (#452). See remote_secrets.go's package-level retention-proxy doc comment (next
-// to PurgeDeletedSecretsBefore) for the shared atomicity/timezone analysis; each
-// of these three cascades (users -> role grants/memberships/received
-// shares/PATs/sessions; projects -> role grants; environments, no cascade) runs
-// entirely inside the upstream server's own single storage.Storage call, so one
-// HTTP round trip preserves the LOCAL implementation's own transactional
-// guarantee unchanged.
-func (rs *RemoteStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) {
-	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/users/purge", before, "purge deleted users")
+// used to proxy onto server-side routes under /api/v1/system/retention
+// (PurgeDeletedUsersBeforeProxy/PurgeDeletedProjectsBeforeProxy/
+// PurgeDeletedEnvironmentsBeforeProxy), deleted (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md) — no live caller: see
+// remote_secrets.go's PurgeDeletedSecretsBefore doc for the full reasoning
+// (same root cause, same deletion, four methods). Return
+// errUnsupportedRemote like every other known-unsupported RemoteStorage
+// operation (see remote_auth.go's package doc).
+func (rs *RemoteStorage) PurgeDeletedUsersBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedUsersBefore")
 }
 
-func (rs *RemoteStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
-	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/projects/purge", before, "purge deleted projects")
+func (rs *RemoteStorage) PurgeDeletedProjectsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedProjectsBefore")
 }
 
-func (rs *RemoteStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {
-	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/environments/purge", before, "purge deleted environments")
+func (rs *RemoteStorage) PurgeDeletedEnvironmentsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedEnvironmentsBefore")
 }
 
 // ListUsers lists users with optional filtering via remote API.

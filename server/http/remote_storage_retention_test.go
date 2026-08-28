@@ -1,10 +1,14 @@
 // remote_storage_retention_test.go — end-to-end proxy tests for finding #520's
-// eleven data-retention/purge-sweep RemoteStorage methods
+// remaining three data-retention/purge-sweep RemoteStorage methods
 // (server/http/handlers/retention_proxy.go): each test seeds a mix of
 // eligible/ineligible rows directly against the upstream's real storage, drives
 // the sweep through a REAL downstream RemoteStorage client over a real HTTP
 // server (not a protocol mock), and confirms exactly the eligible rows were
 // purged/returned while every ineligible row survives untouched.
+//
+// PurgeDeletedSecretsBefore/PurgeDeletedUsersBefore/PurgeDeletedProjectsBefore/
+// PurgeDeletedEnvironmentsBefore and their tests were DELETED (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md) — no live caller.
 package http
 
 import (
@@ -58,43 +62,6 @@ func newUpstreamDownstreamForRetention(t *testing.T) (upstream *core.KeyorixCore
 	require.NoError(t, err)
 	downstream = core.NewKeyorixCore(rs)
 	return upstream, downstream
-}
-
-// TestRemoteStoragePurgeDeletedSecretsBefore_RealServer proves
-// PurgeDeletedSecretsBeforeProxy: a soft-deleted secret past the cutoff is
-// purged; a live secret is left alone.
-func TestRemoteStoragePurgeDeletedSecretsBefore_RealServer(t *testing.T) {
-	upstream, downstream := newUpstreamDownstreamForRetention(t)
-	ctx := context.Background()
-
-	project, err := upstream.CreateProject(ctx, "Retention Test Project", "")
-	require.NoError(t, err)
-	envs, err := upstream.Storage().ListEnvironmentsByProject(ctx, project.ID)
-	require.NoError(t, err)
-	require.NotEmpty(t, envs)
-	envID := envs[0].ID
-
-	deleted, err := upstream.Storage().CreateSecret(ctx, &models.SecretNode{
-		Name: "old-deleted", ProjectID: project.ID, EnvironmentID: envID, Type: "generic",
-	})
-	require.NoError(t, err)
-	require.NoError(t, upstream.Storage().DeleteSecret(ctx, deleted.ID))
-
-	live, err := upstream.Storage().CreateSecret(ctx, &models.SecretNode{
-		Name: "still-live", ProjectID: project.ID, EnvironmentID: envID, Type: "generic",
-	})
-	require.NoError(t, err)
-
-	n, err := downstream.Storage().PurgeDeletedSecretsBefore(ctx, time.Now().Add(time.Minute))
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, n, "only the soft-deleted secret is purged")
-
-	_, err = upstream.Storage().GetSecretIncludingDeleted(ctx, deleted.ID)
-	require.Error(t, err, "the purged secret must be gone, even Unscoped")
-
-	stillThere, err := upstream.Storage().GetSecret(ctx, live.ID)
-	require.NoError(t, err, "the live secret must survive the purge")
-	assert.Equal(t, "still-live", stillThere.Name)
 }
 
 // TestRemoteStorageDeleteExpiredRoleGrants_RealServer proves
@@ -189,94 +156,6 @@ func TestRemoteStorageDeleteExpiredShareRecords_RealServer(t *testing.T) {
 	survivors, err := upstream.Storage().ListSharesByUser(ctx, recipient2.ID)
 	require.NoError(t, err)
 	assert.Len(t, survivors, 1, "the permanent share must survive")
-}
-
-// TestRemoteStoragePurgeDeletedUsersBefore_RealServer proves
-// PurgeDeletedUsersBeforeProxy: a soft-deleted user is purged; a live user is
-// left alone.
-func TestRemoteStoragePurgeDeletedUsersBefore_RealServer(t *testing.T) {
-	upstream, downstream := newUpstreamDownstreamForRetention(t)
-	ctx := context.Background()
-
-	deletedUser, err := upstream.Storage().CreateUser(ctx, &models.User{Username: "todelete", Email: "todelete@example.com", IsActive: true})
-	require.NoError(t, err)
-	require.NoError(t, upstream.Storage().DeleteUser(ctx, deletedUser.ID))
-
-	liveUser, err := upstream.Storage().CreateUser(ctx, &models.User{Username: "stillhere", Email: "stillhere@example.com", IsActive: true})
-	require.NoError(t, err)
-
-	n, err := downstream.Storage().PurgeDeletedUsersBefore(ctx, time.Now().Add(time.Minute))
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, n)
-
-	_, err = upstream.Storage().GetUser(ctx, deletedUser.ID)
-	require.Error(t, err, "the purged user must be gone")
-
-	stillThere, err := upstream.Storage().GetUser(ctx, liveUser.ID)
-	require.NoError(t, err, "the live user must survive the purge")
-	assert.Equal(t, "stillhere", stillThere.Username)
-}
-
-// TestRemoteStoragePurgeDeletedProjectsBefore_RealServer proves
-// PurgeDeletedProjectsBeforeProxy: a soft-deleted project is purged; a live
-// project is left alone.
-func TestRemoteStoragePurgeDeletedProjectsBefore_RealServer(t *testing.T) {
-	upstream, downstream := newUpstreamDownstreamForRetention(t)
-	ctx := context.Background()
-
-	deletedProject, err := upstream.Storage().CreateProject(ctx, &models.Project{Name: "to-delete-project"})
-	require.NoError(t, err)
-	require.NoError(t, upstream.Storage().DeleteProject(ctx, deletedProject.ID))
-
-	liveProject, err := upstream.CreateProject(ctx, "still-here-project", "")
-	require.NoError(t, err)
-
-	n, err := downstream.Storage().PurgeDeletedProjectsBefore(ctx, time.Now().Add(time.Minute))
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, n)
-
-	_, err = upstream.Storage().GetProject(ctx, deletedProject.ID)
-	require.Error(t, err, "the purged project must be gone")
-
-	stillThere, err := upstream.Storage().GetProject(ctx, liveProject.ID)
-	require.NoError(t, err, "the live project must survive the purge")
-	assert.Equal(t, "still-here-project", stillThere.Name)
-}
-
-// TestRemoteStoragePurgeDeletedEnvironmentsBefore_RealServer proves
-// PurgeDeletedEnvironmentsBeforeProxy: a soft-deleted environment is purged; a
-// live environment is left alone.
-func TestRemoteStoragePurgeDeletedEnvironmentsBefore_RealServer(t *testing.T) {
-	upstream, downstream := newUpstreamDownstreamForRetention(t)
-	ctx := context.Background()
-
-	project, err := upstream.CreateProject(ctx, "Env Retention Project", "")
-	require.NoError(t, err)
-
-	deletedEnv, err := upstream.Storage().CreateEnvironment(ctx, &models.Environment{Name: "to-delete-env", ProjectID: project.ID})
-	require.NoError(t, err)
-	require.NoError(t, upstream.Storage().DeleteEnvironment(ctx, deletedEnv.ID))
-
-	envs, err := upstream.Storage().ListEnvironmentsByProject(ctx, project.ID)
-	require.NoError(t, err)
-	require.NotEmpty(t, envs, "the project's default environment(s) survive as controls")
-	liveEnvID := envs[0].ID
-
-	n, err := downstream.Storage().PurgeDeletedEnvironmentsBefore(ctx, time.Now().Add(time.Minute))
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, n)
-
-	var remaining []*models.Environment
-	remaining, err = upstream.Storage().ListEnvironmentsByProject(ctx, project.ID)
-	require.NoError(t, err)
-	found := false
-	for _, e := range remaining {
-		assert.NotEqual(t, deletedEnv.ID, e.ID, "the purged environment must be gone")
-		if e.ID == liveEnvID {
-			found = true
-		}
-	}
-	assert.True(t, found, "the live environment must survive the purge")
 }
 
 // TestRemoteStorageListUsersInStateBefore_RealServer proves

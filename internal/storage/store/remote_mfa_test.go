@@ -40,19 +40,16 @@ func TestRemoteStorage_GetMFASecret(t *testing.T) {
 	assert.True(t, s.Activated)
 }
 
-func TestRemoteStorage_ActivateMFASecret(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/secrets/42/activate", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_ActivateMFASecret_Unsupported: ActivateMFASecretProxy was
+// deleted (#1593, docs/adr-089-mfa-purge-relay-deletion.md) -- no live
+// caller. ActivateMFASecret is now a hard stub, same as
+// ConsumeMFARecoveryCode/CreateMFAChallenge below.
+func TestRemoteStorage_ActivateMFASecret_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
 	require.NoError(t, err)
 
 	err = rs.ActivateMFASecret(context.Background(), 42)
-	require.NoError(t, err)
+	assert.Error(t, err)
 }
 
 func TestRemoteStorage_MarkTOTPStepUsed_Unsupported(t *testing.T) {
@@ -63,67 +60,39 @@ func TestRemoteStorage_MarkTOTPStepUsed_Unsupported(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteStorage_DeleteMFAForUser(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/users/42", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_DeleteMFAForUser_Unsupported: DeleteMFAForUserProxy was
+// deleted (#1593, docs/adr-089-mfa-purge-relay-deletion.md) -- no live
+// caller.
+func TestRemoteStorage_DeleteMFAForUser_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
 	require.NoError(t, err)
 
 	err = rs.DeleteMFAForUser(context.Background(), 42)
-	require.NoError(t, err)
+	assert.Error(t, err)
 }
 
-func TestRemoteStorage_SetUserMFAEnabled(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/users/42/mfa-enabled", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_SetUserMFAEnabled_Unsupported: SetUserMFAEnabledProxy was
+// deleted (#1593, docs/adr-089-mfa-purge-relay-deletion.md) -- no live
+// caller.
+func TestRemoteStorage_SetUserMFAEnabled_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
 	require.NoError(t, err)
 
 	err = rs.SetUserMFAEnabled(context.Background(), 42, true)
-	require.NoError(t, err)
-}
-
-func TestRemoteStorage_SetUserMFAEnabled_Disable(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/users/10/mfa-enabled", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.SetUserMFAEnabled(context.Background(), 10, false)
-	require.NoError(t, err)
+	assert.Error(t, err)
 }
 
 // --- Recovery codes ---
 
-func TestRemoteStorage_CreateMFARecoveryCodes(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/recovery-codes", r.URL.Path)
-		assert.Equal(t, "42", r.URL.Query().Get("user_id"))
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_CreateMFARecoveryCodes_Unsupported:
+// CreateMFARecoveryCodesProxy was deleted (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md) -- no live caller.
+func TestRemoteStorage_CreateMFARecoveryCodes_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
 	require.NoError(t, err)
 
 	err = rs.CreateMFARecoveryCodes(context.Background(), 42, []string{"hash1", "hash2", "hash3"})
-	require.NoError(t, err)
+	assert.Error(t, err)
 }
 
 func TestRemoteStorage_ConsumeMFARecoveryCode_Unsupported(t *testing.T) {
@@ -151,19 +120,15 @@ func TestRemoteStorage_CountUnusedMFARecoveryCodes(t *testing.T) {
 	assert.Equal(t, 6, n)
 }
 
-func TestRemoteStorage_DeleteMFARecoveryCodes(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/api/v1/system/mfa/recovery-codes/42", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_DeleteMFARecoveryCodes_Unsupported:
+// DeleteMFARecoveryCodesProxy was deleted (#1593,
+// docs/adr-089-mfa-purge-relay-deletion.md) -- no live caller.
+func TestRemoteStorage_DeleteMFARecoveryCodes_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
 	require.NoError(t, err)
 
 	err = rs.DeleteMFARecoveryCodes(context.Background(), 42)
-	require.NoError(t, err)
+	assert.Error(t, err)
 }
 
 // --- MFA challenge (CreateMFAChallenge is an unsupported stub) ---

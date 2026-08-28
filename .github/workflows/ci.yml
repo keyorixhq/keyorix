@@ -193,6 +193,51 @@ jobs:
           fi
           echo "OK: no root-level pnpm workspace files."
 
+  # #1594 showed "Merged" on GitHub but never reached main: it was merged
+  # into its base branch (wave2-adr-amendments), which had ALREADY been
+  # squash-merged into main as a separate PR before #1594 landed on it --
+  # the exact branch-into-branch trap this repo's CLAUDE.md already names
+  # by example (PRs #1563-#1566). CLAUDE.md's own "verify closure by
+  # content, not by commit" practice only catches this AFTER the fact, by
+  # re-reading a specific PR someone already suspects is wrong -- it is a
+  # post-hoc verification step, not a gate, so it does not stop the mistake
+  # from being merged in the first place. This job is the preventive gate:
+  # it fails a PR outright if its base is not `main`, unless the PR is
+  # explicitly labeled `stacked-pr` (a deliberate, visible opt-out for a
+  # genuine multi-PR review chain -- see adr082/**'s stacked-branch
+  # convention in this file's own `on: pull_request: branches:` comment
+  # above for what a legitimate case looks like). Runs on pull_request only
+  # (base branch has no meaning for a push event); ungated by docs_only for
+  # the same reason as adr-numbers below -- a single string comparison,
+  # cheap enough to always run.
+  base-branch-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Assert PR base is main, unless labeled stacked-pr
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          if [ "$BASE_REF" = "main" ]; then
+            echo "ok: base is main"
+            exit 0
+          fi
+          case ",$LABELS," in
+            *,stacked-pr,*)
+              echo "ok: base is '$BASE_REF', but PR is labeled stacked-pr -- allowed"
+              exit 0
+              ;;
+          esac
+          echo "::error::PR base is '$BASE_REF', not main, and is not labeled 'stacked-pr'."
+          echo "A PR based on a feature branch instead of main can show 'Merged' on GitHub"
+          echo "without its content ever reaching main -- see #1594/docs/adr-089-mfa-purge-relay-deletion.md"
+          echo "for a real instance. If this is a genuine stacked-PR review chain, add the"
+          echo "'stacked-pr' label explicitly; otherwise retarget this PR at main."
+          exit 1
+
   # Not gated by docs_only: docs/adr-*.md files ARE classified as docs, but
   # this check is a single find|sed|sort pass, cheap enough to always run
   # regardless of what this specific PR touches, matching

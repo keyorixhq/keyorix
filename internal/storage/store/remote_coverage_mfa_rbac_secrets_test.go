@@ -141,76 +141,6 @@ func TestRemoteCov_GetMFASecret_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_ActivateMFASecret_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "user not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.ActivateMFASecret(context.Background(), 99)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "activate MFA secret failed")
-}
-
-func TestRemoteCov_DeleteMFAForUser_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "user not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.DeleteMFAForUser(context.Background(), 99)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "delete MFA for user failed")
-}
-
-func TestRemoteCov_SetUserMFAEnabled_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "user not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.SetUserMFAEnabled(context.Background(), 99, true)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "set MFA enabled failed")
-}
-
-func TestRemoteCov_CreateMFARecoveryCodes_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "db error"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.CreateMFARecoveryCodes(context.Background(), 1, []string{"h1", "h2"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "store MFA recovery codes failed")
-}
-
-func TestRemoteCov_DeleteMFARecoveryCodes_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("NOT_FOUND", "user not found"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.DeleteMFARecoveryCodes(context.Background(), 99)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "delete MFA recovery codes failed")
-}
-
 func TestRemoteCov_CountUnusedMFARecoveryCodes_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("NOT_FOUND", "user not found"))
@@ -618,34 +548,6 @@ func TestRemoteCov_ListConnectRefGrants_BadJSON(t *testing.T) {
 // --------------------------------------------------------------------------
 // remote_secrets.go — error paths (for functions not tested with errors yet)
 // --------------------------------------------------------------------------
-
-func TestRemoteCov_PostRetentionBeforeCountResp_APIError(t *testing.T) {
-	// postRetentionBeforeCountResp is exercised through PurgeDeletedSecretsBefore.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "purge failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.PurgeDeletedSecretsBefore(context.Background(), time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "purge deleted secrets failed")
-}
-
-func TestRemoteCov_PostRetentionBeforeCountResp_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-an-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.PurgeDeletedSecretsBefore(context.Background(), time.Now())
-	assert.Error(t, err)
-}
 
 func TestRemoteCov_ListSecrets_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

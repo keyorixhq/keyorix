@@ -2485,14 +2485,6 @@ func TestParseMFAUserIDQuery_Valid(t *testing.T) {
 	assert.Equal(t, uint(42), uid)
 }
 
-func TestParseMFAUserIDParam_BadID(t *testing.T) {
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "userId", "bad")
-	w := httptest.NewRecorder()
-	_, ok := parseMFAUserIDParam(w, req, "userId")
-	assert.False(t, ok)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestGetMFASecretProxy_MissingQuery(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -2501,60 +2493,11 @@ func TestGetMFASecretProxy_MissingQuery(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestActivateMFASecretProxy_BadParam(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "userID", "bad")
-	w := httptest.NewRecorder()
-	h.ActivateMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteMFAForUserProxy_BadParam(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userID", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteMFAForUserProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSetUserMFAEnabledProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSetUserMFAEnabledProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body, _ := json.Marshal(map[string]any{"user_id": 0, "enabled": true})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateMFARecoveryCodesProxy_BadParam(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")), "userID", "bad")
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCountUnusedMFARecoveryCodesProxy_BadQuery(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.CountUnusedMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteMFARecoveryCodesProxy_BadParam(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userID", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteMFARecoveryCodesProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -3329,43 +3272,6 @@ func TestDecodeRetentionBeforeBody_MissingBefore(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestPurgeDeletedSecretsBeforeProxy_BadBody(t *testing.T) {
-	cs := newHandlerCoreS4(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedSecretsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPurgeDeletedSecretsBeforeProxy_HappyPath(t *testing.T) {
-	cs := newHandlerCoreS4(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-	body, _ := json.Marshal(map[string]any{"before": time.Now().UTC()})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedSecretsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestPurgeDeletedProjectsBeforeProxy_BadBody(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedProjectsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPurgeDeletedEnvironmentsBeforeProxy_BadBody(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedEnvironmentsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestDeleteExpiredRoleGrantsProxy_BadBody(t *testing.T) {
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
@@ -3381,14 +3287,6 @@ func TestDeleteExpiredShareRecordsProxy_BadBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
 	w := httptest.NewRecorder()
 	h.DeleteExpiredShareRecordsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPurgeDeletedUsersBeforeProxy_BadBody(t *testing.T) {
-	h := newUserHandler(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedUsersBeforeProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -9917,7 +9815,7 @@ func TestCatalogHandler_DeleteEnvironmentProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── mfa_management_proxy.go: GetMFASecretProxy, SetUserMFAEnabledProxy, CreateMFARecoveryCodesProxy ──
+// ── mfa_management_proxy.go: GetMFASecretProxy ──
 
 func TestAuthHandler_GetMFASecretProxy_BadUserID(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
@@ -9933,39 +9831,6 @@ func TestAuthHandler_GetMFASecretProxy_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GetMFASecretProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestAuthHandler_SetUserMFAEnabledProxy_BadUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"enabled":true}`)), "userId", "bad")
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_SetUserMFAEnabledProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "userId", "1")
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_CreateMFARecoveryCodesProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"code_hashes":["abc123"]}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_CreateMFARecoveryCodesProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/?user_id=1", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── setup_tokens_proxy.go: ConsumeSetupTokenProxy ────────────────────────────
@@ -10363,35 +10228,6 @@ func TestShareHandler_ListGroupSharedSecrets_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListGroupSharedSecrets(w, req)
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-// ── retention_proxy.go: happy-path sweeps ────────────────────────────────────
-
-func TestCatalogHandler_PurgeDeletedProjectsBeforeProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"before":"2026-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedProjectsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCatalogHandler_PurgeDeletedEnvironmentsBeforeProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"before":"2026-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedEnvironmentsBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCatalogHandler_PurgeDeletedUsersBeforeProxy_HappyPath(t *testing.T) {
-	h := newUserHandlerS4(t)
-	body := `{"before":"2026-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedUsersBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestRBACHandler_DeleteExpiredRoleGrantsProxy_HappyPath(t *testing.T) {
@@ -11546,64 +11382,6 @@ func TestAcknowledgeAnomalyAlert_BadID(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
-// ── mfa_management_proxy.go: ActivateMFASecretProxy, DeleteMFAForUserProxy ───
-
-func TestAuthHandler_ActivateMFASecretProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "userId", "bad")
-	w := httptest.NewRecorder()
-	h.ActivateMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_ActivateMFASecretProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "userId", "1")
-	w := httptest.NewRecorder()
-	h.ActivateMFASecretProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_DeleteMFAForUserProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteMFAForUserProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_DeleteMFAForUserProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "1")
-	w := httptest.NewRecorder()
-	h.DeleteMFAForUserProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_DeleteMFARecoveryCodesProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_DeleteMFARecoveryCodesProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "1")
-	w := httptest.NewRecorder()
-	h.DeleteMFARecoveryCodesProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_SetUserMFAEnabledProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"enabled":true}`)), "userId", "1")
-	w := httptest.NewRecorder()
-	h.SetUserMFAEnabledProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── legal_hold_proxy.go: CreateLegalHoldProxy, UpdateLegalHoldProxy ───────────
 
 func TestDashboardHandler_CreateLegalHoldProxy_BadJSON(t *testing.T) {
@@ -12053,23 +11831,7 @@ func TestSecretHandler_CreateSecretDependencyProxy_MissingFields(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── retention_proxy.go: PurgeDeletedUsersBeforeProxy, ListUsersInStateBeforeProxy ─
-
-func TestUserHandler_PurgeDeletedUsersBeforeProxy_MissingBefore(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedUsersBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUserHandler_PurgeDeletedUsersBeforeProxy_BadJSON(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodDelete, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.PurgeDeletedUsersBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// ── retention_proxy.go: ListUsersInStateBeforeProxy ──────────────────────────
 
 func TestUserHandler_ListUsersInStateBeforeProxy_MissingParams(t *testing.T) {
 	h := newUserHandlerS4(t)

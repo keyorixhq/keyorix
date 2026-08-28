@@ -1,18 +1,22 @@
 // remote_storage_mfa_management_test.go — end-to-end coverage for #524:
-// RemoteStorage's UpsertMFASecret/GetMFASecret/ActivateMFASecret/
-// DeleteMFAForUser/SetUserMFAEnabled/CreateMFARecoveryCodes/
-// CountUnusedMFARecoveryCodes/DeleteMFARecoveryCodes were all unconditional
-// stubs, so MFA enrolment and management (internal/core/mfa.go's
-// BeginMFAEnrollment/ActivateMFA/DisableMFA/RegenerateMFARecoveryCodes/
-// MFARecoveryCodesRemaining — every /auth/mfa/* route except already-active
-// MFA LOGIN, separately proxied by #509/remote_storage_mfa_login_test.go) was
-// 100% broken under storage.type: remote. Mirrors
-// remote_storage_sso_state_test.go's (#521) and
+// RemoteStorage's UpsertMFASecret/GetMFASecret/CountUnusedMFARecoveryCodes
+// were unconditional stubs, so MFA enrolment and management
+// (internal/core/mfa.go's BeginMFAEnrollment/ActivateMFA/DisableMFA/
+// RegenerateMFARecoveryCodes/MFARecoveryCodesRemaining — every /auth/mfa/*
+// route except already-active MFA LOGIN, separately proxied by
+// #509/remote_storage_mfa_login_test.go) was 100% broken under
+// storage.type: remote. Mirrors remote_storage_sso_state_test.go's (#521) and
 // remote_storage_login_lockout_write_test.go's (#529) harness exactly: a real
 // "upstream" exercised through the production NewRouter/handlers (including
-// the new /api/v1/system/mfa routes, server/http/handlers/mfa_management_proxy.go),
+// the /api/v1/system/mfa routes, server/http/handlers/mfa_management_proxy.go),
 // and a "downstream" *core.KeyorixCore configured with storage.type: remote
 // pointed at "upstream" over real HTTP via store.RemoteStorage.
+//
+// ActivateMFASecret/DeleteMFAForUser/SetUserMFAEnabled/
+// CreateMFARecoveryCodes/DeleteMFARecoveryCodes and their coverage here were
+// DELETED (#1593, docs/adr-089-mfa-purge-relay-deletion.md) — no live
+// caller. GetMFASecret/CountUnusedMFARecoveryCodes remain real and are still
+// covered below.
 package http
 
 import (
@@ -78,13 +82,16 @@ func newUpstreamDownstreamForMFAManagement(t *testing.T) (upstream *core.Keyorix
 	return upstream, downstream
 }
 
-// TestRemoteStorageMFAManagement_StoragePrimitives_RealServer proves each of
-// the remaining #524 storage primitives genuinely round-trips through a real
-// upstream server, exercised directly (not via internal/core), mirroring
+// TestRemoteStorageMFAManagement_StoragePrimitives_RealServer proves the
+// surviving #524 storage primitives (GetMFASecret,
+// CountUnusedMFARecoveryCodes) genuinely round-trip through a real upstream
+// server, exercised directly (not via internal/core), mirroring
 // TestRemoteStorageSSOState_CreateConsume_RealServer's storage-primitive-level
-// coverage. The MFA secret itself is seeded directly against the upstream's
-// real storage (UpsertMFASecretProxy was deleted -- G80 liveness sweep found
-// no live caller; see docs/g80-remediation-notes.md).
+// coverage. Both the secret and the recovery codes are seeded directly
+// against the upstream's real storage (UpsertMFASecretProxy was deleted --
+// G80 liveness sweep found no live caller; see docs/g80-remediation-notes.md
+// -- and CreateMFARecoveryCodes was deleted, #1593,
+// docs/adr-089-mfa-purge-relay-deletion.md).
 func TestRemoteStorageMFAManagement_StoragePrimitives_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForMFAManagement(t)
 	ctx := context.Background()
@@ -117,44 +124,11 @@ func TestRemoteStorageMFAManagement_StoragePrimitives_RealServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, secret.ID, directFetch.ID)
 
-	// --- ActivateMFASecret ---
-	require.NoError(t, downstream.Storage().ActivateMFASecret(ctx, seeded.ID))
-	activated, err := upstream.Storage().GetMFASecret(ctx, seeded.ID)
-	require.NoError(t, err)
-	assert.True(t, activated.Activated, "activation must genuinely persist upstream")
-
-	// --- SetUserMFAEnabled ---
-	require.NoError(t, downstream.Storage().SetUserMFAEnabled(ctx, seeded.ID, true))
-	enabledUser, err := upstream.Storage().GetUser(ctx, seeded.ID)
-	require.NoError(t, err)
-	assert.True(t, enabledUser.MFAEnabled, "MFAEnabled must genuinely persist upstream")
-
-	// --- CreateMFARecoveryCodes / CountUnusedMFARecoveryCodes ---
-	hashes := []string{"hash1", "hash2", "hash3"}
-	require.NoError(t, downstream.Storage().CreateMFARecoveryCodes(ctx, seeded.ID, hashes))
+	// --- CountUnusedMFARecoveryCodes ---
+	require.NoError(t, upstream.Storage().CreateMFARecoveryCodes(ctx, seeded.ID, []string{"hash1", "hash2", "hash3"}))
 	count, err := downstream.Storage().CountUnusedMFARecoveryCodes(ctx, seeded.ID)
 	require.NoError(t, err)
-	assert.Equal(t, 3, count)
-
-	upstreamCount, err := upstream.Storage().CountUnusedMFARecoveryCodes(ctx, seeded.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 3, upstreamCount, "the recovery codes must be REAL rows in the upstream's own storage")
-
-	// --- DeleteMFARecoveryCodes ---
-	require.NoError(t, downstream.Storage().DeleteMFARecoveryCodes(ctx, seeded.ID))
-	countAfterDelete, err := upstream.Storage().CountUnusedMFARecoveryCodes(ctx, seeded.ID)
-	require.NoError(t, err)
-	assert.Zero(t, countAfterDelete, "recovery codes must genuinely be gone upstream")
-
-	// --- DeleteMFAForUser: clears the secret AND leaves no dangling recovery codes ---
-	require.NoError(t, downstream.Storage().CreateMFARecoveryCodes(ctx, seeded.ID, []string{"hash-again"}))
-	require.NoError(t, downstream.Storage().DeleteMFAForUser(ctx, seeded.ID))
-
-	_, err = upstream.Storage().GetMFASecret(ctx, seeded.ID)
-	assert.Error(t, err, "the secret row must genuinely be gone upstream")
-	afterDeleteForUser, err := upstream.Storage().CountUnusedMFARecoveryCodes(ctx, seeded.ID)
-	require.NoError(t, err)
-	assert.Zero(t, afterDeleteForUser, "DeleteMFAForUser must also clear recovery codes upstream (local_mfa.go's own transaction)")
+	assert.Equal(t, 3, count, "the recovery codes must be REAL rows in the upstream's own storage")
 }
 
 // TestRemoteStorageMFAManagement_FullLifecycle_RealServer used to drive

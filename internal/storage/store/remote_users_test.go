@@ -410,54 +410,32 @@ func TestRemoteStorage_RestoreUser(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// --- Purge retention ---
+// --- Purge retention (PurgeDeletedUsersBefore/PurgeDeletedProjectsBefore/
+// PurgeDeletedEnvironmentsBefore were deleted, #1593,
+// docs/adr-089-mfa-purge-relay-deletion.md -- no live caller) ---
 
-func TestRemoteStorage_PurgeDeletedUsersBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/retention/users/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"purged": float64(5)}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+func TestRemoteStorage_PurgeDeletedUsersBefore_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	count, err := rs.PurgeDeletedUsersBefore(context.Background(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(5), count)
+	_, err = rs.PurgeDeletedUsersBefore(context.Background(), time.Now())
+	assert.Error(t, err)
 }
 
-func TestRemoteStorage_PurgeDeletedProjectsBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/retention/projects/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"purged": float64(2)}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+func TestRemoteStorage_PurgeDeletedProjectsBefore_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	count, err := rs.PurgeDeletedProjectsBefore(context.Background(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), count)
+	_, err = rs.PurgeDeletedProjectsBefore(context.Background(), time.Now())
+	assert.Error(t, err)
 }
 
-func TestRemoteStorage_PurgeDeletedEnvironmentsBefore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/retention/environments/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"purged": float64(0)}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+func TestRemoteStorage_PurgeDeletedEnvironmentsBefore_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	count, err := rs.PurgeDeletedEnvironmentsBefore(context.Background(), time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), count)
+	_, err = rs.PurgeDeletedEnvironmentsBefore(context.Background(), time.Now())
+	assert.Error(t, err)
 }
 
 // --- ListUsers ---

@@ -33,7 +33,16 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   boundary. Checking `--is-ancestor <sha> HEAD` for one already-resolved commit SHA
   against your own branch's own live history is a different, sound question (is this
   specific object included) — the unsound case is specifically a whole branch tip
-  checked against a squash-merge target.
+  checked against a squash-merge target. **This is a post-hoc verification
+  practice, not a gate** — it only catches the mistake after the fact, by
+  re-reading a specific PR someone already suspects is wrong. It recurred
+  (#1594, docs/adr-089-mfa-purge-relay-deletion.md: merged into an
+  already-squashed base branch, never reached `main`) because a written
+  practice that has failed twice is a note, not a safeguard. The preventive
+  gate is `.github/workflows/ci.yml`'s `base-branch-check` job: it fails a
+  PR outright if its base is not `main`, unless explicitly labeled
+  `stacked-pr`. Prefer fixing this class of mistake at merge time, not by
+  writing down one more sentence to remember to check.
 
 ## Engineering practices
 
