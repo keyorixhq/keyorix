@@ -77,8 +77,9 @@ func TestRunRotate_MissingValueFailsClosedWithoutATerminal(t *testing.T) {
 // point the configured server at a listener that accepts the TCP connection but
 // never writes a response, and assert runRotate fails with a bounded timeout
 // error rather than hanging indefinitely — matching common.RemoteClient's own
-// defaultRemoteClientTimeout (30s), since runRotate now goes through
-// common.NewRemoteClient instead of its own bypassing *http.Client.
+// idle-transfer timeout (#1521, 30s of no progress, not a flat total-round-trip
+// clock), since runRotate now goes through common.NewRemoteClient instead of
+// its own bypassing *http.Client.
 //
 // The endpoint is set BOTH via KEYORIX_SERVER/KEYORIX_TOKEN (what the current,
 // fixed runRotate reads via common.ResolveRemote) AND via a written cli.yaml
