@@ -283,7 +283,7 @@ func (rs *RemoteStorage) ListDynamicSecretConfigs(ctx context.Context, projectID
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("UpdateDynamicSecretConfig")
 }
 
 // TransitionDynamicSecretConfigDisabled used to proxy onto PUT
@@ -293,7 +293,7 @@ func (rs *RemoteStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.
 // Returns errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) TransitionDynamicSecretConfigDisabled(_ context.Context, _ *models.DynamicSecretConfig, _ bool) (bool, error) {
-	return false, errUnsupportedRemote
+	return false, remoteUnsupported("TransitionDynamicSecretConfigDisabled")
 }
 
 // CountDynamicSecretConfigsByClassification returns install-wide config counts
@@ -322,7 +322,7 @@ func (rs *RemoteStorage) CountDynamicSecretConfigsByClassification(ctx context.C
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) CreateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {
-	return nil, errUnsupportedRemote
+	return nil, remoteUnsupported("CreateDynamicSecretLease")
 }
 
 // GetDynamicSecretLease retrieves a lease by its opaque public LeaseID via GET
@@ -394,7 +394,7 @@ func (rs *RemoteStorage) CountActiveLeases(ctx context.Context, configID uint) (
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("UpdateDynamicSecretLease")
 }
 
 // ListExpiredActiveLeases lists every lease past `before` that still needs its

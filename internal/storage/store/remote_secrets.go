@@ -378,7 +378,7 @@ func (rs *RemoteStorage) PurgeDeletedSecretsBefore(ctx context.Context, before t
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _, _ time.Time) (int64, error) {
-	return 0, errUnsupportedRemote
+	return 0, remoteUnsupported("DeleteAnomalyAlertsBefore")
 }
 
 // DeleteClosedAccessReviewsBefore used to proxy onto POST
@@ -388,7 +388,7 @@ func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _, _ time.
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
-	return 0, 0, errUnsupportedRemote
+	return 0, 0, remoteUnsupported("DeleteClosedAccessReviewsBefore")
 }
 
 // DeleteExpiredBreakGlassBefore used to proxy onto POST
@@ -398,7 +398,7 @@ func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(_ context.Context, _ ti
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(_ context.Context, _ time.Time) (int64, error) {
-	return 0, errUnsupportedRemote
+	return 0, remoteUnsupported("DeleteExpiredBreakGlassBefore")
 }
 
 // DeleteResolvedAccessRequestsBefore used to proxy onto POST
@@ -408,7 +408,7 @@ func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(_ context.Context, _ time
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
-	return 0, 0, errUnsupportedRemote
+	return 0, 0, remoteUnsupported("DeleteResolvedAccessRequestsBefore")
 }
 
 // postRetentionBeforeCountResp is the shared shape for every retention-purge
@@ -457,39 +457,39 @@ func (rs *RemoteStorage) ListSecrets(ctx context.Context, filter *storage.Secret
 
 // ListProjectSecretsForDrift is not available in remote mode; drift detection aggregates server-side.
 func (rs *RemoteStorage) ListProjectSecretsForDrift(_ context.Context, _ uint) ([]storage.DriftSecretRow, error) {
-	return nil, fmt.Errorf("ListProjectSecretsForDrift not available in remote mode")
+	return nil, remoteUnsupported("ListProjectSecretsForDrift")
 }
 
 // ListOrphanedSecrets is not available in remote mode; the orphaned-owner JOIN runs server-side.
 func (rs *RemoteStorage) ListOrphanedSecrets(_ context.Context, _ uint) ([]*models.SecretNode, error) {
-	return nil, fmt.Errorf("ListOrphanedSecrets not available in remote mode")
+	return nil, remoteUnsupported("ListOrphanedSecrets")
 }
 
 // CountOrphanedSecretsByProject is not available in remote mode; the grouped
 // hygiene-rollup query (#393) runs server-side.
 func (rs *RemoteStorage) CountOrphanedSecretsByProject(_ context.Context, _ []uint) (map[uint]int, error) {
-	return nil, fmt.Errorf("CountOrphanedSecretsByProject not available in remote mode")
+	return nil, remoteUnsupported("CountOrphanedSecretsByProject")
 }
 
 // CountExpiringSecretsByProject is not available in remote mode; the grouped
 // hygiene-rollup query (#393) runs server-side.
 func (rs *RemoteStorage) CountExpiringSecretsByProject(_ context.Context, _ []uint, _ time.Time) (map[uint]int, error) {
-	return nil, fmt.Errorf("CountExpiringSecretsByProject not available in remote mode")
+	return nil, remoteUnsupported("CountExpiringSecretsByProject")
 }
 
 // ListLiveSecretNamesByProject is not available in remote mode; the grouped
 // deployment-wide name-conformance scan (#416) runs server-side.
 func (rs *RemoteStorage) ListLiveSecretNamesByProject(_ context.Context, _ []uint, _ int) ([]storage.SecretNameRow, bool, error) {
-	return nil, false, fmt.Errorf("ListLiveSecretNamesByProject not available in remote mode")
+	return nil, false, remoteUnsupported("ListLiveSecretNamesByProject")
 }
 
 // GetSecretTags / SetSecretTags are not available in remote mode; tag storage is server-side.
 func (rs *RemoteStorage) GetSecretTags(_ context.Context, _ uint) ([]string, error) {
-	return nil, fmt.Errorf("GetSecretTags not available in remote mode")
+	return nil, remoteUnsupported("GetSecretTags")
 }
 
 func (rs *RemoteStorage) SetSecretTags(_ context.Context, _ uint, _ []string) error {
-	return fmt.Errorf("SetSecretTags not available in remote mode")
+	return remoteUnsupported("SetSecretTags")
 }
 
 // buildSecretFilterPath constructs the /api/v1/secrets query string from filter fields.
@@ -604,6 +604,6 @@ func (rs *RemoteStorage) TryIncrementSecretReadCount(_ context.Context, _ uint, 
 // client is never on the enforcement hot path. Not expected to be called from a
 // CLI/remote context (KeyorixCore always runs against LocalStorage server-side);
 // fails loud rather than silently reporting success if it ever is.
-func (rs *RemoteStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
-	return false, fmt.Errorf("remote storage: max-reads enforcement is server-side only")
+func (rs *RemoteStorage) TryIncrementSecretNodeReadCount(_ context.Context, _ uint, _ int) (bool, error) {
+	return false, remoteUnsupported("TryIncrementSecretNodeReadCount")
 }

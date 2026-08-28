@@ -201,12 +201,15 @@ func TestRemoteStorage_DeleteSessionsForUserExcept(t *testing.T) {
 
 // --- TouchSession (no-op) ---
 
-func TestRemoteStorage_TouchSession_NoError(t *testing.T) {
+// TestRemoteStorage_TouchSession_Unsupported: G80 158-method classification
+// pass — this used to silently no-op (return nil, claiming success);
+// confirmed DEAD, converted to an explicit stub.
+func TestRemoteStorage_TouchSession_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://localhost:19999"))
 	require.NoError(t, err)
 
 	err = rs.TouchSession(context.Background(), 1, time.Now(), time.Minute)
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- PAT stubs (errUnsupportedRemote) ---
@@ -261,12 +264,14 @@ func TestRemoteStorage_RevokeAllPersonalAccessTokensForUser(t *testing.T) {
 
 // --- TouchPersonalAccessToken (no-op) ---
 
-func TestRemoteStorage_TouchPersonalAccessToken_NoError(t *testing.T) {
+// TestRemoteStorage_TouchPersonalAccessToken_Unsupported: G80 158-method
+// classification pass — same silent-no-op-to-stub conversion as TouchSession.
+func TestRemoteStorage_TouchPersonalAccessToken_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://localhost:19999"))
 	require.NoError(t, err)
 
 	err = rs.TouchPersonalAccessToken(context.Background(), 1, time.Now(), time.Hour)
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- Setup Tokens ---

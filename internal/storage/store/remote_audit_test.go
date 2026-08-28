@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,25 +36,31 @@ func TestRemoteStorage_LogAuditEvent(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// --- CreateSecretAccessLog (no-op) ---
+// --- CreateSecretAccessLog (unsupported) ---
+//
+// G80 158-method classification pass (docs/adr-087-remote-storage-deletion-pass.md):
+// this used to silently no-op (return nil, claiming success) — confirmed DEAD
+// (no live caller under storage.type: remote), converted to an explicit stub.
 
-func TestRemoteStorage_CreateSecretAccessLog(t *testing.T) {
+func TestRemoteStorage_CreateSecretAccessLog_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.CreateSecretAccessLog(context.Background(), &models.SecretAccessLog{})
-	require.NoError(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
-// --- CountImpersonatedActions (returns 0) ---
+// --- CountImpersonatedActions (unsupported) ---
+//
+// G80 158-method classification pass: this used to silently return (0, nil)
+// — confirmed DEAD, converted to an explicit stub.
 
-func TestRemoteStorage_CountImpersonatedActions(t *testing.T) {
+func TestRemoteStorage_CountImpersonatedActions_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	count, err := rs.CountImpersonatedActions(context.Background(), 1, 2, time.Now())
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), count)
+	_, err = rs.CountImpersonatedActions(context.Background(), 1, 2, time.Now())
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- GetAuditLogs ---
@@ -170,8 +177,7 @@ func TestRemoteStorage_ListSecretAccessLogs_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.ListSecretAccessLogs(context.Background(), 1, time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- CountSecretReadsBySecretIDs (unsupported) ---
@@ -181,8 +187,7 @@ func TestRemoteStorage_CountSecretReadsBySecretIDs_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.CountSecretReadsBySecretIDs(context.Background(), []uint{1, 2}, time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- PrincipalSecretFirstSeen (unsupported) ---
@@ -192,8 +197,7 @@ func TestRemoteStorage_PrincipalSecretFirstSeen_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.PrincipalSecretFirstSeen(context.Background(), time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- MostAccessedSecrets (unsupported) ---
@@ -203,8 +207,7 @@ func TestRemoteStorage_MostAccessedSecrets_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.MostAccessedSecrets(context.Background(), nil, nil, time.Now(), 10)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- UnusedSecrets (unsupported) ---
@@ -214,8 +217,7 @@ func TestRemoteStorage_UnusedSecrets_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.UnusedSecrets(context.Background(), nil, nil, time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- CountUnusedSecretsByProject (unsupported) ---
@@ -225,8 +227,7 @@ func TestRemoteStorage_CountUnusedSecretsByProject_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.CountUnusedSecretsByProject(context.Background(), []uint{1}, time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- AuditRetentionStats (unsupported) ---
@@ -236,8 +237,7 @@ func TestRemoteStorage_AuditRetentionStats_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.AuditRetentionStats(context.Background())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- VerifyAuditChain (unsupported) ---
@@ -247,8 +247,7 @@ func TestRemoteStorage_VerifyAuditChain_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.VerifyAuditChain(context.Background(), nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 func TestRemoteStorage_MigrateAuditChainEncoding_Unsupported(t *testing.T) {
@@ -256,8 +255,7 @@ func TestRemoteStorage_MigrateAuditChainEncoding_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.MigrateAuditChainEncoding(context.Background(), true, nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- CreateAuditCheckpoint (unsupported) ---
@@ -267,8 +265,7 @@ func TestRemoteStorage_CreateAuditCheckpoint_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.CreateAuditCheckpoint(context.Background(), &models.AuditCheckpoint{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- LatestAuditCheckpoint (unsupported) ---
@@ -278,8 +275,7 @@ func TestRemoteStorage_LatestAuditCheckpoint_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.LatestAuditCheckpoint(context.Background())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- UpdateAuditCheckpointAnchor (unsupported) ---
@@ -289,8 +285,7 @@ func TestRemoteStorage_UpdateAuditCheckpointAnchor_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.UpdateAuditCheckpointAnchor(context.Background(), 1, []byte("anchor"), time.Now(), "tsa-url")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- AuditEntryHashByID (unsupported) ---
@@ -300,8 +295,7 @@ func TestRemoteStorage_AuditEntryHashByID_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = rs.AuditEntryHashByID(context.Background(), 1)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- GetSystemMetadata (unsupported) ---
@@ -311,8 +305,7 @@ func TestRemoteStorage_GetSystemMetadata_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = rs.GetSystemMetadata(context.Background(), "key")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- SetSystemMetadata (unsupported) ---
@@ -322,8 +315,7 @@ func TestRemoteStorage_SetSystemMetadata_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.SetSystemMetadata(context.Background(), "key", "value")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- CreateAnomalyAlert (unsupported) ---
@@ -333,8 +325,7 @@ func TestRemoteStorage_CreateAnomalyAlert_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.CreateAnomalyAlert(context.Background(), &models.AnomalyAlert{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- ListAnomalyAlerts (unsupported) ---
@@ -345,8 +336,7 @@ func TestRemoteStorage_ListAnomalyAlerts_Unsupported(t *testing.T) {
 
 	acked := false
 	_, err = rs.ListAnomalyAlerts(context.Background(), &acked)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- AcknowledgeAnomalyAlert (unsupported) ---
@@ -356,8 +346,7 @@ func TestRemoteStorage_AcknowledgeAnomalyAlert_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.AcknowledgeAnomalyAlert(context.Background(), 1, 2, time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- ListUnalertedAnomalyAlerts (unsupported) ---
@@ -367,8 +356,7 @@ func TestRemoteStorage_ListUnalertedAnomalyAlerts_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.ListUnalertedAnomalyAlerts(context.Background())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- MarkAnomalyAlertAlerted (unsupported) ---
@@ -378,8 +366,7 @@ func TestRemoteStorage_MarkAnomalyAlertAlerted_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rs.MarkAnomalyAlertAlerted(context.Background(), 1)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- GetDistinctActiveUserIDs (unsupported) ---
@@ -389,8 +376,7 @@ func TestRemoteStorage_GetDistinctActiveUserIDs_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = rs.GetDistinctActiveUserIDs(context.Background(), time.Now())
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available in remote mode")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 }
 
 // --- DeleteAuditLogsBefore (unsupported in remote mode) ---
@@ -400,8 +386,7 @@ func TestRemoteStorage_DeleteAuditLogsBefore_Unsupported(t *testing.T) {
 	require.NoError(t, err)
 
 	n, anchor, err := rs.DeleteAuditLogsBefore(context.Background(), time.Now())
-	assert.Error(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported), "expected ErrRemoteUnsupported, got %v", err)
 	assert.Equal(t, int64(0), n)
 	assert.Nil(t, anchor)
-	assert.Contains(t, err.Error(), "not available in remote mode")
 }

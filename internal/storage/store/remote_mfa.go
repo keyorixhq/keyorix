@@ -131,7 +131,7 @@ func decodeMFASecretResponse(data []byte) (*models.MFASecret, error) {
 // errUnsupportedRemote like every other known-unsupported RemoteStorage
 // operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) error {
-	return errUnsupportedRemote
+	return remoteUnsupported("UpsertMFASecret")
 }
 
 // GetMFASecret fetches a user's TOTP secret row via GET

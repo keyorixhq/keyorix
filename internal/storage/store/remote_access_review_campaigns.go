@@ -285,7 +285,7 @@ func (rs *RemoteStorage) GetLatestClosedAccessReviewCampaign(ctx context.Context
 // docs/g80-remediation-notes.md. Returns errUnsupportedRemote like every other
 // known-unsupported RemoteStorage operation (see remote_auth.go's package doc).
 func (rs *RemoteStorage) UpdateAccessReviewCampaign(_ context.Context, _ *models.AccessReviewCampaign) (bool, error) {
-	return false, errUnsupportedRemote
+	return false, remoteUnsupported("UpdateAccessReviewCampaign")
 }
 
 // CreateAccessReviewItems bulk-persists a campaign's freshly-opened (all

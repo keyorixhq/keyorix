@@ -37,14 +37,14 @@ func (rs *RemoteStorage) LogAuditEvent(ctx context.Context, event *models.AuditE
 
 // CreateSecretAccessLog is a no-op in remote mode; access logging is handled server-side.
 func (rs *RemoteStorage) CreateSecretAccessLog(_ context.Context, _ *models.SecretAccessLog) error {
-	return nil
+	return remoteUnsupported("CreateSecretAccessLog")
 }
 
 // CountImpersonatedActions is server-side in remote mode; returns 0.
 // Impersonation sessions are created and ended against the server directly, so a
 // remote client never needs to compute the action count locally.
 func (rs *RemoteStorage) CountImpersonatedActions(_ context.Context, _, _ uint, _ time.Time) (int64, error) {
-	return 0, nil
+	return 0, remoteUnsupported("CountImpersonatedActions")
 }
 
 // GetAuditLogs retrieves audit events with optional filtering via remote API.
@@ -127,7 +127,7 @@ func buildRBACAuditFilterPath(filter *storage.RBACAuditFilter) string {
 
 // ListSecretAccessLogs is not available in remote mode; server handles access logs.
 func (rs *RemoteStorage) ListSecretAccessLogs(_ context.Context, _ uint, _ time.Time) ([]models.SecretAccessLog, error) {
-	return nil, fmt.Errorf("ListSecretAccessLogs not available in remote mode")
+	return nil, remoteUnsupported("ListSecretAccessLogs")
 }
 
 // CountSecretReadsBySecretIDs is the batch form of ListSecretAccessLogs' read
@@ -136,43 +136,43 @@ func (rs *RemoteStorage) ListSecretAccessLogs(_ context.Context, _ uint, _ time.
 // back to treating this as zero reads for every secret on this error, exactly what
 // ListSecretAccessLogs' own error already causes today via countReads' fallback.
 func (rs *RemoteStorage) CountSecretReadsBySecretIDs(_ context.Context, _ []uint, _ time.Time) (map[uint]int, error) {
-	return nil, fmt.Errorf("CountSecretReadsBySecretIDs not available in remote mode")
+	return nil, remoteUnsupported("CountSecretReadsBySecretIDs")
 }
 
 // PrincipalSecretFirstSeen is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) (map[string]map[uint]time.Time, error) {
-	return nil, fmt.Errorf("PrincipalSecretFirstSeen not available in remote mode")
+	return nil, remoteUnsupported("PrincipalSecretFirstSeen")
 }
 
 // MostAccessedSecrets is not available in remote mode; usage analytics aggregate server-side.
 func (rs *RemoteStorage) MostAccessedSecrets(_ context.Context, _, _ *uint, _ time.Time, _ int) ([]storage.SecretUsageStat, error) {
-	return nil, fmt.Errorf("MostAccessedSecrets not available in remote mode")
+	return nil, remoteUnsupported("MostAccessedSecrets")
 }
 
 // UnusedSecrets is not available in remote mode; usage analytics aggregate server-side.
 func (rs *RemoteStorage) UnusedSecrets(_ context.Context, _, _ *uint, _ time.Time) ([]storage.UnusedSecretStat, error) {
-	return nil, fmt.Errorf("UnusedSecrets not available in remote mode")
+	return nil, remoteUnsupported("UnusedSecrets")
 }
 
 // CountUnusedSecretsByProject is not available in remote mode; the grouped
 // hygiene-rollup query (#393) runs server-side.
 func (rs *RemoteStorage) CountUnusedSecretsByProject(_ context.Context, _ []uint, _ time.Time) (map[uint]int, error) {
-	return nil, fmt.Errorf("CountUnusedSecretsByProject not available in remote mode")
+	return nil, remoteUnsupported("CountUnusedSecretsByProject")
 }
 
 // AuditRetentionStats is not available in remote mode; retention coverage aggregates server-side.
 func (rs *RemoteStorage) AuditRetentionStats(_ context.Context) (*storage.AuditRetentionStats, error) {
-	return nil, fmt.Errorf("AuditRetentionStats not available in remote mode")
+	return nil, remoteUnsupported("AuditRetentionStats")
 }
 
 // DeleteAuditLogsBefore is not available in remote mode; audit purge runs server-side.
 func (rs *RemoteStorage) DeleteAuditLogsBefore(_ context.Context, _ time.Time) (int64, *storage.AuditChainAnchor, error) {
-	return 0, nil, fmt.Errorf("DeleteAuditLogsBefore not available in remote mode")
+	return 0, nil, remoteUnsupported("DeleteAuditLogsBefore")
 }
 
 // VerifyAuditChain is not available in remote mode; chain verification runs server-side.
 func (rs *RemoteStorage) VerifyAuditChain(_ context.Context, _ *storage.AuditChainAnchor) (*storage.AuditChainVerification, error) {
-	return nil, fmt.Errorf("VerifyAuditChain not available in remote mode")
+	return nil, remoteUnsupported("VerifyAuditChain")
 }
 
 // MigrateAuditChainEncoding is not available in remote mode: a spoke has no
@@ -180,7 +180,7 @@ func (rs *RemoteStorage) VerifyAuditChain(_ context.Context, _ *storage.AuditCha
 // an exclusive, whole-migration lock only the actual database owner can take.
 // Run this against the primary/hub server's own storage backend directly.
 func (rs *RemoteStorage) MigrateAuditChainEncoding(_ context.Context, _ bool, _ *storage.AuditChainAnchor) (*storage.AuditChainMigrationResult, error) {
-	return nil, fmt.Errorf("MigrateAuditChainEncoding not available in remote mode — run it against the primary server directly")
+	return nil, remoteUnsupported("MigrateAuditChainEncoding")
 }
 
 // GetSecretReadCounts is server-side only; read aggregation runs against the
@@ -191,58 +191,58 @@ func (rs *RemoteStorage) GetSecretReadCounts(_ context.Context, _ uint, _, _ tim
 
 // CreateAuditCheckpoint is not available in remote mode; checkpointing is server-side.
 func (rs *RemoteStorage) CreateAuditCheckpoint(_ context.Context, _ *models.AuditCheckpoint) error {
-	return fmt.Errorf("CreateAuditCheckpoint not available in remote mode")
+	return remoteUnsupported("CreateAuditCheckpoint")
 }
 
 // LatestAuditCheckpoint is not available in remote mode; checkpointing is server-side.
 func (rs *RemoteStorage) LatestAuditCheckpoint(_ context.Context) (*models.AuditCheckpoint, error) {
-	return nil, fmt.Errorf("LatestAuditCheckpoint not available in remote mode")
+	return nil, remoteUnsupported("LatestAuditCheckpoint")
 }
 
 // UpdateAuditCheckpointAnchor is not available in remote mode; checkpointing is server-side.
 func (rs *RemoteStorage) UpdateAuditCheckpointAnchor(_ context.Context, _ uint, _ []byte, _ time.Time, _ string) error {
-	return fmt.Errorf("UpdateAuditCheckpointAnchor not available in remote mode")
+	return remoteUnsupported("UpdateAuditCheckpointAnchor")
 }
 
 // AuditEntryHashByID is not available in remote mode; chain verification runs server-side.
 func (rs *RemoteStorage) AuditEntryHashByID(_ context.Context, _ uint) (string, bool, error) {
-	return "", false, fmt.Errorf("AuditEntryHashByID not available in remote mode")
+	return "", false, remoteUnsupported("AuditEntryHashByID")
 }
 
 // GetSystemMetadata is not available in remote mode; server-managed state is server-side.
 func (rs *RemoteStorage) GetSystemMetadata(_ context.Context, _ string) (string, bool, error) {
-	return "", false, fmt.Errorf("GetSystemMetadata not available in remote mode")
+	return "", false, remoteUnsupported("GetSystemMetadata")
 }
 
 // SetSystemMetadata is not available in remote mode; server-managed state is server-side.
 func (rs *RemoteStorage) SetSystemMetadata(_ context.Context, _, _ string) error {
-	return fmt.Errorf("SetSystemMetadata not available in remote mode")
+	return remoteUnsupported("SetSystemMetadata")
 }
 
 // CreateAnomalyAlert is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
-	return fmt.Errorf("CreateAnomalyAlert not available in remote mode")
+	return remoteUnsupported("CreateAnomalyAlert")
 }
 
 // ListAnomalyAlerts is not available in remote mode.
 func (rs *RemoteStorage) ListAnomalyAlerts(_ context.Context, _ *bool) ([]models.AnomalyAlert, error) {
-	return nil, fmt.Errorf("ListAnomalyAlerts not available in remote mode")
+	return nil, remoteUnsupported("ListAnomalyAlerts")
 }
 
 // AcknowledgeAnomalyAlert is not available in remote mode.
 func (rs *RemoteStorage) AcknowledgeAnomalyAlert(_ context.Context, _, _ uint, _ time.Time) error {
-	return fmt.Errorf("AcknowledgeAnomalyAlert not available in remote mode")
+	return remoteUnsupported("AcknowledgeAnomalyAlert")
 }
 
 func (rs *RemoteStorage) ListUnalertedAnomalyAlerts(_ context.Context) ([]models.AnomalyAlert, error) {
-	return nil, fmt.Errorf("ListUnalertedAnomalyAlerts not available in remote mode")
+	return nil, remoteUnsupported("ListUnalertedAnomalyAlerts")
 }
 
 func (rs *RemoteStorage) MarkAnomalyAlertAlerted(_ context.Context, _ uint) error {
-	return fmt.Errorf("MarkAnomalyAlertAlerted not available in remote mode")
+	return remoteUnsupported("MarkAnomalyAlertAlerted")
 }
 
 // GetDistinctActiveUserIDs is not available in remote mode.
 func (rs *RemoteStorage) GetDistinctActiveUserIDs(_ context.Context, _ time.Time) ([]uint, error) {
-	return nil, fmt.Errorf("GetDistinctActiveUserIDs not available in remote mode")
+	return nil, remoteUnsupported("GetDistinctActiveUserIDs")
 }
