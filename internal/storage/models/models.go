@@ -82,9 +82,17 @@ type AccessRequest struct {
 	State      string // pending | approved | rejected | withdrawn | expired
 	Reason     string // requester's note, or the rejecter's reason
 	ResolvedBy uint
-	ExpiresAt  *time.Time
-	CreatedAt  time.Time
-	ResolvedAt *time.Time
+	// ResolvedByMachineIdentityID (#1573) records which machine identity
+	// approved or rejected this request, when ResolvedBy is 0 because the
+	// resolver was a machine caller (ADR-030) rather than a human — mirrors
+	// AuditEvent.MachineIdentityID's purpose but as a plain uint (0 = none,
+	// consistent with every other attribution field on this model) rather than
+	// a nullable pointer, since it does not participate in a uniqueness
+	// constraint the way AccessRequestApproval.ApproverMachineIdentityID does.
+	ResolvedByMachineIdentityID uint
+	ExpiresAt                   *time.Time
+	CreatedAt                   time.Time
+	ResolvedAt                  *time.Time
 	// ApprovalsReceived / RequiredApprovals are transient (not persisted): the
 	// dual-control progress (M of K) the API surfaces for a pending request.
 	ApprovalsReceived int `gorm:"-"`
@@ -111,14 +119,31 @@ func (r *AccessRequest) BeforeSave(_ *gorm.DB) error {
 // RequiredApprovals distinct approvers (none of them the requester) have approved.
 type AccessRequestApproval struct {
 	ID uint `gorm:"primaryKey"`
-	// (RequestID, ApproverID) is unique: one sign-off per distinct approver. The
-	// constraint is the race backstop for the M-of-K dual-control count — without it,
-	// concurrent approvals from the same approver could insert multiple rows and the
-	// row-count threshold would treat one person as several, defeating dual control.
-	// The composite index also covers RequestID lookups (leftmost column).
+	// (RequestID, ApproverID, ApproverMachineIdentityID) is unique: one sign-off
+	// per distinct approver. The constraint is the race backstop for the M-of-K
+	// dual-control count — without it, concurrent approvals from the same
+	// approver could insert multiple rows and the row-count threshold would
+	// treat one person as several, defeating dual control. The composite index
+	// also covers RequestID lookups (leftmost column).
 	RequestID  uint `gorm:"not null;uniqueIndex:ux_access_request_approver"`
 	ApproverID uint `gorm:"not null;uniqueIndex:ux_access_request_approver"`
-	CreatedAt  time.Time
+	// ApproverMachineIdentityID (#1573) distinguishes one machine approver from
+	// another: ApproverID is 0 for every machine caller by construction
+	// (ADR-030, no UserID), so without this column the unique index above
+	// cannot tell two DIFFERENT machines' approvals apart from a duplicate
+	// approval by the SAME machine — the second, genuinely distinct machine's
+	// legitimate sign-off would collide on (RequestID, ApproverID=0) and be
+	// rejected as "already approved," making a K>=2 threshold unreachable via
+	// machine approvers. A plain uint (not *uint) with 0 = "no machine, this is
+	// a human approver" — deliberately NOT nullable, unlike
+	// AuditEvent.MachineIdentityID (#1530) — because this field participates in
+	// the uniqueness constraint above: SQL treats NULL as distinct from every
+	// other NULL, so a nullable column here would silently stop enforcing "one
+	// sign-off per human approver" (every human row would have NULL in this
+	// column and none would collide). 0 is a safe sentinel because no
+	// MachineIdentity row is ever assigned ID 0 (primary keys start at 1).
+	ApproverMachineIdentityID uint `gorm:"not null;default:0;uniqueIndex:ux_access_request_approver"`
+	CreatedAt                 time.Time
 }
 
 // RejectionReasonTemplate is a reusable pre-defined reason for rejecting access

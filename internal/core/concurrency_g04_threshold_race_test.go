@@ -215,7 +215,7 @@ func TestConcurrency_ApproveAccessRequestWithExpiry_ThresholdRace(t *testing.T) 
 			go func(approverID uint) {
 				defer wg.Done()
 				<-start
-				_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, requestID, approverID, "", 0)
+				_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, requestID, approverID, 0, "", 0)
 				switch {
 				case err == nil:
 					finalized.Add(1)

@@ -528,7 +528,7 @@ func TestRejectAccessRequest_NotFound(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetAccessRequest", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
-	_, err := c.RejectAccessRequest(context.Background(), 1, 99, 1, "no")
+	_, err := c.RejectAccessRequest(context.Background(), 1, 99, 1, 0, "no")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "access request not found")
 }
@@ -537,7 +537,7 @@ func TestRejectAccessRequest_WrongProject(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetAccessRequest", mock.Anything, uint(5)).Return(&models.AccessRequest{ID: 5, ProjectID: 2, State: AccessRequestPending}, nil)
 	c := NewKeyorixCore(ms)
-	_, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, "no")
+	_, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, 0, "no")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "access request not found")
 }
@@ -546,7 +546,7 @@ func TestRejectAccessRequest_NotPending(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetAccessRequest", mock.Anything, uint(5)).Return(&models.AccessRequest{ID: 5, ProjectID: 1, State: AccessRequestApproved}, nil)
 	c := NewKeyorixCore(ms)
-	_, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, "no")
+	_, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, 0, "no")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only a pending request")
 }
@@ -562,7 +562,7 @@ func TestRejectAccessRequest_Success(t *testing.T) {
 	ms.On("ListNotifications", mock.Anything, uint(2), mock.Anything, mock.Anything).Return([]*models.Notification{}, nil)
 	ms.On("CreateNotification", mock.Anything, mock.Anything).Return(&models.Notification{}, nil)
 	c := NewKeyorixCore(ms)
-	got, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, "not now")
+	got, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, 0, "not now")
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestRejected, got.State)
 }
@@ -574,7 +574,7 @@ func TestRejectAccessRequest_ConcurrentUpdate(t *testing.T) {
 	// ok=false: concurrent resolution
 	ms.On("UpdateAccessRequest", mock.Anything, mock.Anything).Return(false, nil)
 	c := NewKeyorixCore(ms)
-	_, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, "no")
+	_, err := c.RejectAccessRequest(context.Background(), 1, 5, 1, 0, "no")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "concurrently")
 }

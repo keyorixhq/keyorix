@@ -377,7 +377,7 @@ func TestApproveAccessRequestWithExpiry_RejectsSoftDeletedProject(t *testing.T) 
 	// The project is soft-deleted AFTER the request was filed, but before it's approved.
 	require.NoError(t, st.DeleteProject(ctx, proj.ID))
 
-	_, err = c.ApproveAccessRequestWithExpiry(ctx, proj.ID, req.ID, approver.ID, "", 0)
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, proj.ID, req.ID, approver.ID, 0, "", 0)
 	require.Error(t, err, "approving a request against a soft-deleted project must be refused")
 	assert.Contains(t, err.Error(), "no longer exists")
 
@@ -524,7 +524,7 @@ func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req.ID, approver.ID, "", 0)
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req.ID, approver.ID, 0, "", 0)
 	require.NoError(t, err)
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
@@ -546,7 +546,7 @@ func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
 		ProjectID: 1, UserID: requester.ID, SuggestedRole: "project_developer", State: AccessRequestPending,
 	})
 	require.NoError(t, err)
-	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req2.ID, approver.ID, "", time.Hour)
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req2.ID, approver.ID, 0, "", time.Hour)
 	require.NoError(t, err)
 
 	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)

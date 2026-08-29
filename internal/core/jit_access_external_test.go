@@ -125,7 +125,7 @@ func TestApproveAccessRequestWithExpiry_TimeBound(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = h.CoreService.ApproveAccessRequestWithExpiry(ctx, proj, created.ID, 1, "editor", time.Hour)
+	_, err = h.CoreService.ApproveAccessRequestWithExpiry(ctx, proj, created.ID, 1, 0, "editor", time.Hour)
 	require.NoError(t, err)
 
 	// The grant is active now (within the TTL window).

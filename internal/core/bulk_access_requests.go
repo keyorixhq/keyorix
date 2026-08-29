@@ -154,7 +154,7 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 			})
 			continue
 		}
-		_, rejectErr := k.RejectAccessRequest(ctx, req.ProjectID, id, approverID, reason)
+		_, rejectErr := k.RejectAccessRequest(ctx, req.ProjectID, id, approverID, 0, reason)
 		if rejectErr != nil {
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,
