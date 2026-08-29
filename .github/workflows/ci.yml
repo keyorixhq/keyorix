@@ -201,15 +201,40 @@ jobs:
   # content, not by commit" practice only catches this AFTER the fact, by
   # re-reading a specific PR someone already suspects is wrong -- it is a
   # post-hoc verification step, not a gate, so it does not stop the mistake
-  # from being merged in the first place. This job is the preventive gate:
-  # it fails a PR outright if its base is not `main`, unless the PR is
-  # explicitly labeled `stacked-pr` (a deliberate, visible opt-out for a
-  # genuine multi-PR review chain -- see adr082/**'s stacked-branch
-  # convention in this file's own `on: pull_request: branches:` comment
-  # above for what a legitimate case looks like). Runs on pull_request only
-  # (base branch has no meaning for a push event); ungated by docs_only for
-  # the same reason as adr-numbers below -- a single string comparison,
-  # cheap enough to always run.
+  # from being merged in the first place. This job fails a PR outright if
+  # its base is not `main`, unless the PR is explicitly labeled `stacked-pr`
+  # (a deliberate, visible opt-out for a genuine multi-PR review chain --
+  # see adr082/**'s stacked-branch convention in this file's own
+  # `on: pull_request: branches:` comment above for what a legitimate case
+  # looks like). Runs on pull_request only (base branch has no meaning for a
+  # push event); ungated by docs_only for the same reason as adr-numbers
+  # below -- a single string comparison, cheap enough to always run.
+  #
+  # NOT a preventive gate, despite currently being listed in main's required
+  # status checks (#1609/G80, verified directly, not theorized): it can only
+  # FAIL when a PR's base isn't main, and required-status-check enforcement
+  # only applies where the base branch IS protected -- which today is only
+  # main. Those two conditions never overlap, so this can never actually
+  # block the mistake it names. Proved by merging PR #1609 (deliberately
+  # mis-based) with this check red. A ruleset requiring it on
+  # feat/**/fix/**/adr082/** too was tried the same day and reverted within
+  # the hour -- ruleset required-status-checks gate PUSHES, not just merges,
+  # and this check only runs on pull_request events, so it can never satisfy
+  # that; every ordinary push to a matching branch was rejected.
+  #
+  # Open decision, not yet acted on (removing it needs a branch-protection
+  # change, out of scope for the pass that added this comment):
+  # recommendation is to remove this from main's required status checks --
+  # "required" implies enforcement this check cannot provide, which is
+  # exactly the false reassurance that let this sit unnoticed for weeks.
+  # Whether or not that happens, keep the JOB itself running (required or
+  # not) for its narrow remaining value: a human glancing at a mis-based
+  # PR's own checks before merging still sees it red, even though nothing
+  # stops them clicking merge past it. The actual catch is
+  # scripts/detect-mis-based-merges.sh (mis-based-merge-detector.yml):
+  # detection on a schedule, not prevention -- see that script's own header
+  # for the full reasoning, including why IT must never be added to
+  # required checks either.
   base-branch-check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

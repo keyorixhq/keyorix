@@ -1,0 +1,54 @@
+name: Mis-based Merge Detector
+
+# #1609/G80: base-branch-check (ci.yml) is a required status check on main,
+# but it is structurally inert there -- it can only FAIL when a PR's base
+# isn't main, and required-check enforcement only applies where the base
+# branch IS protected, which today is only main. Those two conditions never
+# overlap, so it cannot block the mistake it names. Verified directly: PR
+# #1609 was deliberately mis-based and merged with base-branch-check red. A
+# GitHub ruleset requiring the same check on feat/**/fix/**/adr082/**
+# branches was tried the same day and reverted within the hour: ruleset
+# required-status-checks gate PUSHES to the matching ref, not just merges,
+# and base-branch-check only runs on pull_request events -- so it can never
+# satisfy a push-time requirement, and every ordinary push creating or
+# updating a matching branch was rejected until the ruleset was deleted.
+# There is no ruleset shape found that gates the mis-based merge without
+# also gating ordinary feature-branch pushes.
+#
+# This workflow is detection, not prevention: it cannot run against a PR at
+# all (it runs on a schedule), so it cannot block a merge. It scans PRs
+# merged in a lookback window and fails + files an issue for any whose base
+# wasn't main -- turning a mis-based merge from something that goes
+# unnoticed for days (both #1563-#1566 and #1594 did) into something caught
+# within the hour, so the fix is a cherry-pick instead of a week-long
+# unwind. Deliberately NOT added to main's required status checks: doing so
+# would recreate the exact false reassurance base-branch-check already gave
+# for weeks before anyone re-derived that "required" didn't mean "blocking"
+# for this specific check.
+on:
+  schedule:
+    # Hourly, off the round minute -- see scripts/detect-mis-based-merges.sh's
+    # LOOKBACK_MINUTES=90 for why the window overlaps this interval.
+    - cron: '11 * * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: mis-based-merge-detector
+  cancel-in-progress: false
+
+jobs:
+  detect-mis-based-merges:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan recently merged PRs for a non-main base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/detect-mis-based-merges.sh
