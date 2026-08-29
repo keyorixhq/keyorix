@@ -93,26 +93,9 @@ type dynamicSecretConfigWire struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-func newDynamicSecretConfigWire(c *models.DynamicSecretConfig) dynamicSecretConfigWire {
-	return dynamicSecretConfigWire{
-		ID:                c.ID,
-		Name:              c.Name,
-		ProjectID:         c.ProjectID,
-		EnvironmentID:     c.EnvironmentID,
-		BackendType:       c.BackendType,
-		AdminDSNEnc:       c.AdminDSNEnc,
-		AdminDSNMeta:      c.AdminDSNMeta,
-		CreationTemplate:  c.CreationTemplate,
-		DefaultTTLSeconds: c.DefaultTTLSeconds,
-		MaxTTLSeconds:     c.MaxTTLSeconds,
-		MaxActiveLeases:   c.MaxActiveLeases,
-		Classification:    c.Classification,
-		Disabled:          c.Disabled,
-		CreatedBy:         c.CreatedBy,
-		CreatedAt:         c.CreatedAt,
-		UpdatedAt:         c.UpdatedAt,
-	}
-}
+// newDynamicSecretConfigWire (built the wire DTO for CreateDynamicSecretConfig's
+// outbound request) is DELETED -- #1580 liveness sweep, its only caller
+// (CreateDynamicSecretConfig) is now a hard stub.
 
 func (w dynamicSecretConfigWire) toModel() *models.DynamicSecretConfig {
 	return &models.DynamicSecretConfig{
@@ -135,13 +118,8 @@ func (w dynamicSecretConfigWire) toModel() *models.DynamicSecretConfig {
 	}
 }
 
-func decodeDynamicSecretConfigResponse(data []byte) (*models.DynamicSecretConfig, error) {
-	var wire dynamicSecretConfigWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return wire.toModel(), nil
-}
+// decodeDynamicSecretConfigResponse (decoded CreateDynamicSecretConfig's
+// response body) is DELETED -- #1580 liveness sweep, same reason.
 
 // validateEncryptedAdminDSNWireField is a direct read of wire.AdminDSNEnc, kept as its
 // own named call (rather than inlined) so a static analyzer (CodeQL
