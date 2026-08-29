@@ -102,7 +102,7 @@ assumed to still hold.
 across 22 models in `internal/storage/models/models.go` — no other file in
 the package carries any.
 
-### Bucket 1 — reachable, leaves 0 (11 fields / 10 models — the live gap)
+### Bucket 1 — reachable, leaves 0 (10 fields / 9 models — the live gap)
 
 | Model.Field | Core write site | Gate (scope) |
 |---|---|---|
@@ -113,7 +113,6 @@ the package carries any.
 | `BreakGlassActivation.RevokedBy` | `break_glass.go:282` | `roles.assign` (project) |
 | `AccessReviewCampaign.CreatedBy` | `access_review_campaign.go:98` | `roles.assign` (project) |
 | `AccessReviewCampaign.ClosedBy` | `access_review_campaign.go:413` | `roles.assign` (project) |
-| `SecretDependency.CreatedBy` | `secret_dependencies.go:131` | `secrets.write` (secret's own scope) |
 | `SecretNode.OwnerID` (creation only) | `secrets.go:149` | `secrets.write` (project/env) |
 | `SetupToken.CreatedBy` | `setup_token.go:132` | `roles.assign` (project) |
 | `MachineIdentity.CreatedBy` | `machine_identities.go:108` | `roles.assign` (project) |
@@ -124,6 +123,24 @@ permission, and the handler forwards `userCtx.UserID`/`actor.UserID`
 straight into the attribution field with no `isMachineActor` check. Note:
 `AccessRequest.ResolvedBy` is set by two distinct code paths — see the
 check-breaking split below.
+
+**`SecretDependency.CreatedBy` was initially reported here and is removed —
+this classification's own verification error, corrected before implementing
+PR2.** The batch trace reported it as reachable-and-zero, inherited from
+#1573's original filing, without re-checking the actual handler call site.
+Re-verified: `server/http/handlers/secret_dependencies.go:89` calls
+`AddSecretDependency` with `userCtx.PrincipalID()`, not `.UserID` —
+`PrincipalID()` (`server/middleware/auth.go:135-140`) returns the machine's
+own `MachineIdentity.ID` for a machine caller, not 0. `CreatedBy` is already
+stamped with the machine's real ID. This surfaced a *different* problem
+instead — `CreatedBy uint` has no discriminator between a `User.ID` and a
+`MachineIdentity.ID` (separate tables, independent auto-increment sequences,
+so the two can and eventually will collide numerically) — filed separately
+as #1623, not fixed here; it's a different bug shape (silently ambiguous,
+not silently absent) that plausibly needs its own schema decision. The other
+8 Bucket-1 fields' handler call sites were all re-checked against the same
+question and confirmed to pass the raw, always-zero-for-machines
+`UserID`/`actor.UserID` — no other instance of this pattern found.
 
 ### Bucket 2 — reachable, correctly attributed/denied (5 fields / 5 models)
 
@@ -194,8 +211,8 @@ passthrough; the gRPC response conditionally omits it when zero rather than
 comparing against it. No authorization decision anywhere reads this field.
 
 **All other Bucket-1 fields** (`ProjectInvitation.InvitedBy`,
-`AccessReviewCampaign.CreatedBy`/`ClosedBy`, `SecretDependency.CreatedBy`,
-`SecretNode.OwnerID`, `SetupToken.CreatedBy`, `MachineIdentity.CreatedBy`,
+`AccessReviewCampaign.CreatedBy`/`ClosedBy`, `SecretNode.OwnerID`,
+`SetupToken.CreatedBy`, `MachineIdentity.CreatedBy`,
 `ProjectMembership.InvitedBy`) — attribution-only; none feeds a comparison
 or counting check.
 
@@ -215,12 +232,14 @@ These are different defects with different fixes, kept separate:
 
 ## What this does not resolve
 
-- **PR1** (not yet landed): fix the check-breaking subset
+- **PR1** (#1622, landed): fixed the check-breaking subset
   (`AccessRequestApproval.ApproverID` + `AccessRequest.ResolvedBy`'s approve
   and reject paths) with machine-identity-aware self-approval and
   distinct-approver logic, exploit-shaped tests, and positive controls.
 - **PR2** (not yet landed): mechanical, one diff — companion
   `*MachineIdentityID *uint` fields (mirroring `AuditEvent.MachineIdentityID`)
-  for the remaining 9 Bucket-1 fields, populated at each write site from the
-  already-resolved `userCtx.MachineIdentityID`.
+  for the remaining 8 attribution-only Bucket-1 fields, populated at each
+  write site from the already-resolved `userCtx.MachineIdentityID`.
 - **#1621** (`ConnectRefGrant`) — filed, not investigated.
+- **#1623** (`SecretDependency.CreatedBy`'s `User`/`MachineIdentity` ID-space
+  collision, discovered while starting PR2) — filed, not investigated.
