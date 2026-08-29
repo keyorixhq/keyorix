@@ -94,7 +94,11 @@ func TestListSharesBySecretIDs(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ls.CreateShareRecord(ctx, &models.ShareRecord{SecretID: 2, OwnerID: 9, RecipientID: 3, IsGroup: false})
 	require.NoError(t, err)
-	past := time.Now().Add(-time.Hour)
+	// UTC explicitly: the raw db.Model(...).Update("expires_at", past) below bypasses
+	// ShareRecord.BeforeSave's UTC normalization (the hook only fires on a full-struct
+	// Save/Create, not a raw column Update) — see TestListShares_ExcludeExpiredIncludeActive's
+	// identical comment in local_sharing_test.go for the full reasoning.
+	past := time.Now().UTC().Add(-time.Hour)
 	expired, err := ls.CreateShareRecord(ctx, &models.ShareRecord{SecretID: 1, OwnerID: 9, RecipientID: 4, IsGroup: false})
 	require.NoError(t, err)
 	require.NoError(t, ls.db.Model(&models.ShareRecord{}).Where("id = ?", expired.ID).Update("expires_at", past).Error)

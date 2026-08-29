@@ -84,7 +84,14 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 		assert.Equal(t, int64(1), countEvents(core.EventRoleDeleted))
 	})
 
-	t.Run("a refused built-in delete writes no event", func(t *testing.T) {
+	t.Run("a refused built-in delete writes a Success=false event", func(t *testing.T) {
+		// #1503: this used to assert the refusal audited NOTHING -- that was
+		// the bug the fix closes, not the intended behavior. A denied attempt
+		// to delete a built-in role is exactly the kind of event least-
+		// privilege evidence should capture; it now writes a second
+		// role.deleted row (Success=false) alongside the one earlier
+		// successful delete (Success=true), distinguished by the Success flag
+		// per this file's countEvents helper not filtering on it.
 		require.NoError(t, db.Create(&models.Role{Name: "admin", Description: "built-in"}).Error)
 		var adminID uint
 		require.NoError(t, db.Model(&models.Role{}).Where("name = ?", "admin").Select("id").Scan(&adminID).Error)
@@ -95,6 +102,10 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 		handler.DeleteRole(w, req)
 
 		require.Equal(t, http.StatusForbidden, w.Code)
-		assert.Equal(t, int64(1), countEvents(core.EventRoleDeleted), "still just the one earlier delete — the refused built-in delete audits nothing")
+		assert.Equal(t, int64(2), countEvents(core.EventRoleDeleted), "the earlier successful delete plus this refused one")
+
+		var denied models.AuditEvent
+		require.NoError(t, db.Where("event_type = ? AND success = ?", core.EventRoleDeleted, false).First(&denied).Error)
+		assert.Contains(t, denied.Description, "admin", "the audit description must name the refused target role")
 	})
 }

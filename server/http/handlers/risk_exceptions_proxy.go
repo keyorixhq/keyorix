@@ -57,12 +57,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -201,6 +203,15 @@ func (h *DashboardHandler) RevokeRiskExceptionProxy(w http.ResponseWriter, r *ht
 		return
 	}
 	if err := h.coreService.RevokeRiskException(r.Context(), actorID(r), uint(id)); err != nil {
+		// #1531: a lost CAS race or an already-revoked precondition is a normal
+		// outcome on this wire contract (matched=false), not a server error --
+		// see core.ErrRiskExceptionAlreadyRevoked's doc comment for the exact
+		// scope. Every other failure (permission denial, not-found) is still a
+		// genuine error.
+		if errors.Is(err, core.ErrRiskExceptionAlreadyRevoked) || errors.Is(err, core.ErrRiskExceptionConcurrentlyRevoked) {
+			writeRemoteAPISuccess(w, map[string]bool{"matched": false})
+			return
+		}
 		log.Printf("risk-exceptions proxy: revoke failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
@@ -228,6 +239,17 @@ func (h *DashboardHandler) ApproveRiskExceptionProxy(w http.ResponseWriter, r *h
 		return
 	}
 	if err := h.coreService.ApproveRiskException(r.Context(), actorID(r), isMachineActor(r), uint(id)); err != nil {
+		// #1531: same treatment as RevokeRiskExceptionProxy above -- a lost CAS
+		// race or an already-decided precondition (already approved, or
+		// concurrently revoked out from under this approve) is matched=false,
+		// not a server error. Dual-control/machine-actor/expired/SoD-reference
+		// failures are unaffected and still return an error.
+		if errors.Is(err, core.ErrRiskExceptionAlreadyApproved) ||
+			errors.Is(err, core.ErrRiskExceptionRevokedNotApprovable) ||
+			errors.Is(err, core.ErrRiskExceptionConcurrentlyDecided) {
+			writeRemoteAPISuccess(w, map[string]bool{"matched": false})
+			return
+		}
 		log.Printf("risk-exceptions proxy: approve failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

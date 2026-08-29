@@ -289,7 +289,18 @@ func TestListShares_ExcludeExpiredIncludeActive(t *testing.T) {
 		ID: 100, Name: "s", ProjectID: 1, EnvironmentID: 1, OwnerID: 1, Status: "active", Type: "password",
 	}).Error)
 
-	past := time.Now().Add(-1 * time.Hour)
+	// past is UTC explicitly, not just time.Now().Add(...): the two db.Model(...).
+	// Update("expires_at", past) calls below write this raw value straight to the
+	// column, bypassing ShareRecord.BeforeSave's UTC normalization (BeforeSave only
+	// fires on a full-struct Save/Create — a raw column Update never touches the
+	// hook receiver's own field, so there's nothing for it to normalize). Without
+	// .UTC() here, "past" carries this machine's local offset while every listing
+	// query's bound (time.Now().UTC() in local_sharing.go) does not, and SQLite's
+	// plain string comparison between two differently-offset RFC3339 timestamps is
+	// not reliably chronological -- exactly the class of bug G81 fixed for
+	// production write paths (which all go through the hook-covered Save/Create,
+	// unlike this test's deliberately-raw "simulate a not-yet-swept expiry" update).
+	past := time.Now().UTC().Add(-1 * time.Hour)
 	future := time.Now().Add(1 * time.Hour)
 
 	// Active direct share (permanent, no expiry).

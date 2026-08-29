@@ -107,7 +107,8 @@ func TestFetchSecretsRemote_ProjectNotFound(t *testing.T) {
 // test: point fetchSecretsRemote at a server that accepts the TCP connection but
 // never writes a response, and assert the call fails with a bounded timeout error
 // rather than hanging indefinitely — matching common.RemoteClient's own
-// defaultRemoteClientTimeout (30s), since fetchSecretsRemote now goes through
+// idle-transfer timeout (#1521, 30s of no progress, not a flat total-round-trip
+// clock), since fetchSecretsRemote now goes through
 // common.NewRemoteClientWithCredentials instead of a homegrown *http.Client.
 func TestFetchSecretsRemote_HungServerTimesOut(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

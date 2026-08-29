@@ -730,12 +730,14 @@ func TestRevokeRiskExceptionProxy_BadID_S13(t *testing.T) {
 // TestRevokeRiskExceptionProxy_BadBody_S13 is gone with that body decode.
 
 // TestRevokeRiskExceptionProxy_LostRace_S13 — a second revoke attempt against
-// an already-revoked exception must be refused with an error (#G79:
-// RevokeRiskExceptionProxy now routes through
-// core.KeyorixCore.RevokeRiskException, which reports this precondition
-// failure as an error, not a matched:false success — see RevokeRiskException's
-// own doc comment), proving the CAS race still closes at the HTTP-proxy
-// boundary, just with a more specific error than the old raw matched bool.
+// an already-revoked exception is a normal outcome on this wire contract, not
+// a server error (#1531: RevokeRiskExceptionProxy used to turn
+// core.KeyorixCore.RevokeRiskException's already-revoked precondition error
+// into a 500 STORAGE_ERROR; it now recognizes
+// core.ErrRiskExceptionAlreadyRevoked via errors.Is and reports a clean
+// matched:false 200, matching every other conditional-transition wire method
+// in this package). Verified red against the pre-fix handler (500) before
+// this assertion was written to expect 200/matched:false.
 func TestRevokeRiskExceptionProxy_LostRace_S13(t *testing.T) {
 	h := freshDashboardHandlerS13(t)
 
@@ -768,7 +770,58 @@ func TestRevokeRiskExceptionProxy_LostRace_S13(t *testing.T) {
 	secondReq := withChiParam(httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/revoke", nil), "id", idStr)
 	secondW := httptest.NewRecorder()
 	h.RevokeRiskExceptionProxy(secondW, secondReq)
-	assert.NotEqual(t, http.StatusOK, secondW.Code, "second (racing) revoke must be refused — already revoked")
+	assert.Equal(t, http.StatusOK, secondW.Code, "a lost race is a normal outcome, not a server error")
+	secondResp := decodeRemoteResp(t, secondW)
+	secondData, ok := secondResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, false, secondData["matched"], "second (racing) revoke must report matched:false, not win or error")
+}
+
+// TestApproveRiskExceptionProxy_LostRace_S13 is the ApproveRiskExceptionProxy
+// counterpart — see TestRevokeRiskExceptionProxy_LostRace_S13's doc comment.
+// A second approve attempt against an already-approved exception must report
+// matched:false, not a 500.
+func TestApproveRiskExceptionProxy_LostRace_S13(t *testing.T) {
+	h := freshDashboardHandlerS13(t)
+
+	createBody := proxyJSON(map[string]interface{}{
+		"title":         "Approve Race S13",
+		"category":      "other",
+		"justification": "Testing approve CAS",
+		"created_by":    1,
+		"expires_at":    time.Now().Add(30 * 24 * time.Hour),
+	})
+	createReq := httptest.NewRequest(http.MethodPost, "/system/risk-exceptions", createBody)
+	createW := httptest.NewRecorder()
+	h.CreateRiskExceptionProxy(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+	createResp := decodeRemoteResp(t, createW)
+	created, ok := createResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	id := uint(created["id"].(float64))
+	idStr := strconv.FormatUint(uint64(id), 10)
+
+	// CreateRiskExceptionProxy's create request above is a bare httptest
+	// request (no withUserCtx), so actorID(r)==0 makes creator 0 — approve as
+	// a DIFFERENT actor via withUserCtx (mirrors TestApproveRiskExceptionProxy_HappyPath_S13),
+	// satisfying dual control's self-approval check.
+	firstReq := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/approve", nil), "id", idStr))
+	firstW := httptest.NewRecorder()
+	h.ApproveRiskExceptionProxy(firstW, firstReq)
+	require.Equal(t, http.StatusOK, firstW.Code)
+	firstResp := decodeRemoteResp(t, firstW)
+	firstData, ok := firstResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, true, firstData["matched"], "first approve must win")
+
+	secondReq := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/approve", nil), "id", idStr))
+	secondW := httptest.NewRecorder()
+	h.ApproveRiskExceptionProxy(secondW, secondReq)
+	assert.Equal(t, http.StatusOK, secondW.Code, "a lost race is a normal outcome, not a server error")
+	secondResp := decodeRemoteResp(t, secondW)
+	secondData, ok := secondResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, false, secondData["matched"], "second (racing) approve must report matched:false, not win or error")
 }
 
 // TestApproveRiskExceptionProxy_BadID_S13 — non-numeric id → 400.

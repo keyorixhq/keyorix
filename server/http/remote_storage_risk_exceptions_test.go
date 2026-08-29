@@ -8,6 +8,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
@@ -52,6 +53,79 @@ func newUpstreamDownstreamForRiskExceptions(t *testing.T) (upstream *core.Keyori
 	downstream = core.NewKeyorixCore(rs)
 
 	return upstream, downstream
+}
+
+// newUpstreamHumanDownstreamForRiskExceptions is
+// newUpstreamDownstreamForRiskExceptions's counterpart for tests that need to
+// call CreateRiskException: CreateRiskExceptionProxy requires a human
+// principal ("only a human principal may create a risk exception", #1529) --
+// the node/machine credential newUpstreamDownstreamForRiskExceptions's shared
+// downstream uses can never satisfy that (see #1584, a deliberate product
+// constraint, not a bug — verified separately, not changed here). A SEPARATE
+// helper, not a change to the shared one: several other tests in this file
+// deliberately exercise the machine-credential path (or don't need Create at
+// all), and #1584 itself is verdict-only, not a fix — this only unblocks the
+// two conditional-race tests below, which need a working Create step to set
+// up their race and are otherwise unrelated to human-vs-machine identity.
+// Mirrors newUpstreamDownstreamForMemberships's own admin-session pattern
+// (TestMembershipProxy_CreateAllowsAdminRoleByGenuineAdmin). Also returns
+// baseURL so a caller needing a SECOND distinct human actor against the same
+// upstream (see humanRiskExceptionClient below — the approve-race test needs
+// one, since CreateRiskExceptionProxy makes the creator == this function's
+// own actor, and dual control forbids that actor from also approving) can
+// mint one without standing up a second server.
+func newUpstreamHumanDownstreamForRiskExceptions(t *testing.T) (upstream, downstream *core.KeyorixCore, baseURL string) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+
+	upstream = newTestCore(t)
+	_ = createTestToken(t, upstream) // SeedSystem: bootstraps admin user/roles/permissions/project — grantSystemWrite needs "system.write" to already exist
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{Enabled: true, Port: "0"},
+		},
+	}
+	upstreamRouter, err := NewRouter(cfg, upstream)
+	require.NoError(t, err)
+	upstreamSrv := httptest.NewServer(upstreamRouter)
+	t.Cleanup(upstreamSrv.Close)
+	baseURL = upstreamSrv.URL
+
+	downstream, _ = humanRiskExceptionClient(t, upstream, baseURL, "riskexc1584-human")
+	return upstream, downstream, baseURL
+}
+
+// humanRiskExceptionClient creates a fresh human user against upstream,
+// grants it system.write (the permission /api/v1/system/risk-exceptions is
+// gated on), logs in, and returns a *core.KeyorixCore backed by that human's
+// session token against baseURL, plus the created user's ID — a distinct
+// principal each call, since username must be unique per upstream. The ID is
+// needed because RevokeRiskExceptionProxy/ApproveRiskExceptionProxy derive
+// RevokedBy/ApprovedBy from the AUTHENTICATED caller (actorID(r)), not from
+// anything the wire client sends — a caller distinguishing "the winning
+// writer's attribution" needs the real actor ID, not an arbitrary local value.
+func humanRiskExceptionClient(t *testing.T, upstream *core.KeyorixCore, baseURL, username string) (client *core.KeyorixCore, userID uint) {
+	t.Helper()
+	ctx := context.Background()
+	const pw = "Qr7#Kp2$Lm5@Vn9!"
+	human, err := upstream.CreateUser(ctx, &core.CreateUserRequest{
+		Username: username, Email: username + "@example.com", Password: pw,
+	})
+	require.NoError(t, err)
+	grantSystemWrite(t, upstream, human.ID)
+	sess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: username, Password: pw})
+	require.NoError(t, err)
+
+	rs, err := store.NewRemoteStorage(&remote.Config{
+		BaseURL:        baseURL,
+		APIKey:         sess.SessionToken,
+		TimeoutSeconds: 5,
+		RetryAttempts:  0,
+		TLSVerify:      true,
+	})
+	require.NoError(t, err)
+	return core.NewKeyorixCore(rs), human.ID
 }
 
 // buildRiskException mirrors what internal/core.CreateRiskException computes
@@ -244,8 +318,22 @@ func TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer(t *tes
 // a row the first already moved to revoked=true, must be rejected
 // (matched=false) rather than silently re-applied over the winner.
 func TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServer(t *testing.T) {
-	t.Skip("CORRECTED (was misdiagnosed as an actorID(r)==0 cause — it is not): RemoteStorage.RevokeRiskExceptionIfNotRevoked (internal/storage/store/remote_risk_exceptions.go) is built on putConditionalTransition, whose documented wire contract — shared with TransitionMachineIdentityState/TransitionSecretStatus/TransitionDynamicSecretConfigDisabled/UpdateUserIfActiveStateMatches — is (matched=false, err=nil) on a lost race, mirroring the raw storage.Storage conditional-write primitive. But RevokeRiskExceptionProxy (risk_exceptions_proxy.go:203) does not proxy that raw primitive: it calls core.KeyorixCore.RevokeRiskException, the POLICY function, which converts both the already-revoked precondition and a lost race into a Go error (fmt.Errorf(...)) rather than returning matched=false. The proxy handler turns that error into a 500 STORAGE_ERROR, so the second (losing) caller in this test gets an error after retries exhaust, not the matched=false this test — and every other conditional-transition wire method in the package — expects. Verified directly: unskipping this test reproduces 'request failed after 3 attempts: STORAGE_ERROR: an internal error occurred' at the second RevokeRiskExceptionIfNotRevoked call, not a permission/authorization error. Filed as its own defect, unrelated to node-credential identity — see #1531. Quarantined here, not fixed — do not change core.RevokeRiskException's error-on-lost-race behavior to accommodate this without first deciding whether RevokeRiskExceptionProxy should instead proxy the raw conditional primitive directly, like its siblings do.")
-	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
+	upstream, downstream, baseURL := newUpstreamHumanDownstreamForRiskExceptions(t)
+	// RevokeRiskExceptionProxy derives RevokedBy from the AUTHENTICATED caller
+	// (actorID(r)), not from anything the wire client sends (#G79) — a second,
+	// genuinely distinct admin session is what makes "the winner's attribution
+	// persists, not the loser's" a meaningful assertion below; reusing one
+	// session for both racing writes would make them indistinguishable by
+	// attribution regardless of which one actually won the CAS. Must be a
+	// genuine admin-tier role, not just system.write: RevokeRiskException's
+	// own authority check (internal/core/risk_exceptions.go) only allows the
+	// exception's creator OR an admin-tier principal to revoke — a second
+	// actor with system.write alone is neither, and would be denied outright
+	// before ever reaching the CAS this test means to race.
+	secondAdmin, secondAdminID := humanRiskExceptionClient(t, upstream, baseURL, "riskexc1584-second-revoker")
+	adminRole, err := upstream.Storage().GetRoleByName(context.Background(), "admin")
+	require.NoError(t, err)
+	require.NoError(t, upstream.Storage().AssignRole(context.Background(), secondAdminID, adminRole.ID, coreStorage.Scope{}))
 	ctx := context.Background()
 	now := time.Now()
 	expiresAt := now.Add(30 * 24 * time.Hour)
@@ -260,14 +348,12 @@ func TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServ
 	require.NoError(t, err)
 	firstRevokedAt := time.Now()
 	firstRead.Revoked = true
-	firstRead.RevokedBy = 1
 	firstRead.RevokedAt = &firstRevokedAt
 
-	secondRead, err := downstream.Storage().GetRiskException(ctx, exc.ID)
+	secondRead, err := secondAdmin.Storage().GetRiskException(ctx, exc.ID)
 	require.NoError(t, err)
 	secondRevokedAt := time.Now()
 	secondRead.Revoked = true
-	secondRead.RevokedBy = 2
 	secondRead.RevokedAt = &secondRevokedAt
 
 	// First admin's conditional revoke lands and wins.
@@ -277,9 +363,9 @@ func TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServ
 
 	// Second admin's conditional revoke, racing against a row the first write
 	// already moved to revoked=true, must be rejected — not silently
-	// re-applied (re-attributing the revoke away from admin 1 to admin 2, the
-	// exact clobber this fix closes).
-	matched, err = downstream.Storage().RevokeRiskExceptionIfNotRevoked(ctx, secondRead)
+	// re-applied (re-attributing the revoke away from the first admin to the
+	// second, the exact clobber this fix closes).
+	matched, err = secondAdmin.Storage().RevokeRiskExceptionIfNotRevoked(ctx, secondRead)
 	require.NoError(t, err)
 	assert.False(t, matched, "the second writer must lose, not clobber the first revoke")
 
@@ -288,7 +374,8 @@ func TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServ
 	final, err := upstream.Storage().GetRiskException(ctx, exc.ID)
 	require.NoError(t, err)
 	assert.True(t, final.Revoked)
-	assert.Equal(t, uint(1), final.RevokedBy, "the winning first admin's attribution must be the persisted state")
+	assert.NotEqual(t, secondAdminID, final.RevokedBy, "the losing second admin's attribution must not be the persisted state")
+	assert.Equal(t, exc.CreatedBy, final.RevokedBy, "the winning first admin's attribution must be the persisted state")
 }
 
 // TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer
@@ -299,8 +386,12 @@ func TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServ
 // posture, so a revoked-then-approved exception would wrongly keep suppressing
 // it).
 func TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer(t *testing.T) {
-	t.Skip("CORRECTED: same wire-contract mismatch as TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServer above (not an actorID(r)==0 cause) — ApproveRiskExceptionProxy also proxies the core.KeyorixCore.ApproveRiskException policy function instead of the raw ApproveRiskExceptionIfPending conditional primitive, so a losing/already-decided approve returns a 500 STORAGE_ERROR instead of putConditionalTransition's expected matched=false. Verified directly: unskipping reproduces 'request failed after 3 attempts: STORAGE_ERROR' at the ApproveRiskExceptionIfPending call. Quarantined here, not fixed.")
-	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
+	upstream, downstream, baseURL := newUpstreamHumanDownstreamForRiskExceptions(t)
+	// Dual control (#170) forbids the creator from approving its own
+	// exception — downstream (this function's own actor) creates and revokes;
+	// a SECOND, distinct human actor approves, mirroring who would genuinely
+	// perform each step in production.
+	approver, _ := humanRiskExceptionClient(t, upstream, baseURL, "riskexc1584-approver")
 	ctx := context.Background()
 	now := time.Now()
 	expiresAt := now.Add(30 * 24 * time.Hour)
@@ -317,7 +408,7 @@ func TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer
 	revokeRead.RevokedBy = 1
 	revokeRead.RevokedAt = &revokedAt
 
-	approveRead, err := downstream.Storage().GetRiskException(ctx, exc.ID)
+	approveRead, err := approver.Storage().GetRiskException(ctx, exc.ID)
 	require.NoError(t, err)
 	approvedAt := time.Now()
 	approveRead.Approved = true
@@ -331,7 +422,7 @@ func TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer
 
 	// The approve, racing against a row that is no longer unrevoked, must be
 	// rejected.
-	matched, err = downstream.Storage().ApproveRiskExceptionIfPending(ctx, approveRead)
+	matched, err = approver.Storage().ApproveRiskExceptionIfPending(ctx, approveRead)
 	require.NoError(t, err)
 	assert.False(t, matched, "an approve racing a revoke must lose, not mark a revoked exception approved")
 

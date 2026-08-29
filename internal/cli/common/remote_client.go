@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -202,19 +203,25 @@ func newHardenedRemoteClient(endpoint, token string) (*RemoteClient, bool) {
 	rc := &RemoteClient{
 		Endpoint: endpoint,
 		Token:    token,
-		// #315: the zero-value http.Client has an infinite Timeout. Only 3 CLI
-		// commands (status/connect/offline) wrap their own calls in
-		// context.WithTimeout; the 100+ other call sites across secret/rbac/
-		// machine/rotation/project/dynamic etc. use undecorated contexts — a hung
-		// or misconfigured KEYORIX_SERVER would otherwise hang the CLI forever
-		// with no way out. Mirrors the storage-layer remote client's default.
+		// #1521: a single total-round-trip http.Client.Timeout can't tell "the
+		// server is unreachable" from "a large transfer is slowly, genuinely
+		// progressing over a slow link" -- both look identical to a clock that
+		// only measures elapsed time since the request started. Split into two
+		// timeouts with different jobs instead (see newRemoteTransport):
+		// defaultConnectTimeout fails fast when the server can't be reached at
+		// all (no TCP handshake), and defaultIdleTransferTimeout only fires when
+		// NO bytes have moved for that long -- a slow-but-progressing transfer
+		// keeps resetting it and is never killed just for taking a while.
 		//
 		// CheckRedirect: without it, a 3xx response from the configured server
 		// (including a CWD-planted ./keyorix.yaml — see ResolveRemote's warning
 		// above) could bounce the bearer-token-bearing request to an internal
 		// host (e.g. cloud IMDS) at request time (CWE-918). This client backs
 		// essentially all CLI remote-mode traffic, so this one guard covers it.
-		hc: &http.Client{Timeout: defaultRemoteClientTimeout, CheckRedirect: refuseRemoteClientRedirect},
+		hc: &http.Client{
+			Transport:     newRemoteTransport(defaultConnectTimeout, defaultIdleTransferTimeout),
+			CheckRedirect: refuseRemoteClientRedirect,
+		},
 	}
 	// rc.Endpoint is a distinct field declaration from ClientConfig.Endpoint/
 	// RemoteConfig.BaseURL (already validated above in ResolveRemote) -- this direct
@@ -230,9 +237,95 @@ func refuseRemoteClientRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
 }
 
-// defaultRemoteClientTimeout matches internal/storage/remote's default
-// (Config.GetTimeout's 30s fallback when TimeoutSeconds is unset).
-const defaultRemoteClientTimeout = 30 * time.Second
+// defaultConnectTimeout bounds only the TCP handshake (DNS + dial). A few
+// seconds is enough for any genuinely reachable server on a real network; an
+// unreachable or misconfigured KEYORIX_SERVER fails within this window
+// instead of the old 30s total-round-trip budget.
+const defaultConnectTimeout = 5 * time.Second
+
+// defaultIdleTransferTimeout bounds how long a connection may go without
+// producing or consuming a single byte, once connected. It is NOT a total
+// elapsed-time budget: idleConn (below) resets it on every successful
+// Read/Write, so a large secret import over a slow-but-working link can run
+// far longer than this value in total, as long as it keeps moving. Only a
+// genuine stall -- no progress at all for this long -- trips it. Matches the
+// old defaultRemoteClientTimeout value so an already-fast link's behavior is
+// unchanged; only the SHAPE of the timeout (idle vs. total) changes.
+const defaultIdleTransferTimeout = 30 * time.Second
+
+// newRemoteTransport builds an http.Transport whose dial phase is bounded by
+// connectTimeout and whose connection (once established) is bounded by
+// idleTimeout on a no-progress basis -- see defaultConnectTimeout/
+// defaultIdleTransferTimeout's doc comments for why these are split rather
+// than one flat http.Client.Timeout. Exposed (not inlined into
+// newHardenedRemoteClient) so tests can construct a transport with short
+// timeouts instead of waiting out the real 5s/30s defaults.
+func newRemoteTransport(connectTimeout, idleTimeout time.Duration) *http.Transport {
+	dialer := &net.Dialer{Timeout: connectTimeout}
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dialer.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &idleConn{Conn: conn, idle: idleTimeout}, nil
+		},
+	}
+}
+
+// idleConn wraps a net.Conn so a read/write deadline resets on every
+// successful Read or Write, rather than the connection having a single fixed
+// deadline for its whole lifetime. This is what turns idleTimeout into a
+// no-progress timeout instead of a total-transfer-time timeout: TLS
+// handshake bytes, request-body upload bytes, and response-body download
+// bytes each push the deadline back out, so only a genuine stop in traffic
+// -- not merely a long transfer -- ever times out.
+type idleConn struct {
+	net.Conn
+	idle time.Duration
+}
+
+func (c *idleConn) Read(b []byte) (int, error) {
+	if err := c.Conn.SetReadDeadline(time.Now().Add(c.idle)); err != nil {
+		return 0, err
+	}
+	return c.Conn.Read(b)
+}
+
+func (c *idleConn) Write(b []byte) (int, error) {
+	if err := c.Conn.SetWriteDeadline(time.Now().Add(c.idle)); err != nil {
+		return 0, err
+	}
+	return c.Conn.Write(b)
+}
+
+// classifyTransportError turns a low-level dial/read/write network error
+// into a message that tells the caller WHICH kind of failure this was,
+// instead of the same generic wording for every case:
+//   - dial phase failed (connection refused, no route, DNS failure, or the
+//     connectTimeout itself expired): the server was never reachable at all.
+//   - a read or write on an established connection hit idleTimeout: the
+//     server WAS reachable and the transfer WAS progressing, then stopped.
+//
+// Any other error (HTTP-level, context cancellation, JSON decode) passes
+// through wrapped in the caller-supplied fallback wording unchanged -- this
+// only special-cases the two network-shaped failures the connect/idle split
+// above can actually distinguish.
+func (c *RemoteClient) classifyTransportError(err error, fallback string) error {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		switch opErr.Op {
+		case "dial":
+			return fmt.Errorf("could not reach server at %s: %w", c.Endpoint, err)
+		case "read", "write":
+			if ne, ok := opErr.Err.(net.Error); ok && ne.Timeout() {
+				return fmt.Errorf("transfer stalled after %s with no data sent or received (server: %s): %w",
+					defaultIdleTransferTimeout, c.Endpoint, err)
+			}
+		}
+	}
+	return fmt.Errorf("%s: %w", fallback, err)
+}
 
 // Get performs a GET to path, strips the {"data":…} envelope, and decodes into out.
 func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) error {
@@ -245,7 +338,7 @@ func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) er
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return c.classifyTransportError(err, "request failed")
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -268,7 +361,7 @@ func (c *RemoteClient) GetRaw(ctx context.Context, path string) ([]byte, error) 
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, c.classifyTransportError(err, "request failed")
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -277,7 +370,7 @@ func (c *RemoteClient) GetRaw(ctx context.Context, path string) ([]byte, error) 
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response from %s: %w", path, err)
+		return nil, c.classifyTransportError(err, fmt.Sprintf("read response from %s", path))
 	}
 	return body, nil
 }
@@ -301,7 +394,7 @@ func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, 
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return c.classifyTransportError(err, "request failed")
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -344,7 +437,7 @@ func (c *RemoteClient) Put(ctx context.Context, path string, body interface{}, o
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return c.classifyTransportError(err, "request failed")
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -374,7 +467,7 @@ func (c *RemoteClient) Patch(ctx context.Context, path string, body interface{},
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return c.classifyTransportError(err, "request failed")
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -404,7 +497,7 @@ func (c *RemoteClient) DeleteWithBody(ctx context.Context, path string, body int
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return c.classifyTransportError(err, "request failed")
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -424,7 +517,7 @@ func (c *RemoteClient) Delete(ctx context.Context, path string) error {
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return c.classifyTransportError(err, "request failed")
 	}
 	defer resp.Body.Close() //nolint:errcheck
 

@@ -326,6 +326,7 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	// identical guard (server/grpc/services/role_service.go); without it here the guard
 	// is bypassable by switching transport.
 	if core.IsBuiltinRole(role.Name) {
+		h.coreService.LogRoleUpdateDenied(r.Context(), userCtx.UserID, role.ID, role.Name, "target is a built-in role")
 		sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
 		return
 	}
@@ -424,6 +425,7 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if core.IsBuiltinRole(role.Name) {
+		h.coreService.LogRoleDeleteDenied(r.Context(), userCtx.UserID, role.ID, role.Name, "target is a built-in role")
 		sendError(w, "Forbidden", "Cannot delete built-in role: "+role.Name, http.StatusForbidden, nil)
 		return
 	}

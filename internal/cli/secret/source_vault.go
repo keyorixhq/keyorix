@@ -18,8 +18,10 @@ import (
 )
 
 // vaultClientTimeout bounds every request this client makes to a configured Vault
-// server. Matches common.RemoteClient's own defaultRemoteClientTimeout (#G71
-// sibling fix): the caller's ctx (fetchFromVault ← cmd.Context(), which carries no
+// server. Matches common.RemoteClient's old flat 30s timeout value (#G71 sibling
+// fix) — deliberately NOT the connect/idle split #1521 gave common.RemoteClient,
+// since that fix's own scope was the Keyorix-server client specifically. The
+// caller's ctx (fetchFromVault ← cmd.Context(), which carries no
 // deadline anywhere in this CLI) previously left this client's requests with NO
 // bound at all — a hung/misconfigured/malicious VAULT_ADDR could stall 'secret
 // import --source vault' forever.

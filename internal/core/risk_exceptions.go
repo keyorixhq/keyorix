@@ -9,6 +9,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,6 +26,36 @@ const (
 	EventRiskExceptionCreated  = "risk.exception_created"
 	EventRiskExceptionRevoked  = "risk.exception_revoked"
 	EventRiskExceptionApproved = "risk.exception_approved"
+)
+
+// #1531: RevokeRiskException/ApproveRiskException return a plain error for
+// every failure mode -- permission denial, validation, AND a lost CAS race
+// or an already-decided precondition. The local human-facing handler
+// (risk_exceptions.go) is fine with that (a human clicking revoke twice just
+// wants an error message either way), but RevokeRiskExceptionProxy/
+// ApproveRiskExceptionProxy back a wire contract where a lost race or an
+// already-decided precondition is a normal outcome (matched=false), not a
+// failure -- every sibling conditional-transition wire method in this
+// package (TransitionMachineIdentityState, TransitionSecretStatus, ...)
+// already makes that distinction. These sentinels let the proxy tell the
+// two apart via errors.Is without string-matching the message (the existing
+// local-handler precedent, kept working unchanged since these wrap the same
+// text via %w) and without a signature change that would touch the local
+// handler too.
+//
+// Scoped to exactly the preconditions RevokeRiskExceptionIfNotRevoked's
+// ("revoked = false") and ApproveRiskExceptionIfPending's ("revoked = false
+// AND approved = false") own WHERE clauses enforce -- the same invariant,
+// checked once eagerly here and once atomically at the storage layer.
+// ExceptionStatusExpired is deliberately NOT one of these: expiry is a
+// deterministic function of wall-clock time, not a concurrently-decided
+// precondition a CAS could lose a race on, so it stays a genuine error.
+var (
+	ErrRiskExceptionAlreadyRevoked       = errors.New("risk exception is already revoked")
+	ErrRiskExceptionConcurrentlyRevoked  = errors.New("risk exception was concurrently revoked by another request")
+	ErrRiskExceptionAlreadyApproved      = errors.New("risk exception is already approved")
+	ErrRiskExceptionRevokedNotApprovable = errors.New("cannot approve a revoked risk exception")
+	ErrRiskExceptionConcurrentlyDecided  = errors.New("risk exception was concurrently revoked or approved by another request")
 )
 
 // validExceptionCategories are the risk areas an exception may cover (aligned with
@@ -219,7 +250,7 @@ func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint)
 			"only the creating admin or an admin-tier principal may revoke this risk exception")
 	}
 	if e.Revoked {
-		return fmt.Errorf("risk exception %d is already revoked", id)
+		return fmt.Errorf("risk exception %d is already revoked: %w", id, ErrRiskExceptionAlreadyRevoked)
 	}
 	now := c.now()
 	e.Revoked = true
@@ -235,7 +266,7 @@ func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint)
 		// RevokeRiskException or ApproveRiskException call) — treat exactly like
 		// the already-revoked precondition failure above rather than silently
 		// overwriting the winner (StateTransitionMissingCAS.ql).
-		return fmt.Errorf("risk exception %d was concurrently revoked by another request", id)
+		return fmt.Errorf("risk exception %d was concurrently revoked by another request: %w", id, ErrRiskExceptionConcurrentlyRevoked)
 	}
 	c.writeAuditEvent(ctx, EventRiskExceptionRevoked, actorPtr(actorID), nil,
 		fmt.Sprintf("risk exception %d revoked: %q", id, e.Title))
@@ -262,13 +293,13 @@ func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID uint, ac
 		return err
 	}
 	if e.Revoked {
-		return fmt.Errorf("cannot approve a revoked risk exception")
+		return fmt.Errorf("cannot approve a revoked risk exception: %w", ErrRiskExceptionRevokedNotApprovable)
 	}
 	if exceptionStatus(e, c.now()) == ExceptionStatusExpired {
 		return fmt.Errorf("cannot approve an expired risk exception")
 	}
 	if e.Approved {
-		return fmt.Errorf("risk exception %d is already approved", id)
+		return fmt.Errorf("risk exception %d is already approved: %w", id, ErrRiskExceptionAlreadyApproved)
 	}
 	if actorIsMachine {
 		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil, "",
@@ -304,7 +335,7 @@ func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID uint, ac
 		// RevokeRiskException or ApproveRiskException call) — treat exactly like
 		// the already-revoked/already-approved precondition failures above rather
 		// than silently overwriting the winner (StateTransitionMissingCAS.ql).
-		return fmt.Errorf("risk exception %d was concurrently revoked or approved by another request", id)
+		return fmt.Errorf("risk exception %d was concurrently revoked or approved by another request: %w", id, ErrRiskExceptionConcurrentlyDecided)
 	}
 	c.writeAuditEvent(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil,
 		fmt.Sprintf("risk exception %d approved by %d (created by %d): %q", id, actorID, e.CreatedBy, e.Title))
