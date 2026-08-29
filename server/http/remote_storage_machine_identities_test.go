@@ -329,7 +329,7 @@ func TestRemoteStorageMachineIdentities_CredentialCreateGetHashListRevokeTouch_R
 
 	// RevokeMachineIdentityCredential flips Revoked and is visible directly on
 	// the upstream.
-	require.NoError(t, downstream.Storage().RevokeMachineIdentityCredential(ctx, cred.ID))
+	require.NoError(t, downstream.Storage().RevokeMachineIdentityCredential(ctx, projectID, cred.ID))
 	revoked, err := upstream.Storage().GetMachineIdentityCredentialByID(ctx, cred.ID)
 	require.NoError(t, err)
 	assert.True(t, revoked.Revoked)
@@ -340,6 +340,45 @@ func TestRemoteStorageMachineIdentities_CredentialCreateGetHashListRevokeTouch_R
 	for _, c := range activeAfter {
 		assert.NotEqual(t, cred.ID, c.ID, "a revoked credential must not appear in the active list")
 	}
+}
+
+// TestRemoteStorageMachineIdentities_RevokeCredential_CrossTenantRejected_RealServer
+// proves the #1551 fix: a caller reaching RevokeMachineIdentityCredentialProxy
+// directly (as this test does, exactly like a caller holding raw system.write
+// but not going through core.RevokeMachineToken's own client-side ownership
+// check) cannot revoke a credential by naming a project it doesn't actually
+// belong to. Before the fix, the wire carried no project_id at all and the
+// upstream revoked by credential ID alone — this scenario would have
+// succeeded. A positive control at the end proves the SAME credential is
+// still revocable when the caller names its real project, so this isn't
+// coincidentally rejecting every revoke.
+func TestRemoteStorageMachineIdentities_RevokeCredential_CrossTenantRejected_RealServer(t *testing.T) {
+	upstream, downstream, projectID := newUpstreamDownstreamForMachineIdentities(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	m, err := downstream.Storage().CreateMachineIdentity(ctx, buildMachineIdentity(now, projectID, "cross-tenant-test"))
+	require.NoError(t, err)
+
+	const hash = "cafef00d00112233445566778899aabbccddeeff0011223344556677889900"
+	cred, err := downstream.Storage().CreateMachineIdentityCredential(ctx, buildMachineIdentityCredential(now, m.ID, hash))
+	require.NoError(t, err)
+
+	wrongProjectID := projectID + 999
+	err = downstream.Storage().RevokeMachineIdentityCredential(ctx, wrongProjectID, cred.ID)
+	require.Error(t, err, "revoking with a project_id the credential's machine doesn't belong to must be rejected")
+
+	// The credential must still be live on the upstream — the rejected call
+	// must not have revoked it anyway.
+	stillLive, err := upstream.Storage().GetMachineIdentityCredentialByID(ctx, cred.ID)
+	require.NoError(t, err)
+	assert.False(t, stillLive.Revoked, "a cross-tenant revoke attempt must not revoke the credential")
+
+	// Positive control: the same credential, same caller, correct project_id.
+	require.NoError(t, downstream.Storage().RevokeMachineIdentityCredential(ctx, projectID, cred.ID))
+	revoked, err := upstream.Storage().GetMachineIdentityCredentialByID(ctx, cred.ID)
+	require.NoError(t, err)
+	assert.True(t, revoked.Revoked, "revoking with the credential's real project_id must still succeed")
 }
 
 // TestRemoteStorageMachineIdentities_RoleGrantAssignRemoveListIDs_RealServer

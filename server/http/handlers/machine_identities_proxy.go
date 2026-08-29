@@ -757,18 +757,56 @@ func (h *CatalogHandler) CountMachineIdentityCredentialsByClassificationProxy(w 
 	writeRemoteAPISuccess(w, map[string]interface{}{"counts": counts})
 }
 
+// revokeMachineIdentityCredentialProxyBody is
+// RevokeMachineIdentityCredentialProxy's request body — see #1551 below.
+type revokeMachineIdentityCredentialProxyBody struct {
+	ProjectID uint `json:"project_id"`
+}
+
 // RevokeMachineIdentityCredentialProxy handles POST
 // /api/v1/system/machine-credentials/{id}/revoke. storage.Storage.
 // RevokeMachineIdentityCredential is itself an atomic conditional UPDATE
 // (local_machine_credentials.go: `UpdateColumn("revoked", true)` gated on
-// `id = ?`), so a single passthrough call here preserves that guarantee exactly.
+// `id = ? AND machine_identity_id IN (project's machines)`), so a single
+// passthrough call here preserves that guarantee exactly.
+//
+// #1551: project_id is now part of the wire request (previously this route
+// took only the credential id, with no tenant check at all). The
+// legitimate spoke topology (a CLI running under storage.type: remote calls
+// core.RevokeMachineToken, which already runs core.machineInProject's
+// ownership check client-side against its own RemoteStorage-backed read
+// before ever reaching this route) never depended on this route enforcing
+// tenancy itself. A caller reaching this route directly (holding the
+// blanket system.write raw-storage capability every /system proxy in this
+// package trusts, but not going through core.RevokeMachineToken) had no
+// such check at all: any credential ID could be revoked by naming any
+// project, since neither ID was ever cross-checked against the other. The
+// fix pushes the ownership check into the storage primitive itself
+// (RevokeMachineIdentityCredential's own project_id parameter, enforced in
+// its WHERE clause) rather than adding a second, parallel authorization
+// primitive at this handler — deriving from the existing
+// core.machineInProject check's *shape*, not inventing a new one: a
+// caller-claimed tenant is now verified against the credential's real
+// owning project before the write, the same "claim vs. ground truth"
+// pattern already applied to wire-supplied actors elsewhere in this
+// package (e.g. CreateMembershipProxy's #1578 fix), just for a tenant
+// field instead of an actor field.
 func (h *CatalogHandler) RevokeMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCredentialID)
 		return
 	}
-	if err := h.coreService.Storage().RevokeMachineIdentityCredential(r.Context(), uint(id)); err != nil {
+	var body revokeMachineIdentityCredentialProxyBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
+		return
+	}
+	if body.ProjectID == 0 {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id is required")
+		return
+	}
+	if err := h.coreService.Storage().RevokeMachineIdentityCredential(r.Context(), body.ProjectID, uint(id)); err != nil {
 		if isNotFoundErr(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
 			return

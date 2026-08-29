@@ -532,10 +532,15 @@ func (rs *RemoteStorage) CountMachineIdentityCredentialsByClassification(ctx con
 
 // RevokeMachineIdentityCredential revokes a credential via POST
 // /api/v1/system/machine-credentials/{id}/revoke — the server applies the SAME
-// atomic conditional UPDATE local_machine_credentials.go does.
-func (rs *RemoteStorage) RevokeMachineIdentityCredential(ctx context.Context, id uint) error {
+// atomic conditional UPDATE local_machine_credentials.go does, now scoped by
+// project_id (#1551) so the server can verify the credential actually belongs
+// to the project this call claims, rather than trusting the ID alone.
+func (rs *RemoteStorage) RevokeMachineIdentityCredential(ctx context.Context, projectID, id uint) error {
 	path := fmt.Sprintf("/api/v1/system/machine-credentials/%d/revoke", id)
-	resp, err := rs.client.Post(ctx, path, nil)
+	body := struct {
+		ProjectID uint `json:"project_id"`
+	}{ProjectID: projectID}
+	resp, err := rs.client.Post(ctx, path, body)
 	if err != nil {
 		return fmt.Errorf("failed to revoke machine credential: %w", err)
 	}

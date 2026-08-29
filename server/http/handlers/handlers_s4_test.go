@@ -11677,7 +11677,7 @@ func TestAuthHandler_AdvanceWebAuthnCredentialCounterProxy_MissingRequiredFields
 
 func TestCatalogHandler_RevokeMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
+	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"project_id":1}`)), "id", "1")
 	w := httptest.NewRecorder()
 	h.RevokeMachineIdentityCredentialProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)

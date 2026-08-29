@@ -87,7 +87,8 @@ func TestUpdateMachineIdentityCredentialProxy_DBError_S33(t *testing.T) {
 func TestRevokeMachineIdentityCredentialProxy_DBError_S33(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS33(t))
-	r := withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-credentials/1/revoke", nil), "id", "1")
+	body := bytes.NewBufferString(`{"project_id":1}`)
+	r := withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-credentials/1/revoke", body), "id", "1")
 	w := httptest.NewRecorder()
 	h.RevokeMachineIdentityCredentialProxy(w, r)
 	// RevokeMachineIdentityCredential fails with "ErrorStorageFailed" (not "not found") → 500

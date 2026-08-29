@@ -1114,7 +1114,7 @@ func TestRevokeMachineIdentityCredentialProxy_NotFound_S28(t *testing.T) {
 	cs := freshCoreS28(t)
 	h := NewCatalogHandler(cs)
 
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999")
+	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(`{"project_id":1}`))), "id", "9999")
 	w := httptest.NewRecorder()
 	h.RevokeMachineIdentityCredentialProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -1138,7 +1138,7 @@ func TestRevokeMachineIdentityCredentialProxy_HappyPath_S28(t *testing.T) {
 	require.NoError(t, err)
 
 	h := NewCatalogHandler(cs)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", uintStrS28(cred.ID))
+	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(fmt.Sprintf(`{"project_id":%d}`, mi.ProjectID)))), "id", uintStrS28(cred.ID))
 	w := httptest.NewRecorder()
 	h.RevokeMachineIdentityCredentialProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

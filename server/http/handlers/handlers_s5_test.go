@@ -3679,7 +3679,7 @@ func TestListGroupMembersByIDsProxy_HappyPathS5(t *testing.T) {
 
 func TestRevokeMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", "1")
+	req := withChiParam(httptest.NewRequest("POST", "/", strings.NewReader(`{"project_id":1}`)), "id", "1")
 	w := httptest.NewRecorder()
 	h.RevokeMachineIdentityCredentialProxy(w, req)
 	// Row may not exist → 404, but not bad-request.

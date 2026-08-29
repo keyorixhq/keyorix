@@ -580,14 +580,14 @@ func TestListActiveMachineIdentityCredentials_S25_BrokenDB(t *testing.T) {
 // TestRevokeMachineIdentityCredential_S25_NotFound verifies the
 // RowsAffected == 0 branch: revoking a non-existent credential returns an error.
 func TestRevokeMachineIdentityCredential_S25_NotFound(t *testing.T) {
-	ls := newS25Store(t, &models.MachineIdentityCredential{})
-	err := ls.RevokeMachineIdentityCredential(context.Background(), 9999)
+	ls := newS25Store(t, &models.MachineIdentity{}, &models.MachineIdentityCredential{})
+	err := ls.RevokeMachineIdentityCredential(context.Background(), 1, 9999)
 	require.Error(t, err, "revoking a non-existent credential must return an error")
 }
 
 func TestRevokeMachineIdentityCredential_S25_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	err := ls.RevokeMachineIdentityCredential(context.Background(), 1)
+	err := ls.RevokeMachineIdentityCredential(context.Background(), 1, 1)
 	require.Error(t, err)
 }
 

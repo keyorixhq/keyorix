@@ -816,7 +816,7 @@ func TestRemoteStorage_S28_RevokeMachineIdentityCredential_APIError(t *testing.T
 	}))
 	defer srv.Close()
 	rs := newS28Remote(t, srv.URL)
-	err := rs.RevokeMachineIdentityCredential(context.Background(), 99)
+	err := rs.RevokeMachineIdentityCredential(context.Background(), 1, 99)
 	assert.Error(t, err)
 }
 

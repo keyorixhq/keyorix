@@ -26,11 +26,14 @@
 // later DELETED outright -- #1585, docs/adr-090-stale-fork-proxy-deletion.md
 // -- no live caller). Its
 // RevokeMachineIdentityCredentialProxy coverage
-// (RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate below) is
-// gate-level only: the current wire contract (DELETE-by-bare-credential-ID, no
-// project/scope parameter at all) can't express a per-grant scope check
-// without a RemoteStorage client-side change first — a different, harder fix
-// shape than the other rows here; filed as #1551, not closed by this table.
+// (RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate below) was
+// originally gate-level only, since the wire contract (POST-by-bare-
+// credential-ID, no project/scope parameter at all) couldn't express a
+// per-grant scope check without a RemoteStorage client-side change first —
+// filed as #1551. That wire change landed (Wave 2, 2026-08-29): the route now
+// requires project_id and rejects a cross-tenant claim in the storage layer's
+// own WHERE clause (see raw_storage_bypass_guard_test.go's entry for this
+// handler for the still-open residual, audit + cache-eviction hand-off).
 //
 // A second dimension: "Node-credential-path rows" below exercise the
 // human-caller rows' SAME write routes again, but with a bare node-type
@@ -747,15 +750,17 @@ func TestSystemWriteCeiling_AssignRoleWithExpiryProxy_NodeCredential_DeniedAtGat
 }
 
 // TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate
-// closes #1551's node-credential axis: RevokeMachineIdentityCredentialProxy
-// itself is STILL an unconditional raw storage.RevokeMachineIdentityCredential
-// passthrough with no caller-authority or project-scope check at all — that
-// deeper gap (any system.write holder can revoke any credential cross-tenant)
-// is unchanged and remains filed as #1551 (the wire contract, a bare
-// credential ID with no scope parameter, can't express a scope check without
-// a RemoteStorage client-side change first). What ADR-085 closes is narrower
-// but real: a bare node credential can no longer reach the handler AT ALL,
-// refused at the /system group's own system.write gate.
+// closes #1551's node-credential axis: a bare node credential can no longer
+// reach RevokeMachineIdentityCredentialProxy at all, refused at the /system
+// group's own system.write gate (ADR-085) — before the request body is ever
+// read, so this holds regardless of the handler's own body shape. #1551's
+// deeper cross-tenant gap (any system.write holder could revoke any
+// credential by naming any project) is now FIXED separately (Wave 2,
+// 2026-08-29): RevokeMachineIdentityCredentialProxy requires project_id on
+// the wire and storage.Storage.RevokeMachineIdentityCredential enforces it in
+// its WHERE clause. Audit + cache-eviction hand-off remain a separate, still-
+// open residual (raw_storage_bypass_guard_test.go's own entry for this
+// handler).
 func TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate(t *testing.T) {
 	f := setupCeilingTableFixtures(t)
 	status, body := doCeilingRequestAs(t, f, f.nodeToken, http.MethodPost, fmt.Sprintf("/api/v1/system/machine-credentials/%d/revoke", f.plainCredID), nil)

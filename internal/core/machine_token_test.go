@@ -64,7 +64,7 @@ func TestRevokeMachineToken_ReturnsHashForCacheEviction(t *testing.T) {
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	store.On("GetMachineIdentityCredentialByID", mock.Anything, uint(5)).
 		Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, TokenHash: "hash-5"}, nil)
-	store.On("RevokeMachineIdentityCredential", mock.Anything, uint(5)).Return(nil)
+	store.On("RevokeMachineIdentityCredential", mock.Anything, uint(2), uint(5)).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	hash, err := c.RevokeMachineToken(context.Background(), 2, 1, 5, 9)

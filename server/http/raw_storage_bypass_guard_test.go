@@ -632,6 +632,26 @@ func isReadShapedStorageMethod(method string) bool {
 // found calling a wrapped storage method (the #1542 shape recurring), or if a
 // listed entry no longer applies (fixed and forgotten).
 var rawStorageBypassAllowlist = map[string]string{
+	// G80 Wave 2 (#1572, ADR-088): the raw Storage().UpdateUserIfActiveStateMatches
+	// call is the deliberate CAS-conditional write this route exists to
+	// provide (same "conditional write, not full delegation" shape ADR-088
+	// costs for every /system proxy) -- what made it unjustified was that it
+	// skipped two of the three things core.UpdateUser's deactivating branch
+	// does around that same write: the last-admin guard (fixed 2026-08-24,
+	// core.GuardLastAdminDeactivation) and PAT/session revocation (fixed here
+	// via core.RevokeAllPersonalAccessTokensForUser/core.DeleteSessionsForUserExcept,
+	// called in-process immediately after a matched true->false transition).
+	// With both bolted on, this handler now performs every check and side
+	// effect core.UpdateUser's deactivating branch does, in the same order,
+	// around the same conditional write -- it just doesn't re-derive the row
+	// from a fresh GetUser/diff the way full delegation to core.UpdateUser
+	// would (which ADR-088 rejects for this route: full delegation would lose
+	// the FromActive CAS precondition the route exists to provide). Verified
+	// red/green in users_active_transition_proxy_credential_revoke_test.go.
+	"UpdateUserIfActiveStateMatchesProxy": "no-independent-ceiling once both bolt-ons are in place: " +
+		"GuardLastAdminDeactivation (fixed 2026-08-24) and RevokeAllPersonalAccessTokensForUser/" +
+		"DeleteSessionsForUserExcept (fixed here, #1572) replicate every check and side effect " +
+		"core.UpdateUser's deactivating branch applies around the same conditional write.",
 	// G80 Wave 1 (#1547): the one new candidate the repo-wide extension found,
 	// outside /system. VERIFIED 2026-08-25 (G80 documented-exception
 	// re-verification sweep, escalation-delta test), docs/g80-raw-storage-
@@ -1251,41 +1271,80 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	// on "is this a node credential" would LOWER the effective bar, not raise
 	// it, for an account-takeover primitive.
 	//
-	"TransitionMembershipProxy": "UNRESOLVED, not confirmed real or safe -- filed as #1546. The exported wrapper " +
-		"(TransitionMembership) gates activation with requireAuthorityForRole and grants/revokes the underlying " +
-		"role grant as a side effect neither of which this raw call performs; whether that's covered by a " +
-		"separate relayed call from the downstream's own core.TransitionMembership, or a real gap, is undetermined.",
+	// TransitionMembershipProxy is FIXED (#1546, Wave 2, ADR-088) -- entry
+	// removed. Liveness re-trace found the "undetermined" question above (did a
+	// spoke already relay the role-grant separately?) resolves to "no spoke
+	// exists at all": core.TransitionMembership's only caller repo-wide is the
+	// human-facing HTTP route (unreachable from any process with
+	// storage.type: remote, since validateRemoteStorageNotServer rejects that
+	// for every server), and no CLI command calls it either. With no live
+	// spoke, ADR-088's duplication concern for full delegation is moot, so the
+	// handler now fully delegates to core.TransitionMembership instead of the
+	// narrow bolt-on ADR-088 costed -- it no longer makes any raw
+	// wrapped-storage call at all (moved to actorID(r)-derived,
+	// core.TransitionMembership-routed logic;
+	// server/http/handlers/project_memberships_proxy.go).
 	// UpdateLoginLockoutStateProxy's route was deleted (G80 23-handler no-caller
 	// deletion) -- entry removed, no longer applicable.
 	// CreateMachineIdentityProxy is FIXED (moved to rawStorageBypassAllowlist);
 	// CreateMachineIdentityCredentialProxy is HALF-FIXED (see its entry below) --
 	// neither belongs here with its original pre-fix text.
-	"RevokeMachineIdentityCredentialProxy": "REAL, human-reachable, narrower: revokes by bare credential ID with " +
-		"no project-membership check, skips audit + cache-eviction hand-off. Mirrors this file's own " +
-		"already-fixed RemoveMachineRoleProxy pattern; impact is cross-tenant DoS/tampering, not escalation. " +
-		"Deferred (not a wire-compatible fix like its siblings): the wire contract carries no project/scope " +
-		"parameter at all, so closing it needs a RemoteStorage client-side change first -- filed as #1551. " +
+	// #1551 cross-tenant half FIXED 2026-08-29 (Wave 2, ADR-088):
+	// storage.Storage.RevokeMachineIdentityCredential now takes a projectID
+	// parameter, enforced in the WHERE clause (LocalStorage) and carried on
+	// the wire (RemoteStorage/RevokeMachineIdentityCredentialProxy) --
+	// deriving the existing core.machineInProject ownership-check *shape*
+	// rather than inventing a new authorization primitive: a caller-claimed
+	// project_id is now verified against the credential's real owning
+	// project before the write, the same claim-vs-ground-truth pattern
+	// already used for wire-supplied actors elsewhere in this package.
+	// Verified red/green via a real upstream/downstream integration test
+	// (server/http/remote_storage_machine_identities_test.go,
+	// TestRemoteStorageMachineIdentities_RevokeCredential_CrossTenantRejected_RealServer).
+	// Audit + cache-eviction hand-off remain a SEPARATE, still-open residual
+	// (unchanged by this fix, not silently dropped): this raw call still
+	// doesn't log an audit event or return the token hash for auth-cache
+	// eviction the way core.RevokeMachineToken's caller-side eviction
+	// contract expects -- and unlike the tenant check, that gap isn't closed
+	// by a wire parameter alone (it needs either an audit call here or a
+	// wire-carried hash in the response), so still belongs in this list under
+	// its own remaining half.
+	"RevokeMachineIdentityCredentialProxy": "PARTIALLY FIXED 2026-08-29 (#1551, Wave 2): cross-tenant revoke is " +
+		"now rejected (project_id required on the wire, enforced in the storage layer's WHERE clause). Still " +
+		"open: no audit event, no token-hash returned for auth-cache eviction (core.RevokeMachineToken's own " +
+		"caller-side eviction contract is unmet by this raw passthrough) -- narrower residual, not an " +
+		"escalation, not part of #1551's stated cross-tenant scope. " +
 		"ADR-085 (Accepted, 2026-08-25) closed the node-credential axis specifically: the /system group's own " +
 		"gate now requires system.write for every caller (see " +
 		"TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate, " +
-		"system_write_ceiling_table_test.go), so a bare node credential can no longer reach this handler at all -- " +
-		"#1551's real gap (cross-tenant revoke by any system.write holder, human or machine) is unchanged.",
+		"system_write_ceiling_table_test.go) -- irrelevant to the tenant check either way, since that check now " +
+		"runs for every caller regardless of credential class.",
 	// UpsertMFASecretProxy, CreateMFAStepUpGrantProxy, UpdateProjectProxy,
 	// RestoreProjectProxy, DeleteAnomalyAlertsBeforeProxy,
 	// DeleteClosedAccessReviewsBeforeProxy, DeleteExpiredBreakGlassBeforeProxy,
 	// DeleteResolvedAccessRequestsBeforeProxy, DeleteSecretDependencyProxy: all
 	// deleted (G80 23-handler no-caller deletion) -- entries removed, no longer
 	// applicable.
-	"UpdateUserIfActiveStateMatchesProxy": "PARTIALLY FIXED 2026-08-24 (G80 overnight campaign, Tier 1 Group A " +
-		"#3): the last-admin-lockout half is fixed -- core.GuardLastAdminDeactivation now runs before any " +
-		"deactivating transition (FromActive:true, Active:false), a target-state check needing only the target " +
-		"user ID, no RemoteStorage wire-protocol change required. The PAT/session revocation half (RemoteStorage." +
-		"RevokeAllPersonalAccessTokensForUser/DeleteSessionsForUserExcept were both hard-stubbed to " +
-		"errUnsupportedRemote, so the 'correct' full deactivation flow failed outright over RemoteStorage) is now " +
-		"fixed 2026-08-25 via two new proxy routes -- see the RevokeAllPersonalAccessTokensForUserProxy/ " +
-		"DeleteSessionsForUserExceptProxy entries below (this handler itself still makes no PAT/session call; the " +
-		"fix lives in the two new routes core.UpdateUser's deactivating branch now succeeds against, and in the " +
-		"RemoteStorage client methods themselves).",
+	// UpdateUserIfActiveStateMatchesProxy is FIXED (#1572, Wave 2, ADR-088) --
+	// entry removed. Recap: the last-admin-lockout half was fixed 2026-08-24
+	// (core.GuardLastAdminDeactivation). RemoteStorage.RevokeAllPersonalAccessTokensForUser/
+	// DeleteSessionsForUserExcept were un-stubbed 2026-08-25 via two new proxy
+	// routes (RevokeAllPersonalAccessTokensForUserProxy/DeleteSessionsForUserExceptProxy),
+	// which closed the gap for the LEGITIMATE flow (a CLI running
+	// core.UpdateUser under storage.type: remote, whose deactivating branch
+	// calls those two operations as separate HTTP round-trips). What remained
+	// open: a caller reaching THIS route directly, bypassing core.UpdateUser
+	// entirely, could deactivate a user via this route alone without ever
+	// triggering the other two -- PAT/session revocation was skippable, not a
+	// guaranteed side effect of deactivation the way it is for the legitimate
+	// path. Per ADR-088's own costing for #1572 ("the fix is calling those
+	// same two already-safe internal/core operations directly, in sequence...
+	// no new primitive needed"), this handler now calls
+	// core.RevokeAllPersonalAccessTokensForUser/core.DeleteSessionsForUserExcept
+	// itself (in-process, not a second HTTP hop) immediately after a matched
+	// true->false transition, best-effort and non-fatal like core.UpdateUser's
+	// own deactivating branch. Verified red before / green after in
+	// server/http/handlers/users_active_transition_proxy_credential_revoke_test.go.
 	// G80 Wave 2 (tx.X() blind-spot fix, ADR-088): the 9 MFA-management
 	// (ActivateMFASecretProxy/SetUserMFAEnabledProxy/CreateMFARecoveryCodesProxy/
 	// DeleteMFAForUserProxy/DeleteMFARecoveryCodesProxy) and retention-purge
