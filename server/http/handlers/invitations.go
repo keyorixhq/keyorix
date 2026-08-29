@@ -311,6 +311,14 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
+	// #1573: approverMachineID distinguishes one machine approver from another —
+	// ApproverID/ResolvedBy is 0 for every machine caller (ADR-030, no UserID),
+	// so without this the dual-control distinct-approver count could not tell
+	// two different machines' sign-offs apart. 0 for a human actor.
+	var approverMachineID uint
+	if actor.MachineIdentityID != nil {
+		approverMachineID = *actor.MachineIdentityID
+	}
 	var resolveErr error
 	switch body.Action {
 	case "approve":
@@ -322,9 +330,9 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 				return
 			}
 		}
-		_, resolveErr = h.coreService.ApproveAccessRequestWithExpiry(r.Context(), uint(projectID), uint(reqID), actor.UserID, body.GrantedRole, ttl)
+		_, resolveErr = h.coreService.ApproveAccessRequestWithExpiry(r.Context(), uint(projectID), uint(reqID), actor.UserID, approverMachineID, body.GrantedRole, ttl)
 	case "reject":
-		_, resolveErr = h.coreService.RejectAccessRequest(r.Context(), uint(projectID), uint(reqID), actor.UserID, body.Reason)
+		_, resolveErr = h.coreService.RejectAccessRequest(r.Context(), uint(projectID), uint(reqID), actor.UserID, approverMachineID, body.Reason)
 	default:
 		sendError(w, "ValidationError", "action must be approve or reject", http.StatusBadRequest, nil)
 		return

@@ -95,7 +95,7 @@ func runReview(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 				return fmt.Errorf("--ttl must be a non-negative Go duration (e.g. 4h)")
 			}
 		}
-		req, err := service.ApproveAccessRequestWithExpiry(ctx, projectID, reviewID, approverID, reviewRole, ttl)
+		req, err := service.ApproveAccessRequestWithExpiry(ctx, projectID, reviewID, approverID, 0, reviewRole, ttl)
 		if err != nil {
 			return fmt.Errorf("failed to approve access request: %w", err)
 		}
@@ -112,7 +112,7 @@ func runReview(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 		fmt.Printf("Access request %d approved: granted role %q to %s %s.\n",
 			req.ID, req.GrantedRole, userLabel(ctx, service, req.UserID), grantNote)
 	case "reject":
-		req, err := service.RejectAccessRequest(ctx, projectID, reviewID, approverID, reviewReason)
+		req, err := service.RejectAccessRequest(ctx, projectID, reviewID, approverID, 0, reviewReason)
 		if err != nil {
 			return fmt.Errorf("failed to reject access request: %w", err)
 		}

@@ -594,7 +594,7 @@ func (c *KeyorixCore) ListAccessRequests(ctx context.Context, projectID uint) ([
 // back to the suggested role) at the project scope, permanently. No auto-approval —
 // an admin performs this explicitly.
 func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, requestID, approverID uint, grantedRole string) (*models.AccessRequest, error) {
-	return c.ApproveAccessRequestWithExpiry(ctx, projectID, requestID, approverID, grantedRole, 0)
+	return c.ApproveAccessRequestWithExpiry(ctx, projectID, requestID, approverID, 0, grantedRole, 0)
 }
 
 // SetDualControlPolicy sets the N-of-M approval threshold for access requests
@@ -616,7 +616,7 @@ func (c *KeyorixCore) requiredApprovals() int {
 // is reached, grants the role — TIME-BOUND when grantTTL > 0 (JIT). Below the
 // threshold the request stays pending and the returned request carries the M-of-K
 // progress. When K is 1 (the default) the first approval grants immediately.
-func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projectID, requestID, approverID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
+func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
 	// #G04: dualControlApprovalMu holds for the whole read-approvals-decide-
 	// grant sequence below — see its doc comment in service.go for why two
 	// approvers racing at the exact threshold boundary can otherwise both
@@ -690,16 +690,16 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if err != nil {
 		return nil, fmt.Errorf("failed to read approvals: %w", err)
 	}
-	if hasAlreadyApproved(approvals, approverID) {
+	if hasAlreadyApproved(approvals, approverID, approverMachineID) {
 		return nil, fmt.Errorf("you have already approved this request")
 	}
 	received := len(approvals) + 1
 	// Below the threshold: record the approval, stay pending, notify, return progress.
 	if received < required {
-		return c.recordPartialApproval(ctx, req, requestID, approverID, received, required)
+		return c.recordPartialApproval(ctx, req, requestID, approverID, approverMachineID, received, required)
 	}
 	// Threshold reached — grant the role and finalize.
-	return c.finalizeAccessRequestApproval(ctx, req, approverID, roleModel, grantTTL, received, required)
+	return c.finalizeAccessRequestApproval(ctx, req, approverID, approverMachineID, roleModel, grantTTL, received, required)
 }
 
 // resolveApprovalRole determines the role string to grant for an approval, enforcing
@@ -724,10 +724,17 @@ func resolveApprovalRole(req *models.AccessRequest, grantedRole string, required
 	return role, nil
 }
 
-// hasAlreadyApproved reports whether approverID appears in the existing approvals.
-func hasAlreadyApproved(approvals []*models.AccessRequestApproval, approverID uint) bool {
+// hasAlreadyApproved reports whether the (approverID, approverMachineID) principal
+// already appears in the existing approvals. #1573: approverID alone is 0 for
+// EVERY machine caller (ADR-030, no UserID), so comparing only ApproverID would
+// treat any two distinct machine approvers as the same approver — the second,
+// genuinely different machine's legitimate sign-off would be rejected as a
+// duplicate, making a K>=2 threshold unreachable via machine approvers.
+// approverMachineID is 0 for a human approver, so the tuple comparison reduces
+// to the original ApproverID-only check for the human case unchanged.
+func hasAlreadyApproved(approvals []*models.AccessRequestApproval, approverID, approverMachineID uint) bool {
 	for _, a := range approvals {
-		if a.ApproverID == approverID {
+		if a.ApproverID == approverID && a.ApproverMachineIdentityID == approverMachineID {
 			return true
 		}
 	}
@@ -736,9 +743,9 @@ func hasAlreadyApproved(approvals []*models.AccessRequestApproval, approverID ui
 
 // recordPartialApproval handles the below-threshold path: records the approval, stays
 // pending, notifies, and returns progress annotations on the request.
-func (c *KeyorixCore) recordPartialApproval(ctx context.Context, req *models.AccessRequest, requestID, approverID uint, received, required int) (*models.AccessRequest, error) {
+func (c *KeyorixCore) recordPartialApproval(ctx context.Context, req *models.AccessRequest, requestID, approverID, approverMachineID uint, received, required int) (*models.AccessRequest, error) {
 	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: requestID, ApproverID: approverID, CreatedAt: c.now(),
+		RequestID: requestID, ApproverID: approverID, ApproverMachineIdentityID: approverMachineID, CreatedAt: c.now(),
 	}); err != nil {
 		return nil, fmt.Errorf("failed to record approval: %w", err)
 	}
@@ -753,7 +760,7 @@ func (c *KeyorixCore) recordPartialApproval(ctx context.Context, req *models.Acc
 // finalizeAccessRequestApproval handles the threshold-reached path: grants the role,
 // records the approval, and updates the request state atomically. On a concurrent
 // write race (!ok) the grant is reverted and the caller receives an error.
-func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *models.AccessRequest, approverID uint, roleModel *models.Role, grantTTL time.Duration, received, required int) (*models.AccessRequest, error) {
+func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *models.AccessRequest, approverID, approverMachineID uint, roleModel *models.Role, grantTTL time.Duration, received, required int) (*models.AccessRequest, error) {
 	now := c.now()
 	scope := storage.Scope{ProjectID: req.ProjectID}
 	// Grant the role FIRST so that a grant failure leaves the approval unrecorded
@@ -776,13 +783,14 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 		}
 	}
 	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: req.ID, ApproverID: approverID, CreatedAt: now,
+		RequestID: req.ID, ApproverID: approverID, ApproverMachineIdentityID: approverMachineID, CreatedAt: now,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to record approval: %w", err)
 	}
 	req.State = AccessRequestApproved
 	req.GrantedRole = roleModel.Name
 	req.ResolvedBy = approverID
+	req.ResolvedByMachineIdentityID = approverMachineID
 	req.ResolvedAt = &now
 	ok, err := c.storage.UpdateAccessRequest(ctx, req)
 	if err != nil {
@@ -831,7 +839,7 @@ func (c *KeyorixCore) notifyApprovalProgress(ctx context.Context, req *models.Ac
 }
 
 // RejectAccessRequest rejects a pending request with a reason.
-func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, requestID, approverID uint, reason string) (*models.AccessRequest, error) {
+func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, reason string) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("access request not found")
@@ -846,6 +854,7 @@ func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, reques
 	req.State = AccessRequestRejected
 	req.Reason = reason
 	req.ResolvedBy = approverID
+	req.ResolvedByMachineIdentityID = approverMachineID
 	req.ResolvedAt = &now
 	ok, err := c.storage.UpdateAccessRequest(ctx, req)
 	if err != nil {

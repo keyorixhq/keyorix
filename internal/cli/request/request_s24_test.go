@@ -189,7 +189,7 @@ func TestRunReview_RejectFailsOnAlreadyRejected(t *testing.T) {
 	// CLI init opening the same file (same svc instance — no ambiguity).
 	admin, err := svc.GetUserByEmail(ctx, "admin@example.com")
 	require.NoError(t, err)
-	_, err = svc.RejectAccessRequest(ctx, projectID, req.ID, admin.ID, "first")
+	_, err = svc.RejectAccessRequest(ctx, projectID, req.ID, admin.ID, 0, "first")
 	require.NoError(t, err)
 
 	// Now try to reject via the CLI — the request is no longer pending.
@@ -236,7 +236,7 @@ func TestRunReview_ApproveFailsOnAlreadyApproved(t *testing.T) {
 	// First approval via core directly — puts state = "approved".
 	admin, err := svc.GetUserByEmail(ctx, "admin@example.com")
 	require.NoError(t, err)
-	_, err = svc.ApproveAccessRequestWithExpiry(ctx, projectID, req.ID, admin.ID, "viewer", 0)
+	_, err = svc.ApproveAccessRequestWithExpiry(ctx, projectID, req.ID, admin.ID, 0, "viewer", 0)
 	require.NoError(t, err)
 
 	// Now try to approve again via the CLI — must hit the error branch.
