@@ -474,3 +474,4 @@ func TestRBACPermissions(t *testing.T) {
 ```
 
 This framework provides a solid foundation for writing maintainable, reliable tests across the Keyorix project. The key is to use the appropriate helper for your test type and follow the established patterns for consistency.
+<!-- throwaway detector-base branch, mis-based-merge-detector fire-in-anger test -->
