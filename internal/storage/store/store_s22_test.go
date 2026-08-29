@@ -402,7 +402,7 @@ func TestBreakGlass_S22_CRUD(t *testing.T) {
 
 	// RevokeBreakGlassActivation — success path.
 	revokedAt := time.Now()
-	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, a.ID, 1, revokedAt))
+	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, a.ID, 1, 0, revokedAt))
 	revoked, err := ls.GetBreakGlassActivation(ctx, a.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "revoked", revoked.State)
@@ -421,10 +421,10 @@ func TestBreakGlass_S22_RevokeNotActive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Revoke once successfully.
-	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, a.ID, 1, time.Now()))
+	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, a.ID, 1, 0, time.Now()))
 
 	// Second revoke on the already-revoked row must fail.
-	err = ls.RevokeBreakGlassActivation(ctx, a.ID, 1, time.Now())
+	err = ls.RevokeBreakGlassActivation(ctx, a.ID, 1, 0, time.Now())
 	require.Error(t, err)
 }
 

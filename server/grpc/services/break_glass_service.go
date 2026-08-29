@@ -80,7 +80,7 @@ func (s *BreakGlassGRPCService) RevokeBreakGlass(ctx context.Context, req *pb.Re
 	if err := authorizeScoped(ctx, s.core, actor, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
-	if err := s.core.RevokeBreakGlass(ctx, actor.UserID, uint(req.GetProjectId()), uint(req.GetActivationId())); err != nil {
+	if err := s.core.RevokeBreakGlass(ctx, actor.UserID, actor.MachineIdentityID, uint(req.GetProjectId()), uint(req.GetActivationId())); err != nil {
 		return nil, breakGlassError(err)
 	}
 	return &emptypb.Empty{}, nil

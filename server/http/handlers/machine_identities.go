@@ -80,7 +80,7 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 		sendError(w, "ValidationError", "name is required", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.CreateMachineIdentity(r.Context(), id, body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID)
+	m, err := h.coreService.CreateMachineIdentity(r.Context(), id, body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID, machineID(r))
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

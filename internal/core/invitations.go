@@ -109,7 +109,7 @@ func (c *KeyorixCore) requireAdminAuthorityAt(ctx context.Context, actorID, proj
 
 // InviteToProject creates a pending invitation for an email to a project with an
 // intended role. It snapshots the current validation mode and sets a 14-day TTL.
-func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, error) {
+func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email, role string, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, error) {
 	if projectID == 0 || email == "" || role == "" {
 		return nil, fmt.Errorf("project ID, email, and role are required")
 	}
@@ -127,11 +127,12 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 	now := c.now()
 	expires := now.Add(invitationTTL)
 	inv := &models.ProjectInvitation{
-		ProjectID: projectID,
-		Email:     email,
-		Role:      role,
-		State:     InvitationPending,
-		InvitedBy: invitedBy,
+		ProjectID:                  projectID,
+		Email:                      email,
+		Role:                       role,
+		State:                      InvitationPending,
+		InvitedBy:                  invitedBy,
+		InvitedByMachineIdentityID: invitedByMachineID,
 		// Snapshot the install validation mode (ADR-022) so acceptance honours the
 		// mode in force at invite time, not whatever it changes to later.
 		ValidationModeAtInvite: c.validationMode(),
@@ -174,17 +175,18 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // email) globally — see above) preserves the SMTP-abuse ceiling while eliminating that
 // cross-project side effect. A genuine same-project resend/re-invite still supersedes
 // the prior pending invite for that project, exactly as before.
-func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
-	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy)
+func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
 	}
 	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
-		Purpose:            SetupPurposeInvitationAccept,
-		SubjectEmail:       email,
-		InvitationID:       &inv.ID,
-		CreatedBy:          invitedBy,
-		SupersedeProjectID: &projectID,
+		Purpose:                    SetupPurposeInvitationAccept,
+		SubjectEmail:               email,
+		InvitationID:               &inv.ID,
+		CreatedBy:                  invitedBy,
+		CreatedByMachineIdentityID: invitedByMachineID,
+		SupersedeProjectID:         &projectID,
 	}, "", fmt.Sprintf("%s on project %d", role, projectID))
 	if err != nil {
 		return inv, nil, err
@@ -198,7 +200,7 @@ func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uin
 // and every assignment (project + role) are validated and deduped up front, so
 // acceptance can't later fail on an unknown role or project. The per-project
 // grants are snapshotted as JSON on the invitation.
-func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
+func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if email == "" {
 		return nil, fmt.Errorf("email is required")
 	}
@@ -257,16 +259,17 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 	now := c.now()
 	expires := now.Add(invitationTTL)
 	inv := &models.ProjectInvitation{
-		ProjectID:              0, // global
-		Email:                  email,
-		Role:                   "",
-		State:                  InvitationPending,
-		InvitedBy:              invitedBy,
-		SystemRole:             sysRole,
-		AssignmentsJSON:        assignJSON,
-		ValidationModeAtInvite: c.validationMode(),
-		ExpiresAt:              &expires,
-		CreatedAt:              now,
+		ProjectID:                  0, // global
+		Email:                      email,
+		Role:                       "",
+		State:                      InvitationPending,
+		InvitedBy:                  invitedBy,
+		InvitedByMachineIdentityID: invitedByMachineID,
+		SystemRole:                 sysRole,
+		AssignmentsJSON:            assignJSON,
+		ValidationModeAtInvite:     c.validationMode(),
+		ExpiresAt:                  &expires,
+		CreatedAt:                  now,
 	}
 	created, err := c.storage.CreateProjectInvitation(ctx, inv)
 	if err != nil {
@@ -291,16 +294,17 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 // supersedes a prior pending global invite to the same address, and, as before, a
 // prior PROJECT-scoped invite to that address (there is no narrower boundary to draw
 // here; CORE-INVITATIONS-003 is specifically about project-vs-project interference).
-func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
-	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy)
+func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
 	}
 	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
-		Purpose:      SetupPurposeInvitationAccept,
-		SubjectEmail: email,
-		InvitationID: &inv.ID,
-		CreatedBy:    invitedBy,
+		Purpose:                    SetupPurposeInvitationAccept,
+		SubjectEmail:               email,
+		InvitationID:               &inv.ID,
+		CreatedBy:                  invitedBy,
+		CreatedByMachineIdentityID: invitedByMachineID,
 	}, "", fmt.Sprintf("%s + %d project assignment(s)", inv.SystemRole, len(assignments)))
 	if err != nil {
 		return inv, nil, err
@@ -335,7 +339,7 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 				return fmt.Errorf("failed to decode assignments: %w", err)
 			}
 			for _, a := range assignments {
-				if _, err := c.inviteMemberWithMode(ctx, a.ProjectID, userID, a.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false); err != nil {
+				if _, err := c.inviteMemberWithMode(ctx, a.ProjectID, userID, a.Role, inv.InvitedBy, inv.InvitedByMachineIdentityID, inv.ValidationModeAtInvite, false); err != nil {
 					return err
 				}
 			}
@@ -343,7 +347,7 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 		return nil
 	}
 	// Project-scoped invite: single project membership.
-	_, err := c.inviteMemberWithMode(ctx, inv.ProjectID, userID, inv.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false)
+	_, err := c.inviteMemberWithMode(ctx, inv.ProjectID, userID, inv.Role, inv.InvitedBy, inv.InvitedByMachineIdentityID, inv.ValidationModeAtInvite, false)
 	return err
 }
 

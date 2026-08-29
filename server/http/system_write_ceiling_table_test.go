@@ -196,16 +196,16 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 	require.NotEmpty(t, projects)
 	projectID := projects[0].ID
 
-	plainMachine, err := testCore.CreateMachineIdentity(ctx, projectID, "ceiling-table-plain", core.MachineTypeService, "", "", admin.ID)
+	plainMachine, err := testCore.CreateMachineIdentity(ctx, projectID, "ceiling-table-plain", core.MachineTypeService, "", "", admin.ID, 0)
 	require.NoError(t, err)
 
-	adminMachine, err := testCore.CreateMachineIdentity(ctx, projectID, "ceiling-table-admin-tier", core.MachineTypeService, "", "", admin.ID)
+	adminMachine, err := testCore.CreateMachineIdentity(ctx, projectID, "ceiling-table-admin-tier", core.MachineTypeService, "", "", admin.ID, 0)
 	require.NoError(t, err)
 	adminRole, err := testCore.Storage().GetRoleByName(ctx, "system_admin")
 	require.NoError(t, err)
 	require.NoError(t, testCore.AssignMachineRole(ctx, adminMachine.ID, adminRole.ID, core.Scope{ProjectID: projectID}, admin.ID))
 
-	revokedMachine, err := testCore.CreateMachineIdentity(ctx, projectID, "ceiling-table-revoked", core.MachineTypeService, "", "", admin.ID)
+	revokedMachine, err := testCore.CreateMachineIdentity(ctx, projectID, "ceiling-table-revoked", core.MachineTypeService, "", "", admin.ID, 0)
 	require.NoError(t, err)
 	revokedMachine.State = core.MachineRevoked
 	matched, err := testCore.Storage().TransitionMachineIdentityState(ctx, revokedMachine, core.MachineActive)

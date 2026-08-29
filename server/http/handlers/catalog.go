@@ -47,6 +47,19 @@ func isMachineActor(r *http.Request) bool {
 	return u != nil && u.ActorKind() == core.ActorTypeMachine
 }
 
+// machineID returns the acting machine identity's ID (0 for a human actor or
+// no request context), for threading into a *MachineIdentityID attribution
+// companion parameter (#1573) alongside actorID(r). Unlike actorID(r), which
+// is always 0 for a machine caller (ADR-030, no UserID), this carries WHICH
+// machine, so a model's actor-attribution field is not left unattributed.
+func machineID(r *http.Request) uint {
+	u := middleware.GetUserFromContext(r.Context())
+	if u != nil && u.MachineIdentityID != nil {
+		return *u.MachineIdentityID
+	}
+	return 0
+}
+
 // isNodeCredentialRequest is REMOVED (ADR-085, Accepted, 2026-08-25). It used
 // to report whether a request authenticated with a genuine MachineTypeNode
 // credential, so a handful of /system handlers could trust that call

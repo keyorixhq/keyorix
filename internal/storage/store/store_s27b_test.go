@@ -406,7 +406,7 @@ func TestListBreakGlassActivations_S27b_HappyPath(t *testing.T) {
 // the table does not exist.
 func TestRevokeBreakGlassActivation_S27b_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
-	err := ls.RevokeBreakGlassActivation(context.Background(), 1, 1, time.Now())
+	err := ls.RevokeBreakGlassActivation(context.Background(), 1, 1, 0, time.Now())
 	require.Error(t, err)
 }
 

@@ -63,11 +63,32 @@ func TestInviteMember_AllowlistStartsInvited(t *testing.T) {
 	})).Return(&models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, State: MembershipInvited}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	m, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, false)
+	m, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipInvited, m.State)
 	// No role granted yet in allowlist mode.
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// #1573: a machine identity holding project-scoped roles.assign can invite a
+// project member. invitedBy (0, ADR-030) alone loses which machine did it;
+// InvitedByMachineIdentityID must carry it through to the persisted row.
+func TestInviteMember_RecordsActingMachineIdentity(t *testing.T) {
+	store := new(MockStorage)
+	c := newMembershipCore(store)
+	c.membershipValidationMode = ValidationModeAllowlist
+	ctx := context.Background()
+
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).Return(nil, fmt.Errorf("not found"))
+	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+		return m.InvitedBy == 0 && m.InvitedByMachineIdentityID == 42
+	})).Return(&models.ProjectMembership{ID: 51, ProjectID: 1, UserID: 2, State: MembershipInvited}, nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	_, err := c.InviteMember(ctx, 1, 2, "project_developer", 0, 42, false)
+	require.NoError(t, err)
+	store.AssertExpectations(t)
 }
 
 func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
@@ -85,7 +106,7 @@ func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	m, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, false)
+	m, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipActive, m.State)
 	store.AssertCalled(t, "AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
@@ -103,7 +124,7 @@ func TestInviteMember_RejectsDisallowedDomain(t *testing.T) {
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Email: "outsider@evil.com"}, nil)
 
-	_, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, false)
+	_, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, 0, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not on the allowlist")
 	store.AssertNotCalled(t, "CreateProjectMembership", mock.Anything, mock.Anything)
@@ -141,7 +162,7 @@ func TestInviteMember_RejectsDuplicate(t *testing.T) {
 	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).
 		Return(&models.ProjectMembership{ID: 1, State: MembershipActive}, nil)
 
-	_, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, false)
+	_, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, 0, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already has")
 	store.AssertNotCalled(t, "CreateProjectMembership", mock.Anything, mock.Anything)
@@ -192,7 +213,7 @@ func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *t
 	}), MembershipActive).Return(true, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	m, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, false)
+	m, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, 0, false)
 
 	// (a) the error still propagates to the caller.
 	require.Error(t, err)

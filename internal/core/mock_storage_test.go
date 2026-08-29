@@ -559,8 +559,8 @@ func (m *MockStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.
 	return args.Error(0)
 }
 
-func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error {
-	args := m.Called(ctx, id, revokedBy, revokedAt)
+func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error {
+	args := m.Called(ctx, id, revokedBy, revokedByMachineID, revokedAt)
 	return args.Error(0)
 }
 

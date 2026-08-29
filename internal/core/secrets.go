@@ -32,6 +32,10 @@ type CreateSecretRequest struct {
 	Tags          []string          `json:"tags,omitempty"`
 	CreatedBy     string            `json:"created_by" validate:"required"`
 	OwnerID       uint              `json:"owner_id,omitempty"`
+	// OwnerMachineIdentityID (#1573) records which machine identity created this
+	// secret, when OwnerID is 0 because the creator was a machine caller
+	// (ADR-030) rather than a human. 0 = none.
+	OwnerMachineIdentityID uint `json:"-"`
 	// ParentID optionally places the new secret inside a folder node. When set,
 	// the parent must exist, belong to the same project/environment, and be a
 	// folder (IsSecret=false). A zero value means no parent (root level).
@@ -135,20 +139,21 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	}
 
 	secret := &models.SecretNode{
-		Name:           req.Name,
-		ProjectID:      req.ProjectID,
-		EnvironmentID:  req.EnvironmentID,
-		Type:           req.Type,
-		Description:    strings.TrimSpace(req.Description),
-		MaxReads:       req.MaxReads,
-		Expiration:     req.Expiration,
-		Classification: req.Classification,
-		IsSecret:       true,
-		Status:         "active",
-		CreatedBy:      req.CreatedBy,
-		OwnerID:        req.OwnerID,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		Name:                   req.Name,
+		ProjectID:              req.ProjectID,
+		EnvironmentID:          req.EnvironmentID,
+		Type:                   req.Type,
+		Description:            strings.TrimSpace(req.Description),
+		MaxReads:               req.MaxReads,
+		Expiration:             req.Expiration,
+		Classification:         req.Classification,
+		IsSecret:               true,
+		Status:                 "active",
+		CreatedBy:              req.CreatedBy,
+		OwnerID:                req.OwnerID,
+		OwnerMachineIdentityID: req.OwnerMachineIdentityID,
+		CreatedAt:              time.Now(),
+		UpdatedAt:              time.Now(),
 	}
 	if req.ParentID != nil && *req.ParentID != 0 {
 		secret.ParentID = req.ParentID

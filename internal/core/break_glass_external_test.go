@@ -171,7 +171,7 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
 
-	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, proj, act.ID))
+	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID))
 
 	// The emergency role is gone.
 	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
@@ -183,7 +183,33 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, core.BreakGlassRevoked, list[0].State)
-	require.Error(t, h.CoreService.RevokeBreakGlass(ctx, 1, proj, act.ID))
+	require.Error(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID))
+}
+
+// #1573: a machine identity holding project-scoped roles.assign can revoke a
+// break-glass activation. actorID (0, ADR-030) alone loses which machine did
+// it; RevokedByMachineIdentityID must carry it through to the persisted row.
+func TestRevokeBreakGlass_RecordsActingMachineIdentity(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
+	require.NoError(t, err)
+
+	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 0, 42, proj, act.ID))
+
+	list, err := h.CoreService.ListBreakGlassActivations(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Zero(t, list[0].RevokedBy)
+	assert.Equal(t, uint(42), list[0].RevokedByMachineIdentityID)
 }
 
 // #304: the storage-layer state transition is a single conditional UPDATE
@@ -207,10 +233,10 @@ func TestRevokeBreakGlassActivation_ConditionalUpdateOnlyFirstAttemptWins(t *tes
 	require.NoError(t, err)
 
 	firstRevokeAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
-	require.NoError(t, h.Storage.RevokeBreakGlassActivation(ctx, act.ID, 100, firstRevokeAt))
+	require.NoError(t, h.Storage.RevokeBreakGlassActivation(ctx, act.ID, 100, 0, firstRevokeAt))
 
 	secondRevokeAt := time.Now().UTC().Truncate(time.Second)
-	err = h.Storage.RevokeBreakGlassActivation(ctx, act.ID, 200, secondRevokeAt)
+	err = h.Storage.RevokeBreakGlassActivation(ctx, act.ID, 200, 0, secondRevokeAt)
 	require.Error(t, err, "a second conditional revoke of an already-revoked activation must fail")
 	assert.ErrorIs(t, err, storage.ErrBreakGlassNotActive)
 
@@ -250,7 +276,7 @@ func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
 		wg.Add(1)
 		go func(i int, admin uint) {
 			defer wg.Done()
-			errs[i] = h.CoreService.RevokeBreakGlass(ctx, admin, proj, act.ID)
+			errs[i] = h.CoreService.RevokeBreakGlass(ctx, admin, 0, proj, act.ID)
 		}(i, admin)
 	}
 	wg.Wait()
@@ -390,7 +416,7 @@ func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
 	require.Len(t, list, 1)
 
 	// Once the first is revoked, a fresh activation is allowed again.
-	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, proj, list[0].ID))
+	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, list[0].ID))
 	_, err = h.CoreService.ActivateBreakGlass(ctx, proj, 10, "new incident", "")
 	require.NoError(t, err)
 }

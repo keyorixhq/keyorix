@@ -125,7 +125,7 @@ func seedFamilyFixtures(t *testing.T, c *core.KeyorixCore) familyFixtures {
 
 	// An expired-but-active machine credential, so /machine-token-hygiene (#274) has a
 	// flagged entry.
-	mi, err := c.CreateMachineIdentity(ctx, project.ID, "family-ci-runner", "ci", "", "", admin.ID)
+	mi, err := c.CreateMachineIdentity(ctx, project.ID, "family-ci-runner", "ci", "", "", admin.ID, 0)
 	require.NoError(t, err)
 	_, err = c.IssueMachineToken(ctx, project.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "family-ci-token", ExpiresAt: &pastExpiry})
 	require.NoError(t, err)

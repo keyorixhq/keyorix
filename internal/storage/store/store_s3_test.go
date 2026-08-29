@@ -1228,7 +1228,7 @@ func TestBreakGlass_GetListRevoke(t *testing.T) {
 
 	// Revoke.
 	revokedAt := time.Now()
-	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, act.ID, 1, revokedAt))
+	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, act.ID, 1, 0, revokedAt))
 
 	// Verify revoked.
 	got2, err := ls.GetBreakGlassActivation(ctx, act.ID)
@@ -1236,7 +1236,7 @@ func TestBreakGlass_GetListRevoke(t *testing.T) {
 	assert.Equal(t, "revoked", got2.State)
 
 	// Revoke again → ErrBreakGlassNotActive (wrapped).
-	err = ls.RevokeBreakGlassActivation(ctx, act.ID, 1, time.Now())
+	err = ls.RevokeBreakGlassActivation(ctx, act.ID, 1, 0, time.Now())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, storage.ErrBreakGlassNotActive)
 }

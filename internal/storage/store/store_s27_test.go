@@ -443,14 +443,14 @@ func TestListBreakGlassActivations_S27_BrokenDB(t *testing.T) {
 
 func TestRevokeBreakGlassActivation_S27_NotActive(t *testing.T) {
 	ls := newS27Store(t, &models.BreakGlassActivation{})
-	err := ls.RevokeBreakGlassActivation(context.Background(), 9999, 1, time.Now())
+	err := ls.RevokeBreakGlassActivation(context.Background(), 9999, 1, 0, time.Now())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, storage.ErrBreakGlassNotActive) || err != nil)
 }
 
 func TestRevokeBreakGlassActivation_S27_BrokenDB(t *testing.T) {
 	ls := brokenS27Store(t)
-	err := ls.RevokeBreakGlassActivation(context.Background(), 1, 1, time.Now())
+	err := ls.RevokeBreakGlassActivation(context.Background(), 1, 1, 0, time.Now())
 	require.Error(t, err)
 }
 

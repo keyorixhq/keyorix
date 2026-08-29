@@ -104,7 +104,7 @@ func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	// A real target machine identity for the proxy call to attach a credential to —
 	// created by the admin, exactly as a real deployment would have one.
 	targetMI, err := testCore.CreateMachineIdentity(ctx, projects[0].ID,
-		"ceiling-test-target", core.MachineTypeService, "target for the ceiling test", "", admin.ID)
+		"ceiling-test-target", core.MachineTypeService, "target for the ceiling test", "", admin.ID, 0)
 	require.NoError(t, err)
 
 	token := createSystemWriteOnlyToken(t, testCore)

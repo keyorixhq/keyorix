@@ -103,6 +103,7 @@ func TestDiffSecretUpdate_EveryFieldBehavesAsClassified(t *testing.T) {
 		{"Status", secretFieldRejected, func(s *models.SecretNode) { s.Status = "suspended" }},
 		{"CreatedBy", secretFieldRejected, func(s *models.SecretNode) { s.CreatedBy = "someone-else" }},
 		{"OwnerID", secretFieldRejected, func(s *models.SecretNode) { s.OwnerID = 999 }},
+		{"OwnerMachineIdentityID", secretFieldRejected, func(s *models.SecretNode) { s.OwnerMachineIdentityID = 999 }},
 		{"IsShared", secretFieldRejected, func(s *models.SecretNode) { s.IsShared = true }},
 		{"CreatedAt", secretFieldRejected, func(s *models.SecretNode) { s.CreatedAt = time.Unix(1, 0) }},
 		{"LastRotatedAt", secretFieldRejected, func(s *models.SecretNode) { now := time.Unix(3000, 0); s.LastRotatedAt = &now }},

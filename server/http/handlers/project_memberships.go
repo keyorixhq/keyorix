@@ -97,7 +97,7 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	const idpResolvedNotAcceptedFromClient = false
-	m, err := h.coreService.InviteMember(r.Context(), uint(id), body.UserID, body.Role, actor.UserID, idpResolvedNotAcceptedFromClient)
+	m, err := h.coreService.InviteMember(r.Context(), uint(id), body.UserID, body.Role, actor.UserID, machineID(r), idpResolvedNotAcceptedFromClient)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

@@ -213,7 +213,7 @@ func TestRemoteStorageBreakGlass_RevokeActuallyRemovesTheRoleGrant(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, time.Now()))
+	require.NoError(t, asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, 0, time.Now()))
 
 	final, err := upstream.Storage().GetBreakGlassActivation(ctx, act.ID)
 	require.NoError(t, err)
@@ -252,13 +252,13 @@ func TestRemoteStorageBreakGlass_RevokeThenRevokeAgainFails_RealServer(t *testin
 	act, err := upstream.Storage().CreateBreakGlassActivation(ctx, buildActiveBreakGlassActivation(now, projectID, 7))
 	require.NoError(t, err)
 
-	require.NoError(t, asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, time.Now()))
+	require.NoError(t, asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, 0, time.Now()))
 
 	final, err := downstream.Storage().GetBreakGlassActivation(ctx, act.ID)
 	require.NoError(t, err)
 	assert.Equal(t, core.BreakGlassRevoked, final.State)
 
-	err = asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, time.Now())
+	err = asRevoker.Storage().RevokeBreakGlassActivation(ctx, act.ID, revoker.ID, 0, time.Now())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, coreStorage.ErrBreakGlassNotActive), "got %v", err)
 }
@@ -307,7 +307,7 @@ func TestRemoteStorageBreakGlass_ConcurrentRevokeRace_RealServer(t *testing.T) {
 			// Conflict responses from losing racers can't trip a shared client's
 			// circuit breaker.
 			client := newBreakGlassRemoteClient(t, baseURL, apiKey)
-			err := client.Storage().RevokeBreakGlassActivation(context.Background(), act.ID, revokedBy, time.Now())
+			err := client.Storage().RevokeBreakGlassActivation(context.Background(), act.ID, revokedBy, 0, time.Now())
 			switch {
 			case err == nil:
 				successCount.Add(1)
