@@ -117,14 +117,9 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 	// depends only on the target user ID (a target-state invariant, not a
 	// caller-authority check -- see its doc), which is already the route's own
 	// path parameter, so this closes the gap with no RemoteStorage wire-protocol
-	// change. Deliberately NOT addressed here: PAT/session revocation on
-	// deactivation, which core.UpdateUser also performs -- that's a separate,
-	// pre-existing defect (RemoteStorage.RevokeAllPersonalAccessTokensForUser and
-	// DeleteSessionsForUserExcept are both stubbed to errUnsupportedRemote,
-	// meaning the "correct" full deactivation flow already fails outright over
-	// RemoteStorage today, independent of this proxy) -- tracked separately, not
-	// fixed as part of this change.
-	if body.FromActive && !body.Active {
+	// change.
+	deactivating := body.FromActive && !body.Active
+	if deactivating {
 		if err := h.coreService.GuardLastAdminDeactivation(r.Context(), uint(id)); err != nil {
 			writeRemoteAPIError(w, http.StatusForbidden, "LAST_ADMIN", clientSafe(err))
 			return
@@ -147,6 +142,37 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 		log.Printf("users proxy: active-state transition failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
+	}
+	// #1572: replicate core.UpdateUser's deactivating-branch side effect --
+	// PAT/session revocation -- which a caller reaching this route directly
+	// (bypassing core.UpdateUser, e.g. holding raw system.write without going
+	// through the CLI's own core.UpdateUser call) would otherwise skip
+	// entirely, leaving the deactivated user's PATs/sessions live. The two
+	// core-level operations this calls (RevokeAllPersonalAccessTokensForUser/
+	// DeleteSessionsForUserExcept, server/http/handlers/users_credentials_proxy.go)
+	// already exist as safe, authorized, audited routes for exactly this
+	// purpose (ADR-088's own costing for #1572: "the fix is calling those same
+	// two already-safe internal/core operations directly, in sequence... no new
+	// primitive needed") -- reused here as in-process calls, not a second HTTP
+	// hop, since this handler already runs on the hub. Best-effort and
+	// non-fatal, matching core.UpdateUser's own posture toward the identical
+	// failure mode (internal/core/users.go's deactivating branch, lines
+	// ~419-463): the deactivation itself already committed via the conditional
+	// write above, and ValidateSessionToken/ValidatePATToken independently
+	// re-check the live is_active flag on every use regardless of whether
+	// revocation ran, so a failed best-effort revocation here leaves no live
+	// credential, only a stale row. Only fires when matched is true (this
+	// call's own CAS write actually won the race) and only on a real
+	// true->false transition -- calling it on every request would revoke
+	// credentials on no-op or reactivating calls too.
+	if matched && deactivating {
+		actorType, actorID := requestActorKindAndID(r)
+		if _, err := h.coreService.RevokeAllPersonalAccessTokensForUser(r.Context(), actorType, actorID, uint(id)); err != nil {
+			log.Printf("users proxy: active-state transition: best-effort PAT revocation failed for user %d: %v", id, err)
+		}
+		if err := h.coreService.DeleteSessionsForUserExcept(r.Context(), actorType, actorID, uint(id), 0); err != nil {
+			log.Printf("users proxy: active-state transition: best-effort session revocation failed for user %d: %v", id, err)
+		}
 	}
 	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
 }

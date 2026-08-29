@@ -151,7 +151,7 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	// PAT-006: revoke the replaced credential after the new one is safely stored so
 	// the machine is never left without a valid credential during the rotation.
 	if params.ReplaceCredentialID != 0 {
-		if err := c.storage.RevokeMachineIdentityCredential(ctx, params.ReplaceCredentialID); err != nil {
+		if err := c.storage.RevokeMachineIdentityCredential(ctx, projectID, params.ReplaceCredentialID); err != nil {
 			return nil, fmt.Errorf("new token issued but failed to revoke old credential %d: %w", params.ReplaceCredentialID, err)
 		}
 		c.logMachineEvent(ctx, "machine_identity.token_rotated", m, actorID)
@@ -184,7 +184,7 @@ func (c *KeyorixCore) RevokeMachineToken(ctx context.Context, projectID, machine
 	if err != nil || cred.MachineIdentityID != machineID {
 		return "", fmt.Errorf("token not found")
 	}
-	if err := c.storage.RevokeMachineIdentityCredential(ctx, credentialID); err != nil {
+	if err := c.storage.RevokeMachineIdentityCredential(ctx, projectID, credentialID); err != nil {
 		return "", err
 	}
 	c.logMachineEvent(ctx, "machine_identity.token_revoked", m, actorID)

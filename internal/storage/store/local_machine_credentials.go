@@ -89,9 +89,15 @@ func (ls *LocalStorage) CountMachineIdentityCredentialsByClassification(ctx cont
 	return countByClassification(ctx, ls.db, &models.MachineIdentityCredential{})
 }
 
-func (ls *LocalStorage) RevokeMachineIdentityCredential(ctx context.Context, id uint) error {
+// RevokeMachineIdentityCredential's project_id filter (#1551) is enforced via
+// a subquery against machine_identities rather than a join, matching this
+// package's existing UpdateColumn-conditional-write idiom (single statement,
+// no separate read).
+func (ls *LocalStorage) RevokeMachineIdentityCredential(ctx context.Context, projectID, credentialID uint) error {
 	result := ls.db.WithContext(ctx).Model(&models.MachineIdentityCredential{}).
-		Where("id = ?", id).UpdateColumn("revoked", true)
+		Where("id = ? AND machine_identity_id IN (?)", credentialID,
+			ls.db.Model(&models.MachineIdentity{}).Select("id").Where("project_id = ?", projectID)).
+		UpdateColumn("revoked", true)
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}

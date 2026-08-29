@@ -923,7 +923,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_invitations.go:396":             urlValuesEntry(),
 	"remote_login_attempts.go:52":           urlValuesEntry(),
 	"remote_machine_identities.go:337":      urlValuesEntry(),
-	"remote_machine_identities.go:681":      urlValuesEntry(),
+	"remote_machine_identities.go:686":      urlValuesEntry(),
 	"remote_memberships.go:206":             urlValuesEntry(),
 	"remote_memberships.go:225":             urlValuesEntry(),
 	"remote_memberships.go:242":             urlValuesEntry(),

@@ -272,13 +272,13 @@ func TestMachineIdentityCredential_CRUD(t *testing.T) {
 	assert.NotNil(t, got3.LastUsedAt)
 
 	// Revoke.
-	require.NoError(t, ls.RevokeMachineIdentityCredential(ctx, cred.ID))
+	require.NoError(t, ls.RevokeMachineIdentityCredential(ctx, m.ProjectID, cred.ID))
 	got4, err := ls.GetMachineIdentityCredentialByID(ctx, cred.ID)
 	require.NoError(t, err)
 	assert.True(t, got4.Revoked)
 
 	// Revoke non-existent credential → not found error.
-	err = ls.RevokeMachineIdentityCredential(ctx, 99999)
+	err = ls.RevokeMachineIdentityCredential(ctx, m.ProjectID, 99999)
 	require.Error(t, err)
 
 	// ListActive → now empty.

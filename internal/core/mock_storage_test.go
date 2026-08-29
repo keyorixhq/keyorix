@@ -1939,8 +1939,8 @@ func (m *MockStorage) CountMachineIdentityCredentialsByClassification(ctx contex
 	return v, a.Error(1)
 }
 
-func (m *MockStorage) RevokeMachineIdentityCredential(ctx context.Context, id uint) error {
-	return m.Called(ctx, id).Error(0)
+func (m *MockStorage) RevokeMachineIdentityCredential(ctx context.Context, projectID, id uint) error {
+	return m.Called(ctx, projectID, id).Error(0)
 }
 
 func (m *MockStorage) TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {

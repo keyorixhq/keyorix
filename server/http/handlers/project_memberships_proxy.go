@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -174,11 +175,58 @@ func (h *CatalogHandler) GetMembershipProxy(w http.ResponseWriter, r *http.Reque
 // TransitionMembershipProxy handles PUT
 // /api/v1/system/project-memberships/{id}/transition — the server-side
 // endpoint backing RemoteStorage.TransitionProjectMembershipState (#G42).
-// Persists the membership's full row via a single conditional UPDATE, gated
-// on the row's CURRENT state still matching the request's from_state, so a
-// concurrent transition on the same membership can't be silently reverted
-// (or silently revert this one) across the HTTP hop the way UpdateMembershipProxy
-// could.
+//
+// #1546: routes through core.TransitionMembership (FULL delegation) rather
+// than the narrow-primitive bolt-on ADR-088 costed for this handler
+// (docs/adr-088-system-proxy-layer-design.md, "Costing the rule against
+// #1546/#1551/#1572"). That costing assumed a live spoke already runs
+// core.TransitionMembership locally before relaying here, so full
+// delegation would duplicate the role-grant side effect
+// (AddProjectMember/RemoveProjectMember) the spoke already applied.
+// Liveness tracing for #1546 found no such spoke: core.TransitionMembership
+// has exactly one caller repo-wide (server/http/handlers/project_memberships.go,
+// the human-facing route, reachable only inside a booted HTTP server) and no
+// server process can ever run storage.type: remote
+// (validateRemoteStorageNotServer, internal/config/config.go, unconditional
+// since #1549) — so no spoke server can exist. No CLI command calls
+// core.TransitionMembership either (no project-membership CLI surface
+// exists at all). ADR-088's rule is explicitly conditional on that spoke
+// executing core locally ("Precondition this rule depends on" section); the
+// precondition does not hold for this specific handler, so the rule's
+// conclusion (bolt-on beats delegation) does not transfer to it either —
+// re-derived here, not inherited.
+//
+// Full delegation closes more than the ceiling+side-effect gap #1546 named:
+// the OLD raw-write version persisted the wire's ENTIRE membership row
+// verbatim (role, user_id, invited_by, ...) via body.Membership.toModel(),
+// so a caller could rewrite a membership's role while nominally just
+// "transitioning" it. core.TransitionMembership reads its OWN authoritative
+// row and only accepts (projectID, membershipID, to, actorID) from the
+// caller -- every other field is now ignored on the wire, closing that
+// forgery surface too. It also applies canTransition's state-machine
+// legality check, which the raw write never did (any from_state/to pair the
+// wire claimed would persist as long as the CAS condition matched).
+//
+// actorID is resolved from the authenticated caller (actorID(r)), never the
+// wire body — same convention CreateMembershipProxy's own #1578 fix uses
+// immediately above.
+//
+// Wire-shape note: from_state is still accepted (unchanged request shape
+// for whatever, if anything, sends it) but deliberately unused --
+// core.TransitionMembership re-derives the current state itself from a
+// fresh read rather than trusting the wire's claim, so a stale or forged
+// from_state can no longer influence the outcome the way it could in the
+// raw-write version (there, it was the ENTIRE CAS gate).
+//
+// Not replicated: core.TransitionMembership's own best-effort
+// revertFailedActivation (reverting the state row if the role-grant side
+// effect fails AFTER the CAS write already committed) is unexported and
+// internal to internal/core -- exporting it to reach it from this handler
+// would grow this fix past a single handler's worth of change. That failure
+// mode surfaces to the caller as a genuine error (STORAGE_ERROR) either
+// way; the row is left in its new state with the role grant not applied,
+// same residual risk core's own local callers already accept, just without
+// the auto-revert. Stated here as a residual gap, not silently dropped.
 func (h *CatalogHandler) TransitionMembershipProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -193,18 +241,24 @@ func (h *CatalogHandler) TransitionMembershipProxy(w http.ResponseWriter, r *htt
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
 	}
-	if body.FromState == "" {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "from_state is required")
+	if body.Membership.State == "" {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "membership.state (the target state) is required")
 		return
 	}
-	body.Membership.ID = uint(id)
-	matched, err := h.coreService.Storage().TransitionProjectMembershipState(r.Context(), body.Membership.toModel(), body.FromState)
+	_, err = h.coreService.TransitionMembership(r.Context(), body.Membership.ProjectID, uint(id), body.Membership.State, actorID(r))
 	if err != nil {
+		// #G42: a lost CAS race is a normal outcome on this wire contract
+		// (matched=false), not a server error -- matches every other
+		// conditional-transition wire method in this package.
+		if errors.Is(err, core.ErrMembershipStateConflict) {
+			writeRemoteAPISuccess(w, map[string]bool{"matched": false})
+			return
+		}
 		log.Printf("project-memberships proxy: transition failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
-	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
+	writeRemoteAPISuccess(w, map[string]bool{"matched": true})
 }
 
 // ListMembershipsProxy handles GET /api/v1/system/project-memberships?project_id=X.

@@ -807,8 +807,9 @@ func TestRevokeMachineIdentityCredentialProxy_BadID_S13(t *testing.T) {
 
 func TestRevokeMachineIdentityCredentialProxy_NotFound_S13(t *testing.T) {
 	h := machineHandlerS13(t)
+	body, _ := json.Marshal(map[string]interface{}{"project_id": 1})
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-credentials/9999/revoke", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-credentials/9999/revoke", bytes.NewReader(body)),
 		"id", "9999",
 	)
 	w := httptest.NewRecorder()

@@ -504,7 +504,20 @@ type Storage interface {
 	// auditing (stale / expired-but-active).
 	ListActiveMachineIdentityCredentials(ctx context.Context) ([]*models.MachineIdentityCredential, error)
 	UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error
-	RevokeMachineIdentityCredential(ctx context.Context, id uint) error
+	// RevokeMachineIdentityCredential revokes credentialID, but only if it
+	// belongs to a machine identity owned by projectID (#1551) — the same
+	// ownership check core.machineInProject already applies for every other
+	// machine-token operation, now enforced at the storage boundary too so a
+	// caller that reaches this primitive directly (bypassing core, e.g. the
+	// /system RevokeMachineIdentityCredentialProxy relay) can't revoke a
+	// credential cross-tenant by supplying a project_id it doesn't actually
+	// own for a credential that belongs to a different one. Returns
+	// ErrNotFound (via the same not-found path as an unknown ID) when the
+	// credential exists but its machine's project doesn't match — the two
+	// cases are indistinguishable to the caller by design, matching how a
+	// non-existent row and a row a caller wasn't allowed to see already read
+	// the same "not found" elsewhere in this codebase.
+	RevokeMachineIdentityCredential(ctx context.Context, projectID, credentialID uint) error
 	// CountMachineIdentityCredentialsByClassification returns install-wide counts
 	// keyed by classification label ("" = unclassified) for the compliance posture.
 	CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error)

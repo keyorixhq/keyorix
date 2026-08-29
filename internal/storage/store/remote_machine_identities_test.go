@@ -388,7 +388,7 @@ func TestRemoteStorage_RevokeMachineIdentityCredential(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	err = rs.RevokeMachineIdentityCredential(context.Background(), 12)
+	err = rs.RevokeMachineIdentityCredential(context.Background(), 7, 12)
 	require.NoError(t, err)
 }
 

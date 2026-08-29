@@ -712,7 +712,7 @@ func TestRevokeMachineIdentityCredentialProxy_BadID_S21(t *testing.T) {
 func TestRevokeMachineIdentityCredentialProxy_NotFound_S21(t *testing.T) {
 	h := freshCatalogHandlerS21(t)
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/system/machine-credentials/9999/revoke", nil),
+		httptest.NewRequest(http.MethodPost, "/system/machine-credentials/9999/revoke", proxyBodyS21(map[string]interface{}{"project_id": 1})),
 		"id", "9999",
 	)
 	w := httptest.NewRecorder()
@@ -754,7 +754,7 @@ func TestRevokeMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 	_ = credResp
 
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/system/machine-credentials/"+credID+"/revoke", nil),
+		httptest.NewRequest(http.MethodPost, "/system/machine-credentials/"+credID+"/revoke", proxyBodyS21(map[string]interface{}{"project_id": 40})),
 		"id", credID,
 	)
 	w := httptest.NewRecorder()

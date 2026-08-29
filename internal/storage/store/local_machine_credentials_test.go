@@ -19,7 +19,7 @@ func newMachineCredTestStore(t *testing.T) *LocalStorage {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.MachineIdentityCredential{}, &models.MachineIdentityRole{}, &models.Role{},
+		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}, &models.Role{},
 		&models.Project{}, &models.Environment{},
 	))
 	return NewLocalStorage(db)
@@ -29,8 +29,13 @@ func TestMachineCredentialLifecycle(t *testing.T) {
 	ls := newMachineCredTestStore(t)
 	ctx := context.Background()
 
+	mi, err := ls.CreateMachineIdentity(ctx, &models.MachineIdentity{
+		ProjectID: 1, Name: "ci-machine", IdentityType: "ci", State: "active", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
 	cred, err := ls.CreateMachineIdentityCredential(ctx, &models.MachineIdentityCredential{
-		MachineIdentityID: 1, Name: "ci", TokenHash: "hash-abc", TokenPrefix: "kx_machine_ab12cd", CreatedAt: time.Now(),
+		MachineIdentityID: mi.ID, Name: "ci", TokenHash: "hash-abc", TokenPrefix: "kx_machine_ab12cd", CreatedAt: time.Now(),
 	})
 	require.NoError(t, err)
 	require.NotZero(t, cred.ID)
@@ -40,11 +45,11 @@ func TestMachineCredentialLifecycle(t *testing.T) {
 	assert.Equal(t, cred.ID, got.ID)
 	assert.False(t, got.Revoked)
 
-	list, err := ls.ListMachineIdentityCredentials(ctx, 1)
+	list, err := ls.ListMachineIdentityCredentials(ctx, mi.ID)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 
-	require.NoError(t, ls.RevokeMachineIdentityCredential(ctx, cred.ID))
+	require.NoError(t, ls.RevokeMachineIdentityCredential(ctx, mi.ProjectID, cred.ID))
 	got, err = ls.GetMachineIdentityCredentialByHash(ctx, "hash-abc")
 	require.NoError(t, err)
 	assert.True(t, got.Revoked, "revoke flips the flag, row preserved for audit")
