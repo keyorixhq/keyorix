@@ -1244,63 +1244,8 @@ func TestSupersedeSetupTokensProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-// TestConsumeSetupTokenProxy_BadID_S13 — non-numeric id → 400.
-func TestConsumeSetupTokenProxy_BadID_S13(t *testing.T) {
-	h := freshAuthHandlerS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/system/setup-tokens/bad/consume", strings.NewReader("{}")),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.Equal(t, "INVALID_PARAMETER", resp.Error.Code)
-}
-
-// TestConsumeSetupTokenProxy_BadBody_S13 — malformed JSON body → 400.
-func TestConsumeSetupTokenProxy_BadBody_S13(t *testing.T) {
-	h := freshAuthHandlerS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/system/setup-tokens/1/consume", strings.NewReader("{bad")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
-}
-
-// TestConsumeSetupTokenProxy_ZeroConsumedAt_S13 — zero consumed_at → 400.
-func TestConsumeSetupTokenProxy_ZeroConsumedAt_S13(t *testing.T) {
-	h := freshAuthHandlerS13(t)
-	body := proxyJSON(map[string]interface{}{"consumed_at": time.Time{}})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/system/setup-tokens/1/consume", body),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
-}
-
-// TestConsumeSetupTokenProxy_HappyPath_S13 — valid consume on non-existent token → false (no match).
-func TestConsumeSetupTokenProxy_HappyPath_S13(t *testing.T) {
-	h := freshAuthHandlerS13(t)
-	body := proxyJSON(map[string]interface{}{"consumed_at": time.Now()})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/system/setup-tokens/9999/consume", body),
-		"id", "9999",
-	)
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
+// ConsumeSetupTokenProxy tests deleted -- #1579 liveness sweep, handler
+// removed (no live caller in either topology).
 
 // TestExpireSetupTokenProxy_BadID_S13 — non-numeric id → 400.
 func TestExpireSetupTokenProxy_BadID_S13(t *testing.T) {

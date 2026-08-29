@@ -88,32 +88,28 @@ func buildDynamicSecretConfig(now time.Time, projectID, environmentID uint, name
 	}
 }
 
-// TestRemoteStorageDynamicSecrets_ConfigCreateGetList_RealServer proves the fix
-// for CreateDynamicSecretConfig/GetDynamicSecretConfig/ListDynamicSecretConfigs:
-// a config is genuinely persisted on the upstream server via the DOWNSTREAM's
-// RemoteStorage, fetchable by ID, and listed — all via storage.type: remote
-// against a real router, not a protocol mock. The classification update
-// (formerly also exercised here) is applied directly against the upstream's
-// real storage (UpdateDynamicSecretConfigProxy was deleted -- G80 liveness
-// sweep found no live caller; see docs/g80-remediation-notes.md).
-func TestRemoteStorageDynamicSecrets_ConfigCreateGetList_RealServer(t *testing.T) {
+// TestRemoteStorageDynamicSecrets_ConfigGetList_RealServer proves the fix for
+// GetDynamicSecretConfig/ListDynamicSecretConfigs: a config seeded directly
+// against the upstream's real storage (CreateDynamicSecretConfigProxy was
+// deleted -- #1580 liveness sweep found no live caller in either topology;
+// see docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580" addendum) is
+// fetchable by ID and listed via the DOWNSTREAM's RemoteStorage — all via
+// storage.type: remote against a real router, not a protocol mock. The
+// classification update (formerly also exercised here) is applied directly
+// against the upstream's real storage too (UpdateDynamicSecretConfigProxy was
+// deleted for the same reason, an earlier pass; see docs/g80-remediation-notes.md).
+func TestRemoteStorageDynamicSecrets_ConfigGetList_RealServer(t *testing.T) {
 	upstream, downstream, projectID, environmentID := newUpstreamDownstreamForDynamicSecrets(t)
 	ctx := context.Background()
 	now := time.Now()
 
-	cfg, err := downstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "app-db"))
-	require.NoError(t, err, "creating a dynamic-secret config must succeed via storage.type: remote")
+	cfg, err := upstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "app-db"))
+	require.NoError(t, err, "seeding a dynamic-secret config against the upstream's real storage must succeed")
 	require.NotZero(t, cfg.ID, "the upstream must assign a real ID")
 	assert.Equal(t, "app-db", cfg.Name)
 	assert.Equal(t, "postgres", cfg.BackendType)
 	assert.Equal(t, projectID, cfg.ProjectID)
 	assert.Equal(t, environmentID, cfg.EnvironmentID)
-
-	// Confirm it is a REAL row in the upstream's own storage (not just "the call
-	// didn't error"), by reading it back directly against upstream.
-	direct, err := upstream.Storage().GetDynamicSecretConfig(ctx, cfg.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "app-db", direct.Name)
 
 	// GetDynamicSecretConfig via the downstream (RemoteStorage) round-trips every
 	// field correctly.
@@ -126,7 +122,7 @@ func TestRemoteStorageDynamicSecrets_ConfigCreateGetList_RealServer(t *testing.T
 	assert.Equal(t, cfg.MaxActiveLeases, fetched.MaxActiveLeases)
 
 	// A second config, then list both back via the downstream's ListDynamicSecretConfigs.
-	_, err = downstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "cache-db"))
+	_, err = upstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "cache-db"))
 	require.NoError(t, err)
 
 	rows, err := downstream.Storage().ListDynamicSecretConfigs(ctx, projectID, environmentID)
@@ -188,8 +184,10 @@ func TestRemoteStorageDynamicSecrets_AdminDSNRoundTripsViaGet_RealServer(t *test
 	const adminDSNPlain = "postgres://admin:s3cr3t@db.internal:5432/app"
 
 	// Phase 1 (mirrors #94): create the row with no DSN ciphertext yet — cfg.ID
-	// isn't known until the row exists, and the AAD binds to it.
-	cfg, err := downstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "sensitive-db"))
+	// isn't known until the row exists, and the AAD binds to it. Seeded
+	// directly against the upstream's real storage (CreateDynamicSecretConfigProxy
+	// was deleted -- #1580 liveness sweep, no live caller in either topology).
+	cfg, err := upstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "sensitive-db"))
 	require.NoError(t, err)
 
 	// Phase 2: encrypt LOCALLY (standing in for the downstream server's own
@@ -252,7 +250,10 @@ func TestRemoteStorageDynamicSecrets_LeaseGetListCount_RealServer(t *testing.T) 
 	ctx := context.Background()
 	now := time.Now()
 
-	cfg, err := downstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "lease-test-db"))
+	// Seeded directly against the upstream's real storage
+	// (CreateDynamicSecretConfigProxy was deleted -- #1580 liveness sweep, no
+	// live caller in either topology).
+	cfg, err := upstream.Storage().CreateDynamicSecretConfig(ctx, buildDynamicSecretConfig(now, projectID, environmentID, "lease-test-db"))
 	require.NoError(t, err)
 
 	lease, err := upstream.Storage().CreateDynamicSecretLease(ctx, buildDynamicSecretLease(now, cfg.ID, projectID, environmentID, "lease-abc-123"))

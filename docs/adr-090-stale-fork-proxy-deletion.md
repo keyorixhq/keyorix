@@ -287,3 +287,68 @@ caller ever needs it.
   sweep — left for a future pass, not fixed here.
 - Wave 2 proper (#1546/#1551/#1572/#1575), Wave 4, and the decision
   closures (#1523/#1509/#1494) — unaffected, unstarted.
+
+## Addendum: #1579/#1580 (2026-08-29) — same methodology, a different shape
+
+Not stale forks of a superseded unsafe primitive (this ADR's original
+scope, #1585/#1586/#1587) — these two are orphaned relays: a `/system`
+proxy whose backing `RemoteStorage` method never had ANY live caller in
+this codebase's history, under either topology, closer in shape to
+ADR-089's MFA/purge family than to #1585/86/87. Filed here rather than a
+fourth standalone ADR because the deciding methodology — liveness-first,
+report both verdicts before writing either fix, graduated revival-hazard
+classification on deletion — is identical to what this document already
+establishes, and a two-handler addendum did not warrant its own document.
+
+- **`ConsumeSetupTokenProxy` (#1579)** — filed as a real, human-reachable
+  purpose-blindness DoS (any `system.write` holder could burn an active
+  setup token by ID regardless of intended purpose), which IS accurate
+  as a standalone code-shape observation but never traced whether the
+  route is reachable at all. It is not: `core.ConsumeSetupToken`'s only
+  caller repo-wide is `server/http/handlers/auth.go`'s `CompleteSetup`
+  (human-facing, unreachable from any process backed by `RemoteStorage`
+  per `validateRemoteStorageNotServer`), and no CLI command calls
+  `ConsumeSetupToken`/`CompleteSetup` either. Revival hazard:
+  **true-today-but-unbuilt, low.** Nothing prevents a future CLI
+  "complete setup non-interactively" command from being added (e.g. for
+  scripted provisioning), but completing setup means supplying a NEW
+  password only the subject knows — inherently self-service, unlike the
+  admin-driven account-lifecycle operations (deactivate, suspend, revoke)
+  a CLI operator legitimately performs on another user's behalf — so no
+  existing convention points toward this being built. A revival must
+  re-derive the purpose check this deletion removes (`tok.Purpose !=
+  expectedPurpose`, `internal/core/setup_token.go`'s
+  `consumeInspectedToken`) at the wire layer before trusting a caller-
+  supplied token ID again.
+- **`CreateDynamicSecretConfigProxy` (#1580)** — filed as a real
+  reference-confusion gap (no `EnvironmentID`-belongs-to-`ProjectID`
+  cross-reference check), same shape: accurate as a code-shape
+  observation, never traced for reachability. It is not reachable: the
+  G80 158-method classification pass
+  (`remote_reachability_registry_test.go`'s `UpdateDynamicSecretConfig`
+  entry, `entries=[ClassifyDynamicSecretConfig,CreateDynamicSecretConfig]`)
+  had ALREADY classified this exact method `reachabilityDead` — the verdict
+  existed before #1580 was filed; the code was simply never updated to
+  match it. Independently re-confirmed here: `core.CreateDynamicSecretConfig`'s
+  only callers are `server/http/handlers/dynamic_secrets.go` and
+  `server/grpc/services/dynamic_secret_service.go` (both human-facing,
+  server-only). The one CLI command that creates dynamic-secret configs
+  (`internal/cli/dynamic/config_create.go`) uses the ordinary thin-HTTP
+  client (`common.RemoteClient`) against the human-facing
+  `/api/v1/dynamic-secrets/configs` route — NOT an embedded
+  `core.KeyorixCore`+`RemoteStorage` instance — so it never reaches this
+  proxy or its backing storage method at all. Revival hazard:
+  **structurally unlikely, low.** A working, correct, idiomatic CLI path
+  for this operation already exists (the thin-HTTP command above); a
+  future feature need would naturally extend that path, not resurrect the
+  embedded-core/RemoteStorage relay, so reviving this proxy specifically
+  has no plausible trigger.
+
+Both deletions follow this ADR's established "both sides" pattern exactly:
+`RemoteStorage` client method → `remoteUnsupported` stub;
+`/system` handler + router.go registration → removed;
+`remoteUnsupportedAllowlist`/`remoteReachabilityRegistry` → new entries,
+not left stale; `knownUnfixedRawStorageBypasses` → entries removed (no
+longer reproduce, not silently left inaccurate). Verified by full test
+suite (`internal/storage/store`, `server/http`, `server/http/handlers`,
+`internal/core`, `internal/config`) green after every edit.

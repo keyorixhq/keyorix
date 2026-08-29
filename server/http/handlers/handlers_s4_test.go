@@ -1788,21 +1788,8 @@ func TestParseProxyConfigIDQuery_Valid(t *testing.T) {
 	assert.Equal(t, uint(7), id)
 }
 
-func TestCreateDynamicSecretConfigProxy_BadJSON(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateDynamicSecretConfigProxy_MissingFields(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"x"}`))
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// CreateDynamicSecretConfigProxy tests deleted -- #1580 liveness sweep,
+// handler removed (no live caller in either topology).
 
 func TestGetDynamicSecretConfigProxy_BadID(t *testing.T) {
 	h := newDynamicSecretHandlerS4(t)
@@ -2429,13 +2416,8 @@ func TestSupersedeSetupTokensProxy_MissingFields(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestConsumeSetupTokenProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// TestConsumeSetupTokenProxy_BadID deleted -- #1579 liveness sweep, handler
+// removed (no live caller in either topology).
 
 func TestExpireSetupTokenProxy_BadID(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
@@ -9796,32 +9778,8 @@ func TestAuthHandler_GetMFASecretProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── setup_tokens_proxy.go: ConsumeSetupTokenProxy ────────────────────────────
-
-func TestAuthHandler_ConsumeSetupTokenProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_ConsumeSetupTokenProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_ConsumeSetupTokenProxy_MissingConsumedAt(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"consumed_at":"0001-01-01T00:00:00Z"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// ── setup_tokens_proxy.go: ConsumeSetupTokenProxy tests deleted -- #1579
+// liveness sweep, handler removed (no live caller in either topology).
 
 // ── rbac_role_grants_proxy.go: RemoveGlobalAdminRoleGuardedProxy ─────────────
 
@@ -11620,15 +11578,8 @@ func TestGroupHandler_CreateGroupProxy_HappyPath(t *testing.T) {
 
 // ── connect_grants_proxy.go: ListConnectRefGrantsProxy ───────────────────────
 
-// ── dynamic_secrets_proxy.go: CreateDynamicSecretConfigProxy ─────────────────
-
-func TestDynamicSecretHandler_CreateDynamicSecretConfigProxy_MissingFields(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// ── dynamic_secrets_proxy.go: CreateDynamicSecretConfigProxy test deleted --
+// #1580 liveness sweep, handler removed (no live caller in either topology).
 
 func TestDynamicSecretHandler_CountDynamicSecretConfigsByClassificationProxy_HappyPath_S4(t *testing.T) {
 	h := newDynamicSecretHandlerS4(t)

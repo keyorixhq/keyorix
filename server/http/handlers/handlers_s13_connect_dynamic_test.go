@@ -606,42 +606,8 @@ func newDynamicSecretHandlerProxyS13(t *testing.T) *DynamicSecretHandler {
 	return NewDynamicSecretHandler(cs)
 }
 
-// CreateDynamicSecretConfigProxy — bad body
-func TestDynProxy_CreateConfig_BadBody_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/dynamic-secrets/configs", bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// CreateDynamicSecretConfigProxy — missing name / project_id
-func TestDynProxy_CreateConfig_MissingFields_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	// Empty name and project_id=0
-	body, _ := json.Marshal(map[string]interface{}{"backend_type": "postgres"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/dynamic-secrets/configs", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "name and project_id are required")
-}
-
-// CreateDynamicSecretConfigProxy — happy path
-func TestDynProxy_CreateConfig_Happy_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	body, _ := json.Marshal(map[string]interface{}{
-		"name":         "proxy-cfg-s13",
-		"project_id":   1,
-		"backend_type": "postgres",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/dynamic-secrets/configs", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
+// CreateDynamicSecretConfigProxy tests deleted -- #1580 liveness sweep,
+// handler removed (no live caller in either topology).
 
 // GetDynamicSecretConfigProxy — bad id
 func TestDynProxy_GetConfig_BadID_S13(t *testing.T) {

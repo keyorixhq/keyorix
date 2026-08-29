@@ -1,25 +1,24 @@
 // setup_tokens_proxy.go — server-side endpoints backing RemoteStorage's
 // CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/
-// MarkSetupTokenConsumed/MarkSetupTokenExpired/CountSetupTokensSince (#510).
+// MarkSetupTokenExpired/CountSetupTokensSince (#510).
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // its setup-token storage calls to whichever upstream server it's configured
-// against, through these six routes (registered in server/http/router.go under
+// against, through these five routes (registered in server/http/router.go under
 // /api/v1/system/setup-tokens, gated on the existing system.read/system.write RBAC
 // permissions — the SAME credential a RemoteStorage client already needs for every
 // other proxied call, e.g. full user CRUD and the #507 invitations proxy, so this
 // introduces no new privilege class). This mirrors invitations_proxy.go exactly.
 //
+// A sixth route, ConsumeSetupTokenProxy, was deleted (#1579 liveness sweep, no
+// live caller in either topology — see MarkSetupTokenConsumed's stub doc in
+// internal/storage/store/remote_auth.go).
+//
 // These are thin passthroughs onto the SAME storage.Storage primitives
 // internal/core/setup_token.go and setup_consume.go already use against a local
 // backend — no setup-token POLICY decision (purpose validation, TTL computation,
 // which transitions are legal) is made here; that stays entirely in the CALLING
-// server's own internal/core.KeyorixCore. Crucially, ConsumeSetupTokenProxy calls
-// storage.MarkSetupTokenConsumed directly, so it inherits local_auth.go's
-// conditional `WHERE id = ? AND state = 'active'` write verbatim — the
-// single-use-consume race guarantee consumeInspectedToken (setup_token.go) depends
-// on survives this HTTP hop unchanged; there is no separate "check active, then
-// write" sequence here to reintroduce that TOCTOU.
+// server's own internal/core.KeyorixCore.
 //
 // One exception: CreateSetupTokenProxy is NOT a thin passthrough — see its own
 // doc comment. Minting a setup token for user X is equivalent to taking
@@ -292,43 +291,11 @@ func (h *AuthHandler) SupersedeSetupTokensProxy(w http.ResponseWriter, r *http.R
 	writeRemoteAPISuccess(w, map[string]bool{"superseded": true})
 }
 
-// setupTokenConsumeBody is the wire body for POST
-// /api/v1/system/setup-tokens/{id}/consume.
-type setupTokenConsumeBody struct {
-	ConsumedAt time.Time `json:"consumed_at"`
-}
-
-// ConsumeSetupTokenProxy handles POST /api/v1/system/setup-tokens/{id}/consume. It
-// performs the SAME conditional `WHERE id = ? AND state = 'active'` write
-// LocalStorage's own MarkSetupTokenConsumed does (h.coreService.Storage() reaches
-// the identical storage.Storage primitive this server's local /auth/setup/consume
-// path uses), returning whether it actually matched a still-active row — the single
-// round trip a concurrent-consume race resolves in. This is the single-use-consume
-// guarantee: two concurrent consume requests racing on the same token must result
-// in exactly one success, both locally and now across this HTTP hop.
-func (h *AuthHandler) ConsumeSetupTokenProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid setup token ID")
-		return
-	}
-	var body setupTokenConsumeBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if body.ConsumedAt.IsZero() {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "consumed_at is required")
-		return
-	}
-	consumed, err := h.coreService.Storage().MarkSetupTokenConsumed(r.Context(), uint(id), body.ConsumedAt)
-	if err != nil {
-		log.Printf("setup-tokens proxy: consume failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"consumed": consumed})
-}
+// ConsumeSetupTokenProxy (POST /api/v1/system/setup-tokens/{id}/consume) is
+// DELETED — #1579 liveness sweep, no live caller in either topology. See
+// internal/storage/store/remote_auth.go's MarkSetupTokenConsumed stub doc and
+// docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580" addendum for the
+// full trace.
 
 // ExpireSetupTokenProxy handles POST /api/v1/system/setup-tokens/{id}/expire (lazy
 // expiry on read, mirroring local_auth.go's MarkSetupTokenExpired).

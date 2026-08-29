@@ -51,16 +51,12 @@ func dynamicLeaseWireData(id uint, leaseID string, configID uint) map[string]int
 }
 
 // --- CreateDynamicSecretConfig ---
-
-func TestRemoteStorage_CreateDynamicSecretConfig(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/dynamic-secrets/configs", r.URL.Path)
-		_, _ = w.Write(apiOK(dynamicConfigWireData(1, "pg-dynamic")))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_CreateDynamicSecretConfig_Unsupported:
+// CreateDynamicSecretConfigProxy was deleted (#1580 liveness sweep) -- no
+// live caller in either topology. CreateDynamicSecretConfig is now a hard
+// stub, same as ActivateMFASecret's #1593 precedent.
+func TestRemoteStorage_CreateDynamicSecretConfig_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
 	require.NoError(t, err)
 
 	c := &models.DynamicSecretConfig{
@@ -72,11 +68,8 @@ func TestRemoteStorage_CreateDynamicSecretConfig(t *testing.T) {
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 	}
-	result, err := rs.CreateDynamicSecretConfig(context.Background(), c)
-	require.NoError(t, err)
-	assert.Equal(t, uint(1), result.ID)
-	assert.Equal(t, "pg-dynamic", result.Name)
-	assert.Equal(t, "postgres", result.BackendType)
+	_, err = rs.CreateDynamicSecretConfig(context.Background(), c)
+	assert.Error(t, err)
 }
 
 // --- GetDynamicSecretConfig ---

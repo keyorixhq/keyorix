@@ -60,7 +60,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -204,33 +203,14 @@ func isNotFoundErr(err error) bool {
 	return strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "record not found")
 }
 
-// CreateDynamicSecretConfigProxy handles POST /api/v1/system/dynamic-secrets/configs.
-// Persists the caller's already-fully-built config row as-is (a raw storage-layer
-// create) — matching CreateProjectInvitationProxy's precedent, this is NOT the
-// human-facing POST /api/v1/dynamic-secrets/configs (DynamicSecretHandler.CreateConfig),
-// which additionally requires a plaintext admin_dsn and runs this server's own
-// authorization + encryption. The caller (internal/core.CreateDynamicSecretConfig
-// on the downstream server) itself does the same two-phase create-then-update this
-// server's LocalStorage-backed path does (#94): the DSN ciphertext is usually empty
-// on this initial create and arrives moments later via UpdateDynamicSecretConfigProxy.
-func (h *DynamicSecretHandler) CreateDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {
-	var body dynamicSecretConfigProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	if body.Name == "" || body.ProjectID == 0 {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "name and project_id are required")
-		return
-	}
-	created, err := h.coreService.Storage().CreateDynamicSecretConfig(r.Context(), body.toModel())
-	if err != nil {
-		log.Printf("dynamic-secrets proxy: create config failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newDynamicSecretConfigProxyWire(created))
-}
+// CreateDynamicSecretConfigProxy (POST /api/v1/system/dynamic-secrets/configs)
+// is DELETED -- #1580 liveness sweep, no live caller in either topology (the
+// human-facing POST /api/v1/dynamic-secrets/configs path -- DynamicSecretHandler.
+// CreateConfig -- is the only real caller of core.CreateDynamicSecretConfig;
+// its own RemoteStorage-relay sibling, UpdateDynamicSecretConfigProxy, was
+// deleted in an earlier pass for the same reason). See
+// internal/storage/store/remote_dynamic.go's CreateDynamicSecretConfig stub
+// doc and docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580" addendum.
 
 // GetDynamicSecretConfigProxy handles GET /api/v1/system/dynamic-secrets/configs/{id}.
 func (h *DynamicSecretHandler) GetDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {

@@ -159,15 +159,11 @@ var actorIdentityForgeryAllowlist = map[string]string{}
 // Grandfathered so this guard can go live immediately; each entry is a
 // tracked gap, not a claim of safety.
 //
-// CreateDynamicSecretConfigProxy is a REAL, LOW-SEVERITY, not-yet-fixed
-// instance (CreatedBy is a display STRING, forgeable, but read back by no
-// authorization decision traced so far) that does NOT appear here: it falls
-// into this guard's own documented blind spot above (`body.toModel()`
-// picks the field up implicitly; the handler never writes the literal token
-// `body.CreatedBy`), so the scan cannot see it at all, flagged or not. Left
-// as a plain code comment rather than a map entry — a map entry the
-// staleness check can never observe as flagged would itself be permanently
-// stale, defeating the point of this guard's staleness check.
+// CreateDynamicSecretConfigProxy's blind-spot instance (noted here as a plain
+// comment, never a map entry, for the reason explained below) is now MOOT:
+// the handler is DELETED (#1580 liveness sweep, no live caller in either
+// topology — docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580"
+// addendum), so there is no wire-actor-forgery surface left to track.
 var knownUnfixedActorIdentityForgeries = map[string]string{}
 
 // TestNoUnjustifiedActorIdentityForgery is this sweep's guard: for every

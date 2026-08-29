@@ -1226,7 +1226,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/dynamic-secrets/configs/classification-counts", dynamicSecretHandler.CountDynamicSecretConfigsByClassificationProxy)
 			r.Get("/dynamic-secrets/configs/{id}", dynamicSecretHandler.GetDynamicSecretConfigProxy)
 			r.Get("/dynamic-secrets/configs", dynamicSecretHandler.ListDynamicSecretConfigsProxy)
-			r.Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
+			// POST /dynamic-secrets/configs (CreateDynamicSecretConfigProxy)
+			// deleted -- #1580 liveness sweep, no live caller in either topology.
 			r.Get("/dynamic-secrets/leases/active-count", dynamicSecretHandler.CountActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/expired", dynamicSecretHandler.ListExpiredActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.GetDynamicSecretLeaseProxy)
@@ -1369,7 +1370,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/setup-tokens/count", authHandler.CountSetupTokensSinceProxy)
 			r.Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
 			r.Post("/setup-tokens/supersede", authHandler.SupersedeSetupTokensProxy)
-			r.Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
+			// POST /setup-tokens/{id}/consume (ConsumeSetupTokenProxy) deleted --
+			// #1579 liveness sweep, no live caller in either topology.
 			r.Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
 
 			// Keyorix Connect per-reference-grant storage-primitive proxy (ADR-045;

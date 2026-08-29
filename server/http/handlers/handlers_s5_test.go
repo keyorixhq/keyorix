@@ -1448,40 +1448,8 @@ func TestUpdateAccessRequestProxy_ValidStateApproved(t *testing.T) {
 }
 
 // ── setup_tokens_proxy.go ──────────────────────────────────────────────────────
-
-func TestConsumeSetupTokenProxy_BadIDS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestConsumeSetupTokenProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestConsumeSetupTokenProxy_MissingConsumedAt(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestConsumeSetupTokenProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"consumed_at":"2024-01-01T00:00:00Z"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "id", "9999")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	// row 9999 not found → consumed: false, still 200
-	assert.Equal(t, http.StatusOK, w.Code)
-}
+// ConsumeSetupTokenProxy tests deleted -- #1579 liveness sweep, handler removed
+// (no live caller in either topology).
 
 func TestExpireSetupTokenProxy_BadIDS5(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
@@ -3445,15 +3413,8 @@ func TestListConnectRefGrantsProxy_HappyPathS5(t *testing.T) {
 }
 
 // ── dynamic_secrets_proxy.go — happy paths ───────────────────────────────────
-
-func TestCreateDynamicSecretConfigProxy_HappyPath(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	body := `{"name":"test-config","project_id":1}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateDynamicSecretConfigProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
+// CreateDynamicSecretConfigProxy test deleted -- #1580 liveness sweep,
+// handler removed (no live caller in either topology).
 
 func TestGetDynamicSecretConfigProxy_HappyPath(t *testing.T) {
 	h := newDynamicSecretHandlerS4(t)
