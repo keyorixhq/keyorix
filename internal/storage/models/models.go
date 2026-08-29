@@ -41,13 +41,18 @@ type Environment struct {
 // internal/core/setup_consume.go (completeInvitationAccept); this record tracks
 // the pending invite so it can be listed, revoked, and aged out.
 type ProjectInvitation struct {
-	ID                     uint   `gorm:"primaryKey"`
-	ProjectID              uint   `gorm:"index"`
-	Email                  string `gorm:"index"`
-	Role                   string // intended project role (project-scoped invite)
-	State                  string // pending | accepted | revoked | expired
-	InvitedBy              uint
-	ValidationModeAtInvite string // snapshot of the install validation mode at invite time
+	ID        uint   `gorm:"primaryKey"`
+	ProjectID uint   `gorm:"index"`
+	Email     string `gorm:"index"`
+	Role      string // intended project role (project-scoped invite)
+	State     string // pending | accepted | revoked | expired
+	InvitedBy uint
+	// InvitedByMachineIdentityID (#1573) records which machine identity issued
+	// this invitation, when InvitedBy is 0 because the inviter was a machine
+	// caller (ADR-030) rather than a human. Plain uint, 0 = none, consistent
+	// with every other attribution field on this model.
+	InvitedByMachineIdentityID uint
+	ValidationModeAtInvite     string // snapshot of the install validation mode at invite time
 	// Global invite (ADR-024): a non-project-scoped invitation (ProjectID 0) that, on
 	// accept, grants a system role plus the per-project assignments below. Both empty
 	// for a project-scoped invite.
@@ -275,7 +280,11 @@ type BreakGlassActivation struct {
 	ExpiresAt     *time.Time `gorm:"index" json:"expires_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	RevokedBy     uint       `json:"revoked_by,omitempty"` // set on early revoke
-	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	// RevokedByMachineIdentityID (#1573) records which machine identity ended
+	// this emergency grant early, when RevokedBy is 0 because the revoker was a
+	// machine caller (ADR-030) rather than a human. Plain uint, 0 = none.
+	RevokedByMachineIdentityID uint       `json:"revoked_by_machine_identity_id,omitempty"`
+	RevokedAt                  *time.Time `json:"revoked_at,omitempty"`
 }
 
 // BeforeSave normalises CreatedAt to UTC so SQLite string comparisons are
@@ -304,6 +313,12 @@ type AccessReviewCampaign struct {
 	CreatedAt time.Time  `json:"created_at"`
 	ClosedBy  uint       `json:"closed_by,omitempty"`
 	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+	// CreatedByMachineIdentityID/ClosedByMachineIdentityID (#1573) record which
+	// machine identity opened/closed this campaign, when the corresponding
+	// *By field is 0 because the actor was a machine caller (ADR-030) rather
+	// than a human. Plain uint, 0 = none.
+	CreatedByMachineIdentityID uint `json:"created_by_machine_identity_id,omitempty"`
+	ClosedByMachineIdentityID  uint `json:"closed_by_machine_identity_id,omitempty"`
 	// Degraded/DegradedReasons carry forward AccessReviewReport.Degraded/
 	// DegradedReasons (access_review.go) from the snapshot this campaign was
 	// opened from (#483). Without this, a transient storage error mid-snapshot
@@ -811,10 +826,16 @@ type SecretNode struct {
 	Status         string `gorm:"default:'active'"`
 	CreatedBy      string
 	OwnerID        uint `gorm:"index"`
-	IsShared       bool `gorm:"default:false"`
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastRotatedAt  *time.Time
+	// OwnerMachineIdentityID (#1573) records which machine identity created (and
+	// so owns) this secret, when OwnerID is 0 because the creator was a machine
+	// caller (ADR-030) rather than a human. Plain uint, 0 = none. Only set at
+	// creation time -- the reassignment path (secret_ownership.go/
+	// secret_reassign_owner.go) already rejects a machine actor outright.
+	OwnerMachineIdentityID uint `gorm:"index"`
+	IsShared               bool `gorm:"default:false"`
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	LastRotatedAt          *time.Time
 	// AutoRotate opts this secret into automated rotation (ADR-046): when set, and the
 	// secret is covered by an active rotation policy it is overdue under, the rotation
 	// executor regenerates its value on schedule. Off by default — only secrets whose
@@ -1210,9 +1231,14 @@ type SetupToken struct {
 
 	ExpiresAt time.Time
 	// CreatedBy is the admin/inviter who minted the token; 0 for self-service reset.
-	CreatedBy  uint
-	CreatedAt  time.Time
-	ConsumedAt *time.Time // nil until consumed
+	CreatedBy uint
+	// CreatedByMachineIdentityID (#1573) records which machine identity minted
+	// this token, when CreatedBy is 0 because the inviter was a machine caller
+	// (ADR-030) rather than a human (or the token is genuinely self-service —
+	// both cases already collapse to CreatedBy 0, unchanged). Plain uint, 0 = none.
+	CreatedByMachineIdentityID uint
+	CreatedAt                  time.Time
+	ConsumedAt                 *time.Time // nil until consumed
 }
 
 // BeforeSave normalises CreatedAt to UTC so SQLite string comparisons are
@@ -1704,10 +1730,15 @@ type MachineIdentity struct {
 	State        string // pending | active | suspended | revoked
 	Description  string
 	CreatedBy    uint
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	LastSeenAt   *time.Time
-	RevokedAt    *time.Time
+	// CreatedByMachineIdentityID (#1573) records which machine identity created
+	// this machine identity (a machine provisioning another machine), when
+	// CreatedBy is 0 because the creator was a machine caller (ADR-030) rather
+	// than a human. Plain uint, 0 = none.
+	CreatedByMachineIdentityID uint
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	LastSeenAt                 *time.Time
+	RevokedAt                  *time.Time
 	// Classification is the data-sensitivity tier this machine identity handles
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
 	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
@@ -1857,11 +1888,15 @@ type ProjectMembership struct {
 	// the user_roles grant a membership is supposed to carry once active; see
 	// KeyorixCore.revertFailedActivation for what happens when that grant fails
 	// after this row already committed as active.
-	InvitedBy   uint
-	InvitedAt   time.Time
-	ActivatedAt *time.Time
-	RevokedAt   *time.Time
-	UpdatedAt   time.Time
+	InvitedBy uint
+	// InvitedByMachineIdentityID (#1573) records which machine identity created
+	// this membership, when InvitedBy is 0 because the inviter was a machine
+	// caller (ADR-030) rather than a human. Plain uint, 0 = none.
+	InvitedByMachineIdentityID uint
+	InvitedAt                  time.Time
+	ActivatedAt                *time.Time
+	RevokedAt                  *time.Time
+	UpdatedAt                  time.Time
 }
 
 // BeforeSave normalises InvitedAt to UTC so SQLite string comparisons are

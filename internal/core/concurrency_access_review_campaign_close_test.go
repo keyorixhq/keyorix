@@ -86,7 +86,7 @@ func TestConcurrency_DecideAccessReviewItem_RejectsWhenRacingClose(t *testing.T)
 	go func() {
 		defer wg.Done()
 		<-start
-		_, closeErr := c.CloseAccessReviewCampaign(ctx, 1, proj, campaign.ID, true)
+		_, closeErr := c.CloseAccessReviewCampaign(ctx, 1, 0, proj, campaign.ID, true)
 		switch {
 		case closeErr == nil:
 			closeSucceeded.Add(1)

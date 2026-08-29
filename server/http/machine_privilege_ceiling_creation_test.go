@@ -120,7 +120,7 @@ func TestMachinePrivilegeCeiling_CreateMachineIdentityCredentialProxy_ZeroRoleTa
 	f := newMachinePrivilegeCeilingFixture(t)
 	ctx := context.Background()
 
-	zeroRoleMachine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "zero-role-target", core.MachineTypeNode, "", "", f.adminID)
+	zeroRoleMachine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "zero-role-target", core.MachineTypeNode, "", "", f.adminID, 0)
 	require.NoError(t, err)
 
 	status, body := f.do(t, f.swToken, http.MethodPost, "/api/v1/system/machine-credentials", map[string]any{
@@ -141,7 +141,7 @@ func TestMachinePrivilegeCeiling_CreateMachineIdentityCredentialProxy_RolesAssig
 	f := newMachinePrivilegeCeilingFixture(t)
 	ctx := context.Background()
 
-	zeroRoleMachine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "zero-role-target-2", core.MachineTypeNode, "", "", f.adminID)
+	zeroRoleMachine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "zero-role-target-2", core.MachineTypeNode, "", "", f.adminID, 0)
 	require.NoError(t, err)
 
 	status, body := f.do(t, f.assignToken, http.MethodPost, "/api/v1/system/machine-credentials", map[string]any{

@@ -103,7 +103,7 @@ func (s *MachineIdentityGRPCService) CreateMachineIdentity(ctx context.Context, 
 	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
-	m, err := s.core.CreateMachineIdentity(ctx, uint(req.GetProjectId()), req.GetName(), req.GetIdentityType(), req.GetDescription(), req.GetClassification(), user.UserID)
+	m, err := s.core.CreateMachineIdentity(ctx, uint(req.GetProjectId()), req.GetName(), req.GetIdentityType(), req.GetDescription(), req.GetClassification(), user.UserID, user.MachineIdentityID)
 	if err != nil {
 		return nil, mapMachineError(err)
 	}

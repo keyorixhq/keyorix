@@ -30,7 +30,7 @@ func TestGetCompliancePosture_RollsUpControls(t *testing.T) {
 	// alice holds a role grant in project 2 with no secret activity → dormant.
 	h.AssignUserRole(t, 10, 3, uptr(proj))
 	// An open campaign on project 2.
-	_, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "Q4")
+	_, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "Q4")
 	require.NoError(t, err)
 	// An active break-glass activation in project 2.
 	future := time.Now().Add(time.Hour)

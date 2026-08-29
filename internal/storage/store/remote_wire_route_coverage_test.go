@@ -914,7 +914,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_access_review_campaigns.go:237": urlValuesEntry(),
 	"remote_access_review_campaigns.go:263": urlValuesEntry(),
 	"remote_auth.go:341":                    urlValuesEntry(),
-	"remote_break_glass.go:135":             urlValuesEntry(),
+	"remote_break_glass.go:137":             urlValuesEntry(),
 	"remote_dynamic.go:243":                 urlValuesEntry(),
 	"remote_dynamic.go:331":                 urlValuesEntry(),
 	"remote_dynamic.go:358":                 urlValuesEntry(),

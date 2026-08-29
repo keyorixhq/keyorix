@@ -37,7 +37,7 @@ func TestTransitionMachineIdentityStateProxy_RejectsIllegalTransition_RealServer
 
 	proj, err := cs.CreateProject(ctx, "g80-transition-ceiling-proj", "")
 	require.NoError(t, err)
-	m, err := cs.CreateMachineIdentity(ctx, proj.ID, "g80-transition-ceiling-machine", core.MachineTypeOther, "", "", 0)
+	m, err := cs.CreateMachineIdentity(ctx, proj.ID, "g80-transition-ceiling-machine", core.MachineTypeOther, "", "", 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, core.MachineActive, m.State)
 

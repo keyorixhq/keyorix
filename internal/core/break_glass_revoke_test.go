@@ -45,14 +45,14 @@ func TestRevokeBreakGlass_GenuineRoleRemovalFailureAbortsRevoke(t *testing.T) {
 	dbErr := errors.New("connection reset by peer")
 	mockStorage.On("RemoveRole", mock.Anything, uint(10), uint(3), storage.Scope{ProjectID: 2}).Return(dbErr)
 
-	err := c.RevokeBreakGlass(ctx, 1, 2, 7)
+	err := c.RevokeBreakGlass(ctx, 1, 0, 2, 7)
 	require.Error(t, err, "a genuine RemoveUserRole failure must abort the revoke")
 
 	// The conditional state transition (and the audit write that follows it) must
 	// never be reached: no expectation was set for either, so RevokeBreakGlassActivation
 	// or LogAuditEvent being called would fail this test (mock panics on an
 	// unexpected call, or AssertExpectations below would report an extra call).
-	mockStorage.AssertNotCalled(t, "RevokeBreakGlassActivation", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	mockStorage.AssertNotCalled(t, "RevokeBreakGlassActivation", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	mockStorage.AssertExpectations(t)
 }
 
@@ -70,10 +70,10 @@ func TestRevokeBreakGlass_AlreadyGoneRoleRemovalIsNotAFailure(t *testing.T) {
 	mockStorage.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(activation, nil)
 	mockStorage.On("RemoveRole", mock.Anything, uint(10), uint(3), storage.Scope{ProjectID: 2}).
 		Return(storage.ErrRoleNotAssigned)
-	mockStorage.On("RevokeBreakGlassActivation", mock.Anything, uint(7), uint(1), now).Return(nil)
+	mockStorage.On("RevokeBreakGlassActivation", mock.Anything, uint(7), uint(1), uint(0), now).Return(nil)
 	mockStorage.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	err := c.RevokeBreakGlass(ctx, 1, 2, 7)
+	err := c.RevokeBreakGlass(ctx, 1, 0, 2, 7)
 	require.NoError(t, err, "an already-removed role assignment must not block the revoke")
 	mockStorage.AssertExpectations(t)
 }

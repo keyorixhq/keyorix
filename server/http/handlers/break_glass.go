@@ -94,7 +94,7 @@ func (h *CatalogHandler) RevokeBreakGlass(w http.ResponseWriter, r *http.Request
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	if err := h.coreService.RevokeBreakGlass(r.Context(), actor.UserID, uint(id), uint(activationID)); err != nil {
+	if err := h.coreService.RevokeBreakGlass(r.Context(), actor.UserID, machineID(r), uint(id), uint(activationID)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

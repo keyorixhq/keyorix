@@ -31,9 +31,27 @@ func TestInviteToProject(t *testing.T) {
 		return e.EventType == "invitation.created"
 	})).Return(nil)
 
-	inv, err := c.InviteToProject(ctx, 1, "a@b.com", "project_developer", 9)
+	inv, err := c.InviteToProject(ctx, 1, "a@b.com", "project_developer", 9, 0)
 	require.NoError(t, err)
 	assert.Equal(t, InvitationPending, inv.State)
+	store.AssertExpectations(t)
+}
+
+// #1573: a machine identity holding project-scoped roles.assign can invite a
+// project member. invitedBy (0, ADR-030) alone loses which machine did it;
+// InvitedByMachineIdentityID must carry it through to the persisted row.
+func TestInviteToProject_RecordsActingMachineIdentity(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
+		return inv.InvitedBy == 0 && inv.InvitedByMachineIdentityID == 42
+	})).Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
+	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+
+	_, err := c.InviteToProject(ctx, 1, "a@b.com", "project_developer", 0, 42)
+	require.NoError(t, err)
 	store.AssertExpectations(t)
 }
 
@@ -47,7 +65,7 @@ func TestInviteToProject_RejectsDisallowedDomain(t *testing.T) {
 	c.SetMembershipDomainAllowlist([]string{"acme.com"})
 	ctx := context.Background()
 
-	_, err := c.InviteToProject(ctx, 1, "a@evil.example", "project_developer", 9)
+	_, err := c.InviteToProject(ctx, 1, "a@evil.example", "project_developer", 9, 0)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not on the allowlist")
@@ -67,7 +85,7 @@ func TestInviteToProject_AllowsAllowlistedDomain(t *testing.T) {
 		return e.EventType == "invitation.created"
 	})).Return(nil)
 
-	inv, err := c.InviteToProject(ctx, 1, "a@acme.com", "project_developer", 9)
+	inv, err := c.InviteToProject(ctx, 1, "a@acme.com", "project_developer", 9, 0)
 
 	require.NoError(t, err)
 	assert.Equal(t, InvitationPending, inv.State)
@@ -179,7 +197,7 @@ func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 
 	// Inviting as project_admin → refused before any invitation is created.
-	_, err := c.InviteToProject(ctx, 1, "a@b.io", "project_admin", 9)
+	_, err := c.InviteToProject(ctx, 1, "a@b.io", "project_admin", 9, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only an administrator can grant")
 	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
@@ -188,7 +206,7 @@ func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 6, Name: "project_developer"}, nil)
 	store.On("CreateProjectInvitation", ctx, mock.Anything).Return(&models.ProjectInvitation{ID: 1}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
-	_, err = c.InviteToProject(ctx, 1, "c@d.io", "project_developer", 9)
+	_, err = c.InviteToProject(ctx, 1, "c@d.io", "project_developer", 9, 0)
 	require.NoError(t, err)
 }
 
@@ -444,7 +462,7 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
 
-	inv1, prov1, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9)
+	inv1, prov1, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9, 0)
 	require.NoError(t, err)
 	require.NotNil(t, inv1)
 	require.NotNil(t, prov1)
@@ -455,7 +473,7 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
 
-	inv2, prov2, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9)
+	inv2, prov2, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9, 0)
 	require.Error(t, err, "the second same-email invite must be throttled, not delivered")
 	assert.Contains(t, err.Error(), "wait")
 	assert.Nil(t, prov2)
@@ -464,6 +482,34 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	// the window passes rather than losing the invite.
 	require.NotNil(t, inv2)
 	store.AssertNumberOfCalls(t, "CreateSetupToken", 1)
+}
+
+// #1573: a machine identity inviting a project member also mints the setup
+// token via InviteToProjectWithLink. createdBy (0, ADR-030) alone loses which
+// machine did it; SetupToken.CreatedByMachineIdentityID must carry it through.
+func TestInviteToProjectWithLink_RecordsActingMachineIdentityOnSetupToken(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
+	ctx := context.Background()
+	fixed := c.now()
+	anyAudit(store)
+
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
+		return inv.InvitedBy == 0 && inv.InvitedByMachineIdentityID == 42
+	})).Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
+	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com", ptr(uint(1))).Return(nil)
+	store.On("CreateSetupToken", ctx, mock.MatchedBy(func(tok *models.SetupToken) bool {
+		return tok.CreatedBy == 0 && tok.CreatedByMachineIdentityID == 42
+	})).Return(&models.SetupToken{ID: 1}, nil)
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
+
+	_, prov, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 0, 42)
+	require.NoError(t, err)
+	assert.True(t, prov.Delivered)
+	store.AssertExpectations(t)
 }
 
 // #345: InviteGlobalWithLink has the same unthrottled-initial-send shape as
@@ -485,7 +531,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
 
-	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9)
+	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9, 0)
 	require.NoError(t, err)
 	require.NotNil(t, inv1)
 	require.NotNil(t, prov1)
@@ -493,7 +539,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
 
-	inv2, prov2, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9)
+	inv2, prov2, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wait")
 	assert.Nil(t, prov2)

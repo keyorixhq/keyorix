@@ -69,6 +69,10 @@ type IssueSetupTokenRequest struct {
 	SubjectUserID *uint  // nil until an account exists (e.g. invitation by email)
 	InvitationID  *uint  // set for purpose = invitation_accept
 	CreatedBy     uint   // issuing admin/inviter; 0 for self-service reset
+	// CreatedByMachineIdentityID (#1573) records which machine identity issued
+	// this token, when CreatedBy is 0 because the issuer was a machine caller
+	// (ADR-030) rather than a human. 0 = none.
+	CreatedByMachineIdentityID uint
 
 	// SupersedeProjectID additionally scopes the pre-issuance supersede (see
 	// IssueSetupToken below) to a single project's own invitations, instead of every
@@ -122,15 +126,16 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 	now := c.now()
 
 	tok := &models.SetupToken{
-		TokenHash:     sha256Hex(raw),
-		Purpose:       req.Purpose,
-		SubjectUserID: req.SubjectUserID,
-		SubjectEmail:  email,
-		InvitationID:  req.InvitationID,
-		State:         SetupTokenActive,
-		ExpiresAt:     now.Add(ttl),
-		CreatedBy:     req.CreatedBy,
-		CreatedAt:     now,
+		TokenHash:                  sha256Hex(raw),
+		Purpose:                    req.Purpose,
+		SubjectUserID:              req.SubjectUserID,
+		SubjectEmail:               email,
+		InvitationID:               req.InvitationID,
+		State:                      SetupTokenActive,
+		ExpiresAt:                  now.Add(ttl),
+		CreatedBy:                  req.CreatedBy,
+		CreatedByMachineIdentityID: req.CreatedByMachineIdentityID,
+		CreatedAt:                  now,
 	}
 	created, err := c.storage.CreateSetupToken(ctx, tok)
 	if err != nil {

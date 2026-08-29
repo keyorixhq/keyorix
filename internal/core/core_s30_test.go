@@ -332,7 +332,7 @@ func TestLogin_MFARequired(t *testing.T) {
 func TestOpenAccessReviewCampaign_ZeroProjectID_s30(t *testing.T) {
 	c := NewKeyorixCore(new(MockStorage))
 	// actorID=1, projectID=0 → returns "project ID is required" immediately.
-	_, err := c.OpenAccessReviewCampaign(context.Background(), 1, 0, "Campaign")
+	_, err := c.OpenAccessReviewCampaign(context.Background(), 1, 0, 0, "Campaign")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "project ID is required")
 }
@@ -343,7 +343,7 @@ func TestCloseAccessReviewCampaign_CampaignNotFound(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetAccessReviewCampaign", mock.Anything, uint(5)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
-	_, err := c.CloseAccessReviewCampaign(context.Background(), 1, 1, 5, false)
+	_, err := c.CloseAccessReviewCampaign(context.Background(), 1, 0, 1, 5, false)
 	require.Error(t, err)
 }
 
@@ -353,7 +353,7 @@ func TestCloseAccessReviewCampaign_WrongProject(t *testing.T) {
 	ms.On("GetAccessReviewCampaign", mock.Anything, uint(5)).Return(campaign, nil)
 	c := NewKeyorixCore(ms)
 	// projectID=1 but campaign has ProjectID=99 → scoping error.
-	_, err := c.CloseAccessReviewCampaign(context.Background(), 1, 1, 5, false)
+	_, err := c.CloseAccessReviewCampaign(context.Background(), 1, 0, 1, 5, false)
 	require.Error(t, err)
 }
 

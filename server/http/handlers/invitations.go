@@ -56,7 +56,7 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		sendError(w, "ValidationError", "email and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	inv, prov, err := h.coreService.InviteToProjectWithLink(r.Context(), id, body.Email, body.Role, actor.UserID)
+	inv, prov, err := h.coreService.InviteToProjectWithLink(r.Context(), id, body.Email, body.Role, actor.UserID, machineID(r))
 	if err != nil {
 		// A nil inv means the invitation was not created at all; a non-nil inv with an
 		// error means it was created but the link could not be provisioned (e.g.
@@ -130,7 +130,7 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 	for _, a := range body.ProjectAssignments {
 		assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
 	}
-	inv, prov, err := h.coreService.InviteGlobalWithLink(r.Context(), body.Email, body.Role, assignments, actor.UserID)
+	inv, prov, err := h.coreService.InviteGlobalWithLink(r.Context(), body.Email, body.Role, assignments, actor.UserID, machineID(r))
 	if err != nil {
 		// A nil inv means the invitation was not created at all (bad input); a non-nil
 		// inv with an error means it exists but the link couldn't be provisioned (e.g.

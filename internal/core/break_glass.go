@@ -247,7 +247,7 @@ func (c *KeyorixCore) ListBreakGlassActivations(ctx context.Context, projectID u
 // RevokeBreakGlass ends an active emergency grant early: removes the role assignment
 // (best-effort — it may already have auto-expired) and marks the record revoked.
 // actorID is the admin performing the revoke.
-func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, projectID, activationID uint) error {
+func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachineID, projectID, activationID uint) error {
 	if projectID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
@@ -279,7 +279,7 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, projectID, 
 	// concurrent caller's conditional update actually transitions state; the second
 	// gets ErrBreakGlassNotActive instead of silently overwriting RevokedBy/RevokedAt.
 	now := c.now()
-	if err := c.storage.RevokeBreakGlassActivation(ctx, activation.ID, actorID, now); err != nil {
+	if err := c.storage.RevokeBreakGlassActivation(ctx, activation.ID, actorID, actorMachineID, now); err != nil {
 		if errors.Is(err, storage.ErrBreakGlassNotActive) {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
 		}

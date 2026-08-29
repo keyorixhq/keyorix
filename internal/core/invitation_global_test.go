@@ -41,7 +41,7 @@ func TestInviteGlobal_ValidatesAndSnapshotsAssignments(t *testing.T) {
 		{ProjectID: 1, Role: "project_developer"},
 		{ProjectID: 2, Role: "project_viewer"},
 		{ProjectID: 1, Role: "project_viewer"}, // duplicate project — deduped
-	}, 9)
+	}, 9, 0)
 
 	require.NoError(t, err)
 	assert.Equal(t, InvitationPending, inv.State)
@@ -58,7 +58,7 @@ func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
 
 	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
 		{ProjectID: 1, Role: "bogus_role"},
-	}, 9)
+	}, 9, 0)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown role")
@@ -74,7 +74,7 @@ func TestInviteGlobal_RejectsDisallowedDomain(t *testing.T) {
 	c.SetMembershipDomainAllowlist([]string{"acme.com"})
 	ctx := context.Background()
 
-	_, err := c.InviteGlobal(ctx, "carol@evil.example", "", nil, 9)
+	_, err := c.InviteGlobal(ctx, "carol@evil.example", "", nil, 9, 0)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not on the allowlist")
@@ -90,7 +90,7 @@ func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
 
 	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
 		{ProjectID: 1, Role: ""},
-	}, 9)
+	}, 9, 0)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "needs a project_id and a role")
@@ -109,7 +109,7 @@ func TestInviteGlobal_RejectsNonAdminGrantingGlobalAdminRole(t *testing.T) {
 	// no admin-tier role anywhere) must not be able to mint an "admin" invitation.
 	nonAdminID := seedUserWithRole(t, st, "non-admin-inviter", "project_developer", storage.Scope{})
 
-	_, err := c.InviteGlobal(ctx, "mallory@acme.io", "admin", nil, nonAdminID)
+	_, err := c.InviteGlobal(ctx, "mallory@acme.io", "admin", nil, nonAdminID, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only an administrator can grant")
 }
@@ -128,7 +128,7 @@ func TestInviteGlobal_RejectsNonAdminGrantingProjectAdminAssignment(t *testing.T
 
 	_, err = c.InviteGlobal(ctx, "mallory2@acme.io", "system_viewer", []ProjectAssignment{
 		{ProjectID: proj.ID, Role: "project_admin"},
-	}, nonAdminID)
+	}, nonAdminID, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only an administrator can grant")
 }
@@ -144,7 +144,7 @@ func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {
 	})).Return(&models.ProjectInvitation{ID: 13, State: InvitationPending}, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
-	_, err := c.InviteGlobal(ctx, "dave@acme.io", "", nil, 9)
+	_, err := c.InviteGlobal(ctx, "dave@acme.io", "", nil, 9, 0)
 	require.NoError(t, err)
 	store.AssertExpectations(t)
 }

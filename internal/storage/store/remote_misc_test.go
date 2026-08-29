@@ -202,7 +202,7 @@ func TestRemoteStorage_RevokeBreakGlassActivation(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	err = rs.RevokeBreakGlassActivation(context.Background(), 9, 1, now)
+	err = rs.RevokeBreakGlassActivation(context.Background(), 9, 1, 0, now)
 	assert.NoError(t, err)
 }
 
@@ -216,7 +216,7 @@ func TestRemoteStorage_RevokeBreakGlassActivation_NotActive(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	err = rs.RevokeBreakGlassActivation(context.Background(), 9, 1, time.Now())
+	err = rs.RevokeBreakGlassActivation(context.Background(), 9, 1, 0, time.Now())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, corestorage.ErrBreakGlassNotActive)
 }

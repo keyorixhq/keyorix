@@ -52,7 +52,7 @@ func TestConcurrency_InviteMember_NoDuplicateActiveMembership(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, err := c.InviteMember(context.Background(), 1, 2, "project_viewer", 9, false)
+			_, err := c.InviteMember(context.Background(), 1, 2, "project_viewer", 9, 0, false)
 			errs[i] = err
 		}(i)
 	}

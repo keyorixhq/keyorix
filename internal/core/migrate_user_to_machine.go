@@ -54,7 +54,7 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 	// event below, which is gated behind audit.read.
 	desc := fmt.Sprintf("Migrated from user %q (id %d)", user.Username, user.ID)
 
-	m, err := c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID)
+	m, err := c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID, 0)
 	if err != nil {
 		return nil, err
 	}

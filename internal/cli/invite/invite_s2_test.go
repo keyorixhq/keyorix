@@ -43,11 +43,11 @@ func seedInviteDB(t *testing.T) (projectID uint, invitationID uint) {
 
 	// InviteToProjectWithLink may fail on delivery (out-of-band mode), but the
 	// invitation is still created; fall back to InviteToProject if needed.
-	inv, _, linkErr := svc.InviteToProjectWithLink(ctx, proj.ID, "invitee@example.com", "project_viewer", resp.User.ID)
+	inv, _, linkErr := svc.InviteToProjectWithLink(ctx, proj.ID, "invitee@example.com", "project_viewer", resp.User.ID, 0)
 	if linkErr == nil && inv != nil {
 		return proj.ID, inv.ID
 	}
-	inv2, err2 := svc.InviteToProject(ctx, proj.ID, "invitee@example.com", "project_viewer", resp.User.ID)
+	inv2, err2 := svc.InviteToProject(ctx, proj.ID, "invitee@example.com", "project_viewer", resp.User.ID, 0)
 	if err2 == nil {
 		return proj.ID, inv2.ID
 	}
