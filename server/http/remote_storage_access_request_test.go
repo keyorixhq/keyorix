@@ -348,7 +348,7 @@ func grantSystemWrite(t *testing.T, upstream *core.KeyorixCore, userID uint) {
 			}
 		}
 		require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
-		require.NoError(t, upstream.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
+		require.NoError(t, upstream.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
 	}
 	require.NoError(t, st.AssignRole(ctx, userID, role.ID, coreStorage.Scope{}))
 }

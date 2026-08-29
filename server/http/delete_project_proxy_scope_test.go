@@ -70,8 +70,8 @@ func createSystemWriteAndProjectSecretsDeleteToken(t *testing.T, c *core.Keyorix
 	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
 	require.NotZero(t, secretsDeleteID, "secrets.delete permission must already be seeded by bootstrap")
 
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, globalRole.ID, systemWriteID))
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, scopedRole.ID, secretsDeleteID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, globalRole.ID, systemWriteID, false))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, scopedRole.ID, secretsDeleteID, false))
 	require.NoError(t, c.Storage().AssignRole(ctx, user.ID, globalRole.ID, coreStorage.Scope{}))
 	require.NoError(t, c.Storage().AssignRole(ctx, user.ID, scopedRole.ID, coreStorage.Scope{ProjectID: projectID}))
 

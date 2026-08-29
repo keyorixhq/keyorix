@@ -165,6 +165,37 @@ func TestRBACReal_AssignPermissionToRole201(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
+// #1545: the real reachable route — server/http/handlers/rbac.go's
+// AssignPermissionToRole passes userCtx.UserID straight through to
+// core.AssignPermissionToRole with no isMachineActor(r) indirection prior to
+// this fix, unlike CreateRole/UpdateRole which pre-authorize every permission
+// before ever reaching the core call. A machine identity presents UserID==0
+// (ADR-030) — the same value the #169 self-permission check's actorID==0
+// exemption was written for a trusted system caller — so a machine holding
+// nothing but the route's gating permission (roles.write) could bundle a
+// permission it does not hold into any role's definition. Exploit-shaped:
+// no role/permission grant exists for the machine at all.
+func TestRBACReal_AssignPermissionToRole_MachineActorDenied(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	role := mustCreateRole(t, db, "victim-role")
+	perm := mustCreatePermission(t, db, "system.write", "system", "write")
+
+	body := fmt.Sprintf(`{"permission_id":%d}`, perm.ID)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/roles/%d/permissions", role.ID),
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withMachineCtx(withChiParam(req, "id", fmt.Sprintf("%d", role.ID)))
+	w := httptest.NewRecorder()
+
+	handler.AssignPermissionToRole(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	var count int64
+	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ? AND permission_id = ?", role.ID, perm.ID).Count(&count).Error)
+	assert.Zero(t, count, "the permission must not have been assigned")
+}
+
 func TestRBACReal_RemovePermissionFromRole204(t *testing.T) {
 	handler, _, db := setupRBACTestWithDB(t)
 	role := mustCreateRole(t, db, "operator")

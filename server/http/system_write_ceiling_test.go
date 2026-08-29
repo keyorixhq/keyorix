@@ -74,7 +74,7 @@ func createSystemWriteOnlyToken(t *testing.T, c *core.KeyorixCore) string {
 
 	// actorID 0 = the system pseudo-actor (skips AssignPermissionToRole's #169
 	// self-permission-holding check, which a fixture setup step has no actor for).
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
 	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_only@example.com", "ceiling_test_system_writer"))
 
 	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_only", Password: "Qr7#Kp2$Lm5@Vn9!"})

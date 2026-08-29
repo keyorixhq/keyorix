@@ -38,13 +38,58 @@ func TestAssignPermissionToRole_RequiresActorHoldPermission(t *testing.T) {
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
 
 	const attacker = uint(9) // holds ONLY roles.write in the real exploit scenario, no roles at all here
-	err := c.AssignPermissionToRole(ctx, attacker, 1, 1)
+	err := c.AssignPermissionToRole(ctx, attacker, 1, 1, false)
 	require.Error(t, err, "an actor who doesn't hold system.write must not be able to bundle it into a role")
 	assert.Contains(t, err.Error(), "do not hold it yourself")
 
 	var count int64
 	require.NoError(t, db.Model(&models.RolePermission{}).Count(&count).Error)
 	assert.Zero(t, count, "the permission must not have been assigned")
+}
+
+// #1545: a machine identity presents actorID==0 by construction (ADR-030, no
+// UserID), the same value the actorID==0 exemption was written for a true
+// "no authenticated principal" system caller (ReconcileRBACPermissions).
+// Before this fix, AssignPermissionToRole's `if actorID != 0` gate silently
+// exempted a machine caller from the #169 self-permission check right
+// alongside that trusted system caller — a machine identity holding nothing
+// but roles.write (a legitimate, grantable, non-admin permission) could
+// bundle system.write into ANY role's definition without holding it itself.
+// Exploit-shaped: this is the exact attacker shape (actorID==0, actorIsMachine
+// true, no roles at all) — must be denied, not silently trusted. Verified red
+// before the actorIsMachine fix (temporarily reverted the `|| actorIsMachine`
+// clause locally and confirmed this test failed with the assignment
+// succeeding), green after.
+func TestAssignPermissionToRole_MachineActorRequiresHoldPermission(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
+
+	err := c.AssignPermissionToRole(ctx, 0, 1, 1, true)
+	require.Error(t, err, "a machine actor (actorID==0, actorIsMachine=true) who doesn't hold system.write must not be able to bundle it into a role")
+	assert.Contains(t, err.Error(), "do not hold it yourself")
+
+	var count int64
+	require.NoError(t, db.Model(&models.RolePermission{}).Count(&count).Error)
+	assert.Zero(t, count, "the permission must not have been assigned")
+}
+
+// Positive control: the true "no authenticated principal" system caller
+// (actorID==0, actorIsMachine=false — e.g. ReconcileRBACPermissions's startup
+// top-up, #293) must remain exempt from the #169 check exactly as before —
+// the fix narrows the exemption to that genuine case, it does not remove it.
+func TestAssignPermissionToRole_SystemPseudoActorStillExempt(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
+
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, 1, 1, false))
+
+	var count int64
+	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ? AND permission_id = ?", 1, 1).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
 }
 
 // The escalation path the finding describes: attacker holds roles.write (only)
@@ -63,7 +108,7 @@ func TestAssignPermissionToRole_ScopedHolderCannotBundleGlobally(t *testing.T) {
 	// attacker holds "system.write" only at project 3, not globally.
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 2, ProjectID: 3}).Error)
 
-	err := c.AssignPermissionToRole(ctx, attacker, 1, 1)
+	err := c.AssignPermissionToRole(ctx, attacker, 1, 1, false)
 	require.Error(t, err, "a project-scoped holder of system.write must not bundle it into a role, which is a global object")
 }
 
@@ -80,7 +125,7 @@ func TestAssignPermissionToRole_HolderMaySelfBundle(t *testing.T) {
 	const holder = uint(9)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 2}).Error) // global grant
 
-	require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1))
+	require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1, false))
 
 	var count int64
 	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ? AND permission_id = ?", 1, 1).Count(&count).Error)
@@ -99,7 +144,7 @@ func TestAssignPermissionToRole_AdminBypasses(t *testing.T) {
 	const admin = uint(9)
 	require.NoError(t, db.Create(&models.UserRole{UserID: admin, RoleID: 2}).Error)
 
-	require.NoError(t, c.AssignPermissionToRole(ctx, admin, 1, 1))
+	require.NoError(t, c.AssignPermissionToRole(ctx, admin, 1, 1, false))
 }
 
 // RemovePermissionFromRole is purely subtractive (weakens a role) — it must NOT
@@ -188,7 +233,7 @@ func TestAssignPermissionToRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserRole{UserID: actor, RoleID: 1}).Error)
 
 	logOutput := captureLog(t, func() {
-		require.NoError(t, c.AssignPermissionToRole(ctx, actor, 1, 1))
+		require.NoError(t, c.AssignPermissionToRole(ctx, actor, 1, 1, false))
 	})
 
 	event, detail := lastRBACEventDetail(t, c, EventPermissionAdded)
@@ -212,7 +257,7 @@ func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 2}).Error)
 
 	logOutput := captureLog(t, func() {
-		require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1))
+		require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1, false))
 	})
 
 	event, detail := lastRBACEventDetail(t, c, EventPermissionAdded)

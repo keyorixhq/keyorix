@@ -179,7 +179,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 
 	var assignedPerms []*models.Permission
 	for _, perm := range toAssign {
-		if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, role.ID, perm.ID); err != nil {
+		if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, role.ID, perm.ID, false); err != nil {
 			// Already authorized above; only a race (permission deleted concurrently) or
 			// storage error reaches here — log it, the role still exists with the rest.
 			log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, role.ID, err)
@@ -397,7 +397,7 @@ func (h *RBACHandler) replaceRolePermissions(ctx context.Context, actorID, roleI
 		_ = h.coreService.RemovePermissionFromRole(ctx, actorID, roleID, ep.ID)
 	}
 	for _, perm := range toAssign {
-		if err := h.coreService.AssignPermissionToRole(ctx, actorID, roleID, perm.ID); err != nil {
+		if err := h.coreService.AssignPermissionToRole(ctx, actorID, roleID, perm.ID, false); err != nil {
 			log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, roleID, err)
 		}
 	}
@@ -676,7 +676,7 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, roleID, body.PermissionID); err != nil {
+	if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, roleID, body.PermissionID, isMachineActor(r)); err != nil {
 		log.Printf("Error assigning permission to role: %v", err)
 		switch {
 		case strings.Contains(err.Error(), errNotFound):
