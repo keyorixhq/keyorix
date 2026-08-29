@@ -29,10 +29,16 @@ plugins specifically to remove) link into the shipped server binary.
   and copied the real `web/dist/` into `server/webui/dist/` before building
   — not the committed placeholder `index.html`, which is what a plain
   `go build ./server` would embed instead of what actually ships.
-- Stripped variant: same build with `-s -w` added to `-ldflags`. The
-  Makefile's release build does **not** pass `-s -w` today, so "unstripped"
-  is what actually ships; "stripped" is reported alongside because one of
-  Vault's own size regressions (below) turned out to be exactly this knob.
+- Stripped variant: same build with `-s -w` added to `-ldflags`. At the time
+  of measurement the Makefile's release build did **not** pass `-s -w`, so
+  "unstripped" was what actually shipped; "stripped" was reported alongside
+  because one of Vault's own size regressions (below) turned out to be
+  exactly this knob. **Superseded:** `RELEASE_LDFLAGS` now adds `-s -w` to
+  the eight `make release` cross-compiles and to `server/Dockerfile`, so the
+  "Stripped" column is what ships from that change onward. `make build`,
+  `make build-cli`, `make build-server` and `make build-ui` still keep full
+  symbols for local debugging; re-measuring the "Unstripped" column means
+  building with `$(LDFLAGS)` rather than `$(RELEASE_LDFLAGS)`.
 - One worktree, one tag/commit checked out at a time, `git checkout --
   server/webui/dist/index.html` to restore the placeholder between builds.
 

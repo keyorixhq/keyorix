@@ -12,7 +12,21 @@ TRUST_LICENSE_KEYS?=
 # Inject the build identity into both the CLI (internal/cli.version) and the shared
 # internal/version package (read by the server's /health + /system/info). Commit is
 # deterministic per source revision, so release builds stay reproducible (no build date).
-LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)"
+LDFLAGS_IDENTITY=-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
+LDFLAGS=-ldflags "$(LDFLAGS_IDENTITY)"
+
+# Release-only linker flags: identity, plus -s -w to drop the symbol table and
+# DWARF. Measured 2026-08-29, linux/amd64, main @ 9ef802a3 (see
+# docs/binary-size-measurement.md): keyorix-server 99,923,544 B -> 71,823,522 B,
+# i.e. 28% of the shipped artifact was debug info, useful to nobody who receives
+# a release build. A local `make build` / `make build-server` deliberately keeps
+# full symbols, so delve and line-numbered stack traces still work in dev.
+# Deliberately NOT applied to build/build-cli/build-server/build-ui above.
+#
+# `go version -m <binary>` and the .go.buildinfo section survive -s -w, so
+# `cyclonedx-gomod app` (which reads the module graph from source, not from the
+# binary) and any consumer of the embedded build identity are unaffected.
+RELEASE_LDFLAGS=-ldflags "$(LDFLAGS_IDENTITY) -s -w"
 
 .PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate
 
@@ -111,14 +125,14 @@ dev: install-cli
 release: populate-webui-dist
 	@echo "→ Cross-compiling $(VERSION)"
 	@mkdir -p dist
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_amd64    .
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_arm64    .
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_amd64   .
-	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_arm64   .
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_amd64  ./server
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
-	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_amd64    .
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_arm64    .
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_amd64   .
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_arm64   .
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_amd64  ./server
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
 	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true

@@ -7,13 +7,16 @@ RUN go mod download
 COPY . .
 # Injected at build time so the image reports its real release version at runtime
 # (e.g. /health, /system/info). Defaults keep ad-hoc `docker build` working; the
-# docker-publish workflow passes the git tag + sha. Mirrors the Makefile LDFLAGS.
+# docker-publish workflow passes the git tag + sha. Mirrors the Makefile
+# RELEASE_LDFLAGS, including -s -w: the published image is a release artifact,
+# and DWARF is ~28% of the server binary (docs/binary-size-measurement.md).
 ARG VERSION=dev
 ARG GIT_COMMIT=none
 RUN set -- \
     "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION}" \
-    "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" && \
+    "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" \
+    "-s" "-w" && \
     go build -ldflags "$*" \
     -o bin/keyorix-server ./server
 
