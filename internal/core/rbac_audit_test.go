@@ -146,7 +146,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
-	require.NoError(t, c.AssignPermissionToRole(ctx, 5, 2, 8))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 5, 2, 8, false))
 	require.NoError(t, c.RemovePermissionFromRole(ctx, 5, 2, 8))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)

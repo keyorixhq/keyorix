@@ -72,7 +72,19 @@ func (c *KeyorixCore) GetRoleWithPermissions(ctx context.Context, roleID uint) (
 // considered and declined. What changes is visibility: the audit event and
 // log warning below let an operator/reviewer SEE that a built-in role's
 // authorization baseline moved, without blocking the move.
-func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleID, permissionID uint) error {
+//
+// #1545: actorIsMachine distinguishes a machine-credential-authenticated caller
+// (UserID==0 by construction, ADR-030) from the true "no authenticated principal"
+// case the actorID==0 exemption below was written for (system/background callers
+// like ReconcileRBACPermissions). Both present as actorID==0; only the latter is
+// exempt. A machine identity holding nothing but roles.write reached this
+// unguarded — server/http/handlers/rbac.go's AssignPermissionToRole handler
+// passes userCtx.UserID directly, unlike CreateRole/UpdateRole which already
+// pre-authorize every permission via Authorize(ctx, userCtx.UserID, ...) before
+// ever reaching here (and so already denied a machine actor there — Authorize
+// has no user ID 0 to find roles for). actorID==0 with actorIsMachine==true now
+// falls into the check below, which correctly fails closed the same way.
+func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleID, permissionID uint, actorIsMachine bool) error {
 	role, err := c.storage.GetRole(ctx, roleID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
@@ -86,8 +98,8 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 	// additive, non-clobbering, once-per-boot top-up of newly-added canonical
 	// permissions — #293). Those callers have no role of their own to hold the
 	// permission being bundled, so the #169 self-permission check only applies to a
-	// real (non-zero) actor.
-	if actorID != 0 {
+	// real (non-zero) actor OR a machine-credential-authenticated one (#1545).
+	if actorID != 0 || actorIsMachine {
 		if ok, aerr := c.Authorize(ctx, actorID, perm.Name, Scope{}); aerr != nil {
 			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 		} else if !ok {

@@ -122,8 +122,8 @@ func createSystemWriteAndRolesAssignToken(t *testing.T, c *core.KeyorixCore) str
 	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
 	require.NotZero(t, rolesAssignID, "roles.assign permission must already be seeded by bootstrap")
 
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID, false))
 	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_roles_assign@example.com", "ceiling_test_system_writer_roles_assign"))
 
 	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_roles_assign", Password: "Qr7#Kp2$Lm5@Vn9!"})
@@ -166,8 +166,8 @@ func createSystemWriteAndUsersWriteToken(t *testing.T, c *core.KeyorixCore) stri
 	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
 	require.NotZero(t, usersWriteID, "users.write permission must already be seeded by bootstrap")
 
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID, false))
 	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_users_write@example.com", "ceiling_test_system_writer_users_write"))
 
 	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_users_write", Password: "Qr7#Kp2$Lm5@Vn9!"})

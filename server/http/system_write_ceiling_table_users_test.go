@@ -86,8 +86,8 @@ func createUsersWriteToken(t *testing.T, c *core.KeyorixCore) string {
 	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
 	require.NotZero(t, usersWriteID, "users.write permission must already be seeded by bootstrap")
 
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
-	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID, false))
 	require.NoError(t, c.AssignRoleToUser(ctx, "users_write_holder@example.com", "ceiling_test_users_and_system_writer"))
 
 	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "users_write_holder", Password: "Qr7#Kp2$Lm5@Vn9!"})

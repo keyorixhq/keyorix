@@ -52,7 +52,7 @@ func TestG80_1530_MachineActorAttribution_NonNodeServiceIdentity(t *testing.T) {
 		}
 	}
 	require.NotZero(t, systemWriteID)
-	require.NoError(t, testCore.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID))
+	require.NoError(t, testCore.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
 	require.NoError(t, testCore.Storage().AssignMachineRole(ctx, mi.ID, role.ID, coreStorage.Scope{}))
 
 	result, err := testCore.IssueMachineToken(ctx, projects[0].ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "g80-1530-probe-token"})

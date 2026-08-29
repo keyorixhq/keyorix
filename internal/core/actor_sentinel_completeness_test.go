@@ -63,6 +63,15 @@ const (
 	// today and the per-actor ceiling is skipped -- a confirmed, live,
 	// tracked gap, not fixed by this table. See note for the issue.
 	statusOpenGap
+	// statusReasonedSafe: a machine actor can reach this branch with
+	// actorID==0 and the per-actor ceiling IS skipped, same mechanism as
+	// statusOpenGap -- but tracing what the skipped check would have added
+	// shows it is fully subsumed by an earlier, coarser gate the caller
+	// already had to clear to reach this code at all, so skipping it confers
+	// no extra reach. Not the same claim as statusEnforced (nothing here
+	// denies the machine actor); the note must show the escalation-delta
+	// derivation, not just assert safety.
+	statusReasonedSafe
 )
 
 type actorSentinelEntry struct {
@@ -97,8 +106,8 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		note: "#1542: actorIsMachine parameter added, denies a machine actor instead of exempting it. AssignRoleWithExpiryProxy's non-node-relay path now passes isMachineActor(r); a genuine node relay skips this function entirely (still calls raw storage, by design -- see rbac_role_grants_proxy.go). Other callers (AssignUserRole's OWN callers -- AddProjectMember, the AssignRole gRPC/HTTP endpoint, access-request approval) still pass actorIsMachine=false unconditionally -- sibling gap, not fixed here.",
 	},
 	"bulk_delete.go:BulkDeleteSecrets": {
-		class: classPerActorCeiling, status: statusOpenGap,
-		note: "actorID==0 skips GetSecretWithPermissionCheck/DeleteSecretWithPermissionCheck's per-secret ACL/ownership check (2 occurrences, same function). Live gap: reachable by any machine identity holding project-scoped secrets.delete. #1545, not fixed here.",
+		class: classPerActorCeiling, status: statusReasonedSafe,
+		note: "#1545 escalation-delta analysis: actorID==0 skips GetSecretWithPermissionCheck/DeleteSecretWithPermissionCheck's per-secret ACL/ownership check (2 occurrences, same function), but the route (POST /projects/{id}/secrets/bulk-delete) is gated by RequireScopedPermission(secrets.delete, projectScope) -- Scope{ProjectID, EnvironmentID:0}. GetUserRoleIDsAt/GetMachineRoleIDsAt only match a stored grant whose environment_id is 0 (global) or the scope's environment_id against a project-level (env=0) query, so ONLY a project-wide secrets.delete grant clears that gate; an environment-scoped-only grant is refused before the handler ever runs. Every skipped per-secret check (isLiveOwner, share, ACL-for-humans, RBAC fallback) is purely additive -- it can only grant MORE access, never less -- and the RBAC fallback resolves to the identical AuthorizePrincipal(secrets.delete, {ProjectID, EnvironmentID: secret's env}) call, which a project-wide grant always satisfies (broader scope covers narrower). So the exemption confers no reach a project-wide secrets.delete holder didn't already have by clearing the router gate. Not a vulnerability; issue closed on this reasoning, not fixed.",
 	},
 	"compliance_digest.go:SendComplianceDigest": {
 		class: classAuditOnly,
@@ -113,8 +122,8 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		note:  "attribution-only: whether to attach a non-nil actor pointer to the prune audit record.",
 	},
 	"rbac_management.go:AssignPermissionToRole": {
-		class: classPerActorCeiling, status: statusOpenGap,
-		note: "actorID==0 skips the #169 self-permission-bundling check. Live gap: reachable by any machine identity holding roles.write globally. #1545, not fixed here.",
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "#1545: actorIsMachine parameter added (matching P1's AddUserToGroup/ApproveRiskException shape); a machine actor is now denied instead of exempted from the #169 self-permission-bundling check. Only server/http/handlers/rbac.go's direct AssignPermissionToRole handler needed the real isMachineActor(r) value threaded in -- CreateRole/UpdateRole already pre-authorize every permission via Authorize(ctx, userCtx.UserID, ...) before ever reaching this function, which already denied a machine actor (userID 0 has no roles), so those two callers keep actorIsMachine=false unchanged.",
 	},
 	"secret_acl.go:GrantSecretACL": {
 		class: classPerActorCeiling, status: statusEnforced,
@@ -253,7 +262,8 @@ func TestActorSentinelOpenGapsAreTracked(t *testing.T) {
 		}
 	}
 	sort.Strings(open)
-	const knownOpen = 2 // bulk_delete.go:BulkDeleteSecrets, rbac_management.go:AssignPermissionToRole -- #1545
+	const knownOpen = 0 // #1545's two entries are resolved: AssignPermissionToRole fixed (statusEnforced),
+	// BulkDeleteSecrets reasoned safe (statusReasonedSafe) -- see their notes above.
 	if len(open) != knownOpen {
 		t.Errorf("expected exactly %d statusOpenGap classPerActorCeiling entries (tracked via #1545), found %d: %v\n"+
 			"A new open gap needs its own issue filed (see #1545's shape) before this count changes; a closed "+
