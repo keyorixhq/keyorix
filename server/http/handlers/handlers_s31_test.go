@@ -318,15 +318,8 @@ func TestSupersedeSetupTokensProxy_DBError_S31(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestConsumeSetupTokenProxy_DBError_S31(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	body := bytes.NewBufferString(fmt.Sprintf(`{"consumed_at":"%s"}`, time.Now().UTC().Format(time.RFC3339)))
-	r := withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/setup-tokens/1/consume", body), "id", "1")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
+// TestConsumeSetupTokenProxy_DBError_S31 deleted -- #1579 liveness sweep,
+// handler removed (no live caller in either topology).
 
 func TestExpireSetupTokenProxy_DBError_S31(t *testing.T) {
 	t.Parallel()

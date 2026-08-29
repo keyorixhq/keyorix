@@ -399,51 +399,12 @@ func TestRemoteStorage_SupersedeActiveSetupTokens_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteStorage_MarkSetupTokenConsumed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/setup-tokens/10/consume", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"consumed": true,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	consumed, err := rs.MarkSetupTokenConsumed(context.Background(), 10, time.Now())
-	require.NoError(t, err)
-	assert.True(t, consumed)
-}
-
-func TestRemoteStorage_MarkSetupTokenConsumed_NotConsumed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"consumed": false,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	consumed, err := rs.MarkSetupTokenConsumed(context.Background(), 10, time.Now())
-	require.NoError(t, err)
-	assert.False(t, consumed)
-}
-
-func TestRemoteStorage_MarkSetupTokenConsumed_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   map[string]string{"code": "CONFLICT", "message": "already consumed"},
-		})
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_MarkSetupTokenConsumed_Unsupported: ConsumeSetupTokenProxy
+// was deleted (#1579 liveness sweep) -- no live caller in either topology.
+// MarkSetupTokenConsumed is now a hard stub, same as ActivateMFASecret's
+// #1593 precedent.
+func TestRemoteStorage_MarkSetupTokenConsumed_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
 	require.NoError(t, err)
 
 	_, err = rs.MarkSetupTokenConsumed(context.Background(), 10, time.Now())

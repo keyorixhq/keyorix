@@ -93,26 +93,9 @@ type dynamicSecretConfigWire struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-func newDynamicSecretConfigWire(c *models.DynamicSecretConfig) dynamicSecretConfigWire {
-	return dynamicSecretConfigWire{
-		ID:                c.ID,
-		Name:              c.Name,
-		ProjectID:         c.ProjectID,
-		EnvironmentID:     c.EnvironmentID,
-		BackendType:       c.BackendType,
-		AdminDSNEnc:       c.AdminDSNEnc,
-		AdminDSNMeta:      c.AdminDSNMeta,
-		CreationTemplate:  c.CreationTemplate,
-		DefaultTTLSeconds: c.DefaultTTLSeconds,
-		MaxTTLSeconds:     c.MaxTTLSeconds,
-		MaxActiveLeases:   c.MaxActiveLeases,
-		Classification:    c.Classification,
-		Disabled:          c.Disabled,
-		CreatedBy:         c.CreatedBy,
-		CreatedAt:         c.CreatedAt,
-		UpdatedAt:         c.UpdatedAt,
-	}
-}
+// newDynamicSecretConfigWire (built the wire DTO for CreateDynamicSecretConfig's
+// outbound request) is DELETED -- #1580 liveness sweep, its only caller
+// (CreateDynamicSecretConfig) is now a hard stub.
 
 func (w dynamicSecretConfigWire) toModel() *models.DynamicSecretConfig {
 	return &models.DynamicSecretConfig{
@@ -135,13 +118,8 @@ func (w dynamicSecretConfigWire) toModel() *models.DynamicSecretConfig {
 	}
 }
 
-func decodeDynamicSecretConfigResponse(data []byte) (*models.DynamicSecretConfig, error) {
-	var wire dynamicSecretConfigWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return wire.toModel(), nil
-}
+// decodeDynamicSecretConfigResponse (decoded CreateDynamicSecretConfig's
+// response body) is DELETED -- #1580 liveness sweep, same reason.
 
 // validateEncryptedAdminDSNWireField is a direct read of wire.AdminDSNEnc, kept as its
 // own named call (rather than inlined) so a static analyzer (CodeQL
@@ -203,19 +181,24 @@ func decodeDynamicSecretLeaseResponse(data []byte) (*models.DynamicSecretLease, 
 	return wire.toModel(), nil
 }
 
-// CreateDynamicSecretConfig persists an already-built config (metadata only —
-// AdminDSNEnc/AdminDSNMeta are typically still empty at this point, mirroring
-// internal/core.CreateDynamicSecretConfig's own two-phase create-then-update, #94)
-// via POST /api/v1/system/dynamic-secrets/configs.
-func (rs *RemoteStorage) CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/system/dynamic-secrets/configs", newDynamicSecretConfigWire(c))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic-secret config: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create dynamic-secret config failed: %s", resp.Error.Error())
-	}
-	return decodeDynamicSecretConfigResponse(resp.Data)
+// CreateDynamicSecretConfig used to proxy onto POST
+// /api/v1/system/dynamic-secrets/configs (CreateDynamicSecretConfigProxy),
+// deleted in the #1580 liveness sweep: independently confirms the G80
+// 158-method classification pass's own verdict
+// (remote_reachability_registry_test.go's "UpdateDynamicSecretConfig" entry,
+// entries=[ClassifyDynamicSecretConfig,CreateDynamicSecretConfig]) —
+// reachabilityDead, every reaching core method (core.CreateDynamicSecretConfig)
+// called only from server/http/handlers/dynamic_secrets.go and
+// server/grpc/services/dynamic_secret_service.go, both unreachable from any
+// process backed by this RemoteStorage (ADR-083). No CLI command embeds
+// core.KeyorixCore and calls CreateDynamicSecretConfig either — the one CLI
+// surface for this (internal/cli/dynamic/config_create.go) uses the ordinary
+// thin-HTTP client against the human-facing /api/v1/dynamic-secrets/configs
+// route (common.RemoteClient, not an embedded core+RemoteStorage instance),
+// so it never touches this method or its /system proxy at all. See
+// docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580" addendum.
+func (rs *RemoteStorage) CreateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error) {
+	return nil, remoteUnsupported("CreateDynamicSecretConfig")
 }
 
 // GetDynamicSecretConfig retrieves a config by ID via GET

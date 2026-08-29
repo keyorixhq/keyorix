@@ -197,39 +197,11 @@ func TestRemoteCov_ListAccessReviewItems_MalformedJSON(t *testing.T) {
 // ============================================================================
 // remote_dynamic.go — error paths
 // ============================================================================
-
-func TestRemoteCov_CreateDynamicSecretConfig_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL", "create config failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateDynamicSecretConfig(context.Background(), &models.DynamicSecretConfig{
-		Name: "pg", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
-		CreatedBy: "admin", CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "create dynamic-secret config failed")
-}
-
-func TestRemoteCov_CreateDynamicSecretConfig_MalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("{bad}"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.CreateDynamicSecretConfig(context.Background(), &models.DynamicSecretConfig{
-		Name: "pg", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
-		CreatedBy: "admin", CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	assert.Error(t, err)
-}
+// CreateDynamicSecretConfig error-path tests deleted -- #1580 liveness sweep,
+// the method is now a hard stub (no HTTP call is ever made, so a
+// server-error/malformed-JSON response is no longer a real scenario).
+// TestRemoteStorage_CreateDynamicSecretConfig_Unsupported (remote_dynamic_test.go)
+// covers the stub directly.
 
 func TestRemoteCov_CountDynamicSecretConfigsByClassification_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

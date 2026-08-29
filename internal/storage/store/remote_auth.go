@@ -298,39 +298,22 @@ func (rs *RemoteStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose
 	return nil
 }
 
-// MarkSetupTokenConsumed transitions active → consumed only if still active, via
-// POST /api/v1/system/setup-tokens/{id}/consume. See the package doc above: the
-// server performs the SAME conditional `WHERE id = ? AND state = 'active'` write
-// local_auth.go's MarkSetupTokenConsumed does and reports whether it actually
-// matched a row — the single round trip a concurrent-consume race resolves in.
-func (rs *RemoteStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error) {
-	path := fmt.Sprintf("/api/v1/system/setup-tokens/%d/consume", id)
-	// UTC-normalized for the same reason newSetupTokenWire below normalizes
-	// CreatedAt/ExpiresAt: CountSetupTokensSince's own `since` parameter is
-	// always sent UTC-converted, and SQLite (LocalStorage's backend) compares
-	// these TIMESTAMP columns as plain TEXT, not real chronological values — a
-	// timestamp stored with the calling server's local offset (whatever
-	// core.KeyorixCore.now() happens to return there) would sort incorrectly
-	// against a UTC-formatted comparison threshold. Consistently normalizing
-	// every setup-token timestamp that crosses this wire to UTC keeps every
-	// column's stored representation directly comparable.
-	body := struct {
-		ConsumedAt time.Time `json:"consumed_at"`
-	}{ConsumedAt: consumedAt.UTC()}
-	resp, err := rs.client.Post(ctx, path, body)
-	if err != nil {
-		return false, fmt.Errorf("failed to consume setup token: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("consume setup token failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Consumed bool `json:"consumed"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Consumed, nil
+// MarkSetupTokenConsumed used to proxy onto POST
+// /api/v1/system/setup-tokens/{id}/consume (ConsumeSetupTokenProxy), deleted
+// in the #1579 liveness sweep: core.ConsumeSetupToken/consumeInspectedToken
+// (internal/core/setup_token.go) is this method's only Go-level caller
+// repo-wide, and its own only caller is server/http/handlers/auth.go's
+// CompleteSetup — a human-facing HTTP route, unreachable from any process
+// backed by this RemoteStorage (ADR-083: no server can boot with
+// storage.type: remote). No CLI command calls ConsumeSetupToken/CompleteSetup
+// either — completing account setup means providing a NEW password only the
+// subject knows, which is inherently self-service, unlike the admin-driven
+// account-lifecycle operations (deactivate, suspend, revoke) a CLI operator
+// legitimately performs on another user's behalf. See
+// docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580" addendum for the
+// full liveness trace and revival-hazard classification.
+func (rs *RemoteStorage) MarkSetupTokenConsumed(_ context.Context, _ uint, _ time.Time) (bool, error) {
+	return false, remoteUnsupported("MarkSetupTokenConsumed")
 }
 
 // MarkSetupTokenExpired transitions active → expired (lazy expiry on read) via

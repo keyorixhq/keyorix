@@ -1186,43 +1186,31 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	"CreateMembershipProxy": "REAL, human-reachable, HIGH severity: bypasses requireAuthorityForRole entirely " +
 		"(membership_lifecycle.go:172) -- any system.write holder can grant an arbitrary user an active admin-tier " +
 		"project membership via a single POST, with Role and State fully caller-controlled. Filed as #1578.",
-	// G80 Wave 1 (#1547 repo-wide extension, 2026-08-27): REAL bypass, narrow
-	// impact (availability, not escalation). consumeInspectedToken
-	// (internal/core/setup_token.go:210-213) checks `tok.Purpose !=
-	// expectedPurpose` before calling storage.MarkSetupTokenConsumed;
-	// ConsumeSetupTokenProxy (server/http/handlers/setup_tokens_proxy.go:309)
-	// relays the same storage primitive directly, keyed only on token ID, with
-	// no purpose parameter on the wire at all. Any system.write holder who can
-	// enumerate/guess an active setup-token ID can consume it regardless of
-	// its intended purpose (burning a legitimate password-reset/invitation-
-	// accept token before the real recipient uses it) -- a targeted DoS
-	// primitive against account-provisioning flows, not a privilege
-	// escalation (consuming alone confers no access; MarkSetupTokenConsumed
-	// is a bare state-transition CAS, not a credential grant). Filed as
-	// #1579.
-	"ConsumeSetupTokenProxy": "REAL, human-reachable, narrow: consume is purpose-blind (no purpose parameter on " +
-		"the wire), so a system.write holder can burn any active setup token by ID regardless of intended use -- " +
-		"availability/DoS against provisioning flows, not an escalation. Filed as #1579.",
-	// G80 Wave 1 (#1547 repo-wide extension, 2026-08-27): REAL bypass,
-	// reference-confusion class (explicitly not a value-leak, per
-	// core.CreateDynamicSecretConfig's own doc comment,
-	// internal/core/dynamic_secrets.go:225-242). That exported method checks
-	// `env.ProjectID != req.ProjectID` before persisting -- a config's
-	// EnvironmentID must actually belong to its own ProjectID.
-	// CreateDynamicSecretConfigProxy
-	// (server/http/handlers/dynamic_secrets_proxy.go:216) persists the wire
-	// body directly with no cross-reference check, so a caller-supplied
-	// (ProjectID, EnvironmentID) pair naming DIFFERENT projects persists
-	// without error. Downstream reads/leases stay keyed off the config's own
-	// stored ProjectID (confirmed in the core method's own doc comment), so
-	// this is not a cross-project secret-value leak -- it's a config an
-	// operator believes is scoped to (A, envX) actually referencing an
-	// environment belonging to a project the creator may have no visibility
-	// into. Filed as #1580.
-	"CreateDynamicSecretConfigProxy": "REAL, human-reachable, reference-confusion class (not a value leak per the " +
-		"core method's own doc comment): skips the EnvironmentID-belongs-to-ProjectID cross-reference check " +
-		"(dynamic_secrets.go:238-241), so a config can be created referencing an environment from a different, " +
-		"possibly invisible-to-the-caller project. Filed as #1580.",
+	// ConsumeSetupTokenProxy is DELETED (#1579 liveness sweep, entry removed).
+	// The G80 Wave 1 (#1547) "REAL, human-reachable" classification this entry
+	// originally carried never traced liveness -- it established the
+	// purpose-blind gap was real IF the route were reachable, not that any
+	// caller actually reaches it. A liveness re-trace found zero:
+	// core.ConsumeSetupToken's only caller is the human-facing CompleteSetup
+	// route (unreachable from any process backed by RemoteStorage, ADR-083),
+	// and no CLI command calls it either -- completing setup means providing a
+	// new password only the subject knows, inherently self-service, unlike the
+	// admin-driven account-lifecycle CLI operations that DO relay on another
+	// user's behalf. See docs/adr-090-stale-fork-proxy-deletion.md's
+	// "#1579/#1580" addendum.
+	// CreateDynamicSecretConfigProxy is DELETED (#1580 liveness sweep, entry
+	// removed). Same correction: the original G80 Wave 1 entry established the
+	// reference-confusion gap was real IF reachable, not that it was live. A
+	// liveness re-trace found zero callers -- confirming, not discovering, the
+	// G80 158-method classification pass's own reachabilityDead verdict for
+	// this exact method (remote_reachability_registry_test.go's
+	// "UpdateDynamicSecretConfig" entry already listed CreateDynamicSecretConfig
+	// under the same verdict; the code was just never updated to match). The
+	// one CLI surface that creates dynamic-secret configs
+	// (internal/cli/dynamic/config_create.go) uses the ordinary thin-HTTP
+	// client against the human-facing route, not an embedded
+	// core+RemoteStorage instance, so it never reaches this proxy either. See
+	// docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580" addendum.
 	// Pre-existing, already fully documented and deferred -- not a new G80
 	// Wave 1 finding, just newly VISIBLE to this guard (the one-hop fix
 	// surfaced LogAuditEvent as a wrapped method for the first time). See

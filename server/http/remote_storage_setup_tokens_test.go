@@ -1,22 +1,28 @@
 // remote_storage_setup_tokens_test.go — end-to-end coverage for #510: RemoteStorage's
 // SetupToken CRUD (CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/
-// MarkSetupTokenConsumed/MarkSetupTokenExpired/CountSetupTokensSince) was entirely
-// stubbed, so CompleteSetup's very first step (inspectActiveSetupToken) hard-failed
-// under storage.type: remote for EVERY setup-token purpose (account_setup,
+// MarkSetupTokenExpired/CountSetupTokensSince) was entirely stubbed, so
+// CompleteSetup's very first step (inspectActiveSetupToken) hard-failed under
+// storage.type: remote for EVERY setup-token purpose (account_setup,
 // password_reset_link, invitation_accept) — not just invitations. Mirrors
 // remote_storage_invitations_test.go's #507 harness exactly: a real "upstream"
 // exercised through the production NewRouter/handlers (including the new
 // /api/v1/system/setup-tokens routes, server/http/handlers/setup_tokens_proxy.go),
 // and a "downstream" *core.KeyorixCore configured with storage.type: remote pointed
 // at "upstream" over real HTTP via store.RemoteStorage.
+//
+// MarkSetupTokenConsumed/ConsumeSetupTokenProxy and their tests (including the
+// CompleteSetup end-to-end flow and the concurrent-consume race, which
+// exercised MarkSetupTokenConsumed as part of that flow) were DELETED (#1579
+// liveness sweep, docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580"
+// addendum) — no live caller in either topology. This file's remaining tests
+// only cover CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/
+// MarkSetupTokenExpired/CountSetupTokensSince, all still real.
 package http
 
 import (
 	"context"
 	"errors"
 	"net/http/httptest"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,8 +76,8 @@ func newUpstreamDownstreamForSetupTokens(t *testing.T) (upstream *core.KeyorixCo
 // buildActiveSetupToken mirrors what internal/core/setup_token.go's IssueSetupToken
 // computes before calling storage.CreateSetupToken — a fully-built, active token
 // with a 24h TTL — WITHOUT going through IssueSetupToken itself, so the
-// storage-primitive tests below can exercise CreateSetupToken/GetSetupTokenByHash/
-// MarkSetupTokenConsumed directly, independent of the higher-level core API.
+// storage-primitive tests below can exercise CreateSetupToken/GetSetupTokenByHash
+// directly, independent of the higher-level core API.
 //
 // Deliberately does NOT set SubjectUserID or InvitationID: CreateSetupTokenProxy
 // (#G79, server/http/handlers/setup_tokens_proxy.go) requires exactly one of them,
@@ -104,18 +110,17 @@ func createSetupTokenSubjectUser(t *testing.T, upstream *core.KeyorixCore, email
 	return user.ID
 }
 
-// TestRemoteStorageSetupToken_CreateGetConsume_RealServer proves the #510 fix for
-// CreateSetupToken/GetSetupTokenByHash/MarkSetupTokenConsumed: a setup token is
-// genuinely persisted on the upstream server via the DOWNSTREAM's RemoteStorage,
-// fetchable by hash, single-use-consumable, and a replay cleanly loses — all via
-// storage.type: remote against a real router, not a protocol mock.
-func TestRemoteStorageSetupToken_CreateGetConsume_RealServer(t *testing.T) {
+// TestRemoteStorageSetupToken_CreateGet_RealServer proves the #510 fix for
+// CreateSetupToken/GetSetupTokenByHash: a setup token is genuinely persisted
+// on the upstream server via the DOWNSTREAM's RemoteStorage, fetchable by
+// hash, via storage.type: remote against a real router, not a protocol mock.
+func TestRemoteStorageSetupToken_CreateGet_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForSetupTokens(t)
 	ctx := context.Background()
 	now := time.Now()
 
 	subjectID := createSetupTokenSubjectUser(t, upstream, "newuser@example.com")
-	newToken := buildActiveSetupToken(now, "hash-create-get-consume", core.SetupPurposeAccountSetup, "newuser@example.com")
+	newToken := buildActiveSetupToken(now, "hash-create-get", core.SetupPurposeAccountSetup, "newuser@example.com")
 	newToken.SubjectUserID = &subjectID
 	tok, err := downstream.Storage().CreateSetupToken(ctx, newToken)
 	require.NoError(t, err, "creating a setup token must succeed via storage.type: remote")
@@ -127,35 +132,17 @@ func TestRemoteStorageSetupToken_CreateGetConsume_RealServer(t *testing.T) {
 
 	// Confirm it is a REAL row in the upstream's own storage (not just "the call
 	// didn't error"), by reading it back directly against upstream.
-	direct, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-create-get-consume")
+	direct, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-create-get")
 	require.NoError(t, err)
 	assert.Equal(t, tok.ID, direct.ID)
 
 	// GetSetupTokenByHash via the downstream (RemoteStorage) round-trips every field.
-	fetched, err := downstream.Storage().GetSetupTokenByHash(ctx, "hash-create-get-consume")
+	fetched, err := downstream.Storage().GetSetupTokenByHash(ctx, "hash-create-get")
 	require.NoError(t, err)
 	assert.Equal(t, tok.ID, fetched.ID)
 	assert.Equal(t, tok.Purpose, fetched.Purpose)
 	assert.Equal(t, tok.SubjectEmail, fetched.SubjectEmail)
 	assert.Equal(t, core.SetupTokenActive, fetched.State)
-
-	// Consuming an active token via the downstream must succeed exactly once.
-	consumedAt := time.Now()
-	ok, err := downstream.Storage().MarkSetupTokenConsumed(ctx, tok.ID, consumedAt)
-	require.NoError(t, err)
-	assert.True(t, ok, "consuming an active token must succeed")
-
-	// The upstream's own storage must show the real state transition.
-	final, err := upstream.Storage().GetSetupTokenByHash(ctx, "hash-create-get-consume")
-	require.NoError(t, err)
-	assert.Equal(t, core.SetupTokenConsumed, final.State)
-	require.NotNil(t, final.ConsumedAt)
-
-	// A second consume attempt against the now-consumed token must cleanly report
-	// false (not an error, not a silent double success) — the single-use guarantee.
-	ok, err = downstream.Storage().MarkSetupTokenConsumed(ctx, tok.ID, time.Now())
-	require.NoError(t, err)
-	assert.False(t, ok, "consuming an already-consumed token must not report success")
 }
 
 // TestRemoteStorageSetupToken_GetByHashNotFound_RealServer proves a clean not-found
@@ -325,113 +312,16 @@ func TestRemoteStorageSetupToken_CountSince_RealServer(t *testing.T) {
 	assert.Equal(t, int64(0), n)
 }
 
-// TestRemoteStorageSetupToken_ConcurrentConsumeRace_RealServer is the critical #510
-// test: it fires N concurrent "consume" requests at the SAME active setup token
-// over real HTTP against the real upstream router, and asserts EXACTLY ONE
-// succeeds — proving ConsumeSetupTokenProxy's conditional
-// `WHERE id = ? AND state = 'active'` write (local_auth.go, proxied unchanged by
-// server/http/handlers/setup_tokens_proxy.go) still closes the double-consume
-// TOCTOU race consumeInspectedToken (setup_token.go) depends on, even across a
-// network hop — not a client-side "GET, check state, then mark" sequence, which
-// would reopen exactly this race. Mirrors #507's
-// TestRemoteStorageInvitation_ConcurrentAcceptRace_RealServer exactly.
-func TestRemoteStorageSetupToken_ConcurrentConsumeRace_RealServer(t *testing.T) {
-	upstream, downstream := newUpstreamDownstreamForSetupTokens(t)
-	ctx := context.Background()
-	now := time.Now()
-
-	subjectID := createSetupTokenSubjectUser(t, upstream, "race@example.com")
-	raceToken := buildActiveSetupToken(now, "hash-race", core.SetupPurposeAccountSetup, "race@example.com")
-	raceToken.SubjectUserID = &subjectID
-	tok, err := downstream.Storage().CreateSetupToken(ctx, raceToken)
-	require.NoError(t, err)
-
-	const n = 20
-	var successCount atomic.Int64
-	var errCount atomic.Int64
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			ok, err := downstream.Storage().MarkSetupTokenConsumed(ctx, tok.ID, time.Now())
-			if err != nil {
-				errCount.Add(1)
-				return
-			}
-			if ok {
-				successCount.Add(1)
-			}
-		}()
-	}
-	wg.Wait()
-
-	assert.Equal(t, int64(0), errCount.Load(), "every concurrent consume attempt must get a clean result, not a transport/server error")
-	assert.Equal(t, int64(1), successCount.Load(), "exactly one concurrent consume must win the race — the rest must cleanly lose, never a double consume")
-
-	final, err := downstream.Storage().GetSetupTokenByHash(ctx, "hash-race")
-	require.NoError(t, err)
-	assert.Equal(t, core.SetupTokenConsumed, final.State)
-}
-
-// TestRemoteStorageSetupToken_CompleteSetupEndToEnd_RealServer is the actual
-// user-facing flow #510 fixed: core.KeyorixCore.CompleteSetup, called against a
-// DOWNSTREAM core backed entirely by storage.type: remote. Before this fix,
-// CompleteSetup's very first step (inspectActiveSetupToken → GetSetupTokenByHash)
-// hard-failed with "invalid setup token" for EVERY purpose, unconditionally.
-//
-// This proves inspectActiveSetupToken (GetSetupTokenByHash) and
-// consumeInspectedToken (MarkSetupTokenConsumed) — the two #510 storage
-// primitives on this call path — both now genuinely work end-to-end: CompleteSetup
-// proceeds past both and only then fails at applyNewPassword's SetPasswordHash — a
-// SEPARATE, pre-existing, deliberately-hard-failing gap (#484, documented in
-// remote_users.go: password_hash is tagged json:"-" on models.User and can never
-// cross RemoteStorage's wire format at all, so it fails loud rather than silently
-// no-op). That gap is out of #510's scope, exactly as #507's test file left
-// GetRoleByName's separate gap (#512) undisturbed. If #510 were still broken, this
-// call would fail immediately at the setup-token lookup instead.
-func TestRemoteStorageSetupToken_CompleteSetupEndToEnd_RealServer(t *testing.T) {
-	upstream, downstream := newUpstreamDownstreamForSetupTokens(t)
-	ctx := context.Background()
-
-	// A password_reset_link token acts on an EXISTING account (unlike account_setup,
-	// which is more naturally paired with the admin-facing deliver_setup_link/
-	// generate_one_time_password CreateUser flags — flags that RemoteStorage's own
-	// CreateUser wire (remote_users.go's userCreateWireRequest) does not carry at
-	// all, an orthogonal gap out of #510's scope), so the subject is created with an
-	// ordinary initial password here, exactly as a real admin-created account would
-	// have one before a self-service reset.
-	user, err := downstream.Storage().CreateUser(ctx, &models.User{
-		Username:    "newhire",
-		Email:       "newhire@example.com",
-		DisplayName: "New Hire",
-		IsActive:    true,
-	}, "Initial#Passw0rd!")
-	require.NoError(t, err, "creating the subject account must succeed via storage.type: remote")
-
-	issued, err := downstream.IssueSetupToken(ctx, core.IssueSetupTokenRequest{
-		Purpose:       core.SetupPurposePasswordResetLink,
-		SubjectEmail:  user.Email,
-		SubjectUserID: &user.ID,
-	})
-	require.NoError(t, err, "issuing a setup token must succeed via storage.type: remote (#510: SupersedeActiveSetupTokens + CreateSetupToken)")
-	require.NotEmpty(t, issued.PlainToken)
-
-	_, err = downstream.CompleteSetup(ctx, issued.PlainToken, "Str0ngP@ssw0rd123!", "test-agent", "127.0.0.1")
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "invalid setup token",
-		"must NOT fail at the #510 setup-token lookup step — that is the bug this fix closes")
-	assert.ErrorIs(t, err, corestorage.ErrUnsupportedByBackend,
-		"must fail at the SEPARATE, already-documented #484 gap (SetPasswordHash), proving inspectActiveSetupToken + consumeInspectedToken both succeeded first")
-
-	// Fail-closed design (setup_token.go's consumeInspectedToken comment): the token
-	// is consumed BEFORE applyNewPassword runs, so even on this later failure it must
-	// already show as genuinely, atomically consumed on the upstream — proving
-	// MarkSetupTokenConsumed's write landed for real, not just "the call didn't error".
-	final, err := upstream.Storage().GetSetupTokenByHash(ctx, issued.Token.TokenHash)
-	require.NoError(t, err)
-	assert.Equal(t, core.SetupTokenConsumed, final.State, "the token must be spent even though the password step failed afterward (fail-closed)")
-}
+// TestRemoteStorageSetupToken_ConcurrentConsumeRace_RealServer and
+// TestRemoteStorageSetupToken_CompleteSetupEndToEnd_RealServer (which proved
+// MarkSetupTokenConsumed's wire behavior, standalone and as part of
+// CompleteSetup respectively) were DELETED (#1579 liveness sweep) — no real
+// production caller ever constructs a RemoteStorage-backed core and calls
+// CompleteSetup/ConsumeSetupToken (a test harness doing so directly does not
+// establish that; see docs/adr-090-stale-fork-proxy-deletion.md's
+// "#1579/#1580" addendum). MarkSetupTokenConsumed is now a hard stub
+// (internal/storage/store/remote_auth_test.go's
+// TestRemoteStorage_MarkSetupTokenConsumed_Unsupported covers it directly).
 
 // TestRemoteStorageSetupToken_CompleteSetupInvalidToken_RealServer proves that an
 // unknown token cleanly fails CompleteSetup via storage.type: remote (the ordinary
