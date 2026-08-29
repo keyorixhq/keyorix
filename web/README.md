@@ -24,3 +24,5 @@ dev server/build configuration.
 - [`../README.md`](../README.md) — product overview
 - [`../RELEASING.md`](../RELEASING.md) — how this and the server image get published
 - [`CLAUDE.md`](CLAUDE.md) — frontend-specific dev conventions
+
+<!-- CI verification commit, see PR: confirms web-only PRs skip the Go pipeline. Safe to ignore/revert. -->
