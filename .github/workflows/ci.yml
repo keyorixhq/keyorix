@@ -59,14 +59,23 @@ jobs:
   # Detects PR changes that touch nothing but *.md/docs/** (a "docs-only" PR),
   # and separately whether a PR touches nothing but web/** ("web-only").
   # Every code-verification job below (preflight, test-suite, static-analysis,
-  # lint, licenses, operator, helm-*, openapi-lint, fuzz-targets, and the
-  # build-and-test aggregator) is gated on `docs_only != 'true'` -- go tests,
+  # exclusion-freshness, assert-leg-completeness, lint, licenses, operator,
+  # helm-*, openapi-lint, fuzz-targets, and the build-and-test aggregator) is
+  # gated on BOTH `docs_only != 'true'` AND `web_only != 'true'` -- go tests,
   # go lint, Helm charts, dependency licenses, and the operator module cannot
-  # be affected by a *.md/docs/** change, so there is nothing for them to
-  # verify. fuzz-targets additionally gates on `web_only != 'true'` (see its
-  # own comment below) -- it's the one job among these whose Go-only output
-  # also can't change from a web/-only diff, post-ADR-070. A job skipped via
-  # a job-level `if:` still reports a check-run
+  # be affected by a *.md/docs/** change, and (2026-08-29) verified they can't
+  # be affected by a web/-only change either: server/webui/embed.go's
+  # `//go:embed all:dist` looks like it ties the Go build to web/'s output,
+  # but server/webui/dist/ holds only a committed placeholder in this repo --
+  # the real web build only gets copied in by `make build-ui`, which ci.yml
+  # never runs (that's release.yml/docker-publish.yml's job). So `go build`/
+  # `go test` embed the same placeholder regardless of what changes in web/,
+  # and a web-only PR genuinely cannot change any of these jobs' outcome.
+  # Verified empirically too, not just by reading: PR #1514 (52 files, all
+  # under web/) ran the full pre-this-fix test-suite matrix + preflight +
+  # static-analysis + lint + licenses + operator + helm-* + openapi-lint to
+  # completion, ~21 minutes, on a diff that never touched a .go file. A job
+  # skipped via a job-level `if:` still reports a check-run
   # (conclusion "skipped"), and branch protection treats a skipped required
   # check as satisfying the requirement -- this is different from (and safe,
   # unlike) gating an entire workflow via top-level `paths-ignore`, which
@@ -90,10 +99,12 @@ jobs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
       # web/ (ADR-070) lives in this repo now, so a frontend-only PR is no
       # longer isolated in its own repo+CI -- it flows through this same
-      # workflow. Used to skip jobs that are backend-only busywork on a diff
-      # that can't possibly change their outcome (e.g. fuzz-targets below);
-      # NOT wired into docs_only itself, since jobs like build/test/lint stay
-      # gated on docs_only alone and should keep running on web/-only PRs.
+      # workflow. Used to skip every job that's backend-only busywork on a
+      # diff that can't possibly change their outcome -- see this file's own
+      # top-of-jobs comment for why the go:embed-shaped concern that
+      # originally kept this OUT of docs_only's job set doesn't actually
+      # apply (server/webui/dist is a committed placeholder in every ci.yml
+      # run; the real web build never reaches it here).
       web_only: ${{ steps.filter.outputs.web_only }}
       # True when every changed file is in a category verified to contain no
       # Go source and nothing any Go build/test/lint/vuln-scan step reads:
@@ -322,7 +333,7 @@ jobs:
   # instead of via the shared gate, but nothing waits an extra ~30s to start.
   preflight:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -370,7 +381,7 @@ jobs:
     # default, so preflight's success must be checked explicitly here too --
     # otherwise a docs_only-unrelated broken build would no longer be
     # fast-failed by preflight before this (expensive) job starts.
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -609,7 +620,7 @@ jobs:
   # temporarily pointing it at a deliberately stale entry.
   exclusion-freshness:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -635,7 +646,7 @@ jobs:
   # fast and doesn't wait on the (up to 30-minute) test-suite matrix.
   assert-leg-completeness:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -657,7 +668,7 @@ jobs:
   # (as it did when both lived inside one sequential build-and-test job).
   static-analysis:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -699,9 +710,9 @@ jobs:
     needs: [preflight, test-suite, static-analysis, changes]
     # always() so this still runs (and reports the failure below) even when
     # test-suite/static-analysis genuinely fail, not just when they're
-    # skipped -- combined with the docs_only/go_unaffected/operator_only
-    # checks so the whole aggregator itself is skipped (not run at all) when
-    # test-suite/static-analysis are skipped too.
+    # skipped -- combined with the docs_only/web_only/go_unaffected/
+    # operator_only checks so the whole aggregator itself is skipped (not run
+    # at all) when test-suite/static-analysis are skipped too.
     #
     # needs.changes.result == 'success' is required too, and NOT redundant
     # with always(): if the `changes` job itself is cancelled (e.g. a
@@ -715,7 +726,7 @@ jobs:
     # with test-suite/static-analysis's implicit skip-on-cancelled-dependency
     # behavior instead of being the one job immune to it. (root-caused on
     # #1368, whose docs-only CI run hit exactly this.)
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     # download-artifact needs actions: read beyond the workflow-level
     # contents: read default, even for same-run artifacts.
@@ -772,7 +783,7 @@ jobs:
 
   lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -813,7 +824,7 @@ jobs:
     # Deliberately NOT gated on operator_only -- that flag means the diff is
     # CONFINED to operator/, which is exactly the case this job must still
     # run for.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -991,7 +1002,7 @@ jobs:
     # Deliberately NOT gated on operator_only -- this job checks BOTH the
     # root and operator modules' dependency licenses, and an operator-only
     # diff could add a new operator/go.mod dependency.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1101,7 +1112,7 @@ jobs:
 
   helm-chart:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1292,7 +1303,7 @@ jobs:
   # against the same rendered chart output.
   helm-chart-security:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1396,7 +1407,7 @@ jobs:
   # without blocking, and the .spectral.yaml at the repo root controls overrides.
   openapi-lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
