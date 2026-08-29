@@ -89,6 +89,23 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
   indiscriminately until someone routes around it). Before adding a guard, confirm
   it is green on a known-good case as well as red on a known-bad one — both
   directions, not just the failure you set out to catch.
+- When a verdict depends on a condition, guard the condition, not the conclusion.
+  A guard aimed at the conclusion is often vacuous — the population it checks is
+  empty precisely *because* the condition holds, so it passes unconditionally
+  forever regardless of whether the conclusion is still true. #1494's closure
+  ("role renaming is blocked") was proposed as a guard on `IsBuiltinRole`
+  covering every rename path — but there are zero rename paths (neither
+  transport's `UpdateRoleRequest` carries a `Name` field), so that guard would
+  never have anything to check. The guard that actually landed
+  (`TestUpdateRoleRequest_CarriesNoNameField`) asserts the precondition itself:
+  no such field exists. Same move, stated in advance rather than caught after
+  the fact: ADR-088's own "Precondition this rule depends on" section names the
+  CLI/hub execution split its no-full-delegation rule requires, and says the
+  rule is void the moment that split changes; ADR-087's Authorize-chain tracing
+  makes reachability turn on whether a call site's actor identity flows through
+  `Authorize`, not on the call site existing. All three are the same
+  discipline: identify the condition a claim rests on, then write the checkable
+  thing to be that condition, not a proxy for it.
 - A skip with a wrong reason is worse than no skip.
 - Timeouts detect hangs; they don't enforce speed. Set them generously, watch durations.
 - When determining whether something needs fixing costs more than fixing it, fix it.
