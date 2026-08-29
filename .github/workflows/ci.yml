@@ -431,13 +431,23 @@ jobs:
           # deadlocked (the prior 20-minute goroutine-dump "failure" that
           # motivated this measurement was the default go-test timeout
           # cutting off a genuinely still-running suite, not a hang).
-          # Sharded 6 ways by test name (same mechanism as handlers-1..4
-          # above, generalized into run_filter_for_shard) rather than left
-          # as one leg: 1904.015s * ~1.7 local->runner factor puts an
-          # unsharded run around 3237s, well past any per-leg budget this
-          # workflow uses elsewhere. 6 shards lands each at ~540s, ~30% of
-          # the 1800s timeout -- comfortably under budget with real headroom
-          # to spare, matching this workflow's generous-timeout precedent
+          # Sharded 6 ways by test name rather than left as one leg:
+          # 1904.015s * ~1.7 local->runner factor puts an unsharded run
+          # around 3237s, well past any per-leg budget this workflow uses
+          # elsewhere. Originally hash-by-(sorted-name-index-mod-6), the same
+          # mechanism handlers-1..4 above uses -- but unlike handlers,
+          # server/http turned out NOT to have uniform per-test cost: CI
+          # measured http-4 landing at ~1180s against a ~953s 6-shard
+          # average (765s-1180s spread, ~54% top-to-bottom), a real
+          # imbalance from the hash, not the workload. Resharded 2026-08-29
+          # to pin http-1..5 by REAL measured per-test time (same fix
+          # root-1/2/3 already applied to root_base's uneven packages, one
+          # level down at test-name granularity) with http-6 as a dynamic
+          # catch-all -- see scripts/ci-test-legs.sh's http_shard_N_tests()
+          # comment for the full measurement and bin-packing writeup. All 6
+          # shards landed within 597.7s-598.9s of each other on that
+          # measurement basis, comfortably under the 1800s timeout with real
+          # headroom to spare, matching this workflow's generous-timeout precedent
           # rather than tuning tight to the observed duration.
           - leg: http-1
             timeout: 1800
@@ -528,17 +538,33 @@ jobs:
               pkgs=./server/http/handlers/...
               ;;
             http-1|http-2|http-3|http-4|http-5|http-6)
-              # server/http, 392 top-level tests -- same by-test-name-mod-N
-              # sharding as handlers-N above (see http_pkg's own comment in
-              # scripts/ci-test-legs.sh for the shard-count derivation).
+              # server/http, 461 top-level tests -- pinned by measured
+              # per-test time (http-1..5) plus a dynamic catch-all (http-6),
+              # NOT the by-test-name-mod-N hash handlers-N above still uses
+              # (see http_pkg's own comment in scripts/ci-test-legs.sh for
+              # why the two mechanisms diverged and the 2026-08-29
+              # measurement behind this one).
               shard=${leg#http-}
-              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 6)
+              run_filter=$(run_filter_for_http_shard "$shard")
               pkgs=./server/http
               ;;
           esac
           # $pkgs is deliberately unquoted below: it holds a space-separated
           # list of Go package paths meant to word-split into separate
           # `go test` arguments, not one literal string.
+          #
+          # -coverprofile unconditionally disables Go's test result cache
+          # (go help test: -cpuprofile/-memprofile/-mutexprofile/-blockprofile/
+          # -coverprofile all make a run's outcome depend on more than the
+          # source+flags go test normally hashes, so it's never eligible for a
+          # cache hit, matched or not). That means `-count=1` isn't the reason
+          # this workflow gets zero benefit from Go's test cache on re-runs of
+          # an unchanged package -- there's no `-count=1` anywhere in this
+          # file. The actual, permanent cause is this flag, and it can't be
+          # dropped without dropping the coverage-floor gate that consumes its
+          # output (build-and-test's "Check coverage floor" step, COVERAGE_FLOOR
+          # above). If someone proposes enabling Go's test cache here, that's
+          # the trade being proposed, whether or not the proposal names it.
           # shellcheck disable=SC2086
           go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
