@@ -88,7 +88,7 @@ func TestCreateMachineIdentity_RejectsZeroProject(t *testing.T) {
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 
-	_, err := c.CreateMachineIdentity(context.Background(), 0, "orphan", "service", "", "", 1)
+	_, err := c.CreateMachineIdentity(context.Background(), 0, "orphan", "service", "", "", 1, 0)
 
 	require.Error(t, err)
 	ms.AssertNotCalled(t, "CreateMachineIdentity", mock.Anything, mock.Anything)

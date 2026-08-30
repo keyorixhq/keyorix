@@ -910,14 +910,19 @@ type SecretDependency struct {
 	DependsOnSecretID uint   `gorm:"not null;uniqueIndex:idx_secret_dep_edge" json:"depends_on_secret_id"`
 	Note              string `json:"note,omitempty"`
 	CreatedBy         uint   `json:"created_by,omitempty"`
-	// CreatedByMachineIdentityID (#1623, mirroring #1573/PR2's
-	// XxxMachineIdentityID companion-field shape) records which machine
-	// identity created this dependency edge, when CreatedBy is 0 because the
-	// creator was a machine caller (ADR-030) rather than a human. Plain uint,
-	// 0 = none, consistent with every other attribution field on this model
-	// and with #1573's other 8 companion fields -- CreatedBy is not part of
-	// idx_secret_dep_edge or any other uniqueness constraint, so the nullable
-	// *uint AuditEvent.MachineIdentityID shape (#1530) is not needed here.
+	// CreatedByMachineIdentityID (#1623, deriving #1573's established shape --
+	// docs/adr-091-machine-createdby-attribution-classification.md) records
+	// which machine identity created this dependency edge, when CreatedBy is 0
+	// because the creator was a machine caller (ADR-030) rather than a human.
+	// Plain uint, 0 = none -- #1573's family uses this shape uniformly, not
+	// AuditEvent.MachineIdentityID's older nullable *uint (#1530): even
+	// AccessRequestApproval.ApproverMachineIdentityID, which DOES sit inside a
+	// uniqueness constraint (ux_access_request_approver), is still a plain
+	// uint rather than nullable -- SQL treats NULL as distinct from every
+	// other NULL, so a nullable column there would silently stop enforcing
+	// "one sign-off per human approver." idx_secret_dep_edge does not include
+	// CreatedBy at all, so that specific concern doesn't apply here, but the
+	// shape itself (plain uint) is #1573's uniform convention regardless.
 	// Before this field existed, CreatedBy alone stored a machine caller's raw
 	// PrincipalID with no discriminator against User.ID's own independent
 	// auto-increment sequence -- the two could collide (#1623).
