@@ -559,7 +559,7 @@ func TestGetSecretValueForUser_SuspendedSecret(t *testing.T) {
 func TestOpenAccessReviewCampaign_ZeroProjectID(t *testing.T) {
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
-	_, err := c.OpenAccessReviewCampaign(context.Background(), 1, 0, "test")
+	_, err := c.OpenAccessReviewCampaign(context.Background(), 1, 0, 0, "test")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "project ID is required")
 }

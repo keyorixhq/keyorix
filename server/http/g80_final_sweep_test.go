@@ -370,7 +370,7 @@ func TestG80Sweep08_TransitionMachineIdentityStateProxy_LegalityAndCreatedBy(t *
 	f := newG80SweepFixture(t)
 	ctx := context.Background()
 
-	machine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "g80sweep08-machine", core.MachineTypeService, "", "", f.adminID)
+	machine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "g80sweep08-machine", core.MachineTypeService, "", "", f.adminID, 0)
 	require.NoError(t, err)
 	require.Equal(t, core.MachineActive, machine.State, "fixture assumption: CreateMachineIdentity starts a machine Active")
 
@@ -418,7 +418,7 @@ func TestG80Sweep09_UpdateMachineIdentityCredentialProxy_OnlyClassificationAppli
 	f := newG80SweepFixture(t)
 	ctx := context.Background()
 
-	machine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "g80sweep09-machine", core.MachineTypeService, "", "", f.adminID)
+	machine, err := f.core.CreateMachineIdentity(ctx, f.projectID, "g80sweep09-machine", core.MachineTypeService, "", "", f.adminID, 0)
 	require.NoError(t, err)
 	originalExpiry := time.Now().Add(30 * 24 * time.Hour)
 	cred, err := f.core.Storage().CreateMachineIdentityCredential(ctx, &models.MachineIdentityCredential{

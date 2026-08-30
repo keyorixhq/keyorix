@@ -38,7 +38,7 @@ func TestG80_1530_MachineActorAttribution_NonNodeServiceIdentity(t *testing.T) {
 	projects, err := testCore.Storage().ListProjects(ctx)
 	require.NoError(t, err)
 
-	mi, err := testCore.CreateMachineIdentity(ctx, projects[0].ID, "attribution-probe-service", core.MachineTypeService, "", "", admin.ID)
+	mi, err := testCore.CreateMachineIdentity(ctx, projects[0].ID, "attribution-probe-service", core.MachineTypeService, "", "", admin.ID, 0)
 	require.NoError(t, err)
 
 	role, err := testCore.Storage().CreateRole(ctx, &models.Role{Name: "g80_1530_system_writer"})

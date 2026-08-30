@@ -138,14 +138,14 @@ func (c *KeyorixCore) validationMode() string {
 // for idp, whether the user is IdP-resolved). Rejects a duplicate non-revoked
 // membership. When the mode lands the membership directly in `active`, the role
 // grant is applied immediately.
-func (c *KeyorixCore) InviteMember(ctx context.Context, projectID, userID uint, role string, invitedBy uint, idpResolved bool) (*models.ProjectMembership, error) {
-	return c.inviteMemberWithMode(ctx, projectID, userID, role, invitedBy, c.validationMode(), idpResolved)
+func (c *KeyorixCore) InviteMember(ctx context.Context, projectID, userID uint, role string, invitedBy, invitedByMachineID uint, idpResolved bool) (*models.ProjectMembership, error) {
+	return c.inviteMemberWithMode(ctx, projectID, userID, role, invitedBy, invitedByMachineID, c.validationMode(), idpResolved)
 }
 
 // inviteMemberWithMode is InviteMember with an explicit validation mode, so the
 // invitation-accept flow (ADR-024/ADR-028) can honour the mode snapshotted at invite
 // time rather than the install's current mode. InviteMember passes the current mode.
-func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userID uint, role string, invitedBy uint, mode string, idpResolved bool) (*models.ProjectMembership, error) {
+func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userID uint, role string, invitedBy, invitedByMachineID uint, mode string, idpResolved bool) (*models.ProjectMembership, error) {
 	if projectID == 0 || userID == 0 {
 		return nil, fmt.Errorf("project and user IDs are required")
 	}
@@ -180,13 +180,14 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	now := c.now()
 	initial := initialMembershipStateForMode(mode, idpResolved)
 	m := &models.ProjectMembership{
-		ProjectID: projectID,
-		UserID:    userID,
-		Role:      role,
-		State:     initial,
-		InvitedBy: invitedBy,
-		InvitedAt: now,
-		UpdatedAt: now,
+		ProjectID:                  projectID,
+		UserID:                     userID,
+		Role:                       role,
+		State:                      initial,
+		InvitedBy:                  invitedBy,
+		InvitedByMachineIdentityID: invitedByMachineID,
+		InvitedAt:                  now,
+		UpdatedAt:                  now,
 	}
 	if initial == MembershipActive {
 		t := now

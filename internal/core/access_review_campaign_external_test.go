@@ -26,7 +26,7 @@ func TestOpenAccessReviewCampaign_SnapshotsEntries(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → one role entry
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "Q4 2026")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "Q4 2026")
 	require.NoError(t, err)
 	assert.Equal(t, core.CampaignStateOpen, res.Campaign.State)
 	assert.Equal(t, "Q4 2026", res.Campaign.Name)
@@ -38,6 +38,30 @@ func TestOpenAccessReviewCampaign_SnapshotsEntries(t *testing.T) {
 	require.Len(t, detail.Items, 1)
 	assert.Equal(t, core.ReviewItemPending, detail.Items[0].Decision)
 	assert.Equal(t, "alice", detail.Items[0].PrincipalName)
+}
+
+// #1573: a machine identity holding project-scoped roles.assign can open and
+// close a campaign. actorID (0, ADR-030) alone loses which machine did it;
+// the *MachineIdentityID companion fields must carry it through.
+func TestAccessReviewCampaign_RecordsActingMachineIdentity(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateCampaignTables(t, h)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 0, 42, proj, "Machine-opened")
+	require.NoError(t, err)
+	assert.Zero(t, res.Campaign.CreatedBy)
+	assert.Equal(t, uint(42), res.Campaign.CreatedByMachineIdentityID)
+
+	closed, err := h.CoreService.CloseAccessReviewCampaign(ctx, 0, 77, proj, res.Campaign.ID, true)
+	require.NoError(t, err)
+	assert.Zero(t, closed.Campaign.ClosedBy)
+	assert.Equal(t, uint(77), closed.Campaign.ClosedByMachineIdentityID)
 }
 
 // Attesting an item marks it kept; revoking removes the underlying grant.
@@ -53,7 +77,7 @@ func TestDecideAccessReviewItem_AttestAndRevoke(t *testing.T) {
 	h.AssignUserRole(t, 10, 3, uptr(proj)) // alice editor
 	h.AssignUserRole(t, 11, 4, uptr(proj)) // bob viewer
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
 	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
 	require.NoError(t, err)
@@ -103,7 +127,7 @@ func TestDecideAccessReviewItem_RejectsSelfCertification(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, uptr(proj))
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
 	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
 	require.NoError(t, err)
@@ -133,7 +157,7 @@ func TestDecideAccessReviewItem_RejectsNonHumanReviewer(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, uptr(proj))
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
 	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
 	require.NoError(t, err)
@@ -165,7 +189,7 @@ func TestDecideAccessReviewItem_RejectsGroupSelfCertification(t *testing.T) {
 	h.AssignGroupRole(t, g.ID, 3, uptr(proj)) // the group holds a role in the project
 	h.AssignUserToGroup(t, 20, g.ID)          // carol is a member
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
 	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
 	require.NoError(t, err)
@@ -199,7 +223,7 @@ func TestDecideAccessReviewItem_RejectsDoubleDecision(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, uptr(proj))
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
 	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
 	require.NoError(t, err)
@@ -228,15 +252,15 @@ func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, uptr(proj))
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
 
 	// One pending item → close without force fails.
-	_, err = h.CoreService.CloseAccessReviewCampaign(ctx, 1, proj, res.Campaign.ID, false)
+	_, err = h.CoreService.CloseAccessReviewCampaign(ctx, 1, 0, proj, res.Campaign.ID, false)
 	require.Error(t, err)
 
 	// Force-close succeeds and freezes the campaign.
-	closed, err := h.CoreService.CloseAccessReviewCampaign(ctx, 1, proj, res.Campaign.ID, true)
+	closed, err := h.CoreService.CloseAccessReviewCampaign(ctx, 1, 0, proj, res.Campaign.ID, true)
 	require.NoError(t, err)
 	assert.Equal(t, core.CampaignStateClosed, closed.Campaign.State)
 	// #237: a force-close performed while items are still pending must be marked
@@ -251,7 +275,7 @@ func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {
 	require.Error(t, err)
 
 	// Re-closing is rejected.
-	_, err = h.CoreService.CloseAccessReviewCampaign(ctx, 1, proj, res.Campaign.ID, true)
+	_, err = h.CoreService.CloseAccessReviewCampaign(ctx, 1, 0, proj, res.Campaign.ID, true)
 	require.Error(t, err)
 }
 
@@ -269,7 +293,7 @@ func TestCloseAccessReviewCampaign_FullyDecidedIsNotForcedIncomplete(t *testing.
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, uptr(proj))
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "review")
 	require.NoError(t, err)
 	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
 	require.NoError(t, err)
@@ -278,7 +302,7 @@ func TestCloseAccessReviewCampaign_FullyDecidedIsNotForcedIncomplete(t *testing.
 
 	// Nothing pending, so this close (whether force is true or false) is a genuine
 	// completed review.
-	closed, err := h.CoreService.CloseAccessReviewCampaign(ctx, 1, proj, res.Campaign.ID, true)
+	closed, err := h.CoreService.CloseAccessReviewCampaign(ctx, 1, 0, proj, res.Campaign.ID, true)
 	require.NoError(t, err)
 	assert.Equal(t, core.CampaignStateClosed, closed.Campaign.State)
 	assert.False(t, closed.Campaign.ForcedIncomplete, "a fully-decided close must not be flagged incomplete")
@@ -294,7 +318,7 @@ func TestAccessReviewCampaign_CrossProjectGuard(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	h.AssignUserRole(t, 10, 3, uptr(uint(2)))
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 2, "p2")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, 2, "p2")
 	require.NoError(t, err)
 
 	// Reaching campaign (project 2) through project 3 must fail.
@@ -308,7 +332,7 @@ func TestOpenAccessReviewCampaign_RequiresProject(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
-	_, err := h.CoreService.OpenAccessReviewCampaign(context.Background(), 1, 0, "x")
+	_, err := h.CoreService.OpenAccessReviewCampaign(context.Background(), 1, 0, 0, "x")
 	require.Error(t, err)
 }
 
@@ -336,7 +360,7 @@ func TestOpenAccessReviewCampaign_PersistsDegradedFromReport(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.Degraded, "sanity: the report itself must be degraded for this test to be meaningful")
 
-	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "degraded review")
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "degraded review")
 	require.NoError(t, err)
 	assert.True(t, res.Campaign.Degraded, "the campaign returned by Open must carry the degraded signal")
 	assert.NotEmpty(t, res.Campaign.DegradedReasons)

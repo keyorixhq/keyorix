@@ -67,7 +67,7 @@ func setupMachineLocalDB(t *testing.T) (projectID uint, machineID uint, machineN
 	require.NoError(t, err)
 	projectID = proj.ID
 
-	m, err := svc.CreateMachineIdentity(ctx, projectID, "ci-bot", "ci", "CI runner", "", 0)
+	m, err := svc.CreateMachineIdentity(ctx, projectID, "ci-bot", "ci", "CI runner", "", 0, 0)
 	require.NoError(t, err)
 	machineID = m.ID
 	machineName = m.Name

@@ -120,7 +120,7 @@ func (c *KeyorixCore) RunScheduledRecertification(ctx context.Context, cadenceDa
 
 		if autoOpen {
 			name := fmt.Sprintf("Scheduled recertification %s", c.now().Format("2006-01-02"))
-			if _, err := c.OpenAccessReviewCampaign(WithActorType(ctx, ActorTypeSystem), 0, pid, name); err != nil {
+			if _, err := c.OpenAccessReviewCampaign(WithActorType(ctx, ActorTypeSystem), 0, 0, pid, name); err != nil {
 				continue
 			}
 			res.Opened++

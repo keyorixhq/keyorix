@@ -103,10 +103,11 @@ var updateSecretAllowlist = map[string]secretUpdateFieldClass{
 	"RetentionOverrideDays": secretFieldRejected,
 
 	// -- rejected: gated by an authorization check this endpoint cannot run --
-	"OwnerID":        secretFieldRejected, // TransferSecretOwnership: current-owner + SoD check
-	"ParentID":       secretFieldRejected, // MoveSecret: cross-project/environment guard
-	"Name":           secretFieldRejected, // BulkRenameSecrets: uniqueness + validation
-	"Classification": secretFieldRejected, // ClassifySecret: G09 read-approval gate on downgrade
+	"OwnerID":                secretFieldRejected, // TransferSecretOwnership: current-owner + SoD check
+	"OwnerMachineIdentityID": secretFieldRejected, // set at creation only (#1573); reassignment is the same TransferSecretOwnership gate as OwnerID, which explicitly rejects a machine actor
+	"ParentID":               secretFieldRejected, // MoveSecret: cross-project/environment guard
+	"Name":                   secretFieldRejected, // BulkRenameSecrets: uniqueness + validation
+	"Classification":         secretFieldRejected, // ClassifySecret: G09 read-approval gate on downgrade
 	// AutoRotate/RotationLength/RotationCharset are set together with
 	// RotationBackend/RotationRef in the ONE SetSecretAutoRotate call (rotation_executor.go)
 	// as a single AutoRotateSpec. requireAdminAuthorityAt only fires when Backend/Ref
@@ -214,6 +215,9 @@ func diffSecretUpdate(authoritative, desired *models.SecretNode) secretUpdateDif
 	}
 	if authoritative.OwnerID != desired.OwnerID {
 		d.Rejected = append(d.Rejected, "owner_id")
+	}
+	if authoritative.OwnerMachineIdentityID != desired.OwnerMachineIdentityID {
+		d.Rejected = append(d.Rejected, "owner_machine_identity_id")
 	}
 	if authoritative.IsShared != desired.IsShared {
 		d.Rejected = append(d.Rejected, "is_shared")

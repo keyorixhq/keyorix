@@ -113,7 +113,7 @@ func TestMachineAuditReport_ContainsCreatedMachine(t *testing.T) {
 
 	// Create a project first (bootstrap already creates project ID=1).
 	ctx := context.Background()
-	machine, err := c.CreateMachineIdentity(ctx, 1, "audit-test-bot", "ci", "robot for audit test", "", 1)
+	machine, err := c.CreateMachineIdentity(ctx, 1, "audit-test-bot", "ci", "robot for audit test", "", 1, 0)
 	require.NoError(t, err)
 	require.NotNil(t, machine)
 
@@ -152,7 +152,7 @@ func TestMachineAuditReport_NeverUsedIsStale(t *testing.T) {
 	defer srv.Close()
 
 	ctx := context.Background()
-	machine, err := c.CreateMachineIdentity(ctx, 1, "stale-bot", "ci", "never used", "", 1)
+	machine, err := c.CreateMachineIdentity(ctx, 1, "stale-bot", "ci", "never used", "", 1, 0)
 	require.NoError(t, err)
 
 	resp := authGetMachineAudit(t, srv, token, "/api/v1/machine-identities/audit")

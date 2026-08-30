@@ -70,7 +70,7 @@ func tallyProgress(items []*models.AccessReviewItem) CampaignProgress {
 // OpenAccessReviewCampaign snapshots the project's current access review into a new
 // campaign's items (each pending) and returns the campaign with its (all-pending)
 // progress. actorID is the opener.
-func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, projectID uint, name string) (*CampaignWithProgress, error) {
+func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, actorMachineID, projectID uint, name string) (*CampaignWithProgress, error) {
 	// Note: opening is NOT gated on a human actor — the scheduler legitimately auto-opens
 	// overdue campaigns as a system action (actorID==0). Opening only generates review
 	// items; the attributable-human requirement is enforced on the DECISION (attest/
@@ -92,13 +92,14 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, pro
 	// consumed — an ephemeral return value is not a durable record that this
 	// recertification cycle's evidence snapshot was incomplete.
 	campaign, err := c.storage.CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID:       projectID,
-		Name:            name,
-		State:           CampaignStateOpen,
-		CreatedBy:       actorID,
-		CreatedAt:       c.now(),
-		Degraded:        report.Degraded,
-		DegradedReasons: report.DegradedReasons,
+		ProjectID:                  projectID,
+		Name:                       name,
+		State:                      CampaignStateOpen,
+		CreatedBy:                  actorID,
+		CreatedByMachineIdentityID: actorMachineID,
+		CreatedAt:                  c.now(),
+		Degraded:                   report.Degraded,
+		DegradedReasons:            report.DegradedReasons,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -383,7 +384,7 @@ func (c *KeyorixCore) checkForceCloseIndependence(ctx context.Context, actorID u
 // CloseAccessReviewCampaign freezes a campaign as the evidence record. It refuses
 // while items remain pending unless force is set (so an auditor sees either a fully
 // decided cycle or an explicit early close). actorID is the closer.
-func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, projectID, campaignID uint, force bool) (*CampaignWithProgress, error) {
+func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, actorMachineID, projectID, campaignID uint, force bool) (*CampaignWithProgress, error) {
 	campaign, err := c.loadScopedCampaign(ctx, projectID, campaignID)
 	if err != nil {
 		return nil, err
@@ -411,6 +412,7 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, pr
 	now := c.now()
 	campaign.State = CampaignStateClosed
 	campaign.ClosedBy = actorID
+	campaign.ClosedByMachineIdentityID = actorMachineID
 	campaign.ClosedAt = &now
 	// #237: a forced close with items still pending freezes the campaign as
 	// evidence, but it is NOT a genuine, fully-decided recertification cycle —

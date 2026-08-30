@@ -1183,6 +1183,55 @@ func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+// TestCreateSetupTokenProxy_MachineCallerAttributionDistinguishable is the
+// #1623 regression for this handler: a machine caller minting a setup token
+// must be recorded via CreatedByMachineIdentityID, not stamped into CreatedBy
+// where it would be indistinguishable from a real User.ID sharing the same
+// number -- a third, previously unflagged instance of #1623's shape, found
+// sweeping PrincipalID()'s call sites while fixing the original.
+func TestCreateSetupTokenProxy_MachineCallerAttributionDistinguishable(t *testing.T) {
+	cs := freshCoreS12(t)
+	h := NewAuthHandler(cs, false)
+	ctx := context.Background()
+	user, err := cs.Storage().CreateUser(ctx, &models.User{
+		Username: "newuser_1623", Email: "newuser_1623@example.com", PasswordHash: "x",
+	})
+	require.NoError(t, err)
+
+	const callerMachineID = 99
+	_, err = cs.Storage().CreateMachineIdentity(ctx, &models.MachineIdentity{
+		ID: callerMachineID, ProjectID: 1, Name: "setup-minter", IdentityType: "automation", State: "active",
+	})
+	require.NoError(t, err)
+	// Minting a setup token requires users.write (ADR-085) -- granted
+	// explicitly, since machine principals never get the admin-role-name
+	// bypass human callers can use (ADR-030's no-bypass property).
+	perm, err := cs.Storage().CreatePermission(ctx, &models.Permission{Name: "users.write", Resource: "users", Action: "write"})
+	require.NoError(t, err)
+	role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "setup-minter-role", Description: "test"})
+	require.NoError(t, err)
+	require.NoError(t, cs.Storage().AssignPermissionToRole(ctx, role.ID, perm.ID))
+	require.NoError(t, cs.Storage().AssignMachineRole(ctx, callerMachineID, role.ID, coreStorage.Scope{}))
+
+	body := proxyJSON(map[string]interface{}{
+		"token_hash":      "1623deadbeef1234567890ab",
+		"purpose":         "account_setup",
+		"subject_email":   "newuser_1623@example.com",
+		"subject_user_id": user.ID,
+		"state":           "active",
+		"expires_at":      time.Now().Add(24 * time.Hour),
+	})
+	req := withMachineCtxID(httptest.NewRequest(http.MethodPost, "/system/setup-tokens", body), callerMachineID)
+	w := httptest.NewRecorder()
+	h.CreateSetupTokenProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	created, err := cs.Storage().GetSetupTokenByHash(ctx, "1623deadbeef1234567890ab")
+	require.NoError(t, err)
+	assert.Zero(t, created.CreatedBy, "must NOT be stamped with the calling machine's raw ID -- that is #1623's exact bug")
+	assert.Equal(t, uint(callerMachineID), created.CreatedByMachineIdentityID, "the calling machine's real MachineIdentity.ID")
+}
+
 // TestGetSetupTokenByHashProxy_EmptyHash_S13 — empty hash → 400.
 func TestGetSetupTokenByHashProxy_EmptyHash_S13(t *testing.T) {
 	h := freshAuthHandlerS13(t)

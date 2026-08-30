@@ -443,7 +443,7 @@ type Storage interface {
 	// revokes of the same activation cannot both "win": only the first transitions
 	// state, and the second gets ErrBreakGlassNotActive rather than silently
 	// overwriting the first revoker's attribution.
-	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error
+	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)

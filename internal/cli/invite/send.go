@@ -61,7 +61,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	inv, prov, err := service.InviteToProjectWithLink(ctx, projectID, sendEmail, sendRole, invitedBy)
+	inv, prov, err := service.InviteToProjectWithLink(ctx, projectID, sendEmail, sendRole, invitedBy, 0)
 	if err != nil {
 		if inv == nil {
 			return fmt.Errorf("failed to send invitation: %w", err)

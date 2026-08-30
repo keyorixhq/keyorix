@@ -86,13 +86,14 @@ func (ls *LocalStorage) UpdateBreakGlassActivation(ctx context.Context, a *model
 // so a concurrent revoke of the same activation cannot silently overwrite this
 // one's RevokedBy/RevokedAt. Returns storage.ErrBreakGlassNotActive (wrapped) if
 // the row was not active (already revoked, or absent).
-func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error {
+func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
 		Where("id = ? AND state = ?", id, breakGlassActiveState).
 		Updates(map[string]interface{}{
-			"state":      breakGlassRevokedState,
-			"revoked_by": revokedBy,
-			"revoked_at": revokedAt,
+			"state":                          breakGlassRevokedState,
+			"revoked_by":                     revokedBy,
+			"revoked_by_machine_identity_id": revokedByMachineID,
+			"revoked_at":                     revokedAt,
 		})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)

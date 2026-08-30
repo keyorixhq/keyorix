@@ -244,7 +244,7 @@ func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.
 	require.NoError(t, h.DB.AutoMigrate(
 		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}))
 
-	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1)
+	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1, 0)
 	require.NoError(t, err)
 	// requireMachinePrivilegeCeiling now requires the calling actor (user 1) to
 	// hold roles.assign at the target project scope before it can mint a token —
@@ -345,7 +345,7 @@ func TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC(t *testing.T) {
 	require.NoError(t, h.DB.AutoMigrate(
 		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}))
 
-	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot-cidr", "service", "", "", 1)
+	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot-cidr", "service", "", "", 1, 0)
 	require.NoError(t, err)
 	// requireMachinePrivilegeCeiling now requires the calling actor (user 1) to
 	// hold roles.assign at the target project scope before it can mint a token —
@@ -445,7 +445,7 @@ func TestAuthInterceptor_MachineRequestStampsMachineActorInAudit(t *testing.T) {
 	require.NoError(t, h.DB.AutoMigrate(
 		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}, &models.AuditEvent{}))
 
-	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1)
+	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1, 0)
 	require.NoError(t, err)
 	// requireMachinePrivilegeCeiling now requires the calling actor (user 1) to
 	// hold roles.assign at the target project scope before it can mint a token —

@@ -65,7 +65,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	// #G67: operator-asserted actor (KEYORIX_CLI_ACTOR), not a hardcoded placeholder.
-	m, err := svc.CreateMachineIdentity(ctx, projectID, createName, createType, createDescription, createClassification, common.ResolveActorID())
+	m, err := svc.CreateMachineIdentity(ctx, projectID, createName, createType, createDescription, createClassification, common.ResolveActorID(), 0)
 	if err != nil {
 		return fmt.Errorf("failed to create machine identity: %w", err)
 	}

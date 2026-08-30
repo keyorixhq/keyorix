@@ -33,7 +33,7 @@ func TestUpdateMachineIdentityCredentialProxy_IgnoresTokenHashAndRevoked_RealSer
 
 	proj, err := cs.CreateProject(ctx, "g80-credential-narrow-proj", "")
 	require.NoError(t, err)
-	m, err := cs.CreateMachineIdentity(ctx, proj.ID, "g80-credential-narrow-machine", core.MachineTypeOther, "", "", 0)
+	m, err := cs.CreateMachineIdentity(ctx, proj.ID, "g80-credential-narrow-machine", core.MachineTypeOther, "", "", 0, 0)
 	require.NoError(t, err)
 	// actorID must belong to a real user holding admin/roles.assign authority
 	// now that IssueMachineToken enforces RequireMachinePrivilegeCeiling; user

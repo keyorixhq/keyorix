@@ -84,7 +84,7 @@ func IsValidMachineTransition(from, to string) bool {
 }
 
 // CreateMachineIdentity creates an active machine identity in a project.
-func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint, name, identityType, description, classification string, createdBy uint) (*models.MachineIdentity, error) {
+func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint, name, identityType, description, classification string, createdBy, createdByMachineID uint) (*models.MachineIdentity, error) {
 	if projectID == 0 || name == "" {
 		return nil, fmt.Errorf("project ID and name are required")
 	}
@@ -99,15 +99,16 @@ func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint,
 	}
 	now := c.now()
 	m := &models.MachineIdentity{
-		ProjectID:      projectID,
-		Name:           name,
-		IdentityType:   identityType,
-		State:          MachineActive,
-		Description:    description,
-		Classification: classification,
-		CreatedBy:      createdBy,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ProjectID:                  projectID,
+		Name:                       name,
+		IdentityType:               identityType,
+		State:                      MachineActive,
+		Description:                description,
+		Classification:             classification,
+		CreatedBy:                  createdBy,
+		CreatedByMachineIdentityID: createdByMachineID,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
 	}
 	created, err := c.storage.CreateMachineIdentity(ctx, m)
 	if err != nil {

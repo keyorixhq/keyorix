@@ -120,7 +120,7 @@ func createNodeIdentityAndAdmin(t *testing.T, c *core.KeyorixCore) (mi *models.M
 	projects, err := c.Storage().ListProjects(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, projects, "createTestToken must have seeded a default project")
-	mi, err = c.CreateMachineIdentity(ctx, projects[0].ID, "test-node", core.MachineTypeNode, "test node credential", "", admin.ID)
+	mi, err = c.CreateMachineIdentity(ctx, projects[0].ID, "test-node", core.MachineTypeNode, "test node credential", "", admin.ID, 0)
 	require.NoError(t, err)
 	return mi, admin, projects[0].ID
 }

@@ -99,7 +99,7 @@ func TestAssignMachineRole_EscalationByProxyBlocked(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "mr-attacker", "project_viewer", storage.Scope{ProjectID: 1})
-	m, err := c.CreateMachineIdentity(ctx, 1, "svc", MachineTypeService, "", "", attacker)
+	m, err := c.CreateMachineIdentity(ctx, 1, "svc", MachineTypeService, "", "", attacker, 0)
 	require.NoError(t, err)
 	adminRole, err := c.storage.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)

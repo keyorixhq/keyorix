@@ -569,6 +569,61 @@ func TestCreateMachineIdentityProxy_MissingFields_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestCreateMachineIdentityProxy_MachineCallerAttributionDistinguishable is
+// the #1623 regression for this handler: a machine identity that creates
+// ANOTHER machine identity (a machine provisioning a machine) must be
+// recorded via CreatedByMachineIdentityID, not stamped into CreatedBy where
+// it would be indistinguishable from a real User.ID sharing the same number.
+func TestCreateMachineIdentityProxy_MachineCallerAttributionDistinguishable(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	catalog := NewCatalogHandler(cs)
+	proj := &models.Project{Name: "test-proj-mach-1623"}
+	require.NoError(t, db.Create(proj).Error)
+
+	const callerMachineID = 42
+	require.NoError(t, db.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityRole{}))
+	require.NoError(t, db.Create(&models.MachineIdentity{
+		ID: callerMachineID, ProjectID: proj.ID, Name: "provisioner", IdentityType: "automation", State: "active",
+	}).Error)
+
+	// Grant the calling machine identity roles.assign at the target project --
+	// RequireMachinePrivilegeCeiling's fallback path for a brand-new target
+	// (machineID==0, since none exists yet) requires it.
+	perm := &models.Permission{}
+	if err := db.Where("name = ?", "roles.assign").First(perm).Error; err != nil {
+		perm = &models.Permission{Name: "roles.assign", Resource: "roles", Action: "assign"}
+		require.NoError(t, db.Create(perm).Error)
+	}
+	role := &models.Role{Name: "provisioner-role"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{
+		MachineIdentityID: callerMachineID, RoleID: role.ID, ProjectID: proj.ID, EnvironmentID: 0,
+	}).Error)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "proxy-provisioned-bot",
+		"project_id":    proj.ID,
+		"identity_type": "service",
+		"state":         "active",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/machine-identities", bytes.NewReader(body))
+	req = withMachineCtxID(req, callerMachineID)
+	w := httptest.NewRecorder()
+	catalog.CreateMachineIdentityProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp remoteAPIResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	data := resp.Data.(map[string]interface{})
+	createdID := uint(data["id"].(float64))
+
+	created, err := cs.Storage().GetMachineIdentity(t.Context(), createdID)
+	require.NoError(t, err)
+	assert.Zero(t, created.CreatedBy, "must NOT be stamped with the calling machine's raw ID -- that is #1623's exact bug")
+	assert.Equal(t, uint(callerMachineID), created.CreatedByMachineIdentityID, "the calling machine's real MachineIdentity.ID")
+}
+
 func TestCreateMachineIdentityProxy_HappyPath_S13(t *testing.T) {
 	h, projID := machineHandlerWithProjectS13(t)
 	// identity_type must be one of core's validMachineTypes (ci|k8s|service|

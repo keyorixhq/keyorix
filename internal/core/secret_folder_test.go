@@ -91,6 +91,29 @@ func TestCreateSecret_ParentID_SetsParent(t *testing.T) {
 	assert.Equal(t, folder.ID, *got.ParentID)
 }
 
+// TestCreateSecret_RecordsActingMachineIdentity: #1573 -- a machine identity
+// holding project-scoped secrets.write can create a secret. OwnerID (0,
+// ADR-030) alone loses which machine did it; OwnerMachineIdentityID must
+// carry it through to the persisted row.
+func TestCreateSecret_RecordsActingMachineIdentity(t *testing.T) {
+	c, _ := newFolderCoreDB(t)
+
+	req := &CreateSecretRequest{
+		Name:                   "machine-created",
+		Value:                  []byte("s3cr3t"),
+		ProjectID:              1,
+		EnvironmentID:          10,
+		Type:                   "generic",
+		CreatedBy:              "machine",
+		OwnerID:                0,
+		OwnerMachineIdentityID: 42,
+	}
+	got, err := c.CreateSecret(context.Background(), req)
+	require.NoError(t, err)
+	assert.Zero(t, got.OwnerID)
+	assert.Equal(t, uint(42), got.OwnerMachineIdentityID)
+}
+
 // TestCreateSecret_ParentID_NotAFolder verifies that using a real secret as the
 // parent is rejected with a validation error.
 func TestCreateSecret_ParentID_NotAFolder(t *testing.T) {

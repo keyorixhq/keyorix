@@ -60,32 +60,34 @@ import (
 // models.ProjectInvitation before #507), so — matching membershipWire's/
 // invitationWire's reasoning — every field is named explicitly here.
 type breakGlassActivationWire struct {
-	ID            uint       `json:"id"`
-	ProjectID     uint       `json:"project_id"`
-	UserID        uint       `json:"user_id"`
-	RoleID        uint       `json:"role_id"`
-	RoleName      string     `json:"role_name"`
-	Justification string     `json:"justification"`
-	State         string     `json:"state"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	RevokedBy     uint       `json:"revoked_by,omitempty"`
-	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	UserID                     uint       `json:"user_id"`
+	RoleID                     uint       `json:"role_id"`
+	RoleName                   string     `json:"role_name"`
+	Justification              string     `json:"justification"`
+	State                      string     `json:"state"`
+	ExpiresAt                  *time.Time `json:"expires_at,omitempty"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	RevokedBy                  uint       `json:"revoked_by,omitempty"`
+	RevokedByMachineIdentityID uint       `json:"revoked_by_machine_identity_id,omitempty"`
+	RevokedAt                  *time.Time `json:"revoked_at,omitempty"`
 }
 
 func (w breakGlassActivationWire) toModel() *models.BreakGlassActivation {
 	return &models.BreakGlassActivation{
-		ID:            w.ID,
-		ProjectID:     w.ProjectID,
-		UserID:        w.UserID,
-		RoleID:        w.RoleID,
-		RoleName:      w.RoleName,
-		Justification: w.Justification,
-		State:         w.State,
-		ExpiresAt:     w.ExpiresAt,
-		CreatedAt:     w.CreatedAt,
-		RevokedBy:     w.RevokedBy,
-		RevokedAt:     w.RevokedAt,
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		UserID:                     w.UserID,
+		RoleID:                     w.RoleID,
+		RoleName:                   w.RoleName,
+		Justification:              w.Justification,
+		State:                      w.State,
+		ExpiresAt:                  w.ExpiresAt,
+		CreatedAt:                  w.CreatedAt,
+		RevokedBy:                  w.RevokedBy,
+		RevokedByMachineIdentityID: w.RevokedByMachineIdentityID,
+		RevokedAt:                  w.RevokedAt,
 	}
 }
 
@@ -164,8 +166,9 @@ func (rs *RemoteStorage) UpdateBreakGlassActivation(_ context.Context, _ *models
 // breakGlassRevokeRequest is RevokeBreakGlassActivation's request body, matching
 // server/http/handlers/break_glass_proxy.go's breakGlassRevokeProxyRequest.
 type breakGlassRevokeRequest struct {
-	RevokedBy uint      `json:"revoked_by"`
-	RevokedAt time.Time `json:"revoked_at"`
+	RevokedBy                  uint      `json:"revoked_by"`
+	RevokedByMachineIdentityID uint      `json:"revoked_by_machine_identity_id,omitempty"`
+	RevokedAt                  time.Time `json:"revoked_at"`
 }
 
 // RevokeBreakGlassActivation atomically transitions activation id from active to
@@ -177,9 +180,9 @@ type breakGlassRevokeRequest struct {
 // the exact double-revoke TOCTOU race this method exists to close (two
 // concurrent revoke requests both observing "active" before either writes). One
 // HTTP round trip maps to one atomic server-side conditional UPDATE.
-func (rs *RemoteStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error {
+func (rs *RemoteStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error {
 	path := fmt.Sprintf("/api/v1/system/break-glass/%d/revoke", id)
-	resp, err := rs.client.Post(ctx, path, breakGlassRevokeRequest{RevokedBy: revokedBy, RevokedAt: revokedAt})
+	resp, err := rs.client.Post(ctx, path, breakGlassRevokeRequest{RevokedBy: revokedBy, RevokedByMachineIdentityID: revokedByMachineID, RevokedAt: revokedAt})
 	if err != nil {
 		// Same reasoning as CreateBreakGlassActivation above: makeRequest turns
 		// RevokeBreakGlassActivationProxy's 409 Conflict into a non-nil error

@@ -54,48 +54,51 @@ import (
 // hash out of USER-facing responses — irrelevant here, since this is an internal
 // system-to-system wire format gated on system.read/system.write).
 type setupTokenProxyWire struct {
-	ID            uint       `json:"id"`
-	TokenHash     string     `json:"token_hash"`
-	Purpose       string     `json:"purpose"`
-	SubjectUserID *uint      `json:"subject_user_id"`
-	SubjectEmail  string     `json:"subject_email"`
-	InvitationID  *uint      `json:"invitation_id"`
-	State         string     `json:"state"`
-	ExpiresAt     time.Time  `json:"expires_at"`
-	CreatedBy     uint       `json:"created_by"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ConsumedAt    *time.Time `json:"consumed_at"`
+	ID                         uint       `json:"id"`
+	TokenHash                  string     `json:"token_hash"`
+	Purpose                    string     `json:"purpose"`
+	SubjectUserID              *uint      `json:"subject_user_id"`
+	SubjectEmail               string     `json:"subject_email"`
+	InvitationID               *uint      `json:"invitation_id"`
+	State                      string     `json:"state"`
+	ExpiresAt                  time.Time  `json:"expires_at"`
+	CreatedBy                  uint       `json:"created_by"`
+	CreatedByMachineIdentityID uint       `json:"created_by_machine_identity_id,omitempty"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	ConsumedAt                 *time.Time `json:"consumed_at"`
 }
 
 func newSetupTokenProxyWire(t *models.SetupToken) setupTokenProxyWire {
 	return setupTokenProxyWire{
-		ID:            t.ID,
-		TokenHash:     t.TokenHash,
-		Purpose:       t.Purpose,
-		SubjectUserID: t.SubjectUserID,
-		SubjectEmail:  t.SubjectEmail,
-		InvitationID:  t.InvitationID,
-		State:         t.State,
-		ExpiresAt:     t.ExpiresAt,
-		CreatedBy:     t.CreatedBy,
-		CreatedAt:     t.CreatedAt,
-		ConsumedAt:    t.ConsumedAt,
+		ID:                         t.ID,
+		TokenHash:                  t.TokenHash,
+		Purpose:                    t.Purpose,
+		SubjectUserID:              t.SubjectUserID,
+		SubjectEmail:               t.SubjectEmail,
+		InvitationID:               t.InvitationID,
+		State:                      t.State,
+		ExpiresAt:                  t.ExpiresAt,
+		CreatedBy:                  t.CreatedBy,
+		CreatedByMachineIdentityID: t.CreatedByMachineIdentityID,
+		CreatedAt:                  t.CreatedAt,
+		ConsumedAt:                 t.ConsumedAt,
 	}
 }
 
 func (w setupTokenProxyWire) toModel() *models.SetupToken {
 	return &models.SetupToken{
-		ID:            w.ID,
-		TokenHash:     w.TokenHash,
-		Purpose:       w.Purpose,
-		SubjectUserID: w.SubjectUserID,
-		SubjectEmail:  w.SubjectEmail,
-		InvitationID:  w.InvitationID,
-		State:         w.State,
-		ExpiresAt:     w.ExpiresAt,
-		CreatedBy:     w.CreatedBy,
-		CreatedAt:     w.CreatedAt,
-		ConsumedAt:    w.ConsumedAt,
+		ID:                         w.ID,
+		TokenHash:                  w.TokenHash,
+		Purpose:                    w.Purpose,
+		SubjectUserID:              w.SubjectUserID,
+		SubjectEmail:               w.SubjectEmail,
+		InvitationID:               w.InvitationID,
+		State:                      w.State,
+		ExpiresAt:                  w.ExpiresAt,
+		CreatedBy:                  w.CreatedBy,
+		CreatedByMachineIdentityID: w.CreatedByMachineIdentityID,
+		CreatedAt:                  w.CreatedAt,
+		ConsumedAt:                 w.ConsumedAt,
 	}
 }
 
@@ -224,8 +227,17 @@ func (h *AuthHandler) CreateSetupTokenProxy(w http.ResponseWriter, r *http.Reque
 	// used to persist verbatim from the wire and feed the setup_token.issued
 	// audit event's actor field. This route's own gating decision (users.write
 	// above) was already correctly context-derived; force provenance to match.
+	//
+	// #1623: userCtx.PrincipalID() alone is ambiguous against User.ID for a
+	// machine caller (the same ID-namespace-collision #1623 filed for
+	// SecretDependency.CreatedBy -- a THIRD, previously unflagged instance of
+	// the same shape, found sweeping PrincipalID()'s call sites during that
+	// fix). actorID(r)/machineID(r) split the two ID spaces the same way
+	// #1573's PR2 does everywhere else: exactly one of
+	// CreatedBy/CreatedByMachineIdentityID is nonzero for any real actor.
 	model := body.toModel()
-	model.CreatedBy = userCtx.PrincipalID()
+	model.CreatedBy = actorID(r)
+	model.CreatedByMachineIdentityID = machineID(r)
 	created, err := h.coreService.Storage().CreateSetupToken(r.Context(), model)
 	if err != nil {
 		log.Printf("setup-tokens proxy: create failed: %v", err)

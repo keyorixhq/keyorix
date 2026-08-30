@@ -2061,7 +2061,7 @@ func TestUpdateBreakGlassActivation_UpsertPath(t *testing.T) {
 // RevokeBreakGlassActivation — not-found.
 func TestRevokeBreakGlassActivation_NotFound(t *testing.T) {
 	ls := newBGStoreMax(t)
-	err := ls.RevokeBreakGlassActivation(context.Background(), 9999, 1, time.Now())
+	err := ls.RevokeBreakGlassActivation(context.Background(), 9999, 1, 0, time.Now())
 	require.Error(t, err)
 }
 

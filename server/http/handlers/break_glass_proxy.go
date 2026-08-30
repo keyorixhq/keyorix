@@ -268,7 +268,9 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		return
 	}
 
-	if err := h.coreService.Storage().RevokeBreakGlassActivation(r.Context(), uint(id), revokedBy, body.RevokedAt); err != nil {
+	// revokedBy is required nonzero human above (actorID(r)==0 denied) -- this
+	// route never represents a machine revoker, so 0 for the companion param.
+	if err := h.coreService.Storage().RevokeBreakGlassActivation(r.Context(), uint(id), revokedBy, 0, body.RevokedAt); err != nil {
 		if errors.Is(err, coreStorage.ErrBreakGlassNotActive) {
 			writeRemoteAPIError(w, http.StatusConflict, breakGlassNotActiveCode, coreStorage.ErrBreakGlassNotActive.Error())
 			return

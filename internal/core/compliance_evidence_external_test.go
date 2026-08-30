@@ -27,7 +27,7 @@ func TestGenerateComplianceEvidence_BundlesRecords(t *testing.T) {
 	h.AssignUserRole(t, 10, 3, uptr(proj))
 
 	// A campaign (the recertification record) and an active break-glass activation.
-	camp, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "Q4 review")
+	camp, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, 0, proj, "Q4 review")
 	require.NoError(t, err)
 	future := time.Now().Add(time.Hour)
 	require.NoError(t, h.DB.Create(&models.BreakGlassActivation{
