@@ -156,29 +156,16 @@ func (rs *RemoteStorage) ListSecretDependenciesForProject(ctx context.Context, p
 	return decodeSecretDependencyList(resp.Data)
 }
 
-// ListSecretDependenciesForProjectForUpdate is ListSecretDependenciesForProject over
-// HTTP via GET /api/v1/system/secret-dependencies/snapshot?project_id=X — kept for
-// interface parity, but note there is no lock to take over this hop (each remote API
-// call is already atomic server-side; see AddSecretDependency's use of
-// CreateSecretDependencyExclusive instead, which — unlike this method — genuinely
-// preserves #260's cycle-check-under-lock guarantee across storage.type: remote).
-// The wire route is named "snapshot", not "for-update" — this Go method name stays
-// aligned with LocalStorage's real, lock-holding sibling for interface parity, but no
-// HTTP route can honestly promise the same across a request boundary, so the route
-// itself (server/http/router.go, ListSecretDependenciesForProjectSnapshotProxy) does
-// not claim to.
-func (rs *RemoteStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
-	q := url.Values{}
-	q.Set("project_id", strconv.FormatUint(uint64(projectID), 10))
-	path := "/api/v1/system/secret-dependencies/snapshot?" + q.Encode()
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list secret dependencies for update: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("list secret dependencies for update failed: %s", resp.Error.Error())
-	}
-	return decodeSecretDependencyList(resp.Data)
+// ListSecretDependenciesForProjectForUpdate is not supported in remote
+// storage (#1480). AddSecretDependency used to call it as a separate read
+// before CreateSecretDependency inside a WithTransaction closure — dead since
+// #260 replaced that two-call sequence with CreateSecretDependencyExclusive's
+// single atomic conditional write. No internal/core caller remains; its only
+// real caller, repo-wide, was its own /system proxy handler, now also removed
+// (ListSecretDependenciesForProjectSnapshotProxy,
+// server/http/handlers/secret_dependencies_proxy.go).
+func (rs *RemoteStorage) ListSecretDependenciesForProjectForUpdate(_ context.Context, _ uint) ([]*models.SecretDependency, error) {
+	return nil, remoteUnsupported("ListSecretDependenciesForProjectForUpdate")
 }
 
 // DeleteSecretDependency used to proxy onto DELETE

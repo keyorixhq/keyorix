@@ -301,33 +301,6 @@ func TestRemoteCov_DeleteProjectIfEmpty_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_ListGlobalAdminAssignmentsForUpdate_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "db error"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.ListGlobalAdminAssignmentsForUpdate(context.Background(), []uint{1, 2})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "list global admin assignments failed")
-}
-
-func TestRemoteCov_ListGlobalAdminAssignmentsForUpdate_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-an-array"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.ListGlobalAdminAssignmentsForUpdate(context.Background(), []uint{1})
-	assert.Error(t, err)
-}
-
 func TestRemoteCov_ListProjects_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "db error"))

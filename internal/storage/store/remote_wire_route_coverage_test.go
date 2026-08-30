@@ -931,7 +931,6 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_mfa.go:135":                     urlValuesEntry(),
 	"remote_mfa.go:218":                     urlValuesEntry(),
 	"remote_secret_dependencies.go:149":     urlValuesEntry(),
-	"remote_secret_dependencies.go:174":     urlValuesEntry(),
 	"remote_users.go:550":                   urlValuesEntry(),
 	"remote_webauthn.go:179":                urlValuesEntry(),
 	"remote_webauthn.go:209":                urlValuesEntry(),
@@ -946,11 +945,8 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// real, scoped tool enhancement (resolve the literal prefix, represent the
 	// escaped segment as a wildcard "*" the way normalizeChiPath already does
 	// for a chi {param}), just a different one than the query-string case.
-	"remote_connector_project_bindings.go:63": pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
-	"remote_rbac.go:485":                      pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
-	"remote_rbac.go:798":                      pathEscapeEntry("url.PathEscape(name) path-segment concatenation"),
-	"remote_rbac.go:1076":                     pathEscapeEntry("joinUintsCSV(adminRoleIDs) query-string concatenation (a local helper, not url.Values)"),
-	"remote_users.go:974":                     pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
+	"remote_rbac.go:484":  pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
+	"remote_users.go:974": pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
 
 	// Category: the ENTIRE path is a bare call to a locally-defined helper
 	// function (buildAuditFilterPath/buildRBACAuditFilterPath/

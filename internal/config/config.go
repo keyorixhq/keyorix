@@ -2054,6 +2054,17 @@ func validateConnectScopes(cc ConnectConfig) error {
 // internal/cli — the CLI's own "connected mode" validates a narrower, distinct
 // internal/storage/remote.Config, never this type) -- there is no legitimate
 // caller this change could break.
+//
+// #1480: this function is enforcement, not the dead topology it forbids —
+// do NOT delete it (or its test) as part of any future cleanup pass that
+// removes the storage.type:-remote-as-server route registrations/proxy
+// plumbing this gate makes unreachable. Deleting it would silently
+// RE-ENABLE the topology, with no code left to make it work correctly —
+// worse than leaving it, since a server would then boot successfully on
+// storage.type: remote and 403/error on every request instead of failing
+// loud at startup. The #1480 cleanup pass (docs/adr-083-remote-storage-cli-only.md's
+// "Deferred work" section) removed the now-dead client/server plumbing
+// this gate makes unreachable, but explicitly did NOT touch this function.
 func validateRemoteStorageNotServer(c *Config) error {
 	return fmt.Errorf("storage.type: remote cannot back a server process: " +
 		"remote storage is a CLI/client mode only, not a deployable server backend " +

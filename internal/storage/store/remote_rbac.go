@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -786,23 +785,19 @@ func (rs *RemoteStorage) GetProject(ctx context.Context, id uint) (*models.Proje
 	return decodeProjectResponse(resp.Data)
 }
 
-// GetProjectByName resolves a project by name via GET
-// /api/v1/system/projects/by-name/{name} (ADR-082 branch 2's boot-time connector
-// resolution) — a real, DB-backed lookup on the upstream server, not a stub. Backlog
-// #527 already fixed exactly this failure shape once for ConnectRefGrant: a
-// RemoteStorage primitive with no server endpoint to call at all made every
-// Keyorix Connect federated read fail closed on every storage.type: remote node
-// with Connect configured. This follows the same #510 setup-token-proxy pattern.
-func (rs *RemoteStorage) GetProjectByName(ctx context.Context, name string) (*models.Project, error) {
-	path := "/api/v1/system/projects/by-name/" + url.PathEscape(name)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get project by name: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("get project by name failed: %s", resp.Error.Error())
-	}
-	return decodeProjectResponse(resp.Data)
+// GetProjectByName is not supported in remote storage (#1480). It used to be
+// a real, DB-backed HTTP implementation, kept live to avoid a #527-shaped
+// boot failure for a "downstream Keyorix server" (ADR-082 branch 2's
+// boot-time connector resolution) proxying this to an upstream. That
+// topology cannot exist (ADR-083: validateRemoteStorageNotServer rejects
+// storage.type: remote for any server process). Its only real caller,
+// repo-wide, was server/main.go's resolveConnectorOwnership at boot time —
+// which calls storage.Storage methods directly against coreService.Storage(),
+// i.e. whatever backend the running server was actually configured with,
+// which can never be RemoteStorage. No internal/core method reaches it, so no
+// CLI command under storage.type: remote could reach it either.
+func (rs *RemoteStorage) GetProjectByName(_ context.Context, _ string) (*models.Project, error) {
+	return nil, remoteUnsupported("GetProjectByName")
 }
 
 // UpdateProject used to proxy onto PUT /api/v1/system/projects/{id}
@@ -1060,31 +1055,16 @@ func (rs *RemoteStorage) ListProjectMachineRoleAssignments(ctx context.Context, 
 	return result, nil
 }
 
-// ListGlobalAdminAssignmentsForUpdate proxies onto GET
-// /api/v1/system/rbac/global-admin-assignments (finding #525) as a PLAIN read —
-// like LockMachineIdentityForUpdate/ListSecretDependenciesForProjectForUpdate
-// before it, there is no row lock to take over HTTP, so the "ForUpdate" naming is
-// aspirational here; safety comes entirely from RemoveGlobalAdminRoleGuarded's
-// atomic conditional write below, not from this read. Direct callers of this
-// method alone (outside RemoveUserRole's guarded removal path) get the same
-// read-only visibility LocalStorage's real row lock would give them anyway on
-// SQLite (a plain read); only Postgres HA replication needed the lock, and that's
-// entirely a hub-side concern once this method's own caller no longer spans an
-// HTTP hop with a subsequent write (see RemoveGlobalAdminRoleGuarded).
-func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]storage.RoleAssignment, error) {
-	path := "/api/v1/system/rbac/global-admin-assignments?role_ids=" + joinUintsCSV(adminRoleIDs)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list global admin assignments: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("list global admin assignments failed: %s", resp.Error.Error())
-	}
-	var result []storage.RoleAssignment
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result, nil
+// ListGlobalAdminAssignmentsForUpdate is not supported in remote storage
+// (#1480). RemoveUserRole used to call it as a separate read before RemoveRole
+// inside a WithTransaction closure — dead since #525 replaced that two-call
+// sequence with RemoveGlobalAdminRoleGuarded's single atomic conditional
+// write. No internal/core caller remains; its only real caller, repo-wide,
+// was its own /system proxy handler, now also removed
+// (ListGlobalAdminAssignmentsSnapshotProxy,
+// server/http/handlers/rbac_role_grants_proxy.go).
+func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("ListGlobalAdminAssignmentsForUpdate")
 }
 
 // removeGlobalAdminRoleGuardedRefusedCode is the machine-readable error code
@@ -1134,15 +1114,3 @@ func (rs *RemoteStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userI
 // not exist (storage.ErrRoleNotAssigned) — mirrored exactly in
 // server/http/handlers/rbac_role_grants_proxy.go.
 const notAssignedCode = "ROLE_NOT_ASSIGNED"
-
-// joinUintsCSV renders ids as a comma-separated query value (empty string for an
-// empty slice), the wire shape RemoveGlobalAdminRoleGuardedProxy's sibling GET
-// /api/v1/system/rbac/global-admin-assignments handler parses back with
-// strconv.ParseUint per component.
-func joinUintsCSV(ids []uint) string {
-	parts := make([]string, 0, len(ids))
-	for _, id := range ids {
-		parts = append(parts, strconv.FormatUint(uint64(id), 10))
-	}
-	return strings.Join(parts, ",")
-}

@@ -79,18 +79,16 @@ func (rs *RemoteStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uin
 	return decodeMFAStepUpGrantResponse(resp.Data)
 }
 
-// DeleteMFAStepUpGrantsFor removes all step-up grants for userID via
-// DELETE /api/v1/system/mfa/stepup-grants/{userID}.
-func (rs *RemoteStorage) DeleteMFAStepUpGrantsFor(ctx context.Context, userID uint) error {
-	path := fmt.Sprintf("/api/v1/system/mfa/stepup-grants/%d", userID)
-	resp, err := rs.client.Delete(ctx, path)
-	if err != nil {
-		return fmt.Errorf("failed to delete MFA step-up grants: %w", err)
-	}
-	if !resp.Success {
-		return fmt.Errorf("delete MFA step-up grants failed: %s", resp.Error.Error())
-	}
-	return nil
+// DeleteMFAStepUpGrantsFor is not supported in remote storage (#1480). No
+// internal/core caller ever existed for it — server/main.go's own scheduled
+// pruning comment names this directly: "DeleteMFAStepUpGrantsFor exists but
+// is only reachable via the RemoteStorage proxy, never called from a local
+// maintenance path" (grants are instead cleaned up by TTL via
+// PruneMFAStepUpGrants). Its only real caller, repo-wide, was its own
+// /system proxy handler, now also removed (DeleteMFAStepUpGrantsForProxy,
+// server/http/handlers/mfa_stepup_proxy.go).
+func (rs *RemoteStorage) DeleteMFAStepUpGrantsFor(_ context.Context, _ uint) error {
+	return remoteUnsupported("DeleteMFAStepUpGrantsFor")
 }
 
 // mfaStepUpGrantPruneWire is the request body for PruneMFAStepUpGrants.

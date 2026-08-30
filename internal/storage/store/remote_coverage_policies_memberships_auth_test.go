@@ -1,15 +1,18 @@
 // remote_coverage_policies_memberships_auth_test.go — targeted coverage for
 // !resp.Success and network-error branches in remote_break_glass.go,
 // remote_memberships.go, remote_rotation_policies.go, remote_risk_exceptions.go,
-// remote_auth.go, remote_login_attempts.go, remote_scheduler_lock.go,
-// remote_secret_dependencies.go, remote_access_activity.go, and
-// remote_legal_hold.go.
+// remote_auth.go, remote_login_attempts.go, remote_secret_dependencies.go,
+// remote_access_activity.go, and remote_legal_hold.go.
+// (remote_scheduler_lock.go's coverage here was removed under #1480 --
+// TryAcquireSchedulerLock/ReleaseSchedulerLock/WithSchedulerLock are now
+// unconditional remoteUnsupported stubs, so there is no !resp.Success branch
+// left to exercise.)
 //
 // Strategy: for each method that has a !resp.Success branch, add a test that
 // returns HTTP 200 with {"success":false,"error":{...}} to exercise that branch.
 // For methods that only had success-path tests, add error-path tests. For
-// helpers tested indirectly (decodeXxx, newSchedulerLockHolderToken), exercise
-// them through their caller or via a server that returns the decode shape.
+// helpers tested indirectly (decodeXxx), exercise them through their caller or
+// via a server that returns the decode shape.
 package store_test
 
 import (
@@ -422,97 +425,6 @@ func TestRemoteCov_CountRecentLoginAttempts_NotSuccess(t *testing.T) {
 	_, err = rs.CountRecentLoginAttempts(context.Background(), "10.0.0.2", time.Now().Add(-time.Hour))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "count login attempts failed")
-}
-
-// ============================================================
-// remote_scheduler_lock.go — !resp.Success branches
-// ============================================================
-
-func TestRemoteCov_TryAcquireSchedulerLock_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/scheduler-lock/acquire", r.URL.Path)
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "acquire failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, err = rs.TryAcquireSchedulerLock(context.Background(), 42, "holder-token", 30*time.Second)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "acquire scheduler lock failed")
-}
-
-func TestRemoteCov_ReleaseSchedulerLock_NotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/scheduler-lock/release", r.URL.Path)
-		_, _ = w.Write(apiNotOK("INTERNAL_ERROR", "release failed"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	err = rs.ReleaseSchedulerLock(context.Background(), 42, "holder-token")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "release scheduler lock failed")
-}
-
-// newSchedulerLockHolderToken is exercised by WithSchedulerLock internally.
-// Test TryAcquireSchedulerLock success path (which parses the "acquired" field)
-// to cover the json.Unmarshal branch and the function's return path.
-func TestRemoteCov_TryAcquireSchedulerLock_Success_Acquired(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/system/scheduler-lock/acquire", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]any{"acquired": true}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	acquired, err := rs.TryAcquireSchedulerLock(context.Background(), 1, "test-holder", 45*time.Second)
-	require.NoError(t, err)
-	assert.True(t, acquired)
-}
-
-func TestRemoteCov_TryAcquireSchedulerLock_Success_NotAcquired(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK(map[string]any{"acquired": false}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	acquired, err := rs.TryAcquireSchedulerLock(context.Background(), 1, "test-holder", 45*time.Second)
-	require.NoError(t, err)
-	assert.False(t, acquired)
-}
-
-// Test WithSchedulerLock to exercise newSchedulerLockHolderToken indirectly
-// and cover the acquire-failed-to-acquire (lock contended) branch.
-func TestRemoteCov_WithSchedulerLock_NotAcquired(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Lock is held by someone else — return acquired:false.
-		_, _ = w.Write(apiOK(map[string]any{"acquired": false}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	ran := false
-	got, err := rs.WithSchedulerLock(context.Background(), 7, func() error {
-		ran = true
-		return nil
-	})
-	require.NoError(t, err)
-	assert.False(t, got, "should report lock not acquired")
-	assert.False(t, ran, "fn must not run when lock was not acquired")
 }
 
 // ============================================================

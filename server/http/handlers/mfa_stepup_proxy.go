@@ -1,8 +1,11 @@
 // mfa_stepup_proxy.go — server-side endpoints backing RemoteStorage's
 // MFAStepUpGrant storage primitives:
-// GetActiveMFAStepUpGrant / DeleteMFAStepUpGrantsFor / PruneMFAStepUpGrants.
+// GetActiveMFAStepUpGrant / PruneMFAStepUpGrants.
 // (CreateMFAStepUpGrantProxy was deleted — G80 liveness sweep found no live
-// caller; see docs/g80-remediation-notes.md.)
+// caller; see docs/g80-remediation-notes.md. DeleteMFAStepUpGrantsForProxy was
+// removed (#1480) — no internal/core caller ever existed for it; grants are
+// cleaned up by TTL via PruneMFAStepUpGrants instead, and its only real
+// caller, repo-wide, was itself.)
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049)
 // proxies these calls to this server's real storage backend so that the MFA
@@ -16,10 +19,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
-
-	"github.com/go-chi/chi/v5"
 )
 
 // mfaStepUpGrantActiveProxyBody is the wire body for
@@ -63,24 +63,6 @@ func (h *AuthHandler) GetActiveMFAStepUpGrantProxy(w http.ResponseWriter, r *htt
 	// it as {"success":true,"data":null} which the remote client treats as
 	// (nil, nil).
 	writeRemoteAPISuccess(w, grant)
-}
-
-// DeleteMFAStepUpGrantsForProxy handles DELETE
-// /api/v1/system/mfa/stepup-grants/{userId}. Removes all step-up grants for
-// the given user (session revocation / security-incident response).
-func (h *AuthHandler) DeleteMFAStepUpGrantsForProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user id")
-		return
-	}
-	userID := uint(id)
-	if err := h.coreService.Storage().DeleteMFAStepUpGrantsFor(r.Context(), userID); err != nil {
-		log.Printf("mfa stepup proxy: delete grants failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
 }
 
 // mfaStepUpGrantPruneBody is the wire body for POST /api/v1/system/mfa/stepup-grants/prune.

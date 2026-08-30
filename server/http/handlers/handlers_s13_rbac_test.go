@@ -618,37 +618,6 @@ func TestListProjectMachineRoleAssignmentsProxy_Happy_S13(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestListGlobalAdminAssignmentsProxy_BadRoleIDs_S13 covers invalid role_ids.
-func TestListGlobalAdminAssignmentsProxy_BadRoleIDs_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/global-admin-assignments?role_ids=nan,2", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_QUERY")
-}
-
-// TestListGlobalAdminAssignmentsProxy_EmptyRoleIDs_S13 covers empty role_ids (valid).
-func TestListGlobalAdminAssignmentsProxy_EmptyRoleIDs_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/global-admin-assignments", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestListGlobalAdminAssignmentsProxy_ValidRoleIDs_S13 covers valid role_ids list.
-func TestListGlobalAdminAssignmentsProxy_ValidRoleIDs_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/global-admin-assignments?role_ids=1,2,3", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // TestRemoveGlobalAdminRoleGuardedProxy_BadBody_S13 covers JSON decode error.
 func TestRemoveGlobalAdminRoleGuardedProxy_BadBody_S13(t *testing.T) {
 	h := newRBACHandlerForProxy(t)

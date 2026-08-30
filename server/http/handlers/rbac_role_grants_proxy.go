@@ -1,9 +1,15 @@
 // rbac_role_grants_proxy.go — server-side endpoints backing RemoteStorage's
 // RBAC role-grant primitives (finding #525): GetGroupRoleGrants/
 // AssignRoleWithExpiry/AssignRoleToGroupWithExpiry/RemoveAllProjectRoleGrants/
-// ListGroupRoleAssignments/ListGlobalAdminAssignmentsForUpdate/
-// ListProjectRoleAssignments/ListProjectMachineRoleAssignments/
-// RemoveGlobalAdminRoleGuarded.
+// ListGroupRoleAssignments/ListProjectRoleAssignments/
+// ListProjectMachineRoleAssignments/RemoveGlobalAdminRoleGuarded.
+//
+// ListGlobalAdminAssignmentsSnapshotProxy (backed
+// ListGlobalAdminAssignmentsForUpdate) was removed (#1480) — dead since #525
+// replaced its only real caller, RemoveUserRole's separate pre-read, with
+// RemoveGlobalAdminRoleGuarded's single atomic conditional write; no
+// internal/core caller remained, and its only real HTTP caller, repo-wide,
+// was itself.
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // these RBAC role-grant storage calls to whichever upstream server it's configured
@@ -72,7 +78,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -323,32 +328,6 @@ func (h *RBACHandler) ListProjectMachineRoleAssignmentsProxy(w http.ResponseWrit
 	writeRemoteAPISuccess(w, assignments)
 }
 
-// ListGlobalAdminAssignmentsSnapshotProxy handles GET
-// /api/v1/system/rbac/global-admin-assignments?role_ids=1,2,3. Named Snapshot, not
-// ForUpdate — the deliberately outdated Go interface method backing it
-// (RemoteStorage.ListGlobalAdminAssignmentsForUpdate, remote_rbac.go) is kept named
-// after LocalStorage's real, lock-holding sibling method for interface parity, but
-// no HTTP endpoint can hold a Postgres row lock across a request boundary: a
-// separate connection serves each call, so any "ForUpdate" name on the route itself
-// would advertise a guarantee this transport structurally cannot provide, and
-// would invite a caller to read this, decide, and write back on a second request
-// believing the first locked something. It never does. This is a PLAIN, unlocked
-// read; safety comes entirely from RemoveGlobalAdminRoleGuardedProxy's atomic
-// conditional write below, in ONE request.
-func (h *RBACHandler) ListGlobalAdminAssignmentsSnapshotProxy(w http.ResponseWriter, r *http.Request) {
-	roleIDs, ok := parseRBACProxyRoleIDsQuery(w, r)
-	if !ok {
-		return
-	}
-	assignments, err := h.coreService.Storage().ListGlobalAdminAssignmentsForUpdate(r.Context(), roleIDs)
-	if err != nil {
-		log.Printf("rbac role-grants proxy: list global admin assignments failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, assignments)
-}
-
 // removeGlobalAdminRoleGuardedProxyWire is the request body for
 // RemoveGlobalAdminRoleGuardedProxy. AdminRoleIDs is accepted for wire
 // compatibility with older RemoteStorage clients but is IGNORED and unused —
@@ -453,27 +432,4 @@ func parseRBACProxyProjectIDQuery(w http.ResponseWriter, r *http.Request) (proje
 		return 0, false
 	}
 	return uint(id), true
-}
-
-// parseRBACProxyRoleIDsQuery parses the optional, comma-separated role_ids query
-// parameter ListGlobalAdminAssignmentsSnapshotProxy takes — an empty/absent value
-// is valid (no install-admin role seeded yet) and yields an empty slice, mirroring
-// LocalStorage.ListGlobalAdminAssignmentsForUpdate's own "len(adminRoleIDs) == 0 →
-// nil, nil" short-circuit.
-func parseRBACProxyRoleIDsQuery(w http.ResponseWriter, r *http.Request) (roleIDs []uint, ok bool) {
-	v := r.URL.Query().Get("role_ids")
-	if v == "" {
-		return nil, true
-	}
-	parts := strings.Split(v, ",")
-	ids := make([]uint, 0, len(parts))
-	for _, p := range parts {
-		id, err := strconv.ParseUint(strings.TrimSpace(p), 10, 32)
-		if err != nil {
-			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "role_ids must be a comma-separated list of integers")
-			return nil, false
-		}
-		ids = append(ids, uint(id))
-	}
-	return ids, true
 }

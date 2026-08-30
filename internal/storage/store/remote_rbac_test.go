@@ -826,25 +826,6 @@ func TestRemoteStorage_ListProjectMachineRoleAssignments(t *testing.T) {
 	assert.Equal(t, "machine", assignments[0].PrincipalType)
 }
 
-func TestRemoteStorage_ListGlobalAdminAssignmentsForUpdate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/v1/system/rbac/global-admin-assignments", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
-			{"principal_type": "user", "principal_id": 1, "role_id": 1, "project_id": 0, "environment_id": 0},
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	assignments, err := rs.ListGlobalAdminAssignmentsForUpdate(context.Background(), []uint{1, 2})
-	require.NoError(t, err)
-	require.Len(t, assignments, 1)
-	assert.Equal(t, uint(1), assignments[0].RoleID)
-}
-
 func TestRemoteStorage_RemoveGlobalAdminRoleGuarded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)

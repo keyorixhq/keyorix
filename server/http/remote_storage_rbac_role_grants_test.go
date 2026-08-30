@@ -1,9 +1,9 @@
 // remote_storage_rbac_role_grants_test.go — end-to-end coverage for finding #525:
 // RemoteStorage's RBAC role-grant primitives (GetGroupRoleGrants/
 // AssignRoleWithExpiry/AssignRoleToGroupWithExpiry/RemoveAllProjectRoleGrants/
-// ListGroupRoleAssignments/ListGlobalAdminAssignmentsForUpdate/
-// ListProjectRoleAssignments/ListProjectMachineRoleAssignments/
-// RemoveGlobalAdminRoleGuarded) were unconditional stubs, breaking adding a user
+// ListGroupRoleAssignments/ListProjectRoleAssignments/
+// ListProjectMachineRoleAssignments/RemoveGlobalAdminRoleGuarded) were
+// unconditional stubs, breaking adding a user
 // to a group, removing a project member, JIT time-bound role grants, and every
 // last-global-admin lockout guard under storage.type: remote.
 //
@@ -51,10 +51,9 @@ import (
 // TestRemoteStorageRBACRoleGrants_ReadsAndWrites_RealServer proves the fix for
 // GetGroupRoleGrants/AssignRoleWithExpiry/AssignRoleToGroupWithExpiry/
 // ListGroupRoleAssignments/ListProjectRoleAssignments/
-// ListProjectMachineRoleAssignments/RemoveAllProjectRoleGrants/
-// ListGlobalAdminAssignmentsForUpdate: every one of these round-trips through the
-// downstream's RemoteStorage against real rows on the upstream's own storage, not
-// just "the call didn't error".
+// ListProjectMachineRoleAssignments/RemoveAllProjectRoleGrants: every one of
+// these round-trips through the downstream's RemoteStorage against real rows
+// on the upstream's own storage, not just "the call didn't error".
 func TestRemoteStorageRBACRoleGrants_ReadsAndWrites_RealServer(t *testing.T) {
 	upstream, srv, token := newUpstreamForSecretDependencies(t) // shared harness helper
 	downstream := newDownstreamRemoteStorage(t, srv, token)
@@ -127,14 +126,6 @@ func TestRemoteStorageRBACRoleGrants_ReadsAndWrites_RealServer(t *testing.T) {
 	require.Len(t, machineAssignments, 1)
 	assert.Equal(t, "machine", machineAssignments[0].PrincipalType)
 	assert.Equal(t, machine.ID, machineAssignments[0].PrincipalID)
-
-	// --- ListGlobalAdminAssignmentsForUpdate: a plain read over the seeded admin ---
-	adminRole, err := upstream.Storage().GetRoleByName(ctx, "admin")
-	require.NoError(t, err)
-	globalAdmins, err := downstream.Storage().ListGlobalAdminAssignmentsForUpdate(ctx, []uint{adminRole.ID})
-	require.NoError(t, err, "ListGlobalAdminAssignmentsForUpdate must reach the real proxy route")
-	require.Len(t, globalAdmins, 1, "the bootstrap admin holds the seeded global admin role")
-	assert.Equal(t, adminRole.ID, globalAdmins[0].RoleID)
 
 	// --- RemoveAllProjectRoleGrants: bulk-removes the user's project-scoped grant ---
 	require.NoError(t, downstream.Storage().RemoveAllProjectRoleGrants(ctx, user.ID, projectID),

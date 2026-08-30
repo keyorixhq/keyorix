@@ -672,32 +672,6 @@ func TestListSecretDependenciesForProjectProxy_InvalidQuery_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestListSecretDependenciesForProjectSnapshotProxy_InvalidQuery_S13 — non-numeric project_id → 400.
-func TestListSecretDependenciesForProjectSnapshotProxy_InvalidQuery_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestListSecretDependenciesForProjectSnapshotProxy_HappyPath_S13 — valid project_id → 200.
-func TestListSecretDependenciesForProjectSnapshotProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // TestParseProxyProjectIDQuery_S13 — exercises the 77.8% branch directly.
 // The missing branch is the invalid-integer path (already partially covered above,
 // but let's hit it directly to be sure).

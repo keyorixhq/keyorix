@@ -717,11 +717,6 @@ var rawStorageBypassAllowlist = map[string]string{
 		"the authenticated caller and self-certification is explicitly rejected; persistItemDecision " +
 		"(internal/core/access_review_campaign.go:234-249) applies no additional authority ceiling beyond the " +
 		"item-pending + campaign-open atomic CAS this proxy already replicates exactly.",
-	"CreateConnectorProjectBindingProxy": "no-independent-ceiling: the flagged LogAuditEvent call " +
-		"(connector_project_bindings_proxy.go:152-160) is entirely server-constructed -- EventType, ProjectID, " +
-		"Description, Success, EventTime, and ActorType are all hardcoded/derived server-side, zero caller-" +
-		"controlled content. Different call site, different question from IngestAuditEventProxy's LogAuditEvent " +
-		"below (knownUnfixedRawStorageBypasses) -- that one persists a caller-supplied event wholesale.",
 	"ClearProjectSecretOwnershipProxy": "false positive: the exported core wrapper (RemoveProjectMember) calls this " +
 		"storage method only as a best-effort CLEANUP side effect of removing a member, not as its own gated " +
 		"operation -- there is no independent ceiling for 'clear ownership' alone to bypass.",
@@ -1115,20 +1110,11 @@ var rawStorageBypassAllowlist = map[string]string{
 	// G80 Wave 2 (blind-spot-2 fix, ADR-088): newly IN SCOPE because this test no
 	// longer skips a storage method with no exported core wrapper at all --
 	// previously "no wrapper" meant "not considered," which is exactly the
-	// inference ADR-088's own #1585/#1586/#1587 findings disproved. These 5 are
-	// the benign side of that widened scope: verified individually below, not
+	// inference ADR-088's own #1585/#1586/#1587 findings disproved. These 2 are
+	// the benign side of that widened scope (originally 5 -- AcquireSchedulerLockProxy/
+	// ReleaseSchedulerLockProxy/DeleteMFAStepUpGrantsForProxy were removed
+	// outright under #1480, no live caller): verified individually below, not
 	// assumed safe by pattern-matching the shape.
-	"AcquireSchedulerLockProxy": "no-independent-ceiling: scheduler_lock_proxy.go's own doc comment establishes " +
-		"this is pure distributed-lock coordination infrastructure (ADR-039), not a policy decision -- " +
-		"TryAcquireSchedulerLock performs its entire acquire-or-renew-or-reclaim decision atomically server-side, " +
-		"with no actor-authority dimension to bypass (which key, how long to hold it, is decided entirely by the " +
-		"CALLING server's own WithSchedulerLock, not by this raw call).",
-	"ReleaseSchedulerLockProxy": "no-independent-ceiling: same reasoning as AcquireSchedulerLockProxy immediately " +
-		"above -- a release-iff-still-owned is a no-op for a non-owning holder, no capability to gain by calling it.",
-	"DeleteMFAStepUpGrantsForProxy": "no-independent-ceiling: removes step-up grants for a user (session " +
-		"revocation / incident response) -- capability-REDUCING, same shape as ExpireSetupTokenProxy/" +
-		"DeleteExpiredRoleGrantsProxy above. No privilege to gain by skipping whatever ceiling a wrapper might " +
-		"otherwise apply, since revocation is itself the safe direction.",
 	// UpdateRole/DeleteRole are NOT /system proxies -- they're the original
 	// human-facing RBAC handlers (server/http/handlers/rbac.go, registered at
 	// PUT/DELETE /api/v1/roles/{id}, gated by RequirePermission(permRolesWrite),
