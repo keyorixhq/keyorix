@@ -44,6 +44,12 @@ keyorix.db
 test-keyorix.db
 data/*.db
 
+# SQLite cross-process migration lock sidecar (factory_sqlite_migration_lock.go)
+# -- named "<configured database.path>.migration.lock", cwd-relative by
+# default (#1636), so it appears wherever a CLI command or test happened to
+# run from, not just next to a real database file.
+*.migration.lock
+
 # --- Log Files ---
 *.log
 *.log.*
@@ -82,6 +88,7 @@ web/.nuxt/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.pnpm-store/
 
 # --- Test Artifacts ---
 test-results/
@@ -201,8 +208,10 @@ certs/
 # compiled binary debris (use bin/ via make build)
 /main
 
-# throwaway binaries / test artifacts
-/.scratch/
+# throwaway binaries / test artifacts -- unanchored (not /.scratch/ alone) so
+# a nested module's own .scratch/ (e.g. operator/.scratch/) is covered too;
+# found leaking into `git status` at the repo root during #1636's investigation.
+.scratch/
 
 # Claude Code internal state and local tooling
 /.claire/
