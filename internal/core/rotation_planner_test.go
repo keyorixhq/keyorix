@@ -122,7 +122,7 @@ func TestGenerateRotationPlan(t *testing.T) {
 	mk(4, "healthy-key", daysAgo(5))   // ok → excluded from the plan
 
 	// overdue-app depends on overdue-db → it must rotate in a later wave.
-	_, err := c.AddSecretDependency(ctx, ActorTypeUser, plannerTestActor, 1, 2, "app token derives from db password")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, plannerTestActor, 1, 2, "app token derives from db password", 0)
 	require.NoError(t, err)
 
 	plan, err := c.GenerateRotationPlan(ctx, projectID)

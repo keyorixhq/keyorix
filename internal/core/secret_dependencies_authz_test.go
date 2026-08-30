@@ -179,7 +179,7 @@ func TestAddSecretDependency_RejectsUnauthorizedPeer(t *testing.T) {
 	grantDepACL(t, c, focal)
 	// No grant on `target`.
 
-	_, err := c.AddSecretDependency(context.Background(), ActorTypeUser, authzTestActor, focal, target, "")
+	_, err := c.AddSecretDependency(context.Background(), ActorTypeUser, authzTestActor, focal, target, "", 0)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "unauthorized-target", "must not leak the target's name in the error")
 

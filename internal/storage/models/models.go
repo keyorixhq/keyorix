@@ -906,11 +906,23 @@ type SecretDependency struct {
 	ID        uint `gorm:"primaryKey" json:"id"`
 	ProjectID uint `gorm:"index;not null" json:"project_id"` // denormalised from the endpoints (same for both)
 	// DependentSecretID depends on DependsOnSecretID. The pair is unique.
-	DependentSecretID uint      `gorm:"not null;uniqueIndex:idx_secret_dep_edge" json:"dependent_secret_id"`
-	DependsOnSecretID uint      `gorm:"not null;uniqueIndex:idx_secret_dep_edge" json:"depends_on_secret_id"`
-	Note              string    `json:"note,omitempty"`
-	CreatedBy         uint      `json:"created_by,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	DependentSecretID uint   `gorm:"not null;uniqueIndex:idx_secret_dep_edge" json:"dependent_secret_id"`
+	DependsOnSecretID uint   `gorm:"not null;uniqueIndex:idx_secret_dep_edge" json:"depends_on_secret_id"`
+	Note              string `json:"note,omitempty"`
+	CreatedBy         uint   `json:"created_by,omitempty"`
+	// CreatedByMachineIdentityID (#1623, mirroring #1573/PR2's
+	// XxxMachineIdentityID companion-field shape) records which machine
+	// identity created this dependency edge, when CreatedBy is 0 because the
+	// creator was a machine caller (ADR-030) rather than a human. Plain uint,
+	// 0 = none, consistent with every other attribution field on this model
+	// and with #1573's other 8 companion fields -- CreatedBy is not part of
+	// idx_secret_dep_edge or any other uniqueness constraint, so the nullable
+	// *uint AuditEvent.MachineIdentityID shape (#1530) is not needed here.
+	// Before this field existed, CreatedBy alone stored a machine caller's raw
+	// PrincipalID with no discriminator against User.ID's own independent
+	// auto-increment sequence -- the two could collide (#1623).
+	CreatedByMachineIdentityID uint      `json:"created_by_machine_identity_id,omitempty"`
+	CreatedAt                  time.Time `json:"created_at"`
 }
 
 // SecretTemplate is a reusable metadata preset for secret creation.

@@ -86,7 +86,7 @@ func (h *SecretHandler) AddSecretDependency(w http.ResponseWriter, r *http.Reque
 		h.sendError(w, "InvalidParameter", "depends_on_id is required", http.StatusBadRequest, nil)
 		return
 	}
-	dep, err := h.coreService.AddSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), reqBody.DependsOnID, reqBody.Note)
+	dep, err := h.coreService.AddSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), reqBody.DependsOnID, reqBody.Note, machineID(r))
 	if err != nil {
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return

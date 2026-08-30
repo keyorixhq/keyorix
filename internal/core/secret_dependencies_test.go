@@ -128,7 +128,7 @@ func TestAddSecretDependency_Validation(t *testing.T) {
 	otherProj := mkSecret(t, db, 2, "other-secret")
 
 	t.Run("happy path", func(t *testing.T) {
-		got, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "app token derives from db password")
+		got, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "app token derives from db password", 0)
 		require.NoError(t, err)
 		assert.Equal(t, appTok, got.DependentSecretID)
 		assert.Equal(t, dbPass, got.DependsOnSecretID)
@@ -136,38 +136,108 @@ func TestAddSecretDependency_Validation(t *testing.T) {
 	})
 
 	t.Run("self-dependency rejected", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, dbPass, dbPass, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, dbPass, dbPass, "", 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "itself")
 	})
 
 	t.Run("cross-project rejected", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, otherProj, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, otherProj, "", 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "same project")
 	})
 
 	t.Run("duplicate rejected", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "", 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
 	})
 
 	t.Run("cycle rejected", func(t *testing.T) {
 		// appTok already depends on dbPass; making dbPass depend on appTok is a cycle.
-		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, dbPass, appTok, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, dbPass, appTok, "", 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cycle")
 	})
 
 	t.Run("missing dependency target rejected with an opaque error (no existence oracle)", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, 9999, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, 9999, "", 0)
 		require.Error(t, err)
 		// Must NOT reveal whether 9999 exists / what it is — same message as a cross-scope
 		// target, so the caller can't enumerate secret IDs across scopes.
 		assert.NotContains(t, err.Error(), "9999")
 		assert.Contains(t, err.Error(), "same project and environment")
 	})
+}
+
+// TestAddSecretDependency_MachineAndUserAttributionDistinguishable is the
+// #1623 regression: a dependency edge created by machine identity N and one
+// created by user N must be distinguishable when read back. Before this fix,
+// CreatedBy stored actorID verbatim regardless of actor kind -- User.ID and
+// MachineIdentity.ID are independent auto-increment sequences that can
+// collide on the same numeric value, so a machine-created edge and a
+// user-created edge with the same numeric ID were indistinguishable, and a
+// forensic query resolving CreatedBy against the users table would name a
+// real human who did nothing.
+func TestAddSecretDependency_MachineAndUserAttributionDistinguishable(t *testing.T) {
+	ctx := context.Background()
+	c, db := newDepCore(t)
+
+	// A role with an EXPLICIT secrets.write permission, granted identically to
+	// a user and a machine identity sharing the same numeric ID -- avoids
+	// relying on the admin-role bypass, which machine principals never get
+	// (ADR-030's no-bypass property, pinned by TestMachineIdentity_NoAdminBypass_RealDB).
+	perm := &models.Permission{Name: "secrets.write", Resource: "secrets", Action: "write"}
+	require.NoError(t, db.Create(perm).Error)
+	role := &models.Role{Name: "secret-writer"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+
+	const collidingID = 7 // the SAME numeric ID, deliberately, for both actor kinds
+	require.NoError(t, db.Create(&models.UserRole{UserID: collidingID, RoleID: role.ID, ProjectID: 1, EnvironmentID: 1}).Error)
+	require.NoError(t, db.AutoMigrate(&models.MachineIdentity{}))
+	require.NoError(t, db.Create(&models.MachineIdentity{ID: collidingID, ProjectID: 1, Name: "ci", State: "active"}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: collidingID, RoleID: role.ID, ProjectID: 1, EnvironmentID: 1}).Error)
+
+	// Two independent secret pairs (a dependency edge's (dependent, depends_on)
+	// pair is unique per project) -- one edge attributed to the human actor,
+	// one to the machine actor holding the colliding ID.
+	humanDependent := mkSecret(t, db, 1, "human-app")
+	humanDependsOn := mkSecret(t, db, 1, "human-db")
+	machineDependent := mkSecret(t, db, 1, "machine-app")
+	machineDependsOn := mkSecret(t, db, 1, "machine-db")
+
+	humanEdge, err := c.AddSecretDependency(ctx, ActorTypeUser, collidingID, humanDependent, humanDependsOn, "human-created", 0)
+	require.NoError(t, err)
+	machineEdge, err := c.AddSecretDependency(ctx, ActorTypeMachine, collidingID, machineDependent, machineDependsOn, "machine-created", collidingID)
+	require.NoError(t, err)
+
+	// The two rows must be distinguishable despite sharing the same raw
+	// numeric ID -- the whole point of the companion field.
+	assert.Equal(t, uint(collidingID), humanEdge.CreatedBy, "the human actor's real User.ID")
+	assert.Zero(t, humanEdge.CreatedByMachineIdentityID, "no machine involved in the human-created edge")
+	assert.Zero(t, machineEdge.CreatedBy, "must NOT be stamped with the machine's raw ID -- that is #1623's exact bug")
+	assert.Equal(t, uint(collidingID), machineEdge.CreatedByMachineIdentityID, "the machine actor's real MachineIdentity.ID")
+
+	// Positive control: reading back via storage reproduces the same split --
+	// this isn't just an in-memory return-value artifact.
+	rows, err := c.storage.ListSecretDependenciesForProject(ctx, 1)
+	require.NoError(t, err)
+	var rereadHuman, rereadMachine *models.SecretDependency
+	for _, r := range rows {
+		switch r.ID {
+		case humanEdge.ID:
+			rereadHuman = r
+		case machineEdge.ID:
+			rereadMachine = r
+		}
+	}
+	require.NotNil(t, rereadHuman)
+	require.NotNil(t, rereadMachine)
+	assert.Equal(t, uint(collidingID), rereadHuman.CreatedBy, "user attribution still resolves correctly on read-back")
+	assert.Zero(t, rereadHuman.CreatedByMachineIdentityID)
+	assert.Zero(t, rereadMachine.CreatedBy)
+	assert.Equal(t, uint(collidingID), rereadMachine.CreatedByMachineIdentityID)
 }
 
 // A dependency must stay within one environment — authorization is environment-
@@ -178,7 +248,7 @@ func TestAddSecretDependency_CrossEnvironmentRejected(t *testing.T) {
 	c, db := newDepCore(t)
 	staging := mkSecretEnv(t, db, 1, 1, "app-token")     // project 1, env 1
 	prod := mkSecretEnv(t, db, 1, 2, "prod-db-password") // project 1, env 2
-	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, staging, prod, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, staging, prod, "", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "environment")
 }
@@ -191,7 +261,7 @@ func TestRemoveSecretDependency_RequiresFocalReference(t *testing.T) {
 	a := mkSecret(t, db, 1, "a")
 	b := mkSecret(t, db, 1, "b")
 	other := mkSecret(t, db, 1, "other")
-	e, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, a, b, "")
+	e, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, a, b, "", 0)
 	require.NoError(t, err)
 
 	// 'other' is not part of edge a→b → removal scoped to 'other' is rejected.
@@ -234,9 +304,9 @@ func TestSecretDependencyImpactAndOrderAndRemove(t *testing.T) {
 	leaf := mkSecret(t, db, 1, "service-cert")
 
 	// service-cert depends on intermediate depends on root-ca.
-	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, mid, root, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, mid, root, "", 0)
 	require.NoError(t, err)
-	e2, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, leaf, mid, "")
+	e2, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, leaf, mid, "", 0)
 	require.NoError(t, err)
 
 	// Impact of rotating root-ca: intermediate (depth1) then service-cert (depth2).
@@ -301,12 +371,12 @@ func TestAddSecretDependency_ConcurrentRaceCannotPersistACycle(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, results[0] = c.AddSecretDependency(ctx, ActorTypeUser, 1, a, b, "")
+			_, results[0] = c.AddSecretDependency(ctx, ActorTypeUser, 1, a, b, "", 0)
 		}()
 		go func() {
 			defer wg.Done()
 			<-start
-			_, results[1] = c.AddSecretDependency(ctx, ActorTypeUser, 1, b, a, "")
+			_, results[1] = c.AddSecretDependency(ctx, ActorTypeUser, 1, b, a, "", 0)
 		}()
 		close(start)
 		wg.Wait()

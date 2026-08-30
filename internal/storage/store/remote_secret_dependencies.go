@@ -45,36 +45,39 @@ import (
 // every field whose wire name isn't case-insensitively identical to its Go name (see
 // remote_users.go's userWireResponse comment for the full explanation).
 type secretDependencyWire struct {
-	ID                uint      `json:"id"`
-	ProjectID         uint      `json:"project_id"`
-	DependentSecretID uint      `json:"dependent_secret_id"`
-	DependsOnSecretID uint      `json:"depends_on_secret_id"`
-	Note              string    `json:"note,omitempty"`
-	CreatedBy         uint      `json:"created_by,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                         uint      `json:"id"`
+	ProjectID                  uint      `json:"project_id"`
+	DependentSecretID          uint      `json:"dependent_secret_id"`
+	DependsOnSecretID          uint      `json:"depends_on_secret_id"`
+	Note                       string    `json:"note,omitempty"`
+	CreatedBy                  uint      `json:"created_by,omitempty"`
+	CreatedByMachineIdentityID uint      `json:"created_by_machine_identity_id,omitempty"`
+	CreatedAt                  time.Time `json:"created_at"`
 }
 
 func newSecretDependencyWire(d *models.SecretDependency) secretDependencyWire {
 	return secretDependencyWire{
-		ID:                d.ID,
-		ProjectID:         d.ProjectID,
-		DependentSecretID: d.DependentSecretID,
-		DependsOnSecretID: d.DependsOnSecretID,
-		Note:              d.Note,
-		CreatedBy:         d.CreatedBy,
-		CreatedAt:         d.CreatedAt,
+		ID:                         d.ID,
+		ProjectID:                  d.ProjectID,
+		DependentSecretID:          d.DependentSecretID,
+		DependsOnSecretID:          d.DependsOnSecretID,
+		Note:                       d.Note,
+		CreatedBy:                  d.CreatedBy,
+		CreatedByMachineIdentityID: d.CreatedByMachineIdentityID,
+		CreatedAt:                  d.CreatedAt,
 	}
 }
 
 func (w secretDependencyWire) toModel() *models.SecretDependency {
 	return &models.SecretDependency{
-		ID:                w.ID,
-		ProjectID:         w.ProjectID,
-		DependentSecretID: w.DependentSecretID,
-		DependsOnSecretID: w.DependsOnSecretID,
-		Note:              w.Note,
-		CreatedBy:         w.CreatedBy,
-		CreatedAt:         w.CreatedAt,
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		DependentSecretID:          w.DependentSecretID,
+		DependsOnSecretID:          w.DependsOnSecretID,
+		Note:                       w.Note,
+		CreatedBy:                  w.CreatedBy,
+		CreatedByMachineIdentityID: w.CreatedByMachineIdentityID,
+		CreatedAt:                  w.CreatedAt,
 	}
 }
 

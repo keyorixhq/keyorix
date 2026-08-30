@@ -341,12 +341,13 @@ func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *ht
 	// this SAME function just ceiling-checked two lines above) already being
 	// available — force provenance to match the actor that was actually
 	// authorized to perform this create.
-	// #1573: this proxy already stamps CreatedBy from principalID (the machine's
-	// own ID for a machine relay caller), not 0 -- the same ID-namespace-collision
-	// shape as #1623 (SecretDependency.CreatedBy), not the "left at 0" shape PR2
-	// fixes elsewhere. Left unchanged here rather than silently fixed mid-PR; see
-	// #1623.
-	created, err := h.coreService.CreateMachineIdentity(r.Context(), body.ProjectID, body.Name, body.IdentityType, body.Description, body.Classification, principalID, 0)
+	// #1623: principalID alone is ambiguous against User.ID for a machine
+	// relay caller (the same ID-namespace-collision #1623 filed for
+	// SecretDependency.CreatedBy). actorID(r)/machineID(r) split the two ID
+	// spaces the same way #1573's PR2 does for CreateMachineIdentity's other
+	// (human-facing) callers -- exactly one of the two is nonzero for any real
+	// actor, machine or human.
+	created, err := h.coreService.CreateMachineIdentity(r.Context(), body.ProjectID, body.Name, body.IdentityType, body.Description, body.Classification, actorID(r), machineID(r))
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusInternalServerError

@@ -41,7 +41,7 @@ func newRotationPlanRig(t *testing.T) *ProjectGRPCService {
 
 	svc := core.NewKeyorixCore(store.NewLocalStorage(db))
 	// app-token depends on db-password → it must rotate in a later wave.
-	_, err := svc.AddSecretDependency(t.Context(), core.ActorTypeUser, 1, 11, 10, "")
+	_, err := svc.AddSecretDependency(t.Context(), core.ActorTypeUser, 1, 11, 10, "", 0)
 	require.NoError(t, err)
 	return NewProjectService(svc)
 }

@@ -93,7 +93,7 @@ type RotationOrder struct {
 // row, on RemoteStorage) is what now also serializes across replicas/processes — the
 // same two-layer pattern login_lockout.go's recordFailedLogin and RemoveUserRole's
 // guardLastGlobalAdmin use.
-func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string, actorID, dependentID, dependsOnID uint, note string) (*models.SecretDependency, error) {
+func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string, actorID, dependentID, dependsOnID uint, note string, createdByMachineID uint) (*models.SecretDependency, error) {
 	if dependentID == dependsOnID {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a secret cannot depend on itself")
 	}
@@ -123,13 +123,26 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 	c.secretDependencyMu.Lock()
 	defer c.secretDependencyMu.Unlock()
 
+	// #1623: actorID alone cannot be persisted into CreatedBy for a machine
+	// caller -- AuthorizeSecretPrincipal above needs actorID as the real
+	// PrincipalID (a machine's own MachineIdentity.ID) to resolve its grants,
+	// but persisting that same raw value into CreatedBy is ambiguous against
+	// User.ID's own independent auto-increment sequence. actorKind (already a
+	// parameter) discriminates which ID space actorID actually came from, the
+	// same split #1573's PR2 applies via actorID(r)/machineID(r) at the HTTP
+	// layer for every other machine-actor attribution field.
+	createdBy := actorID
+	if actorKind == ActorTypeMachine {
+		createdBy = 0
+	}
 	created, err := c.storage.CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
-		ProjectID:         dependent.ProjectID,
-		DependentSecretID: dependentID,
-		DependsOnSecretID: dependsOnID,
-		Note:              note,
-		CreatedBy:         actorID,
-		CreatedAt:         c.now(),
+		ProjectID:                  dependent.ProjectID,
+		DependentSecretID:          dependentID,
+		DependsOnSecretID:          dependsOnID,
+		Note:                       note,
+		CreatedBy:                  createdBy,
+		CreatedByMachineIdentityID: createdByMachineID,
+		CreatedAt:                  c.now(),
 	})
 	if err != nil {
 		switch {
