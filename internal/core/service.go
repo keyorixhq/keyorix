@@ -366,6 +366,32 @@ type KeyorixCore struct {
 	// by "actorID:targetID" to reduce per-request DB load on the auth hot path for
 	// impersonation sessions (IMP-001). Zero value is ready to use (sync.Map).
 	impersonationCeilingCache sync.Map
+	// secretExpiryWatermark is an in-memory monotonic high-water mark of the
+	// latest wall-clock instant enforceSecretReadGuards has ever observed via
+	// c.now(), in this process's lifetime (#1632). Mirrors auditMaxCertified's
+	// shape (an in-memory floor that never regresses) applied to wall-clock
+	// time instead of a chained-events count: the secret-value disclosure
+	// guard refuses to treat a c.now() reading as trustworthy if it is
+	// EARLIER than a time this process has already legitimately observed —
+	// the one deployment-realistic case this actually stops is an operator or
+	// NTP correction stepping the clock backward WHILE THE SERVER KEEPS
+	// RUNNING (the scenario ADR-094/#1632 named as the live one for this
+	// site), without requiring every other wall-clock site in #1632 to adopt
+	// the same mechanism. Deliberately NOT persisted (unlike auditMaxCertified,
+	// which backstops a SystemMetadata row): GetSystemMetadata/SetSystemMetadata
+	// are unconditionally unsupported on RemoteStorage
+	// (internal/storage/store/remote_audit.go), and this guard runs on every
+	// secret-value read including the CLI's embedded storage.type: remote
+	// path — persisting here would make every such read depend on a storage
+	// call that hard-fails under that backend, breaking secret reads entirely
+	// under remote mode to close a gap that mode is already reachable through.
+	// Residual risk, named rather than hidden: resets to zero on process
+	// restart, so an attacker who can also restart the process after
+	// stepping the clock back defeats it — a real limitation, not covered by
+	// this fix, of the same kind ADR-094 already flagged as calling for an
+	// operational (not per-site code) mitigation.
+	secretExpiryWatermarkMu sync.Mutex
+	secretExpiryWatermark   time.Time
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).

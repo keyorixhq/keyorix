@@ -9,6 +9,42 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// secretExpiryClockRegressionTolerance bounds how far c.now() may read
+// EARLIER than secretExpiryWatermark before checkSecretExpiryClockNotRegressed
+// refuses the read. Must be small enough to still catch a deliberate/
+// NTP-less manual clock reset (the #1632 threat model: an operator, or an
+// NTP correction, stepping the clock back by an hour or more) and large
+// enough not to false-positive on ordinary small backward NTP slew steps
+// (NTP step corrections, as opposed to gradual slewing, are typically
+// sub-second to low-single-digit seconds).
+const secretExpiryClockRegressionTolerance = 30 * time.Second
+
+// checkSecretExpiryClockNotRegressed refuses to trust now for the secret-value
+// disclosure guard if it looks EARLIER than a time this process has already
+// legitimately observed for this same check (more than
+// secretExpiryClockRegressionTolerance behind secretExpiryWatermark) — see
+// secretExpiryWatermark's doc comment (service.go) for what this does and
+// does not protect against. On success, advances the watermark to now (never
+// backward — the watermark itself must not regress, or a second, slower
+// backward step could walk it down unnoticed).
+func (c *KeyorixCore) checkSecretExpiryClockNotRegressed(now time.Time) error {
+	c.secretExpiryWatermarkMu.Lock()
+	defer c.secretExpiryWatermarkMu.Unlock()
+	if !c.secretExpiryWatermark.IsZero() && now.Before(c.secretExpiryWatermark.Add(-secretExpiryClockRegressionTolerance)) {
+		// Deliberately the SAME error i18n key and text as an ordinary expired
+		// secret, not a distinct "clock anomaly detected" message: telling a
+		// caller specifically that clock regression was detected is itself an
+		// oracle (it confirms the manipulation had an effect worth reacting
+		// to). A uniform refusal reveals nothing beyond "this read did not
+		// succeed," matching how every other guard in this bundle refuses.
+		return fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
+	}
+	if now.After(c.secretExpiryWatermark) {
+		c.secretExpiryWatermark = now
+	}
+	return nil
+}
+
 // GetSecretVersions retrieves all versions of a secret.
 func (c *KeyorixCore) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {
 	if secretID == 0 {
@@ -121,7 +157,28 @@ func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte
 // the same secret correctly refused. Route every value-disclosing function
 // through this one guard bundle instead of re-implementing a subset of it.
 func (c *KeyorixCore) enforceSecretReadGuards(ctx context.Context, secret *models.SecretNode, userID uint) error {
-	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
+	// #1632: c.now(), not a bare time.Now() -- the injected/test-controllable
+	// clock every other security-relevant expiry check in this package uses
+	// (service.go's `now func() time.Time` field). This is the actual
+	// secret-VALUE disclosure guard (see the #G09 comment above), so it must
+	// be seam-testable the same way ValidateSessionToken/ValidateMachineToken
+	// etc. already are -- a bare time.Now() here could not be moved
+	// backward in a test at all, which is itself part of what made this the
+	// worst site in the #1632 sweep: there was no way to even exercise the
+	// hazard without actually changing the OS clock.
+	//
+	// The seam alone does not close the hazard -- it only makes it testable.
+	// checkSecretExpiryClockNotRegressed is the actual fix: it refuses this
+	// read outright if c.now() looks EARLIER than a time this process has
+	// already legitimately observed, rather than trusting a wall clock that
+	// may have just been stepped backward past this secret's real
+	// Expiration. See secretExpiryWatermark's doc comment (service.go) for
+	// why this is in-memory only, and named there as a residual limitation.
+	now := c.now()
+	if err := c.checkSecretExpiryClockNotRegressed(now); err != nil {
+		return err
+	}
+	if secret.Expiration != nil && now.After(*secret.Expiration) {
 		return fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
 	}
 	if secret.Status == SecretStatusSuspended {
