@@ -52,17 +52,6 @@ func TestListSecretDependenciesForProjectProxy_DBError_S32(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestListSecretDependenciesForProjectSnapshotProxy_DBError_S32(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS32(t)
-	h, err := NewSecretHandler(kc)
-	require.NoError(t, err)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/secret-dependencies/snapshot?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectSnapshotProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestGetSecretIncludingDeletedProxy_DBError_S32(t *testing.T) {
 	t.Parallel()
 	kc := freshCoreBrokenS32(t)

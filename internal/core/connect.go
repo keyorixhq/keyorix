@@ -28,12 +28,13 @@ const (
 
 // EventConnectorProjectBindingCreate is audited on every persisted
 // ConnectorProjectBinding write (ADR-082 branch 3, issue #1477's audit half) —
-// both the boot-time first-resolution write (server/main.go's
-// resolveConnectorOwnership) and the RemoteStorage proxy write
-// (server/http/handlers/connector_project_bindings_proxy.go's
-// CreateConnectorProjectBindingProxy). The binding is an authorization input
-// (it feeds connectOwnershipSatisfied) regardless of which door the write comes
-// through, so both call sites use the same event type.
+// the boot-time first-resolution write (server/main.go's
+// resolveConnectorOwnership). Used to also be audited from a second door, the
+// RemoteStorage proxy write (CreateConnectorProjectBindingProxy); that route
+// was removed (#1480) — no server process can be configured with
+// storage.type: remote (ADR-083), so it was never reachable in that topology.
+// The binding is an authorization input (it feeds connectOwnershipSatisfied),
+// which is why the event type stays even with a single call site now.
 const EventConnectorProjectBindingCreate = "connect.project_binding_create" // #nosec G101 -- audit event type, not a credential
 
 // ConnectOwnershipReason and the deny-path reason values below form ONE closed

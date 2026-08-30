@@ -3050,14 +3050,6 @@ func TestPruneLoginAttemptsProxy_BadJSON(t *testing.T) {
 
 // ── scheduler_lock_proxy.go — additional paths ───────────────────────────────
 
-func TestReleaseSchedulerLockProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.ReleaseSchedulerLockProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── misc_remote_proxy.go — CreateUserWithRoleGrantsProxy ─────────────────────
 
 func TestCreateUserWithRoleGrantsProxy_HappyPath(t *testing.T) {
@@ -3241,14 +3233,6 @@ func TestGetSecretDependencyProxy_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GetSecretDependencyProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestListSecretDependenciesForProjectSnapshotProxy_HappyPath(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // ── setup_tokens_proxy.go — additional paths ─────────────────────────────────
@@ -3688,31 +3672,6 @@ func TestListProjectMachineRoleAssignmentsProxy_MissingProjectIDS5(t *testing.T)
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	h.ListProjectMachineRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListGlobalAdminAssignmentsSnapshotProxy_HappyPathS5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	// Empty role_ids is valid — returns empty/nil list.
-	req := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestListGlobalAdminAssignmentsSnapshotProxy_WithRoleIDs(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest("GET", "/?role_ids=1,2", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestListGlobalAdminAssignmentsSnapshotProxy_BadRoleIDs(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest("GET", "/?role_ids=1,bad", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

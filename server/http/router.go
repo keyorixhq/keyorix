@@ -1395,14 +1395,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/connect-grants/by-connector/{connector}", authHandler.ListConnectRefGrantsByConnectorProxy)
 			r.Get("/connect-grants", authHandler.ListConnectRefGrantsProxy)
 
-			// Connect connector→project ID binding storage-primitive proxy (ADR-082
-			// branch 2). Same rationale and pattern as the connect-grants block above
-			// (backlog #527): boot-time connector resolution (server/main.go) treats
-			// any error from these primitives as an unresolvable connector and fails
-			// boot, so RemoteStorage needs a real endpoint here, not a stub.
-			r.Get("/connector-project-bindings/{connector}", authHandler.GetConnectorProjectBindingProxy)
-			r.Post("/connector-project-bindings", authHandler.CreateConnectorProjectBindingProxy)
-
 			// SSO login-state storage-primitive proxy (#521). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateSSOLoginState/ConsumeSSOLoginState to THIS server's real storage
@@ -1462,8 +1454,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Secret-dependency storage-primitive proxy (finding #519). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
 			// proxy CreateSecretDependency/GetSecretDependency/
-			// ListSecretDependenciesForProject/
-			// ListSecretDependenciesForProjectForUpdate/DeleteSecretDependency/
+			// ListSecretDependenciesForProject/DeleteSecretDependency/
 			// CreateSecretDependencyExclusive to THIS server's real storage backend,
 			// instead of RemoteStorage's six secret-dependency methods having no
 			// server endpoint to call at all (ADR-052's dependency graph — used per
@@ -1483,11 +1474,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// passthrough) — see secret_dependencies_proxy.go's package doc and the
 			// storage.Storage interface doc for why AddSecretDependency now calls
 			// this instead of orchestrating a list-under-lock-then-create sequence
-			// itself. Static sub-paths ("snapshot", "exclusive") are registered
-			// before the "{id}" wildcard. "snapshot" is a deliberate rename from
-			// "for-update" — no route boundary can hold a Postgres row lock across a
-			// request (see ListSecretDependenciesForProjectSnapshotProxy's own doc).
-			r.Get("/secret-dependencies/snapshot", secretHandler.ListSecretDependenciesForProjectSnapshotProxy)
+			// itself. The static "exclusive" sub-path is registered before the
+			// "{id}" wildcard. The GET .../snapshot route (formerly .../for-update,
+			// ListSecretDependenciesForProjectSnapshotProxy) was removed (#1480) —
+			// its only real caller, repo-wide, was itself; the read it served was
+			// superseded by CreateSecretDependencyExclusive's atomic conditional
+			// write back when #260 landed.
 			r.Get("/secret-dependencies/{id}", secretHandler.GetSecretDependencyProxy)
 			r.Get("/secret-dependencies", secretHandler.ListSecretDependenciesForProjectProxy)
 			// CreateSecretDependencyProxy (a raw, unconditional persist, POST
@@ -1882,15 +1874,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// global-scope admin-conferring role: two separate HTTP round trips
 			// would reopen the exact cross-process last-admin-lockout race #340
 			// closed for HA Postgres replicas, this time between concurrent
-			// spokes (or a spoke and the hub itself). Static sub-paths
+			// spokes (or a spoke and the hub itself). The GET .../global-admin-
+			// assignments route (formerly .../for-update,
+			// ListGlobalAdminAssignmentsSnapshotProxy) was removed (#1480) — its
+			// only real caller, repo-wide, was itself; the read it served was
+			// superseded by RemoveGlobalAdminRoleGuarded's atomic conditional
+			// write, described above, back when #525 landed. Static sub-paths
 			// ("role-grants", "role-assignments" under "/groups/{groupID}",
-			// "global-admin-assignments", "global-admin-role/remove-guarded") are
-			// registered ahead of nothing that would collide at this depth.
+			// "global-admin-role/remove-guarded") are registered ahead of nothing
+			// that would collide at this depth.
 			r.Get("/rbac/groups/{groupID}/role-grants", rbacHandler.GetGroupRoleGrantsProxy)
 			r.Get("/rbac/groups/{groupID}/role-assignments", rbacHandler.ListGroupRoleAssignmentsProxy)
 			r.Get("/rbac/project-role-assignments", rbacHandler.ListProjectRoleAssignmentsProxy)
 			r.Get("/rbac/project-machine-role-assignments", rbacHandler.ListProjectMachineRoleAssignmentsProxy)
-			r.Get("/rbac/global-admin-assignments", rbacHandler.ListGlobalAdminAssignmentsSnapshotProxy)
 			r.Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
 			r.Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
 			r.Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
@@ -1934,13 +1930,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// query step-up grants against this server's real storage backend, so
 			// the classification gate works correctly under storage.type: remote.
 			// Static sub-paths ("stepup-grants/active", "stepup-grants/prune") are
-			// registered before the {userId} wildcard to avoid route shadowing.
+			// registered ahead of nothing that would collide at this depth.
 			// stepup-grants/prune (store-mfa-002) backs the periodic maintenance
 			// sweep (mfa_stepup_grant_prune scheduler, server/main.go) that bounds
-			// retention of expired grant rows.
+			// retention of expired grant rows. The DELETE .../stepup-grants/{userId}
+			// route (DeleteMFAStepUpGrantsForProxy) was removed (#1480) — its only
+			// real caller, repo-wide, was itself; nothing in internal/core ever
+			// called the underlying per-user deletion primitive (grants are
+			// cleaned up by TTL via the prune sweep above instead).
 			r.Post("/mfa/stepup-grants/active", authHandler.GetActiveMFAStepUpGrantProxy)
 			r.Post("/mfa/stepup-grants/prune", authHandler.PruneMFAStepUpGrantsProxy)
-			r.Delete("/mfa/stepup-grants/{userId}", authHandler.DeleteMFAStepUpGrantsForProxy)
 
 			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
 			// Lets a downstream Keyorix server booted with storage.type: remote
@@ -1995,12 +1994,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// "/projects/{id}/environments/{envId}/copy-secrets" vs
 			// "/projects/{projectId}/environments/{id}/restore" routes already do.
 			r.Get("/projects/with-counts", catalogHandler.ListProjectsWithCountsProxy)
-			// /projects/by-name/{name} (ADR-082 branch 2): a static "by-name" segment
-			// ahead of the {id} wildcard below, same precedence pattern as
-			// "with-counts" above — boot-time connector resolution (server/main.go)
-			// resolves a connector's configured project: name against this route on a
-			// storage.type: remote node.
-			r.Get("/projects/by-name/{name}", catalogHandler.GetProjectByNameProxy)
 			r.Get(pathProjects, catalogHandler.ListProjectsProxy)
 			r.Get(pathProjectsID, catalogHandler.GetProjectProxy)
 			// DeleteProjectProxy (G80 documented-exception re-verification sweep,
@@ -2022,33 +2015,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/environments", catalogHandler.ListEnvironmentsProxy)
 			r.Get(pathEnvironmentsID, catalogHandler.GetEnvironmentProxy)
 			r.Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironmentProxy)
-
-			// Scheduler-lock storage-primitive proxy (#530). Lets a downstream
-			// Keyorix server booted with storage.type: remote (ADR-049) proxy
-			// TryAcquireSchedulerLock/ReleaseSchedulerLock to THIS server's real
-			// storage backend, instead of RemoteStorage.WithSchedulerLock having no
-			// server endpoint to call at all (every background scheduler runs
-			// unconditionally regardless of storage.type, so this was the sole
-			// blocker preventing already-remote-proxied maintenance — e.g. the
-			// retention proxy immediately above, #520 — from ever actually running
-			// on a schedule under storage.type: remote). Exactly the same pattern
-			// as the retention proxy above: a thin passthrough onto storage.Storage
-			// (no lock POLICY — which key, how long to hold it, when to renew — is
-			// made here; that stays entirely in the CALLING server's own
-			// RemoteStorage.WithSchedulerLock, exactly as LocalStorage.
-			// WithSchedulerLock decides it against a local backend), reusing the
-			// group's existing system.write baseline (not a system.read/
-			// system.write tier — see the group header comment above) — no new
-			// privilege class. BOTH routes are mutations (acquiring or releasing a
-			// lock changes state)
-			// and require system.write; there is no read-only variant. See
-			// scheduler_lock_proxy.go's package doc for the atomicity analysis:
-			// each route performs its ENTIRE conditional decision inside ONE
-			// storage.Storage call, so no naive "check, then write" pair is ever
-			// exposed over this HTTP hop to reopen the exclusivity race the lock
-			// exists to prevent.
-			r.Post("/scheduler-lock/acquire", authHandler.AcquireSchedulerLockProxy)
-			r.Post("/scheduler-lock/release", authHandler.ReleaseSchedulerLockProxy)
 
 			// Audit-event ingest proxy (#r122-A). Lets a downstream Keyorix server
 			// booted with storage.type: remote persist its emitAudit-emitted events

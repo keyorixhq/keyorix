@@ -24,6 +24,59 @@ directly (no router, no middleware) by several CLI commands under
 decision. The rest of this ADR (the topology gate itself, and the
 route-registration/proxy-tier cleanup surface) is unaffected.
 
+**Deferred removal done (#1480, 2026-08-30).** By the time this pass ran,
+four prior deletion passes (the G80 158-method classification, its own
+154-method deletion, #1596's 9-handler MFA/purge sweep, #1603's 3-proxy
+stale-fork sweep) had already reduced this ADR's original "Deferred work"
+list to almost nothing — the enumerated surface below (route registrations,
+the `/system` proxy tier's server-side half, the ~18 `remote_storage_*_test.go`
+files) was already gone or already reclassified as CLI-serving coverage, not
+dead-topology coverage. What remained: **9 `RemoteStorage` client methods**
+across 3 unrelated clusters, whose only real caller, repo-wide, was their own
+now-removed `/system` server-side proxy handler — confirmed via the same
+criterion ADR-087 established (trace every `internal/core` caller; a method
+with zero core-layer callers and a route that no longer exists is dead,
+because no `storage.type: remote` process can ever reach it as a server, and
+no CLI command that reaches `internal/core` can reach it as a client either).
+Deleted: `GetConnectorProjectBinding`/`CreateConnectorProjectBinding`
+(ADR-082 branch 2's boot-time connector resolution — the resolving caller,
+`server/main.go`'s `resolveConnectorOwnership`, calls `storage.Storage`
+directly against whatever backend the server itself is configured with,
+never `RemoteStorage`, since this ADR's own gate forecloses that);
+`GetProjectByName` (same boot-time caller, same reasoning);
+`TryAcquireSchedulerLock`/`ReleaseSchedulerLock`/`WithSchedulerLock` (#530 —
+every scheduler tick runs against the server's own real backend, never
+`RemoteStorage`, for the identical reason); `ListGlobalAdminAssignmentsForUpdate`
+(dead since #525's `RemoveGlobalAdminRoleGuarded` atomic rewrite);
+`ListSecretDependenciesForProjectForUpdate` (dead since #260's
+`CreateSecretDependencyExclusive` atomic rewrite); `DeleteMFAStepUpGrantsFor`
+(never had an `internal/core` caller — grants are reaped by TTL via
+`PruneMFAStepUpGrants` instead). All 9 converted to `remoteUnsupported(...)`
+stubs (not silently removed from the interface — `storage.Storage` is
+unchanged) with a `remoteReachabilityRegistry`/`remoteUnsupportedAllowlist`
+entry each, citing this evidence. Their 8 now-dead `/system` route
+registrations and server-side handler functions were deleted outright
+(`scheduler_lock_proxy.go` and `connector_project_bindings_proxy.go` deleted
+in full; the other 4 handler functions removed from their otherwise-live
+multi-handler files). **Explicitly untouched, on the same trace**: the 7 LIVE
+`RemoteStorage` methods and 7 UNRESOLVED methods ADR-087/Wave 0 already
+classified (kept means kept — no new evidence resolved any of the 7 this
+pass), `validateRemoteStorageNotServer` itself and its test suite (enforcement,
+not the topology it forbids — see its own doc comment, added this pass, for
+why it must never be deleted alongside the topology), and everything the
+CLI's embedded `storage.type: remote` path touches (verified directly: a real
+`keyorix group create`/`group list` round trip against a live hub, through
+the genuinely-unguarded embedded `RemoteStorage`-backed `core.KeyorixCore`
+path — not the `NewRemoteClient()`/`ResolveRemote()` client-mode passthrough
+most CRUD commands use — succeeded end to end post-deletion). Net: 39 files
+changed, ~1,800 net lines removed. Full per-method citations:
+`internal/storage/store/remote_reachability_registry_test.go`'s 9 new
+`reachabilityDead` entries and the corresponding `remoteUnsupportedAllowlist`
+entries (`remote_connector_project_bindings_completeness_test.go`,
+`remote_rbac_completeness_test.go`, `remote_mfa_stepup_completeness_test.go`,
+`remote_scheduler_lock_completeness_test.go`,
+`remote_secret_dependencies_completeness_test.go`).
+
 ## Context
 
 ADR-082 branch 4 (`connect.platform.use`) added a new `AuthorizePrincipal`
@@ -148,33 +201,38 @@ routes, and points here.
   combination works) immediately, without deleting code under the time
   pressure of this investigation.
 
-## Deferred work
+## Deferred work — done (#1480, 2026-08-30)
 
-Full removal of the `storage.type: remote`-as-server topology's now-dead
-code is **out of scope for this ADR** and deferred to its own branch:
+Originally, full removal of the `storage.type: remote`-as-server topology's
+now-dead code was **out of scope for this ADR** and deferred to its own
+branch. By the time that branch ran, four prior deletion passes (see "Deferred
+removal done" in the Status section above) had already closed almost
+everything this section originally listed:
 
-- The route registrations and `/system` proxy tier's server-side plumbing
-  that exist specifically to let a "downstream" node proxy through to an
-  upstream (login/MFA/WebAuthn proxy-verification, machine-identity role
-  lookups, `ConnectRefGrant`/`ConnectorProjectBinding` CRUD, project/
-  environment catalog, login-attempt counters, etc.) — all built under the
-  assumption a full downstream server was a real, reachable target.
-- The ~18 `server/http/remote_storage_*_test.go` files, which test that
-  proxying machinery in isolation (in-process, bypassing `RequirePermission`
-  entirely, per the Evidence section above) — worth keeping as coverage for
-  the CLI's own use of these primitives, but their framing/naming should be
-  revisited once it's clear they were never proving a working server
-  topology.
-- Whether ADR-082 branch 2's `0a4194ce` (the `ConnectorProjectBinding`
-  RemoteStorage storage-primitive commit, built to let Connect ownership
-  resolution proxy correctly on a "downstream" node) becomes unnecessary
-  work, given that topology never functioned as a server in the first
-  place — needs its own assessment, not decided here.
+- ~~The route registrations and `/system` proxy tier's server-side
+  plumbing~~ — closed. The specific list this ADR named (login/MFA/WebAuthn
+  proxy-verification, machine-identity role lookups, project/environment
+  catalog, login-attempt counters) was already gone by #1596/#1603; only
+  `ConnectRefGrant`/`ConnectorProjectBinding` CRUD's read/create half and the
+  scheduler-lock/`ForUpdate`-snapshot pair this ADR didn't specifically name
+  remained, and #1480 closed those.
+- ~~The ~18 `server/http/remote_storage_*_test.go` files~~ — resolved by NOT
+  removing them: they test the CLI's own genuine use of these primitives (the
+  live/unresolved surface), which is exactly the coverage worth keeping, per
+  this section's own original reasoning. Only the specific test functions
+  covering the 9 methods actually deleted were removed.
+- ~~Whether ADR-082 branch 2's `0a4194ce`
+  (`ConnectorProjectBinding` storage-primitive commit) becomes unnecessary~~
+  — resolved: its `Get`/`Create` methods (the boot-time connector-resolution
+  half) were dead and are now stubs; `ListConnectorProjectBindings` was
+  already a stub (Wave 0). The model/interface declarations are unchanged —
+  `LocalStorage`'s real implementation is the live one, used by the resolving
+  server's own boot path, per this ADR's own "Who is actually affected"
+  table.
 
-None of this is committed to in this ADR. The gate in `Config.Validate()`
-is the only enforcement change; everything else stays as-is, reachable only
-by the CLI's actual (correct, unaffected) use of `storage.type: remote`,
-until the deferred branch addresses it.
+The gate in `Config.Validate()` remains the durable enforcement — see its own
+doc comment (`internal/config/config.go`), which now states explicitly that
+it must survive any future cleanup pass, including this one.
 
 ## Consequences
 

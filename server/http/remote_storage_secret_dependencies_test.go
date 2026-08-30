@@ -79,11 +79,10 @@ func createTestSecretID(t *testing.T, c *core.KeyorixCore, name string) uint {
 }
 
 // TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer proves the fix for
-// GetSecretDependency/ListSecretDependenciesForProject/
-// ListSecretDependenciesForProjectForUpdate: an edge is genuinely persisted on
-// the upstream via the downstream's RemoteStorage, fetchable by ID, and listed
-// both ways — all via storage.type: remote against a real router, not a
-// protocol mock. Seeding uses CreateSecretDependencyExclusive rather than the
+// GetSecretDependency/ListSecretDependenciesForProject: an edge is genuinely
+// persisted on the upstream via the downstream's RemoteStorage, fetchable by
+// ID, and listed back — all via storage.type: remote against a real router,
+// not a protocol mock. Seeding uses CreateSecretDependencyExclusive rather than the
 // plain CreateSecretDependency: CreateSecretDependency/CreateSecretDependencyProxy
 // was DELETED (#1587, docs/adr-090-stale-fork-proxy-deletion.md) -- no live
 // caller; CreateSecretDependencyExclusive is the safe sibling every real
@@ -123,7 +122,7 @@ func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testi
 	assert.Equal(t, created.ProjectID, fetched.ProjectID)
 
 	// A second edge, then list both back via the downstream's
-	// ListSecretDependenciesForProject / ListSecretDependenciesForProjectForUpdate.
+	// ListSecretDependenciesForProject.
 	second, err := downstream.Storage().CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
 		ProjectID: 1, DependentSecretID: secretC, DependsOnSecretID: secretA,
 	})
@@ -132,10 +131,6 @@ func TestRemoteStorageSecretDependencies_CreateGetListDelete_RealServer(t *testi
 	rows, err := downstream.Storage().ListSecretDependenciesForProject(ctx, 1)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
-
-	rowsForUpdate, err := downstream.Storage().ListSecretDependenciesForProjectForUpdate(ctx, 1)
-	require.NoError(t, err)
-	require.Len(t, rowsForUpdate, 2)
 
 	// DeleteSecretDependency applied directly against the upstream's storage.
 	// Re-verify directly against the upstream, not through the SAME downstream

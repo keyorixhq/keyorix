@@ -2,6 +2,13 @@
 // catalog methods (ListProjects/ListProjectsWithCounts/GetProject/UpdateProject/
 // DeleteProject/DeleteProjectIfEmpty/RestoreProject/ListProjectMembers).
 //
+// GetProjectByNameProxy (backed GetProjectByName, ADR-082 branch 2's boot-time
+// connector resolution) was removed (#1480) — its only real caller, repo-wide,
+// was server/main.go's resolveConnectorOwnership, which calls storage.Storage
+// directly against the running server's own backend, never RemoteStorage
+// (ADR-083: validateRemoteStorageNotServer rejects storage.type: remote for
+// any server process).
+//
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies its
 // project-catalog storage calls to whichever upstream server it's configured against,
 // through these routes (registered in server/http/router.go under
@@ -147,30 +154,6 @@ func (h *CatalogHandler) GetProjectProxy(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		log.Printf("project catalog proxy: get failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, newProjectProxyWire(p))
-}
-
-// GetProjectByNameProxy handles GET /api/v1/system/projects/by-name/{name} —
-// ADR-082 branch 2's boot-time connector resolution (server/main.go), proxied so a
-// storage.type: remote node can resolve a connector's configured project: name
-// against the upstream server's real Project table instead of RemoteStorage's
-// GetProjectByName having no server endpoint to call at all.
-func (h *CatalogHandler) GetProjectByNameProxy(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if name == "" {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "name is required")
-		return
-	}
-	p, err := h.coreService.Storage().GetProjectByName(r.Context(), name)
-	if err != nil {
-		if isProjectNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errProjectNotFound)
-			return
-		}
-		log.Printf("project catalog proxy: get by name failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}

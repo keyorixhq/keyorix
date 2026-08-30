@@ -663,7 +663,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			// only place in the system that sees both config (ownership, resolved
 			// just above) and DB rows (ConnectRefGrant, ConnectorProjectBinding)
 			// together — the create-time checks (CreateConnectRefGrant,
-			// CreateConnectorProjectBindingProxy) each structurally cannot see this:
+			// resolveConnectorOwnership's own CreateConnectorProjectBinding call
+			// above) each structurally cannot see this:
 			// a grant/binding valid when created can still drift out of sync with a
 			// LATER config edit. Neither condition this checks is a security risk —
 			// a dead ref-grant or an orphaned binding both already fail closed/are
@@ -1112,8 +1113,9 @@ func connectOwnershipKeySetMismatch(builtNames []string, ownership map[string]co
 // both config (ownership, resolved from cfg.Connect.Connectors just before
 // this is called) and DB rows (ConnectRefGrant, ConnectorProjectBinding)
 // together, which is why it closes what the create-time checks
-// (CreateConnectRefGrant, CreateConnectorProjectBindingProxy) structurally
-// cannot: a config edit AFTER a grant/binding already exists. Neither
+// (CreateConnectRefGrant, resolveConnectorOwnership's own
+// CreateConnectorProjectBinding call) structurally cannot: a config edit
+// AFTER a grant/binding already exists. Neither
 // condition here is a security risk — a dead ref-grant already denies
 // nothing extra (ReadFederatedSecret's platform branch is a terminal deny
 // regardless of any grant), and an orphaned binding is simply unused, not

@@ -3128,16 +3128,6 @@ func TestListSecretDependenciesForProjectProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestListSecretDependenciesForProjectSnapshotProxy_MissingQuery(t *testing.T) {
-	cs := newHandlerCoreS4(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── risk_exceptions_proxy.go ─────────────────────────────────────────────────
 
 func TestRiskExceptionProxyWireRoundTrip(t *testing.T) {
@@ -3380,23 +3370,6 @@ func TestParseRBACProxyProjectIDQuery_Invalid(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestParseRBACProxyRoleIDsQuery_Missing(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	ids, ok := parseRBACProxyRoleIDsQuery(w, req)
-	// missing role_ids is valid (empty slice) — not an error
-	assert.True(t, ok)
-	assert.Empty(t, ids)
-}
-
-func TestParseRBACProxyRoleIDsQuery_Invalid(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/?role_ids=abc", nil)
-	w := httptest.NewRecorder()
-	_, ok := parseRBACProxyRoleIDsQuery(w, req)
-	assert.False(t, ok)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestGetGroupRoleGrantsProxy_BadID(t *testing.T) {
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
@@ -3451,15 +3424,6 @@ func TestListProjectMachineRoleAssignmentsProxy_MissingQuery(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListProjectMachineRoleAssignmentsProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListGlobalAdminAssignmentsSnapshotProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
-	// missing role_ids is valid → empty result → 200
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestRemoveGlobalAdminRoleGuardedProxy_BadJSON(t *testing.T) {
@@ -4690,48 +4654,6 @@ func TestPruneLoginAttemptsProxy_HappyPath(t *testing.T) {
 }
 
 // ── Scheduler lock proxy ──────────────────────────────────────────────────────
-
-func TestAcquireSchedulerLockProxy_MissingHolder(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.AcquireSchedulerLockProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAcquireSchedulerLockProxy_BadTTL(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"holder":"h","ttl_millis":0}`))
-	w := httptest.NewRecorder()
-	h.AcquireSchedulerLockProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAcquireSchedulerLockProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body, _ := json.Marshal(map[string]any{"key": 1, "holder": "node1", "ttl_millis": 5000})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.AcquireSchedulerLockProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestReleaseSchedulerLockProxy_MissingHolder(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.ReleaseSchedulerLockProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestReleaseSchedulerLockProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body, _ := json.Marshal(map[string]any{"key": 1, "holder": "node1"})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ReleaseSchedulerLockProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── Invitation proxy ──────────────────────────────────────────────────────────
 
@@ -10313,22 +10235,6 @@ func TestSecretHandler_GetSecretDependencyProxy_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestSecretHandler_ListSecretDependenciesForProjectSnapshotProxy_MissingProjectID(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSecretHandler_ListSecretDependenciesForProjectSnapshotProxy_HappyPath(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── connect.go: DeleteRefGrant (S4 additional) ───────────────────────────────
 
 func TestConnectHandler_DeleteRefGrant_UnauthorizedS4(t *testing.T) {
@@ -10772,16 +10678,6 @@ func TestSecretHandler_AccessHistory_HappyPath(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-// ── scheduler_lock_proxy.go: ReleaseSchedulerLockProxy ───────────────────────
-
-func TestAuthHandler_ReleaseSchedulerLockProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.ReleaseSchedulerLockProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── misc_remote_proxy.go: GetSecretIncludingDeletedProxy ─────────────────────
 
 func TestSecretHandler_GetSecretIncludingDeletedProxy_BadID(t *testing.T) {
@@ -11091,27 +10987,6 @@ func TestCatalogHandler_CreateInvitationProxy_BadJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.CreateInvitationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// ── rbac_role_grants_proxy.go: ListGlobalAdminAssignmentsSnapshotProxy ───────
-
-func TestRBACHandler_ListGlobalAdminAssignmentsSnapshotProxy_HappyPath(t *testing.T) {
-	c := newHandlerCoreS4(t)
-	h := NewRBACHandler(c)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListGlobalAdminAssignmentsSnapshotProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// ── scheduler_lock_proxy.go: AcquireSchedulerLockProxy ───────────────────────
-
-func TestAuthHandler_AcquireSchedulerLockProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.AcquireSchedulerLockProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
