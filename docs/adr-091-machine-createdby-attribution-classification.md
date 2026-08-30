@@ -2,9 +2,13 @@
 
 ## Status
 
-**Accepted (2026-08-29).** #1573. Classification recorded here; fixes tracked
-separately (PR1 for the check-breaking subset, PR2 for the mechanical
-attribution-only subset — see "What this does not resolve").
+**Closed (2026-08-30).** #1573, with #1621 folded in. Classification
+complete: PR1 (#1622) fixed the check-breaking subset, PR2 (#1625) fixed the
+mechanical attribution-only subset, and ConnectRefGrant (#1621) is verdicted
+below — no third PR needed. See "What this does not resolve" for the
+retroactive PR1/PR2 mapping and the one closed-without-a-fix item
+(`SecretDependency`'s ID-space collision, #1623, tracked separately since
+it's a different bug shape).
 
 ## What this is
 
@@ -95,6 +99,29 @@ new path to `storage.AssignMachineRole`/`storage.CreateMachineIdentity`
 added that bypasses either check — this guard goes red, and every "Bucket 3"
 verdict below (and #1545's global-scope reasoning) must be re-derived, not
 assumed to still hold.
+
+## The one-sentence rule for the whole attribution family
+
+Every machine-attribution field added under this family — #1573's Bucket 1
+fixes (PR2/#1625), #1622's `ApproverMachineIdentityID`, #1623's per-model
+discriminator columns — uses a **plain `uint` companion column with `0` as
+"no machine actor," matching the shape of the human-attribution field it
+sits beside on the same model**, never a nullable `*uint`. `AuditEvent.MachineIdentityID`
+(nullable, #1530) is the one exception, and it is *not* a second pattern to
+replicate: it predates this convention, and nullability there is load-bearing
+for a reason specific to audit rows (distinguishing "no context tag present,"
+e.g. impersonation/system events that never call `WithMachineActor` at all,
+from "context tag present, human acted") that doesn't apply to a model create
+path, where the human/machine split is always known synchronously at write
+time — there is no third "unknown" state to represent. #1622's
+`ApproverMachineIdentityID` additionally participates in
+`uniqueIndex:ux_access_request_approver`, where a nullable column would
+silently stop enforcing "one sign-off per approver" (NULL is never equal to
+NULL in a unique index) — a second, independent reason plain `uint` is
+correct there, not just consistency with the rest of the family. This
+matches what #1623 landed on (PR #1625 confirmed via `git show ac8a1b10`
+using plain `uint` throughout, citing #1573's shape explicitly) — one rule,
+not a third shape.
 
 ## Task 2 — the three-bucket classification
 
@@ -223,23 +250,60 @@ These are different defects with different fixes, kept separate:
 - **`Notification`** (`models.go:1250`) — no actor field at all, by design
   (confirmed unchanged from #1589): a notification doesn't need to record a
   trigger the way a governance record does. Not a bug.
-- **`ConnectRefGrant`** (`models.go:677`) — flagged as a *plausible* gap but
-  not traced during this investigation: an admin-mutated
-  authorization-scope grant (role↔connector↔ref-prefix) with `CreatedAt`
-  but no actor field, unlike its siblings (`ShareRecord`/`RiskException`/
-  `BreakGlassActivation`, all of which carry a real attribution trail).
-  Filed separately (#1621) rather than assumed either way.
+- **`ConnectRefGrant`** (`models.go:677`) — **traced (#1621): no attribution
+  field, by design. Not a bug.** `ConnectRefGrant{ID, RoleID, Connector,
+  RefPrefix, ExpiresAt, CreatedAt}` is a pure role-to-capability binding —
+  the same shape as `RolePermission`, `UserRole`, `GroupRole`, and
+  `MachineIdentityRole`, all four of which were checked directly and none of
+  which carry any actor field either (`UserRole`/`GroupRole` don't even
+  carry `CreatedAt`). This codebase's convention is: attribution lives on
+  *resource-grant* models (`ShareRecord`, `SecretACL`, `RiskException`,
+  `BreakGlassActivation` — something is being granted TO someone, or an
+  exception is being made FOR a reason), never on pure *role-binding* join
+  models (something is being wired to a capability, full stop — the "who"
+  is answered by the audit log, not the row). `CreateConnectRefGrant`/
+  `DeleteConnectRefGrant` (`internal/core/connect_ref_grants.go`) do call
+  `writeAuditEventFull` with `EventConnectRefGrantCreate`/`...Delete` on
+  every write, and that audit trail's own `UserID`/`MachineIdentityID`
+  attribution is now correct end-to-end (#1626/#1628, landed after this
+  ADR was first written) — so "no persisted attribution column" does not
+  mean "who did this is unrecoverable," only that it lives in the audit log
+  instead of the row, consistent with every other join table of this shape.
+  Closed without a fix: adding a field here would be the first attribution
+  column on any pure role-binding model in this codebase, breaking the
+  convention rather than following it.
 
-## What this does not resolve
+## What this closes, and what's still open elsewhere
+
+Two PRs, as scoped — not ten, and not a third:
 
 - **PR1** (#1622, landed): fixed the check-breaking subset
   (`AccessRequestApproval.ApproverID` + `AccessRequest.ResolvedBy`'s approve
   and reject paths) with machine-identity-aware self-approval and
   distinct-approver logic, exploit-shaped tests, and positive controls.
-- **PR2** (not yet landed): mechanical, one diff — companion
-  `*MachineIdentityID *uint` fields (mirroring `AuditEvent.MachineIdentityID`)
-  for the remaining 8 attribution-only Bucket-1 fields, populated at each
-  write site from the already-resolved `userCtx.MachineIdentityID`.
-- **#1621** (`ConnectRefGrant`) — filed, not investigated.
+  `TestAssignMachineRole_GlobalScopeRejected` and its two companions
+  (`internal/core/machine_global_scope_invariant_test.go`) landed in this PR
+  and are confirmed present and passing on current `main`.
+- **PR2** (#1625, landed): mechanical, one diff — plain `uint` companion
+  `*MachineIdentityID` fields (per the one-sentence rule above, NOT
+  `AuditEvent`'s nullable shape) for the remaining 8 attribution-only
+  Bucket-1 fields, populated at each write site from the already-resolved
+  `userCtx.MachineIdentityID`. This PR also absorbed #1623's discovery
+  (`SecretDependency.CreatedBy`'s ID-space collision) by adding
+  `SecretDependency.CreatedByMachineIdentityID` alongside the rest.
+- **#1621** (`ConnectRefGrant`) — traced and closed above: no attribution
+  field, by design, matching every sibling role-binding model. No PR3.
+
+**Data honesty**: every Bucket-1 field's existing `0` rows, written before
+PR1/PR2, cannot be repaired — nothing else on those rows records who the
+real actor was, unlike #1626's audit rows, which stay flaggable-as-suspect
+via `ActorType` even without a backfill. This is a plain, permanent gap in
+historical data for installs that existed before 2026-08-30, not silently
+glossed over here.
+
 - **#1623** (`SecretDependency.CreatedBy`'s `User`/`MachineIdentity` ID-space
-  collision, discovered while starting PR2) — filed, not investigated.
+  collision) — the discriminator column landed via PR2/#1625 above; tracked
+  separately from this ADR because it's a different bug shape (silently
+  *ambiguous*, not silently *absent*) and may still need its own schema
+  decision for the general `*By uint`-without-discriminator pattern beyond
+  this one field. Not reopened here.
