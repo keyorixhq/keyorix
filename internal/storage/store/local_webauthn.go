@@ -161,6 +161,14 @@ func (ls *LocalStorage) CreateWebAuthnSession(ctx context.Context, s *models.Web
 func (ls *LocalStorage) ConsumeWebAuthnSession(ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error) {
 	// G81 (WebAuthnSession.ExpiresAt): normalize internally — see GetAuditLogs.
 	now = now.UTC()
+	// #1632: refuse a now that looks earlier than one this process has
+	// already legitimately observed -- see consumeClockLooksRegressed's doc
+	// comment (shared with ConsumeMFAChallenge) for what this defends
+	// against (a backward-stepped host clock letting an expired-but-never-
+	// consumed session be consumed for the first time past its real window).
+	if ls.consumeClockLooksRegressed(now) {
+		return nil, fmt.Errorf("invalid or expired webauthn session")
+	}
 	var sess *models.WebAuthnSession
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.WebAuthnSession{}).

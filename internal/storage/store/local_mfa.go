@@ -123,6 +123,14 @@ func (ls *LocalStorage) GetActiveMFAChallenge(ctx context.Context, tokenHash str
 func (ls *LocalStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
 	// G81 (MFAChallenge.ExpiresAt): normalize internally — see GetAuditLogs.
 	now = now.UTC()
+	// #1632: refuse a now that looks earlier than one this process has
+	// already legitimately observed -- see consumeClockLooksRegressed's doc
+	// comment for what this defends against (a backward-stepped host clock
+	// letting an expired-but-never-consumed challenge be consumed for the
+	// first time past its real window).
+	if ls.consumeClockLooksRegressed(now) {
+		return nil, fmt.Errorf("invalid or expired challenge")
+	}
 	var ch *models.MFAChallenge
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&models.MFAChallenge{}).
