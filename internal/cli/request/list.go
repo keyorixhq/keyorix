@@ -86,7 +86,9 @@ func runList(cmd *cobra.Command, args []string) error {
 func requireListAuthority(ctx context.Context, svc *core.KeyorixCore, actorID, projectID uint) error {
 	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{ProjectID: projectID})
 	if err != nil {
-		return fmt.Errorf("failed to verify --by authority: %w", err)
+		return common.ByAuthorityUnavailableError(err,
+			"run GET /api/v1/projects/{id}/access-requests directly against the hub instead, authenticated "+
+				"with your own real session (e.g. via 'keyorix connect')")
 	}
 	if !ok {
 		return fmt.Errorf("--by actor does not hold roles.assign at project %d; refusing to list access requests on their behalf", projectID)
