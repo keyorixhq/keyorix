@@ -144,6 +144,20 @@ func TestReadFederatedSecret_BackendErrorAudited(t *testing.T) {
 // context.Background() (i.e. WITHOUT the transport layer having already called
 // core.WithActorType). ReadFederatedSecret must stamp actorType itself rather than
 // trust that upstream middleware tagged the context.
+//
+// #1626: UserID must NOT hold principalID here — emitAudit clears UserID
+// unconditionally once ActorType is machine, since a machine's raw ID in a
+// human-attribution column is exactly the bug that issue fixed. This test
+// previously asserted the opposite (UserID == the machine's raw ID) as if it
+// were the correct, proven behavior; that assertion enshrined the bug rather
+// than testing for it. MachineIdentityID is correctly nil here too — but only
+// because THIS test deliberately uses a bare, untagged context.Background()
+// to probe ActorType's own defense-in-depth (see doc comment above); it does
+// not call WithMachineActor the way real HTTP/gRPC middleware does for an
+// actual machine-authenticated request. In production, MachineIdentityID
+// would be populated from that upstream tag regardless of what
+// ReadFederatedSecret does internally — this test's artificial premise (a
+// context nothing has ever tagged) is why it stays nil here specifically.
 func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 	ms := new(MockStorage)
 	var got *models.AuditEvent
@@ -161,8 +175,7 @@ func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 	assert.Equal(t, "v", val)
 	require.NotNil(t, got)
 	assert.Equal(t, ActorTypeMachine, got.ActorType, "machine-identity read must be actored as machine_identity, not default to user")
-	require.NotNil(t, got.UserID)
-	assert.EqualValues(t, 42, *got.UserID)
+	assert.Nil(t, got.UserID, "#1626: a machine's raw ID must never occupy UserID, a human-attribution column")
 }
 
 // TestReadFederatedSecret_UserAuditedAsUser is the counterpart: an ordinary user read
