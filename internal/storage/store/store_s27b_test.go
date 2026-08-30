@@ -490,8 +490,16 @@ func TestCountStaleMachineIdentitiesByProject_S27b_HappyPath(t *testing.T) {
 		ProjectID: 20, Name: "stale-s27b", State: "active", CreatedAt: past,
 	}
 	require.NoError(t, ls.db.Create(m).Error)
-	// Force created_at to past (GORM may override on Create).
-	require.NoError(t, ls.db.Model(m).Update("created_at", past).Error)
+	// Force created_at to past (GORM may override on Create). Routed through
+	// Save, not a raw column Update: CountStaleMachineIdentitiesByProject does a
+	// real SQL range query on created_at (local_machine_identities.go), and
+	// MachineIdentity.BeforeSave exists specifically to UTC-normalize this
+	// column for that comparison — a raw Update bypasses it and leaves `past`'s
+	// local Location in the column, correct here only because the 72h-old
+	// fixture value clears the 1h-old cutoff by a wide margin, not because the
+	// value is actually canonical (#1619).
+	m.CreatedAt = past
+	require.NoError(t, ls.db.Save(m).Error)
 
 	olderThan := time.Now().Add(-time.Hour)
 	counts, err := ls.CountStaleMachineIdentitiesByProject(ctx, []uint{20}, olderThan)

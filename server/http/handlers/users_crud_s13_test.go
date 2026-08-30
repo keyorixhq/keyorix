@@ -445,14 +445,21 @@ func TestSearchUsers_ReturnsResults_S13(t *testing.T) {
 func TestStaleAccounts_PasswordResetRequired_S13(t *testing.T) {
 	uh, _, db := freshUserHandlerS12(t)
 
-	require.NoError(t, db.Create(&models.User{
+	u := &models.User{
 		Username:     "reset-stale-s13",
 		Email:        "reset-stale-s13@x.com",
 		AccountState: core.AccountPasswordResetRequired,
-	}).Error)
-	require.NoError(t, db.Model(&models.User{}).
-		Where("username = ?", "reset-stale-s13").
-		UpdateColumn("created_at", time.Now().Add(-10*24*time.Hour)).Error)
+	}
+	require.NoError(t, db.Create(u).Error)
+	// Force created_at into the past, routed through Save (not a raw column
+	// Update): StaleAccounts' ListUsersInStateBefore does a real SQL range
+	// query on created_at, and User.BeforeSave exists specifically to
+	// UTC-normalize this column for that comparison — a raw Update bypasses it
+	// and leaves the local Location of time.Now() sitting in the column,
+	// correct here only because the 10-day-old value clears the 7-day cutoff
+	// by a comfortable margin, not because the value is actually canonical (#1619).
+	u.CreatedAt = time.Now().Add(-10 * 24 * time.Hour)
+	require.NoError(t, db.Save(u).Error)
 
 	req := withUserCtx(httptest.NewRequest(
 		http.MethodGet,

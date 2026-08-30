@@ -295,12 +295,18 @@ func TestSetupTokenLifecycle_S22(t *testing.T) {
 	ls := newS22Store(t, &models.SetupToken{})
 	ctx := context.Background()
 
-	// CreateSetupToken.
+	// CreateSetupToken. CreatedAt is set explicitly here, mirroring every real
+	// caller (internal/core/setup_token.go's `now := c.now()`): SetupToken.
+	// BeforeSave only gets a chance to UTC-normalize a non-zero value — GORM's
+	// own blank-CreatedAt auto-population runs AFTER BeforeSave and would
+	// silently overwrite a hook-normalized zero value with local time.Now(),
+	// producing a row no real caller can produce (#1619).
 	tok, err := ls.CreateSetupToken(ctx, &models.SetupToken{
 		TokenHash:    "abc123",
 		Purpose:      "password_reset_link",
 		SubjectEmail: "alice@test.io",
 		State:        "active",
+		CreatedAt:    time.Now(),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, tok)
@@ -328,6 +334,7 @@ func TestSetupTokenLifecycle_S22(t *testing.T) {
 		Purpose:      "password_reset_link",
 		SubjectEmail: "alice@test.io",
 		State:        "active",
+		CreatedAt:    time.Now(),
 	})
 	require.NoError(t, err)
 
@@ -347,6 +354,7 @@ func TestSetupTokenLifecycle_S22(t *testing.T) {
 		Purpose:      "password_reset_link",
 		SubjectEmail: "alice@test.io",
 		State:        "active",
+		CreatedAt:    time.Now(),
 	})
 	require.NoError(t, err)
 

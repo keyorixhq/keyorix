@@ -46,10 +46,18 @@ func TestStaleAccountsHandler(t *testing.T) {
 	uh, _, db := setupUserEnhancementTest(t)
 
 	// One stale pending account (>7d), one recent pending, one active old.
+	// Force created_at into the past, routed through Save (not a raw column
+	// Update): StaleAccounts' ListUsersInStateBefore does a real SQL range
+	// query on created_at, and User.BeforeSave exists specifically to
+	// UTC-normalize this column for that comparison — a raw Update bypasses it
+	// and leaves the local Location of time.Now() sitting in the column,
+	// correct today only by the margin between each case's age and the 7-day
+	// cutoff, not because the value is actually canonical (#1619).
 	mk := func(name, state string, age time.Duration) {
-		require.NoError(t, db.Create(&models.User{Username: name, Email: name + "@x.com", AccountState: state}).Error)
-		require.NoError(t, db.Model(&models.User{}).Where("username = ?", name).
-			UpdateColumn("created_at", time.Now().Add(-age)).Error)
+		u := &models.User{Username: name, Email: name + "@x.com", AccountState: state}
+		require.NoError(t, db.Create(u).Error)
+		u.CreatedAt = time.Now().Add(-age)
+		require.NoError(t, db.Save(u).Error)
 	}
 	mk("stale-bot", core.AccountPendingFirstLogin, 10*24*time.Hour)
 	mk("fresh-bot", core.AccountPendingFirstLogin, 1*24*time.Hour)

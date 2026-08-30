@@ -106,9 +106,22 @@ func TestSendExpiryReminders_EscalatesOnMoreSevereState(t *testing.T) {
 	firstID := note.ID
 
 	// Now that secret has also expired (soon-key's expiry moved into the past)
-	// while the Warning reminder is still unread: escalate to Critical.
-	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", 11).
-		Update("expiration", note.CreatedAt.AddDate(0, 0, -1)).Error)
+	// while the Warning reminder is still unread: escalate to Critical. Routed
+	// through Save (fetch, mutate, Save), not a raw column Update: SecretNode.
+	// BeforeSave UTC-normalizes Expiration because the real read path
+	// (listSecretsExpiringBefore -> ListSecrets' ExpiresBefore filter) is a SQL
+	// range query, not a Go-side comparison. note.CreatedAt is already UTC here
+	// (newExpiryReminderCore stubs c.now() to a fixed time.UTC value, and
+	// notifyWithSeverity stamps Notification.CreatedAt from c.now()), so a raw
+	// Update would have been benign today too — this is a defensive rewrite,
+	// not a fix for a currently-observable bug, matching #1619's "right fix"
+	// shape rather than leaving a raw write whose safety depends on knowing a
+	// fact about an unrelated helper two calls away.
+	var soon models.SecretNode
+	require.NoError(t, db.Where("id = ?", 11).First(&soon).Error)
+	newExpiration := note.CreatedAt.AddDate(0, 0, -1)
+	soon.Expiration = &newExpiration
+	require.NoError(t, db.Save(&soon).Error)
 
 	sent, err = c.SendExpiryReminders(ctx, 14)
 	require.NoError(t, err)
