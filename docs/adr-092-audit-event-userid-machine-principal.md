@@ -2,7 +2,14 @@
 
 ## Status
 
-**Accepted (2026-08-30).** #1626. Fix landed here; guard is the deliverable.
+**Closed (2026-08-30).** #1626, fixed in #1628, independently re-verified
+complete in a follow-up pass the same day (see "Verification pass" below) —
+#1628's title ("emitAudit clears UserID") undersold its own scope: it also
+correctly leaves `MachineIdentityID` populated and `ActorType` machine-typed,
+and it reaches all eight call sites structurally (through the choke point),
+not eight individual patches. Not an instance of #1573 (a cleared field with
+nothing recorded) — the actor ends up correctly attributed, just via
+`MachineIdentityID` instead of `UserID`.
 
 ## What this is
 
@@ -133,17 +140,117 @@ every event these eight call sites wrote while the caller was a machine
 identity, and this cannot be disambiguated retroactively — the discriminating
 information was never recorded on `UserID` itself. No production installs
 exist yet; no backfill is possible or implied. Unlike #1623's persisted model
-rows, though, these rows ARE flaggable as suspect without any backfill: any
-row with `ActorType == "machine_identity"` and a non-nil `UserID` predates
-this fix and is known-wrong in that one column, even though which `User.ID`
-it accidentally collided with cannot be un-recorded.
+rows, though, these rows ARE flaggable as suspect without any backfill, and
+better than merely flaggable: **the true actor is recoverable, not just the
+row's badness.** Directly verified (not assumed) against
+`server/middleware/auth.go`'s `buildRequestContext`: `WithActorType(ctx,
+ActorTypeMachine)` and `WithMachineActor(ctx, *userCtx.MachineIdentityID)`
+are set together, unconditionally, for every machine-authenticated request —
+so any pre-#1628 row from a real machine caller has all three of
+`ActorType="machine_identity"`, `MachineIdentityID=<the real machine>`, AND
+`UserID=<the same ID, misplaced>` simultaneously. Any row with
+`ActorType == "machine_identity"` and a non-nil `UserID` predates this fix,
+is known-wrong in that one column, and the correct actor is sitting right
+there in `MachineIdentityID` on the same row — "we can identify these rows
+AND recover the actor" is the accurate claim, stronger than "we can identify
+these rows but not recover the actor."
+
+**Detection query** (installs that ran between #1626's bug window and #1628's
+fix):
+
+```sql
+SELECT * FROM audit_events
+WHERE actor_type = 'machine_identity' AND user_id IS NOT NULL;
+```
+
+Every matching row's real actor is `machine_identity_id` on that same row;
+`user_id` on a matching row should be treated as garbage and ignored, never
+displayed as-is. This predicate is structurally unreachable for any row
+written after #1628 landed (`emitAudit` clears `UserID` unconditionally the
+instant `ActorType` is machine), so the query is self-limiting to the
+historical window without needing a cutoff timestamp.
+
+## Verification pass (2026-08-30) — is #1628 actually complete?
+
+A follow-up pass re-verified this ADR's claims from the merged diff, not the
+PR title or the closed issue, per standing practice. Three yes/no answers:
+
+1. **Does the machine principal end up in `MachineIdentityID`, or only out of
+   `UserID`? Both — populated into `MachineIdentityID` AND cleared from
+   `UserID`.** `git show 9f3adc42 -- internal/core/service.go` shows the
+   pre-existing #1530 `MachineIdentityID`-stamp logic untouched, now nested
+   alongside the new unconditional `event.UserID = nil`. Not a narrowing —
+   the original mechanism plus the new correction, in the same block.
+2. **Is `ActorType` set to machine on those events? Yes**, and independently
+   of the bug: `writeAuditEventDiff`/`writeAuditEventFailed`
+   (`internal/core/audit.go`) set `ActorType: actorTypeFromContext(ctx)` from
+   context, never from the call site's own (buggy) `userID` value.
+3. **Did the fix reach all eight call sites, or only the ones routed through
+   `emitAudit`? All eight — because all eight were already routed through
+   `emitAudit`.** Directly grepped each of the eight functions'
+   current bodies (`connect.go`, `rotation_executor.go`,
+   `secret_ownership.go`, `users.go`, `secret_dependencies.go`): every one
+   calls `writeAuditEvent`/`writeAuditEventFull`/`writeAuditEventDiff`/
+   `writeAuditEventFailed`, none constructs `models.AuditEvent{}` directly.
+
+**Task 2 — eight sites were wrong, not "the audit writer is optional."**
+Confirmed: none of the eight construct `AuditEvent` directly. The original
+diagnosis (a value-correctness bug at a converged choke point, not a bypass)
+holds. No structural closure needed for the eight themselves.
+
+**But the "audit writer is optional" question has a different answer at repo
+scope, found during this pass — not among the eight, a separate discovery.**
+`rg -n '\.LogAuditEvent\(' --type=go -g '!*_test.go'` across the whole repo
+(not just `internal/core`, which is all #1530's original guard scanned)
+found two direct callers the guard had never seen:
+`server/main.go:auditConnectorProjectBindingCreate` and
+`server/http/handlers/audit_ingest_proxy.go:IngestAuditEventProxy`. Both are
+safe on inspection (first hardcodes `ActorType: system`, never sets
+`UserID`; second is the `storage.type: remote` hub-side proxy, persisting an
+event a follower's own `emitAudit` already corrected before serializing it
+over the wire — a genuinely different trust boundary, `#G79`, already
+tracked and deferred, not something #1626/#1628 was scoped to close). But
+the OLD guard's own doc comment claimed "there is exactly one direct
+caller" — true for `internal/core`, false for the repository. Widened to
+walk the whole repo (see Guard, below) rather than leave a completeness
+claim that was accurate only by accident of where it looked.
+
+**One-sentence rule for #1573/#1623 to cite**: a machine principal's own ID
+belongs in `MachineIdentityID` (or a model's `*MachineIdentityID` companion
+field, #1573's shape) whenever it is being recorded as WHO acted, and must
+never occupy a `UserID`/`CreatedBy`-shaped human-attribution column, even
+though the identical `PrincipalID()` value is exactly what
+`AuthorizePrincipal` correctly needs for the SAME request's authorization
+decision — the two are different questions (who is allowed vs. who acted)
+that happen to share a source value, and conflating them is the single
+mistake #1573, #1623, and #1626 all trace back to.
+
+**Guard — widened, verified red-first, twice, in this pass.**
+`internal/core/g80_1530_machine_actor_attribution_guard_test.go`
+(`TestDirectLogAuditEventCallersAreSafe`, #1530's original guard) now walks
+the entire repository via `filepath.WalkDir` from repo root, not just
+`internal/core`'s own directory — the allowlist grew from 1 entry to 3
+(`anomaly.go`, `server/main.go`, `audit_ingest_proxy.go`), each with its own
+reasoning. Verified red twice, by actually breaking things, not by
+inspection:
+- Reverted `emitAudit`'s `event.UserID = nil` line locally; confirmed
+  `TestEmitAudit_MachineActorNeverGetsUserID` and
+  `TestAddSecretDependency_AuditEventUserIDNotMachinePrincipal` both failed
+  (a mocked `storage.LogAuditEvent` call no longer matched); restored;
+  confirmed green again.
+- Removed the new `audit_ingest_proxy.go` allowlist entry; confirmed
+  `TestDirectLogAuditEventCallersAreSafe` failed, naming that exact
+  `path:func`; restored; confirmed green again.
+
+Positive control: `TestEmitAudit_HumanActorKeepsUserID` — a human-actored
+event's `UserID` survives untouched and `MachineIdentityID` stays nil; the
+fix is conditioned on `ActorType == machine`, not a blanket clear.
 
 ## Verification
 
 - `go build ./...`, `go vet ./...`, `gofmt -l .` clean.
 - Full suite: `internal/core`, `internal/storage`, `server/http`,
   `server/grpc` green.
-- Guard registry: `TestDirectLogAuditEventCallersAreSafe` (#1530's existing
-  bypass guard) predicted unaffected (this fix doesn't add or remove any
-  `storage.LogAuditEvent` caller) — confirmed green, unchanged allowlist
-  (still 1 entry).
+- Guard registry: `TestDirectLogAuditEventCallersAreSafe` — predicted 3
+  entries after widening to repo scope (1 pre-existing + 2 newly discovered,
+  both safe); confirmed actual = 3, green.
