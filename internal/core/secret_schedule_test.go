@@ -103,7 +103,11 @@ func newScheduleCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "p"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 10, ProjectID: 10, Name: "e"}).Error)
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	// #1632: enforceSecretReadGuards now calls c.now() (previously a bare
+	// time.Now()), so this raw struct literal needs the same default the
+	// NewKeyorixCore constructor sets, or every value-read test through this
+	// helper panics on a nil c.now.
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	return c, db
 }
 

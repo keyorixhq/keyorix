@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,9 @@ func rollbackCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}))
-	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
+	// #1632: enforceSecretReadGuards (reached via RotateSecret) now calls
+	// c.now() -- see secret_schedule_test.go's newScheduleCore for the same fix.
+	return &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}, db
 }
 
 func TestRollbackSecret(t *testing.T) {
