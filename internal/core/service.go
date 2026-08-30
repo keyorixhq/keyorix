@@ -473,11 +473,33 @@ func truncateAuditField(s string, maxLen int) string {
 // identity's own ID is stamped here from context (WithMachineActor,
 // audit_context.go) whenever the event is already actor-typed "machine_identity"
 // and no caller explicitly set MachineIdentityID itself.
+//
+// #1626: the same guarantee, the other direction. Several writeAuditEventFull/
+// writeAuditEventDiff/writeAuditEventFailed callers (SetSecretAutoRotate,
+// CreateConnectRefGrant/DeleteConnectRefGrant, AddSecretDependency/
+// RemoveSecretDependency, transferOwnership, RevokeAllPersonalAccessTokensForUser/
+// DeleteSessionsForUserExcept) build userID from a PrincipalID()-derived value --
+// correct for AuthorizePrincipal, which needs the machine's real ID, but wrong
+// for UserID, a human-attribution column: it collides with the same User.ID
+// space #1623 fixed for persisted model columns. Every one of those callers
+// funnels through here already (confirmed: TestDirectLogAuditEventCallersAreSafe,
+// #1530's existing guard, allows no other path to storage.LogAuditEvent), so the
+// fix belongs here, not at each site -- one correction, not eight, and it closes
+// the same mistake at any future call site too. Do NOT add a second
+// machine-actor field to carry this; MachineIdentityID above is already the
+// mechanism. This is guard-the-invariant-not-the-conclusion's fifth instance in
+// this campaign -- see docs/adr-092-audit-event-userid-machine-principal.md.
 func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
-	if event.ActorType == ActorTypeMachine && event.MachineIdentityID == nil {
-		if machineID, ok := machineActorFromContext(ctx); ok {
-			event.MachineIdentityID = &machineID
+	if event.ActorType == ActorTypeMachine {
+		if event.MachineIdentityID == nil {
+			if machineID, ok := machineActorFromContext(ctx); ok {
+				event.MachineIdentityID = &machineID
+			}
 		}
+		// A machine principal's ID must never occupy UserID -- see the doc
+		// comment above. Unconditional: no caller has a legitimate reason to
+		// want a machine's raw ID there once ActorType says machine.
+		event.UserID = nil
 	}
 	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
 	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
