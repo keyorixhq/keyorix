@@ -280,7 +280,10 @@ func runTmplDelete(cmd *cobra.Command, args []string) error {
 func requireTemplateAuthority(ctx context.Context, svc *core.KeyorixCore, actorID uint) error {
 	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{})
 	if err != nil {
-		return fmt.Errorf("failed to verify --by authority: %w", err)
+		return common.ByAuthorityUnavailableError(err,
+			"run the equivalent request directly against the hub instead -- POST/GET "+
+				"/api/v1/rejection-reason-templates or DELETE .../rejection-reason-templates/{id} -- "+
+				"authenticated with your own real session (e.g. via 'keyorix connect')")
 	}
 	if !ok {
 		return fmt.Errorf("--by actor does not hold roles.assign; refusing to attribute this action to them")

@@ -135,7 +135,10 @@ func runReview(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 func requireReviewAuthority(ctx context.Context, svc *core.KeyorixCore, actorID, projectID uint) error {
 	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{ProjectID: projectID})
 	if err != nil {
-		return fmt.Errorf("failed to verify --by authority: %w", err)
+		return common.ByAuthorityUnavailableError(err,
+			"run PUT /api/v1/projects/{id}/access-requests/{requestId} directly against the hub instead, "+
+				"authenticated with your own real session (e.g. via 'keyorix connect'), since the hub, not "+
+				"this shared credential, decides who may approve or reject")
 	}
 	if !ok {
 		return fmt.Errorf("--by actor does not hold roles.assign at project %d; refusing to attribute this review to them", projectID)

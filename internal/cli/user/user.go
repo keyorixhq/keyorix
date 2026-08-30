@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/spf13/cobra"
 )
@@ -61,7 +62,11 @@ func resolveAdminID(ctx context.Context, service *core.KeyorixCore, email string
 func requireUserAuthority(ctx context.Context, svc *core.KeyorixCore, actorID uint, permission string) error {
 	ok, err := svc.Authorize(ctx, actorID, permission, core.Scope{})
 	if err != nil {
-		return fmt.Errorf("failed to verify --by authority: %w", err)
+		return common.ByAuthorityUnavailableError(err,
+			"run the equivalent request directly against the hub instead -- POST /api/v1/users/{id}/suspend, "+
+				"/reactivate, /revoke-sessions, /resend-setup-link, or /require-password-reset, or DELETE "+
+				"/api/v1/users/{id} -- authenticated with your own real session (e.g. via 'keyorix connect'), "+
+				"since the hub, not this shared credential, decides who may act")
 	}
 	if !ok {
 		return fmt.Errorf("--by actor does not hold %s; refusing to attribute this action to them", permission)

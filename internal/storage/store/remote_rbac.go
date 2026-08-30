@@ -643,8 +643,18 @@ func (rs *RemoteStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleI
 
 // GetUserRoleIDsAt is a server-internal authorization primitive; remote clients
 // do not enforce, so it is unsupported here.
+//
+// #1575: wraps the shared ErrUnsupportedByBackend sentinel (via
+// remoteUnsupported), not a bare string, specifically so internal/cli's
+// requireUserAuthority/requireInviteAuthority/requireReviewAuthority/
+// requireTemplateAuthority (the --by authority check's four call sites) can
+// distinguish "this backend cannot evaluate the check at all" from "the
+// resolved actor genuinely lacks the permission" via errors.Is, and surface a
+// clear, actionable message instead of this raw stub error. Kept as a stub
+// deliberately — see ADR-086 — this changes only what the error IS, not
+// what the method DOES.
 func (rs *RemoteStorage) GetUserRoleIDsAt(_ context.Context, _ uint, _ storage.Scope) ([]uint, error) {
-	return nil, fmt.Errorf("not supported in remote storage")
+	return nil, remoteUnsupported("GetUserRoleIDsAt")
 }
 
 // GetUserRoleIDsExact is a server-internal authorization primitive.
@@ -661,8 +671,11 @@ func (rs *RemoteStorage) IsGroupProjectScoped(_ context.Context, _ uint, _ uint)
 }
 
 // GetUserGroupRoleIDsAt is a server-internal authorization primitive.
+//
+// #1575: see GetUserRoleIDsAt's doc comment above — same reasoning, same
+// errors.Is-detectable sentinel.
 func (rs *RemoteStorage) GetUserGroupRoleIDsAt(_ context.Context, _ uint, _ storage.Scope) ([]uint, error) {
-	return nil, fmt.Errorf("not supported in remote storage")
+	return nil, remoteUnsupported("GetUserGroupRoleIDsAt")
 }
 
 // GetUserRoleScopes is a server-internal authorization primitive.
@@ -671,8 +684,11 @@ func (rs *RemoteStorage) GetUserRoleScopes(_ context.Context, _ uint) ([]storage
 }
 
 // RoleSetHasPermission is a server-internal authorization primitive.
+//
+// #1575: see GetUserRoleIDsAt's doc comment above — same reasoning, same
+// errors.Is-detectable sentinel.
 func (rs *RemoteStorage) RoleSetHasPermission(_ context.Context, _ []uint, _ string) (bool, error) {
-	return false, fmt.Errorf("not supported in remote storage")
+	return false, remoteUnsupported("RoleSetHasPermission")
 }
 
 // --- Project / Environment ---

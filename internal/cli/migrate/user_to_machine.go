@@ -116,16 +116,18 @@ func requireMigrationAuthority(ctx context.Context, svc *core.KeyorixCore, actor
 		return fmt.Errorf("--by actor's account is suspended or deactivated; refusing to attribute this migration to them")
 	}
 
+	migrationAlternative := "run POST /api/v1/projects/{id}/machine-identities/migrate-from-user directly against " +
+		"the hub instead, authenticated with your own real session (e.g. via 'keyorix connect')"
 	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{ProjectID: projectID})
 	if err != nil {
-		return fmt.Errorf("failed to verify --by authority: %w", err)
+		return common.ByAuthorityUnavailableError(err, migrationAlternative)
 	}
 	if !ok {
 		return fmt.Errorf("--by actor does not hold roles.assign at project %d; refusing to attribute this migration to them", projectID)
 	}
 	ok, err = svc.Authorize(ctx, actorID, "users.write", core.Scope{})
 	if err != nil {
-		return fmt.Errorf("failed to verify --by authority: %w", err)
+		return common.ByAuthorityUnavailableError(err, migrationAlternative)
 	}
 	if !ok {
 		return fmt.Errorf("--by actor does not hold users.write; refusing to attribute this migration to them")
