@@ -65,10 +65,6 @@ type bypassSite struct {
 	Method    string
 }
 
-func (b bypassSite) key() string {
-	return b.File + ":" + itoa(b.Line)
-}
-
 func itoa(n int) string { return strconv.Itoa(n) }
 
 // beforeSaveHookedFields derives, from models.go's own AST, a map of model
