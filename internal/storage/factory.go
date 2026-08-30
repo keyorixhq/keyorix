@@ -2,6 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -185,6 +188,24 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	dbPath := cfg.Storage.Database.Path
 	if dbPath == "" {
 		dbPath = "./secrets.db"
+	}
+
+	// #1636: log which file is actually about to be opened, and whether it
+	// already existed, BEFORE gorm.Open's implicit create-if-missing makes that
+	// distinction unrecoverable. dbPath itself is deliberately left untouched
+	// here (still cwd-relative if configured that way, still fed as-is into
+	// sqliteDSN/withMigrationLock below) -- this is diagnostics only, not a fix
+	// for the underlying resolution defect (tracked separately). Best-effort:
+	// filepath.Abs only fails if os.Getwd() fails, which would already be a
+	// more fundamental problem than this log line; never block startup on it.
+	logDbPath := dbPath
+	if abs, aerr := filepath.Abs(dbPath); aerr == nil {
+		logDbPath = abs
+	}
+	if _, statErr := os.Stat(dbPath); statErr == nil {
+		log.Printf("storage: opening existing SQLite database at %s (configured: %q)", logDbPath, cfg.Storage.Database.Path)
+	} else {
+		log.Printf("storage: no database found at %s (configured: %q) -- a NEW, EMPTY database will be created here", logDbPath, cfg.Storage.Database.Path)
 	}
 
 	// Hold migrationMu across gorm.Open too, not just the migration that follows
