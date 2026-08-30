@@ -221,7 +221,13 @@ func TestSetupToken_MarkExpired(t *testing.T) {
 func TestSetupToken_CountSince(t *testing.T) {
 	ctx := context.Background()
 
-	// Create 3 tokens on the same store and count them.
+	// Create 3 tokens on the same store and count them. CreatedAt is set
+	// explicitly, mirroring every real caller (internal/core/setup_token.go's
+	// `now := c.now()`): SetupToken.BeforeSave only gets a chance to
+	// UTC-normalize a non-zero value — GORM's own blank-CreatedAt
+	// auto-population runs AFTER BeforeSave and would silently overwrite a
+	// hook-normalized zero value with local time.Now(), producing a row no
+	// real caller can produce (#1619).
 	ls2 := newStoreS3(t, "setup_token_count", &models.SetupToken{})
 	since := time.Now().Add(-time.Minute)
 	for _, hash := range []string{"x1", "x2", "x3"} {
@@ -231,6 +237,7 @@ func TestSetupToken_CountSince(t *testing.T) {
 			SubjectEmail: "frank@example.com",
 			State:        "active",
 			ExpiresAt:    time.Now().Add(time.Hour),
+			CreatedAt:    time.Now(),
 		})
 		require.NoError(t, err)
 	}
