@@ -13,6 +13,7 @@ import (
 var (
 	listProject   string
 	listStaleDays int
+	listBy        string
 )
 
 var listCmd = &cobra.Command{
@@ -25,6 +26,8 @@ var listCmd = &cobra.Command{
 func init() {
 	listCmd.Flags().StringVar(&listProject, "project", "", "Project name (or use KEYORIX_PROJECT / active project)")
 	listCmd.Flags().IntVar(&listStaleDays, "stale-days", 0, "Show only pending invitations older than this many days")
+	listCmd.Flags().StringVar(&listBy, "by", "", "Viewer email address (required, for authorization)")
+	_ = listCmd.MarkFlagRequired("by")
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -40,6 +43,22 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	projectID, err := common.LookupProjectIDByName(ctx, service.Storage(), projectName)
 	if err != nil {
+		return err
+	}
+
+	// #1648: mirrors send/revoke/resend's identical guard (requireInviteAuthority,
+	// invite.go) and the structurally identical request/list.go's requireListAuthority
+	// -- without it, --by resolving ANY email with zero authority check let an
+	// operator read an arbitrary project's pending invitations (invitee email,
+	// intended role, state) purely by naming an arbitrary or unprivileged account.
+	// ListProjectInvitations itself does not check permissions (the HTTP handler's
+	// job is done by router middleware), so this must be verified here, at the CLI
+	// entrypoint, before the list is returned.
+	viewerID, err := resolveUserID(ctx, service, listBy)
+	if err != nil {
+		return err
+	}
+	if err := requireInviteAuthority(ctx, service, viewerID, projectID); err != nil {
 		return err
 	}
 

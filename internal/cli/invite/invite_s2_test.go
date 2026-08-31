@@ -109,12 +109,13 @@ func TestRunList_StaleDays(t *testing.T) {
 
 	_, _ = seedInviteDB(t)
 
-	origProject, origStale := listProject, listStaleDays
-	defer func() { listProject = origProject; listStaleDays = origStale }()
+	origProject, origStale, origBy := listProject, listStaleDays, listBy
+	defer func() { listProject = origProject; listStaleDays = origStale; listBy = origBy }()
 	listProject = ""
 	listStaleDays = 7 // trigger the stale-days branch (StaleInvitations call)
+	listBy = "admin@example.com"
 
-	_ = runList(nil, nil)
+	require.NoError(t, runList(nil, nil))
 }
 
 // TestRunList_EmptyResult seeds a project but filters with an extremely large
@@ -129,12 +130,13 @@ func TestRunList_EmptyResult(t *testing.T) {
 
 	_, _ = seedInviteDB(t)
 
-	origProject, origStale := listProject, listStaleDays
-	defer func() { listProject = origProject; listStaleDays = origStale }()
+	origProject, origStale, origBy := listProject, listStaleDays, listBy
+	defer func() { listProject = origProject; listStaleDays = origStale; listBy = origBy }()
 	listProject = ""
 	listStaleDays = 36500 // 100 years — nothing is that old → empty result
+	listBy = "admin@example.com"
 
-	_ = runList(nil, nil)
+	require.NoError(t, runList(nil, nil))
 }
 
 // TestRunList_WithInvitations seeds a project with an invitation and lists with
@@ -148,12 +150,13 @@ func TestRunList_WithInvitations(t *testing.T) {
 
 	_, _ = seedInviteDB(t)
 
-	origProject, origStale := listProject, listStaleDays
-	defer func() { listProject = origProject; listStaleDays = origStale }()
+	origProject, origStale, origBy := listProject, listStaleDays, listBy
+	defer func() { listProject = origProject; listStaleDays = origStale; listBy = origBy }()
 	listProject = ""
 	listStaleDays = 0 // normal list — returns all invitations for the project
+	listBy = "admin@example.com"
 
-	_ = runList(nil, nil)
+	require.NoError(t, runList(nil, nil))
 }
 
 // ──────────────────────────── runRevoke ──────────────────────────────────────
