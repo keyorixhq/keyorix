@@ -199,13 +199,6 @@ func MFASecretAAD(userID uint) []byte {
 	return []byte(fmt.Sprintf("keyorix:mfa:v1:%d", userID))
 }
 
-// SessionTokenAAD returns the AAD for a user's encrypted session token (AUTH-CRYPTO-001),
-// binding the ciphertext to the owning user so a DB-write attacker cannot transplant
-// one user's encrypted session token onto another user's row.
-func SessionTokenAAD(userID uint) []byte {
-	return []byte(fmt.Sprintf("keyorix:session:v1:%d", userID))
-}
-
 // APITokenAAD returns the AAD for a user's encrypted personal-access token
 // (AUTH-CRYPTO-002), binding the ciphertext to the issuing user.
 func APITokenAAD(userID uint) []byte {

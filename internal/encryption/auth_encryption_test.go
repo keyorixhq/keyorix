@@ -93,28 +93,6 @@ func TestAuthEncryption_ClientSecret(t *testing.T) {
 	}
 }
 
-func TestAuthEncryption_SessionToken(t *testing.T) {
-	authEnc, _, cleanup := setupAuthEncryptionTest(t)
-	defer cleanup()
-
-	sessionToken := "session-token-abc123def456"
-
-	// Encrypt session token
-	encryptedData, metadata, err := authEnc.EncryptSessionToken(sessionToken, uint(1))
-	require.NoError(t, err)
-	assert.NotEmpty(t, encryptedData)
-
-	// When encryption is disabled, metadata will be nil
-	if authEnc.service.IsEnabled() {
-		assert.NotEmpty(t, metadata)
-	}
-
-	// Decrypt session token
-	decryptedToken, err := authEnc.DecryptSessionToken(encryptedData, metadata, uint(1))
-	require.NoError(t, err)
-	assert.Equal(t, sessionToken, decryptedToken)
-}
-
 func TestAuthEncryption_APIToken(t *testing.T) {
 	authEnc, _, cleanup := setupAuthEncryptionTest(t)
 	defer cleanup()
@@ -157,101 +135,6 @@ func TestAuthEncryption_PasswordResetToken(t *testing.T) {
 	decryptedToken, err := authEnc.DecryptPasswordResetToken(encryptedData, metadata, uint(1))
 	require.NoError(t, err)
 	assert.Equal(t, resetToken, decryptedToken)
-}
-
-func TestAuthEncryption_StoreEncryptedAPIClient(t *testing.T) {
-	authEnc, db, cleanup := setupAuthEncryptionTest(t)
-	defer cleanup()
-
-	client := &models.APIClient{
-		Name:        "Test Client",
-		Description: "Test API Client",
-		ClientID:    "test-client-id",
-		Scopes:      "read write",
-		IsActive:    true,
-		CreatedAt:   time.Now(),
-	}
-
-	clientSecret := "super-secret-client-secret"
-
-	// Store encrypted API client
-	err := authEnc.StoreEncryptedAPIClient(client, clientSecret)
-	require.NoError(t, err)
-
-	// Verify client was stored
-	var storedClient models.APIClient
-	err = db.Where("client_id = ?", "test-client-id").First(&storedClient).Error
-	require.NoError(t, err)
-
-	assert.Equal(t, "Test Client", storedClient.Name)
-	assert.NotEmpty(t, storedClient.EncryptedClientSecret)
-
-	// When encryption is disabled, metadata will be empty
-	if authEnc.service.IsEnabled() {
-		assert.NotEmpty(t, storedClient.ClientSecretMetadata)
-	}
-
-	// Retrieve and verify client secret
-	retrievedSecret, err := authEnc.RetrieveAPIClientSecret("test-client-id")
-	require.NoError(t, err)
-	assert.Equal(t, clientSecret, retrievedSecret)
-}
-
-func TestAuthEncryption_StoreEncryptedSession(t *testing.T) {
-	authEnc, db, cleanup := setupAuthEncryptionTest(t)
-	defer cleanup()
-
-	expiresAt := time.Now().Add(24 * time.Hour)
-	session := &models.Session{
-		UserID:    1,
-		CreatedAt: time.Now(),
-		ExpiresAt: &expiresAt,
-	}
-
-	sessionToken := "encrypted-session-token-123"
-
-	// Store encrypted session
-	err := authEnc.StoreEncryptedSession(session, sessionToken)
-	require.NoError(t, err)
-
-	// Verify session was stored
-	var storedSession models.Session
-	err = db.First(&storedSession, session.ID).Error
-	require.NoError(t, err)
-
-	assert.Equal(t, uint(1), storedSession.UserID)
-	assert.NotEmpty(t, storedSession.EncryptedSessionToken)
-
-	// When encryption is disabled, metadata will be empty
-	if authEnc.service.IsEnabled() {
-		assert.NotEmpty(t, storedSession.SessionTokenMetadata)
-	}
-
-	// Retrieve and verify session token
-	retrievedToken, err := authEnc.RetrieveSessionToken(storedSession.ID)
-	require.NoError(t, err)
-	assert.Equal(t, sessionToken, retrievedToken)
-}
-
-func TestAuthEncryption_ValidateEncryptedToken(t *testing.T) {
-	authEnc, _, cleanup := setupAuthEncryptionTest(t)
-	defer cleanup()
-
-	originalToken := "test-validation-token"
-
-	// Encrypt token
-	encryptedData, metadata, err := authEnc.EncryptSessionToken(originalToken, uint(1))
-	require.NoError(t, err)
-
-	// Test valid token
-	isValid, err := authEnc.ValidateEncryptedToken(encryptedData, metadata, originalToken, uint(1))
-	require.NoError(t, err)
-	assert.True(t, isValid)
-
-	// Test invalid token
-	isValid, err = authEnc.ValidateEncryptedToken(encryptedData, metadata, "wrong-token", uint(1))
-	require.NoError(t, err)
-	assert.False(t, isValid)
 }
 
 func TestAuthEncryption_DisabledEncryption(t *testing.T) {
@@ -313,19 +196,32 @@ func TestAuthEncryption_KeyRotation(t *testing.T) {
 	authEnc := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, authEnc.Initialize(passphrase))
 
-	client := &models.APIClient{
-		Name:      "Test Client",
-		ClientID:  "test-client-rotation",
-		Scopes:    "read",
-		IsActive:  true,
-		CreatedAt: time.Now(),
-	}
+	// Constructed directly (not via a Store*/Retrieve* convenience wrapper —
+	// #1641 deleted those; nothing else ever called them) to still exercise
+	// sweepAPIClients re-encrypting a legacy-shaped encrypted_client_secret row
+	// during rotation, the scenario those columns are kept for.
 	clientSecret := "secret-for-rotation"
-	require.NoError(t, authEnc.StoreEncryptedAPIClient(client, clientSecret))
-
-	retrievedSecret, err := authEnc.RetrieveAPIClientSecret("test-client-rotation")
+	encryptedSecret, metadata, err := authEnc.EncryptClientSecret(clientSecret)
 	require.NoError(t, err)
-	assert.Equal(t, clientSecret, retrievedSecret)
+	client := &models.APIClient{
+		Name:                  "Test Client",
+		ClientID:              "test-client-rotation",
+		Scopes:                "read",
+		IsActive:              true,
+		CreatedAt:             time.Now(),
+		EncryptedClientSecret: encryptedSecret,
+		ClientSecretMetadata:  models.JSON(metadata),
+	}
+	require.NoError(t, db.Create(client).Error)
+
+	retrieveSecret := func() string {
+		var stored models.APIClient
+		require.NoError(t, db.Where("client_id = ?", "test-client-rotation").First(&stored).Error)
+		plain, err := authEnc.DecryptClientSecret(stored.EncryptedClientSecret, []byte(stored.ClientSecretMetadata))
+		require.NoError(t, err)
+		return plain
+	}
+	assert.Equal(t, clientSecret, retrieveSecret())
 
 	keyVersionBefore := authEnc.service.GetKeyVersion()
 
@@ -335,9 +231,7 @@ func TestAuthEncryption_KeyRotation(t *testing.T) {
 	assert.NotEqual(t, keyVersionBefore, authEnc.service.GetKeyVersion(), "RotateAuthEncryption must generate new key material, not just re-encrypt under the same key")
 
 	// The secret, re-encrypted under the new DEK by the sweep, must still decrypt correctly.
-	retrievedSecret, err = authEnc.RetrieveAPIClientSecret("test-client-rotation")
-	require.NoError(t, err)
-	assert.Equal(t, clientSecret, retrievedSecret)
+	assert.Equal(t, clientSecret, retrieveSecret())
 }
 
 func TestAuthEncryption_GetStatus(t *testing.T) {

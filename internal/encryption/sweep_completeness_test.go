@@ -14,7 +14,7 @@ package encryption
 // internal/storage/models via go/ast (NOT a hardcoded list of model types, so a
 // brand-new model struct is picked up automatically — only the discovered FIELD
 // still has to match the naming convention below) for struct fields matching the
-// naming convention every one of today's 8 DEK-encrypted columns follows: type
+// naming convention every one of today's 7 DEK-encrypted columns follows: type
 // []byte, name either "Encrypted*" or "*Enc". It then diffs that discovered set
 // against expectedSweptFields, a hand-maintained map mirroring exactly what
 // SweepAllTables sweeps today.
@@ -47,13 +47,15 @@ type modelField struct {
 func (f modelField) String() string { return f.Struct + "." + f.Field }
 
 // expectedSweptFields mirrors exactly what SweepAllTables (sweep.go's
-// sweepSecretVersions + sweep_auth.go's sweepSessions/sweepAPITokens/
-// sweepAPIClients/sweepPasswordResets/sweepMFASecrets/sweepDynamicSecretConfigs/
+// sweepSecretVersions + sweep_auth.go's sweepAPITokens/sweepAPIClients/
+// sweepPasswordResets/sweepMFASecrets/sweepDynamicSecretConfigs/
 // sweepDynamicSecretLeases) re-encrypts today. Keep this in lockstep with
-// SweepAllTables — that's the entire point of this test.
+// SweepAllTables — that's the entire point of this test. Session has no entry:
+// its EncryptedSessionToken/SessionTokenMetadata columns were dropped outright
+// (#1641), not swept — the live write path only ever hashed session tokens,
+// never encrypted them, so there was nothing for a sweep to re-encrypt.
 var expectedSweptFields = map[modelField]bool{
 	{"SecretVersion", "EncryptedValue"}:     true,
-	{"Session", "EncryptedSessionToken"}:    true,
 	{"APIToken", "EncryptedToken"}:          true,
 	{"APIClient", "EncryptedClientSecret"}:  true,
 	{"PasswordReset", "EncryptedToken"}:     true,
@@ -159,8 +161,8 @@ func isByteSliceType(expr ast.Expr) bool {
 }
 
 // looksLikeEncryptedFieldName reports whether name follows the DEK-encrypted
-// column naming convention every one of today's 8 tracked fields uses:
-// EncryptedValue, EncryptedSessionToken, EncryptedToken (x2), EncryptedClientSecret,
+// column naming convention every one of today's 7 tracked fields uses:
+// EncryptedValue, EncryptedToken (x2), EncryptedClientSecret,
 // SecretEnc, AdminDSNEnc, CredentialEnc.
 func looksLikeEncryptedFieldName(name string) bool {
 	return strings.HasPrefix(name, "Encrypted") || strings.HasSuffix(name, "Enc")

@@ -284,12 +284,13 @@ func TestMigrateProviderWithConfig_S24_OldSvcInitFails(t *testing.T) {
 
 // ── openTestDB / openTestAuthEnc re-use: non-empty encrypted stats ──────────
 
-// TestShowAuthEncryptionStats_S24_AllFourTablesEncrypted exercises
+// TestShowAuthEncryptionStats_S24_AllTablesEncrypted exercises
 // showAuthEncryptionStats(db, true) with at least one encrypted row in EVERY
-// table — covering the "WHERE encrypted_X IS NOT NULL" count query for each
-// of the four models and the per-table printf format string that includes the
-// "(N encrypted)" suffix.
-func TestShowAuthEncryptionStats_S24_AllFourTablesEncrypted(t *testing.T) {
+// table that still has an "encrypted" count — covering the
+// "WHERE encrypted_X IS NOT NULL" count query for each of those models and
+// the per-table printf format string that includes the "(N encrypted)"
+// suffix. Sessions carry no such count (#1641: never encrypted, only hashed).
+func TestShowAuthEncryptionStats_S24_AllTablesEncrypted(t *testing.T) {
 	db := openTestDB(t)
 	ae := openTestAuthEnc(t, db)
 
@@ -303,12 +304,8 @@ func TestShowAuthEncryptionStats_S24_AllFourTablesEncrypted(t *testing.T) {
 		ClientSecretMetadata:  models.JSON(encSecMeta),
 	}).Error)
 
-	encSess, encSessMeta, err := ae.EncryptSessionToken("s24-stats-session", uint(70))
-	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.Session{
-		UserID:                70,
-		EncryptedSessionToken: encSess,
-		SessionTokenMetadata:  encSessMeta,
+		UserID: 70,
 	}).Error)
 
 	encTok, encTokMeta, err := ae.EncryptAPIToken("s24-stats-token", uint(0))

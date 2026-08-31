@@ -1,7 +1,6 @@
 // auth_encryption.go — AuthEncryption struct, constructor, and per-token-type encrypt/decrypt.
 //
 // Thin typed wrappers over Service.EncryptSecret/DecryptSecret for each auth token category.
-// For DB store/retrieve operations see auth_encryption_store.go.
 // For rotation see auth_encryption_rotate.go.
 //
 // Each encrypt/decrypt method now accepts the owning user/token ID as AAD so a
@@ -12,7 +11,6 @@
 package encryption
 
 import (
-	"crypto/subtle"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -79,15 +77,6 @@ func (ae *AuthEncryption) GetAuthEncryptionStatus() map[string]interface{} {
 	return status
 }
 
-// ValidateEncryptedToken decrypts storedToken and compares to plainToken using constant-time compare.
-func (ae *AuthEncryption) ValidateEncryptedToken(encryptedToken, metadata []byte, plainToken string, userID uint) (bool, error) {
-	storedToken, err := ae.DecryptSessionToken(encryptedToken, metadata, userID)
-	if err != nil {
-		return false, fmt.Errorf("failed to decrypt stored token: %w", err)
-	}
-	return subtle.ConstantTimeCompare([]byte(storedToken), []byte(plainToken)) == 1, nil
-}
-
 // EncryptClientSecret encrypts an API client secret.
 func (ae *AuthEncryption) EncryptClientSecret(plainSecret string) ([]byte, []byte, error) {
 	if !ae.service.IsEnabled() {
@@ -108,31 +97,6 @@ func (ae *AuthEncryption) DecryptClientSecret(encryptedData, metadata []byte) (s
 	plain, err := ae.service.DecryptSecret(encryptedData)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt client secret: %w", err)
-	}
-	return string(plain), nil
-}
-
-// EncryptSessionToken encrypts a session token bound to the owning user (AUTH-CRYPTO-001).
-func (ae *AuthEncryption) EncryptSessionToken(plainToken string, userID uint) ([]byte, []byte, error) {
-	if !ae.service.IsEnabled() {
-		return []byte(plainToken), nil, nil
-	}
-	enc, meta, err := ae.service.EncryptSecretWithAAD([]byte(plainToken), SessionTokenAAD(userID))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to encrypt session token: %w", err)
-	}
-	return enc, meta, nil
-}
-
-// DecryptSessionToken decrypts a session token. Legacy rows (no AAD) fall back to
-// the non-AAD path automatically via DecryptSecretWithAAD's AADVersion check.
-func (ae *AuthEncryption) DecryptSessionToken(encryptedData, metadata []byte, userID uint) (string, error) {
-	if !ae.service.IsEnabled() {
-		return string(encryptedData), nil
-	}
-	plain, err := ae.service.DecryptSecretWithAAD(encryptedData, SessionTokenAAD(userID))
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt session token: %w", err)
 	}
 	return string(plain), nil
 }

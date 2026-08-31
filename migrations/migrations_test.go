@@ -807,3 +807,73 @@ func TestFixShareStatusSoftDeleteSyncDownMigration(t *testing.T) {
 	// stale is_shared bug is restored.
 	assertSecretIsShared(t, db, 1, true)
 }
+
+// TestDropSessionReversibleEncryptionMigration pins #1641: sessions'
+// encrypted_session_token/session_token_metadata columns (added by 004, never
+// populated by any live write path) are genuinely dropped, any pre-existing
+// value is preserved in the shared backup table first, and rolling back
+// restores both the columns and their values.
+func TestDropSessionReversibleEncryptionMigration(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "004_add_auth_encryption.up.sql")
+
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('alice', 'alice@example.com', 'x')`,
+	); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO sessions (user_id, session_token, encrypted_session_token, session_token_metadata)
+		 VALUES (1, 'tok1', X'CAFEBABE', '{"alg":"AES-256-GCM","kv":1}')`,
+	); err != nil {
+		t.Fatalf("seed sessions: %v", err)
+	}
+
+	execSQLFile(t, db, "011_drop_session_reversible_encryption.up.sql")
+
+	for _, column := range []string{"encrypted_session_token", "session_token_metadata"} {
+		if columnExists(t, db, "sessions", column) {
+			t.Fatalf("sessions.%s still exists after 011's up-migration; migration is a no-op", column)
+		}
+	}
+
+	wantRows := map[string]string{
+		"encrypted_session_token": string([]byte{0xCA, 0xFE, 0xBA, 0xBE}),
+		"session_token_metadata":  `{"alg":"AES-256-GCM","kv":1}`,
+	}
+	for column, want := range wantRows {
+		var got []byte
+		err := db.QueryRow(
+			`SELECT column_value FROM auth_encryption_columns_backup
+			 WHERE source_table = 'sessions' AND column_name = ? AND source_id = 1`,
+			column,
+		).Scan(&got)
+		if err != nil {
+			t.Fatalf("query auth_encryption_columns_backup for sessions.%s: %v", column, err)
+		}
+		if string(got) != want {
+			t.Fatalf("auth_encryption_columns_backup sessions.%s = %q, want %q", column, got, want)
+		}
+	}
+
+	execSQLFile(t, db, "011_drop_session_reversible_encryption.down.sql")
+
+	for _, column := range []string{"encrypted_session_token", "session_token_metadata"} {
+		if !columnExists(t, db, "sessions", column) {
+			t.Fatalf("sessions.%s missing after 011's down-migration", column)
+		}
+	}
+
+	var gotToken []byte
+	var gotMeta []byte
+	if err := db.QueryRow(`SELECT encrypted_session_token, session_token_metadata FROM sessions WHERE id = 1`).
+		Scan(&gotToken, &gotMeta); err != nil {
+		t.Fatalf("query restored session row: %v", err)
+	}
+	if string(gotToken) != wantRows["encrypted_session_token"] {
+		t.Fatalf("restored sessions.encrypted_session_token = %q, want %q", gotToken, wantRows["encrypted_session_token"])
+	}
+	if string(gotMeta) != wantRows["session_token_metadata"] {
+		t.Fatalf("restored sessions.session_token_metadata = %q, want %q", gotMeta, wantRows["session_token_metadata"])
+	}
+}

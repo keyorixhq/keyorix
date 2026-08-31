@@ -2,7 +2,7 @@
 //
 // Focus areas (functions not yet reaching 90%):
 //   - sweepSecretVersions: deserialize error, decrypt error, no-project-found error
-//   - sweepSessions / sweepAPITokens / sweepAPIClients / sweepPasswordResets:
+//   - sweepAPITokens / sweepAPIClients / sweepPasswordResets:
 //     deserialize error (corrupt JSON in stored blob)
 //   - sweepMFASecrets / sweepDynamicSecretConfigs / sweepDynamicSecretLeases:
 //     deserialize error path
@@ -176,24 +176,6 @@ func TestSweepSecretVersions_DecryptError(t *testing.T) {
 	_, _, err = sweepSecretVersions(db, es, es, "v2", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decrypt secret_version")
-}
-
-// ─── sweepSessions: deserialize error ────────────────────────────────────────
-
-func TestSweepSessions_DeserializeError(t *testing.T) {
-	db := s25DB(t)
-	es := s25ES(t)
-
-	row := &models.Session{
-		UserID:                200,
-		SessionToken:          "hash-corrupt",
-		EncryptedSessionToken: []byte(`{corrupt`),
-	}
-	require.NoError(t, db.Create(row).Error)
-
-	_, _, err := sweepSessions(db, es, es, "v2", false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to deserialize session")
 }
 
 // ─── sweepAPITokens: deserialize error ───────────────────────────────────────
@@ -383,7 +365,7 @@ func TestService_PreviewRotationSweep_EmptyDB(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, 0, result.SecretVersionsSwept)
-	assert.Equal(t, 0, result.SessionsSwept)
+	assert.Equal(t, 0, result.APITokensSwept)
 	svc.Shutdown()
 }
 
@@ -804,32 +786,6 @@ func TestEncryptionService_DecryptWithAAD_WrongNonceLength_S25(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid nonce length")
 }
 
-// ─── sweepSessionss: happy path persists ─────────────────────────────────────
-
-func TestSweepSessions_HappyPath_Persists_S25(t *testing.T) {
-	db := s25DB(t)
-	es := s25ES(t)
-
-	enc, err := es.Encrypt([]byte("sess-tok"), "v1")
-	require.NoError(t, err)
-	encBytes, err := SerializeEncryptedData(enc)
-	require.NoError(t, err)
-	metaBytes, err := json.Marshal(enc.Metadata)
-	require.NoError(t, err)
-
-	row := &models.Session{
-		UserID:                700,
-		SessionToken:          "h-s25-sess",
-		EncryptedSessionToken: encBytes,
-		SessionTokenMetadata:  models.JSON(metaBytes),
-	}
-	require.NoError(t, db.Create(row).Error)
-
-	swept, _, err := sweepSessions(db, es, es, "v2", false)
-	require.NoError(t, err)
-	assert.Equal(t, 1, swept)
-}
-
 // ─── sweepMFASecrets: decrypt error ──────────────────────────────────────────
 
 func TestSweepMFASecrets_DecryptError(t *testing.T) {
@@ -924,11 +880,10 @@ func TestService_PreviewRotationSweep_SweepError(t *testing.T) {
 	svc := s25Svc(t)
 	db := s25DB(t)
 
-	// Insert a session with corrupt data that causes the sweep to fail.
-	row := &models.Session{
-		UserID:                901,
-		SessionToken:          "h-preview-err",
-		EncryptedSessionToken: []byte(`{corrupt json`),
+	// Insert an api_token with corrupt data that causes the sweep to fail.
+	row := &models.APIToken{
+		Token:          "h-preview-err",
+		EncryptedToken: []byte(`{corrupt json`),
 	}
 	require.NoError(t, db.Create(row).Error)
 
@@ -1063,42 +1018,6 @@ func TestKeyManager_RotateDEKWithSweep_UnreadableDEKFile_Error(t *testing.T) {
 	// The error comes from writing the pending DEK file.
 	assert.NotNil(t, err)
 	svc.Shutdown()
-}
-
-// ─── sweepSessions: Updates() error (DB closed mid-sweep) ────────────────────
-
-func TestSweepSessions_UpdatesError(t *testing.T) {
-	es := s25ES(t)
-	enc, err := es.Encrypt([]byte("session-tok"), "v1")
-	require.NoError(t, err)
-	encBytes, err := SerializeEncryptedData(enc)
-	require.NoError(t, err)
-	metaBytes, err := json.Marshal(enc.Metadata)
-	require.NoError(t, err)
-
-	// Open a fresh DB just for this test.
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_sess_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Session{}))
-
-	row := &models.Session{
-		UserID:                950,
-		SessionToken:          "h-close-test",
-		EncryptedSessionToken: encBytes,
-		SessionTokenMetadata:  models.JSON(metaBytes),
-	}
-	require.NoError(t, db.Create(row).Error)
-
-	// Close the underlying SQL DB so Updates() fails.
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-
-	_, _, err = sweepSessions(db, es, es, "v2", false)
-	// After close, the error may come from Find (early) or Updates (late).
-	// Either way, an error must be returned.
-	require.Error(t, err)
 }
 
 // ─── sweepAPITokens: Updates() error (DB closed mid-sweep) ───────────────────
@@ -1292,45 +1211,6 @@ func TestSweepDynamicSecretLeases_UpdatesError(t *testing.T) {
 	require.NoError(t, sqlDB.Close())
 
 	_, _, err = sweepDynamicSecretLeases(db, es, es, "v2", false)
-	require.Error(t, err)
-}
-
-// ─── sweepSessions: Updates() error via read-only view ───────────────────────
-// Opens a second GORM connection to the same DB in read-only mode so that
-// Find() succeeds (reads from the cache) but Updates() fails.
-
-func TestSweepSessions_UpdatesError_ReadOnly(t *testing.T) {
-	es := s25ES(t)
-	enc, err := es.Encrypt([]byte("session-val"), "v1")
-	require.NoError(t, err)
-	encBytes, err := SerializeEncryptedData(enc)
-	require.NoError(t, err)
-	metaBytes, err := json.Marshal(enc.Metadata)
-	require.NoError(t, err)
-
-	// Use a named file-based SQLite DB so we can open it in read-only mode.
-	dbFile := filepath.Join(t.TempDir(), "sess_ro.db")
-	rwDB, err := gorm.Open(sqlite.Open(dbFile), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	require.NoError(t, rwDB.AutoMigrate(&models.Session{}))
-
-	row := &models.Session{
-		UserID:                960,
-		SessionToken:          "h-ro-test",
-		EncryptedSessionToken: encBytes,
-		SessionTokenMetadata:  models.JSON(metaBytes),
-	}
-	require.NoError(t, rwDB.Create(row).Error)
-
-	// Open the same file in read-only mode (immutable).
-	roDB, err := gorm.Open(
-		sqlite.Open("file:"+dbFile+"?mode=ro"),
-		&gorm.Config{Logger: logger.Discard},
-	)
-	require.NoError(t, err)
-
-	_, _, err = sweepSessions(roDB, es, es, "v2", false)
-	// On read-only SQLite, the UPDATE should fail.
 	require.Error(t, err)
 }
 

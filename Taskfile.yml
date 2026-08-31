@@ -77,14 +77,6 @@ tasks:
       - mkdir -p bin
       - go build -o bin/server ./server
 
-  # 🏗️ Сборка secret CLI
-  build-secret:
-    desc: 🔧 Сборка secret...
-    cmds:
-      - echo "🔧 Сборка secret..."
-      - mkdir -p bin
-      - go build -o bin/secret ./cmd/secret
-
   # 🔨 Общая сборка
   build:
     desc: 🛠️ Run security checks and build all components
@@ -94,4 +86,3 @@ tasks:
       - echo "🛠️ Теперь собираем компоненты..."
       - task: build-cli
       - task: build-server
-      - task: build-secret
