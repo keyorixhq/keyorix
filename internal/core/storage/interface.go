@@ -88,6 +88,28 @@ type Storage interface {
 	// process mutex is enough.
 	WithBootstrapLock(ctx context.Context, fn func() error) error
 
+	// WithNamedLock serializes fn against every OTHER caller using the identical
+	// lockKey, across replicas of an HA deployment (ADR-039) -- the general-purpose
+	// form of WithAuditCheckpointLock/WithBootstrapLock's dedicated-mutex pattern,
+	// for check-then-act invariants that don't warrant their own bespoke method
+	// (#1646: the separation-of-duties preventive gate, the last-project-admin
+	// guard, and the last-global-admin guard were each previously serialized by
+	// an in-process KeyorixCore-level sync.Mutex ONLY -- meaning two independent
+	// replicas of a real multi-instance Postgres deployment were never
+	// serialized against each other at all, reproduced live for the SoD case).
+	// On PostgreSQL it holds a session advisory lock (pg_advisory_lock) keyed by
+	// a hash of lockKey for the duration of fn; on SQLite (single instance, no
+	// cross-process concern) a single shared process mutex is enough. This
+	// BLOCKS until the lock is free, same as WithAuditCheckpointLock/
+	// WithBootstrapLock: a losing caller must actually re-check under the lock
+	// and observe the winner's now-committed state, not silently skip.
+	//
+	// fn receives the lock-marked context. A caller that itself calls
+	// WithNamedLock again (directly or transitively) MUST pass this ctx through,
+	// not whatever ctx it closed over -- otherwise the reentrancy marker is lost
+	// and a nested call self-deadlocks (see store.namedLockHeldCtxKey).
+	WithNamedLock(ctx context.Context, lockKey string, fn func(ctx context.Context) error) error
+
 	// WithTransaction runs fn inside a single storage transaction: every mutation fn
 	// performs through the provided Storage commits together, or rolls back together if
 	// fn returns an error. The backing store decides the semantics — the local (DB)

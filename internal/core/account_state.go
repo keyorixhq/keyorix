@@ -139,12 +139,30 @@ func (c *KeyorixCore) StaleAccounts(ctx context.Context, state string, olderThan
 // SuspendUser blocks a user's login. Admin action; audited. Refuses to suspend
 // the install's last global administrator (guardLastAdminDeactivation, #G02)
 // — the same lockout DeleteUser and SCIM deactivation already refuse.
+//
+// #1646: the guard check and setAccountState's write must be serialized under
+// the SAME lock acquisition, and that serialization must hold across every
+// replica of an HA deployment -- two concurrent SuspendUser calls for two
+// DIFFERENT admins could each observe "another admin survives" (the other
+// hasn't been deactivated yet) and both proceed, jointly stranding the install
+// with zero admins. lastAdminGuardLockKey is a single global key (matching
+// accountStateMu's own single-mutex, not-sharded-per-user design): this
+// operation is rare (admin actions, not steady-state traffic), and the
+// invariant itself is install-wide, not per-target-user.
 func (c *KeyorixCore) SuspendUser(ctx context.Context, adminID, userID uint) error {
-	if err := c.guardLastAdminDeactivation(ctx, userID); err != nil {
-		return err
-	}
-	return c.setAccountState(ctx, adminID, userID, AccountSuspended, "account.suspended")
+	return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+		if err := c.guardLastAdminDeactivation(ctx, userID); err != nil {
+			return err
+		}
+		return c.setAccountState(ctx, adminID, userID, AccountSuspended, "account.suspended")
+	})
 }
+
+// lastAdminGuardLockKey is the WithNamedLock key for guardLastAdminDeactivation's
+// check-then-act sequence (#1646), used by every deactivation path
+// (SuspendUser, UpdateUser, DeleteUser, and the SCIM update/deactivate/deprovision
+// paths in scim.go).
+const lastAdminGuardLockKey = "last-admin-guard"
 
 // ReactivateUser returns a suspended (or otherwise non-active) user to active.
 func (c *KeyorixCore) ReactivateUser(ctx context.Context, adminID, userID uint) error {

@@ -185,17 +185,17 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
 		return err
 	}
-	// #G04: see AssignUserRole's identical sodGrantMu use.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
-	return nil
+	// #1646: see AssignUserRole's identical WithNamedLock use.
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("group", groupID), func(ctx context.Context) error {
+		if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
+		return nil
+	})
 }
 
 // RemoveRoleFromGroup verifies the group exists then removes the role at scope
@@ -329,6 +329,15 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 	return nil
 }
 
+// sodGrantLockKey is the WithNamedLock key for every role-grant path guarded by the
+// #419 separation-of-duties preventive check (#1646): scoped per (principalType,
+// principalID) so two concurrent grants to the SAME principal serialize against
+// each other -- the shape a toxic-combination SoD violation requires -- without
+// unrelated principals' grants contending on the same lock.
+func sodGrantLockKey(principalType string, principalID uint) string {
+	return fmt.Sprintf("sod-grant:%s:%d", principalType, principalID)
+}
+
 // AssignUserRole assigns a role to a user at the given scope and records an RBAC
 // audit event. actorID is the acting principal (0 when unauthenticated, e.g. a
 // local CLI invocation). This is the audited choke point all role-assignment
@@ -347,19 +356,22 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, false); err != nil {
 		return err
 	}
-	// #G04: sodGrantMu holds across the check AND the write — see its doc
-	// comment in service.go for why a separate, unsynchronized write lets two
-	// concurrent grants each pass a stale pre-grant SoD check.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
-	return nil
+	// #1646: the check-then-write below must be serialized across every replica of
+	// an HA deployment, not just within this process — sodGrantMu (an in-process
+	// sync.Mutex) alone let two independent replicas each pass a stale pre-grant
+	// SoD check and both write, live-reproduced. WithNamedLock's Postgres advisory
+	// lock, keyed per target principal, closes that; see its doc comment in
+	// internal/core/storage/interface.go.
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("user", userID), func(ctx context.Context) error {
+		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
+		return nil
+	})
 }
 
 // assignUserRoleSystemGrant performs the same audited grant as AssignUserRole but
@@ -389,17 +401,17 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 // (IdP group membership can change on every login, which is at least as fast a
 // grant/revoke cycle as an explicit JIT grant).
 func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
-	// #G04: see AssignUserRole's identical sodGrantMu use.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
-	return nil
+	// #1646: see AssignUserRole's identical WithNamedLock use.
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("user", userID), func(ctx context.Context) error {
+		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
+		return nil
+	})
 }
 
 // RemoveUserRole removes a role from a user at the given scope and records an

@@ -49,6 +49,11 @@ func (m *MockStorage) WithBootstrapLock(_ context.Context, fn func() error) erro
 	return fn()
 }
 
+// WithNamedLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithNamedLock(ctx context.Context, _ string, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
 // WithTransaction runs fn directly against the mock (no real transaction in tests).
 func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
 	return fn(m)

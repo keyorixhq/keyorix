@@ -377,14 +377,6 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		user.IsActive = *req.IsActive
 	}
 	deactivating := wasActive && !user.IsActive
-	if deactivating {
-		// Refuse to deactivate the install's last global administrator (#G02) —
-		// the same lockout guard DeleteUser and SCIM deactivation already apply;
-		// this was the one active-state-flipping path that skipped it.
-		if err := c.guardLastAdminDeactivation(ctx, req.ID); err != nil {
-			return nil, err
-		}
-	}
 	user.UpdatedAt = c.now()
 
 	var sessionHashes []string
@@ -407,61 +399,74 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		// c.storage.UpdateUser here would silently clobber (or be clobbered by)
 		// a concurrent IsActive flip on the same user with no error to either
 		// caller (see UpdateUserIfActiveStateMatches's doc, storage/interface.go).
-		err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-			matched, terr := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
-			if terr != nil {
-				return terr
+		//
+		// #1646: the last-admin guard check (moved here, from before this switch)
+		// and the deactivating write below must be serialized under the SAME lock
+		// acquisition, across every replica of an HA deployment — two concurrent
+		// UpdateUser deactivations of two DIFFERENT admins could otherwise each
+		// observe "another admin survives" and both proceed, jointly stranding the
+		// install with zero admins. See lastAdminGuardLockKey's doc comment
+		// (account_state.go).
+		err = c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+			if err := c.guardLastAdminDeactivation(ctx, req.ID); err != nil {
+				return err
 			}
-			if !matched {
-				return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
-			}
-			updated = user
-			var patErr, sessionErr error
-			var hashes []string
-			hashes, patErr = tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID)
-			if patErr == nil {
-				patHashes = hashes
-			}
-			sessionErr = tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
-			// Best-effort, not fatal: the conditional write this switch case
-			// exists for (UpdateUserIfActiveStateMatches) has ALREADY matched
-			// and applied by this point -- the deactivation itself durably
-			// succeeded. Letting a revocation failure here fail the whole
-			// WithTransaction call would report total failure for an
-			// operation that, from the target user's perspective, already
-			// happened. This matters most over storage.type: remote, where
-			// WithTransaction provides NO real atomicity at all (each
-			// sub-call is its own independent HTTP round-trip -- see
-			// remote_transaction.go) -- treating this as fatal there could
-			// never have rolled the deactivation back anyway, only hidden
-			// that it succeeded behind a misleading error.
-			//
-			// Safe specifically because a failed revocation does NOT leave a
-			// working credential: ValidateSessionToken (auth.go) and
-			// ValidatePATToken (pat.go) BOTH independently re-check the live
-			// user.IsActive/AccountLoginBlocked state on every single use of
-			// a session or PAT, cold path AND the 30s warm auth-cache path
-			// (via AccountStillUsable, server/middleware/auth.go's
-			// serveAuthCacheHit) -- already-committed IsActive=false alone
-			// blocks the credential regardless of whether its row was ever
-			// deleted. There is no session-expiry sweeper in this codebase
-			// (CleanupExpiredSessions is implemented but never scheduled), so
-			// a row a failed revocation leaves behind lingers indefinitely --
-			// but inertly: it authorizes nothing. The residual cost is
-			// orphaned-row hygiene and forensic noise, not a live credential,
-			// which is why this is audited (right below) rather than merely
-			// swallowed.
-			if patErr != nil || sessionErr != nil {
-				// nil actor: UpdateUser (unlike DeleteUser/SetAccountState) takes
-				// no actorID parameter at all -- a pre-existing gap in this
-				// function's own signature, not something this fix should
-				// silently paper over with a fabricated attribution.
-				c.writeAuditEventFailed(ctx, EventUserDeactivationCleanupFailed, nil, nil, "",
-					fmt.Sprintf("user %d deactivated, but credential cleanup was incomplete (pat_error=%v, session_error=%v) -- "+
-						"the account is already login-blocked regardless, but a stale row may remain until its own expiry",
-						req.ID, patErr, sessionErr))
-			}
-			return nil
+			return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+				matched, terr := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
+				if terr != nil {
+					return terr
+				}
+				if !matched {
+					return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
+				}
+				updated = user
+				var patErr, sessionErr error
+				var hashes []string
+				hashes, patErr = tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID)
+				if patErr == nil {
+					patHashes = hashes
+				}
+				sessionErr = tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
+				// Best-effort, not fatal: the conditional write this switch case
+				// exists for (UpdateUserIfActiveStateMatches) has ALREADY matched
+				// and applied by this point -- the deactivation itself durably
+				// succeeded. Letting a revocation failure here fail the whole
+				// WithTransaction call would report total failure for an
+				// operation that, from the target user's perspective, already
+				// happened. This matters most over storage.type: remote, where
+				// WithTransaction provides NO real atomicity at all (each
+				// sub-call is its own independent HTTP round-trip -- see
+				// remote_transaction.go) -- treating this as fatal there could
+				// never have rolled the deactivation back anyway, only hidden
+				// that it succeeded behind a misleading error.
+				//
+				// Safe specifically because a failed revocation does NOT leave a
+				// working credential: ValidateSessionToken (auth.go) and
+				// ValidatePATToken (pat.go) BOTH independently re-check the live
+				// user.IsActive/AccountLoginBlocked state on every single use of
+				// a session or PAT, cold path AND the 30s warm auth-cache path
+				// (via AccountStillUsable, server/middleware/auth.go's
+				// serveAuthCacheHit) -- already-committed IsActive=false alone
+				// blocks the credential regardless of whether its row was ever
+				// deleted. There is no session-expiry sweeper in this codebase
+				// (CleanupExpiredSessions is implemented but never scheduled), so
+				// a row a failed revocation leaves behind lingers indefinitely --
+				// but inertly: it authorizes nothing. The residual cost is
+				// orphaned-row hygiene and forensic noise, not a live credential,
+				// which is why this is audited (right below) rather than merely
+				// swallowed.
+				if patErr != nil || sessionErr != nil {
+					// nil actor: UpdateUser (unlike DeleteUser/SetAccountState) takes
+					// no actorID parameter at all -- a pre-existing gap in this
+					// function's own signature, not something this fix should
+					// silently paper over with a fabricated attribution.
+					c.writeAuditEventFailed(ctx, EventUserDeactivationCleanupFailed, nil, nil, "",
+						fmt.Sprintf("user %d deactivated, but credential cleanup was incomplete (pat_error=%v, session_error=%v) -- "+
+							"the account is already login-blocked regardless, but a stale row may remain until its own expiry",
+							req.ID, patErr, sessionErr))
+				}
+				return nil
+			})
 		})
 	case req.IsActive != nil:
 		// Not deactivating (either re-activating, or a redundant "set to the same
@@ -544,45 +549,46 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
-	// #G03: guardLastAdminDeactivation's read is serialized against every other
-	// accountStateMu-guarded admin-deactivation path (UpdateSCIMUser,
-	// DeprovisionSCIMUser, SuspendUser) — see UpdateSCIMUser's identical comment in
-	// scim.go. Previously this function held no lock at all, so two concurrent
-	// DeleteUser calls for two different admins could each observe "not the last
-	// admin" and both proceed, jointly stranding the install with zero admins.
-	c.accountStateMu.Lock()
-	defer c.accountStateMu.Unlock()
-	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
-		return err
-	}
-	user.IsActive = false
-	if NormalizeAccountState(user.AccountState) != AccountSuspended {
-		user.AccountState = AccountDeprovisioned
-	}
-	user.UpdatedAt = c.now()
-	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, id)
-	var patHashes []string
-	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		if _, err := tx.UpdateUser(ctx, user); err != nil {
+	// #1646: guardLastAdminDeactivation's read and the deactivating write below
+	// must be serialized under the SAME lock acquisition, across every replica of
+	// an HA deployment, not just within this process — previously
+	// accountStateMu (an in-process sync.Mutex) alone let two concurrent DeleteUser
+	// calls for two different admins each observe "not the last admin" and both
+	// proceed on two different replicas, jointly stranding the install with zero
+	// admins. See lastAdminGuardLockKey's doc comment (account_state.go).
+	return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+		if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
 			return err
 		}
-		if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
-			return err
+		user.IsActive = false
+		if NormalizeAccountState(user.AccountState) != AccountSuspended {
+			user.AccountState = AccountDeprovisioned
 		}
-		hashes, err := tx.RevokeAllPersonalAccessTokensForUser(ctx, id)
-		if err != nil {
-			return err
+		user.UpdatedAt = c.now()
+		sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, id)
+		var patHashes []string
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if _, err := tx.UpdateUser(ctx, user); err != nil {
+				return err
+			}
+			if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
+				return err
+			}
+			hashes, err := tx.RevokeAllPersonalAccessTokensForUser(ctx, id)
+			if err != nil {
+				return err
+			}
+			patHashes = hashes
+			return tx.DeleteUser(ctx, id)
+		}); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
-		patHashes = hashes
-		return tx.DeleteUser(ctx, id)
-	}); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.invalidateTokenCache(sessionHashes...)
-	c.invalidateTokenCache(patHashes...)
-	c.writeAuditEvent(ctx, EventUserDeleted, actorPtr(actorID), nil,
-		fmt.Sprintf("deleted user %d (%s)", id, user.Username))
-	return nil
+		c.invalidateTokenCache(sessionHashes...)
+		c.invalidateTokenCache(patHashes...)
+		c.writeAuditEvent(ctx, EventUserDeleted, actorPtr(actorID), nil,
+			fmt.Sprintf("deleted user %d (%s)", id, user.Username))
+		return nil
+	})
 }
 
 // EventUserCredentialsRevoked is audited when an admin-driven bulk PAT/session

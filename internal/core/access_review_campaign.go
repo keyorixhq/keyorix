@@ -13,6 +13,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -213,31 +214,54 @@ func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uin
 	return nil
 }
 
-// applyAccessDecision executes the grant action (attest or revoke) and stamps the
-// item's Decision field. Extracted from DecideAccessReviewItem to reduce its complexity.
-func (c *KeyorixCore) applyAccessDecision(ctx context.Context, actorID, projectID uint, item *models.AccessReviewItem, action string, decision AccessReviewDecision) error {
+// targetDecisionForAction maps a requested action to the Decision value that will be
+// claimed for it, or an error if action is neither "attest" nor "revoke".
+func targetDecisionForAction(action string) (string, error) {
 	switch action {
 	case "attest":
-		if err := c.AttestAccessReviewGrant(ctx, actorID, projectID, decision); err != nil {
-			return err
-		}
-		item.Decision = ReviewItemAttested
+		return ReviewItemAttested, nil
 	case "revoke":
-		if err := c.RevokeAccessReviewGrant(ctx, actorID, projectID, decision); err != nil {
-			return err
-		}
-		item.Decision = ReviewItemRevoked
+		return ReviewItemRevoked, nil
+	default:
+		return "", fmt.Errorf("%s: action must be attest or revoke", i18n.T("ErrorValidation", nil))
+	}
+}
+
+// applyAccessDecision executes the grant action (attest or revoke) that the item's
+// Decision has ALREADY been atomically claimed for (see DecideAccessReviewItem's
+// claim-before-act ordering, #1646). Extracted from DecideAccessReviewItem to reduce
+// its complexity.
+func (c *KeyorixCore) applyAccessDecision(ctx context.Context, actorID, projectID uint, action string, decision AccessReviewDecision) error {
+	switch action {
+	case "attest":
+		return c.AttestAccessReviewGrant(ctx, actorID, projectID, decision)
+	case "revoke":
+		return c.RevokeAccessReviewGrant(ctx, actorID, projectID, decision)
 	default:
 		return fmt.Errorf("%s: action must be attest or revoke", i18n.T("ErrorValidation", nil))
 	}
-	return nil
 }
 
-// persistItemDecision persists the decided item via a conditional UPDATE that also
-// guards the race between concurrent decisions and concurrent force-closes (#319, #343).
-// ok==false means this call lost the race; the re-read is cosmetic only — the security
+// claimItemDecision atomically transitions item from pending to targetDecision via a
+// conditional UPDATE (WHERE decision='pending'), BEFORE the real attest/revoke action
+// runs -- not after, as this codebase's own #G04 comment used to describe (#1646). That
+// conditional UPDATE is enforced by Postgres/SQLite itself, not an in-process mutex, so
+// it holds across independent replicas: only the caller whose claim actually commits
+// ever proceeds to applyAccessDecision. A second, concurrent caller (in this process or
+// a different one) is refused here, before it ever touches the underlying grant --
+// closing the false-certification race
+// concurrency_access_review_decision_postgres_test.go reproduces (two replicas racing
+// an attest against a revoke on the same item could previously both read
+// Decision==pending and both execute their action before either write landed, letting a
+// revoked grant end up persisted as "attested"). ok==false means this call lost the
+// race (or the campaign closed underneath it); the re-read is cosmetic only — the
 // decision was already made atomically by the UPDATE, win or lose.
-func (c *KeyorixCore) persistItemDecision(ctx context.Context, item *models.AccessReviewItem, itemID uint) error {
+func (c *KeyorixCore) claimItemDecision(ctx context.Context, item *models.AccessReviewItem, itemID, actorID uint, targetDecision, reason string) error {
+	now := c.now()
+	item.Decision = targetDecision
+	item.Reason = reason
+	item.DecidedBy = actorID
+	item.DecidedAt = &now
 	ok, err := c.storage.UpdateAccessReviewItem(ctx, item)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -267,11 +291,15 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if campaign.State != CampaignStateOpen {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
 	}
-	// #G04: accessReviewDecisionMu holds from the pending-decision read through
-	// the actual attest/revoke side effect and its persisted stamp — see its
-	// doc comment in service.go for why persistItemDecision's conditional
-	// UPDATE alone isn't enough (it stops a second STAMP from persisting, not
-	// a second ACTION from executing).
+	// #1646: accessReviewDecisionMu only ever serialized callers within ONE process
+	// -- across independent replicas (a real multi-instance Postgres deployment) it
+	// provided no protection at all, reproduced live in
+	// concurrency_access_review_decision_postgres_test.go. The actual cross-replica
+	// guarantee now comes from claimItemDecision's DB-level conditional UPDATE
+	// below, enforced by Postgres/SQLite itself. This lock is kept only as a minor
+	// in-process fast-path (avoids a wasted round-trip when many goroutines in this
+	// same process pile up on the same item) -- it is not load-bearing for
+	// correctness anymore.
 	c.accessReviewDecisionMu.Lock()
 	defer c.accessReviewDecisionMu.Unlock()
 	item, err := c.storage.GetAccessReviewItem(ctx, itemID)
@@ -301,6 +329,13 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
 		}
 	}
+	targetDecision, err := targetDecisionForAction(action)
+	if err != nil {
+		return err
+	}
+	if err := c.claimItemDecision(ctx, item, itemID, actorID, targetDecision, reason); err != nil {
+		return err
+	}
 	decision := AccessReviewDecision{
 		Source:        item.Source,
 		PrincipalType: item.PrincipalType,
@@ -309,14 +344,17 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 		EnvironmentID: item.EnvironmentID,
 		SecretID:      item.SecretID,
 	}
-	if err := c.applyAccessDecision(ctx, actorID, projectID, item, action, decision); err != nil {
+	if err := c.applyAccessDecision(ctx, actorID, projectID, action, decision); err != nil {
+		// The claim already committed (item now shows targetDecision) but the real
+		// action failed -- a rare, single-threaded failure distinct from the
+		// concurrency race claimItemDecision's ordering closes. Surface it loudly
+		// rather than silently leaving a stamp the underlying action never actually
+		// performed: manual reconciliation (re-run the decision, or correct the
+		// item) is required. #1646.
+		log.Printf("SECURITY: access review item %d claimed as %q but the underlying %s action failed: %v -- manual reconciliation required", itemID, targetDecision, action, err)
 		return err
 	}
-	now := c.now()
-	item.Reason = reason
-	item.DecidedBy = actorID
-	item.DecidedAt = &now
-	return c.persistItemDecision(ctx, item, itemID)
+	return nil
 }
 
 // requireHumanReviewer rejects a recertification action by a non-human / unattributable

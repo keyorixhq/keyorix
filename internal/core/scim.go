@@ -413,6 +413,21 @@ func applySCIMActiveState(user *models.User, active *bool, deactivated *bool) {
 // "another admin survives" without checking whether targetID was that group's only
 // member. A target whose sole route to admin authority is membership in a
 // single-member admin group was therefore never recognized as the last admin.
+//
+// #1646 SCOPE NOTE: SuspendUser, UpdateUser, and DeleteUser (the direct
+// user-facing API) now wrap their call to this guard, plus the deactivating
+// write that follows it, in storage.WithNamedLock(lastAdminGuardLockKey, ...) --
+// a Postgres advisory lock that serializes the check-then-act sequence across
+// every replica of an HA deployment, not just within one process. The three
+// SCIM callers below (UpdateSCIMUser, the deactivate helper at line ~460, and
+// DeprovisionSCIMUser) still rely on accountStateMu ALONE -- an in-process
+// mutex, cross-replica-safe only if a real multi-instance-Postgres deployment
+// never routes two concurrent SCIM syncs for two different admins to two
+// different replicas. That gap was deliberately left open in this pass (their
+// larger, more deeply nested transaction bodies made a safe mechanical
+// WithNamedLock wrap higher-risk to land alongside the direct-API fix within
+// the same change) -- filed as an explicit follow-up, not silently carried
+// forward as already covered.
 func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
 	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
 	if err != nil {
