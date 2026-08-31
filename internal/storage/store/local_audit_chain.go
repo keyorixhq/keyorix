@@ -133,6 +133,11 @@ func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 // hash chain (ADR-029). The read-chain-head + insert is serialized so the chain
 // stays well-formed under concurrent writers.
 func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
+	// #1650: detach from the caller's cancellation before the transaction below runs —
+	// see auditWriteContext's doc comment for the full rationale.
+	ctx, cancel := auditWriteContext(ctx)
+	defer cancel()
+
 	// Truncate to microseconds before both hashing and storage so the stored
 	// timestamp equals the hashed one on every backend (Postgres timestamptz is
 	// µs-precision; an un-truncated nanosecond time would not round-trip).

@@ -564,6 +564,13 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 	}
 	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
 	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
+	// #1650: the request-cancellation-immunity fix lives at the storage layer
+	// (LocalStorage.LogAuditEvent / RemoteStorage.LogAuditEvent detach their own ctx
+	// before doing I/O), not here — this is one of four call sites into LogAuditEvent
+	// in the codebase (the other three bypass emitAudit entirely: server/main.go,
+	// audit_ingest_proxy.go, anomaly.go), so fixing it at emitAudit alone would leave
+	// those three still vulnerable. See store.auditWriteContext's doc comment for the
+	// full rationale.
 	if err := c.storage.LogAuditEvent(ctx, event); err != nil {
 		// A failed chain-write is an audit gap that VerifyAuditChain cannot detect — a
 		// never-written event leaves no hole. Surface it loudly instead of swallowing,

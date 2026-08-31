@@ -25,6 +25,10 @@ import (
 // path for a remote-storage follower's emitAudit calls; the hub's /audit/logs
 // (GET) and /audit/rbac-logs (GET) routes only serve reads.
 func (rs *RemoteStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
+	// #1650: detach from the caller's cancellation before the outbound HTTP call --
+	// see auditWriteContext's doc comment for the full rationale.
+	ctx, cancel := auditWriteContext(ctx)
+	defer cancel()
 	resp, err := rs.client.Post(ctx, apiAuditIngestPath, event)
 	if err != nil {
 		return fmt.Errorf("failed to log audit event: %w", err)
