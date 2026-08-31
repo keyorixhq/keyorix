@@ -62,28 +62,39 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	// Refuse a demotion that would leave the project with no roles.assign holder
 	// (#236): after this call the user's only project-scope role is roleName, so
 	// check whether THAT role still carries roles.assign before touching anything.
-	// #G03: the guard's read and the role changes below are serialized under
-	// projectAdminGuardMu, held for the whole check-then-act sequence — see its
-	// doc comment in service.go for the race this closes.
-	c.projectAdminGuardMu.Lock()
-	defer c.projectAdminGuardMu.Unlock()
-	if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, []uint{role.ID}); err != nil {
-		return err
-	}
-	hasTarget := false
-	for _, rid := range existing {
-		if rid == role.ID {
-			hasTarget = true
-			continue
-		}
-		if err := c.RemoveUserRole(ctx, actorID, userID, rid, scope); err != nil {
+	// #1646: the guard's read and the role changes below must be serialized across
+	// every replica of an HA deployment, not just within this process —
+	// projectAdminGuardMu (an in-process sync.Mutex) alone let two independent
+	// replicas each observe "another admin survives" and both proceed, jointly
+	// stripping the project of every roles.assign holder. WithNamedLock's
+	// Postgres advisory lock, keyed per project, closes that; see its doc
+	// comment in internal/core/storage/interface.go.
+	return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(projectID), func(ctx context.Context) error {
+		if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, []uint{role.ID}); err != nil {
 			return err
 		}
-	}
-	if hasTarget {
-		return nil
-	}
-	return c.AssignUserRole(ctx, actorID, userID, role.ID, scope)
+		hasTarget := false
+		for _, rid := range existing {
+			if rid == role.ID {
+				hasTarget = true
+				continue
+			}
+			if err := c.RemoveUserRole(ctx, actorID, userID, rid, scope); err != nil {
+				return err
+			}
+		}
+		if hasTarget {
+			return nil
+		}
+		return c.AssignUserRole(ctx, actorID, userID, role.ID, scope)
+	})
+}
+
+// projectAdminGuardLockKey is the WithNamedLock key for guardLastProjectAdmin's
+// check-then-act sequence (#1646), scoped per project so unrelated projects'
+// membership changes never contend on the same lock.
+func projectAdminGuardLockKey(projectID uint) string {
+	return fmt.Sprintf("project-admin-guard:%d", projectID)
 }
 
 // RemoveProjectMember removes ALL of the user's role grants scoped to the
@@ -110,41 +121,41 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 	// admins. Not a permanent lockout — a GLOBAL admin can always re-add one via
 	// GetUserRoleIDsAt's project_id = 0 OR project_id = ? matching — but still an
 	// availability risk worth refusing outright rather than requiring recovery.
-	// #G03: see SetProjectMemberRole's identical projectAdminGuardMu comment above.
-	c.projectAdminGuardMu.Lock()
-	defer c.projectAdminGuardMu.Unlock()
-	if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, nil); err != nil {
-		return err
-	}
-	// Capture every grant (any environment) this deletes so each can be recorded
-	// in the RBAC audit trail (#234) — RemoveAllProjectRoleGrants is a single
-	// bulk delete, not a per-role RemoveUserRole loop, so it doesn't audit itself.
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("failed to list project role assignments: %w", err)
-	}
-	if err := c.storage.RemoveAllProjectRoleGrants(ctx, userID, projectID); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	// Clear owner_id on secrets this user owned in the project (RBAC-002): without
-	// this the stale owner tag would grant them owner-level access via
-	// CheckSecretPermission's owner short-circuit even after all role grants are gone.
-	// Best-effort: a failure here is logged at the storage layer but does not roll back
-	// the role removal, because the RBAC-001 membership check in CheckSecretPermission
-	// already blocks access — this is defense-in-depth, not a hard gate.
-	_ = c.storage.ClearProjectSecretOwnership(ctx, userID, projectID)
-	// Revoke per-secret ACL grants in this project (CWE-284): without this a removed
-	// member retains access to any secret they held a SecretACL grant for, because
-	// AuthorizeSecret checks ACL grants before project-scope RBAC and short-circuits
-	// on the first match — the role removal above provides no protection against stale ACLs.
-	_ = c.storage.DeleteSecretACLsByUserAndProject(ctx, userID, projectID)
-	for _, a := range assignments {
-		if a.PrincipalType != "user" || a.PrincipalID != userID {
-			continue
+	// #1646: see SetProjectMemberRole's identical WithNamedLock use above.
+	return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(projectID), func(ctx context.Context) error {
+		if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, nil); err != nil {
+			return err
 		}
-		c.LogRoleRemoved(ctx, actorID, userID, a.RoleID, Scope{ProjectID: projectID, EnvironmentID: a.EnvironmentID})
-	}
-	return nil
+		// Capture every grant (any environment) this deletes so each can be recorded
+		// in the RBAC audit trail (#234) — RemoveAllProjectRoleGrants is a single
+		// bulk delete, not a per-role RemoveUserRole loop, so it doesn't audit itself.
+		assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("failed to list project role assignments: %w", err)
+		}
+		if err := c.storage.RemoveAllProjectRoleGrants(ctx, userID, projectID); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		// Clear owner_id on secrets this user owned in the project (RBAC-002): without
+		// this the stale owner tag would grant them owner-level access via
+		// CheckSecretPermission's owner short-circuit even after all role grants are gone.
+		// Best-effort: a failure here is logged at the storage layer but does not roll back
+		// the role removal, because the RBAC-001 membership check in CheckSecretPermission
+		// already blocks access — this is defense-in-depth, not a hard gate.
+		_ = c.storage.ClearProjectSecretOwnership(ctx, userID, projectID)
+		// Revoke per-secret ACL grants in this project (CWE-284): without this a removed
+		// member retains access to any secret they held a SecretACL grant for, because
+		// AuthorizeSecret checks ACL grants before project-scope RBAC and short-circuits
+		// on the first match — the role removal above provides no protection against stale ACLs.
+		_ = c.storage.DeleteSecretACLsByUserAndProject(ctx, userID, projectID)
+		for _, a := range assignments {
+			if a.PrincipalType != "user" || a.PrincipalID != userID {
+				continue
+			}
+			c.LogRoleRemoved(ctx, actorID, userID, a.RoleID, Scope{ProjectID: projectID, EnvironmentID: a.EnvironmentID})
+		}
+		return nil
+	})
 }
 
 // guardLastProjectAdmin refuses an operation that would strip targetID's

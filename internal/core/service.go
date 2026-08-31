@@ -150,55 +150,27 @@ type KeyorixCore struct {
 	// Combined with the row lock LockUserForUpdate takes on Postgres, this holds
 	// across replicas too. Zero value is ready to use. See account_state.go / scim.go.
 	accountStateMu sync.Mutex
-	// sodGrantMu serializes every role-grant path that runs a preventive
-	// separation-of-duties check (requireNoSoDViolation /
-	// requireGroupGrantNoSoDViolation) before writing the grant (#G04):
-	// AssignUserRole, assignUserRoleSystemGrant, AssignRoleToGroup,
-	// AssignUserRoleWithExpiry, AssignGroupRoleWithExpiry, and
-	// AddUserToGroup's validateGroupJoinRoles path (assignUserRoleWithExpirySkipSoD,
-	// break-glass's deliberate SoD-skip path, does not need it — it never reads
-	// SoD state to race against). Without it, two concurrent
-	// grants that are each individually SoD-clean can both read the principal's
-	// pre-grant permission set before either write commits, both pass the
-	// check, and together create the exact toxic-permission-combination the
-	// gate exists to block. In-process only (LocalStorage/single replica) —
-	// a RemoteStorage/multi-replica deployment would need a DB-level lock on
-	// the principal's role-grant rows to close the same window across
-	// processes, out of scope for this pattern-level fix. Zero value is ready
-	// to use. See sod.go / rbac_management.go / groups.go.
-	sodGrantMu sync.Mutex
-	// accessReviewDecisionMu serializes DecideAccessReviewItem's read-decide-
-	// act-persist sequence (#G04): the pending-decision check, the actual
-	// attest/revoke side effect, and the decision-stamping write must all be
-	// treated as one step. persistItemDecision's conditional UPDATE already
-	// stops a SECOND writer from persisting its Decision stamp, but without
-	// this mutex both concurrent callers can still read Decision==pending and
-	// both execute their attest/revoke action before either write commits —
-	// so the losing caller's real-world action (e.g. an actual revoke) still
-	// happened even though only the winner's stamp survives, leaving the
-	// persisted evidence silently wrong about what was decided. In-process
-	// only, same caveat as sodGrantMu. Zero value is ready to use. See
-	// access_review_campaign.go.
+	// accessReviewDecisionMu is a minor in-process fast-path only, kept alongside
+	// claimItemDecision's real fix (#1646): the cross-replica correctness
+	// guarantee for DecideAccessReviewItem's read-decide-act-persist sequence now
+	// comes from a DB-level conditional UPDATE (claimed BEFORE the real
+	// attest/revoke action runs, not after), not this mutex — the mutex alone
+	// only ever serialized callers within ONE process, and a false-certification
+	// race across independent replicas was live-reproduced with it as the sole
+	// guard. See access_review_campaign.go.
 	accessReviewDecisionMu sync.Mutex
 	// dualControlApprovalMu serializes ApproveAccessRequestWithExpiry's
-	// read-approvals-decide-grant sequence (#G04): two approvers signing off
-	// at the exact threshold boundary can otherwise both read the same
-	// below-threshold approval count before either's approval row commits,
-	// both compute "received == required", and both finalize the grant —
-	// defeating the K-distinct-approvers dual-control guarantee with fewer
-	// than K approvals actually recorded first. In-process only, same caveat
-	// as sodGrantMu. Zero value is ready to use. See invitations.go.
+	// read-approvals-decide-grant sequence in-process (#G04). #1646: reproduced
+	// live across independent replicas (concurrency_dual_control_approval_
+	// postgres_test.go) before deciding whether this needed a DB-level fix like
+	// sodGrantMu's replacement got — it did not: UserRole's composite primary key
+	// (UserID, RoleID, ProjectID, EnvironmentID) already makes the threshold race
+	// structurally impossible (dual control always targets one locked-in role for
+	// the same principal, so two racing finalizers always collide on that exact
+	// key; the loser's grant INSERT fails outright, before it ever records an
+	// extra approval or leaves a live double-grant). This mutex is kept as-is,
+	// unmodified. Zero value is ready to use. See invitations.go.
 	dualControlApprovalMu sync.Mutex
-	// projectAdminGuardMu serializes guardLastProjectAdmin's read (#G03) with the
-	// role removal/change that follows it, in SetProjectMemberRole and
-	// RemoveProjectMember: without it, two concurrent calls demoting/removing two
-	// DIFFERENT project admins can each read "another admin survives" (the other
-	// hasn't been removed yet) and both proceed, jointly stripping the project of
-	// every roles.assign holder. A single global mutex, not per-project: this
-	// operation is rare (membership changes, not steady-state traffic) so
-	// correctness is worth more than cross-project throughput here. Zero value is
-	// ready to use. See project_members.go.
-	projectAdminGuardMu sync.Mutex
 	// rateLimitUnsupportedWarnOnce guards the #452 operator warning logged the
 	// first time IsLoginRateLimited/IsPasswordResetRateLimited observe that the
 	// active storage backend can never satisfy CountRecentLoginAttempts (as

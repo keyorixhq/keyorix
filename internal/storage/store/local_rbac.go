@@ -466,6 +466,7 @@ func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID
 			auditChainMu:          ls.auditChainMu,
 			auditCheckpointMu:     ls.auditCheckpointMu,
 			bootstrapMu:           ls.bootstrapMu,
+			namedLockMu:           ls.namedLockMu,
 			consumeClockWatermark: ls.consumeClockWatermark,
 			rbacClockWatermark:    ls.rbacClockWatermark,
 		}
