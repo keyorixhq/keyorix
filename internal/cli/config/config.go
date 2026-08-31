@@ -138,23 +138,25 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	// optional here, so an unset value is left empty rather than prompted for.
 	apiKey := resolveAPIKey(cmd)
 
-	cfg, cerr := config.Load(configFilename)
-	if cerr != nil {
-		// Create default config if it doesn't exist
-		cfg = &config.Config{}
+	// #1644: check whether an existing config file fails to parse BEFORE writing anything
+	// -- distinguishes "no config file yet" (safe to proceed) from "a config file is there
+	// and failed to parse" (must NOT proceed; see auth.runLogin's identical guard for the
+	// full rationale). The loaded value itself isn't needed: SaveFields below only ever
+	// touches the specific fields this command sets, so there's nothing to carry over.
+	if _, cerr := config.Load(configFilename); cerr != nil && !config.IsNotExist(cerr) {
+		return fmt.Errorf("failed to load existing configuration: %w", cerr)
 	}
 
-	// Configure remote storage
-	cfg.Storage.Type = "remote"
-	if cfg.Storage.Remote == nil {
-		cfg.Storage.Remote = &config.RemoteConfig{}
-	}
-	cfg.Storage.Remote.BaseURL = remoteURL
-	cfg.Storage.Remote.APIKey = apiKey
-	cfg.Storage.Remote.TimeoutSeconds = timeout
-	cfg.Storage.Remote.TLSVerify = config.BoolPtr(true)
-
-	if err := config.Save(configFilename, cfg); err != nil {
+	// Persist only the fields this command sets (#1644): everything else already in the
+	// file round-trips untouched instead of being silently reconstituted from this
+	// in-memory *Config's zero values -- see SaveFields' doc comment.
+	if err := config.SaveFields(configFilename, map[string]any{
+		"storage.type":                   "remote",
+		"storage.remote.base_url":        remoteURL,
+		"storage.remote.api_key":         apiKey,
+		"storage.remote.timeout_seconds": timeout,
+		"storage.remote.tls_verify":      true,
+	}); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -170,22 +172,35 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 func runUseLocal(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load(configFilename)
 	if err != nil {
-		// Create default config if it doesn't exist
+		// #1644: distinguish "no config file yet" (safe to proceed with defaults) from
+		// "a config file is there and failed to parse" (must NOT proceed -- see
+		// auth.runLogin's identical guard for the full rationale).
+		if !config.IsNotExist(err) {
+			return fmt.Errorf("failed to load existing configuration: %w", err)
+		}
 		cfg = &config.Config{}
 	}
 
-	// Configure local storage
-	cfg.Storage.Type = "local"
-	if cfg.Storage.Database.Path == "" {
-		cfg.Storage.Database.Path = "./secrets.db" //nolint:goconst
+	// Configure local storage — read the existing path (if the config loaded
+	// successfully) to decide whether a default is needed; the write below only ever
+	// touches the two fields actually being set.
+	dbPath := cfg.Storage.Database.Path
+	if dbPath == "" {
+		dbPath = "./secrets.db" //nolint:goconst
 	}
 
-	if err := config.Save(configFilename, cfg); err != nil {
+	// Persist only the fields this command sets (#1644): everything else already in the
+	// file round-trips untouched instead of being silently reconstituted from this
+	// in-memory *Config's zero values -- see SaveFields' doc comment.
+	if err := config.SaveFields(configFilename, map[string]any{
+		"storage.type":          "local",
+		"storage.database.path": dbPath,
+	}); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
 	fmt.Printf("✅ Configuration updated successfully!\n")
-	fmt.Printf("💾 CLI now uses local database: %s\n", cfg.Storage.Database.Path)
+	fmt.Printf("💾 CLI now uses local database: %s\n", dbPath)
 
 	return nil
 }

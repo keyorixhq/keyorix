@@ -39,6 +39,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// for the health check could silently disagree.
 	cfg, err := config.Load("")
 	if err != nil {
+		// #1644: a Load error means EITHER "no config file yet" OR "a config file is
+		// there and failed to parse" -- reporting the latter as "no configuration
+		// found, using defaults" is actively misleading (the file exists and is
+		// broken, not absent), so surface the real error instead of guessing wrong.
+		if !config.IsNotExist(err) {
+			return fmt.Errorf("failed to load existing configuration: %w", err)
+		}
 		fmt.Printf("⚠️  No configuration found, using defaults\n")
 		cfg = &config.Config{
 			Storage: config.StorageConfig{

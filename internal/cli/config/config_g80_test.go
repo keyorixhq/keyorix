@@ -77,9 +77,13 @@ func TestRefuseConfigRedirect_ReturnsErrorNamingTarget(t *testing.T) {
 
 // ──────────────────────────── runSetRemote / runUseLocal gaps ────────────────
 
-// TestRunSetRemote_SaveConfigError exercises the config.Save error branch: a
-// directory already occupies the "keyorix.yaml" path in the CWD, so the
-// write fails instead of silently succeeding.
+// TestRunSetRemote_SaveConfigError: a directory already occupies the
+// "keyorix.yaml" path in the CWD, so config.Load fails to read it. #1644:
+// this is neither "no config file" (IsNotExist) nor a case Load should ever
+// silently paper over, so the command must fail at the LOAD step, before
+// ever attempting to write anything — not fail later at the save step, as it
+// did before that fix (proceed on any Load error, then fail trying to write
+// through the directory).
 func TestRunSetRemote_SaveConfigError(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -88,7 +92,7 @@ func TestRunSetRemote_SaveConfigError(t *testing.T) {
 	cmd := newSetRemoteCmd("https://keyorix.example.com", "")
 	err := runSetRemote(cmd, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to save configuration")
+	assert.Contains(t, err.Error(), "failed to load existing configuration")
 }
 
 func TestRunUseLocal_SaveConfigError(t *testing.T) {
@@ -99,7 +103,7 @@ func TestRunUseLocal_SaveConfigError(t *testing.T) {
 	cmd := &cobra.Command{}
 	err := runUseLocal(cmd, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to save configuration")
+	assert.Contains(t, err.Error(), "failed to load existing configuration")
 }
 
 // TestRunSetRemote_ReusesExistingRemoteConfig covers the case where
