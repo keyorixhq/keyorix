@@ -37,8 +37,13 @@ func TestInviteRevokeRequiredFlags(t *testing.T) {
 }
 
 func TestInviteListFlags(t *testing.T) {
-	assert.NotNil(t, listCmd.Flags().Lookup("project"))
-	assert.NotNil(t, listCmd.Flags().Lookup("stale-days"))
+	for _, name := range []string{"project", "stale-days", "by"} {
+		assert.NotNil(t, listCmd.Flags().Lookup(name), "list should have --%s", name)
+	}
+	// #1648: --by must be required -- without it, list had no authorization check
+	// at all (any embedded-CLI invoker could read any project's invitations).
+	byFlag := listCmd.Flags().Lookup("by")
+	assert.NotEmpty(t, byFlag.Annotations[cobraRequired], "--by should be marked required")
 }
 
 // cobraRequired is the annotation key cobra uses to mark required flags.

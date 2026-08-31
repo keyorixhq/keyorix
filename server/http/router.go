@@ -2014,7 +2014,22 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get(pathProjectEnvs, catalogHandler.ListEnvironmentsByProjectProxy)
 			r.Get("/environments", catalogHandler.ListEnvironmentsProxy)
 			r.Get(pathEnvironmentsID, catalogHandler.GetEnvironmentProxy)
-			r.Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironmentProxy)
+			// DeleteEnvironmentProxy (#1648): the same gap DeleteProjectProxy's own
+			// fix above closed, for the same reason -- the group's system.write gate
+			// alone let ANY holder of that permission delete ANY environment on this
+			// hub, with no check that the caller is actually authorized against THIS
+			// environment's project. Deleting an environment is exactly as
+			// destructive/irreversible as deleting a project, so it gets the same
+			// treatment: mirrors the human-facing DeleteEnvironment route's own check
+			// (permSecretsDelete scoped via ScopeFromEnvParam, line ~583), layered on
+			// top of, not replacing, the group's system.write gate. This does NOT
+			// extend to the group's read routes above (ListProjectsProxy,
+			// GetProjectProxy, ListProjectMembersProxy, ListEnvironmentsByProjectProxy,
+			// GetEnvironmentProxy, etc.) -- this group's own doc comment already states
+			// those are deliberately flat-gated on system.write with no per-project
+			// scoping, "reads included," by design (see the group header comment
+			// above); only destructive/irreversible writes get this additional layer.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, customMiddleware.ScopeFromEnvParam("id"))).Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironmentProxy)
 
 			// Audit-event ingest proxy (#r122-A). Lets a downstream Keyorix server
 			// booted with storage.type: remote persist its emitAudit-emitted events

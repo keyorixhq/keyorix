@@ -105,10 +105,11 @@ func TestRunList_ListInvitationsFails(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
 
-	origProject, origStale := listProject, listStaleDays
-	defer func() { listProject = origProject; listStaleDays = origStale }()
+	origProject, origStale, origBy := listProject, listStaleDays, listBy
+	defer func() { listProject = origProject; listStaleDays = origStale; listBy = origBy }()
 	listProject = ""
 	listStaleDays = 0
+	listBy = "admin@example.com"
 
 	err = runList(nil, nil)
 	require.Error(t, err)
@@ -138,10 +139,11 @@ func TestRunList_StaleInvitationsFails(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
 
-	origProject, origStale := listProject, listStaleDays
-	defer func() { listProject = origProject; listStaleDays = origStale }()
+	origProject, origStale, origBy := listProject, listStaleDays, listBy
+	defer func() { listProject = origProject; listStaleDays = origStale; listBy = origBy }()
 	listProject = ""
 	listStaleDays = 7
+	listBy = "admin@example.com"
 
 	err = runList(nil, nil)
 	require.Error(t, err)
