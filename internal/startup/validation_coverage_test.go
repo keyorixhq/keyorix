@@ -159,17 +159,22 @@ func TestValidateStartup_EncryptionEnabled_ValidKeys(t *testing.T) {
 	assert.True(t, result.EncryptionOK, "valid key files must set EncryptionOK=true")
 }
 
-// TestValidateStartup_DatabaseValidationFails exercises the path where
-// validateDatabase returns an error — for local storage with a relative DB path.
-// This covers lines 79-82 in ValidateStartup.
-func TestValidateStartup_DatabaseValidationFails(t *testing.T) {
+// TestValidateStartup_RelativeDatabasePath_ResolvedNotRejected replaces the
+// old TestValidateStartup_DatabaseValidationFails: #1636 made config.Load()
+// (called by ValidateStartup before validateDatabase ever runs) resolve a
+// relative storage.database.path to absolute, anchored at the config file's
+// own directory -- so by the time validateDatabase's own
+// !filepath.IsAbs(dbPath) check would fire, the path is already absolute,
+// and it doesn't. This is a deliberate behavior change, not a regression:
+// the path is now genuinely safe by construction rather than merely
+// flagged as unsafe while staying relative. validateDatabase's own
+// defense-in-depth rejection of a truly-relative path (for a
+// *config.Config built by hand, bypassing Load()) remains independently
+// covered by TestValidateDatabase_LocalStorageStillValidatesPath
+// (validation_test.go).
+func TestValidateStartup_RelativeDatabasePath_ResolvedNotRejected(t *testing.T) {
 	dir := t.TempDir()
-	// We need a config that passes schema validation but gives validateDatabase a
-	// relative (unsafe) path. Use a custom config struct path injection: write a
-	// config with a relative database path. Config.Validate() does not validate the
-	// path value itself, only that the field is non-empty for local storage.
 	configPath := filepath.Join(dir, "keyorix.yaml")
-	// Use a relative path that will be rejected by validateDatabase.
 	content := `
 storage:
   type: local
@@ -189,8 +194,48 @@ security:
 `
 	require.NoError(t, os.WriteFile(configPath, []byte(content), 0600))
 
+	result, err := ValidateStartup(configPath, false)
+	require.NoError(t, err, "a relative database path must now be resolved, not rejected")
+	assert.True(t, result.DatabaseOK)
+	assert.Contains(t, result.Warnings[len(result.Warnings)-1], filepath.Join(dir, "relative.db"),
+		"the resolved absolute path (anchored to the config file's directory) must be visible in the validation output")
+}
+
+// TestValidateStartup_DatabaseValidationFails_UnopenableFile keeps
+// ValidateStartup's lines 79-82 (the branch where validateDatabase returns
+// an error) covered via a trigger that still fails after #1636: an existing
+// database file this process cannot open, rather than a relative path
+// (which #1636 made config.Load() resolve instead of reject -- see
+// TestValidateStartup_RelativeDatabasePath_ResolvedNotRejected).
+func TestValidateStartup_DatabaseValidationFails_UnopenableFile(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "secrets.db")
+	require.NoError(t, os.WriteFile(dbPath, []byte("x"), 0600))
+	require.NoError(t, os.Chmod(dbPath, 0000))
+	t.Cleanup(func() { _ = os.Chmod(dbPath, 0600) })
+
+	configPath := filepath.Join(dir, "keyorix.yaml")
+	content := fmt.Sprintf(`
+storage:
+  type: local
+  database:
+    path: %q
+  encryption:
+    enabled: false
+
+server:
+  http:
+    enabled: false
+  grpc:
+    enabled: false
+
+security:
+  enable_file_permission_check: false
+`, dbPath)
+	require.NoError(t, os.WriteFile(configPath, []byte(content), 0600))
+
 	_, err := ValidateStartup(configPath, false)
-	require.Error(t, err, "a relative database path must cause database validation to fail")
+	require.Error(t, err, "an existing but unopenable database file must cause database validation to fail")
 	assert.Contains(t, err.Error(), "database")
 }
 
