@@ -831,7 +831,7 @@ const (
 	kindTemporary wireCallExclusionKind = iota
 	// kindPermanent means: this exact call site can never be made statically
 	// resolvable by construction (its path argument is a plain function
-	// PARAMETER — see entry.go:160's own entry below for the one case that
+	// PARAMETER — see entry.go:161's own entry below for the one case that
 	// currently qualifies), independent of whether router.go triage has
 	// happened. Exempt from the freshness check for the same reason C5's
 	// PERMANENT kind is: there is no fix to "land" that changes this.
@@ -890,7 +890,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// router.go normally — this entry is only the wrapper definition itself,
 	// not a second copy of those two calls. kindPermanent: no code change
 	// makes a generic forwarding helper's own parameter a literal.
-	"entry.go:160": {kindPermanent, "path is a function parameter (putConditionalTransition's own signature) — " +
+	"entry.go:161": {kindPermanent, "path is a function parameter (putConditionalTransition's own signature) — " +
 		"genuinely caller-dependent by design; each real caller resolves independently via findWrapperMethods",
 		"#1511", "2026-08-28"},
 	// postRetentionBeforeCountResp (remote_secrets.go) -- the generic

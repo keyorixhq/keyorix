@@ -54,6 +54,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"gorm.io/gorm"
@@ -195,11 +196,36 @@ type LocalStorage struct {
 	// same reason as auditChainMu/auditCheckpointMu — a transaction-scoped
 	// LocalStorage must share its parent's mutex.
 	bootstrapMu *sync.Mutex
+	// consumeClockWatermark backs checkConsumeClockNotRegressed (#1632): an
+	// in-memory monotonic high-water mark of the latest wall-clock instant a
+	// single-use-token consumption (ConsumeMFAChallenge, ConsumeWebAuthnSession)
+	// has legitimately observed, in this process's lifetime. A pointer for the
+	// same reason as the mutexes above — ConsumeMFAChallenge and
+	// ConsumeWebAuthnSession are two distinct call paths (one via the core
+	// layer's c.now(), one via a raw storage call from an HTTP handler; see
+	// checkConsumeClockNotRegressed's doc comment) that must share ONE
+	// watermark, not warm two independent ones.
+	consumeClockWatermark *clockWatermark
+}
+
+// clockWatermark pairs a mutex with the time.Time it guards, so a single
+// pointer field on LocalStorage can be shared across transaction-scoped
+// copies (see WithTransaction) without copying the mutex and the time value
+// out of sync with each other.
+type clockWatermark struct {
+	mu   sync.Mutex
+	time time.Time
 }
 
 // NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
-	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}, auditCheckpointMu: &sync.Mutex{}, bootstrapMu: &sync.Mutex{}}
+	return &LocalStorage{
+		db:                    db,
+		auditChainMu:          &sync.Mutex{},
+		auditCheckpointMu:     &sync.Mutex{},
+		bootstrapMu:           &sync.Mutex{},
+		consumeClockWatermark: &clockWatermark{},
+	}
 }
 
 // DB returns the underlying *gorm.DB. Exposed for test helpers that need direct
@@ -207,4 +233,53 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 // code — all writes must go through the Storage interface methods.
 func (ls *LocalStorage) DB() *gorm.DB {
 	return ls.db
+}
+
+// consumeClockRegressionTolerance bounds how far now may read EARLIER than
+// consumeClockWatermark before checkConsumeClockNotRegressed refuses a
+// single-use-token consumption. Mirrors internal/core's
+// secretExpiryClockRegressionTolerance (#1632) -- same threat model (an
+// operator, or an NTP-less clock correction, stepping the host clock back by
+// an hour or more), same tolerance for ordinary NTP slew.
+const consumeClockRegressionTolerance = 30 * time.Second
+
+// consumeClockLooksRegressed reports whether now looks EARLIER than a time
+// this process has already legitimately observed for a single-use-token
+// consumption (ConsumeMFAChallenge, ConsumeWebAuthnSession) (#1632). Both
+// consumption methods bind now directly into a SQL `expires_at > ?` bound,
+// with no caching layer between the wall clock and the comparison -- a host
+// clock stepped backward past a challenge/session's real expiry would let it
+// be consumed for the first time past its real window (this cannot enable
+// replay of an ALREADY-consumed row: the `used_at IS NULL` predicate is
+// clock-independent).
+//
+// Returns a bool rather than an error so each caller can return its OWN
+// existing "invalid or expired X" text on a regression, matching the exact
+// wording its normal expiry path already uses -- a caller must not be able
+// to distinguish "genuinely expired" from "clock regression detected" by
+// the error text differing between the two refusal reasons.
+//
+// This watermark is shared by both methods rather than kept per-method,
+// because they have two genuinely distinct callers each (one via the core
+// layer's c.now(), one via a raw storage call from an HTTP handler that
+// passes a bare time.Now() -- see users_crud.go's ConsumeMFAChallenge and
+// webauthn_proxy.go's ConsumeWebAuthnSessionProxy) and the fact being
+// defended against -- "has this process's OS clock been stepped backward" --
+// is a single process-wide fact, not a per-method one.
+//
+// On a non-regressed reading, advances the watermark to now (never
+// backward, for the same reason as internal/core's
+// checkSecretExpiryClockNotRegressed: a second, slower backward step must
+// not walk the watermark down unnoticed).
+func (ls *LocalStorage) consumeClockLooksRegressed(now time.Time) bool {
+	wm := ls.consumeClockWatermark
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	if !wm.time.IsZero() && now.Before(wm.time.Add(-consumeClockRegressionTolerance)) {
+		return true
+	}
+	if now.After(wm.time) {
+		wm.time = now
+	}
+	return false
 }
