@@ -67,7 +67,15 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// Load current configuration
 	cfg, err := config.Load(configFilename)
 	if err != nil {
-		// Create default config if it doesn't exist
+		// #1644: a Load error means EITHER "no config file yet" (safe to proceed with
+		// defaults) OR "a config file is there and failed to parse" (must NOT proceed --
+		// falling through to the write below would silently replace an existing,
+		// merely-unparseable file, discarding whatever security-relevant settings it
+		// held, e.g. security.require_transport_tls: true). Only the first case may
+		// fall back to a fresh default config.
+		if !config.IsNotExist(err) {
+			return fmt.Errorf("failed to load existing configuration: %w", err)
+		}
 		cfg = &config.Config{
 			Storage: config.StorageConfig{
 				Type: "local",
@@ -114,19 +122,18 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// since the token will be sent in cleartext on every subsequent request.
 	common.WarnIfInsecureEndpoint(server)
 
-	// Update configuration
-	cfg.Storage.Type = "remote"
-	if cfg.Storage.Remote == nil {
-		cfg.Storage.Remote = &config.RemoteConfig{}
-	}
-	cfg.Storage.Remote.BaseURL = server
-	cfg.Storage.Remote.APIKey = apiKey
-	cfg.Storage.Remote.TLSVerify = config.BoolPtr(true)
-	cfg.Storage.Remote.TimeoutSeconds = 30
-	cfg.Storage.Remote.RetryAttempts = 3
-
-	// Save configuration
-	if err := config.Save(configFilename, cfg); err != nil {
+	// Persist only the fields this command sets (#1644): SaveFields edits the on-disk
+	// YAML in place, so anything else already in the file -- security.*, other storage
+	// settings, comments, key order -- round-trips untouched, instead of being silently
+	// reconstituted from whatever this in-memory *Config happens to have (or not have) set.
+	if err := config.SaveFields(configFilename, map[string]any{
+		"storage.type":                   "remote",
+		"storage.remote.base_url":        server,
+		"storage.remote.api_key":         apiKey,
+		"storage.remote.tls_verify":      true,
+		"storage.remote.timeout_seconds": 30,
+		"storage.remote.retry_attempts":  3,
+	}); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -164,6 +171,12 @@ func runLogout(cmd *cobra.Command, args []string) error {
 func runStatus(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load(configFilename)
 	if err != nil {
+		// #1644: a Load error means EITHER "no config file yet" OR "a config file is
+		// there and failed to parse" -- reporting the latter as "no configuration
+		// found" is actively misleading, so surface the real error instead.
+		if !config.IsNotExist(err) {
+			return fmt.Errorf("failed to load existing configuration: %w", err)
+		}
 		fmt.Printf("❌ No configuration found\n")
 		return nil
 	}

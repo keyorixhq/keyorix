@@ -88,7 +88,14 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 	// Load configuration
 	cfg, err := config.Load("")
 	if err != nil {
-		// If no config file exists, use default local storage
+		// #1644: a Load error means EITHER "no config file yet" (safe to fall back to
+		// local storage) OR "a config file is there and failed to parse" (must NOT
+		// silently proceed as if unconfigured -- that would run against the wrong
+		// storage backend with no indication anything was wrong). Only the first case
+		// may fall back to a default.
+		if !config.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to load existing configuration: %w", err)
+		}
 		cfg = &config.Config{
 			Locale: config.LocaleConfig{
 				Language:         "en",
