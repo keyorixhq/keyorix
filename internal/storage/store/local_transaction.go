@@ -22,6 +22,7 @@ func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Sto
 			auditCheckpointMu:     ls.auditCheckpointMu,
 			bootstrapMu:           ls.bootstrapMu,
 			consumeClockWatermark: ls.consumeClockWatermark,
+			rbacClockWatermark:    ls.rbacClockWatermark,
 		})
 	})
 }
