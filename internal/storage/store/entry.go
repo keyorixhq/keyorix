@@ -196,16 +196,26 @@ type LocalStorage struct {
 	// same reason as auditChainMu/auditCheckpointMu — a transaction-scoped
 	// LocalStorage must share its parent's mutex.
 	bootstrapMu *sync.Mutex
-	// consumeClockWatermark backs checkConsumeClockNotRegressed (#1632): an
+	// consumeClockWatermark backs consumeClockLooksRegressed (#1632): an
 	// in-memory monotonic high-water mark of the latest wall-clock instant a
 	// single-use-token consumption (ConsumeMFAChallenge, ConsumeWebAuthnSession)
 	// has legitimately observed, in this process's lifetime. A pointer for the
 	// same reason as the mutexes above — ConsumeMFAChallenge and
 	// ConsumeWebAuthnSession are two distinct call paths (one via the core
 	// layer's c.now(), one via a raw storage call from an HTTP handler; see
-	// checkConsumeClockNotRegressed's doc comment) that must share ONE
+	// consumeClockLooksRegressed's doc comment) that must share ONE
 	// watermark, not warm two independent ones.
 	consumeClockWatermark *clockWatermark
+	// rbacClockWatermark backs rbacEffectiveNow (#1632): an in-memory monotonic
+	// high-water mark of the latest wall-clock instant any RBAC permission-
+	// resolution query in local_rbac.go has legitimately observed. Unlike
+	// consumeClockWatermark (which backs a REFUSAL of a single, discrete
+	// action), this backs a CLAMP applied to a pervasive, high-volume read
+	// path reached on every authorized request — see rbacEffectiveNow's doc
+	// comment for why the two sites need different response shapes to the
+	// same underlying fact. A pointer for the same sharing reason as every
+	// other watermark/mutex field on this struct.
+	rbacClockWatermark *clockWatermark
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -225,6 +235,7 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		auditCheckpointMu:     &sync.Mutex{},
 		bootstrapMu:           &sync.Mutex{},
 		consumeClockWatermark: &clockWatermark{},
+		rbacClockWatermark:    &clockWatermark{},
 	}
 }
 

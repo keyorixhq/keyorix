@@ -22,6 +22,44 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// rbacEffectiveNow returns a wall-clock reading that never regresses relative
+// to what this LocalStorage has already observed for RBAC permission-
+// resolution queries (#1632): max(now, rbacClockWatermark), always advancing
+// the watermark forward. Every expiry check in this file binds a fresh
+// time.Now().UTC() directly into a SQL `expires_at > ?` bound (or an in-Go
+// ExpiresAt.After comparison) with no caching layer in between — a host
+// clock stepped backward past a grant's real expiry would compute that grant
+// as still live, extending a permission/role assignment's validity past its
+// real window.
+//
+// Unlike consumeClockLooksRegressed (which REFUSES a single, discrete
+// action outright), this CLAMPS rather than errors. These ~14+ call sites are
+// read-heavy permission-resolution queries reached on every authorized
+// request across the whole application; hard-refusing all of them the moment
+// a regression is detected would turn a narrow clock-integrity concern into
+// a total authorization outage (every permission check failing, for every
+// user, until the tolerance window passes) — a strictly worse outcome than
+// the hazard being defended against. Clamping achieves the same security
+// property (a backward-stepped clock can never compute a grant as MORE valid
+// than the highest wall-clock time this process has already legitimately
+// observed) without that availability blast radius. The two in-Go
+// ExpiresAt.After checks in this file (assignUserRole, assignGroupRole) are
+// already safe-direction on a regression — a backward clock makes an
+// EXPIRED existing grant look live, which blocks a fresh assignment rather
+// than granting anything — but are clamped too for mechanical consistency
+// with every other wall-clock read in this file, not because they are
+// themselves a security finding.
+func (ls *LocalStorage) rbacEffectiveNow(now time.Time) time.Time {
+	wm := ls.rbacClockWatermark
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	if now.Before(wm.time) {
+		return wm.time
+	}
+	wm.time = now
+	return now
+}
+
 // --- Permissions ---
 
 func (ls *LocalStorage) CreatePermission(ctx context.Context, permission *models.Permission) (*models.Permission, error) {
@@ -149,7 +187,7 @@ func (ls *LocalStorage) assignUserRole(ctx context.Context, userID, roleID uint,
 			// so the composite primary key (user_id, role_id, project_id, environment_id) is
 			// free for the fresh Create below, mirroring how live-authorization queries
 			// elsewhere (e.g. GetUserRoles) already exclude expired grants.
-			if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
+			if existing.ExpiresAt == nil || existing.ExpiresAt.After(ls.rbacEffectiveNow(time.Now().UTC())) {
 				return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
 			}
 			if derr := tx.Where(sqlWhereUserRoleEnv,
@@ -212,7 +250,7 @@ func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 	err := ls.db.WithContext(ctx).Table("roles").
 		Joins("JOIN user_roles ON roles.id = user_roles.role_id").
 		Where(sqlWhereURUserID, userID).
-		Where(sqlWhereURNotExpired, time.Now().UTC()).
+		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Find(&roles).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -244,7 +282,7 @@ func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope
 		Where(sqlWhereURUserID, userID).
 		Where("user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
 		Where("user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
-		Where(sqlWhereURNotExpired, time.Now().UTC()).
+		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Distinct().Pluck("user_roles.role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -267,7 +305,7 @@ func (ls *LocalStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]s
 	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Select("project_id, environment_id").
 		Where("user_id = ?", userID).
-		Where(sqlWhereURNotExpired, time.Now().UTC()).
+		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Group("project_id, environment_id").
 		Scan(&direct).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -282,7 +320,7 @@ func (ls *LocalStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]s
 		Joins(sqlJoinUserGroups).
 		Joins(sqlJoinGroups).
 		Where(sqlWhereUGUserID, userID).
-		Where(sqlWhereGRNotExpired, time.Now().UTC()).
+		Where(sqlWhereGRNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Group("group_roles.project_id, group_roles.environment_id").
 		Scan(&viaGroups).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -306,7 +344,7 @@ func (ls *LocalStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]s
 func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
 	var out []storage.RoleAssignment
 
-	now := time.Now().UTC()
+	now := ls.rbacEffectiveNow(time.Now().UTC())
 	var userRows []models.UserRole
 	if err := ls.db.WithContext(ctx).
 		Where(sqlWhereProjectID, projectID).
@@ -382,7 +420,7 @@ func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context,
 	}
 	var userRows []models.UserRole
 	if err := userQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
-		Where(sqlWhereURNotExpired, time.Now().UTC()).
+		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Find(&userRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -399,7 +437,7 @@ func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context,
 	}
 	var groupRows []models.GroupRole
 	if err := groupQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
-		Where(sqlWhereGRNotExpired, time.Now().UTC()).
+		Where(sqlWhereGRNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Find(&groupRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -429,6 +467,7 @@ func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID
 			auditCheckpointMu:     ls.auditCheckpointMu,
 			bootstrapMu:           ls.bootstrapMu,
 			consumeClockWatermark: ls.consumeClockWatermark,
+			rbacClockWatermark:    ls.rbacClockWatermark,
 		}
 		assignments, err := txStorage.ListGlobalAdminAssignmentsForUpdate(ctx, adminRoleIDs)
 		if err != nil {
@@ -459,7 +498,7 @@ func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, sc
 	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Where("user_id = ? AND project_id = ? AND environment_id = ?",
 			userID, scope.ProjectID, scope.EnvironmentID).
-		Where(sqlWhereURNotExpired, time.Now().UTC()).
+		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Distinct().Pluck("role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -475,7 +514,7 @@ func (ls *LocalStorage) IsProjectMember(ctx context.Context, userID, projectID u
 	if projectID == 0 {
 		return false, nil
 	}
-	now := time.Now().UTC()
+	now := ls.rbacEffectiveNow(time.Now().UTC())
 	var direct int64
 	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
@@ -507,7 +546,7 @@ func (ls *LocalStorage) IsGroupProjectScoped(ctx context.Context, groupID, proje
 	if projectID == 0 {
 		return false, nil
 	}
-	now := time.Now().UTC()
+	now := ls.rbacEffectiveNow(time.Now().UTC())
 	var count int64
 	if err := ls.db.WithContext(ctx).Table("group_roles").
 		Joins(sqlJoinGroups).
@@ -533,7 +572,7 @@ func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) 
 		Joins("JOIN users u ON u.id = ur.user_id").
 		Joins("JOIN roles r ON r.id = ur.role_id").
 		Where("ur.project_id = ? AND ur.environment_id = 0", projectID).
-		Where("ur.expires_at IS NULL OR ur.expires_at > ?", time.Now().UTC()).
+		Where("ur.expires_at IS NULL OR ur.expires_at > ?", ls.rbacEffectiveNow(time.Now().UTC())).
 		Where("u.deleted_at IS NULL").
 		Order("u.username").
 		Scan(&members).Error
@@ -571,7 +610,7 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 		Where("user_groups.project_id = 0 OR user_groups.project_id = ?", scope.ProjectID).
 		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
 		Where("group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
-		Where(sqlWhereGRNotExpired, time.Now().UTC()).
+		Where(sqlWhereGRNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Distinct().Pluck("group_roles.role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -683,7 +722,7 @@ func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID ui
 	var rows []models.GroupRole
 	if err := ls.db.WithContext(ctx).
 		Where("group_id = ?", groupID).
-		Where(sqlWhereGRNotExpired, time.Now().UTC()).
+		Where(sqlWhereGRNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -745,7 +784,7 @@ func (ls *LocalStorage) assignGroupRole(ctx context.Context, groupID, roleID uin
 			// though nothing live is actually being duplicated (#263/#471). Delete the stale
 			// row so the composite primary key (group_id, role_id, project_id, environment_id)
 			// is free for the fresh Create below, mirroring assignUserRole's identical fix.
-			if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
+			if existing.ExpiresAt == nil || existing.ExpiresAt.After(ls.rbacEffectiveNow(time.Now().UTC())) {
 				return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
 			}
 			if derr := tx.Where(sqlWhereGroupRoleEnv,
@@ -841,7 +880,7 @@ func (ls *LocalStorage) GetUserPermissions(ctx context.Context, userID uint) ([]
 		Joins(sqlJoinRolePerms).
 		Joins("JOIN user_roles ON role_permissions.role_id = user_roles.role_id").
 		Where(sqlWhereURUserID, userID).
-		Where(sqlWhereURNotExpired, time.Now().UTC()).
+		Where(sqlWhereURNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Group("permissions.id").
 		Find(&permissions).Error
 	if err != nil {
@@ -864,7 +903,7 @@ func (ls *LocalStorage) GetUserGroupPermissions(ctx context.Context, userID uint
 		// A soft-deleted group confers no permissions (matches authz resolution).
 		Joins(sqlJoinGroups).
 		Where(sqlWhereUGUserID, userID).
-		Where(sqlWhereGRNotExpired, time.Now().UTC()).
+		Where(sqlWhereGRNotExpired, ls.rbacEffectiveNow(time.Now().UTC())).
 		Group("permissions.id").
 		Find(&permissions).Error
 	if err != nil {
