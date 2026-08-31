@@ -53,8 +53,8 @@ func TestSensitiveFieldsAreNotJSONSerialized(t *testing.T) {
 		},
 		{
 			name:    "Session.SessionToken",
-			v:       &Session{SessionToken: "sha256hash", EncryptedSessionToken: []byte("x")},
-			secrets: []string{"SessionToken", "EncryptedSessionToken"},
+			v:       &Session{SessionToken: "sha256hash"},
+			secrets: []string{"SessionToken"},
 		},
 		{
 			name:    "PasswordReset.Token",

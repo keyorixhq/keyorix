@@ -372,16 +372,18 @@ func dryRunRotation(cfg *config.Config) error {
 	return nil
 }
 
-// printSweepResult prints every field of a SweepResult — all 8 per-table "Swept"
+// printSweepResult prints every field of a SweepResult — all 7 per-table "Swept"
 // counts plus LegacyAADUpgraded — so an operator sees the FULL sweep outcome
 // (real or previewed), not a partial one. Before this, the CLI printed no
 // per-table detail from a rotation at all, and even the underlying service log
 // line covered only 5 of these 8 fields — silently omitting mfa_secrets,
 // dynamic_secret_configs, and dynamic_secret_leases, the exact three tables
-// #422's sweep-gap fix added.
+// #422's sweep-gap fix added. Sessions dropped out of this list entirely under
+// #1641: sessions never had anything to sweep (the live write path only ever
+// hashes session tokens, never encrypts them).
 func printSweepResult(result *encryption.SweepResult) {
-	fmt.Printf("📋 secret_versions: %d, sessions: %d, api_tokens: %d, api_clients: %d, password_resets: %d, mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d (legacy AAD upgraded: %d)\n",
-		result.SecretVersionsSwept, result.SessionsSwept, result.APITokensSwept, result.APIClientsSwept,
+	fmt.Printf("📋 secret_versions: %d, api_tokens: %d, api_clients: %d, password_resets: %d, mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d (legacy AAD upgraded: %d)\n",
+		result.SecretVersionsSwept, result.APITokensSwept, result.APIClientsSwept,
 		result.AccountResetsSwept, result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept,
 		result.LegacyAADUpgraded)
 }

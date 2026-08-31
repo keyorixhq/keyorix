@@ -1,10 +1,9 @@
 // encryption_s24_test.go — coverage uplift for internal/encryption (s24 round).
 //
 // Focus areas (functions with <90% coverage not already exercised by s23):
-//   - sweepSessions decrypt-error path
 //   - sweepAPITokens decrypt-error path (missing variant)
 //   - sweepPasswordResets decrypt-error path
-//   - sweepSessions/sweepAPITokens/sweepPasswordResets skip-empty path
+//   - sweepAPITokens/sweepPasswordResets skip-empty path
 //   - SweepAllTables error-propagation paths (session, api_token, api_client, password_reset,
 //     mfa_secrets, dynamic_secret_configs, dynamic_secret_leases inner-error paths)
 //   - deriveEvidenceSignKey and deriveAuditCheckpointKey: happy-path determinism
@@ -16,8 +15,6 @@
 //   - KeyManager.RewrapDEK: nil provider, wrong-size KEK, stale snapshot
 //   - AuthEncryption: disabled service paths
 //   - GetAuthEncryptionStatus: initialized and not-initialized
-//   - ValidateEncryptedToken happy path
-//   - StoreEncryptedAPIClient/StoreEncryptedSession/StoreEncryptedAPIToken store+retrieve
 //   - Decrypt: bad algorithm, wrong nonce length
 //   - DecryptWithAAD: wrong nonce length
 //   - EncryptChunked: multi-chunk smoke test
@@ -105,34 +102,6 @@ func otherKey(t *testing.T, seed byte) []byte {
 	return k
 }
 
-// ─── sweepSessions: decrypt error (wrong key) ────────────────────────────────
-
-func TestSweepSessions_DecryptError(t *testing.T) {
-	db := s24DB(t)
-	es := s24ES(t)
-
-	encBytes := encryptedWith(t, otherKey(t, 10), []byte("tok"))
-	row := &models.Session{UserID: 91, SessionToken: "h91", EncryptedSessionToken: encBytes}
-	require.NoError(t, db.Create(row).Error)
-
-	_, _, err := sweepSessions(db, es, es, "v2", false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decrypt session")
-}
-
-// ─── sweepSessions: skip row with empty EncryptedSessionToken ────────────────
-
-func TestSweepSessions_SkipsEmptyToken(t *testing.T) {
-	db := s24DB(t)
-	es := s24ES(t)
-	row := &models.Session{UserID: 92, SessionToken: "h92"}
-	require.NoError(t, db.Create(row).Error)
-
-	swept, _, err := sweepSessions(db, es, es, "v1", false)
-	require.NoError(t, err)
-	assert.Equal(t, 0, swept)
-}
-
 // ─── sweepAPITokens: skip row with empty EncryptedToken ──────────────────────
 
 func TestSweepAPITokens_SkipsEmptyToken(t *testing.T) {
@@ -204,24 +173,6 @@ func TestSweepAPITokens_HappyPath_Persists(t *testing.T) {
 	swept, _, err := sweepAPITokens(db, es, es, "v2", false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
-}
-
-// ─── SweepAllTables: session error propagates ────────────────────────────────
-
-func TestSweepAllTables_SessionError_Propagates(t *testing.T) {
-	db := s24DB(t)
-	es := s24ES(t)
-
-	// Insert a session with ciphertext from a different key → decrypt fails
-	encBytes := encryptedWith(t, otherKey(t, 30), []byte("tok"))
-	row := &models.Session{UserID: 95, SessionToken: "h95", EncryptedSessionToken: encBytes}
-	require.NoError(t, db.Create(row).Error)
-
-	// SweepAllTables also fetches secret_nodes for the node map, so we need
-	// at least no secret_versions to fail on that step first.
-	_, err := SweepAllTables(db, es, es, "v2", false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sessions sweep failed")
 }
 
 // ─── SweepAllTables: api_token error propagates ──────────────────────────────
@@ -819,20 +770,6 @@ func TestAuthEncryption_GetStatus_Initialized(t *testing.T) {
 
 // ─── AuthEncryption: session token encrypt/decrypt roundtrip ─────────────────
 
-func TestAuthEncryption_SessionToken_RoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	db := s24DB(t)
-	ae := NewAuthEncryption(cfg, dir, db)
-	require.NoError(t, ae.Initialize("test-pass"))
-
-	enc, meta, err := ae.EncryptSessionToken("my-session-tok", uint(1))
-	require.NoError(t, err)
-	got, err := ae.DecryptSessionToken(enc, meta, uint(1))
-	require.NoError(t, err)
-	assert.Equal(t, "my-session-tok", got)
-}
-
 // ─── AuthEncryption: API token encrypt/decrypt roundtrip ─────────────────────
 
 func TestAuthEncryption_APIToken_RoundTrip(t *testing.T) {
@@ -865,24 +802,6 @@ func TestAuthEncryption_PasswordResetToken_RoundTrip(t *testing.T) {
 	assert.Equal(t, "reset-tok", got)
 }
 
-// ─── AuthEncryption: disabled session token passthrough ───────────────────────
-
-func TestAuthEncryption_Disabled_SessionToken_Passthrough(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: false, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	ae := NewAuthEncryption(cfg, dir, s24DB(t))
-	require.NoError(t, ae.Initialize(""))
-
-	enc, meta, err := ae.EncryptSessionToken("tok", uint(0))
-	require.NoError(t, err)
-	assert.Equal(t, "tok", string(enc))
-	assert.Nil(t, meta)
-
-	got, err := ae.DecryptSessionToken(enc, meta, uint(0))
-	require.NoError(t, err)
-	assert.Equal(t, "tok", got)
-}
-
 // ─── AuthEncryption: disabled API token passthrough ───────────────────────────
 
 func TestAuthEncryption_Disabled_APIToken_Passthrough(t *testing.T) {
@@ -911,102 +830,21 @@ func TestAuthEncryption_Disabled_PasswordResetToken_Passthrough(t *testing.T) {
 	assert.Nil(t, meta)
 }
 
-// ─── ValidateEncryptedToken: happy path ──────────────────────────────────────
+// ─── AuthEncryption: disabled encrypt uses plaintext (no encrypt branch) ─────
 
-func TestAuthEncryption_ValidateEncryptedToken_Match(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	db := s24DB(t)
-	ae := NewAuthEncryption(cfg, dir, db)
-	require.NoError(t, ae.Initialize("test-pass"))
-
-	enc, meta, err := ae.EncryptSessionToken("tok-abc", uint(1))
-	require.NoError(t, err)
-
-	match, err := ae.ValidateEncryptedToken(enc, meta, "tok-abc", uint(1))
-	require.NoError(t, err)
-	assert.True(t, match)
-}
-
-// ─── ValidateEncryptedToken: mismatch returns false ──────────────────────────
-
-func TestAuthEncryption_ValidateEncryptedToken_Mismatch(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	db := s24DB(t)
-	ae := NewAuthEncryption(cfg, dir, db)
-	require.NoError(t, ae.Initialize("test-pass"))
-
-	enc, meta, err := ae.EncryptSessionToken("tok-abc", uint(1))
-	require.NoError(t, err)
-
-	match, err := ae.ValidateEncryptedToken(enc, meta, "different-token", uint(1))
-	require.NoError(t, err)
-	assert.False(t, match)
-}
-
-// ─── StoreEncryptedAPIClient / RetrieveAPIClientSecret ───────────────────────
-
-func TestAuthEncryption_StoreAndRetrieveAPIClient(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	db := s24DB(t)
-	ae := NewAuthEncryption(cfg, dir, db)
-	require.NoError(t, ae.Initialize("test-pass"))
-
-	client := &models.APIClient{
-		Name:         "test-client",
-		ClientID:     "cid-s24",
-		ClientSecret: "hash-of-secret",
-	}
-	require.NoError(t, ae.StoreEncryptedAPIClient(client, "the-secret"))
-	assert.NotZero(t, client.ID)
-
-	got, err := ae.RetrieveAPIClientSecret("cid-s24")
-	require.NoError(t, err)
-	assert.Equal(t, "the-secret", got)
-}
-
-// ─── StoreEncryptedSession / RetrieveSessionToken ────────────────────────────
-
-func TestAuthEncryption_StoreAndRetrieveSession(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	db := s24DB(t)
-	ae := NewAuthEncryption(cfg, dir, db)
-	require.NoError(t, ae.Initialize("test-pass"))
-
-	session := &models.Session{
-		UserID:       100,
-		SessionToken: "hashed-tok",
-	}
-	require.NoError(t, ae.StoreEncryptedSession(session, "plain-token"))
-	assert.NotZero(t, session.ID)
-
-	got, err := ae.RetrieveSessionToken(session.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "plain-token", got)
-}
-
-// ─── AuthEncryption: disabled store uses plaintext (no encrypt branch) ────────
-
-func TestAuthEncryption_Disabled_StoreAPIClient_Plaintext(t *testing.T) {
+func TestAuthEncryption_Disabled_EncryptClientSecret_Plaintext(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{Enabled: false, DEKPath: "dek.key", SaltPath: "kek.salt"}
 	db := s24DB(t)
 	ae := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, ae.Initialize(""))
 
-	client := &models.APIClient{
-		Name:         "plain-client",
-		ClientID:     "cid-plain",
-		ClientSecret: "h",
-	}
-	require.NoError(t, ae.StoreEncryptedAPIClient(client, "secret"))
-	// encrypted field should hold the raw plaintext (disabled path)
-	assert.Equal(t, "secret", string(client.EncryptedClientSecret))
+	enc, meta, err := ae.EncryptClientSecret("secret")
+	require.NoError(t, err)
+	assert.Equal(t, "secret", string(enc))
+	assert.Nil(t, meta)
 
-	got, err := ae.RetrieveAPIClientSecret("cid-plain")
+	got, err := ae.DecryptClientSecret(enc, meta)
 	require.NoError(t, err)
 	assert.Equal(t, "secret", got)
 }

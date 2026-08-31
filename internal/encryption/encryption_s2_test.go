@@ -168,65 +168,11 @@ func TestEncryptionService_DeserializeEncryptedData_RoundTrip(t *testing.T) {
 	assert.Equal(t, []byte("hello"), dec)
 }
 
-// --- AuthEncryption store: StoreEncryptedAPIToken / RetrieveAPIToken ---
-
-func TestAuthEncryption_StoreAndRetrieveAPIToken(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEnc(t, db)
-
-	apiToken := &models.APIToken{
-		ClientID:  1,
-		Scope:     "read",
-		CreatedAt: time.Now(),
-	}
-	plain := "api-token-plain-text-value"
-
-	require.NoError(t, ae.StoreEncryptedAPIToken(apiToken, plain))
-	assert.NotZero(t, apiToken.ID, "token must be stored in the DB")
-
-	retrieved, err := ae.RetrieveAPIToken(apiToken.ID)
-	require.NoError(t, err)
-	assert.Equal(t, plain, retrieved)
-}
-
-func TestAuthEncryption_RetrieveAPIToken_NotFound(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEnc(t, db)
-
-	_, err := ae.RetrieveAPIToken(99999)
-	require.Error(t, err)
-}
-
 // TestAuthEncryption_Enabled_Suite shares one setupS2AuthEncEnabled call across subtests
 // to avoid repeated expensive PBKDF2 derivations.
 func TestAuthEncryption_Enabled_Suite(t *testing.T) {
 	db := setupS2DB(t)
 	ae := setupS2AuthEncEnabled(t, db)
-
-	t.Run("StoreAndRetrieveAPIToken", func(t *testing.T) {
-		apiToken := &models.APIToken{
-			ClientID:  2,
-			Scope:     "write",
-			CreatedAt: time.Now(),
-		}
-		plain := "api-token-enabled-value"
-		require.NoError(t, ae.StoreEncryptedAPIToken(apiToken, plain))
-		assert.NotZero(t, apiToken.ID)
-		retrieved, err := ae.RetrieveAPIToken(apiToken.ID)
-		require.NoError(t, err)
-		assert.Equal(t, plain, retrieved)
-	})
-
-	t.Run("SessionTokenRoundTrip", func(t *testing.T) {
-		plain := "session-token-enabled-path"
-		enc, meta, err := ae.EncryptSessionToken(plain, uint(1))
-		require.NoError(t, err)
-		assert.NotEqual(t, plain, string(enc), "token must be encrypted")
-		assert.NotNil(t, meta)
-		dec, err := ae.DecryptSessionToken(enc, meta, uint(1))
-		require.NoError(t, err)
-		assert.Equal(t, plain, dec)
-	})
 
 	t.Run("APITokenRoundTrip", func(t *testing.T) {
 		plain := "api-token-enabled-path"
@@ -254,49 +200,14 @@ func TestAuthEncryption_Enabled_Suite(t *testing.T) {
 		assert.NotEmpty(t, status["key_version"])
 	})
 
-	t.Run("ValidateEncryptedToken", func(t *testing.T) {
-		plain := "valid-session-token"
-		enc, meta, err := ae.EncryptSessionToken(plain, uint(1))
-		require.NoError(t, err)
-		ok, err := ae.ValidateEncryptedToken(enc, meta, plain, uint(1))
-		require.NoError(t, err)
-		assert.True(t, ok)
-		ok, err = ae.ValidateEncryptedToken(enc, meta, "wrong-token", uint(1))
-		require.NoError(t, err)
-		assert.False(t, ok)
-	})
-
-	t.Run("ValidateEncryptedToken_DecryptError", func(t *testing.T) {
-		_, err := ae.ValidateEncryptedToken([]byte("not-valid-ciphertext"), nil, "token", uint(1))
-		require.Error(t, err)
-	})
-
-	t.Run("StoreAndRetrieveSession", func(t *testing.T) {
-		expiresAt := time.Now().Add(time.Hour)
-		sess := &models.Session{
-			UserID:    42,
-			CreatedAt: time.Now(),
-			ExpiresAt: &expiresAt,
-		}
-		plain := "session-token-for-enabled"
-		require.NoError(t, ae.StoreEncryptedSession(sess, plain))
-		retrieved, err := ae.RetrieveSessionToken(sess.ID)
-		require.NoError(t, err)
-		assert.Equal(t, plain, retrieved)
-	})
-
-	t.Run("StoreAndRetrieveAPIClient", func(t *testing.T) {
-		client := &models.APIClient{
-			Name:      "enabled-client",
-			ClientID:  "client-enabled-1",
-			IsActive:  true,
-			CreatedAt: time.Now(),
-		}
+	t.Run("ClientSecretRoundTrip", func(t *testing.T) {
 		plain := "enabled-client-secret"
-		require.NoError(t, ae.StoreEncryptedAPIClient(client, plain))
-		retrieved, err := ae.RetrieveAPIClientSecret("client-enabled-1")
+		enc, meta, err := ae.EncryptClientSecret(plain)
 		require.NoError(t, err)
-		assert.Equal(t, plain, retrieved)
+		assert.NotEqual(t, plain, string(enc), "secret must be encrypted")
+		dec, err := ae.DecryptClientSecret(enc, meta)
+		require.NoError(t, err)
+		assert.Equal(t, plain, dec)
 	})
 }
 
@@ -473,22 +384,6 @@ func TestAuthEncryption_RotateAuthEncryption_Disabled(t *testing.T) {
 	err := ae.RotateAuthEncryption("passphrase")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disabled")
-}
-
-func TestAuthEncryption_RetrieveAPIClientSecret_NotFound(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEnc(t, db)
-
-	_, err := ae.RetrieveAPIClientSecret("nonexistent-client-id")
-	require.Error(t, err)
-}
-
-func TestAuthEncryption_RetrieveSessionToken_NotFound(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEnc(t, db)
-
-	_, err := ae.RetrieveSessionToken(99999)
-	require.Error(t, err)
 }
 
 // --- Service methods ---
@@ -889,9 +784,9 @@ func TestService_PreviewRotationSweep(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-// TestService_RotateDEKWithSweep_AuthTables verifies that sweepSessions,
-// sweepAPITokens, and sweepPasswordResets re-encrypt seeded rows correctly
-// (exercising the inner loop bodies that are at 17.9% coverage).
+// TestService_RotateDEKWithSweep_AuthTables verifies that sweepAPITokens and
+// sweepPasswordResets re-encrypt seeded rows correctly (exercising the inner
+// loop bodies that are at 17.9% coverage).
 // TestService_RotateDEKWithSweep_DeletesBackupFiles exercises deleteBackupFiles inner loop
 // by pre-creating a .backup.* file in the key dir before rotation.
 func TestService_RotateDEKWithSweep_DeletesBackupFiles(t *testing.T) {
@@ -987,12 +882,6 @@ func TestAuthEncryption_EncryptError_Suite(t *testing.T) {
 		ae.service.mu.Unlock()
 	})
 
-	t.Run("EncryptSessionToken_Error", func(t *testing.T) {
-		_, _, err := ae.EncryptSessionToken("token", uint(1))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to encrypt session token")
-	})
-
 	t.Run("EncryptAPIToken_Error", func(t *testing.T) {
 		_, _, err := ae.EncryptAPIToken("token", uint(1))
 		require.Error(t, err)
@@ -1027,176 +916,6 @@ func TestAuthEncryption_EncryptError_Suite(t *testing.T) {
 	})
 }
 
-// TestAuthEncryption_StoreEncryptError_Suite covers the DB-Create error branches in
-// StoreEncryptedAPIClient, StoreEncryptedSession, StoreEncryptedAPIToken (77.8%).
-// Each Store* function has two uncovered statements: the encryption-error return and
-// the db.Create-error return. We trigger the db.Create error by inserting a row with
-// a duplicate unique-constrained field (ClientID / primary key collision).
-func TestAuthEncryption_StoreEncryptError_Suite(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEnc(t, db) // encryption disabled — passthrough, no encrypt failure
-
-	t.Run("StoreEncryptedAPIClient_DBCreateError", func(t *testing.T) {
-		client1 := &models.APIClient{
-			Name:      "dup-client",
-			ClientID:  "dup-client-id",
-			IsActive:  true,
-			CreatedAt: time.Now(),
-		}
-		require.NoError(t, ae.StoreEncryptedAPIClient(client1, "secret1"))
-
-		// Second insert with same ClientID must fail the unique constraint.
-		client2 := &models.APIClient{
-			Name:      "dup-client-2",
-			ClientID:  "dup-client-id",
-			IsActive:  true,
-			CreatedAt: time.Now(),
-		}
-		err := ae.StoreEncryptedAPIClient(client2, "secret2")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to store API client")
-	})
-
-	t.Run("StoreEncryptedSession_DBCreateError", func(t *testing.T) {
-		expiresAt := time.Now().Add(time.Hour)
-		sess1 := &models.Session{
-			UserID:    99,
-			CreatedAt: time.Now(),
-			ExpiresAt: &expiresAt,
-		}
-		require.NoError(t, ae.StoreEncryptedSession(sess1, "tok1"))
-
-		// Force a primary key collision.
-		sess2 := &models.Session{
-			ID:        sess1.ID,
-			UserID:    99,
-			CreatedAt: time.Now(),
-			ExpiresAt: &expiresAt,
-		}
-		err := ae.StoreEncryptedSession(sess2, "tok2")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to store session")
-	})
-
-	t.Run("StoreEncryptedAPIToken_DBCreateError", func(t *testing.T) {
-		tok1 := &models.APIToken{
-			ClientID:  77,
-			Scope:     "read",
-			CreatedAt: time.Now(),
-		}
-		require.NoError(t, ae.StoreEncryptedAPIToken(tok1, "tok-val-1"))
-
-		// Force a primary key collision.
-		tok2 := &models.APIToken{
-			ID:        tok1.ID,
-			ClientID:  77,
-			Scope:     "read",
-			CreatedAt: time.Now(),
-		}
-		err := ae.StoreEncryptedAPIToken(tok2, "tok-val-2")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to store API token")
-	})
-}
-
-// TestAuthEncryption_StoreEncryptCallError covers the encrypt-failure path in each
-// Store* method (when EncryptXxx itself returns an error). This exercises the
-// "return fmt.Errorf("failed to encrypt ...")" line that 77.8% coverage misses.
-func TestAuthEncryption_StoreEncryptCallError(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupEnabledAuthEncBroken(t, db)
-
-	t.Run("StoreEncryptedAPIClient_EncryptError", func(t *testing.T) {
-		client := &models.APIClient{
-			Name:      "err-client",
-			ClientID:  "err-client-id",
-			IsActive:  true,
-			CreatedAt: time.Now(),
-		}
-		err := ae.StoreEncryptedAPIClient(client, "secret")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to encrypt client secret")
-	})
-
-	t.Run("StoreEncryptedSession_EncryptError", func(t *testing.T) {
-		expiresAt := time.Now().Add(time.Hour)
-		sess := &models.Session{
-			UserID:    88,
-			CreatedAt: time.Now(),
-			ExpiresAt: &expiresAt,
-		}
-		err := ae.StoreEncryptedSession(sess, "token")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to encrypt session token")
-	})
-
-	t.Run("StoreEncryptedAPIToken_EncryptError", func(t *testing.T) {
-		tok := &models.APIToken{
-			ClientID:  55,
-			Scope:     "read",
-			CreatedAt: time.Now(),
-		}
-		err := ae.StoreEncryptedAPIToken(tok, "tok-val")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to encrypt API token")
-	})
-}
-
-// TestAuthEncryption_RetrieveDecryptError covers the decrypt-failure path in each
-// Retrieve* method (85.7% → targets the "return "", fmt.Errorf("failed to decrypt...")" line).
-// We store a row with deliberately corrupt ciphertext bytes, then Retrieve* must fail
-// on the Decrypt step (not the DB-fetch step).
-func TestAuthEncryption_RetrieveDecryptError(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	corruptBlob := []byte("not-valid-json")
-
-	t.Run("RetrieveAPIClientSecret_DecryptError", func(t *testing.T) {
-		// Insert a row with corrupt ciphertext directly via DB.
-		client := &models.APIClient{
-			Name:                  "corrupt-client",
-			ClientID:              "corrupt-client-id",
-			EncryptedClientSecret: corruptBlob,
-			IsActive:              true,
-			CreatedAt:             time.Now(),
-		}
-		require.NoError(t, db.Create(client).Error)
-
-		_, err := ae.RetrieveAPIClientSecret("corrupt-client-id")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decrypt client secret")
-	})
-
-	t.Run("RetrieveSessionToken_DecryptError", func(t *testing.T) {
-		expiresAt := time.Now().Add(time.Hour)
-		sess := &models.Session{
-			UserID:                1,
-			EncryptedSessionToken: corruptBlob,
-			CreatedAt:             time.Now(),
-			ExpiresAt:             &expiresAt,
-		}
-		require.NoError(t, db.Create(sess).Error)
-
-		_, err := ae.RetrieveSessionToken(sess.ID)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decrypt session token")
-	})
-
-	t.Run("RetrieveAPIToken_DecryptError", func(t *testing.T) {
-		tok := &models.APIToken{
-			ClientID:       1,
-			EncryptedToken: corruptBlob,
-			CreatedAt:      time.Now(),
-		}
-		require.NoError(t, db.Create(tok).Error)
-
-		_, err := ae.RetrieveAPIToken(tok.ID)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decrypt API token")
-	})
-}
-
 // TestAuthEncryption_RotateAuthEncryption_SweepError covers the error-return path
 // in RotateAuthEncryption when RotateDEKWithSweep fails (80.0% → line 26).
 // We achieve this by enabling the service but forcing initialized=false so
@@ -1228,20 +947,6 @@ func TestService_RotateDEKWithSweep_AuthTables(t *testing.T) {
 	svc := NewService(cfg, dir)
 	require.NoError(t, svc.Initialize("test-passphrase-sweep"))
 
-	// Seed a session token row.
-	sessEnc, sessMeta, err := svc.EncryptSecret([]byte("my-session-token"))
-	require.NoError(t, err)
-
-	expiresAt := time.Now().Add(time.Hour)
-	sess := models.Session{
-		UserID:                1,
-		EncryptedSessionToken: sessEnc,
-		SessionTokenMetadata:  models.JSON(sessMeta),
-		CreatedAt:             time.Now(),
-		ExpiresAt:             &expiresAt,
-	}
-	require.NoError(t, db.Create(&sess).Error)
-
 	// Seed an API token row.
 	tokEnc, tokMeta, err := svc.EncryptSecret([]byte("my-api-token"))
 	require.NoError(t, err)
@@ -1271,12 +976,12 @@ func TestService_RotateDEKWithSweep_AuthTables(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 
-	// After rotation the service must still decrypt the re-encrypted session token.
-	// sweepSessions now upgrades legacy rows to AAD-bound encryption, so use
+	// After rotation the service must still decrypt the re-encrypted API token.
+	// sweepAPITokens now upgrades legacy rows to AAD-bound encryption, so use
 	// DecryptSecretWithAAD with the same per-user AAD the sweeper constructs.
-	var updatedSess models.Session
-	require.NoError(t, db.First(&updatedSess, sess.ID).Error)
-	plain, err := svc.DecryptSecretWithAAD(updatedSess.EncryptedSessionToken, SessionTokenAAD(sess.UserID))
+	var updatedTok models.APIToken
+	require.NoError(t, db.First(&updatedTok, apiTok.ID).Error)
+	plain, err := svc.DecryptSecretWithAAD(updatedTok.EncryptedToken, APITokenAAD(0))
 	require.NoError(t, err)
-	assert.Equal(t, "my-session-token", string(plain))
+	assert.Equal(t, "my-api-token", string(plain))
 }

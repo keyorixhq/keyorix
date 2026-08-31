@@ -67,8 +67,8 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 		// dynamic_secret_leases) are exactly the tables #422's sweep-gap fix added;
 		// silently under-reporting them left an operator with no visibility into
 		// whether that fix's own sweeps ran, even after the data itself was safe.
-		log.Printf("✅ Sweep committed: %d secret_versions, %d sessions, %d api_tokens, %d api_clients, %d password_resets, %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases re-encrypted (%d legacy AAD upgraded)",
-			result.SecretVersionsSwept, result.SessionsSwept, result.APITokensSwept,
+		log.Printf("✅ Sweep committed: %d secret_versions, %d api_tokens, %d api_clients, %d password_resets, %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases re-encrypted (%d legacy AAD upgraded)",
+			result.SecretVersionsSwept, result.APITokensSwept,
 			result.APIClientsSwept, result.AccountResetsSwept, result.MFASecretsSwept,
 			result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept, result.LegacyAADUpgraded)
 		sweepResult = result

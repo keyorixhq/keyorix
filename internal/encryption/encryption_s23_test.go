@@ -383,30 +383,6 @@ func TestSweepDynamicSecretConfigs_DryRun_DoesNotPersist(t *testing.T) {
 	assert.Equal(t, orig, []byte(updated.AdminDSNEnc))
 }
 
-// ─── sweepSessions: dryRun=true does not persist ─────────────────────────────
-
-func TestSweepSessions_DryRun_DoesNotPersist(t *testing.T) {
-	db := s23DB(t)
-	es := s23ES(t)
-	enc, err := es.Encrypt([]byte("tok"), "v1")
-	require.NoError(t, err)
-	encBytes, err := SerializeEncryptedData(enc)
-	require.NoError(t, err)
-	orig := make([]byte, len(encBytes))
-	copy(orig, encBytes)
-
-	row := &models.Session{UserID: 10, SessionToken: "hash10", EncryptedSessionToken: encBytes}
-	require.NoError(t, db.Create(row).Error)
-
-	swept, _, err := sweepSessions(db, es, es, "v2", true)
-	require.NoError(t, err)
-	assert.Equal(t, 1, swept)
-
-	var updated models.Session
-	require.NoError(t, db.First(&updated, row.ID).Error)
-	assert.Equal(t, orig, []byte(updated.EncryptedSessionToken))
-}
-
 // ─── sweepPasswordResets: dryRun=true does not persist ───────────────────────
 
 func TestSweepPasswordResets_DryRun_DoesNotPersist(t *testing.T) {
@@ -743,19 +719,6 @@ func TestUpgradeAuthAAD_DynLeaseDecryptFails_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "dynamic_secret_leases AAD upgrade failed")
 }
 
-// ─── sweepSessions: deserialize-corrupt row fails ────────────────────────────
-
-func TestSweepSessions_CorruptJSON_FailsDeserialize(t *testing.T) {
-	db := s23DB(t)
-	es := s23ES(t)
-	row := &models.Session{UserID: 99, SessionToken: "hsh99", EncryptedSessionToken: []byte("not-json")}
-	require.NoError(t, db.Create(row).Error)
-
-	_, _, err := sweepSessions(db, es, es, "v1", false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "deserialize")
-}
-
 // ─── sweepAPITokens: deserialize-corrupt row fails ───────────────────────────
 
 func TestSweepAPITokens_CorruptJSON_FailsDeserialize(t *testing.T) {
@@ -907,34 +870,6 @@ func TestSweepAPITokens_DecryptError(t *testing.T) {
 	_, _, err = sweepAPITokens(db, es, es, "v1", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decrypt api_token")
-}
-
-// ─── sweepSessions: happy path (non-dryRun persists) ─────────────────────────
-
-func TestSweepSessions_HappyPath_Persists(t *testing.T) {
-	db := s23DB(t)
-	es := s23ES(t)
-	enc, err := es.Encrypt([]byte("session-value"), "v1")
-	require.NoError(t, err)
-	encBytes, err := SerializeEncryptedData(enc)
-	require.NoError(t, err)
-	metaBytes, err := json.Marshal(enc.Metadata)
-	require.NoError(t, err)
-
-	row := &models.Session{
-		UserID:                50,
-		SessionToken:          "hash50",
-		EncryptedSessionToken: encBytes,
-		SessionTokenMetadata:  models.JSON(metaBytes),
-	}
-	require.NoError(t, db.Create(row).Error)
-
-	// Use a different key version to see the update take effect
-	newES, err := NewEncryptionService(make([]byte, 32))
-	require.NoError(t, err)
-	swept, _, err := sweepSessions(db, es, newES, "v2", false)
-	require.NoError(t, err)
-	assert.Equal(t, 1, swept)
 }
 
 // ─── sweepPasswordResets: happy path ─────────────────────────────────────────

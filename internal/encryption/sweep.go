@@ -5,7 +5,9 @@
 //
 // sweepSecretVersions is here because it requires AAD reconstruction logic
 // (project lookup, SecretAAD, legacy-vs-bound path). The simpler auth-table
-// sweepers (sessions, API tokens, clients, password resets) live in sweep_auth.go.
+// sweepers (API tokens, clients, password resets) live in sweep_auth.go.
+// Sessions have no sweeper: the live write path only ever hashes session
+// tokens, never encrypts them, so there is nothing to re-encrypt (#1641).
 //
 // Invariant: on nil return, every row holds ciphertext under the new DEK.
 // Secret values are transient in memory only — never logged or returned.
@@ -27,7 +29,6 @@ var sweepBatchSize = 500
 // SweepResult holds statistics from a completed sweep.
 type SweepResult struct {
 	SecretVersionsSwept       int
-	SessionsSwept             int
 	APITokensSwept            int
 	APIClientsSwept           int
 	AccountResetsSwept        int
@@ -55,13 +56,6 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	}
 	result.SecretVersionsSwept = sweptVersions
 	result.LegacyAADUpgraded = legacyUpgraded
-
-	sweptSessions, legacySessions, err := sweepSessions(tx, oldSvc, newSvc, newKeyVersion, dryRun)
-	if err != nil {
-		return nil, fmt.Errorf("sessions sweep failed: %w", err)
-	}
-	result.SessionsSwept = sweptSessions
-	result.LegacyAADUpgraded += legacySessions
 
 	sweptAPITokens, legacyAPITokens, err := sweepAPITokens(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {

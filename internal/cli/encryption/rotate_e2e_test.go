@@ -54,7 +54,6 @@ const (
 	e2eProjectID  = uint(7)
 	ptAADSecret   = "aad-secret-plaintext-value"
 	ptLegacy      = "legacy-secret-plaintext-value"
-	ptSession     = "session-token-plaintext"
 	ptAPIToken    = "api-token-plaintext"
 	ptAPIClient   = "client-secret-plaintext"
 	ptPasswordRst = "password-reset-token-plaintext"
@@ -133,10 +132,6 @@ func runRotationE2E(t *testing.T, kind string) {
 
 	// auth tables — all use plain (no-AAD) encryption, the same blob format
 	// EncryptSecret produces, which is what the auth sweepers read back.
-	sessVal, sessMeta := mustEncrypt(t, oldSvc, ptSession)
-	session := &models.Session{UserID: 1, SessionToken: "e2e-dep-session", EncryptedSessionToken: sessVal, SessionTokenMetadata: models.JSON(sessMeta)}
-	mustCreate(t, db, session)
-
 	tokVal, tokMeta := mustEncrypt(t, oldSvc, ptAPIToken)
 	apiToken := &models.APIToken{ClientID: 1, Token: "e2e-dep-token", EncryptedToken: tokVal, TokenMetadata: models.JSON(tokMeta)}
 	mustCreate(t, db, apiToken)
@@ -220,7 +215,7 @@ func runRotationE2E(t *testing.T, kind string) {
 			t.Errorf("%s: old DEK still decrypts after rotation", name)
 		}
 	}
-	// sessions/api_tokens/password_resets: per-owner AAD after rotation.
+	// api_tokens/password_resets: per-owner AAD after rotation.
 	checkAADRow := func(name string, blob []byte, aad []byte, want string) {
 		if pt, err := newSvc.DecryptSecretWithAAD(blob, aad); err != nil {
 			t.Errorf("%s: new DEK decrypt failed: %v", name, err)
@@ -231,10 +226,6 @@ func runRotationE2E(t *testing.T, kind string) {
 			t.Errorf("%s: old DEK still decrypts after rotation", name)
 		}
 	}
-
-	var gotSession models.Session
-	mustFirst(t, db, &gotSession, session.ID)
-	checkAADRow("session", gotSession.EncryptedSessionToken, enc.SessionTokenAAD(gotSession.UserID), ptSession)
 
 	var gotToken models.APIToken
 	mustFirst(t, db, &gotToken, apiToken.ID)

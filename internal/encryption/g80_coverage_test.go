@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -113,68 +112,30 @@ func TestAuthEncryption_Shutdown_ReleasesLock(t *testing.T) {
 	assert.NoError(t, other.AcquireExclusiveKeyLock(), "exclusive lock must succeed after AuthEncryption.Shutdown released the shared lock")
 }
 
-// ─── auth_encryption_store.go: token.UserID != nil branch ────────────────────
-//
-// Every existing test for StoreEncryptedAPIToken/RetrieveAPIToken leaves
-// APIToken.UserID nil, so the `if token.UserID != nil { tokenUserID = *token.UserID }`
-// branch (both in StoreEncryptedAPIToken and RetrieveAPIToken) was never exercised.
-
-func TestAuthEncryption_StoreAndRetrieveAPIToken_WithUserID(t *testing.T) {
-	tempDir := t.TempDir()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(tempDir, "test.db")), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.APIToken{}))
-
-	cfg := &config.EncryptionConfig{Enabled: false}
-	ae := NewAuthEncryption(cfg, tempDir, db)
-	require.NoError(t, ae.Initialize("unused"))
-
-	uid := uint(42)
-	apiToken := &models.APIToken{
-		ClientID:  1,
-		UserID:    &uid,
-		Scope:     "read",
-		CreatedAt: time.Now(),
-	}
-	plain := "api-token-with-real-owner"
-
-	require.NoError(t, ae.StoreEncryptedAPIToken(apiToken, plain))
-	assert.NotZero(t, apiToken.ID)
-
-	retrieved, err := ae.RetrieveAPIToken(apiToken.ID)
-	require.NoError(t, err)
-	assert.Equal(t, plain, retrieved)
-}
-
-// TestAuthEncryption_StoreAndRetrieveAPIToken_WithUserID_Enabled exercises the
-// same UserID != nil branch with encryption actually enabled — the AAD binds to
-// the real owning user, so a wrong-user decrypt (see AUTH-CRYPTO-002) fails.
-func TestAuthEncryption_StoreAndRetrieveAPIToken_WithUserID_Enabled(t *testing.T) {
+// TestAuthEncryption_APITokenAAD_BindsToRealOwner exercises EncryptAPIToken/
+// DecryptAPIToken with a real (non-zero) owning userID — the AAD binds to the
+// real owning user, so a wrong-user decrypt (see AUTH-CRYPTO-002) fails.
+func TestAuthEncryption_APITokenAAD_BindsToRealOwner(t *testing.T) {
 	dir := t.TempDir()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(dir, "test.db")), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.APIToken{}))
 
 	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
 	ae := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, ae.Initialize("g80-apitoken-userid-pass"))
 	defer ae.Shutdown()
 
-	uid := uint(7)
-	apiToken := &models.APIToken{ClientID: 1, UserID: &uid, Scope: "write", CreatedAt: time.Now()}
-	plain := "api-token-plain-owned"
-	require.NoError(t, ae.StoreEncryptedAPIToken(apiToken, plain))
-
-	retrieved, err := ae.RetrieveAPIToken(apiToken.ID)
+	enc, meta, err := ae.EncryptAPIToken("api-token-plain-owned", uint(7))
 	require.NoError(t, err)
-	assert.Equal(t, plain, retrieved)
 
-	// Sanity: the encrypted bytes are bound to userID=7's AAD, not userID=0's —
-	// decrypting directly with the wrong AAD must fail.
-	var stored models.APIToken
-	require.NoError(t, db.First(&stored, apiToken.ID).Error)
-	_, err = ae.DecryptAPIToken(stored.EncryptedToken, []byte(stored.TokenMetadata), 0)
-	assert.Error(t, err, "decrypting with the wrong (zero) userID AAD must fail once the row was encrypted with a real, non-nil UserID")
+	retrieved, err := ae.DecryptAPIToken(enc, meta, uint(7))
+	require.NoError(t, err)
+	assert.Equal(t, "api-token-plain-owned", retrieved)
+
+	// Decrypting with the wrong (zero) userID AAD must fail once the token was
+	// encrypted with a real, non-zero owning userID.
+	_, err = ae.DecryptAPIToken(enc, meta, 0)
+	assert.Error(t, err, "decrypting with the wrong (zero) userID AAD must fail once the token was encrypted with a real, non-zero userID")
 }
 
 // ─── encryption.go: Decrypt — invalid base64 nonce (no rand mocking needed) ───
@@ -1049,26 +1010,6 @@ func TestSweepAPITokens_WithNonNilUserID(t *testing.T) {
 }
 
 // ─── sweep_auth.go: re-encrypt failure branches (one per sweep function) ──────
-
-func TestSweepSessions_ReEncryptFailure(t *testing.T) {
-	db := g80SweepDB(t)
-	require.NoError(t, db.AutoMigrate(&models.Session{}))
-	oldSvc, newSvc := g80OldNewSvc(t)
-
-	enc, err := oldSvc.EncryptWithAAD([]byte("sess-val"), "v1", SessionTokenAAD(1))
-	require.NoError(t, err)
-	encBytes, err := SerializeEncryptedData(enc)
-	require.NoError(t, err)
-	expiresAt := time.Now().Add(time.Hour)
-	row := &models.Session{UserID: 1, ExpiresAt: &expiresAt, EncryptedSessionToken: encBytes}
-	require.NoError(t, db.Create(row).Error)
-
-	withFailingRand(t, func() {
-		_, _, err := sweepSessions(db, oldSvc, newSvc, "v2", false)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to re-encrypt session")
-	})
-}
 
 func TestSweepAPITokens_ReEncryptFailure(t *testing.T) {
 	db := g80SweepDB(t)

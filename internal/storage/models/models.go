@@ -1104,16 +1104,14 @@ type SecretMetadataHistory struct {
 }
 
 type Session struct {
-	ID                    uint `gorm:"primaryKey"`
-	UserID                uint
-	SessionToken          string     `gorm:"unique" json:"-"` // SHA-256 hash of the session token (never plaintext)
-	EncryptedSessionToken []byte     `json:"-"`
-	SessionTokenMetadata  JSON       `json:"-"`
-	UserAgent             string     // captured at login, for the My Account "active sessions" view
-	IPAddress             string     // captured at login
-	LastSeenAt            *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
-	CreatedAt             time.Time
-	ExpiresAt             *time.Time // short-lived access window; RefreshSession rotates the token and extends this
+	ID           uint `gorm:"primaryKey"`
+	UserID       uint
+	SessionToken string     `gorm:"unique" json:"-"` // SHA-256 hash of the session token (never plaintext)
+	UserAgent    string     // captured at login, for the My Account "active sessions" view
+	IPAddress    string     // captured at login
+	LastSeenAt   *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
+	CreatedAt    time.Time
+	ExpiresAt    *time.Time // short-lived access window; RefreshSession rotates the token and extends this
 
 	// AbsoluteExpiresAt is the hard ceiling on total session lifetime. It is set
 	// once at login and carried unchanged through every refresh, so refreshing the

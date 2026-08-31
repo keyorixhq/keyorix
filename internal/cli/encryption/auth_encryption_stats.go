@@ -35,16 +35,11 @@ func showAuthEncryptionStats(db *gorm.DB, encryptionEnabled bool) error {
 	}
 	fmt.Println()
 
-	var sessionCount, encryptedSessionCount int64
+	// Sessions have no encrypted-count: the live write path only ever hashes
+	// session tokens, never encrypts them, so there is nothing to report (#1641).
+	var sessionCount int64
 	db.Model(&models.Session{}).Count(&sessionCount)
-	if encryptionEnabled {
-		db.Model(&models.Session{}).Where("encrypted_session_token IS NOT NULL").Count(&encryptedSessionCount)
-	}
-	fmt.Printf("🎫 Sessions: %d total", sessionCount)
-	if encryptionEnabled {
-		fmt.Printf(" (%d encrypted)", encryptedSessionCount)
-	}
-	fmt.Println()
+	fmt.Printf("🎫 Sessions: %d total\n", sessionCount)
 
 	var apiTokenCount, encryptedAPITokenCount int64
 	db.Model(&models.APIToken{}).Count(&apiTokenCount)

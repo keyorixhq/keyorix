@@ -59,9 +59,10 @@ func captureStdout(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
-// seedOneRowPerTable seeds exactly one row into every one of the 8 DEK-encrypted
+// seedOneRowPerTable seeds exactly one row into every one of the 7 DEK-encrypted
 // tables SweepResult tracks, each with a distinguishable plaintext, so a test can
-// assert on the per-table counts a preview or a real rotation reports.
+// assert on the per-table counts a preview or a real rotation reports. Sessions
+// are not among them (#1641: never encrypted, only hashed, so nothing to sweep).
 func seedOneRowPerTable(t *testing.T, db *gorm.DB, svc *enc.Service) {
 	t.Helper()
 
@@ -70,9 +71,6 @@ func seedOneRowPerTable(t *testing.T, db *gorm.DB, svc *enc.Service) {
 	aad := enc.SecretAAD(node.ID, 1, 1)
 	val, meta := mustEncryptAAD(t, svc, "dry-run-secret-value", aad)
 	mustCreate(t, db, &models.SecretVersion{SecretNodeID: node.ID, VersionNumber: 1, EncryptedValue: val, EncryptionMetadata: models.JSON(meta)})
-
-	sVal, sMeta := mustEncrypt(t, svc, "dry-run-session-token")
-	mustCreate(t, db, &models.Session{UserID: 1, SessionToken: "dry-run-session", EncryptedSessionToken: sVal, SessionTokenMetadata: models.JSON(sMeta)})
 
 	tVal, tMeta := mustEncrypt(t, svc, "dry-run-api-token")
 	mustCreate(t, db, &models.APIToken{ClientID: 1, Token: "dry-run-token", EncryptedToken: tVal, TokenMetadata: models.JSON(tMeta)})
@@ -135,14 +133,15 @@ func setupDryRunTest(t *testing.T) (*config.Config, *enc.Service, string) {
 	return cfg, svc, workDir
 }
 
-// assertAllEightFieldsReported checks the CLI's printed summary surfaces every one
-// of the 8 SweepResult "Swept" fields (plus LegacyAADUpgraded) with the expected
+// assertAllSweptFieldsReported checks the CLI's printed summary surfaces every one
+// of the 7 SweepResult "Swept" fields (plus LegacyAADUpgraded) with the expected
 // count — the core regression this fix closes: previously only 5 of 8 were ever
-// logged, and the CLI printed none of them at all.
-func assertAllEightFieldsReported(t *testing.T, output string, wantCount int) {
+// logged, and the CLI printed none of them at all. Sessions is no longer among
+// them (#1641: never encrypted, only hashed, so nothing to sweep).
+func assertAllSweptFieldsReported(t *testing.T, output string, wantCount int) {
 	t.Helper()
 	for _, field := range []string{
-		"secret_versions", "sessions", "api_tokens", "api_clients",
+		"secret_versions", "api_tokens", "api_clients",
 		"password_resets", "mfa_secrets", "dynamic_secret_configs", "dynamic_secret_leases",
 	} {
 		if !strings.Contains(output, field) {
@@ -170,7 +169,6 @@ func TestRotateWithConfig_DryRun_AccuratePreviewNoChanges(t *testing.T) {
 	}
 	var (
 		verBefore   models.SecretVersion
-		sessBefore  models.Session
 		tokBefore   models.APIToken
 		cliBefore   models.APIClient
 		rstBefore   models.PasswordReset
@@ -179,7 +177,6 @@ func TestRotateWithConfig_DryRun_AccuratePreviewNoChanges(t *testing.T) {
 		leaseBefore models.DynamicSecretLease
 	)
 	mustFirst(t, dbBefore, &verBefore, 1)
-	mustFirst(t, dbBefore, &sessBefore, 1)
 	mustFirst(t, dbBefore, &tokBefore, 1)
 	mustFirst(t, dbBefore, &cliBefore, 1)
 	mustFirst(t, dbBefore, &rstBefore, 1)
@@ -201,14 +198,14 @@ func TestRotateWithConfig_DryRun_AccuratePreviewNoChanges(t *testing.T) {
 		t.Errorf("expected dry-run output to announce itself as a dry run, got:\n%s", output)
 	}
 	for _, want := range []string{
-		"secret_versions: 1", "sessions: 1", "api_tokens: 1", "api_clients: 1",
+		"secret_versions: 1", "api_tokens: 1", "api_clients: 1",
 		"password_resets: 1", "mfa_secrets: 1", "dynamic_secret_configs: 1",
-		// seedOneRowPerTable encrypts all 8 table rows via the legacy (no-AAD) path.
+		// seedOneRowPerTable encrypts all 7 table rows via the legacy (no-AAD) path.
 		// Sweepers that bind AAD (mfa_secrets, dynamic_secret_configs,
-		// dynamic_secret_leases, sessions, api_tokens, password_resets) upgrade their
-		// rows in place — 6 tables × 1 row = 6 legacy upgrades. secret_versions was
+		// dynamic_secret_leases, api_tokens, password_resets) upgrade their
+		// rows in place — 5 tables × 1 row = 5 legacy upgrades. secret_versions was
 		// seeded AAD-bound; api_clients does not bind AAD.
-		"dynamic_secret_leases: 1", "legacy AAD upgraded: 6",
+		"dynamic_secret_leases: 1", "legacy AAD upgraded: 5",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected dry-run preview to report %q, got:\n%s", want, output)
@@ -244,11 +241,6 @@ func TestRotateWithConfig_DryRun_AccuratePreviewNoChanges(t *testing.T) {
 	mustFirst(t, dbAfter, &verAfter, 1)
 	if !bytes.Equal(verBefore.EncryptedValue, verAfter.EncryptedValue) {
 		t.Error("secret_versions ciphertext changed by a --dry-run")
-	}
-	var sessAfter models.Session
-	mustFirst(t, dbAfter, &sessAfter, 1)
-	if !bytes.Equal(sessBefore.EncryptedSessionToken, sessAfter.EncryptedSessionToken) {
-		t.Error("sessions ciphertext changed by a --dry-run")
 	}
 	var tokAfter models.APIToken
 	mustFirst(t, dbAfter, &tokAfter, 1)
@@ -326,18 +318,18 @@ func TestRotateWithConfig_RealRotation_PrintsAllSweepResultFields(t *testing.T) 
 		t.Errorf("expected the usual real-rotation success message, got:\n%s", output)
 	}
 	for _, want := range []string{
-		"secret_versions: 1", "sessions: 1", "api_tokens: 1", "api_clients: 1",
+		"secret_versions: 1", "api_tokens: 1", "api_clients: 1",
 		"password_resets: 1", "mfa_secrets: 1", "dynamic_secret_configs: 1",
-		// seedOneRowPerTable encrypts all 8 table rows via the legacy (no-AAD) path.
+		// seedOneRowPerTable encrypts all 7 table rows via the legacy (no-AAD) path.
 		// Sweepers that bind AAD (mfa_secrets, dynamic_secret_configs,
-		// dynamic_secret_leases, sessions, api_tokens, password_resets) upgrade their
-		// rows in place — 6 tables × 1 row = 6 legacy upgrades. secret_versions was
+		// dynamic_secret_leases, api_tokens, password_resets) upgrade their
+		// rows in place — 5 tables × 1 row = 5 legacy upgrades. secret_versions was
 		// seeded AAD-bound; api_clients does not bind AAD.
-		"dynamic_secret_leases: 1", "legacy AAD upgraded: 6",
+		"dynamic_secret_leases: 1", "legacy AAD upgraded: 5",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected post-rotation summary to report %q, got:\n%s", want, output)
 		}
 	}
-	assertAllEightFieldsReported(t, output, 1)
+	assertAllSweptFieldsReported(t, output, 1)
 }
