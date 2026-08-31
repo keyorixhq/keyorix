@@ -392,6 +392,41 @@ type KeyorixCore struct {
 	// operational (not per-site code) mitigation.
 	secretExpiryWatermarkMu sync.Mutex
 	secretExpiryWatermark   time.Time
+	// connectClockWatermark, shareClockWatermark: in-memory monotonic high-water
+	// marks backing connectEffectiveNow (connect.go) and shareEffectiveNow
+	// (permissions.go) respectively (#1653, the follow-up to #1632). Both CLAMP
+	// rather than refuse — see rbacEffectiveNow's doc comment
+	// (internal/storage/store/local_rbac.go, #1651) for why: these are
+	// read-heavy permission-resolution paths (Connect ref-grant checks on every
+	// federated read; share-active checks on every secret listing/access-list
+	// resolution), not single discrete actions, so hard-refusing on a detected
+	// regression would trade a narrow clock-integrity concern for a broad
+	// denial-of-service. Kept as two separate fields, not one shared watermark,
+	// matching #1632's own precedent (consumeClockWatermark vs
+	// rbacClockWatermark) — Connect grants and shares are unrelated
+	// subsystems; sharing a watermark would only blur which mechanism actually
+	// warmed it, without protecting anything more.
+	connectClockWatermarkMu sync.Mutex
+	connectClockWatermark   time.Time
+	shareClockWatermarkMu   sync.Mutex
+	shareClockWatermark     time.Time
+	// sessionRefreshWatermark, accessRequestApprovalWatermark: in-memory
+	// monotonic high-water marks backing checkSessionRefreshClockNotRegressed
+	// (auth.go) and checkAccessRequestApprovalClockNotRegressed
+	// (classification_gate.go) respectively (#1653). Both REFUSE rather than
+	// clamp, matching secretExpiryWatermark's shape above — each guards a
+	// single, discrete, low-volume action (one session refresh per access
+	// window; one admin approval per request), not a pervasive read path, so
+	// refusing outright on a detected regression is proportionate. The
+	// access-request watermark is shared between
+	// ApproveSecretAccessRequest and ApproveAccessRequestWithExpiry
+	// (invitations.go) — the same "access request approval" action reached via
+	// two entry points, mirroring #1638's consumeClockWatermark being shared
+	// between ConsumeMFAChallenge and ConsumeWebAuthnSession.
+	sessionRefreshWatermarkMu        sync.Mutex
+	sessionRefreshWatermark          time.Time
+	accessRequestApprovalWatermarkMu sync.Mutex
+	accessRequestApprovalWatermark   time.Time
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).

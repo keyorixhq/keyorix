@@ -43,7 +43,7 @@ func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*m
 	}
 	// Drop expired time-bound shares so the list matches what actually authorizes
 	// (every enforcement path filters via activeShares); they're swept separately.
-	return activeShares(shares, c.now()), nil
+	return activeShares(shares, c.shareEffectiveNow()), nil
 }
 
 // ListSecretSharesWithPermissionCheck lists a secret's shares, but only for its
@@ -67,7 +67,7 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	// Drop expired time-bound shares — see ListSecretShares.
-	return activeShares(shares, c.now()), nil
+	return activeShares(shares, c.shareEffectiveNow()), nil
 }
 
 // ListSharesByUser lists shares involving the user (received as recipient + outgoing as owner).

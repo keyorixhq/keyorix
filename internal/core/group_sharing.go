@@ -145,7 +145,12 @@ func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, actorKind stri
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	now := c.now()
+	// #1653: shares the same clamp-based clock as shareActive/activeShares
+	// (permissions.go) rather than a bare c.now() — this is the same
+	// "share still authorizes" predicate, duplicated inline instead of
+	// calling shareActive, so it gets the same defense against a
+	// backward-stepped clock resurrecting an expired time-bound share.
+	now := c.shareEffectiveNow()
 	secrets := make([]*models.SecretNode, 0, len(shares))
 	seen := make(map[uint]bool, len(shares))
 	for _, s := range shares {

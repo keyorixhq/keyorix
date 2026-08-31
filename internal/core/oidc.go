@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -63,6 +64,34 @@ type OIDCVerifier struct {
 	jwks    JWKSResolver
 	leeway  time.Duration
 	now     func() time.Time
+	// clockWatermarkMu/clockWatermark back effectiveNow (#1653, follow-up to
+	// #1632): an in-memory monotonic high-water mark of the latest now()
+	// reading this verifier has legitimately observed. Verify's age check
+	// (v.now().Sub(claims.IssuedAt.Time)) is NOT monotonic-safe — claims.IssuedAt
+	// is parsed from the JWT (round-tripped, monotonic reading stripped), so a
+	// backward-stepped host clock makes a stale token's computed age look
+	// smaller, extending acceptance of it past its configured max-age. This
+	// CLAMPS rather than refuses — Verify runs on every OIDC-authenticated
+	// request (server/middleware/auth.go), a pervasive read path, not a single
+	// discrete action — see rbacEffectiveNow's doc comment
+	// (internal/storage/store/local_rbac.go) for why that shape calls for a
+	// clamp, not a refuse.
+	clockWatermarkMu sync.Mutex
+	clockWatermark   time.Time
+}
+
+// effectiveNow returns v.now() clamped so it never regresses relative to a
+// reading this verifier has already legitimately observed. See
+// clockWatermark's doc comment above for what this defends against.
+func (v *OIDCVerifier) effectiveNow() time.Time {
+	v.clockWatermarkMu.Lock()
+	defer v.clockWatermarkMu.Unlock()
+	now := v.now()
+	if now.Before(v.clockWatermark) {
+		return v.clockWatermark
+	}
+	v.clockWatermark = now
+	return now
 }
 
 // NewOIDCVerifier builds a verifier over the trusted issuers. An issuer with no
@@ -165,7 +194,7 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 	if claims.IssuedAt == nil {
 		return "", "", fmt.Errorf("oidc token has no iat claim")
 	}
-	if age := v.now().Sub(claims.IssuedAt.Time); age > trust.maxAge+v.leeway {
+	if age := v.effectiveNow().Sub(claims.IssuedAt.Time); age > trust.maxAge+v.leeway {
 		return "", "", fmt.Errorf("oidc token exceeds max age (issued %s ago)", age.Round(time.Second))
 	}
 	return claims.Issuer, claims.Subject, nil

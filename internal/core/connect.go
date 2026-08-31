@@ -20,6 +20,24 @@ import (
 // ConnectOwnershipReason and the deny-path reason constants below).
 const EventConnectSecretRead = "connect.secret_read"
 
+// connectEffectiveNow returns a wall-clock reading that never regresses
+// relative to what this KeyorixCore has already observed for Connect
+// ref-grant resolution (#1653, follow-up to #1632): max(now,
+// connectClockWatermark). connectRefAllowed/connectRefGrantDelegates/
+// connectorHasAnyDelegationForActor are reached on every federated read —
+// see rbacEffectiveNow's doc comment (internal/storage/store/local_rbac.go)
+// for why this clamps rather than refuses.
+func (c *KeyorixCore) connectEffectiveNow() time.Time {
+	c.connectClockWatermarkMu.Lock()
+	defer c.connectClockWatermarkMu.Unlock()
+	now := c.now()
+	if now.Before(c.connectClockWatermark) {
+		return c.connectClockWatermark
+	}
+	c.connectClockWatermark = now
+	return now
+}
+
 // Per-reference grant management events (ADR-045).
 const (
 	EventConnectRefGrantCreate = "connect.ref_grant_create"
@@ -474,7 +492,7 @@ func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, p
 	if err != nil {
 		return false, err
 	}
-	now := time.Now()
+	now := c.connectEffectiveNow()
 	for _, g := range grants {
 		if roleSet[g.RoleID] && connectGrantActive(g, now) && refMatches(g.RefPrefix, ref) {
 			return true, nil
@@ -513,7 +531,7 @@ func (c *KeyorixCore) connectRefGrantDelegates(ctx context.Context, actorType st
 	if err != nil {
 		return false, true, err
 	}
-	now := time.Now()
+	now := c.connectEffectiveNow()
 	for _, g := range grants {
 		if roleSet[g.RoleID] && connectGrantActive(g, now) && refMatches(g.RefPrefix, ref) {
 			return true, true, nil
@@ -539,7 +557,7 @@ func (c *KeyorixCore) connectorHasAnyDelegationForActor(ctx context.Context, act
 	if err != nil {
 		return false, err
 	}
-	now := time.Now()
+	now := c.connectEffectiveNow()
 	for _, g := range grants {
 		if roleSet[g.RoleID] && connectGrantActive(g, now) {
 			return true, nil
