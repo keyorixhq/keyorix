@@ -266,10 +266,18 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 	// Mirrors ApproveAccessRequestWithExpiry's own lazy-expire-and-refuse (#277):
 	// GetAccessRequest returns the row verbatim, so a request whose TTL already
 	// lapsed is still State==pending until something reconciles it.
-	if req.ExpiresAt != nil && c.now().After(*req.ExpiresAt) {
-		req.State = AccessRequestExpired
-		_, _ = c.storage.UpdateAccessRequest(ctx, req)
-		return nil, fmt.Errorf("access request has expired")
+	if req.ExpiresAt != nil {
+		// #1653: refuse a now that looks earlier than one this process has
+		// already legitimately observed for an access-request approval --
+		// see checkAccessRequestApprovalClockNotRegressed's doc comment.
+		if err := c.checkAccessRequestApprovalClockNotRegressed(c.now()); err != nil {
+			return nil, err
+		}
+		if c.now().After(*req.ExpiresAt) {
+			req.State = AccessRequestExpired
+			_, _ = c.storage.UpdateAccessRequest(ctx, req)
+			return nil, fmt.Errorf("access request has expired")
+		}
 	}
 	// Maker ≠ checker, same as the project/role flow.
 	if approverID == req.UserID {
@@ -303,6 +311,40 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 		fmt.Sprintf("approved access request %d for user %d to read secret %d (%s)", req.ID, req.UserID, *req.SecretID, secret.Name))
 	c.notifySecretAccessResolved(ctx, req, secret, true)
 	return req, nil
+}
+
+// accessRequestApprovalClockRegressionTolerance bounds how far now may read
+// EARLIER than accessRequestApprovalWatermark before
+// checkAccessRequestApprovalClockNotRegressed refuses an approval. Same
+// value and rationale as secretExpiryClockRegressionTolerance (versions.go,
+// #1632).
+const accessRequestApprovalClockRegressionTolerance = 30 * time.Second
+
+// checkAccessRequestApprovalClockNotRegressed refuses to trust now for an
+// access-request approval's lazy-expire-and-refuse check if it looks
+// EARLIER than a time this process has already legitimately observed for
+// this same check (#1653, follow-up to #1632). Shared between
+// ApproveSecretAccessRequest (this file) and ApproveAccessRequestWithExpiry
+// (invitations.go) -- the same "is this access request's TTL still live"
+// question, reached via two entry points, mirroring #1638's
+// consumeClockWatermark being shared between ConsumeMFAChallenge and
+// ConsumeWebAuthnSession. Both callers' expiry check binds a fresh c.now()
+// directly against a DB-loaded ExpiresAt with no seam — a host clock
+// stepped backward past a request's real expiry would let an approver
+// approve a request that should have already lapsed. Reuses the exact same
+// refusal text both callers' own expiry check already returns
+// ("access request has expired"), not a distinct message, so a caller
+// cannot use it as an oracle confirming clock manipulation had an effect.
+func (c *KeyorixCore) checkAccessRequestApprovalClockNotRegressed(now time.Time) error {
+	c.accessRequestApprovalWatermarkMu.Lock()
+	defer c.accessRequestApprovalWatermarkMu.Unlock()
+	if !c.accessRequestApprovalWatermark.IsZero() && now.Before(c.accessRequestApprovalWatermark.Add(-accessRequestApprovalClockRegressionTolerance)) {
+		return fmt.Errorf("access request has expired")
+	}
+	if now.After(c.accessRequestApprovalWatermark) {
+		c.accessRequestApprovalWatermark = now
+	}
+	return nil
 }
 
 // notifySecretAccessRequested alerts the project's approvers of a new

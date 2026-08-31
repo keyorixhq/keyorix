@@ -10,6 +10,24 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// shareEffectiveNow returns a wall-clock reading that never regresses
+// relative to what this KeyorixCore has already observed for share-active
+// resolution (#1653, follow-up to #1632): max(now, shareClockWatermark).
+// shareActive/activeShares are reached on every secret listing and
+// access-list resolution that involves shares — see rbacEffectiveNow's doc
+// comment (internal/storage/store/local_rbac.go) for why this clamps rather
+// than refuses.
+func (c *KeyorixCore) shareEffectiveNow() time.Time {
+	c.shareClockWatermarkMu.Lock()
+	defer c.shareClockWatermarkMu.Unlock()
+	now := c.now()
+	if now.Before(c.shareClockWatermark) {
+		return c.shareClockWatermark
+	}
+	c.shareClockWatermark = now
+	return now
+}
+
 // shareActive reports whether a share still authorizes at time now: a nil ExpiresAt
 // is permanent, otherwise the share stops authorizing the instant it passes (a
 // time-bound / JIT secret share, mirroring UserRole.ExpiresAt). The JIT sweeper later
@@ -113,7 +131,7 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	}
 	// Drop expired (time-bound) shares before any authorization: an expired share
 	// must never grant access, even though the sweep that reclaims its row runs later.
-	shares = activeShares(shares, c.now())
+	shares = activeShares(shares, c.shareEffectiveNow())
 
 	// Check direct shares.
 	for _, share := range shares {

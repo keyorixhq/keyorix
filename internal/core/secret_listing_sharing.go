@@ -83,7 +83,7 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 	}
 	// Expired (time-bound) shares no longer authorize, so the reported sharing
 	// status must not count or display them — keep it consistent with enforcement.
-	shares = activeShares(shares, c.now())
+	shares = activeShares(shares, c.shareEffectiveNow())
 
 	isOwner := secretOwnedBy(secret.OwnerID, userID)
 	userPermission := ""
@@ -159,7 +159,7 @@ func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, use
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	// An expired share grants no permission — match the authorization gate.
-	shares = activeShares(shares, c.now())
+	shares = activeShares(shares, c.shareEffectiveNow())
 
 	for _, share := range shares {
 		if !share.IsGroup && share.RecipientID == userID {

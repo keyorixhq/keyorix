@@ -654,13 +654,23 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	// returns the stored record verbatim, so a request whose expiry has passed is still
 	// State==pending until something reconciles it — approving it would grant access on a
 	// stale request that should have lapsed. Expire it lazily and refuse.
-	if req.ExpiresAt != nil && c.now().After(*req.ExpiresAt) {
-		req.State = AccessRequestExpired
-		// Best-effort: if a concurrent approve/reject/withdraw already resolved this
-		// request, the "has expired" refusal below still stands — no role was
-		// granted on this path, so there's nothing to unwind either way.
-		_, _ = c.storage.UpdateAccessRequest(ctx, req)
-		return nil, fmt.Errorf("access request has expired")
+	if req.ExpiresAt != nil {
+		// #1653: refuse a now that looks earlier than one this process has
+		// already legitimately observed for an access-request approval --
+		// shared with ApproveSecretAccessRequest's identical check
+		// (classification_gate.go); see
+		// checkAccessRequestApprovalClockNotRegressed's doc comment there.
+		if err := c.checkAccessRequestApprovalClockNotRegressed(c.now()); err != nil {
+			return nil, err
+		}
+		if c.now().After(*req.ExpiresAt) {
+			req.State = AccessRequestExpired
+			// Best-effort: if a concurrent approve/reject/withdraw already resolved this
+			// request, the "has expired" refusal below still stands — no role was
+			// granted on this path, so there's nothing to unwind either way.
+			_, _ = c.storage.UpdateAccessRequest(ctx, req)
+			return nil, fmt.Errorf("access request has expired")
+		}
 	}
 	if grantTTL < 0 {
 		return nil, fmt.Errorf("grant TTL must not be negative")

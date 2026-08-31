@@ -34,7 +34,11 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 		&models.ConnectorProjectBinding{},
 		&models.Permission{}, &models.RolePermission{},
 	))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	// #1653: connectRefAllowed/connectRefGrantDelegates/etc. now call
+	// c.connectEffectiveNow(), which calls c.now() -- needs the same default
+	// the NewKeyorixCore constructor sets, or every grant-resolution test
+	// through this helper panics on a nil c.now.
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
 		ownership := make(map[string]ConnectOwnership, len(conns))

@@ -361,6 +361,19 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		c.handleSessionReuse(ctx, old)
 		return nil, fmt.Errorf("session not found or expired")
 	}
+	if old.AbsoluteExpiresAt != nil {
+		// #1653: refuse a now that looks earlier than one this process has
+		// already legitimately observed for a session refresh -- see
+		// checkSessionRefreshClockNotRegressed's doc comment for what this
+		// defends against (a backward-stepped host clock letting the
+		// absolute-ceiling recheck below pass for a session that has
+		// actually exceeded its lifetime). Scoped to sessions that actually
+		// HAVE an absolute ceiling -- a session with none has nothing here
+		// for a clock regression to extend.
+		if err := c.checkSessionRefreshClockNotRegressed(now); err != nil {
+			return nil, err
+		}
+	}
 	if old.AbsoluteExpiresAt != nil && !now.Before(*old.AbsoluteExpiresAt) {
 		// Past the hard ceiling — re-authentication required, not another refresh.
 		_ = c.storage.DeleteSession(ctx, old.ID)
@@ -421,6 +434,38 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		return nil, fmt.Errorf("session not found or expired")
 	}
 	return created, nil
+}
+
+// sessionRefreshClockRegressionTolerance bounds how far now may read EARLIER
+// than sessionRefreshWatermark before checkSessionRefreshClockNotRegressed
+// refuses a session refresh. Same value and rationale as
+// secretExpiryClockRegressionTolerance (versions.go, #1632): large enough not
+// to false-positive on ordinary NTP slew, small enough to still catch a
+// deliberate/NTP-less manual clock reset.
+const sessionRefreshClockRegressionTolerance = 30 * time.Second
+
+// checkSessionRefreshClockNotRegressed refuses to trust now for
+// RefreshSession's absolute-ceiling recheck if it looks EARLIER than a time
+// this process has already legitimately observed for a session refresh
+// (#1653, follow-up to #1632). RefreshSession's `!now.Before(*old.AbsoluteExpiresAt)`
+// comparison binds a fresh c.now() directly against a DB-loaded, non-renewable
+// ceiling — a host clock stepped backward past that ceiling would let a
+// session refresh past its true absolute lifetime. Reuses the exact same
+// refusal text RefreshSession's own ceiling check already returns
+// ("session lifetime exceeded; re-authentication required"), not a distinct
+// message, so a caller cannot use it as an oracle confirming clock
+// manipulation had an effect. On success, advances the watermark to now
+// (never backward).
+func (c *KeyorixCore) checkSessionRefreshClockNotRegressed(now time.Time) error {
+	c.sessionRefreshWatermarkMu.Lock()
+	defer c.sessionRefreshWatermarkMu.Unlock()
+	if !c.sessionRefreshWatermark.IsZero() && now.Before(c.sessionRefreshWatermark.Add(-sessionRefreshClockRegressionTolerance)) {
+		return fmt.Errorf("session lifetime exceeded; re-authentication required")
+	}
+	if now.After(c.sessionRefreshWatermark) {
+		c.sessionRefreshWatermark = now
+	}
+	return nil
 }
 
 // ensureFamilyID returns existing if non-empty, otherwise generates a new secure token.
