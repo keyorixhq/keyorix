@@ -2,6 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -180,11 +183,103 @@ func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Stora
 	}
 }
 
+// secureLocalStoragePerm is the mode the SQLite database and its -wal/-shm sidecars must
+// never exceed: owner read/write only. See prepareLocalStorageFile / tightenSidecarPerms
+// and #1647.
+const secureLocalStoragePerm = 0o600
+
+// localStorageDBFile strips DSN query parameters from dbPath and reports whether the
+// result names a real on-disk file at all — false for an in-memory database ("file:
+// name?mode=memory[&cache=shared]" or ":memory:", both used throughout this package's own
+// test suite, per acquireSQLiteMigrationLock's identical check). Neither #1647 concern
+// (an insecure inherited mode, a mode left over from before this fix) applies to a
+// database that was never written to disk.
+func localStorageDBFile(dbPath string) (path string, isRealFile bool) {
+	base := dbPath
+	if idx := strings.IndexByte(base, '?'); idx != -1 {
+		base = base[:idx]
+	}
+	if base == "" || base == ":memory:" || strings.Contains(dbPath, "mode=memory") {
+		return "", false
+	}
+	return base, true
+}
+
+// prepareLocalStorageFile ensures dbPath's parent directory exists at a safe mode and, if
+// the database file does not already exist, pre-creates it at secureLocalStoragePerm
+// BEFORE gorm.Open ever touches it. modernc.org/sqlite's VFS creates a file it opens with
+// mode 0, which becomes SQLITE_DEFAULT_FILE_PERMISSIONS (0644) masked by the process's
+// (possibly lax) inherited umask -- main()'s explicit syscall.Umask(0o077) closes that for
+// every NEW file this process creates, but this pre-creation is a second, independent
+// layer: it means the database is born at 0600 even if that startup umask call is ever
+// missing, skipped, or reverted by something later in the process (#1647).
+//
+// If the file already exists from before this fix shipped, its mode is left untouched
+// here -- see tightenExistingLocalStorageFiles, which runs after Open and decides whether
+// to correct it, since that decision needs the file to exist first.
+func prepareLocalStorageFile(dbPath string) error {
+	path, isRealFile := localStorageDBFile(dbPath)
+	if !isRealFile {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("failed to create database directory %q: %w", dir, err)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, secureLocalStoragePerm) // #nosec G304 -- operator-configured storage.database.path, the same value gorm.Open uses immediately after
+	if err != nil {
+		if os.IsExist(err) {
+			return nil // pre-existing file — tightenExistingLocalStorageFiles handles it after Open
+		}
+		return fmt.Errorf("failed to pre-create database file %q: %w", path, err)
+	}
+	return f.Close()
+}
+
+// tightenExistingLocalStorageFiles corrects the mode of dbPath and its -wal/-shm sidecars
+// if any is more permissive than secureLocalStoragePerm — the case of a database created
+// before this fix shipped, which keeps whatever mode it was originally given (#1647). This
+// runs on every local-storage open (server boot AND every CLI invocation, since both share
+// this one factory function) rather than as an opt-in check: unlike most security
+// hardening, tightening a file's mode to 0600 can never break the owning process's own
+// access to it, so there is no operational reason to make correction conditional or to
+// refuse to start over it — only to make sure it is never SILENT. Each correction is
+// logged loudly so an operator relying on some other process (backup tooling running as a
+// different user, for instance) to read the file finds out immediately, not by that other
+// process mysteriously losing access.
+func tightenExistingLocalStorageFiles(dbPath string) {
+	dbPath, isRealFile := localStorageDBFile(dbPath)
+	if !isRealFile {
+		return
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		path := dbPath + suffix
+		info, err := os.Stat(path)
+		if err != nil {
+			continue // doesn't exist (yet, or ever, e.g. no -shm outside WAL mode) — nothing to tighten
+		}
+		if info.Mode().Perm() == secureLocalStoragePerm {
+			continue
+		}
+		oldMode := info.Mode().Perm()
+		if err := os.Chmod(path, secureLocalStoragePerm); err != nil {
+			log.Printf("SECURITY: failed to tighten permissions on %s (mode %04o, expected %04o): %v", path, oldMode, secureLocalStoragePerm, err)
+			continue
+		}
+		log.Printf("SECURITY: corrected %s permissions from %04o to %04o (see #1647 -- this file predates an explicit-mode fix and previously relied on the inherited process umask)", path, oldMode, secureLocalStoragePerm)
+	}
+}
+
 // createLocalStorage creates a SQLite-backed local storage instance
 func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.Storage, error) {
 	dbPath := cfg.Storage.Database.Path
 	if dbPath == "" {
 		dbPath = "./secrets.db"
+	}
+	if err := prepareLocalStorageFile(dbPath); err != nil {
+		return nil, err
 	}
 
 	// Hold migrationMu across gorm.Open too, not just the migration that follows
@@ -210,6 +305,10 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
+	// The WAL pragma above (in sqliteDSN) creates -wal/-shm during Open, and a
+	// pre-existing database from before this fix shipped keeps whatever mode it
+	// originally had — tighten both cases here, after the file(s) are known to exist.
+	tightenExistingLocalStorageFiles(dbPath)
 
 	if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
 		return nil, err

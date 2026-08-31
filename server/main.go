@@ -64,6 +64,12 @@ import (
 )
 
 func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
+	// #1647: see main.go's identical call for the full rationale -- an explicit,
+	// restrictive process umask means the SQLite database and its -wal/-shm sidecars
+	// (created deep inside the driver, with no mode this process's Go code controls
+	// directly) are born at 0600 regardless of what umask this process inherited.
+	syscall.Umask(0o077)
+
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
