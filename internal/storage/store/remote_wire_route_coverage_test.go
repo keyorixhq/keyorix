@@ -959,8 +959,8 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// struct fields) — real, scoped, but more work than the BinaryExpr cases
 	// above, which is exactly why this campaign's own past attempts stopped at
 	// literal/Sprintf/local-var and never reached this category.
-	"remote_audit.go:53":    helperReturnEntry("buildAuditFilterPath(filter)"),
-	"remote_audit.go:95":    helperReturnEntry("buildRBACAuditFilterPath(filter)"),
+	"remote_audit.go:57":    helperReturnEntry("buildAuditFilterPath(filter)"),
+	"remote_audit.go:99":    helperReturnEntry("buildRBACAuditFilterPath(filter)"),
 	"remote_secrets.go:422": helperReturnEntry("buildSecretFilterPath(filter)"),
 	"remote_users.go:514":   helperReturnEntry("buildUserFilterPath(filter)"),
 
@@ -977,7 +977,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// function for them. kindTemporary: a real, scoped, mechanical fix --
 	// give extractWireCalls a constants.go-scoped constPaths map, the same
 	// shape extractRouterRoutes already has for router.go.
-	"remote_audit.go:28":    constRefEntry("apiAuditIngestPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
+	"remote_audit.go:32":    constRefEntry("apiAuditIngestPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
 	"remote_secrets.go:148": constRefEntry("apiSecretsPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
 	"remote_users.go:225":   constRefEntry("apiUsersPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
 }
