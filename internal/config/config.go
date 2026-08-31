@@ -1808,7 +1808,70 @@ func Load(path string) (*Config, error) {
 		cfg.Server.HTTP.AllowedOrigins[i] = expandEnvVars(origin)
 	}
 
+	// #1636: a relative storage.database.path was resolved against the PROCESS's
+	// cwd at the point internal/storage/factory.go happened to open it — not
+	// against baseDir, the directory THIS config file was actually read from.
+	// Two processes loading the identical config (e.g. via the same absolute
+	// KEYORIX_CONFIG_PATH, the documented container pattern above) but launched
+	// with different working directories silently opened two different SQLite
+	// files, each successfully, neither warning. Anchoring to baseDir here
+	// instead makes "same config" reliably mean "same database" regardless of
+	// launch directory — matching how baseDir already anchors the config file's
+	// OWN path resolution above. Anchoring to the config file's directory (not
+	// an unrelated fixed root) is deliberate: it's what "keyorix.db lives next
+	// to keyorix.yaml" (the template's own layout) actually means.
+	resolvedDBPath, derr := resolveConfigRelativePath(baseDir, cfg.Storage.Database.Path)
+	if derr != nil {
+		return nil, fmt.Errorf("invalid storage.database.path: %w", derr)
+	}
+	cfg.Storage.Database.Path = resolvedDBPath
+
 	return &cfg, nil
+}
+
+// resolveConfigRelativePath anchors a relative SQLite database path to
+// baseDir (the directory Load read the config file from) instead of leaving
+// it to resolve against the process's cwd wherever it's later opened. Two
+// shapes are deliberately left untouched, matching
+// acquireSQLiteMigrationLock's own detection of the same cases (see
+// internal/storage/factory_sqlite_migration_lock.go): an in-memory DSN
+// (":memory:" or a "mode=memory" query parameter) names no real file to
+// anchor, and any existing DSN query-string suffix (an operator-supplied
+// "?_pragma=...") is preserved verbatim, resolved around rather than through.
+// Already-absolute and empty paths pass through unchanged.
+//
+// Rejects (rather than silently resolving) a relative path containing "..":
+// filepath.Abs/Join would otherwise collapse it into a clean absolute path
+// OUTSIDE baseDir with no ".." substring left to detect afterward —
+// internal/cli/system/init.go's initializeDatabase used to catch this itself
+// (its own "invalid path for database" check), but only on the CLI's own
+// init --database step, never on the server's boot path (createLocalStorage
+// never ran any such check at all). Centralizing the rejection here, in
+// Load() itself, closes that gap for both callers at once, not just the one
+// that happened to remember to check.
+func resolveConfigRelativePath(baseDir, dbPath string) (string, error) {
+	if dbPath == "" || dbPath == ":memory:" || strings.Contains(dbPath, "mode=memory") {
+		return dbPath, nil
+	}
+	base, suffix := dbPath, ""
+	if idx := strings.IndexByte(dbPath, '?'); idx != -1 {
+		base, suffix = dbPath[:idx], dbPath[idx:]
+	}
+	if base == "" || filepath.IsAbs(base) {
+		return dbPath, nil
+	}
+	if strings.Contains(base, "..") {
+		return "", fmt.Errorf("database.path %q must not contain \"..\"", dbPath)
+	}
+	abs, err := filepath.Abs(filepath.Join(baseDir, base))
+	if err != nil {
+		// filepath.Abs only fails if os.Getwd() fails -- a more fundamental
+		// problem than this resolution step. Leave the path as Load found it
+		// rather than fail config loading over it; the pre-existing (relative)
+		// behavior is at least no worse than before this fix.
+		return dbPath, nil
+	}
+	return abs + suffix, nil
 }
 
 // envVarPattern matches shell-style ${VAR} and ${VAR:-default} references — the

@@ -121,10 +121,18 @@ func TestRunInit_InitializeEncryptionErrorPropagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to initialize encryption")
 }
 
-// TestRunInit_InitializeDatabaseErrorPropagates exercises init.go:117-119: the
-// generated config's database path contains "..", which initializeDatabase
-// rejects, and runInit must wrap that error.
-func TestRunInit_InitializeDatabaseErrorPropagates(t *testing.T) {
+// TestRunInit_DatabasePathTraversal_RejectedAtConfigLoad exercises the same
+// "../escapes.db" traversal TestRunInit_InitializeDatabaseErrorPropagates
+// used to catch inside initializeDatabase (init.go's own "invalid path for
+// database" check) -- #1636 moved that rejection into config.Load() itself
+// (resolveConfigRelativePath, internal/config/config.go), since
+// initializeDatabase's check only ever ran on this CLI path, never on the
+// server's own boot path (createLocalStorage had no such check at all).
+// runInit now fails at the "failed to load config" step, before
+// initializeDatabase is ever reached -- initializeDatabase's own check is
+// still in place as defense-in-depth for a hand-constructed *config.Config
+// that didn't go through Load(), but is no longer what this test exercises.
+func TestRunInit_DatabasePathTraversal_RejectedAtConfigLoad(t *testing.T) {
 	dir := t.TempDir()
 	template := "storage:\n  type: local\n  database:\n    path: ../escapes.db\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix_template.yaml"), []byte(template), 0600))
@@ -142,7 +150,8 @@ func TestRunInit_InitializeDatabaseErrorPropagates(t *testing.T) {
 
 	err := runInit(InitCmd, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to initialize database")
+	assert.Contains(t, err.Error(), "failed to load config")
+	assert.Contains(t, err.Error(), "..")
 }
 
 // TestRunInit_InitializeLoggingErrorPropagates exercises init.go:123-125 (and,
