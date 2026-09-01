@@ -61,7 +61,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	inv, prov, err := service.InviteToProjectWithLink(ctx, projectID, sendEmail, sendRole, invitedBy, 0)
+	inv, prov, err := service.InviteToProjectWithLink(ctx, projectID, sendEmail, sendRole, invitedBy, 0) // nosemgrep: trailofbits.go.invalid-usage-of-modified-variable.invalid-usage-of-modified-variable -- inv is nil-checked below before any field is dereferenced; the non-nil branch is the intentional partial-result path (invite created, link delivery failed)
 	if err != nil {
 		if inv == nil {
 			return fmt.Errorf("failed to send invitation: %w", err)
