@@ -13,7 +13,7 @@ import (
 // accent, built from actual combining-character bytes (not a typed/pasted
 // glyph, which risks silent editor/tool re-normalization to NFC).
 var (
-	nfcCafe = "café"   // e-acute precomposed (U+00E9), 5 bytes UTF-8
+	nfcCafe = "café"  // e-acute precomposed (U+00E9), 5 bytes UTF-8
 	nfdCafe = "café" // e (U+0065) + combining acute accent (U+0301), 6 bytes UTF-8
 )
 

@@ -1980,7 +1980,7 @@ func ensureUserNameIndex(db *gorm.DB) error {
 // column enforced different uniqueness on different backends. Scoped to
 // `deleted_at IS NULL` so a soft-deleted (e.g. SCIM-deprovisioned) user's email
 // is freed for reuse on re-provisioning, mirroring ensureUserNameIndex; `email
-// <> ''` so any legacy rows with no email recorded don't collide with each
+// <> ”` so any legacy rows with no email recorded don't collide with each
 // other. Idempotent; works on both SQLite and Postgres.
 func ensureUserEmailIndex(db *gorm.DB) error {
 	// Drop the previous LOWER(email)-expression index this replaces (#1642 —
