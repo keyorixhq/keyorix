@@ -627,15 +627,29 @@ func requireUserAndCore(w http.ResponseWriter, r *http.Request) (*UserContext, *
 	return userCtx, cs, true
 }
 
+// AuthorizedAtGlobalScope reports whether userCtx holds permission at GLOBAL
+// scope — the narrow real-404 exception ADR-096 carves out of the house
+// 403-for-both anti-enumeration convention: a caller who could have read this
+// resource TYPE anywhere sees a genuine 404 for one target that truly doesn't
+// exist, instead of the identical denial shown to everyone else. Exported for
+// handler code that resolves a scoped reference inline (e.g. by name within a
+// larger multi-reference operation) rather than through RequireScopedPermission
+// — ADR-096's migration note calls for exactly this: either export
+// handleScopeResolutionError's decision or add a thin wrapper around it.
+func AuthorizedAtGlobalScope(ctx context.Context, cs *core.KeyorixCore, userCtx *UserContext, permission string) bool {
+	ok, err := cs.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{})
+	return err == nil && ok
+}
+
 // handleScopeResolutionError writes the response for a scope-resolution failure,
 // shared by RequireScopedPermission and RequireScopedSecretPermission. An
 // errTargetNotFound reveals "not found" only to callers who hold the permission
-// globally; otherwise it denies without confirming the resource exists (avoids
-// existence enumeration by unprivileged users). Any other error is treated as an
-// unparseable target (400).
+// globally (AuthorizedAtGlobalScope); otherwise it denies without confirming the
+// resource exists (avoids existence enumeration by unprivileged users). Any
+// other error is treated as an unparseable target (400).
 func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, userCtx *UserContext, permission string, err error) {
 	if errors.Is(err, errTargetNotFound) {
-		if ok, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{}); aerr == nil && ok {
+		if AuthorizedAtGlobalScope(r.Context(), cs, userCtx, permission) {
 			notFoundResponse(w, "Resource not found")
 		} else {
 			forbiddenResponse(w, "Insufficient permissions")

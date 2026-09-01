@@ -18,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
@@ -36,6 +37,8 @@ func setupRenderHandlerTest(t *testing.T) (*SecretHandler, uint) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
 		&models.Project{}, &models.Environment{}, &models.SecretAccessLog{}, &models.AuditEvent{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "viewer", Email: "v@test.com"}).Error)
@@ -68,9 +71,14 @@ func withUserCtxID(r *http.Request, userID uint, username string) *http.Request 
 	return r.WithContext(context.WithValue(r.Context(), customMiddleware.GetUserContextKey(), userCtx))
 }
 
-// #181: a viewer must get the identical response (status + body) whether the referenced
-// secret doesn't exist or exists but they can't read it — otherwise the render endpoint
-// is a 404-vs-403 existence oracle for secret names.
+// #181/ADR-096: a viewer must get the identical response (status + body)
+// whether the referenced secret doesn't exist or exists but they can't read
+// it — otherwise the render endpoint is an existence oracle for secret names.
+// The status the two cases collapse TO changed under ADR-096 (403-for-both,
+// not 404-for-both): user 2 here holds no RBAC grant anywhere, not even
+// globally, so both cases now deny as Forbidden — see
+// TestRenderTemplate_GlobalPermissionRevealsRealNotFound below for the
+// narrow exception that still yields a genuine 404.
 func TestRenderTemplate_UniformResponseForNotFoundVsForbidden(t *testing.T) {
 	handler, projectID := setupRenderHandlerTest(t)
 
@@ -79,7 +87,7 @@ func TestRenderTemplate_UniformResponseForNotFoundVsForbidden(t *testing.T) {
 		require.NoError(t, err)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/render", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = withUserCtxID(req, 2, "viewer") // user 2: no ownership, no share
+		req = withUserCtxID(req, 2, "viewer") // user 2: no ownership, no share, no RBAC grant
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", strconv.FormatUint(uint64(projectID), 10))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -94,7 +102,41 @@ func TestRenderTemplate_UniformResponseForNotFoundVsForbidden(t *testing.T) {
 	// "nope" does not exist at all, in the same environment.
 	notFoundCode, notFoundBody := doRender("${secret:production/nope}")
 
-	require.Equal(t, http.StatusNotFound, forbiddenCode, "an existing-but-forbidden secret must not be distinguishable from a nonexistent one via status code")
-	require.Equal(t, http.StatusNotFound, notFoundCode)
+	require.Equal(t, http.StatusForbidden, forbiddenCode, "an existing-but-forbidden secret must not be distinguishable from a nonexistent one via status code")
+	require.Equal(t, http.StatusForbidden, notFoundCode)
 	require.Equal(t, notFoundBody, forbiddenBody, "response body must be identical for the nonexistent and forbidden cases")
+}
+
+// TestRenderTemplate_GlobalPermissionRevealsRealNotFound is the narrow
+// ADR-096 exception: a caller who holds secrets.read at GLOBAL scope gets a
+// genuine 404 for a reference that truly doesn't exist — distinct from the
+// 403 the same caller would see for a reference they exist-but-can't-read
+// (not exercised here; see TestSendRenderTemplateError_ErrSecretRefNotFound_*
+// in handlers_s14_test.go for that side of the split).
+func TestRenderTemplate_GlobalPermissionRevealsRealNotFound(t *testing.T) {
+	handler, projectID := setupRenderHandlerTest(t)
+	ctx := context.Background()
+	st := handler.coreService.Storage()
+
+	perm, err := st.CreatePermission(ctx, &models.Permission{Name: "secrets.read", Description: "read secrets"})
+	require.NoError(t, err)
+	folded, err := identity.NewFoldedName("global-render-reader-181")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, folded, "global reader")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignPermissionToRole(ctx, role.ID, perm.ID))
+	require.NoError(t, st.AssignRole(ctx, 2, role.ID, core.Scope{})) // user 2, global
+
+	body, err := json.Marshal(map[string]string{"template": "${secret:production/nope}"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/render", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUserCtxID(req, 2, "viewer")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatUint(uint64(projectID), 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler.RenderTemplate(w, req)
+	require.Equal(t, http.StatusNotFound, w.Code)
 }

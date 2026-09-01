@@ -111,6 +111,32 @@ func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, actor *intercept
 	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
 }
 
+// authorizeScopedTarget is the gRPC analogue of HTTP's handleScopeResolutionError
+// (server/middleware/auth.go) — ADR-096 §4 requires it back every RPC that
+// resolves a scoped resource by ID. resolveErr non-nil means the resource
+// fetch itself failed (no scope to check yet, so scope is ignored); nil means
+// the resource was found, with scope set to its actual project/environment.
+//
+// Either way, a denial to a caller who lacks perm resolves to the SAME
+// codes.PermissionDenied with the SAME message — a caller cannot distinguish
+// "this ID doesn't exist" from "it exists but you can't touch it" from the
+// response alone. The one narrow exception: a caller who holds perm at
+// GLOBAL scope (core.Scope{}) gets a genuine codes.NotFound for a target that
+// truly doesn't exist, exactly mirroring handleScopeResolutionError's
+// errTargetNotFound branch on the HTTP side.
+func authorizeScopedTarget(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, perm string, resolveErr error, scope core.Scope, notFoundMsg string) error {
+	if resolveErr != nil {
+		if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, core.Scope{}); err == nil && allowed {
+			return status.Error(codes.NotFound, notFoundMsg)
+		}
+		return status.Error(codes.PermissionDenied, "insufficient permissions")
+	}
+	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
+		return status.Error(codes.PermissionDenied, "insufficient permissions")
+	}
+	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
+}
+
 // enforceProjectMFA applies the per-project MFA policy (ADR-037) over gRPC: an
 // interactive session WITHOUT a second factor is denied access to a project that
 // requires MFA. It mirrors the HTTP ProjectMFABlocked gate so the policy is not

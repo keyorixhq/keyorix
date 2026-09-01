@@ -567,10 +567,12 @@ func TestDynamicSecretService_ClassifyConfig_InvalidClassification(t *testing.T)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
-// loadConfigScoped/loadLeaseScoped's found-but-unauthorized branch (#G14
-// uniform NotFound): a caller scoped to a different project than the
-// config/lease must get the same NotFound a nonexistent id would.
-func TestDynamicSecretService_CrossProjectAccess_NotFound(t *testing.T) {
+// loadConfigScoped/loadLeaseScoped's found-but-unauthorized branch (ADR-096,
+// via the shared authorizeScopedTarget): a caller scoped to a different
+// project than the config/lease, and not globally privileged, must get the
+// same PermissionDenied a nonexistent id's default branch would — a distinct
+// NotFound would be an existence oracle across the project boundary.
+func TestDynamicSecretService_CrossProjectAccess_PermissionDenied(t *testing.T) {
 	r := newDynTestRigWithFake(t)
 	owner := authCtx(1, "owner")
 	cfg, err := r.svc.CreateConfig(owner, &pb.CreateDynamicConfigRequest{
@@ -587,11 +589,11 @@ func TestDynamicSecretService_CrossProjectAccess_NotFound(t *testing.T) {
 
 	_, err = r.svc.GetConfig(scoped, &pb.GetDynamicConfigRequest{Id: cfg.GetId()})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "GetConfig cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetConfig cross-project")
 
 	_, err = r.svc.RenewLease(scoped, &pb.RenewLeaseRequest{LeaseId: lease.GetLeaseId()})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "RenewLease cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "RenewLease cross-project")
 }
 
 // ListConfigs/ListLeases' mapDynamicError branches: both are bare storage

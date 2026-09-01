@@ -154,15 +154,16 @@ func TestGrantSecretACL_PermissionDenied(t *testing.T) {
 	r := newACLTestRig(t)
 	// Guest (user 2) has no RBAC role, so AuthorizePrincipal will deny.
 	ctx := authCtx(aclGuestUserID, "guest", "secrets.read")
-	// #G14: authorizeSecretScoped returns the same NotFound a nonexistent secret
-	// ID would, not PermissionDenied.
+	// ADR-096: authorizeSecretScoped denies as PermissionDenied by default —
+	// the guest holds no RBAC role anywhere (not even globally), so this is
+	// not the narrow real-404 exception.
 	_, err := r.svc.GrantSecretACL(ctx, &pb.GrantSecretACLRequest{
 		SecretId:    r.secretID,
 		UserId:      aclAdminUserID,
 		Permissions: []string{"secrets.read"},
 	})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 // TestGrantSecretACL_MissingSecretID validates that a zero secret_id is rejected.
@@ -241,11 +242,12 @@ func TestListSecretACLs_Unauthenticated(t *testing.T) {
 func TestListSecretACLs_PermissionDenied(t *testing.T) {
 	r := newACLTestRig(t)
 	ctx := authCtx(aclGuestUserID, "guest", "secrets.read")
-	// #G14: authorizeSecretScoped returns the same NotFound a nonexistent secret
-	// ID would, not PermissionDenied.
+	// ADR-096: authorizeSecretScoped denies as PermissionDenied by default —
+	// the guest holds no RBAC role anywhere (not even globally), so this is
+	// not the narrow real-404 exception.
 	_, err := r.svc.ListSecretACLs(ctx, &pb.ListSecretACLsRequest{SecretId: r.secretID})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 // TestListSecretACLs_MissingSecretID validates that a zero secret_id is rejected.
@@ -298,14 +300,15 @@ func TestRevokeSecretACL_Unauthenticated(t *testing.T) {
 func TestRevokeSecretACL_PermissionDenied(t *testing.T) {
 	r := newACLTestRig(t)
 	ctx := authCtx(aclGuestUserID, "guest", "secrets.read")
-	// #G14: authorizeSecretScoped returns the same NotFound a nonexistent secret
-	// ID would, not PermissionDenied.
+	// ADR-096: authorizeSecretScoped denies as PermissionDenied by default —
+	// the guest holds no RBAC role anywhere (not even globally), so this is
+	// not the narrow real-404 exception.
 	_, err := r.svc.RevokeSecretACL(ctx, &pb.RevokeSecretACLRequest{
 		SecretId: r.secretID,
 		AclId:    1,
 	})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 // TestRevokeSecretACL_MissingSecretID validates that a zero secret_id is rejected.
