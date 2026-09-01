@@ -281,13 +281,14 @@ func TestDynamic_IssueLease_NoUserCtx_S23(t *testing.T) {
 	}
 	require.NoError(t, db.Create(cfg).Error)
 
-	// IssueLease calls loadAuthorizedConfig first, which calls authorize();
-	// authorize() returns false when userCtx is nil, so the guard fires before
-	// the core.IssueLease call. Because IssueLease's outer guard comes AFTER
-	// loadAuthorizedConfig (which has its own authorize inside), no user ctx
-	// means loadAuthorizedConfig returns false → NotFound (#G14: the
-	// found-but-unauthorized branch collapses to the same response a missing
-	// config ID would get, not a distinct Forbidden).
+	// #1645/ADR-096: authorization against the config's scope moved out of
+	// IssueLease's own body entirely (now route-level RequireScopedPermission
+	// middleware, router.go) -- the handler's only remaining pre-flight check
+	// is mustGetUser, matching every sibling handler in this file. No user
+	// context now fails fast with 401 here, before loadConfig ever runs
+	// (this test calls the handler directly, bypassing the router, so the
+	// middleware's own 403-for-both collapse is never exercised by this
+	// specific test -- see dynamic_secrets_403_convention_test.go for that).
 	req := withChiParam(
 		httptest.NewRequest(http.MethodPost, "/api/v1/dynamic-secrets/configs/1/issue", nil),
 		"id", uintStr(cfg.ID),
@@ -295,7 +296,7 @@ func TestDynamic_IssueLease_NoUserCtx_S23(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.IssueLease(w, req)
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // TestDynamic_IssueLease_BadConfigID_S23 verifies that a non-numeric config id

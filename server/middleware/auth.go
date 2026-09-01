@@ -864,6 +864,49 @@ func ScopeFromRotationPolicyParam(param string) ScopeResolver {
 	}
 }
 
+// ScopeFromDynamicSecretConfigParam treats the named path param as a
+// dynamic-secret config ID and resolves its project/environment scope.
+// #1645/ADR-096: replaces dynamic_secrets.go's handler-internal
+// loadAuthorizedConfig, which used to collapse "doesn't exist" and "exists,
+// denied" into a uniform 404 regardless of caller privilege (Convention B) --
+// routing through this resolver + RequireScopedPermission instead gives every
+// dynamic-secret config route the same 403-for-both behavior (with the
+// narrow real-404-for-global-holders exception) every other scoped resource
+// already has, via the one shared mechanism (handleScopeResolutionError)
+// rather than a second, independently-derived collapse implementation.
+func ScopeFromDynamicSecretConfigParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+		cfg, err := cs.GetDynamicSecretConfig(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}, nil
+	}
+}
+
+// ScopeFromDynamicSecretLeaseParam treats the named path param as a
+// dynamic-secret lease ID (a string, unlike every other resolver's uint path
+// param -- lease IDs are opaque tokens, not row IDs) and resolves the scope
+// of the config that issued it. Same #1645/ADR-096 rationale as
+// ScopeFromDynamicSecretConfigParam above.
+func ScopeFromDynamicSecretLeaseParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		leaseID := chi.URLParam(r, param)
+		if leaseID == "" {
+			return core.Scope{}, errInvalidTarget
+		}
+		lease, err := cs.GetDynamicSecretLease(r.Context(), leaseID)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}, nil
+	}
+}
+
 // roleAssignmentBodyScope is the subset of the user-roles assign/remove request
 // body (both share the same project_id/environment_id shape) needed to resolve
 // the target scope ahead of the handler's own decode.

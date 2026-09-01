@@ -160,7 +160,7 @@ func (h *DynamicSecretHandler) ListConfigs(w http.ResponseWriter, r *http.Reques
 
 // GetConfig handles GET /api/v1/dynamic-secrets/configs/{id}
 func (h *DynamicSecretHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsRead)
+	cfg, ok := h.loadConfig(w, r)
 	if !ok {
 		return
 	}
@@ -169,8 +169,11 @@ func (h *DynamicSecretHandler) GetConfig(w http.ResponseWriter, r *http.Request)
 
 // IssueLease handles POST /api/v1/dynamic-secrets/configs/{id}/issue
 func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := h.loadConfig(w, r)
 	if !ok {
 		return
 	}
@@ -195,7 +198,7 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 
 // ListLeases handles GET /api/v1/dynamic-secrets/configs/{id}/leases
 func (h *DynamicSecretHandler) ListLeases(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsRead)
+	cfg, ok := h.loadConfig(w, r)
 	if !ok {
 		return
 	}
@@ -220,7 +223,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	leaseID := chi.URLParam(r, "leaseID")
-	if _, ok := h.loadAuthorizedLease(w, r, leaseID, permSecretsWrite); !ok {
+	if _, ok := h.loadLease(w, r, leaseID); !ok {
 		return
 	}
 	if err := h.coreService.RevokeLease(r.Context(), leaseID, userCtx.UserID, "manual"); err != nil {
@@ -243,7 +246,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 		return
 	}
 	leaseID := chi.URLParam(r, "leaseID")
-	if _, ok := h.loadAuthorizedLease(w, r, leaseID, permSecretsWrite); !ok {
+	if _, ok := h.loadLease(w, r, leaseID); !ok {
 		return
 	}
 	var body struct {
@@ -266,8 +269,11 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 // RevokeAllLeases handles POST /api/v1/dynamic-secrets/configs/{id}/revoke-all —
 // the incident kill switch: revoke every active lease from a config at once.
 func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := h.loadConfig(w, r)
 	if !ok {
 		return
 	}
@@ -289,8 +295,11 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 // ClassifyConfig handles PATCH /api/v1/dynamic-secrets/configs/{id}/classification —
 // sets (or clears) the config's data-classification label.
 func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := h.loadConfig(w, r)
 	if !ok {
 		return
 	}
@@ -320,8 +329,11 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 // afterward (project restore deliberately does not do so on its own), or
 // disables one directly outside of a project delete.
 func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := h.loadConfig(w, r)
 	if !ok {
 		return
 	}
@@ -345,16 +357,17 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 	sendSuccess(w, sanitizeConfig(updated), "Config enabled state updated.")
 }
 
-// loadAuthorizedConfig loads the {id} config and authorizes the caller against
-// its scope. It writes the error response and returns ok=false on failure. A
-// missing config AND a found-but-unauthorized one both write the SAME NotFound
-// response (#G14) — a distinct Forbidden for the found-but-unauthorized branch
-// would let a caller distinguish "this ID doesn't exist" from "this ID exists
-// but you can't touch it". The MFA-blocked branch is deliberately NOT
-// collapsed: the caller is already known to be authorized at that point, just
-// missing a second factor, so hiding it behind a generic NotFound would mask
-// an actionable, legitimate error.
-func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *http.Request, perm string) (*models.DynamicSecretConfig, bool) {
+// loadConfig fetches the {id} config. #1645/ADR-096: authorization against
+// the config's project/environment scope now runs as route-level
+// RequireScopedPermission middleware (router.go, ScopeFromDynamicSecretConfigParam)
+// before this handler is ever reached — a caller who lacks the permission or
+// whose target doesn't exist gets the shared 403-for-both collapse
+// (handleScopeResolutionError) there, not a second, independently-derived
+// collapse here. This function only re-fetches the already-authorized row;
+// a "not found" here means a benign TOCTOU race (deleted between the
+// middleware's check and this handler running), not an oracle — the caller
+// already passed authorization for this exact ID.
+func (h *DynamicSecretHandler) loadConfig(w http.ResponseWriter, r *http.Request) (*models.DynamicSecretConfig, bool) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
@@ -366,34 +379,17 @@ func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *ht
 		sendError(w, "NotFound", "Config not found", http.StatusNotFound, nil)
 		return nil, false
 	}
-	if ok, mfaBlocked := h.authorize(r, perm, core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}); !ok {
-		if mfaBlocked {
-			h.denyAuthz(w, true)
-		} else {
-			sendError(w, "NotFound", "Config not found", http.StatusNotFound, nil)
-		}
-		return nil, false
-	}
 	return cfg, true
 }
 
-// loadAuthorizedLease loads the leaseID lease and authorizes the caller
-// against its scope, with the same #G14 uniform-NotFound treatment as
-// loadAuthorizedConfig above — see its doc comment for why the MFA branch is
-// deliberately excluded. Shared by RevokeLease/RenewLease so the pattern isn't
-// duplicated (and can't silently diverge) across call sites.
-func (h *DynamicSecretHandler) loadAuthorizedLease(w http.ResponseWriter, r *http.Request, leaseID string, perm string) (*models.DynamicSecretLease, bool) {
+// loadLease fetches the leaseID lease, mirroring loadConfig's #1645/ADR-096
+// treatment above (authorization already ran via RequireScopedPermission +
+// ScopeFromDynamicSecretLeaseParam before this handler runs). Shared by
+// RevokeLease/RenewLease so the fetch isn't duplicated.
+func (h *DynamicSecretHandler) loadLease(w http.ResponseWriter, r *http.Request, leaseID string) (*models.DynamicSecretLease, bool) {
 	lease, err := h.coreService.GetDynamicSecretLease(r.Context(), leaseID)
 	if err != nil {
 		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
-		return nil, false
-	}
-	if ok, mfaBlocked := h.authorize(r, perm, core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
-		if mfaBlocked {
-			h.denyAuthz(w, true)
-		} else {
-			sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
-		}
 		return nil, false
 	}
 	return lease, true
