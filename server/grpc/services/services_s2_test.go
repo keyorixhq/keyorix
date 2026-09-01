@@ -192,6 +192,39 @@ func TestMapRoleError_Default(t *testing.T) {
 	}
 }
 
+// core.ErrRoleValidation-wrapped errors (CreateRole's own length/charset
+// checks) map to InvalidArgument with their message intact -- safe to echo
+// since errors.Is confirms the text is application-generated, not a
+// storage/driver failure.
+func TestMapRoleError_Validation(t *testing.T) {
+	inner := errors.New("role name must be between 3 and 50 characters")
+	err := mapRoleError(core.WrapRoleValidation(inner))
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", st.Code())
+	}
+	if st.Message() != "role name must be between 3 and 50 characters" {
+		t.Errorf("expected the validation message to be echoed verbatim, got %q", st.Message())
+	}
+}
+
+// A plain error whose text merely CONTAINS "validation" -- but isn't wrapped
+// in core.ErrRoleValidation -- must fall through to the generic Internal
+// bucket rather than being echoed to the client. This is the failure mode
+// the old strings.Contains(msg, "validation") check could not distinguish:
+// any storage/driver error mentioning the word "validation" would have had
+// its raw text sent straight to a gRPC client.
+func TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed(t *testing.T) {
+	err := mapRoleError(errors.New("constraint chk_validation_xyz on table roles: internal driver detail"))
+	st, _ := status.FromError(err)
+	if st.Code() != codes.Internal {
+		t.Errorf("expected Internal (no sentinel match), got %v", st.Code())
+	}
+	if st.Message() != "role operation failed" {
+		t.Errorf("expected the generic safe message, got %q (raw error text must not leak)", st.Message())
+	}
+}
+
 // --- breakGlassError ---
 
 func TestBreakGlassError_NotFound(t *testing.T) {

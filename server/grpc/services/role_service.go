@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -414,11 +415,14 @@ func mapRoleError(err error) error {
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"), strings.Contains(msg, "unique"):
 		return status.Error(codes.AlreadyExists, "a role with that name already exists")
-	// #1660: core.CreateRole/UpdateRole's own validation (name fold rejects
-	// control/bidi characters, length bounds) surfaces here now that both
-	// RPCs route through them instead of storage directly.
-	case strings.Contains(msg, "validation"):
-		return status.Error(codes.InvalidArgument, err.Error())
+	// #1660: core.CreateRole's own validation (name fold rejects control/bidi
+	// characters, length bounds) surfaces here now that both RPCs route
+	// through it instead of storage directly. errors.Is against
+	// core.ErrRoleValidation confirms this err.Error() text is
+	// application-generated (never a storage/driver failure), so it's safe
+	// to echo instead of guessing from the message text.
+	case errors.Is(err, core.ErrRoleValidation):
+		return status.Error(codes.InvalidArgument, err.Error()) // nosemgrep: keyorix-raw-error-to-client -- confirmed via errors.Is(err, core.ErrRoleValidation) above; message is CreateRole's own fixed validation text, never storage/driver output
 	case strings.Contains(msg, "built-in"):
 		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	default:
