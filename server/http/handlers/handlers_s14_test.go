@@ -24,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
@@ -425,11 +426,54 @@ func TestRenderTemplate_LiteralTemplate_S13(t *testing.T) {
 
 // ── sendRenderTemplateError — all branches ────────────────────────────────────
 
-// TestSendRenderTemplateError_ErrSecretRefNotFound_S13 — sentinel error → 404.
-func TestSendRenderTemplateError_ErrSecretRefNotFound_S13(t *testing.T) {
+// renderErrReqS13 builds a request/userCtx pair for sendRenderTemplateError's
+// non-ADR-096 branches, where the caller's permissions are irrelevant.
+func renderErrReqS13() (*http.Request, *customMiddleware.UserContext) {
+	req := withUserCtxS14(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/render", nil))
+	return req, customMiddleware.GetUserFromContext(req.Context())
+}
+
+// TestSendRenderTemplateError_ErrSecretRefNotFound_Unprivileged_S13 — sentinel
+// error, caller lacks secrets.read at GLOBAL scope → 403, byte-identical to
+// the permission-denied branch (ADR-096: RenderTemplate's per-reference
+// existence check must not distinguish "no such secret" from "exists, you
+// can't read it" for anyone but a globally-privileged caller).
+func TestSendRenderTemplateError_ErrSecretRefNotFound_Unprivileged_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, core.ErrSecretRefNotFound)
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, core.ErrSecretRefNotFound)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "Not authorized to read a referenced secret")
+}
+
+// TestSendRenderTemplateError_ErrSecretRefNotFound_GlobalPermission_S13 — same
+// sentinel error, caller holds secrets.read at GLOBAL scope → the narrow
+// ADR-096 exception: a genuine 404.
+func TestSendRenderTemplateError_ErrSecretRefNotFound_GlobalPermission_S13(t *testing.T) {
+	h, _ := freshSecretHandlerS14(t)
+	ctx := context.Background()
+	st := h.coreService.Storage()
+
+	perm, err := st.CreatePermission(ctx, &models.Permission{Name: "secrets.read", Description: "read secrets"})
+	require.NoError(t, err)
+	folded, err := identity.NewFoldedName("global-render-reader-s13")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, folded, "global reader")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignPermissionToRole(ctx, role.ID, perm.ID))
+	globalUser, err := h.coreService.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "global_render_s13", Email: "global_render_s13@test.com", DisplayName: "Global Reader", Password: "Xk9#mQ7zLp2!vR4t",
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, globalUser.ID, role.ID, core.Scope{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/render", nil)
+	uctx := &customMiddleware.UserContext{UserID: globalUser.ID, Username: globalUser.Username, Email: globalUser.Email}
+	req = req.WithContext(context.WithValue(req.Context(), customMiddleware.GetUserContextKey(), uctx))
+
+	w := httptest.NewRecorder()
+	h.sendRenderTemplateError(w, req, uctx, core.ErrSecretRefNotFound)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "Secret not found")
 }
@@ -438,7 +482,8 @@ func TestSendRenderTemplateError_ErrSecretRefNotFound_S13(t *testing.T) {
 func TestSendRenderTemplateError_NotFoundSubstring_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("project not found"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("project not found"))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -446,7 +491,8 @@ func TestSendRenderTemplateError_NotFoundSubstring_S13(t *testing.T) {
 func TestSendRenderTemplateError_PermissionSubstring_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("permission denied for user"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("permission denied for user"))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -454,7 +500,8 @@ func TestSendRenderTemplateError_PermissionSubstring_S13(t *testing.T) {
 func TestSendRenderTemplateError_NotAuthorizedSubstring_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("user is not authorized to read secret"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("user is not authorized to read secret"))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -462,7 +509,8 @@ func TestSendRenderTemplateError_NotAuthorizedSubstring_S13(t *testing.T) {
 func TestSendRenderTemplateError_InvalidReference_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("invalid reference syntax"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("invalid reference syntax"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -470,7 +518,8 @@ func TestSendRenderTemplateError_InvalidReference_S13(t *testing.T) {
 func TestSendRenderTemplateError_Unterminated_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("unterminated secret reference"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("unterminated secret reference"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -478,7 +527,8 @@ func TestSendRenderTemplateError_Unterminated_S13(t *testing.T) {
 func TestSendRenderTemplateError_EmptySecretReference_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("empty secret reference in template"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("empty secret reference in template"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -486,7 +536,8 @@ func TestSendRenderTemplateError_EmptySecretReference_S13(t *testing.T) {
 func TestSendRenderTemplateError_CannotBeSafelySubstituted_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("value cannot be safely substituted"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("value cannot be safely substituted"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -494,7 +545,8 @@ func TestSendRenderTemplateError_CannotBeSafelySubstituted_S13(t *testing.T) {
 func TestSendRenderTemplateError_DefaultInternal_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.sendRenderTemplateError(w, errors.New("some unexpected storage error"))
+	req, userCtx := renderErrReqS13()
+	h.sendRenderTemplateError(w, req, userCtx, errors.New("some unexpected storage error"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), "Failed to render template")
 }

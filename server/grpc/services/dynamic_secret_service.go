@@ -47,25 +47,20 @@ func mapDynamicError(err error) error {
 }
 
 // loadConfigScoped loads a config by ID and authorizes perm at its project/env
-// scope. A missing config AND a found-but-unauthorized one both yield the SAME
-// NotFound (#G14) — returning PermissionDenied for the found-but-unauthorized
-// branch would let a caller distinguish "this ID doesn't exist" from "this ID
-// exists but you can't touch it". Deliberately does not call the shared
-// authorizeScoped helper: its own found-but-MFA-required branch (via
-// enforceProjectMFA) is NOT an existence leak — the caller is already known to
-// be authorized at this point, just missing a second factor — and collapsing
-// that into a generic NotFound would hide an actionable, legitimate error.
+// scope, via the shared authorizeScopedTarget (ADR-096 §4): a missing config
+// and a found-but-unauthorized one both deny as PermissionDenied by default,
+// with a genuine NotFound reserved for a caller who holds perm at GLOBAL
+// scope. Its found-but-MFA-required branch (via enforceProjectMFA, inside
+// authorizeScopedTarget's authorized-at-scope path) is NOT an existence leak
+// — the caller is already known to be authorized at this point, just missing
+// a second factor — so that error surfaces as-is rather than being collapsed.
 func (s *DynamicSecretGRPCService) loadConfigScoped(ctx context.Context, user *interceptors.UserContext, id uint, perm string) (*models.DynamicSecretConfig, error) {
-	notFound := status.Error(codes.NotFound, "config not found")
 	cfg, err := s.core.GetDynamicSecretConfig(ctx, id)
 	if err != nil {
-		return nil, notFound
+		return nil, authorizeScopedTarget(ctx, s.core, user, perm, err, core.Scope{}, "config not found")
 	}
 	scope := core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}
-	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), perm, scope); err != nil || !allowed {
-		return nil, notFound
-	}
-	if err := enforceProjectMFA(ctx, s.core, user, scope.ProjectID); err != nil {
+	if err := authorizeScopedTarget(ctx, s.core, user, perm, nil, scope, ""); err != nil {
 		return nil, err
 	}
 	return cfg, nil
@@ -203,19 +198,16 @@ func (s *DynamicSecretGRPCService) ListLeases(ctx context.Context, req *pb.ListL
 }
 
 // loadLeaseScoped loads a lease by its opaque ID and authorizes perm at its
-// scope. Same #G14 uniform-NotFound treatment as loadConfigScoped above —
-// see its doc comment for why the MFA branch is deliberately excluded.
+// scope via the shared authorizeScopedTarget. Same ADR-096 §4 treatment as
+// loadConfigScoped above — see its doc comment for why the MFA branch is
+// deliberately excluded from the NotFound collapse.
 func (s *DynamicSecretGRPCService) loadLeaseScoped(ctx context.Context, user *interceptors.UserContext, leaseID, perm string) (*models.DynamicSecretLease, error) {
-	notFound := status.Error(codes.NotFound, "lease not found")
 	lease, err := s.core.GetDynamicSecretLease(ctx, leaseID)
 	if err != nil {
-		return nil, notFound
+		return nil, authorizeScopedTarget(ctx, s.core, user, perm, err, core.Scope{}, "lease not found")
 	}
 	scope := core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}
-	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), perm, scope); err != nil || !allowed {
-		return nil, notFound
-	}
-	if err := enforceProjectMFA(ctx, s.core, user, scope.ProjectID); err != nil {
+	if err := authorizeScopedTarget(ctx, s.core, user, perm, nil, scope, ""); err != nil {
 		return nil, err
 	}
 	return lease, nil

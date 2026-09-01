@@ -21,10 +21,12 @@ resource doesn't exist:
   caller who holds the permission **globally** gets a real 404.
 - **Convention B (404-for-both)**: a separate, independently-invented idiom
   (tagged `#G14`/`#G85`/`TMPL-002` at each site) used by dynamic-secret
-  config/lease routes, SCIM provisioning collision checks, secret rename, and
-  gRPC's `GetSecret`/dynamic-secret RPCs. Denied and nonexistent both
-  collapse to a uniform 404, **regardless of caller privilege** — there is no
-  privileged-caller exception at all in this convention.
+  config/lease routes, template-render secret-reference resolution, SCIM's
+  per-record 404s, and gRPC's `GetSecret`/dynamic-secret RPCs. Denied and
+  nonexistent both collapse to a uniform 404, **regardless of caller
+  privilege** — there is no privileged-caller exception at all in this
+  convention. (SCIM's is reviewed and excluded below, not migrated — see
+  "Out of scope: SCIM provisioning".)
 
 **Decision: Convention A (403-for-both) is the house standard.** Convention B
 sites migrate to it. Not because A is the majority (that would be a weak
@@ -135,6 +137,33 @@ complete:
   other Convention-B site — otherwise existence gets probed through DELETE
   instead of GET, which defeats the point.
 
+## Out of scope: SCIM provisioning
+
+`server/http/handlers/scim.go` and `scim_groups.go` (the #G85-tagged 404s
+#1645 originally flagged) were reviewed against this convention and found
+**not** to be a 403-for-both site — not an oversight, a deliberate exclusion,
+recorded here so a future audit doesn't re-flag it.
+
+The 403-for-both threat model is: an authenticated caller, inside the trust
+boundary, who holds *some* permissions but not the ones needed for *this*
+resource, and who could otherwise infer the resource's existence by comparing
+responses across many resources. SCIM has no such caller. Every SCIM route is
+gated by `customMiddleware.SCIMToken` (`server/middleware/scim.go`) — one
+static bearer token per deployment, configured for a single IdP integration.
+There is no authenticated-but-differently-privileged population to protect
+from an oracle: the token either matches (and the caller can act on the
+entire SCIM-managed namespace) or it doesn't (401, before any handler runs).
+Migrating `GetUser`/`GetGroup`/etc. to `RequireScopedPermission` would be a
+no-op that adds a resolver with nothing to resolve against.
+
+What the #G85 404 actually reveals — whether an id belongs to a SCIM-managed
+account versus a native one, or doesn't exist at all — is a narrower,
+different question than the one this ADR answers, and is left as a separate,
+not-yet-filed concern rather than folded into this migration. (SCIM's 409 on
+`CreateUser`/`CreateGroup` duplicate-name collisions is unrelated to either
+question — that's correct RFC 7644 create-collision behavior, not an
+existence leak, and needs no change.)
+
 ## Migration mechanism
 
 For an HTTP handler currently doing its own fetch-then-authorize-then-collapse
@@ -169,13 +198,21 @@ does for the by-ref read path, if avoiding a second fetch matters for that
 route).
 
 Where full middleware conversion is impractical for a specific call site
-(e.g. a check embedded in a larger multi-step operation like SCIM
-provisioning's collision check), the same decision must still be made by ONE
-shared, exported function callable from handler code — not re-derived
-inline. `handleScopeResolutionError` itself is unexported (package
-`server/middleware`); either export it or add a thin exported wrapper in
-that package so handler packages can call the identical logic without a
-full route restructure.
+(e.g. a check embedded in a larger multi-step operation, or one target among
+several references resolved inside a single request body — `secrets_render.go`'s
+`RenderTemplate` is the worked example: the route-level project scope is
+already gated through `RequireScopedPermission`, but each `${secret:...}`
+reference inside the template body is a second, per-reference existence
+check that can't be expressed as a single path-param `ScopeResolver`), the
+same decision must still be made by ONE shared, exported function callable
+from handler code — not re-derived inline. `handleScopeResolutionError`
+itself is unexported (package `server/middleware`); export the decision as
+`middleware.AuthorizedAtGlobalScope(ctx, cs, userCtx, permission) bool` so
+handler packages can call the identical logic without a full route
+restructure. `server/grpc/services/conversions.go`'s `authorizeScopedTarget`
+is the gRPC equivalent, backing `authorizeSecretScoped`
+(`secret_service.go`) and `loadConfigScoped`/`loadLeaseScoped`
+(`dynamic_secret_service.go`).
 
 ## Guard
 

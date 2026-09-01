@@ -488,24 +488,20 @@ func mapSecretACLError(err error) error {
 // authorizeSecretScoped resolves a secret's project/environment and checks the
 // permission AT that scope — mirroring the HTTP RequireScopedPermission gate, so
 // gRPC enforces the same scoped-RBAC model as HTTP rather than the flat, global
-// permission set. Both a missing secret AND a found-but-unauthorized one yield
-// the SAME NotFound response (#G14) — returning PermissionDenied only for the
-// found-but-unauthorized branch would let a caller distinguish "this ID doesn't
-// exist" from "this ID exists but you can't touch it" purely from the response
-// shape, an existence oracle across every project/tenant boundary. The
-// downstream *WithPermissionCheck core calls still enforce ownership/share on
-// top of this.
+// permission set. Routes through the shared authorizeScopedTarget (ADR-096 §4):
+// a missing secret and a found-but-unauthorized one both deny as
+// PermissionDenied by default, with a genuine NotFound reserved for a caller
+// who holds perm at GLOBAL scope — closing the existence oracle across every
+// project/tenant boundary without silently absorbing global-scope callers'
+// legitimate "doesn't exist" answer into a denial. The downstream
+// *WithPermissionCheck core calls still enforce ownership/share on top of this.
 func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string) error {
-	notFound := status.Error(codes.NotFound, "secret not found")
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
-		return notFound
+		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
-		return notFound
-	}
-	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
+	return authorizeScopedTarget(ctx, cs, actor, perm, nil, scope, "")
 }
 
 // mapSecretError translates core errors into gRPC status codes.
