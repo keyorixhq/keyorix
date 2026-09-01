@@ -43,7 +43,12 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 			return nil, err
 		}
 		return db, nil
-	case "local", "":
+	// #1640: "sqlite" is an accepted alias for "local" -- see the matching
+	// comment in internal/storage/factory.go's CreateStorage switch. This
+	// function's own doc comment already notes these CLI admin commands run
+	// without Config.Validate() first, so it must accept the alias
+	// independently, not rely on Validate() to have normalized it upstream.
+	case "local", "sqlite", "":
 		dbPath := cfg.Storage.Database.Path
 		if dbPath == "" {
 			dbPath = "./secrets.db"
@@ -61,6 +66,6 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 		// CLI admin commands run without going through Config.Validate() first,
 		// so a typo'd storage.type must not silently open a local SQLite file
 		// disconnected from the operator's intended (e.g. shared Postgres) backend.
-		return nil, fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"postgres\", \"postgresql\", or \"remote\"", cfg.Storage.Type)
+		return nil, fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"sqlite\", \"postgres\", \"postgresql\", or \"remote\"", cfg.Storage.Type)
 	}
 }

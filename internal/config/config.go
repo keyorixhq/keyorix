@@ -460,7 +460,7 @@ type RateLimitConfig struct {
 }
 
 type StorageConfig struct {
-	Type       string           `yaml:"type"` // "local", "postgres", "postgresql", "remote"
+	Type       string           `yaml:"type"` // "local" (alias "sqlite"), "postgres", "postgresql", "remote"
 	Database   DatabaseConfig   `yaml:"database"`
 	Remote     *RemoteConfig    `yaml:"remote,omitempty"`
 	Encryption EncryptionConfig `yaml:"encryption"`
@@ -1969,7 +1969,9 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		if db.DSN == "" && (db.Host == "" || db.Name == "" || db.User == "") {
 			return fmt.Errorf("postgres storage requires either database.dsn or all of host, name, and user to be set")
 		}
-	case "local", "":
+	// #1640: "sqlite" is an accepted alias for "local" -- see the matching
+	// comment in internal/storage/factory.go's CreateStorage switch.
+	case "local", "sqlite", "":
 		if c.Storage.Database.Path == "" {
 			return fmt.Errorf("database path is not specified")
 		}
@@ -1980,7 +1982,7 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		// deployment intending shared Postgres/remote storage, that produced
 		// per-replica split-brain SQLite instances with no operator-visible
 		// signal. Fail fast at config-validation time instead.
-		return fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"postgres\", \"postgresql\", or \"remote\"", c.Storage.Type)
+		return fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"sqlite\", \"postgres\", \"postgresql\", or \"remote\"", c.Storage.Type)
 	}
 
 	if c.Locale.Language == "" {

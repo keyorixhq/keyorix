@@ -62,6 +62,23 @@ func TestCreateStorage_EmptyTypeIsLocal(t *testing.T) {
 	assert.NotNil(t, st)
 }
 
+// TestCreateStorage_SqliteAliasIsLocal validates that "sqlite" -- the value
+// configs/keyorix.yaml.tpl documents (#1640) -- is accepted as an alias for
+// "local", not rejected as an unrecognized type.
+func TestCreateStorage_SqliteAliasIsLocal(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	dir := t.TempDir()
+	cfg := &config.Config{}
+	cfg.Storage.Type = "sqlite"
+	cfg.Storage.Database.Path = filepath.Join(dir, "sqlite-alias.db")
+
+	st, err := NewStorageFactory().CreateStorage(cfg)
+	require.NoError(t, err)
+	assert.NotNil(t, st)
+}
+
 // TestCreateStorage_InvalidType validates that any unrecognized type is
 // explicitly rejected rather than silently falling through to SQLite.
 func TestCreateStorage_InvalidType(t *testing.T) {
@@ -125,6 +142,21 @@ func TestOpenGormDB_LocalSQLite(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Type = "local"
 	cfg.Storage.Database.Path = filepath.Join(dir, "gormdb.db")
+
+	db, err := OpenGormDB(cfg)
+	require.NoError(t, err)
+	assert.NotNil(t, db)
+}
+
+// TestOpenGormDB_SqliteAlias validates that OpenGormDB also accepts "sqlite"
+// as an alias for "local" (#1640) -- it runs without Config.Validate() first
+// (see its own doc comment), so it must not rely on Validate() to have
+// normalized the alias upstream.
+func TestOpenGormDB_SqliteAlias(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{}
+	cfg.Storage.Type = "sqlite"
+	cfg.Storage.Database.Path = filepath.Join(dir, "gormdb-sqlite-alias.db")
 
 	db, err := OpenGormDB(cfg)
 	require.NoError(t, err)
