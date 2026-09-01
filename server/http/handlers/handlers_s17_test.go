@@ -261,15 +261,18 @@ func TestFinishWebAuthnPasswordlessLogin_CoreFailure_S17(t *testing.T) {
 func TestRevokeAllLeases_NoUserCtxLoadFails_S17(t *testing.T) {
 	t.Parallel()
 	h := NewDynamicSecretHandler(freshCoreS17(t))
-	req := withChiParam(
+	// #1645/ADR-096: RevokeAllLeases now checks mustGetUser BEFORE loadConfig
+	// (matching every sibling handler in this file, and closing a nil-userCtx
+	// panic loadConfig's removal of the old in-handler authorize() call
+	// otherwise left) -- a real user context is required to reach the bad-ID
+	// branch this test targets, or mustGetUser's own 401 fires first instead.
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPost, "/api/v1/dynamic-secrets/configs/notanid/revoke-all", nil),
 		"id", "notanid",
-	)
-	// No user context: authorize() returns false → loadAuthorizedConfig writes 403/400
-	// and returns ok=false, so the handler returns before touching userCtx.
+	))
 	w := httptest.NewRecorder()
 	h.RevokeAllLeases(w, req)
-	// Bad ID param is caught before auth check → 400.
+	// Bad ID param is caught after the user-ctx check → 400.
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

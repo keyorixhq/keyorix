@@ -779,20 +779,28 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permSecretsRead)).Post("/{id}/apply", secretTemplateHandler.Apply)
 		})
 
-		// Dynamic secrets (ADR-035). Authorization is in-handler against each
-		// config/lease's project/environment scope (reusing secrets.read/write),
-		// so these routes carry no scoped-permission middleware.
+		// Dynamic secrets (ADR-035). #1645/ADR-096: authorization against each
+		// config/lease's project/environment scope (reusing secrets.read/write)
+		// now runs as scoped-permission middleware, matching every other
+		// scoped resource -- it used to run in-handler
+		// (DynamicSecretHandler.loadAuthorizedConfig/loadAuthorizedLease),
+		// collapsing "doesn't exist" and "exists, denied" into a uniform 404
+		// regardless of caller privilege (Convention B) instead of the
+		// 403-for-both (narrow real-404-for-global-holders exception)
+		// every other scoped route gets from this same middleware.
 		r.Route("/dynamic-secrets", func(r chi.Router) {
+			configScope := customMiddleware.ScopeFromDynamicSecretConfigParam("id")
+			leaseScope := customMiddleware.ScopeFromDynamicSecretLeaseParam("leaseID")
 			r.Post("/configs", dynamicSecretHandler.CreateConfig)
 			r.Get("/configs", dynamicSecretHandler.ListConfigs)
-			r.Get("/configs/{id}", dynamicSecretHandler.GetConfig)
-			r.Patch("/configs/{id}/classification", dynamicSecretHandler.ClassifyConfig)
-			r.Patch("/configs/{id}/enabled", dynamicSecretHandler.SetConfigEnabled)
-			r.Post("/configs/{id}/issue", dynamicSecretHandler.IssueLease)
-			r.Get("/configs/{id}/leases", dynamicSecretHandler.ListLeases)
-			r.Post("/configs/{id}/revoke-all", dynamicSecretHandler.RevokeAllLeases)
-			r.Post("/leases/{leaseID}/renew", dynamicSecretHandler.RenewLease)
-			r.Post("/leases/{leaseID}/revoke", dynamicSecretHandler.RevokeLease)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, configScope)).Get("/configs/{id}", dynamicSecretHandler.GetConfig)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Patch("/configs/{id}/classification", dynamicSecretHandler.ClassifyConfig)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Patch("/configs/{id}/enabled", dynamicSecretHandler.SetConfigEnabled)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Post("/configs/{id}/issue", dynamicSecretHandler.IssueLease)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, configScope)).Get("/configs/{id}/leases", dynamicSecretHandler.ListLeases)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, configScope)).Post("/configs/{id}/revoke-all", dynamicSecretHandler.RevokeAllLeases)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, leaseScope)).Post("/leases/{leaseID}/renew", dynamicSecretHandler.RenewLease)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, leaseScope)).Post("/leases/{leaseID}/revoke", dynamicSecretHandler.RevokeLease)
 		})
 
 		// Users endpoints (RBAC)

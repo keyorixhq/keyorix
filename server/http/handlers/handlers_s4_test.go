@@ -2254,7 +2254,11 @@ func TestDynamicSecretHandler_GetConfig_BadID(t *testing.T) {
 
 func TestDynamicSecretHandler_IssueLease_BadID(t *testing.T) {
 	h := NewDynamicSecretHandler(newDynamicSecretHandlerS4(t).coreService)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "notanid")
+	// #1645/ADR-096: IssueLease now checks mustGetUser before loadConfig
+	// (matching every sibling handler in this file) -- a real user context
+	// is required to reach the bad-id branch this test targets, or mustGetUser's
+	// own 401 fires first instead.
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "notanid"))
 	w := httptest.NewRecorder()
 	h.IssueLease(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2262,7 +2266,9 @@ func TestDynamicSecretHandler_IssueLease_BadID(t *testing.T) {
 
 func TestDynamicSecretHandler_IssueLease_NotFound(t *testing.T) {
 	h := NewDynamicSecretHandler(newDynamicSecretHandlerS4(t).coreService)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999")
+	// #1645/ADR-096: a real user context is required to reach loadConfig's
+	// not-found branch this test targets -- see IssueLease_BadID's comment above.
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999"))
 	w := httptest.NewRecorder()
 	h.IssueLease(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -2296,16 +2302,19 @@ func TestDynamicSecretHandler_RenewLease_Unauthorized(t *testing.T) {
 
 func TestDynamicSecretHandler_RevokeAllLeases_NotFound(t *testing.T) {
 	h := NewDynamicSecretHandler(newDynamicSecretHandlerS4(t).coreService)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999")
+	// #1645/ADR-096: RevokeAllLeases now checks mustGetUser before loadConfig
+	// (matching every sibling handler in this file) -- a real user context
+	// is required to reach loadConfig's not-found branch this test targets.
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999"))
 	w := httptest.NewRecorder()
 	h.RevokeAllLeases(w, req)
-	// Config not found → 404 (loadAuthorizedConfig fails before user ctx check)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestDynamicSecretHandler_ClassifyConfig_NotFound(t *testing.T) {
 	h := NewDynamicSecretHandler(newDynamicSecretHandlerS4(t).coreService)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999")
+	// #1645/ADR-096: same mustGetUser-before-loadConfig ordering as above.
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999"))
 	w := httptest.NewRecorder()
 	h.ClassifyConfig(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -2313,7 +2322,8 @@ func TestDynamicSecretHandler_ClassifyConfig_NotFound(t *testing.T) {
 
 func TestDynamicSecretHandler_SetConfigEnabled_NotFound(t *testing.T) {
 	h := NewDynamicSecretHandler(newDynamicSecretHandlerS4(t).coreService)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999")
+	// #1645/ADR-096: same mustGetUser-before-loadConfig ordering as above.
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999"))
 	w := httptest.NewRecorder()
 	h.SetConfigEnabled(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
