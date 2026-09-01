@@ -343,8 +343,21 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		switch {
 		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
-		case strings.Contains(msg, errOnlyPending), strings.Contains(msg, errUnknownRole), strings.Contains(msg, "required"):
+		case strings.Contains(msg, errOnlyPending), strings.Contains(msg, errUnknownRole), strings.Contains(msg, "required"),
+			// #1645: ApproveAccessRequestWithExpiry/RejectAccessRequest's own
+			// state/timing-conflict business rules -- an approval racing a
+			// concurrent resolution, an approver double-approving, an expired
+			// request, or the request's project having been deleted underneath
+			// it. These previously fell through to a generic 500 alongside a
+			// real internal error, hiding a legitimate "the request can no
+			// longer be actioned" outcome as a server bug.
+			strings.Contains(msg, "already approved"), strings.Contains(msg, "no longer pending"),
+			strings.Contains(msg, "has expired"), strings.Contains(msg, "no longer exists"):
 			status = http.StatusConflict
+		// #1645: a requester approving their own request is a business RULE
+		// about who may act, not a state conflict -- 403, not 409.
+		case strings.Contains(msg, "cannot approve their own"):
+			status = http.StatusForbidden
 		default:
 			log.Printf("Error resolving access request %d for project %d: %v", reqID, projectID, resolveErr)
 			msg = clientSafe(resolveErr)

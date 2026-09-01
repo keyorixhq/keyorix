@@ -66,6 +66,16 @@ func (h *SecretHandler) GetSecretReadSummary(w http.ResponseWriter, r *http.Requ
 			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
+		// #1645: AuthorizeSecretPrincipal resolves the secret before checking
+		// permission, so a nonexistent ID surfaces here as a wrapped "not found"
+		// error, not as ErrInvalidInput or a permission string -- without this
+		// branch it fell through to a generic 500, unlike every one of this
+		// endpoint's 7 sibling read-metadata endpoints (tags, versions,
+		// access-history/list/stats/audit-trail), which all map it to 404.
+		if strings.Contains(err.Error(), errNotFound) {
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+			return
+		}
 		h.sendError(w, "InternalServerError", "failed to retrieve read summary", http.StatusInternalServerError, nil)
 		return
 	}

@@ -1117,8 +1117,8 @@ func TestCatalogHandler_UpdateProject_NotFound(t *testing.T) {
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.UpdateProject(w, req)
-	// project 9999 doesn't exist → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	// #1645: project 9999 doesn't exist -> 404, matching GetProject's sibling behavior.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCatalogHandler_CreateProjectEnvironment_EmptyName(t *testing.T) {
@@ -4700,8 +4700,8 @@ func TestCatalogHandler_UpdateProject_NotFound_S5(t *testing.T) {
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "99999"))
 	w := httptest.NewRecorder()
 	h.UpdateProject(w, req)
-	// Not found → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	// #1645: not found -> 404, matching GetProject's sibling behavior.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCatalogHandler_DeleteProject_NotFound_S5(t *testing.T) {

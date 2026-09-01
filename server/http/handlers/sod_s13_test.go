@@ -7,11 +7,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/identity"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,6 +80,24 @@ func TestCreateSoDPolicy_SamePermissions_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestCreateSoDPolicy_PermissionDenied_S13 -- #1645 item 3: a valid, well-formed
+// request from a non-admin actor must surface the core layer's "permission
+// denied" error as 403, not fall through to a generic 500 (the handler's
+// switch previously matched only "required"/"must be different"). withUserCtx's
+// hardcoded UserID=1 has no role assigned here (unlike
+// TestCreateSoDPolicyProxy_HappyPath_S13, which grants system_admin first), so
+// isGlobalAdminRoleName returns "" and CreateSoDPolicy's #1529 authority check
+// denies.
+func TestCreateSoDPolicy_PermissionDenied_S13(t *testing.T) {
+	h := newCatalogHandlerSoDSodS13(t)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/sod/policies",
+		strings.NewReader(`{"name":"unauth-pol","permission_a":"secrets.read","permission_b":"secrets.write"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateSoDPolicy(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 // ── sod.go: DeleteSoDPolicy ───────────────────────────────────────────────────
 
 func TestDeleteSoDPolicy_NoUserCtx_S13(t *testing.T) {
@@ -101,6 +122,26 @@ func TestDeleteSoDPolicy_NotFound_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestDeleteSoDPolicy_PermissionDenied_S13 -- #1645 item 3's DeleteSoDPolicy
+// sibling: an existing policy created by a DIFFERENT user, deleted by a
+// non-admin, non-creator actor (withUserCtx's UserID=1, no role assigned)
+// must surface 403, not the generic 500 the handler's old switch fell
+// through to for any error besides "not found".
+func TestDeleteSoDPolicy_PermissionDenied_S13(t *testing.T) {
+	h := newCatalogHandlerSoDSodS13(t)
+	ctx := context.Background()
+	policy, err := h.coreService.Storage().CreateSoDPolicy(ctx, &models.SoDPolicy{
+		Name: "someone-elses-policy", PermissionA: "secrets.read", PermissionB: "secrets.write",
+		CreatedBy: 2, CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", strconv.Itoa(int(policy.ID))))
+	w := httptest.NewRecorder()
+	h.DeleteSoDPolicy(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── sod.go: ListSoDViolations ─────────────────────────────────────────────────

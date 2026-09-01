@@ -49,9 +49,12 @@ func (h *CatalogHandler) CreateSoDPolicy(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "required") || strings.Contains(msg, "must be different") {
+		switch {
+		case strings.Contains(msg, "required") || strings.Contains(msg, "must be different"):
 			status = http.StatusBadRequest
-		} else {
+		case strings.Contains(msg, "permission denied"):
+			status = http.StatusForbidden
+		default:
 			log.Printf("Error creating SoD policy: %v", err)
 			msg = clientSafe(err)
 		}
@@ -77,9 +80,12 @@ func (h *CatalogHandler) DeleteSoDPolicy(w http.ResponseWriter, r *http.Request)
 	if err := h.coreService.DeleteSoDPolicy(r.Context(), actor.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		switch {
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		} else {
+		case strings.Contains(msg, "permission denied"):
+			status = http.StatusForbidden
+		default:
 			log.Printf("Error deleting SoD policy %d: %v", id, err)
 			msg = clientSafe(err)
 		}
