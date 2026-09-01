@@ -157,6 +157,23 @@ func TestGetSecretReadSummary_HappyPath(t *testing.T) {
 	assert.Contains(t, body, `"secret_id":7`)
 }
 
+// TestGetSecretReadSummary_NotFound -- #1645: a nonexistent secret ID must
+// surface 404, matching this endpoint's 7 read-metadata siblings (tags,
+// versions, access-history/list/stats/audit-trail). AuthorizeSecretPrincipal
+// resolves the secret before checking permission, so the wrapped error text
+// is "not found", not "permission"/"not authorized" -- without the dedicated
+// branch it fell through to a generic 500.
+func TestGetSecretReadSummary_NotFound(t *testing.T) {
+	c, _ := newSecretReadAggCore(t)
+	h, err := NewSecretHandler(c)
+	require.NoError(t, err)
+
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999"))
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
 // ── limit=60 is silently capped at 50 by core ────────────────────────────────
 
 func TestGetSecretReadSummary_LimitCappedAt50(t *testing.T) {

@@ -208,14 +208,18 @@ func TestUpdateProject_ValidationError_S13(t *testing.T) {
 }
 
 // TestUpdateProject_NotFound_S13 — valid id but project doesn't exist → error from core.
+// TestUpdateProject_NotFound_S13 -- #1645: a nonexistent project ID must surface
+// 404, matching GetProject's sibling behavior on the identical underlying fact.
+// The handler's switch previously matched only "name is required"/"exceeds",
+// so a real "project not found" error from the core layer fell through to a
+// generic 500.
 func TestUpdateProject_NotFound_S13(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreS12(t))
 	r := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"newname"}`)), "id", "99999"))
 	w := httptest.NewRecorder()
 	h.UpdateProject(w, r)
-	// Either 400 (validation name error path) or 500 (internal storage fail).
-	assert.True(t, w.Code >= 400, "expected 4xx or 5xx, got %d", w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestCreateProjectEnvironment_BadParam_S13 — non-numeric project id → 400.

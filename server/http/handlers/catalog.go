@@ -264,6 +264,8 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(msg, "name is required"), strings.Contains(msg, "exceeds"):
 			status = http.StatusBadRequest
+		case strings.Contains(msg, errNotFound):
+			status = http.StatusNotFound
 		default:
 			log.Printf("Error updating project %d: %v", id, err)
 			msg = clientSafe(err)

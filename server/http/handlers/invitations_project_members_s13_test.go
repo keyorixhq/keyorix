@@ -319,6 +319,28 @@ func TestResolveAccessRequest_UnknownAction_S13(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "action must be approve or reject")
 }
 
+// TestResolveAccessRequest_SelfApproval_S13 -- #1645: ApproveAccessRequestWithExpiry's
+// "a requester cannot approve their own access request" business rule previously
+// fell through to a generic 500 (matched none of the handler's status branches),
+// misreporting a legitimate authorization-adjacent denial as a server bug.
+func TestResolveAccessRequest_SelfApproval_S13(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
+
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
+	require.NoError(t, db.Create(&models.AccessRequest{
+		ID: 1, ProjectID: 1, UserID: 1, SuggestedRole: "viewer", State: "pending",
+	}).Error)
+
+	req := withChiParams(
+		withUserCtx(jsonReq(t, http.MethodPut, "/api/v1/projects/1/access-requests/1", `{"action":"approve"}`)),
+		map[string]string{"id": "1", "requestId": "1"},
+	)
+	w := httptest.NewRecorder()
+	h.ResolveAccessRequest(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func TestResolveAccessRequest_BadGrantTTL_S13(t *testing.T) {
 	cs := freshCoreS12(t)
 	h := NewCatalogHandler(cs)
