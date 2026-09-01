@@ -19,6 +19,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 )
@@ -454,12 +455,20 @@ func (ls *LocalStorage) GetSecretsByIDs(ctx context.Context, ids []uint) ([]*mod
 	return secrets, nil
 }
 
-// GetSecretByName retrieves a secret by name and scope.
+// GetSecretByName retrieves a secret by name and scope. The lookup name is
+// NFC-normalized (#1642) via identity.NewAddressName before comparison, the
+// same way CreateSecret normalizes before writing — not case-folded, since a
+// secret name is an address, not human-verified identity (PROD_KEY and
+// prod_key must remain distinct).
 func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
+	normalized, nerr := identity.NewAddressName(name)
+	if nerr != nil {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
 	var secret models.SecretNode
 	err := ls.db.WithContext(ctx).Where(
 		"name = ? AND project_id = ? AND environment_id = ?",
-		name, projectID, environmentID,
+		normalized.String(), projectID, environmentID,
 	).First(&secret).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

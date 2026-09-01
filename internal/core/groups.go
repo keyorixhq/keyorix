@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -28,7 +29,15 @@ func (c *KeyorixCore) CreateGroup(ctx context.Context, actorID uint, req *Create
 	if err := c.validateCreateGroupRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
-	group := &models.Group{Name: req.Name, Description: req.Description}
+	// #1642: fold once here — group names are identity (a human reads them to
+	// decide who's a member), so "Support Team"/"support team" and NFC/NFD
+	// forms of the same name must collide, not coexist as two indistinguishable
+	// groups.
+	foldedName, ferr := identity.NewFoldedName(req.Name)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+	}
+	group := &models.Group{Name: req.Name, NameFolded: foldedName.Folded(), Description: req.Description}
 	created, err := c.storage.CreateGroup(ctx, group)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -60,7 +69,12 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if req.Name != "" {
+		foldedName, ferr := identity.NewFoldedName(req.Name)
+		if ferr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		}
 		group.Name = req.Name
+		group.NameFolded = foldedName.Folded()
 	}
 	if req.Description != "" {
 		group.Description = req.Description

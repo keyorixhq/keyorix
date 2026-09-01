@@ -390,13 +390,32 @@ type User struct {
 	// tag — so a soft-deleted (e.g. SCIM-deprovisioned) user's username is freed for
 	// reuse on re-provisioning while the old row stays restorable for audit.
 	Username string `gorm:"not null"`
+	// UsernameFolded is Username run through identity.NewFoldedName: NFC-
+	// normalized AND case-folded (#1642). Username is the display form as
+	// typed; UsernameFolded is the form every uniqueness check and lookup
+	// compares against (uniq_users_username_folded_active), so "Admin" and
+	// "admin" — or NFC vs NFD forms of the same non-ASCII username — collide
+	// as the same identity instead of coexisting as two indistinguishable
+	// accounts.
+	UsernameFolded string `gorm:"not null" json:"-"`
 	// Email uniqueness (among live, non-empty rows) is enforced by a PARTIAL
-	// unique index (email WHERE deleted_at IS NULL AND email != ''), created in
-	// migrateDatabase — mirrors the Username precedent. Without this, two
-	// concurrent CreateUser calls with the same address could both succeed,
-	// leaving duplicate-email accounts with ambiguous SSO/SCIM/password-reset
-	// targeting.
-	Email        string
+	// unique index (email_folded WHERE deleted_at IS NULL AND email != ''),
+	// created in migrateDatabase — mirrors the Username precedent. Without
+	// this, two concurrent CreateUser calls with the same address could both
+	// succeed, leaving duplicate-email accounts with ambiguous
+	// SSO/SCIM/password-reset targeting.
+	Email string
+	// EmailFolded is Email run through identity.NewFoldedName (#1642) — same
+	// NFC+case-fold treatment as UsernameFolded, replacing the previous
+	// SQL-side LOWER(email) comparison/index. LOWER() folds differently
+	// depending on the backend (SQLite's is ASCII-only with no ICU loaded;
+	// Postgres's depends on the database locale/collation), so the exact same
+	// email column enforced different uniqueness rules on different customer
+	// deployments — two accounts could collide on one backend and coexist as
+	// distinct on another, for the column that is a user's login identity.
+	// Folding once in Go and comparing/indexing the stored result removes
+	// that divergence entirely.
+	EmailFolded  string `json:"-"`
 	DisplayName  string
 	PasswordHash string `json:"-"`
 	IsActive     bool   `gorm:"default:true"`
@@ -656,8 +675,17 @@ type PasswordHistory struct {
 }
 
 type Role struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"unique;not null"`
+	ID   uint   `gorm:"primaryKey"`
+	Name string `gorm:"not null"`
+	// NameFolded is Name run through identity.NewFoldedName: NFC-normalized
+	// AND case-folded (#1642), so "Admin"/"admin" can't coexist as two
+	// indistinguishable roles in an access review. Uniqueness is enforced by
+	// ensureRoleNameIndex (uniq_roles_name_folded) rather than a `unique` gorm
+	// tag -- this codebase's AutoMigrate doesn't reliably rename/replace a
+	// tag-based unique constraint when the underlying column changes (see
+	// ensureUserNameIndex's identical rationale), so every unique-name column
+	// here is managed by an explicit ensure*Index function instead.
+	NameFolded  string `gorm:"not null" json:"-"`
 	Description string
 }
 
@@ -758,7 +786,12 @@ type Group struct {
 	// Name uniqueness is enforced by a PARTIAL unique index (name WHERE deleted_at
 	// IS NULL), created in migrateDatabase — not the plain `unique` tag — so a
 	// soft-deleted group's name is freed for reuse while it stays restorable.
-	Name        string `gorm:"not null"`
+	Name string `gorm:"not null"`
+	// NameFolded is Name run through identity.NewFoldedName: NFC-normalized
+	// AND case-folded (#1642), enforced by uniq_groups_name_folded_active —
+	// see Name's own doc comment for the soft-delete-scoping rationale, which
+	// applies identically here.
+	NameFolded  string `gorm:"not null" json:"-"`
 	Description string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time

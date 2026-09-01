@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -211,7 +212,9 @@ func seedRestrictedPermissionFixture(t *testing.T, st *store.LocalStorage) (secr
 	perm, err := st.CreatePermission(ctx, &models.Permission{Name: PermSecretReadRestricted})
 	require.NoError(t, err)
 
-	role, err := st.CreateRole(ctx, &models.Role{Name: "restricted-reader"})
+	restrictedReaderName, err := identity.NewFoldedName("restricted-reader")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, restrictedReaderName, "")
 	require.NoError(t, err)
 
 	require.NoError(t, st.AssignPermissionToRole(ctx, role.ID, perm.ID))

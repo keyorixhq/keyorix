@@ -35,7 +35,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
 // userCredentialsCeilingFixtures holds every row this file's requests
@@ -67,9 +67,9 @@ func createUsersWriteToken(t *testing.T, c *core.KeyorixCore) string {
 	require.NoError(t, err)
 	require.NoError(t, c.RemoveRoleFromUser(ctx, "users_write_holder@example.com", "system_viewer"))
 
-	role, err := c.Storage().CreateRole(ctx, &models.Role{
-		Name: "ceiling_test_users_and_system_writer", Description: "test-only role: system.write + users.write",
-	})
+	ceilingTestUsersAndSystemWriterName, err := identity.NewFoldedName("ceiling_test_users_and_system_writer")
+	require.NoError(t, err)
+	role, err := c.Storage().CreateRole(ctx, ceilingTestUsersAndSystemWriterName, "test-only role: system.write + users.write")
 	require.NoError(t, err)
 
 	perms, err := c.ListPermissions(ctx)

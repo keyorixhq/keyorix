@@ -69,6 +69,15 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
     5 handlers orphaned by that same scheduler fix stayed classified "uncertain," not
     "safe," until the fix's actual effect on the scheduler path was confirmed — only
     then reclassified to no-caller/delete.
+  - A demonstration proves reachability only at the layer actually demonstrated, not
+    the whole path to it: #1642's recon called `storage.NewStorageFactory().CreateStorage(cfg)`
+    directly and genuinely demonstrated an NFC/NFD project-name collision at the storage
+    layer — real demonstration, done correctly. It wasn't reachable through any live
+    caller: `internal/core`'s `validateProjectName` rejects non-ASCII before any real
+    request reaches storage. The demonstration wasn't wrong; treating it as proof the
+    *application* was reachable was the gap. Pair every storage/DB-layer demonstration
+    with a trace of whether a live caller can drive that exact code path with that exact
+    input — don't infer application-level reachability from a lower-layer repro alone.
 - Ask of any mechanism: what does it silently skip, and does it say so?
 - **A ceiling that inspects only the target is not a ceiling.** A privilege-ceiling
   check must derive the ceiling from the ACTOR's own effective privileges as well as

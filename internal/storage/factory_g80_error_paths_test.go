@@ -59,11 +59,29 @@ func TestEnsureIndexHelpers_CreateIndexFailsWhenTargetTableMissing(t *testing.T)
 		{"SecretNodeNameIndex", "uniq_secret_nodes_project_env_name_active", ensureSecretNodeNameIndex, "failed to create secret_nodes unique-name index"},
 		{"SecretVersionIndex", "uniq_secret_versions_node_version", ensureSecretVersionIndex, "failed to create secret_versions unique index"},
 		{"DynamicSecretConfigNameIndex", "uniq_dynamic_secret_configs_project_env_name", ensureDynamicSecretConfigNameIndex, "failed to create dynamic_secret_configs unique index"},
-		{"GroupNameIndex", "uniq_groups_name_active", ensureGroupNameIndex, "failed to create partial groups name index"},
+		// GroupNameIndex/UserNameIndex/UserEmailIndex are deliberately NOT in this
+		// table-driven case list (#1642): each of those three now runs
+		// backfillFoldedColumn BEFORE the indexExists(idxName) short-circuit this
+		// helper relies on, so seeding the index name on a dummy table (with the
+		// real target table absent) makes backfillFoldedColumn's own "no such
+		// table" read fail FIRST -- a different branch than the CREATE INDEX
+		// failure this test is named for. Worse, the CREATE-INDEX-itself-fails
+		// branch these three used to exercise this way is no longer reachable by
+		// ANY variant of this technique: giving backfillFoldedColumn a real
+		// target table (so it succeeds) means CREATE UNIQUE INDEX IF NOT EXISTS
+		// also finds its target table valid -- and then the "IF NOT EXISTS" name
+		// match (the same seeded name that skips warnIfDuplicatesExist) ALSO
+		// short-circuits the CREATE itself before SQLite ever evaluates the real
+		// duplicate data, so no error surfaces (confirmed empirically). The
+		// reachable failure mode for these three is now backfillFoldedColumn's
+		// own "no such table" error when the table is genuinely absent --
+		// already covered by TestEnsureGroupNameIndex_S25_NoTableError /
+		// TestEnsureUserNameIndex_S25_NoTableError /
+		// TestEnsureUserEmailIndex_S25_NoTableError in storage_s25_test.go
+		// (their generic `Contains(err.Error(), "groups"/"users")` assertions
+		// still hold against the new backfill error text).
 		{"ProjectMembershipIndex", "uniq_project_memberships_active", ensureProjectMembershipIndex, "failed to create partial project_memberships index"},
 		{"BreakGlassActiveIndex", "uniq_break_glass_active_project_user", ensureBreakGlassActiveIndex, "failed to create partial break_glass_activations active index"},
-		{"UserNameIndex", "uniq_users_username_active", ensureUserNameIndex, "failed to create partial users username index"},
-		{"UserEmailIndex", "uniq_users_email_active", ensureUserEmailIndex, "failed to create partial users email index"},
 		{"UserExternalIDIndex", "uniq_users_external_id_active", ensureUserExternalIDIndex, "failed to create partial users external_id index"},
 		{"ProjectNameIndex", "uniq_projects_name_active", ensureProjectNameIndex, "failed to create partial projects name index"},
 		{"LegalHoldActiveIndex", "uniq_legal_holds_active", ensureLegalHoldActiveIndex, "failed to create partial legal_holds active index"},

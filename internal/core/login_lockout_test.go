@@ -27,7 +27,8 @@ func newLockoutTestCore(t *testing.T, enabled bool) (*KeyorixCore, *gorm.DB, *ti
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{}))
 	hash, err := bcrypt.GenerateFromPassword([]byte(lockoutTestPassword), bcrypt.DefaultCost)
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", PasswordHash: string(hash), AccountState: AccountActive}).Error)
+	// UsernameFolded is what GetUserByUsername actually queries (#1642); "alice" is already its own folded form.
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", PasswordHash: string(hash), AccountState: AccountActive}).Error)
 
 	clock := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return clock }, passwordPolicy: DefaultPasswordPolicy()}

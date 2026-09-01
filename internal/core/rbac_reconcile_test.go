@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -37,7 +38,9 @@ func seedOldCatalog(t *testing.T, c *KeyorixCore, db *gorm.DB) {
 		require.NoError(t, err)
 	}
 	for _, rdef := range defaultRoles {
-		role, err := c.storage.CreateRole(ctx, &models.Role{Name: rdef.Name, Description: rdef.Description})
+		rdefFoldedName, err := identity.NewFoldedName(rdef.Name)
+		require.NoError(t, err)
+		role, err := c.storage.CreateRole(ctx, rdefFoldedName, rdef.Description)
 		require.NoError(t, err)
 		for _, permName := range rdef.Permissions {
 			if permName == "connect.read" {
@@ -97,7 +100,9 @@ func seedOldCatalogWithoutPlatformUse(t *testing.T, c *KeyorixCore, db *gorm.DB)
 		require.NoError(t, err)
 	}
 	for _, rdef := range defaultRoles {
-		role, err := c.storage.CreateRole(ctx, &models.Role{Name: rdef.Name, Description: rdef.Description})
+		rdefFoldedName, err := identity.NewFoldedName(rdef.Name)
+		require.NoError(t, err)
+		role, err := c.storage.CreateRole(ctx, rdefFoldedName, rdef.Description)
 		require.NoError(t, err)
 		for _, permName := range rdef.Permissions {
 			if permName == "connect.platform.use" {

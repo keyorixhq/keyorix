@@ -47,6 +47,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -125,13 +126,40 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 			return
 		}
 	}
+	// #1642: this route bypasses core.UpdateUser's own fold entirely (it goes
+	// straight to storage.UpdateUserIfActiveStateMatches, a full-row replace —
+	// see its own doc comment), so a stale/empty UsernameFolded or
+	// EmailFolded here would silently break every future lookup for this user
+	// via GetUserByUsername/GetUserByEmail. Fold whatever the wire body
+	// carries; Email may legitimately be empty (some accounts have none,
+	// same as core.UpdateUser tolerates), in which case EmailFolded stays
+	// empty too, matching ensureUserEmailIndex's own empty-email exclusion.
+	var foldedUsername, foldedEmail identity.FoldedName
+	if body.Username != "" {
+		var ferr error
+		foldedUsername, ferr = identity.NewFoldedName(body.Username)
+		if ferr != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid username: "+ferr.Error())
+			return
+		}
+	}
+	if body.Email != "" {
+		var ferr error
+		foldedEmail, ferr = identity.NewFoldedName(body.Email)
+		if ferr != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid email: "+ferr.Error())
+			return
+		}
+	}
 	user := &models.User{
-		ID:          uint(id),
-		Username:    body.Username,
-		Email:       body.Email,
-		DisplayName: body.DisplayName,
-		IsActive:    body.Active,
-		UpdatedAt:   body.UpdatedAt,
+		ID:             uint(id),
+		Username:       body.Username,
+		UsernameFolded: foldedUsername.Folded(),
+		Email:          body.Email,
+		EmailFolded:    foldedEmail.Folded(),
+		DisplayName:    body.DisplayName,
+		IsActive:       body.Active,
+		UpdatedAt:      body.UpdatedAt,
 	}
 	matched, err := h.coreService.Storage().UpdateUserIfActiveStateMatches(r.Context(), user, body.FromActive)
 	if err != nil {

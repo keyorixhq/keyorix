@@ -28,6 +28,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -187,11 +188,11 @@ func TestCreateUser_DuplicateEmailSentinel(t *testing.T) {
 	ls := newUserStoreMax(t)
 	ctx := context.Background()
 
-	u := &models.User{Email: "dup@example.com", Username: "dup1"}
+	u := &models.User{Email: "dup@example.com", EmailFolded: "dup@example.com", Username: "dup1", UsernameFolded: "dup1"}
 	_, err := ls.CreateUser(ctx, u)
 	require.NoError(t, err)
 
-	u2 := &models.User{Email: "dup@example.com", Username: "dup2"}
+	u2 := &models.User{Email: "dup@example.com", EmailFolded: "dup@example.com", Username: "dup2", UsernameFolded: "dup2"}
 	_, err = ls.CreateUser(ctx, u2)
 	require.Error(t, err)
 }
@@ -201,9 +202,9 @@ func TestUpdateUser_Errors(t *testing.T) {
 	ls := newUserStoreMax(t)
 	ctx := context.Background()
 
-	u1, err := ls.CreateUser(ctx, &models.User{Email: "a@b.com", Username: "aUser"})
+	u1, err := ls.CreateUser(ctx, &models.User{Email: "a@b.com", EmailFolded: "a@b.com", Username: "aUser", UsernameFolded: "auser"})
 	require.NoError(t, err)
-	u2, err := ls.CreateUser(ctx, &models.User{Email: "c@d.com", Username: "cUser"})
+	u2, err := ls.CreateUser(ctx, &models.User{Email: "c@d.com", EmailFolded: "c@d.com", Username: "cUser", UsernameFolded: "cuser"})
 	require.NoError(t, err)
 
 	// Happy path: update u1's display name.
@@ -225,7 +226,7 @@ func TestUpdateLastLogin_Max(t *testing.T) {
 	ls := newUserStoreMax(t)
 	ctx := context.Background()
 
-	u, err := ls.CreateUser(ctx, &models.User{Email: "login@test.com", Username: "loginUser"})
+	u, err := ls.CreateUser(ctx, &models.User{Email: "login@test.com", EmailFolded: "login@test.com", Username: "loginUser", UsernameFolded: "loginuser"})
 	require.NoError(t, err)
 	require.NoError(t, ls.UpdateLastLogin(ctx, u.ID, time.Now()))
 }
@@ -269,10 +270,10 @@ func TestCreateUserWithRoleGrants_DuplicateEmailError(t *testing.T) {
 	ls.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users(email) WHERE deleted_at IS NULL AND email != ''")
 	ctx := context.Background()
 
-	_, err := ls.CreateUser(ctx, &models.User{Email: "uniq@dup.com", Username: "u1"})
+	_, err := ls.CreateUser(ctx, &models.User{Email: "uniq@dup.com", EmailFolded: "uniq@dup.com", Username: "u1", UsernameFolded: "u1"})
 	require.NoError(t, err)
 
-	_, err = ls.CreateUserWithRoleGrants(ctx, &models.User{Email: "uniq@dup.com", Username: "u2"}, nil)
+	_, err = ls.CreateUserWithRoleGrants(ctx, &models.User{Email: "uniq@dup.com", EmailFolded: "uniq@dup.com", Username: "u2", UsernameFolded: "u2"}, nil)
 	require.Error(t, err)
 }
 
@@ -295,9 +296,10 @@ func TestGetGroup_NotFound(t *testing.T) {
 func TestUpdateGroup_Success(t *testing.T) {
 	ls := newUserStoreMax(t)
 	ctx := context.Background()
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "g-upd"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "g-upd", NameFolded: "g-upd"})
 	require.NoError(t, err)
 	g.Name = "g-upd-v2"
+	g.NameFolded = "g-upd-v2"
 	got, err := ls.UpdateGroup(ctx, g)
 	require.NoError(t, err)
 	assert.Equal(t, "g-upd-v2", got.Name)
@@ -1030,7 +1032,7 @@ func TestPurgeDeletedUsersBefore_DeletesUsers(t *testing.T) {
 	ls := newPurgeStore(t)
 	ctx := context.Background()
 
-	u, err := ls.CreateUser(ctx, &models.User{Email: "purge@test.com", Username: "purgeMe"})
+	u, err := ls.CreateUser(ctx, &models.User{Email: "purge@test.com", EmailFolded: "purge@test.com", Username: "purgeMe", UsernameFolded: "purgeme"})
 	require.NoError(t, err)
 	require.NoError(t, ls.DeleteUser(ctx, u.ID))
 
@@ -1145,7 +1147,9 @@ func TestCreateRoleAndGetNotFound(t *testing.T) {
 	ls := newRBACStoreMax(t)
 	ctx := context.Background()
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "tester", Description: "d"})
+	testerName, err := identity.NewFoldedName("tester")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, testerName, "d")
 	require.NoError(t, err)
 	require.NotZero(t, role.ID)
 
@@ -1164,7 +1168,9 @@ func TestGetRoleByName_NotFound(t *testing.T) {
 func TestUpdateRole(t *testing.T) {
 	ls := newRBACStoreMax(t)
 	ctx := context.Background()
-	role, _ := ls.CreateRole(ctx, &models.Role{Name: "upd-role"})
+	updRoleName, err := identity.NewFoldedName("upd-role")
+	require.NoError(t, err)
+	role, _ := ls.CreateRole(ctx, updRoleName, "")
 	role.Description = "updated"
 	got, err := ls.UpdateRole(ctx, role)
 	require.NoError(t, err)
@@ -1191,7 +1197,9 @@ func TestAssignPermissionToRole(t *testing.T) {
 	ls := newRBACStoreMax(t)
 	ctx := context.Background()
 
-	role, _ := ls.CreateRole(ctx, &models.Role{Name: "r1"})
+	r1Name, err := identity.NewFoldedName("r1")
+	require.NoError(t, err)
+	role, _ := ls.CreateRole(ctx, r1Name, "")
 	perm, _ := ls.CreatePermission(ctx, &models.Permission{Name: "do.thing"})
 	require.NoError(t, ls.AssignPermissionToRole(ctx, role.ID, perm.ID))
 }
@@ -1214,11 +1222,13 @@ func TestGetUserRoles_Empty(t *testing.T) {
 func TestAssignRole_AlreadyAssigned(t *testing.T) {
 	ls := newRBACStoreMax(t)
 	ctx := context.Background()
-	role, _ := ls.CreateRole(ctx, &models.Role{Name: "dup-role"})
+	dupRoleName, err := identity.NewFoldedName("dup-role")
+	require.NoError(t, err)
+	role, _ := ls.CreateRole(ctx, dupRoleName, "")
 	scope := storage.Scope{ProjectID: 1}
 
 	require.NoError(t, ls.AssignRole(ctx, 2, role.ID, scope))
-	err := ls.AssignRole(ctx, 2, role.ID, scope)
+	err = ls.AssignRole(ctx, 2, role.ID, scope)
 	require.Error(t, err) // already assigned
 }
 
@@ -1226,7 +1236,9 @@ func TestAssignRole_AlreadyAssigned(t *testing.T) {
 func TestAssignRole_ExpiredGrantIsReplaced(t *testing.T) {
 	ls := newRBACStoreMax(t)
 	ctx := context.Background()
-	role, _ := ls.CreateRole(ctx, &models.Role{Name: "exp-role"})
+	expRoleName, err := identity.NewFoldedName("exp-role")
+	require.NoError(t, err)
+	role, _ := ls.CreateRole(ctx, expRoleName, "")
 	scope := storage.Scope{ProjectID: 5}
 
 	past := time.Now().Add(-time.Hour)
@@ -1309,11 +1321,13 @@ func TestListGroupRoleAssignments_Empty(t *testing.T) {
 func TestAssignRoleToGroup_AlreadyAssigned(t *testing.T) {
 	ls := newRBACStoreMax(t)
 	ctx := context.Background()
-	role, _ := ls.CreateRole(ctx, &models.Role{Name: "grole"})
+	groleName, err := identity.NewFoldedName("grole")
+	require.NoError(t, err)
+	role, _ := ls.CreateRole(ctx, groleName, "")
 	scope := storage.Scope{ProjectID: 7}
 
 	require.NoError(t, ls.AssignRoleToGroup(ctx, 4, role.ID, scope))
-	err := ls.AssignRoleToGroup(ctx, 4, role.ID, scope)
+	err = ls.AssignRoleToGroup(ctx, 4, role.ID, scope)
 	require.Error(t, err)
 }
 

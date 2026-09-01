@@ -30,7 +30,7 @@ func newMigrateHandler(t *testing.T) (*CatalogHandler, *gorm.DB) {
 		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 3, Name: "platform"}).Error)
-	require.NoError(t, db.Create(&models.User{ID: 7, Username: "ci-bot", Email: "ci-bot@x.io", AccountState: core.AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 7, Username: "ci-bot", UsernameFolded: "ci-bot", Email: "ci-bot@x.io", EmailFolded: "ci-bot@x.io", AccountState: core.AccountActive}).Error)
 	return NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db))), db
 }
 

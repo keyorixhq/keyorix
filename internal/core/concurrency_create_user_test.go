@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -34,11 +35,13 @@ func TestConcurrency_CreateUser_NoDuplicateEmail(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}))
-	// Mirror factory.go's ensureUserEmailIndex exactly: a partial, case-insensitive
-	// unique index on live rows, so this test exercises the same DB-level guard
-	// production installs get, not just the (removed) in-process check-then-act read.
-	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
-		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
+	// Mirror factory.go's ensureUserEmailIndex exactly (#1642: on email_folded,
+	// not a SQL-side LOWER(email) expression -- see EmailFolded's doc comment
+	// for why): a partial, case-insensitive unique index on live rows, so this
+	// test exercises the same DB-level guard production installs get, not just
+	// the (removed) in-process check-then-act read.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_folded_active "+
+		"ON users (email_folded) WHERE deleted_at IS NULL AND email <> ''").Error)
 
 	ls := store.NewLocalStorage(db)
 
@@ -58,9 +61,15 @@ func TestConcurrency_CreateUser_NoDuplicateEmail(t *testing.T) {
 			if i%2 == 1 {
 				email = "bob@example.com"
 			}
+			username := fmt.Sprintf("bob%d", i)
 			_, cerr := ls.CreateUser(context.Background(), &models.User{
-				Username: fmt.Sprintf("bob%d", i),
-				Email:    email,
+				Username:       username,
+				UsernameFolded: username,
+				Email:          email,
+				// #1642: fold here the same way core.buildUserForCreate does —
+				// this is the actual point of the test: two different-CASE
+				// emails must fold to the identical value and collide.
+				EmailFolded: strings.ToLower(email),
 			})
 			errs[i] = cerr
 		}(i)

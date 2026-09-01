@@ -31,7 +31,7 @@ func TestLocalStorage_WithTransaction_CommitsOnSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	err := ls.WithTransaction(ctx, func(tx storage.Storage) error {
-		_, e := tx.CreateUser(ctx, &models.User{Username: "alice", Email: "a@x.io"})
+		_, e := tx.CreateUser(ctx, &models.User{Username: "alice", UsernameFolded: "alice", Email: "a@x.io", EmailFolded: "a@x.io"})
 		return e
 	})
 	require.NoError(t, err)
@@ -47,7 +47,7 @@ func TestLocalStorage_WithTransaction_RollsBackOnError(t *testing.T) {
 	sentinel := errors.New("boom")
 
 	err := ls.WithTransaction(ctx, func(tx storage.Storage) error {
-		if _, e := tx.CreateUser(ctx, &models.User{Username: "bob", Email: "b@x.io"}); e != nil {
+		if _, e := tx.CreateUser(ctx, &models.User{Username: "bob", UsernameFolded: "bob", Email: "b@x.io", EmailFolded: "b@x.io"}); e != nil {
 			return e
 		}
 		// The insert above must be rolled back when fn returns an error.

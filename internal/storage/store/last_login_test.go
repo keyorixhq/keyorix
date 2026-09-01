@@ -26,7 +26,7 @@ func TestUpdateLastLogin(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserTestStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "alice", Email: "a@x.io"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "alice", UsernameFolded: "alice", Email: "a@x.io", EmailFolded: "a@x.io"})
 	require.NoError(t, err)
 	require.Nil(t, u.LastLoginAt, "new user has never logged in")
 
@@ -47,14 +47,14 @@ func TestListUsersInactiveSince(t *testing.T) {
 	now := time.Now().UTC()
 
 	// never logged in → inactive
-	_, err := ls.CreateUser(ctx, &models.User{Username: "never", Email: "n@x.io"})
+	_, err := ls.CreateUser(ctx, &models.User{Username: "never", UsernameFolded: "never", Email: "n@x.io", EmailFolded: "n@x.io"})
 	require.NoError(t, err)
 	// logged in 40 days ago → inactive
-	stale, err := ls.CreateUser(ctx, &models.User{Username: "stale", Email: "s@x.io"})
+	stale, err := ls.CreateUser(ctx, &models.User{Username: "stale", UsernameFolded: "stale", Email: "s@x.io", EmailFolded: "s@x.io"})
 	require.NoError(t, err)
 	require.NoError(t, ls.UpdateLastLogin(ctx, stale.ID, now.Add(-40*24*time.Hour)))
 	// logged in yesterday → active
-	fresh, err := ls.CreateUser(ctx, &models.User{Username: "fresh", Email: "f@x.io"})
+	fresh, err := ls.CreateUser(ctx, &models.User{Username: "fresh", UsernameFolded: "fresh", Email: "f@x.io", EmailFolded: "f@x.io"})
 	require.NoError(t, err)
 	require.NoError(t, ls.UpdateLastLogin(ctx, fresh.ID, now.Add(-24*time.Hour)))
 

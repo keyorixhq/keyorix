@@ -358,9 +358,9 @@ func TestEnsureShareRecordUniqueIndex_S23_DuplicateActiveRecords(t *testing.T) {
 func TestEnsureGroupNameIndex_S23_DuplicateLiveGroupNames(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-dup.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'engineers', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'engineers', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'engineers', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'engineers', '', NULL)`).Error)
 	err = ensureGroupNameIndex(db)
 	require.Error(t, err, "duplicate live group names must block the migration")
 	assert.Contains(t, err.Error(), "groups")
@@ -448,7 +448,7 @@ func TestEnsureLegalHoldActiveIndex_S23_ReleasedNotCounted(t *testing.T) {
 func TestEnsureUserNameIndex_S23_Idempotent(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "uname-idem.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_folded TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, ensureUserNameIndex(db))
 	require.NoError(t, ensureUserNameIndex(db), "second call must be a no-op")
 }
@@ -459,9 +459,9 @@ func TestEnsureUserNameIndex_S23_Idempotent(t *testing.T) {
 func TestEnsureUserNameIndex_S23_SoftDeletedNotCounted(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "uname-softdel.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice', '2024-06-01')`).Error) // soft-deleted
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'alice', NULL)`).Error)         // live re-provisioned user
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice', '', '2024-06-01')`).Error) // soft-deleted
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'alice', '', NULL)`).Error)         // live re-provisioned user
 	require.NoError(t, ensureUserNameIndex(db), "a soft-deleted username must not block live re-creation")
 }
 
@@ -475,9 +475,9 @@ func TestEnsureUserNameIndex_S23_SoftDeletedNotCounted(t *testing.T) {
 func TestEnsureUserEmailIndex_S23_CaseInsensitiveDuplicateDetected(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "email-case-dup.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'Bob@example.com', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob@example.com', NULL)`).Error) // same LOWER()
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'Bob@example.com', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob@example.com', '', NULL)`).Error) // same LOWER()
 	err = ensureUserEmailIndex(db)
 	require.Error(t, err, "case-variant duplicate emails must be detected via LOWER(email)")
 	assert.Contains(t, err.Error(), "users")
@@ -489,9 +489,9 @@ func TestEnsureUserEmailIndex_S23_CaseInsensitiveDuplicateDetected(t *testing.T)
 func TestEnsureUserEmailIndex_S23_DeletedRowNotCounted(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "email-del.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'deleted@x.io', '2024-01-01')`).Error) // soft-deleted
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'deleted@x.io', NULL)`).Error)         // live re-provisioned
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'deleted@x.io', '', '2024-01-01')`).Error) // soft-deleted
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'deleted@x.io', '', NULL)`).Error)         // live re-provisioned
 	require.NoError(t, ensureUserEmailIndex(db), "a soft-deleted user email must not conflict with a live re-provision of the same email")
 }
 

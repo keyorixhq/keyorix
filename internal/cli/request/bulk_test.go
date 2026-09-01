@@ -50,7 +50,7 @@ func withUserSeededPartialService(t *testing.T, email string) {
 	// Migrate ONLY the users table so GetUserByEmail works.
 	require.NoError(t, db.AutoMigrate(&models.User{}))
 	require.NoError(t, db.Create(&models.User{
-		Username: "admin", Email: email, IsActive: true,
+		Username: "admin", UsernameFolded: "admin", Email: email, EmailFolded: email, IsActive: true,
 	}).Error)
 	svc := core.NewKeyorixCore(store.NewLocalStorage(db))
 	orig := bulkInitService

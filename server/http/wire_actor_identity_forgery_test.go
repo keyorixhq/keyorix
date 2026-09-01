@@ -18,6 +18,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -304,7 +305,9 @@ func TestWireActorForgery_RevokeBreakGlassActivationProxy_RevokedByIsAlwaysCalle
 	f := newMachinePrivilegeCeilingFixture(t)
 	ctx := context.Background()
 
-	role, err := f.core.Storage().CreateRole(ctx, &models.Role{Name: "wire_forge_bg_emergency_role"})
+	wireForgeBgEmergencyRoleName, err := identity.NewFoldedName("wire_forge_bg_emergency_role")
+	require.NoError(t, err)
+	role, err := f.core.Storage().CreateRole(ctx, wireForgeBgEmergencyRoleName, "")
 	require.NoError(t, err)
 	require.NoError(t, f.core.Storage().AssignRole(ctx, f.adminID, role.ID, coreStorage.Scope{ProjectID: f.projectID}))
 	activation, err := f.core.Storage().CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{

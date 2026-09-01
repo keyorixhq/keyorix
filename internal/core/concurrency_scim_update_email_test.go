@@ -39,19 +39,24 @@ func TestConcurrency_UpdateSCIMUser_NoDuplicateEmail(t *testing.T) {
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Session{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
 	))
-	// Mirror factory.go's ensureUserEmailIndex exactly, so this test exercises the same
-	// DB-level guard production installs get (rather than only the in-process
-	// check-then-act read).
-	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
-		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
+	// Mirror factory.go's ensureUserEmailIndex exactly (#1642: the folded-column
+	// index, not the old SQL-side LOWER() index this test used to create — SQL-side
+	// LOWER() is ASCII-only on modernc/SQLite and locale-dependent on Postgres, so it
+	// enforces different uniqueness per backend for the same login identity), so this
+	// test exercises the same DB-level guard production installs get (rather than
+	// only the in-process check-then-act read).
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_folded_active "+
+		"ON users (email_folded) WHERE deleted_at IS NULL AND email <> ''").Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
 	const attackers = 20 // many concurrent SCIM updates racing to claim the same email
 	for i := 0; i < attackers; i++ {
+		username := fmt.Sprintf("user%d", i)
+		email := fmt.Sprintf("user%d@x.io", i)
 		require.NoError(t, db.Create(&models.User{
-			ID: uint(i + 1), Username: fmt.Sprintf("user%d", i), Email: fmt.Sprintf("user%d@x.io", i),
+			ID: uint(i + 1), Username: username, UsernameFolded: username, Email: email, EmailFolded: email,
 			IsActive: true, AccountState: core.AccountActive, ExternalID: fmt.Sprintf("okta|user%d", i),
 		}).Error)
 	}

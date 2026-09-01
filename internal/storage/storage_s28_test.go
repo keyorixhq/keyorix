@@ -689,13 +689,16 @@ func TestMigrateDatabase_S28_ProjectsExistingEarlyReturn(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE users (
 		id INTEGER PRIMARY KEY,
 		username TEXT,
+		username_folded TEXT,
 		email TEXT,
+		email_folded TEXT,
 		external_id TEXT NOT NULL DEFAULT '',
 		deleted_at DATETIME
 	)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE groups (
 		id INTEGER PRIMARY KEY,
 		name TEXT,
+		name_folded TEXT,
 		deleted_at DATETIME
 	)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE share_records (

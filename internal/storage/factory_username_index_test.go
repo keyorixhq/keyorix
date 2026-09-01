@@ -28,16 +28,16 @@ func TestUsernamePartialUniqueIndex_ReuseAfterSoftDelete(t *testing.T) {
 	ctx := context.Background()
 
 	// Provision "alice".
-	alice, err := st.CreateUser(ctx, &models.User{Username: "alice", Email: "alice@x.io", IsActive: true})
+	alice, err := st.CreateUser(ctx, &models.User{Username: "alice", UsernameFolded: "alice", Email: "alice@x.io", EmailFolded: "alice@x.io", IsActive: true})
 	require.NoError(t, err)
 
 	// A second LIVE "alice" is rejected (live uniqueness still holds).
-	_, err = st.CreateUser(ctx, &models.User{Username: "alice", Email: "alice2@x.io", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "alice", UsernameFolded: "alice", Email: "alice2@x.io", EmailFolded: "alice2@x.io", IsActive: true})
 	require.Error(t, err, "two live users may not share a username")
 
 	// Deprovision alice (soft delete), then re-provision the same userName — must succeed.
 	require.NoError(t, st.DeleteUser(ctx, alice.ID))
-	reAlice, err := st.CreateUser(ctx, &models.User{Username: "alice", Email: "alice@x.io", IsActive: true})
+	reAlice, err := st.CreateUser(ctx, &models.User{Username: "alice", UsernameFolded: "alice", Email: "alice@x.io", EmailFolded: "alice@x.io", IsActive: true})
 	require.NoError(t, err, "a soft-deleted username must be reusable on re-provisioning")
 	assert.NotEqual(t, alice.ID, reAlice.ID, "re-provisioning creates a fresh row")
 }

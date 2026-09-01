@@ -21,14 +21,21 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 )
 
 // --- Roles ---
 
-// CreateRole creates a new role via remote API.
-func (rs *RemoteStorage) CreateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
+// CreateRole creates a new role via remote API. Sends only the display form
+// and description over the wire — the hub's own handler (server/http/handlers/
+// rbac.go's RBACHandler.CreateRole) independently re-derives the folded form
+// from the raw name it receives (#1642: never trust a client-supplied folded
+// value), so there is nothing normalization-specific for this client-side
+// call to do beyond matching the new typed signature.
+func (rs *RemoteStorage) CreateRole(ctx context.Context, name identity.FoldedName, description string) (*models.Role, error) {
+	role := &models.Role{Name: name.Display(), Description: description}
 	resp, err := rs.client.Post(ctx, "/api/v1/roles", role)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create role: %w", err)

@@ -36,7 +36,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
 // createSystemWriteOnlyToken creates a human user holding ONLY the system.write
@@ -56,9 +56,9 @@ func createSystemWriteOnlyToken(t *testing.T, c *core.KeyorixCore) string {
 	require.NoError(t, err)
 	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_only@example.com", "system_viewer"))
 
-	role, err := c.Storage().CreateRole(ctx, &models.Role{
-		Name: "ceiling_test_system_writer", Description: "test-only role: system.write and nothing else",
-	})
+	ceilingTestSystemWriterName, err := identity.NewFoldedName("ceiling_test_system_writer")
+	require.NoError(t, err)
+	role, err := c.Storage().CreateRole(ctx, ceilingTestSystemWriterName, "test-only role: system.write and nothing else")
 	require.NoError(t, err)
 
 	perms, err := c.ListPermissions(ctx)

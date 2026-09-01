@@ -158,14 +158,14 @@ func TestApplyPoolSettings_S27_AllThreeSet(t *testing.T) {
 func TestEnsureGroupNameIndex_S27_HappyPath(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-happy.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'alpha', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'beta', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'alpha', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'beta', '', NULL)`).Error)
 	// Soft-deleted group with same name as live group — must NOT count as dup.
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (3, 'alpha', '2024-01-01')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (3, 'alpha', '', '2024-01-01')`).Error)
 
 	require.NoError(t, ensureGroupNameIndex(db))
-	assert.True(t, indexExists(db, "uniq_groups_name_active"))
+	assert.True(t, indexExists(db, "uniq_groups_name_folded_active"))
 }
 
 // TestEnsureGroupNameIndex_S27_DuplicateActiveNamesBlocked verifies that two
@@ -174,9 +174,9 @@ func TestEnsureGroupNameIndex_S27_HappyPath(t *testing.T) {
 func TestEnsureGroupNameIndex_S27_DuplicateActiveNamesBlocked(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-dup.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'clash', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'clash', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'clash', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'clash', '', NULL)`).Error)
 
 	err = ensureGroupNameIndex(db)
 	require.Error(t, err)
@@ -188,7 +188,7 @@ func TestEnsureGroupNameIndex_S27_DuplicateActiveNamesBlocked(t *testing.T) {
 func TestEnsureGroupNameIndex_S27_Idempotent(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-idem.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, ensureGroupNameIndex(db))
 	require.NoError(t, ensureGroupNameIndex(db), "second call must be a no-op")
 }
@@ -202,11 +202,11 @@ func TestEnsureGroupNameIndex_S27_Idempotent(t *testing.T) {
 func TestEnsureUserEmailIndex_S27_HappyPath(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "email-happy.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice@example.com', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob@example.com', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice@example.com', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob@example.com', '', NULL)`).Error)
 	require.NoError(t, ensureUserEmailIndex(db))
-	assert.True(t, indexExists(db, "uniq_users_email_active"))
+	assert.True(t, indexExists(db, "uniq_users_email_folded_active"))
 }
 
 // TestEnsureUserEmailIndex_S27_DuplicateEmails verifies that two live rows with
@@ -214,9 +214,9 @@ func TestEnsureUserEmailIndex_S27_HappyPath(t *testing.T) {
 func TestEnsureUserEmailIndex_S27_DuplicateEmails(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "email-dup.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice@example.com', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'Alice@Example.Com', NULL)`).Error) // same LOWER()
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice@example.com', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'Alice@Example.Com', '', NULL)`).Error) // same LOWER()
 	err = ensureUserEmailIndex(db)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "users")
@@ -556,7 +556,7 @@ func TestSQLiteBusyTimeoutMillis_S27_Value(t *testing.T) {
 func TestEnsureGroupNameIndex_S27_DropLegacyIndexNoOp(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-droplg.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
 	// No legacy index exists — DROP IF EXISTS is a no-op.
 	require.NoError(t, ensureGroupNameIndex(db), "must succeed even without a legacy index to drop")
 }

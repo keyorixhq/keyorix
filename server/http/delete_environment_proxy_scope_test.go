@@ -21,7 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
 // createSystemWriteAndProjectSecretsDeleteTokenForEnv is
@@ -41,13 +41,13 @@ func createSystemWriteAndProjectSecretsDeleteTokenForEnv(t *testing.T, c *core.K
 	require.NoError(t, err)
 	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_env_secrets_delete@example.com", "system_viewer"))
 
-	globalRole, err := c.Storage().CreateRole(ctx, &models.Role{
-		Name: "ceiling_test_system_writer_delenv_global", Description: "test-only role: system.write only, granted globally",
-	})
+	globalRoleName, err := identity.NewFoldedName("ceiling_test_system_writer_delenv_global")
 	require.NoError(t, err)
-	scopedRole, err := c.Storage().CreateRole(ctx, &models.Role{
-		Name: "ceiling_test_system_writer_delenv_scoped", Description: "test-only role: secrets.delete only, granted at one project's scope",
-	})
+	globalRole, err := c.Storage().CreateRole(ctx, globalRoleName, "test-only role: system.write only, granted globally")
+	require.NoError(t, err)
+	scopedRoleName, err := identity.NewFoldedName("ceiling_test_system_writer_delenv_scoped")
+	require.NoError(t, err)
+	scopedRole, err := c.Storage().CreateRole(ctx, scopedRoleName, "test-only role: secrets.delete only, granted at one project's scope")
 	require.NoError(t, err)
 
 	perms, err := c.ListPermissions(ctx)

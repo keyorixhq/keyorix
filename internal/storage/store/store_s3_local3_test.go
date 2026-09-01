@@ -12,6 +12,7 @@ import (
 	"time"
 
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -231,7 +232,7 @@ func TestSecret_ListOrphanedAndCounts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Active user.
-	u := &models.User{Username: "active-u", Email: "active@example.com"}
+	u := &models.User{Username: "active-u", UsernameFolded: "active-u", Email: "active@example.com", EmailFolded: "active@example.com"}
 	require.NoError(t, ls.db.Create(u).Error)
 
 	// Secret owned by live user → not orphaned.
@@ -319,7 +320,7 @@ func TestUser_GetByEmail(t *testing.T) {
 	ls := newUsersFullStore(t)
 
 	u, err := ls.CreateUser(ctx, &models.User{
-		Username: "alice", Email: "alice@example.com",
+		Username: "alice", UsernameFolded: "alice", Email: "alice@example.com", EmailFolded: "alice@example.com",
 	})
 	require.NoError(t, err)
 
@@ -343,7 +344,7 @@ func TestUser_GetByExternalID(t *testing.T) {
 	ls := newUsersFullStore(t)
 
 	u, err := ls.CreateUser(ctx, &models.User{
-		Username: "ext-user", Email: "ext@example.com", ExternalID: "ext-123",
+		Username: "ext-user", UsernameFolded: "ext-user", Email: "ext@example.com", EmailFolded: "ext@example.com", ExternalID: "ext-123",
 	})
 	require.NoError(t, err)
 
@@ -359,7 +360,7 @@ func TestUser_LockForUpdate(t *testing.T) {
 	ctx := context.Background()
 	ls := newUsersFullStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "lock-u", Email: "lock@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "lock-u", UsernameFolded: "lock-u", Email: "lock@example.com", EmailFolded: "lock@example.com"})
 	require.NoError(t, err)
 
 	got, err := ls.LockUserForUpdate(ctx, u.ID)
@@ -374,7 +375,7 @@ func TestUser_UpdateAndSetAccountState(t *testing.T) {
 	ctx := context.Background()
 	ls := newUsersFullStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "state-u", Email: "state@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "state-u", UsernameFolded: "state-u", Email: "state@example.com", EmailFolded: "state@example.com"})
 	require.NoError(t, err)
 
 	// UpdateUser.
@@ -398,7 +399,7 @@ func TestUser_SetPasswordHash(t *testing.T) {
 	ctx := context.Background()
 	ls := newUsersFullStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "pw-u", Email: "pw@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "pw-u", UsernameFolded: "pw-u", Email: "pw@example.com", EmailFolded: "pw@example.com"})
 	require.NoError(t, err)
 
 	require.NoError(t, ls.SetPasswordHash(ctx, u.ID, "$2a$bcrypt", time.Now()))
@@ -415,7 +416,7 @@ func TestUser_UpdateLoginLockoutState(t *testing.T) {
 	ctx := context.Background()
 	ls := newUsersFullStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "lock-state-u", Email: "lockstate@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "lock-state-u", UsernameFolded: "lock-state-u", Email: "lockstate@example.com", EmailFolded: "lockstate@example.com"})
 	require.NoError(t, err)
 
 	now := time.Now()
@@ -430,7 +431,7 @@ func TestUser_DeleteAndRestore(t *testing.T) {
 	ctx := context.Background()
 	ls := newUsersFullStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "del-u", Email: "del@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "del-u", UsernameFolded: "del-u", Email: "del@example.com", EmailFolded: "del@example.com"})
 	require.NoError(t, err)
 
 	// DeleteUser (soft-delete).
@@ -463,7 +464,7 @@ func TestGroup_UpdateAndList(t *testing.T) {
 	ls := newUsersFullStore(t)
 
 	// CreateGroup (via RBAC in store_s3_local2_test.go already tests create).
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "list-group"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "list-group", NameFolded: "list-group"})
 	require.NoError(t, err)
 
 	// UpdateGroup.
@@ -506,10 +507,12 @@ func TestRBAC_RemoveAllProjectRoleGrants(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "proj-role"})
+	projRoleName, err := identity.NewFoldedName("proj-role")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, projRoleName, "")
 	require.NoError(t, err)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "proj-user", Email: "pu@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "proj-user", UsernameFolded: "proj-user", Email: "pu@example.com", EmailFolded: "pu@example.com"})
 	require.NoError(t, err)
 
 	scope1 := coreStorage.Scope{ProjectID: 1, EnvironmentID: 0}
@@ -530,10 +533,12 @@ func TestRBAC_GetUserRoleScopes(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "scope-role"})
+	scopeRoleName, err := identity.NewFoldedName("scope-role")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, scopeRoleName, "")
 	require.NoError(t, err)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "scope-user", Email: "su@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "scope-user", UsernameFolded: "scope-user", Email: "su@example.com", EmailFolded: "su@example.com"})
 	require.NoError(t, err)
 
 	require.NoError(t, ls.AssignRole(ctx, u.ID, role.ID, coreStorage.Scope{ProjectID: 5, EnvironmentID: 0}))
@@ -548,17 +553,19 @@ func TestRBAC_ListProjectRoleAssignments(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "list-role"})
+	listRoleName, err := identity.NewFoldedName("list-role")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, listRoleName, "")
 	require.NoError(t, err)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "list-user", Email: "lu@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "list-user", UsernameFolded: "list-user", Email: "lu@example.com", EmailFolded: "lu@example.com"})
 	require.NoError(t, err)
 
 	scope := coreStorage.Scope{ProjectID: 10, EnvironmentID: 0}
 	require.NoError(t, ls.AssignRole(ctx, u.ID, role.ID, scope))
 
 	// Add a group grant too.
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "list-group2"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "list-group2", NameFolded: "list-group2"})
 	require.NoError(t, err)
 	require.NoError(t, ls.AssignRoleToGroup(ctx, g.ID, role.ID, scope))
 
@@ -576,7 +583,9 @@ func TestRBAC_ListProjectMachineRoleAssignments(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "mach-role"})
+	machRoleName, err := identity.NewFoldedName("mach-role")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, machRoleName, "")
 	require.NoError(t, err)
 
 	m, err := ls.CreateMachineIdentity(ctx, &models.MachineIdentity{
@@ -602,10 +611,12 @@ func TestRBAC_IsProjectMember(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "member-role"})
+	memberRoleName, err := identity.NewFoldedName("member-role")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, memberRoleName, "")
 	require.NoError(t, err)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "member-u", Email: "member@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "member-u", UsernameFolded: "member-u", Email: "member@example.com", EmailFolded: "member@example.com"})
 	require.NoError(t, err)
 
 	// Zero projectID → always false.
@@ -630,7 +641,9 @@ func TestRBAC_RoleSetHasPermission(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "perm-role"})
+	permRoleName, err := identity.NewFoldedName("perm-role")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, permRoleName, "")
 	require.NoError(t, err)
 	perm, err := ls.CreatePermission(ctx, &models.Permission{Name: "secrets.read", Resource: "secrets", Action: "read"})
 	require.NoError(t, err)
@@ -678,9 +691,11 @@ func TestRBAC_GetGroupRoleGrants(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "grp-grants-role"})
+	grpGrantsRoleName, err := identity.NewFoldedName("grp-grants-role")
 	require.NoError(t, err)
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "grants-group"})
+	role, err := ls.CreateRole(ctx, grpGrantsRoleName, "")
+	require.NoError(t, err)
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "grants-group", NameFolded: "grants-group"})
 	require.NoError(t, err)
 
 	scope := coreStorage.Scope{ProjectID: 40, EnvironmentID: 0}
@@ -701,10 +716,12 @@ func TestRBAC_DeleteExpiredRoleGrants(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "exp-role"})
+	expRoleName, err := identity.NewFoldedName("exp-role")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, expRoleName, "")
 	require.NoError(t, err)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "exp-u", Email: "expu@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "exp-u", UsernameFolded: "exp-u", Email: "expu@example.com", EmailFolded: "expu@example.com"})
 	require.NoError(t, err)
 
 	now := time.Now()
@@ -741,10 +758,12 @@ func TestRBAC_GlobalAdmin(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACAdvancedStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "global-admin"})
+	globalAdminName, err := identity.NewFoldedName("global-admin")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, globalAdminName, "")
 	require.NoError(t, err)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "gadmin", Email: "gadmin@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "gadmin", UsernameFolded: "gadmin", Email: "gadmin@example.com", EmailFolded: "gadmin@example.com"})
 	require.NoError(t, err)
 
 	// Assign global role (scope 0/0).
@@ -759,7 +778,7 @@ func TestRBAC_GlobalAdmin(t *testing.T) {
 	assert.Len(t, rows, 1)
 
 	// Add a second admin so we can remove one safely.
-	u2, err := ls.CreateUser(ctx, &models.User{Username: "gadmin2", Email: "gadmin2@example.com"})
+	u2, err := ls.CreateUser(ctx, &models.User{Username: "gadmin2", UsernameFolded: "gadmin2", Email: "gadmin2@example.com", EmailFolded: "gadmin2@example.com"})
 	require.NoError(t, err)
 	require.NoError(t, ls.AssignRole(ctx, u2.ID, role.ID, globalScope))
 
@@ -790,7 +809,7 @@ func TestWebAuthn_Credential_CRUD(t *testing.T) {
 	ctx := context.Background()
 	ls := newWebAuthnStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "wa-user", Email: "wa@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "wa-user", UsernameFolded: "wa-user", Email: "wa@example.com", EmailFolded: "wa@example.com"})
 	require.NoError(t, err)
 
 	blob := []byte(`{"authenticator":{"signCount":10}}`)
@@ -837,7 +856,7 @@ func TestWebAuthn_AdvanceCredentialCounter(t *testing.T) {
 	ctx := context.Background()
 	ls := newWebAuthnStore(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "wa-adv", Email: "wa-adv@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "wa-adv", UsernameFolded: "wa-adv", Email: "wa-adv@example.com", EmailFolded: "wa-adv@example.com"})
 	require.NoError(t, err)
 
 	type blobT struct {
@@ -1111,7 +1130,7 @@ func TestListProjectMemberships(t *testing.T) {
 
 	p, err := ls.CreateProject(ctx, &models.Project{Name: "memb-proj"})
 	require.NoError(t, err)
-	u, err := ls.CreateUser(ctx, &models.User{Username: "memb-user", Email: "memb@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "memb-user", UsernameFolded: "memb-user", Email: "memb@example.com", EmailFolded: "memb@example.com"})
 	require.NoError(t, err)
 
 	// Add membership.

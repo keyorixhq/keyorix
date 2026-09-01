@@ -143,3 +143,11 @@ We would rather tell you these up front than have you find them:
   item.
 - **No independent certification yet** — NIS2/DORA/ISO mappings are informational;
   detailed reviewed reports are targeted for Q3 2026.
+- **`keyorix run`'s injected secrets are readable via OS process-environment
+  introspection** — for the lifetime of the child process, any process able to
+  read this OS user's process environment (e.g. another local process, or an
+  operator with shell access to the host) can read an injected secret value.
+  This is inherent to how OS environment variables work, not unique to
+  Keyorix (direnv/dotenv share it), and not fixable at the application layer
+  — `--clean-env` isolates the child from the invoking shell's leftover
+  variables, not from external process-environment readers.

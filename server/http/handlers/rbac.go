@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
@@ -145,6 +146,17 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// #1642: fold once here, use for both the reserved-name check below and
+	// the CreateRole call — a raw string can no longer reach either. This also
+	// closes a case-variant gap IsBuiltinRole's own exact map lookup left open
+	// ("Super_Admin"/"SUPER_ADMIN" never matched the reserved "super_admin"
+	// key), found while wiring this handler's identity boundary.
+	foldedName, ferr := identity.NewFoldedName(req.Name)
+	if ferr != nil {
+		sendError(w, "ValidationError", "invalid role name: "+ferr.Error(), http.StatusBadRequest, nil)
+		return
+	}
+
 	// #294: reserved role names (super_admin/admin/system_admin/project_admin/...) must
 	// never be creatable through the API. Bootstrap-seeded builtins (admin, system_admin,
 	// project_admin, ...) already collide with an existing row on the DB's unique(name)
@@ -155,7 +167,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	// by permission content, so that role — despite holding zero permissions and
 	// trivially satisfying #169's "must already hold every bundled permission" check —
 	// would function as a complete admin-bypass switch the moment it's assigned.
-	if core.IsBuiltinRole(req.Name) {
+	if core.IsBuiltinRole(foldedName.Folded()) {
 		sendError(w, "ConflictError", "this role name is reserved and cannot be created", http.StatusConflict, nil)
 		return
 	}
@@ -166,7 +178,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, err := h.coreService.Storage().CreateRole(r.Context(), &models.Role{Name: req.Name, Description: req.Description})
+	role, err := h.coreService.Storage().CreateRole(r.Context(), foldedName, req.Description)
 	if err != nil {
 		log.Printf("Error creating role: %v", err)
 		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE") {

@@ -499,8 +499,9 @@ func TestActivateBreakGlass_RejectsRoleAssignEmergencyRole(t *testing.T) {
 	makeProjectMember(t, h, 10, proj)
 
 	// A delegated, NON-admin role that nonetheless carries roles.assign (perm id 13).
-	h.ExecuteRawSQL(t, "INSERT OR IGNORE INTO roles (id, name, description) VALUES (?, ?, ?)",
-		50, "delegated_approver", "non-admin role that can assign roles")
+	// name_folded is NOT NULL (#1642); already pure-lowercase ASCII.
+	h.ExecuteRawSQL(t, "INSERT OR IGNORE INTO roles (id, name, name_folded, description) VALUES (?, ?, ?, ?)",
+		50, "delegated_approver", "delegated_approver", "non-admin role that can assign roles")
 	h.ExecuteRawSQL(t, "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)", 50, 13)
 
 	enableBreakGlass(h, "delegated_approver", 4*time.Hour, 24*time.Hour)

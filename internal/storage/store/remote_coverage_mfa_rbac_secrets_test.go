@@ -16,7 +16,7 @@ import (
 	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -473,7 +473,9 @@ func TestRemoteCov_CreateRole_APIError(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.CreateRole(context.Background(), &models.Role{Name: "admin"})
+	adminName, ferr := identity.NewFoldedName("admin")
+	require.NoError(t, ferr)
+	_, err = rs.CreateRole(context.Background(), adminName, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "create role failed")
 }
@@ -487,7 +489,9 @@ func TestRemoteCov_CreateRole_BadJSON(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.CreateRole(context.Background(), &models.Role{Name: "test"})
+	testName, ferr := identity.NewFoldedName("test")
+	require.NoError(t, ferr)
+	_, err = rs.CreateRole(context.Background(), testName, "")
 	assert.Error(t, err)
 }
 

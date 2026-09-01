@@ -12,6 +12,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -289,10 +290,11 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 
 	roleIDs := make(map[string]uint, len(defaultRoles))
 	for _, rdef := range defaultRoles {
-		role, err := c.storage.CreateRole(ctx, &models.Role{
-			Name:        rdef.Name,
-			Description: rdef.Description,
-		})
+		foldedName, ferr := identity.NewFoldedName(rdef.Name)
+		if ferr != nil {
+			return nil, fmt.Errorf("failed to normalize seed role name %s: %w", rdef.Name, ferr)
+		}
+		role, err := c.storage.CreateRole(ctx, foldedName, rdef.Description)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create role %s: %w", rdef.Name, err)
 		}

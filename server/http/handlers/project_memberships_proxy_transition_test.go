@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
@@ -40,7 +41,9 @@ func setupTransitionMembershipFixture(t *testing.T) (cs *core.KeyorixCore, membe
 	require.NoError(t, err)
 
 	if _, err := cs.Storage().GetRoleByName(ctx, "project_admin"); err != nil {
-		_, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "project_admin", Description: "test"})
+		projectAdminName, err := identity.NewFoldedName("project_admin")
+		require.NoError(t, err)
+		_, err = cs.Storage().CreateRole(ctx, projectAdminName, "test")
 		require.NoError(t, err)
 	}
 

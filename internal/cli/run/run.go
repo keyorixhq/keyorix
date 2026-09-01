@@ -59,7 +59,14 @@ Environment isolation:
     (plus a minimal PATH/HOME baseline) instead — use this when you don't
     want the child to also see whatever else is already exported in the
     invoking shell (a leftover token from a prior 'keyorix run', an
-    unrelated CI secret, etc.).`,
+    unrelated CI secret, etc.).
+  • --clean-env isolates the child from the INVOKING SHELL's leftover
+    variables only. It does not isolate the secret from other observers: for
+    the lifetime of the child process, any process able to read this OS
+    user's process environment (e.g. another local process, or an operator
+    with shell access to the host) can read the injected values — the same
+    limitation every environment-variable-based secret injector shares, not
+    something Keyorix can close.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runRun,
 }

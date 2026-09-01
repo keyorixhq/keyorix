@@ -32,6 +32,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -530,8 +531,20 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		displayName = email
 	}
 	now := c.now()
+	// #1642: SSO JIT-provisioned usernames/emails come from the IdP's own
+	// claims and bypass buildUserForCreate entirely -- fold here, mirroring
+	// ProvisionSCIMUser's identical treatment (scim.go).
+	foldedUsername, ferr := identity.NewFoldedName(username)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+	}
+	foldedEmail, ferr := identity.NewFoldedName(email)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+	}
 	created, err := c.storage.CreateUser(ctx, &models.User{
-		Username: username, Email: email, DisplayName: displayName,
+		Username: username, UsernameFolded: foldedUsername.Folded(),
+		Email: email, EmailFolded: foldedEmail.Folded(), DisplayName: displayName,
 		PasswordHash: hash, IsActive: true, AccountState: AccountActive, ExternalID: ssoExternalID(p.Name, sub),
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})

@@ -12,6 +12,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -72,6 +73,18 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
+	// #1642: fold once here, use everywhere below — the constructor is the
+	// single point every username/email must pass through before it can reach
+	// a comparison or a write, so a raw string can never bypass normalization.
+	foldedUsername, err := identity.NewFoldedName(req.Username)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+	foldedEmail, err := identity.NewFoldedName(req.Email)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+
 	displayName := req.DisplayName
 	if displayName == "" {
 		displayName = req.Username
@@ -120,7 +133,9 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	}
 	user := &models.User{
 		Username:          req.Username,
+		UsernameFolded:    foldedUsername.Folded(),
 		Email:             req.Email,
+		EmailFolded:       foldedEmail.Folded(),
 		DisplayName:       displayName,
 		PasswordHash:      string(hash),
 		IsActive:          active,
@@ -352,22 +367,42 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
 	if req.Username != "" && req.Username != user.Username {
-		if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
-			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
-		} else if !storage.IsUserNotFound(err) {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		foldedUsername, ferr := identity.NewFoldedName(req.Username)
+		if ferr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		}
+		// #1642: a rename that only changes display form/case (folds to the
+		// SAME identity the row already has, e.g. "Bob" -> "bob") must be a
+		// no-op for the uniqueness check -- otherwise GetUserByUsername would
+		// find this exact row under its own about-to-be-replaced folded value
+		// and reject the rename as "already exists" against itself. Only a
+		// genuine identity change needs the collision check.
+		if foldedUsername.Folded() != user.UsernameFolded {
+			if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
+				return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
+			} else if !storage.IsUserNotFound(err) {
+				return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			}
 		}
 		user.Username = req.Username
+		user.UsernameFolded = foldedUsername.Folded()
 	}
 	if req.Email != "" && req.Email != user.Email {
-		existing, err := c.storage.GetUserByEmail(ctx, req.Email)
-		if err == nil && existing != nil && existing.ID != user.ID {
-			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
+		foldedEmail, ferr := identity.NewFoldedName(req.Email)
+		if ferr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 		}
-		if err != nil && !storage.IsUserNotFound(err) {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		if foldedEmail.Folded() != user.EmailFolded {
+			existing, err := c.storage.GetUserByEmail(ctx, req.Email)
+			if err == nil && existing != nil && existing.ID != user.ID {
+				return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
+			}
+			if err != nil && !storage.IsUserNotFound(err) {
+				return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			}
 		}
 		user.Email = req.Email
+		user.EmailFolded = foldedEmail.Folded()
 	}
 	if req.DisplayName != "" {
 		user.DisplayName = req.DisplayName

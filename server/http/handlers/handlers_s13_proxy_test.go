@@ -22,6 +22,7 @@ import (
 	"time"
 
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1035,7 +1036,9 @@ func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
 	require.NoError(t, err)
 	// Minting a setup token requires users.write (ADR-085); seed a caller who
 	// holds it via the system_admin adminRoleNames bypass (internal/core/authz.go).
-	adminRole, err := cs.Storage().CreateRole(context.Background(), &models.Role{Name: "system_admin", Description: "admin"})
+	systemAdminName, err := identity.NewFoldedName("system_admin")
+	require.NoError(t, err)
+	adminRole, err := cs.Storage().CreateRole(context.Background(), systemAdminName, "admin")
 	require.NoError(t, err)
 	admin, err := cs.Storage().CreateUser(context.Background(), &models.User{
 		Username: "admin_s13", Email: "admin_s13@example.com", PasswordHash: "x",
@@ -1084,7 +1087,9 @@ func TestCreateSetupTokenProxy_MachineCallerAttributionDistinguishable(t *testin
 	// bypass human callers can use (ADR-030's no-bypass property).
 	perm, err := cs.Storage().CreatePermission(ctx, &models.Permission{Name: "users.write", Resource: "users", Action: "write"})
 	require.NoError(t, err)
-	role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "setup-minter-role", Description: "test"})
+	setupMinterRoleName, err := identity.NewFoldedName("setup-minter-role")
+	require.NoError(t, err)
+	role, err := cs.Storage().CreateRole(ctx, setupMinterRoleName, "test")
 	require.NoError(t, err)
 	require.NoError(t, cs.Storage().AssignPermissionToRole(ctx, role.ID, perm.ID))
 	require.NoError(t, cs.Storage().AssignMachineRole(ctx, callerMachineID, role.ID, coreStorage.Scope{}))

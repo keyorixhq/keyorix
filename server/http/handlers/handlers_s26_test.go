@@ -34,6 +34,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -1149,7 +1150,9 @@ func TestRevokeBreakGlassActivationProxy_RemovesRoleGrant(t *testing.T) {
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
 
-	role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "s26_break_glass_emergency_role"})
+	breakGlassEmergencyRoleName, err := identity.NewFoldedName("s26_break_glass_emergency_role")
+	require.NoError(t, err)
+	role, err := cs.Storage().CreateRole(ctx, breakGlassEmergencyRoleName, "")
 	require.NoError(t, err)
 	scope := core.Scope{ProjectID: 1}
 	require.NoError(t, cs.Storage().AssignRole(ctx, 1, role.ID, scope))

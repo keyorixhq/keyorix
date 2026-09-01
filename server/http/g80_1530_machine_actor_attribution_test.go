@@ -23,7 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
 func TestG80_1530_MachineActorAttribution_NonNodeServiceIdentity(t *testing.T) {
@@ -41,7 +41,9 @@ func TestG80_1530_MachineActorAttribution_NonNodeServiceIdentity(t *testing.T) {
 	mi, err := testCore.CreateMachineIdentity(ctx, projects[0].ID, "attribution-probe-service", core.MachineTypeService, "", "", admin.ID, 0)
 	require.NoError(t, err)
 
-	role, err := testCore.Storage().CreateRole(ctx, &models.Role{Name: "g80_1530_system_writer"})
+	g801530SystemWriterName, err := identity.NewFoldedName("g80_1530_system_writer")
+	require.NoError(t, err)
+	role, err := testCore.Storage().CreateRole(ctx, g801530SystemWriterName, "")
 	require.NoError(t, err)
 	perms, err := testCore.ListPermissions(ctx)
 	require.NoError(t, err)

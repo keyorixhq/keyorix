@@ -197,8 +197,8 @@ func TestListEnvironments(t *testing.T) {
 
 func TestIsDuplicateEmailViolation(t *testing.T) {
 	assert.False(t, isDuplicateEmailViolation(nil))
-	assert.True(t, isDuplicateEmailViolation(fmt.Errorf("uniq_users_email_active")))
-	assert.True(t, isDuplicateEmailViolation(fmt.Errorf("ERROR: violates unique constraint \"uniq_users_email_active\"")))
+	assert.True(t, isDuplicateEmailViolation(fmt.Errorf("uniq_users_email_folded_active")))
+	assert.True(t, isDuplicateEmailViolation(fmt.Errorf("ERROR: violates unique constraint \"uniq_users_email_folded_active\"")))
 	assert.False(t, isDuplicateEmailViolation(fmt.Errorf("some other error")))
 }
 
@@ -211,7 +211,7 @@ func TestCreateUser_Success(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "alice", Email: "alice@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "alice", UsernameFolded: "alice", Email: "alice@example.com", EmailFolded: "alice@example.com"})
 	require.NoError(t, err)
 	assert.NotZero(t, u.ID)
 }
@@ -220,7 +220,7 @@ func TestUpdateUser_Success(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "bob", Email: "bob@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "bob", UsernameFolded: "bob", Email: "bob@example.com", EmailFolded: "bob@example.com"})
 	require.NoError(t, err)
 
 	u.DisplayName = "Bobby"
@@ -236,7 +236,7 @@ func TestUpdateUserIfActiveStateMatches_Success(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "dave", Email: "dave@example.com", IsActive: true})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "dave", UsernameFolded: "dave", Email: "dave@example.com", EmailFolded: "dave@example.com", IsActive: true})
 	require.NoError(t, err)
 
 	u.IsActive = false
@@ -263,11 +263,11 @@ func TestUpdateUserIfActiveStateMatches_LostRaceReturnsFalse(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "eve", Email: "eve@example.com", IsActive: true})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "eve", UsernameFolded: "eve", Email: "eve@example.com", EmailFolded: "eve@example.com", IsActive: true})
 	require.NoError(t, err)
 
 	// First racing caller: observed IsActive=true, flips to false, wins.
-	first := &models.User{ID: u.ID, Username: u.Username, Email: u.Email, IsActive: false}
+	first := &models.User{ID: u.ID, Username: u.Username, UsernameFolded: u.UsernameFolded, Email: u.Email, EmailFolded: u.EmailFolded, IsActive: false}
 	matched, err := ls.UpdateUserIfActiveStateMatches(ctx, first, true)
 	require.NoError(t, err)
 	assert.True(t, matched, "first racing call must win")
@@ -276,7 +276,7 @@ func TestUpdateUserIfActiveStateMatches_LostRaceReturnsFalse(t *testing.T) {
 	// already committed false) and tries to persist its own unrelated field
 	// change plus a redundant IsActive=false assertion. Must lose the race, not
 	// silently re-apply its stale view over the winner's write.
-	second := &models.User{ID: u.ID, Username: u.Username, Email: u.Email, DisplayName: "Should Not Persist", IsActive: false}
+	second := &models.User{ID: u.ID, Username: u.Username, UsernameFolded: u.UsernameFolded, Email: u.Email, EmailFolded: u.EmailFolded, DisplayName: "Should Not Persist", IsActive: false}
 	matched, err = ls.UpdateUserIfActiveStateMatches(ctx, second, true)
 	require.NoError(t, err)
 	assert.False(t, matched, "second racing call must lose the race")
@@ -312,7 +312,7 @@ func TestRestoreUser_NotDeleted(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "carol", UsernameFolded: "carol", Email: "carol@example.com", EmailFolded: "carol@example.com"})
 	require.NoError(t, err)
 
 	// User not soft-deleted → returns not-found sentinel (RowsAffected == 0).
@@ -326,9 +326,9 @@ func TestListUsers_Filters(t *testing.T) {
 	ls := newUserS4Store(t)
 
 	active := true
-	u1, err := ls.CreateUser(ctx, &models.User{Username: "u1fil", Email: "u1fil@example.com", IsActive: true})
+	u1, err := ls.CreateUser(ctx, &models.User{Username: "u1fil", UsernameFolded: "u1fil", Email: "u1fil@example.com", EmailFolded: "u1fil@example.com", IsActive: true})
 	require.NoError(t, err)
-	u2, err := ls.CreateUser(ctx, &models.User{Username: "u2fil", Email: "u2fil@example.com", IsActive: true})
+	u2, err := ls.CreateUser(ctx, &models.User{Username: "u2fil", UsernameFolded: "u2fil", Email: "u2fil@example.com", EmailFolded: "u2fil@example.com", IsActive: true})
 	require.NoError(t, err)
 
 	// Deactivate u2 via direct DB update to avoid GORM zero-value issue.
@@ -353,9 +353,9 @@ func TestListUsers_UsernameEmailFilter(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	_, err := ls.CreateUser(ctx, &models.User{Username: "dave", Email: "dave@example.com"})
+	_, err := ls.CreateUser(ctx, &models.User{Username: "dave", UsernameFolded: "dave", Email: "dave@example.com", EmailFolded: "dave@example.com"})
 	require.NoError(t, err)
-	_, err = ls.CreateUser(ctx, &models.User{Username: "eve", Email: "eve@example.com"})
+	_, err = ls.CreateUser(ctx, &models.User{Username: "eve", UsernameFolded: "eve", Email: "eve@example.com", EmailFolded: "eve@example.com"})
 	require.NoError(t, err)
 
 	uname := "dave"
@@ -375,7 +375,7 @@ func TestListUsers_CreatedAfterFilter(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	_, err := ls.CreateUser(ctx, &models.User{Username: "frank", Email: "frank@example.com"})
+	_, err := ls.CreateUser(ctx, &models.User{Username: "frank", UsernameFolded: "frank", Email: "frank@example.com", EmailFolded: "frank@example.com"})
 	require.NoError(t, err)
 
 	past := time.Now().Add(-24 * time.Hour)
@@ -398,7 +398,7 @@ func TestListUsers_InactiveSinceFilter(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "grace", Email: "grace@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "grace", UsernameFolded: "grace", Email: "grace@example.com", EmailFolded: "grace@example.com"})
 	require.NoError(t, err)
 
 	// InactiveSince: never logged in (LastLoginAt = nil) → returned.
@@ -416,8 +416,10 @@ func TestListUsers_OffsetParam(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		_, err := ls.CreateUser(ctx, &models.User{
-			Username: fmt.Sprintf("puser%d", i),
-			Email:    fmt.Sprintf("puser%d@example.com", i),
+			Username:       fmt.Sprintf("puser%d", i),
+			UsernameFolded: fmt.Sprintf("puser%d", i),
+			Email:          fmt.Sprintf("puser%d@example.com", i),
+			EmailFolded:    fmt.Sprintf("puser%d@example.com", i),
 		})
 		require.NoError(t, err)
 	}
@@ -437,7 +439,7 @@ func TestGroup_CRUD(t *testing.T) {
 	ls := newUserS4Store(t)
 
 	// Create.
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "eng"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "eng", NameFolded: "eng"})
 	require.NoError(t, err)
 	assert.NotZero(t, g.ID)
 
@@ -505,9 +507,9 @@ func TestGroup_UserMembership(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "henry", Email: "henry@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "henry", UsernameFolded: "henry", Email: "henry@example.com", EmailFolded: "henry@example.com"})
 	require.NoError(t, err)
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "ops"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "ops", NameFolded: "ops"})
 	require.NoError(t, err)
 
 	// AddUserToGroup (global: projectID=0).
@@ -557,7 +559,7 @@ func TestListGroupsPage_Offset(t *testing.T) {
 	ls := newUserS4Store(t)
 
 	for i := 0; i < 3; i++ {
-		_, err := ls.CreateGroup(ctx, &models.Group{Name: fmt.Sprintf("g%d", i)})
+		_, err := ls.CreateGroup(ctx, &models.Group{Name: fmt.Sprintf("g%d", i), NameFolded: fmt.Sprintf("g%d", i)})
 		require.NoError(t, err)
 	}
 
@@ -572,7 +574,7 @@ func TestAddUserToGroup_UserNotFound(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "admins"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "admins", NameFolded: "admins"})
 	require.NoError(t, err)
 
 	err = ls.AddUserToGroup(ctx, 99999, g.ID, 0)
@@ -583,7 +585,7 @@ func TestAddUserToGroup_GroupNotFound(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u, err := ls.CreateUser(ctx, &models.User{Username: "ivan", Email: "ivan@example.com"})
+	u, err := ls.CreateUser(ctx, &models.User{Username: "ivan", UsernameFolded: "ivan", Email: "ivan@example.com", EmailFolded: "ivan@example.com"})
 	require.NoError(t, err)
 
 	err = ls.AddUserToGroup(ctx, u.ID, 99999, 0)
@@ -598,13 +600,13 @@ func TestListGroupMembersByGroupIDsS4(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)
 
-	u1, err := ls.CreateUser(ctx, &models.User{Username: "jill", Email: "jill@example.com"})
+	u1, err := ls.CreateUser(ctx, &models.User{Username: "jill", UsernameFolded: "jill", Email: "jill@example.com", EmailFolded: "jill@example.com"})
 	require.NoError(t, err)
-	u2, err := ls.CreateUser(ctx, &models.User{Username: "jack", Email: "jack@example.com"})
+	u2, err := ls.CreateUser(ctx, &models.User{Username: "jack", UsernameFolded: "jack", Email: "jack@example.com", EmailFolded: "jack@example.com"})
 	require.NoError(t, err)
-	g1, err := ls.CreateGroup(ctx, &models.Group{Name: "g1"})
+	g1, err := ls.CreateGroup(ctx, &models.Group{Name: "g1", NameFolded: "g1"})
 	require.NoError(t, err)
-	g2, err := ls.CreateGroup(ctx, &models.Group{Name: "g2"})
+	g2, err := ls.CreateGroup(ctx, &models.Group{Name: "g2", NameFolded: "g2"})
 	require.NoError(t, err)
 
 	require.NoError(t, ls.AddUserToGroup(ctx, u1.ID, g1.ID, 0))

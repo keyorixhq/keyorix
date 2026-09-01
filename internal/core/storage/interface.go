@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -983,7 +984,19 @@ type Storage interface {
 	AssignPermissionToRole(ctx context.Context, roleID, permissionID uint) error
 
 	// Role Management
-	CreateRole(ctx context.Context, role *models.Role) (*models.Role, error)
+	//
+	// CreateRole takes a typed identity.FoldedName, not a raw string or a
+	// pre-built *models.Role, deliberately (#1642): both server/http and
+	// server/grpc's role-creation handlers call this directly, bypassing
+	// internal/core entirely (no length cap, no charset check, no
+	// normalization of any kind existed before this). Patching each of those
+	// two known call sites to construct a FoldedName themselves would still
+	// let a third, future caller bypass it again by passing a raw string —
+	// putting the typed parameter in the signature makes every caller,
+	// present and future, go through identity.NewFoldedName's validation
+	// (which also rejects control characters and bidi-override characters as
+	// part of the PRECIS profile) or fail to compile.
+	CreateRole(ctx context.Context, name identity.FoldedName, description string) (*models.Role, error)
 	GetRole(ctx context.Context, id uint) (*models.Role, error)
 	GetRoleByName(ctx context.Context, name string) (*models.Role, error)
 	UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error)

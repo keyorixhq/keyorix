@@ -33,8 +33,10 @@ func newSCIMGuardCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 func TestUpdateSCIMUser_RejectsEmailCollision(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin@x.io", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "bob@x.io", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
+	// EmailFolded is what the collision check's GetUserByEmail actually
+	// queries (#1642); both addresses are already their own folded form.
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", UsernameFolded: "admin", Email: "admin@x.io", EmailFolded: "admin@x.io", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", UsernameFolded: "bob", Email: "bob@x.io", EmailFolded: "bob@x.io", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
 
 	adminEmail := "admin@x.io"
 	_, err := c.UpdateSCIMUser(ctx, 9, 2, nil, &adminEmail, nil)
@@ -247,18 +249,20 @@ func TestLocalStorage_UpdateUser_DuplicateEmailWrapsSentinel(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	_ = c
 	// Install the same partial unique index production installs get (mirrors
-	// factory.go's ensureUserEmailIndex), since newSCIMGuardCore's in-memory AutoMigrate
-	// doesn't run the storage-factory migration path that creates it.
-	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
-		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
+	// factory.go's ensureUserEmailIndex — #1642: on email_folded, not a
+	// SQL-side LOWER(email) expression), since newSCIMGuardCore's in-memory
+	// AutoMigrate doesn't run the storage-factory migration path that creates it.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_folded_active "+
+		"ON users (email_folded) WHERE deleted_at IS NULL AND email <> ''").Error)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@x.io", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "bob@x.io", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", Email: "alice@x.io", EmailFolded: "alice@x.io", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", UsernameFolded: "bob", Email: "bob@x.io", EmailFolded: "bob@x.io", IsActive: true, AccountState: AccountActive}).Error)
 
 	ls := store.NewLocalStorage(db)
 	u2, err := ls.GetUser(ctx, 2)
 	require.NoError(t, err)
 	u2.Email = "alice@x.io" // collides with user 1
+	u2.EmailFolded = "alice@x.io"
 	_, err = ls.UpdateUser(ctx, u2)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, corestorage.ErrDuplicateEmail),

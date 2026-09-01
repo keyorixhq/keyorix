@@ -38,7 +38,7 @@ func TestResolveUserID_ExistingEmail(t *testing.T) {
 	svc, st := newTestRequestCore(t)
 	ctx := context.Background()
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "bob", Email: "bob@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, &models.User{Username: "bob", UsernameFolded: "bob", Email: "bob@example.com", EmailFolded: "bob@example.com", IsActive: true})
 	require.NoError(t, err)
 
 	id, err := resolveUserID(ctx, svc, "bob@example.com")
