@@ -40,7 +40,7 @@ var ErrRoleValidation = errors.New("role validation")
 type roleValidationError struct{ err error }
 
 func (e *roleValidationError) Error() string        { return e.err.Error() }
-func (e *roleValidationError) Unwrap() error         { return e.err }
+func (e *roleValidationError) Unwrap() error        { return e.err }
 func (e *roleValidationError) Is(target error) bool { return target == ErrRoleValidation }
 
 // WrapRoleValidation marks err as an ErrRoleValidation match for errors.Is,
