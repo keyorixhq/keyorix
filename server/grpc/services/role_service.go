@@ -423,7 +423,12 @@ func mapRoleError(err error) error {
 	// string), which is safe content but not a "known safe sentinel with a
 	// fixed string" the rule's nosemgrep exception covers, so it goes
 	// through mapRoleError like every other case instead of being
-	// special-cased.
+	// special-cased. (An earlier fix on main took the sentinel route --
+	// wrapping CreateRole's validation errors in a core.ErrRoleValidation
+	// marker checked via errors.Is -- but this fixed-message approach is
+	// simpler, matches every other case in this switch, and needs no
+	// wrapper type; the sentinel machinery was removed from
+	// internal/core/rbac_roles.go when resolving this conflict.)
 	case strings.Contains(msg, "validation"):
 		return status.Error(codes.InvalidArgument, "invalid role name or description")
 	case strings.Contains(msg, "built-in"):
