@@ -692,11 +692,6 @@ var rawStorageBypassAllowlist = map[string]string{
 	"UpdateWebAuthnCredentialProxy": "no-independent-ceiling: the proxy's own doc comment establishes it backs " +
 		"rejectIfCloned's best-effort 'mark disabled' write -- a defensive, capability-REDUCING action (disabling " +
 		"a suspected-cloned credential), not an authorization gate to bypass.",
-	"CreateRole": "no-independent-ceiling: the exported wrapper reachable via one hop is bootstrapSystemLocked " +
-		"(internal/core/auth_bootstrap.go:226-292, called only from system-init bootstrap), which creates a FIXED, " +
-		"hardcoded set of default roles -- unrelated in content to this HTTP route's actual authorization gate " +
-		"(RequirePermission(permRolesWrite), router.go:962), which already independently governs arbitrary " +
-		"caller-supplied role creation.",
 	"ExpireSetupTokenProxy": "no-independent-ceiling: marking a setup token expired only REDUCES future capability " +
 		"(revokes an outstanding token early) -- there is no privilege to gain by skipping whatever ceiling " +
 		"inspectActiveSetupToken's lazy-expiry path would otherwise apply, since expiry is itself the safe " +
@@ -1115,24 +1110,22 @@ var rawStorageBypassAllowlist = map[string]string{
 	// ReleaseSchedulerLockProxy/DeleteMFAStepUpGrantsForProxy were removed
 	// outright under #1480, no live caller): verified individually below, not
 	// assumed safe by pattern-matching the shape.
-	// UpdateRole/DeleteRole are NOT /system proxies -- they're the original
-	// human-facing RBAC handlers (server/http/handlers/rbac.go, registered at
-	// PUT/DELETE /api/v1/roles/{id}, gated by RequirePermission(permRolesWrite),
-	// router.go:974-975), newly flagged by this guard's repo-wide scope now that
-	// "no wrapper" no longer means "not considered." internal/core has no
-	// exported wrapper for role update/delete at all -- there is no separate
-	// operation for this raw call to bypass, matching the existing "CreateRole"
-	// entry above exactly (same file, same absence of a core-level equivalent,
-	// same reasoning). Each handler carries its own built-in-role protection
-	// inline (core.IsBuiltinRole check, rbac.go:328/426) and, for UpdateRole,
-	// its own permission-bundling authorization (authorizeAndCollectPermissions,
-	// rbac.go:374-391) before ever reaching the raw call.
-	"UpdateRole": "no-independent-ceiling: internal/core has no exported wrapper for role update at all (same " +
-		"absence as the existing \"CreateRole\" entry above) -- this route (PUT /api/v1/roles/{id}, " +
-		"RequirePermission(permRolesWrite)) IS the authoritative implementation, with its own built-in-role guard " +
-		"(rbac.go:328) and permission-bundling authorization (rbac.go:374-391) already inline.",
-	"DeleteRole": "no-independent-ceiling: same reasoning as UpdateRole immediately above -- no core-level " +
-		"equivalent exists to bypass; this route's own built-in-role guard (rbac.go:426) already runs inline.",
+	// DeleteRole is NOT a /system proxy -- it's the original human-facing RBAC
+	// handler (server/http/handlers/rbac.go, registered at DELETE
+	// /api/v1/roles/{id}, gated by RequirePermission(permRolesWrite),
+	// router.go:975), flagged by this guard's repo-wide scope now that "no
+	// wrapper" no longer means "not considered." internal/core has no exported
+	// wrapper for role deletion at all -- there is no separate operation for
+	// this raw call to bypass. The handler carries its own built-in-role
+	// protection inline (core.IsBuiltinRole check, rbac.go:426) before ever
+	// reaching the raw call. (CreateRole/UpdateRole used to be listed here
+	// too, with the identical "no core wrapper" reasoning -- #1660 gave both
+	// a real internal/core.CreateRole/UpdateRole wrapper, so their raw
+	// storage calls are gone, not merely justified; removed from this list
+	// rather than re-justified.)
+	"DeleteRole": "no-independent-ceiling: internal/core has no exported wrapper for role deletion at all -- " +
+		"this route (DELETE /api/v1/roles/{id}, RequirePermission(permRolesWrite)) IS the authoritative " +
+		"implementation, with its own built-in-role guard (rbac.go:426) already inline.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by

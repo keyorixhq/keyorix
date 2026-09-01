@@ -21,7 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/identity"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
@@ -146,44 +146,33 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// #1642: fold once here, use for both the reserved-name check below and
-	// the CreateRole call — a raw string can no longer reach either. This also
-	// closes a case-variant gap IsBuiltinRole's own exact map lookup left open
-	// ("Super_Admin"/"SUPER_ADMIN" never matched the reserved "super_admin"
-	// key), found while wiring this handler's identity boundary.
-	foldedName, ferr := identity.NewFoldedName(req.Name)
-	if ferr != nil {
-		sendError(w, "ValidationError", "invalid role name: "+ferr.Error(), http.StatusBadRequest, nil)
-		return
-	}
-
-	// #294: reserved role names (super_admin/admin/system_admin/project_admin/...) must
-	// never be creatable through the API. Bootstrap-seeded builtins (admin, system_admin,
-	// project_admin, ...) already collide with an existing row on the DB's unique(name)
-	// constraint, but "super_admin" and "auditor" are pinned as builtin/reserved (see
-	// IsBuiltinRole) WITHOUT ever being seeded — nothing previously stopped a roles.write
-	// holder from creating an empty-permission role literally named "super_admin".
-	// roleSetContainsAdmin (authz.go) grants a full admin bypass by NAME match alone, not
-	// by permission content, so that role — despite holding zero permissions and
-	// trivially satisfying #169's "must already hold every bundled permission" check —
-	// would function as a complete admin-bypass switch the moment it's assigned.
-	if core.IsBuiltinRole(foldedName.Folded()) {
-		sendError(w, "ConflictError", "this role name is reserved and cannot be created", http.StatusConflict, nil)
-		return
-	}
-
 	// #169: resolve + authorize every requested permission BEFORE creating anything.
 	toAssign, handled := h.resolveAndAuthorizePermissions(w, r, userCtx.UserID, req.Permissions)
 	if handled {
 		return
 	}
 
-	role, err := h.coreService.Storage().CreateRole(r.Context(), foldedName, req.Description)
+	// #1660: core.CreateRole is the single place that folds the name (identity.
+	// NewFoldedName — #1642), rejects reserved built-in names (#294:
+	// roleSetContainsAdmin in authz.go grants a full admin bypass by NAME match
+	// alone, so a caller-created row named e.g. "super_admin" would function as
+	// a complete admin-bypass switch the moment it's assigned, even with zero
+	// permissions of its own), and audits the creation — previously duplicated
+	// per-transport (this handler and the gRPC RoleGRPCService each called
+	// storage.CreateRole directly, bypassing internal/core's validation layer
+	// entirely).
+	role, err := h.coreService.CreateRole(r.Context(), userCtx.UserID, req.Name, req.Description)
 	if err != nil {
 		log.Printf("Error creating role: %v", err)
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "reserved"):
+			sendError(w, "ConflictError", "this role name is reserved and cannot be created", http.StatusConflict, nil)
+		case strings.Contains(msg, "already exists"), strings.Contains(msg, "UNIQUE"):
 			sendError(w, "ConflictError", "Role with this name already exists", http.StatusConflict, nil)
-		} else {
+		case strings.Contains(msg, i18n.T("ErrorValidation", nil)):
+			sendError(w, "ValidationError", msg, http.StatusBadRequest, nil)
+		default:
 			sendError(w, "InternalError", "Failed to create role", http.StatusInternalServerError, nil)
 		}
 		return
@@ -200,7 +189,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.coreService.LogRoleCreated(r.Context(), userCtx.UserID, role.ID, role.Name)
+	// core.CreateRole already audited the role.created event above.
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, map[string]any{"role": role, "permissions": assignedPerms}, "Role created successfully")
 }
@@ -329,20 +318,6 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 		}
 		return
 	}
-	// A built-in role must not be mutable through the API — mirrors the CreateRole/
-	// DeleteRole guards below/above. replaceRolePermissions unconditionally strips a
-	// role's entire current permission set before re-adding the caller-supplied one, so
-	// without this check a roles.write holder could shrink e.g. admin/system_admin down
-	// to whatever subset they hold themselves, silently locking out every administrator
-	// who relies on that built-in role. The gRPC RoleGRPCService.UpdateRole applies the
-	// identical guard (server/grpc/services/role_service.go); without it here the guard
-	// is bypassable by switching transport.
-	if core.IsBuiltinRole(role.Name) {
-		h.coreService.LogRoleUpdateDenied(r.Context(), userCtx.UserID, role.ID, role.Name, "target is a built-in role")
-		sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
-		return
-	}
-
 	// #169: resolve + authorize every requested permission BEFORE touching the
 	// role's existing permission set — otherwise a request naming even one
 	// permission the actor doesn't hold would strip the role's current permissions
@@ -368,12 +343,25 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	if req.Description != nil {
 		role.Description = *req.Description
 	}
-	if _, err := h.coreService.Storage().UpdateRole(r.Context(), role); err != nil {
+	// #1660: core.UpdateRole is the single place that rejects mutating a
+	// built-in role (replaceRolePermissions below unconditionally strips a
+	// role's entire current permission set before re-adding the caller-
+	// supplied one, so without this guard a roles.write holder could shrink
+	// e.g. admin/system_admin down to whatever subset they hold themselves,
+	// silently locking out every administrator who relies on that built-in
+	// role) and audits the update — previously duplicated per-transport, the
+	// same shape CreateRole had (see its own #1660 comment above).
+	updated, err := h.coreService.UpdateRole(r.Context(), userCtx.UserID, role)
+	if err != nil {
 		log.Printf("Error updating role: %v", err)
-		sendError(w, "InternalError", "Failed to update role", http.StatusInternalServerError, nil)
+		if strings.Contains(err.Error(), "built-in") {
+			sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
+		} else {
+			sendError(w, "InternalError", "Failed to update role", http.StatusInternalServerError, nil)
+		}
 		return
 	}
-	h.coreService.LogRoleUpdated(r.Context(), userCtx.UserID, role.ID, role.Name)
+	role = updated
 
 	// Replace permissions if provided.
 	if req.Permissions != nil {
