@@ -169,7 +169,12 @@ func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Stora
 		return f.createRemoteStorage(cfg)
 	case "postgres", "postgresql":
 		return f.createPostgresStorage(cfg)
-	case "local", "":
+	// #1640: "sqlite" is an accepted alias for "local" (the shipped
+	// configs/keyorix.yaml.tpl documents "sqlite" as the value to set,
+	// matching the "postgres"/"postgresql" dual-spelling precedent above --
+	// operators write the storage engine's name, not this codebase's
+	// internal term for it).
+	case "local", "sqlite", "":
 		return f.createLocalStorage(cfg)
 	default:
 		// #463: defense in depth. Config.Validate() rejects an unrecognized

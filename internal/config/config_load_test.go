@@ -259,16 +259,27 @@ func TestValidate_AcceptsValidStorageTypes(t *testing.T) {
 	// TestValidate_RejectsRemoteStorageWithNoServerEnabled's comment) and now rejects
 	// "remote" unconditionally, since it's the one storage type this validator's own
 	// caller (server/main.go) can never legitimately back a server process with.
-	for _, storageType := range []string{"", "local", "postgres", "postgresql"} {
+	for _, storageType := range []string{"", "local", "sqlite", "postgres", "postgresql"} {
 		c := &Config{}
 		c.Storage.Type = storageType
 		switch storageType {
 		case "postgres", "postgresql":
 			c.Storage.Database.DSN = "postgres://user:pass@localhost/db"
-		case "local", "":
+		case "local", "sqlite", "":
 			c.Storage.Database.Path = "/tmp/keyorix.db"
 		}
 		err := c.Validate()
 		require.NoErrorf(t, err, "storage.type %q should be accepted", storageType)
 	}
+}
+
+// TestValidate_SqliteAliasForLocal is #1640's regression: configs/keyorix.yaml.tpl
+// documents storage.type: sqlite, but until this fix only "local" validated —
+// copying the shipped template verbatim and leaving it as documented failed
+// outright at startup.
+func TestValidate_SqliteAliasForLocal(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = "sqlite"
+	c.Storage.Database.Path = "/tmp/keyorix.db"
+	require.NoError(t, c.Validate())
 }
