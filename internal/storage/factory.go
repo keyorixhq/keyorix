@@ -1839,7 +1839,7 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	// Drop the legacy plain unique index from the old `unique` tag, and the
 	// raw-name (exact-match, pre-#1642) partial index this replaces.
 	for _, idx := range []string{"uni_groups_name", "uniq_groups_name_active"} {
-		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil {
+		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- idx ranges over the two-element hardcoded literal above, never external input
 			return fmt.Errorf("failed to drop legacy groups name index %q: %w", idx, err)
 		}
 	}
@@ -1934,7 +1934,7 @@ func ensureUserNameIndex(db *gorm.DB) error {
 	// Drop the legacy plain unique index. GORM's `uniqueIndex` tag names it
 	// idx_users_username; the older `unique` tag would be uni_users_username. Drop both.
 	for _, idx := range []string{"idx_users_username", "uni_users_username", "uniq_users_username_active"} {
-		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil {
+		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- idx ranges over the hardcoded literal above, never external input
 			return fmt.Errorf("failed to drop legacy users username index %q: %w", idx, err)
 		}
 	}
