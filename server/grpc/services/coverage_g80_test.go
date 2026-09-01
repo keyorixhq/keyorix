@@ -9,6 +9,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -286,6 +287,28 @@ func TestEnforceProjectMFAForProjects_SkipsZeroAndDuplicateIDs(t *testing.T) {
 // ---------------------------------------------------------------------------
 // secret_service.go
 // ---------------------------------------------------------------------------
+
+// TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText proves the
+// concrete leak scenario mapSecretACLError's "invalid"/"required" branch is
+// exposed to: secret_acl.go wraps CreateOrUpdateSecretACL/DeleteSecretACL's
+// raw storage error with "%s: %w" (ErrorStorageFailed/ErrorRetrievalFailed
+// prefix), and a real SQL/driver error can coincidentally contain "invalid"
+// or "required" as a substring (e.g. Postgres' "invalid input syntax for
+// type integer", or a NOT NULL constraint mentioning a "required" column) —
+// which would classify as InvalidArgument and, before this fix, echo the
+// raw driver text straight to the gRPC client. Asserting only the status
+// code (as the sibling classification table test does) can't catch this —
+// only checking the message content can.
+func TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText(t *testing.T) {
+	rawDriverErr := errors.New(`pq: invalid input syntax for type integer: "abc"`)
+	wrapped := fmt.Errorf("%s: %w", "Storage operation failed", rawDriverErr)
+
+	got := mapSecretACLError(wrapped)
+	require.Error(t, got)
+	assert.Equal(t, codes.InvalidArgument, status.Code(got))
+	assert.NotContains(t, status.Convert(got).Message(), "pq:", "raw driver error text must not reach the client")
+	assert.NotContains(t, status.Convert(got).Message(), "abc", "the caller-irrelevant driver detail must not reach the client")
+}
 
 // mapSecretACLError's classification switch — only the default/NotFound
 // branches are exercised by secret_acl_service_test.go; directly drive the

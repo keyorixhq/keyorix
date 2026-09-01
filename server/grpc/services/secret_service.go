@@ -469,10 +469,17 @@ func mapSecretACLError(err error) error {
 	switch {
 	case strings.Contains(msg, "not found"):
 		return status.Error(codes.NotFound, "ACL or secret not found")
+	// "invalid"/"required" don't only match GrantSecretACL's own validation
+	// messages (invalid permission, missing IDs) -- CreateOrUpdateSecretACL's
+	// storage-layer failure is also routed through this classifier
+	// (secret_acl.go's "%w"-wrapped ErrorStorageFailed/ErrorRetrievalFailed
+	// paths), and a raw SQL/driver error can coincidentally contain either
+	// word. Fixed message, not msg, so a driver error never reaches the
+	// client verbatim (matches mapUserError's GRPC-003 remediation).
 	case strings.Contains(msg, "invalid"), strings.Contains(msg, "required"):
-		return status.Error(codes.InvalidArgument, msg)
+		return status.Error(codes.InvalidArgument, "invalid ACL request")
 	case strings.Contains(msg, "not authorized"):
-		return status.Error(codes.PermissionDenied, msg)
+		return status.Error(codes.PermissionDenied, "not authorized to manage this secret's ACLs")
 	default:
 		return status.Error(codes.Internal, "ACL operation failed")
 	}
@@ -514,10 +521,15 @@ func mapSecretError(err error) error {
 		return status.Error(codes.PermissionDenied, "access denied to this secret")
 	case strings.Contains(msg, "already exists"):
 		return status.Error(codes.AlreadyExists, "secret with this name already exists")
+	// Fixed message, not msg -- these are genuinely safe caller-echo validation
+	// text today (rotation_executor.go), but "exceeds" in particular is used
+	// for dozens of unrelated validations across internal/core; matching a
+	// coincidental substring in some future wrapped error must not turn into
+	// a raw-error leak here (matches mapUserError's GRPC-003 remediation).
 	case strings.Contains(msg, "unknown rotation charset"), strings.Contains(msg, "out of range"),
 		strings.Contains(msg, "must be set together"), strings.Contains(msg, "unknown rotation backend"),
 		strings.Contains(msg, "no rotation backends"), strings.Contains(msg, "exceeds"):
-		return status.Error(codes.InvalidArgument, msg)
+		return status.Error(codes.InvalidArgument, "invalid rotation configuration")
 	default:
 		return status.Error(codes.Internal, "secret operation failed")
 	}
