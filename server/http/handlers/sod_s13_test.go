@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,7 +139,9 @@ func TestCreateSoDPolicyProxy_MissingFields_S13(t *testing.T) {
 func TestCreateSoDPolicyProxy_HappyPath_S13(t *testing.T) {
 	h := newCatalogHandlerSoDSodS13(t)
 	ctx := context.Background()
-	adminRole, err := h.coreService.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "Administrator"})
+	systemAdminName, err := identity.NewFoldedName("system_admin")
+	require.NoError(t, err)
+	adminRole, err := h.coreService.Storage().CreateRole(ctx, systemAdminName, "Administrator")
 	require.NoError(t, err)
 	require.NoError(t, h.coreService.Storage().AssignRole(ctx, 1, adminRole.ID, storage.Scope{}))
 

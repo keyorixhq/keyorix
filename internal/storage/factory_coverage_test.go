@@ -327,6 +327,7 @@ func TestMigrateDatabase_Cov_GroupsElseBranch_DeletedAtPresent(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE groups (
 		id          INTEGER PRIMARY KEY,
 		name        TEXT    NOT NULL,
+		name_folded TEXT,
 		description TEXT,
 		created_at  DATETIME,
 		updated_at  DATETIME,
@@ -339,7 +340,7 @@ func TestMigrateDatabase_Cov_GroupsElseBranch_DeletedAtPresent(t *testing.T) {
 
 	assert.True(t, columnExists(db, "groups", "deleted_at"))
 	// ensureGroupNameIndex must have run and created the partial unique index.
-	assert.True(t, indexExists(db, "uniq_groups_name_active"),
+	assert.True(t, indexExists(db, "uniq_groups_name_folded_active"),
 		"ensureGroupNameIndex must be called in the groupsExists branch")
 }
 
@@ -489,18 +490,24 @@ func TestMigrateDatabase_Cov_EnsureUserEmailIndex_DuplicateEmails(t *testing.T) 
 	require.NoError(t, err)
 
 	// Pre-create users with unique usernames (so ensureUserNameIndex succeeds)
-	// but duplicate non-empty emails (so ensureUserEmailIndex fails).
+	// but duplicate non-empty emails (so ensureUserEmailIndex fails). username_folded/
+	// email_folded (#1642) are left blank so backfillFoldedColumn computes them:
+	// the two distinct usernames fold to distinct values (no collision), but the
+	// two identical emails fold to the same value, so backfillFoldedColumn's own
+	// collision refusal is what actually fails ensureUserEmailIndex here.
 	require.NoError(t, db.Exec(`CREATE TABLE users (
 		id         INTEGER PRIMARY KEY,
 		username   TEXT NOT NULL,
+		username_folded TEXT,
 		email      TEXT,
+		email_folded TEXT,
 		deleted_at DATETIME,
 		external_id TEXT NOT NULL DEFAULT ''
 	)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users (id, username, email, deleted_at, external_id)
-		VALUES (1, 'alice', 'dup@example.com', NULL, '')`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users (id, username, email, deleted_at, external_id)
-		VALUES (2, 'bob', 'dup@example.com', NULL, '')`).Error) // same email = duplicate
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, username_folded, email, email_folded, deleted_at, external_id)
+		VALUES (1, 'alice', '', 'dup@example.com', '', NULL, '')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, username_folded, email, email_folded, deleted_at, external_id)
+		VALUES (2, 'bob', '', 'dup@example.com', '', NULL, '')`).Error) // same email = duplicate
 
 	f := &DefaultStorageFactory{}
 	err = f.migrateDatabase(db)
@@ -528,17 +535,24 @@ func TestMigrateDatabase_Cov_EnsureUserExternalIDIndex_DuplicateExternalIDs(t *t
 	//   - unique usernames (ensureUserNameIndex succeeds)
 	//   - distinct/empty emails (ensureUserEmailIndex succeeds)
 	//   - duplicate non-empty external_ids (ensureUserExternalIDIndex fails)
+	// username_folded/email_folded (#1642) are left blank so backfillFoldedColumn
+	// computes them; the distinct usernames and distinct emails fold to distinct
+	// values, so neither ensureUserNameIndex nor ensureUserEmailIndex errors here.
+	// external_id has no folded counterpart (identity.NewFoldedName is for
+	// human-verified identity, not SCIM addresses), so this part is unaffected.
 	require.NoError(t, db.Exec(`CREATE TABLE users (
 		id          INTEGER PRIMARY KEY,
 		username    TEXT NOT NULL,
+		username_folded TEXT,
 		email       TEXT,
+		email_folded TEXT,
 		deleted_at  DATETIME,
 		external_id TEXT NOT NULL DEFAULT ''
 	)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users (id, username, email, deleted_at, external_id)
-		VALUES (1, 'alice', 'alice@example.com', NULL, 'scim-1234')`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users (id, username, email, deleted_at, external_id)
-		VALUES (2, 'bob', 'bob@example.com', NULL, 'scim-1234')`).Error) // same external_id
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, username_folded, email, email_folded, deleted_at, external_id)
+		VALUES (1, 'alice', '', 'alice@example.com', '', NULL, 'scim-1234')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, username_folded, email, email_folded, deleted_at, external_id)
+		VALUES (2, 'bob', '', 'bob@example.com', '', NULL, 'scim-1234')`).Error) // same external_id
 
 	f := &DefaultStorageFactory{}
 	err = f.migrateDatabase(db)

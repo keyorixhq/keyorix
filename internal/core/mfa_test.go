@@ -31,7 +31,7 @@ func newMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 		&models.MFARecoveryCode{}, &models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
 		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
 	hash, _ := bcrypt.GenerateFromPassword([]byte(mfaTestPassword), bcrypt.DefaultCost)
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", Email: "a@b.com", EmailFolded: "a@b.com",
 		PasswordHash: string(hash), AccountState: "active"}).Error)
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())

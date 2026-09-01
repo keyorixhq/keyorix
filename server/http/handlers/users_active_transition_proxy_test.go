@@ -169,7 +169,7 @@ func TestUpdateUserIfActiveStateMatchesProxy_DuplicateEmail(t *testing.T) {
 	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users(email) WHERE deleted_at IS NULL AND email != ''")
 
 	require.NoError(t, db.Create(&models.User{
-		ID: 2, Username: "other_user", Email: "taken@example.com", IsActive: true,
+		ID: 2, Username: "other_user", UsernameFolded: "other_user", Email: "taken@example.com", EmailFolded: "taken@example.com", IsActive: true,
 	}).Error)
 
 	h, err := NewUserHandler(cs)
@@ -211,7 +211,7 @@ func TestUpdateUserIfActiveStateMatchesProxy_DuplicateEmail(t *testing.T) {
 func TestUpdateUserIfActiveStateMatchesProxy_DuplicateUsername(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	require.NoError(t, db.Create(&models.User{
-		ID: 2, Username: "taken_username", Email: "user2@example.com", IsActive: true,
+		ID: 2, Username: "taken_username", UsernameFolded: "taken_username", Email: "user2@example.com", EmailFolded: "user2@example.com", IsActive: true,
 	}).Error)
 
 	h, err := NewUserHandler(cs)

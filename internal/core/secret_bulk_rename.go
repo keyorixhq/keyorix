@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
 // Rename outcome statuses.
@@ -93,6 +95,18 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 			skip(rn.ID, "", "", "new name is empty")
 			continue
 		}
+		// #1642: normalize once here, use for the unchanged-check, the
+		// uniqueness check, and the stored value — GetSecretByName below
+		// already normalizes its own lookup key, but the pre-normalization
+		// newName must never be what actually gets written, or the stored
+		// row would end up in whatever form the caller happened to submit
+		// instead of the canonical NFC form CreateSecret always stores.
+		normalizedName, nerr := identity.NewAddressName(newName)
+		if nerr != nil {
+			skip(rn.ID, "", newName, "invalid name: "+nerr.Error())
+			continue
+		}
+		newName = normalizedName.String()
 
 		// #G14: "not found", "belongs to another project", and "not authorized" are
 		// collapsed into one uniform denial below — a distinct message per case

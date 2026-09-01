@@ -467,17 +467,21 @@ func TestMachineIdentityService_ListMachineIdentities_StorageErrorIsInternal(t *
 // role_service.go
 // ---------------------------------------------------------------------------
 
-// CreateRole's mapRoleError branch via a real storage failure: Role.Name
-// carries a `gorm:"unique"` tag (unlike Group.Name's partial index, this one
-// IS created by AutoMigrate), so creating two roles with the same name hits
-// a genuine UNIQUE constraint violation and mapRoleError's "unique" branch.
+// CreateRole's mapRoleError branch via a real storage failure: #1642 moved role-name
+// uniqueness off Role.Name's `gorm:"unique"` tag onto the explicit ensureRoleNameIndex
+// migration step (matching Group/User's folded-column pattern), so AutoMigrate alone no
+// longer creates any constraint here — replicate what the production migration creates
+// (uniq_roles_name_folded on the folded column) so this test still exercises a genuine
+// UNIQUE constraint violation and mapRoleError's "unique" branch.
 func TestRoleService_CreateRole_DuplicateName(t *testing.T) {
 	svc, h := newRoleService(t)
+	_, err := h.SqlDB.Exec("CREATE UNIQUE INDEX uniq_roles_name_folded ON roles (name_folded)")
+	require.NoError(t, err)
 	perm := somePermission(t, h)
 	ctx := roleAdminCtx()
 
 	req := &pb.CreateRoleRequest{Name: "duplicate-role", Description: "a role", Permissions: []string{perm}}
-	_, err := svc.CreateRole(ctx, req)
+	_, err = svc.CreateRole(ctx, req)
 	require.NoError(t, err)
 
 	_, err = svc.CreateRole(ctx, req)

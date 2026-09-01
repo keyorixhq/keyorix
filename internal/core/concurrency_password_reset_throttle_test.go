@@ -51,7 +51,7 @@ func TestConcurrency_RequestPasswordReset_BurstIsThrottled(t *testing.T) {
 
 	const email = "victim@acme.io"
 	require.NoError(t, db.Create(&models.User{
-		ID: 1, Username: "victim", Email: email, AccountState: core.AccountActive,
+		ID: 1, Username: "victim", UsernameFolded: "victim", Email: email, EmailFolded: email, AccountState: core.AccountActive,
 	}).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))

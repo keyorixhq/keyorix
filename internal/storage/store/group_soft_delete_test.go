@@ -25,7 +25,7 @@ func newGroupSoftDeleteStore(t *testing.T) *LocalStorage {
 		&models.ShareRecord{}, &models.SecretNode{}, &models.User{},
 		&models.Project{}, &models.Environment{},
 	))
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "u1", Email: "u1@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "u1", UsernameFolded: "u1", Email: "u1@x.io", EmailFolded: "u1@x.io"}).Error)
 	return NewLocalStorage(db)
 }
 
@@ -36,7 +36,7 @@ func TestGroupSoftDelete_RevokesThenRestoresAccess(t *testing.T) {
 	ls := newGroupSoftDeleteStore(t)
 	ctx := context.Background()
 
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "ops"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "ops", NameFolded: "ops"})
 	require.NoError(t, err)
 	require.NoError(t, ls.AddUserToGroup(ctx, 1, g.ID, 0))
 	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: g.ID, RoleID: 50}).Error)
@@ -84,18 +84,19 @@ func TestGroupSoftDelete_RevokesThenRestoresAccess(t *testing.T) {
 func TestGroupSoftDelete_NameReuse(t *testing.T) {
 	ls := newGroupSoftDeleteStore(t)
 	ctx := context.Background()
-	// The production migration creates this; replicate it for the test DB.
-	require.NoError(t, ls.db.Exec("CREATE UNIQUE INDEX uniq_groups_name_active ON groups (name) WHERE deleted_at IS NULL").Error)
+	// The production migration creates this (#1642: now scoped to the folded
+	// column); replicate it for the test DB.
+	require.NoError(t, ls.db.Exec("CREATE UNIQUE INDEX uniq_groups_name_folded_active ON groups (name_folded) WHERE deleted_at IS NULL").Error)
 
-	g, err := ls.CreateGroup(ctx, &models.Group{Name: "dup"})
+	g, err := ls.CreateGroup(ctx, &models.Group{Name: "dup", NameFolded: "dup"})
 	require.NoError(t, err)
 
 	// A second LIVE group with the same name is rejected.
-	_, err = ls.CreateGroup(ctx, &models.Group{Name: "dup"})
+	_, err = ls.CreateGroup(ctx, &models.Group{Name: "dup", NameFolded: "dup"})
 	require.Error(t, err, "two live groups cannot share a name")
 
 	// After soft-delete, the name is free to reuse.
 	require.NoError(t, ls.DeleteGroup(ctx, g.ID))
-	_, err = ls.CreateGroup(ctx, &models.Group{Name: "dup"})
+	_, err = ls.CreateGroup(ctx, &models.Group{Name: "dup", NameFolded: "dup"})
 	require.NoError(t, err, "a soft-deleted group's name is reusable")
 }

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,9 @@ func TestRemoteStorageRBACRoleGrants_ReadsAndWrites_RealServer(t *testing.T) {
 
 	// Fixtures, created directly against the upstream's own storage (exactly what
 	// a real admin action would have produced).
-	role, err := upstream.Storage().CreateRole(ctx, &models.Role{Name: "rbac-grants-test-role", Description: "test role"})
+	rbacGrantsTestRoleName, err := identity.NewFoldedName("rbac-grants-test-role")
+	require.NoError(t, err)
+	role, err := upstream.Storage().CreateRole(ctx, rbacGrantsTestRoleName, "test role")
 	require.NoError(t, err)
 
 	group, err := upstream.Storage().CreateGroup(ctx, &models.Group{Name: "rbac-grants-test-group"})

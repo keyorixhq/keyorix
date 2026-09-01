@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -318,7 +319,9 @@ func TestCreateRole_HappyPath(t *testing.T) {
 	ls := newS18Store(t, &models.Role{})
 	ctx := context.Background()
 
-	r, err := ls.CreateRole(ctx, &models.Role{Name: "viewer", Description: "read-only"})
+	viewerName, err := identity.NewFoldedName("viewer")
+	require.NoError(t, err)
+	r, err := ls.CreateRole(ctx, viewerName, "read-only")
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.NotZero(t, r.ID)
@@ -328,7 +331,9 @@ func TestCreateRole_BrokenDB(t *testing.T) {
 	ls := newS18Store(t, &models.Role{})
 	closeS18DB(t, ls)
 
-	_, err := ls.CreateRole(context.Background(), &models.Role{Name: "viewer"})
+	viewerName, err := identity.NewFoldedName("viewer")
+	require.NoError(t, err)
+	_, err = ls.CreateRole(context.Background(), viewerName, "")
 	require.Error(t, err)
 }
 

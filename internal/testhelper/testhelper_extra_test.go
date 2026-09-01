@@ -34,8 +34,9 @@ func TestExecuteRawSQL_QueryRawSQL(t *testing.T) {
 	h := NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 
-	h.ExecuteRawSQL(t, "INSERT INTO roles (id, name, description) VALUES (?, ?, ?)",
-		999, "raw_sql_role", "created via ExecuteRawSQL")
+	// name_folded is NOT NULL (#1642); already pure-lowercase ASCII.
+	h.ExecuteRawSQL(t, "INSERT INTO roles (id, name, name_folded, description) VALUES (?, ?, ?, ?)",
+		999, "raw_sql_role", "raw_sql_role", "created via ExecuteRawSQL")
 
 	rows := h.QueryRawSQL(t, "SELECT name, description FROM roles WHERE id = ?", 999)
 	defer rows.Close() //nolint:errcheck

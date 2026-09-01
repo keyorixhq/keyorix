@@ -1661,10 +1661,62 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if err := ensureProjectNameIndex(db); err != nil {
 		return err
 	}
+	if err := ensureRoleNameIndex(db); err != nil {
+		return err
+	}
+	if err := ensureSecretNodeNameNFC(db); err != nil {
+		return err
+	}
 	if err := ensureShareRecordUniqueIndex(db); err != nil {
 		return err
 	}
 	return ensureSecretVersionIndex(db)
+}
+
+// ensureRoleNameIndex replaces Role.Name's original plain `unique` gorm tag
+// (which only caught byte-identical duplicates) with a partial-free (roles
+// carry no soft-delete) unique index on name_folded — identity.NewFoldedName's
+// NFC+case-fold output, #1642 — so "Admin"/"admin" can't coexist as two
+// indistinguishable roles in an access review. Idempotent; works on both
+// SQLite and Postgres.
+func ensureRoleNameIndex(db *gorm.DB) error {
+	// Drop the unique constraint/index GORM's original `unique` tag on Name
+	// created. GORM names a plain `unique` tag's index uni_<table>_<column>.
+	if err := db.Exec("DROP INDEX IF EXISTS uni_roles_name").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy roles name index: %w", err)
+	}
+	if err := backfillFoldedColumn(db, "roles", "id", "name", "name_folded", "", foldIdentity); err != nil {
+		return err
+	}
+	const idxName = "uniq_roles_name_folded"
+	// #490: other tables (RolePermission, UserRole, GroupRole) reference a
+	// role by ID, so auto-deleting one of two "duplicate name" roles would
+	// silently orphan any real permission grants tied to the deleted role's
+	// ID. Fail loud instead so an operator resolves the collision
+	// deliberately.
+	if !indexExists(db, idxName) {
+		if err := warnIfDuplicatesExist(db, "roles", "name_folded", "",
+			"rename or delete one of the conflicting roles via the application's role API before upgrading"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON roles (name_folded)").Error; err != nil {
+		return fmt.Errorf("failed to create roles name_folded index: %w", err)
+	}
+	return nil
+}
+
+// ensureSecretNodeNameNFC NFC-normalizes any pre-existing secret_nodes.name
+// value that isn't already in NFC form (#1642). Unlike the *_folded columns
+// elsewhere in this file, secret names are addresses, not human-verified
+// identity — they are NOT case-folded (PROD_KEY and prod_key must remain
+// distinct) — so there is no separate column: uniq_secret_nodes_project_env_name_active
+// (ensureSecretNodeNameIndex, already byte-exact/case-sensitive on both
+// backends) stays exactly as it is; this only ensures the name column itself
+// never holds two different Unicode representations of what a human reads as
+// the same address.
+func ensureSecretNodeNameNFC(db *gorm.DB) error {
+	return normalizeColumnInPlace(db, "secret_nodes", "id", "name", sqlWhereNotDeleted, normalizeAddress)
 }
 
 // ensureShareRecordUniqueIndex creates a partial unique index on share_records
@@ -1774,27 +1826,38 @@ func ensureDynamicSecretConfigNameIndex(db *gorm.DB) error {
 }
 
 // ensureGroupNameIndex replaces any plain unique index on groups.name with a
-// partial unique index scoped to non-deleted rows, so a soft-deleted group's name
-// is freed for reuse while the group stays restorable. Idempotent; works on both
+// partial unique index on name_folded (identity.NewFoldedName's NFC+case-fold
+// output, #1642), scoped to non-deleted rows so a soft-deleted group's name is
+// freed for reuse while the group stays restorable. Idempotent; works on both
 // SQLite and Postgres (both support partial indexes and IF [NOT] EXISTS).
 func ensureGroupNameIndex(db *gorm.DB) error {
-	// Drop the legacy plain unique index from the old `unique` tag, if present.
-	if err := db.Exec("DROP INDEX IF EXISTS uni_groups_name").Error; err != nil {
-		return fmt.Errorf("failed to drop legacy groups name index: %w", err)
+	// Drop the legacy plain unique index from the old `unique` tag, and the
+	// raw-name (exact-match, pre-#1642) partial index this replaces.
+	for _, idx := range []string{"uni_groups_name", "uniq_groups_name_active"} {
+		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil {
+			return fmt.Errorf("failed to drop legacy groups name index %q: %w", idx, err)
+		}
 	}
-	const idxName = "uniq_groups_name_active"
+	// name_folded is Name run through identity.NewFoldedName — see
+	// models.Group.NameFolded's doc comment. Backfilling happens before the
+	// new index so any pre-existing row a normalization-aware write path
+	// never touched still gets one.
+	if err := backfillFoldedColumn(db, "groups", "id", "name", "name_folded", sqlWhereNotDeleted, foldIdentity); err != nil {
+		return err
+	}
+	const idxName = "uniq_groups_name_folded_active"
 	// #490: other tables (GroupRole, UserGroup) reference a group by ID, so
 	// auto-deleting one of two "duplicate name" groups would silently orphan
 	// any real memberships/role-grants tied to the deleted group's ID. Fail
 	// loud instead so an operator resolves the name collision deliberately.
 	if !indexExists(db, idxName) {
-		if err := warnIfDuplicatesExist(db, "groups", "name", sqlWhereNotDeleted,
+		if err := warnIfDuplicatesExist(db, "groups", "name_folded", sqlWhereNotDeleted,
 			"rename or delete one of the conflicting groups via the application's group-rename/delete API before upgrading"); err != nil {
 			return err
 		}
 	}
-	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
-		return fmt.Errorf("failed to create partial groups name index: %w", err)
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON groups (name_folded) WHERE deleted_at IS NULL").Error; err != nil {
+		return fmt.Errorf("failed to create partial groups name_folded index: %w", err)
 	}
 	return nil
 }
@@ -1865,59 +1928,86 @@ func ensureBreakGlassActiveIndex(db *gorm.DB) error {
 func ensureUserNameIndex(db *gorm.DB) error {
 	// Drop the legacy plain unique index. GORM's `uniqueIndex` tag names it
 	// idx_users_username; the older `unique` tag would be uni_users_username. Drop both.
-	for _, idx := range []string{"idx_users_username", "uni_users_username"} {
+	for _, idx := range []string{"idx_users_username", "uni_users_username", "uniq_users_username_active"} {
 		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil {
 			return fmt.Errorf("failed to drop legacy users username index %q: %w", idx, err)
 		}
 	}
-	const idxName = "uniq_users_username_active"
+	// #1642: username_folded is Username run through identity.NewFoldedName
+	// (NFC-normalized AND case-folded) — see models.User.UsernameFolded's doc
+	// comment. Backfilling happens before the new index so any pre-existing
+	// row a normalization-aware write path never touched still gets one.
+	// Precis-based folding can't be expressed as a portable SQL expression
+	// (unlike the old raw-username index this replaces), so this is a Go-side
+	// backfill (normalize_backfill.go), not a SQL migration.
+	if err := backfillFoldedColumn(db, "users", "id", "username", "username_folded", sqlWhereNotDeleted, foldIdentity); err != nil {
+		return err
+	}
+	const idxName = "uniq_users_username_folded_active"
 	// #490: two accounts colliding on username are two DIFFERENT real users
 	// (their own PasswordHash, MFA config, sessions), and other tables
 	// (roles, audit logs, owned secrets, sessions) reference a user by ID —
 	// auto-deleting one would silently delete a real account/credential and
-	// leave those references dangling. Fail loud instead.
+	// leave those references dangling. Fail loud instead. In practice this
+	// duplicates backfillFoldedColumn's own collision refusal above, but is
+	// kept as defense in depth for a row written directly to the DB outside
+	// any Go write path (e.g. a manual restore) with a pre-populated,
+	// colliding username_folded value.
 	if !indexExists(db, idxName) {
-		if err := warnIfDuplicatesExist(db, "users", "username", sqlWhereNotDeleted,
+		if err := warnIfDuplicatesExist(db, "users", "username_folded", sqlWhereNotDeleted,
 			"merge or rename the conflicting user accounts via the application's admin user API before upgrading"); err != nil {
 			return err
 		}
 	}
-	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
-		return fmt.Errorf("failed to create partial users username index: %w", err)
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON users (username_folded) WHERE deleted_at IS NULL").Error; err != nil {
+		return fmt.Errorf("failed to create partial users username_folded index: %w", err)
 	}
 	return nil
 }
 
-// ensureUserEmailIndex creates a partial, case-insensitive unique index on users.email
-// scoped to live (non-deleted) rows with a non-empty email (#117). Without a DB-level
-// constraint, email uniqueness was enforced only by a check-then-act read
-// (GetUserByEmail) before each create/update, which is racy: two concurrent
-// CreateUser/signup/invite-accept/SCIM-provision calls for the identical email could
-// both pass their pre-check before either write landed, producing multiple rows sharing
-// one email that GetUserByEmail then resolves to an arbitrary one of — an ambiguous
-// login/identity-resolution bug, empirically reproduced at a 100% rate under
-// concurrency. The index is on LOWER(email) to match GetUserByEmail's own
-// case-insensitive lookup (`LOWER(email) = LOWER(?)`) — an exact-match index would let
-// the race slip through on a case variant (Bob@x vs bob@x). Scoped to
-// `deleted_at IS NULL` so a soft-deleted (e.g. SCIM-deprovisioned) user's email is freed
-// for reuse on re-provisioning, mirroring ensureUserNameIndex; `email <> ”` so any
-// legacy rows with no email recorded don't collide with each other. Idempotent; works on
-// both SQLite and Postgres (both support expression indexes, partial indexes, and
-// IF [NOT] EXISTS).
+// ensureUserEmailIndex creates a partial, case-insensitive unique index on
+// users.email_folded, scoped to live (non-deleted) rows with a non-empty
+// email (#117). Without a DB-level constraint, email uniqueness was enforced
+// only by a check-then-act read (GetUserByEmail) before each create/update,
+// which is racy: two concurrent CreateUser/signup/invite-accept/SCIM-provision
+// calls for the identical email could both pass their pre-check before either
+// write landed, producing multiple rows sharing one email that GetUserByEmail
+// then resolves to an arbitrary one of — an ambiguous login/identity-resolution
+// bug, empirically reproduced at a 100% rate under concurrency. The index is
+// on email_folded (identity.NewFoldedName's NFC+case-fold output), not a raw
+// SQL LOWER(email) expression (#1642): LOWER() folds ASCII-only on SQLite (no
+// ICU) but locale-dependent on Postgres, so the exact same login-identity
+// column enforced different uniqueness on different backends. Scoped to
+// `deleted_at IS NULL` so a soft-deleted (e.g. SCIM-deprovisioned) user's email
+// is freed for reuse on re-provisioning, mirroring ensureUserNameIndex; `email
+// <> ''` so any legacy rows with no email recorded don't collide with each
+// other. Idempotent; works on both SQLite and Postgres.
 func ensureUserEmailIndex(db *gorm.DB) error {
-	const idxName = "uniq_users_email_active"
+	// Drop the previous LOWER(email)-expression index this replaces (#1642 —
+	// see models.User.EmailFolded's doc comment for why SQL-side LOWER() was
+	// backend-divergent).
+	if err := db.Exec("DROP INDEX IF EXISTS uniq_users_email_active").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy users email index: %w", err)
+	}
+	// email_folded is Email run through identity.NewFoldedName, backfilled
+	// only for non-empty emails — an empty EmailFolded is fine and expected
+	// for the legacy/machine rows the index below already excludes.
+	if err := backfillFoldedColumn(db, "users", "id", "email", "email_folded", "deleted_at IS NULL AND email <> ''", foldIdentity); err != nil {
+		return err
+	}
+	const idxName = "uniq_users_email_folded_active"
 	// #490: same reasoning as ensureUserNameIndex — two accounts colliding on
 	// email are two DIFFERENT real accounts with their own credential/MFA
 	// state, and other tables reference a user by ID. Fail loud instead of
 	// auto-deleting one.
 	if !indexExists(db, idxName) {
-		if err := warnIfDuplicatesExist(db, "users", "LOWER(email)", "deleted_at IS NULL AND email <> ''",
+		if err := warnIfDuplicatesExist(db, "users", "email_folded", "deleted_at IS NULL AND email <> ''",
 			"merge or update the email of one of the conflicting user accounts via the application's admin user API before upgrading"); err != nil {
 			return err
 		}
 	}
-	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
-		return fmt.Errorf("failed to create partial users email index: %w", err)
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON users (email_folded) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
+		return fmt.Errorf("failed to create partial users email_folded index: %w", err)
 	}
 	return nil
 }

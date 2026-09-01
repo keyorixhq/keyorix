@@ -17,6 +17,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -79,7 +80,8 @@ func (ls *LocalStorage) AssignPermissionToRole(ctx context.Context, roleID, perm
 
 // --- Roles ---
 
-func (ls *LocalStorage) CreateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
+func (ls *LocalStorage) CreateRole(ctx context.Context, name identity.FoldedName, description string) (*models.Role, error) {
+	role := &models.Role{Name: name.Display(), NameFolded: name.Folded(), Description: description}
 	if err := ls.db.WithContext(ctx).Create(role).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -97,6 +99,27 @@ func (ls *LocalStorage) GetRole(ctx context.Context, id uint) (*models.Role, err
 	return &role, nil
 }
 
+// GetRoleByName looks up a role by its exact display name.
+//
+// #1642 follow-up (filed, not fixed here): this queries the raw `name`
+// column, not `name_folded`, so it does NOT benefit from the case-insensitive
+// fold CreateRole/ensureRoleNameIndex enforce at write time — a lookup for
+// "Admin" will not find a role created as "admin". This is the same
+// write-without-read-fold shape already fixed for GetUserByEmail/
+// GetUserByUsername, and the human-facing exposure (GET
+// /api/v1/roles/by-name?name=) has the same theoretical gap. It is left
+// unfixed in this change because roleSetContainsAdmin (authz.go) calls this
+// method internally, on every authorization check, with the four fixed
+// adminRoleNames literals — switching this query to name_folded requires
+// every test fixture across the repo that seeds a `models.Role{Name: "..."}`
+// row directly (bypassing CreateRole, and so leaving NameFolded empty) to
+// also set NameFolded, and that pattern is used by roughly 100 call sites
+// across internal/core, internal/cli, internal/storage/store,
+// server/grpc/services, and server/http(/handlers) — a fixture sweep at
+// least as large as the User/Group one already done for #1642, disproportionate
+// to what is a UX papercut (case-variant role-name search misses a match) with
+// no security stake, unlike CreateRole's charset bypass. Track as a separate
+// follow-up rather than expand this change further.
 func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models.Role, error) {
 	var role models.Role
 	if err := ls.db.WithContext(ctx).Where("name = ?", name).First(&role).Error; err != nil {

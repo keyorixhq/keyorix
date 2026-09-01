@@ -21,6 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -74,9 +75,13 @@ func TestRemoteStorageConnectGrants_ListByConnector_RealServer(t *testing.T) {
 	upstream, downstream := newUpstreamDownstreamForConnectGrants(t)
 	ctx := context.Background()
 
-	roleAWS, err := upstream.Storage().CreateRole(ctx, &models.Role{Name: "connect-grant-role-aws"})
+	connectGrantRoleAWSName, err := identity.NewFoldedName("connect-grant-role-aws")
 	require.NoError(t, err)
-	roleGCP, err := upstream.Storage().CreateRole(ctx, &models.Role{Name: "connect-grant-role-gcp"})
+	roleAWS, err := upstream.Storage().CreateRole(ctx, connectGrantRoleAWSName, "")
+	require.NoError(t, err)
+	connectGrantRoleGCPName, err := identity.NewFoldedName("connect-grant-role-gcp")
+	require.NoError(t, err)
+	roleGCP, err := upstream.Storage().CreateRole(ctx, connectGrantRoleGCPName, "")
 	require.NoError(t, err)
 
 	g1, err := upstream.Storage().CreateConnectRefGrant(ctx, &models.ConnectRefGrant{

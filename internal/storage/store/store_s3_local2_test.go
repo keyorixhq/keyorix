@@ -10,6 +10,7 @@ import (
 	"time"
 
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,7 +131,7 @@ func TestMFA_SetUserMFAEnabled(t *testing.T) {
 	ls := newMFAStore(t)
 
 	// Create a user.
-	require.NoError(t, ls.db.Create(&models.User{Username: "mfa-user", Email: "mfa@example.com"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{Username: "mfa-user", UsernameFolded: "mfa-user", Email: "mfa@example.com", EmailFolded: "mfa@example.com"}).Error)
 	var u models.User
 	require.NoError(t, ls.db.Where("username = ?", "mfa-user").First(&u).Error)
 
@@ -586,7 +587,9 @@ func TestRBAC_RolesAndPermissions(t *testing.T) {
 	ls := newRBACStore(t)
 
 	// CreateRole.
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "viewer", Description: "read-only"})
+	viewerName, err := identity.NewFoldedName("viewer")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, viewerName, "read-only")
 	require.NoError(t, err)
 	assert.NotZero(t, role.ID)
 
@@ -650,11 +653,13 @@ func TestRBAC_UserRoles(t *testing.T) {
 	ls := newRBACStore(t)
 
 	// Create role.
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "editor", Description: "edit"})
+	editorName, err := identity.NewFoldedName("editor")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, editorName, "edit")
 	require.NoError(t, err)
 
 	// Create user.
-	require.NoError(t, ls.db.Create(&models.User{Username: "rbac-user", Email: "rbac@example.com"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{Username: "rbac-user", UsernameFolded: "rbac-user", Email: "rbac@example.com", EmailFolded: "rbac@example.com"}).Error)
 	var u models.User
 	require.NoError(t, ls.db.Where("username = ?", "rbac-user").First(&u).Error)
 
@@ -694,11 +699,13 @@ func TestRBAC_GroupRoles(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "member", Description: "member"})
+	memberName, err := identity.NewFoldedName("member")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, memberName, "member")
 	require.NoError(t, err)
 
 	// Create group.
-	group, err := ls.CreateGroup(ctx, &models.Group{Name: "eng-team"})
+	group, err := ls.CreateGroup(ctx, &models.Group{Name: "eng-team", NameFolded: "eng-team"})
 	require.NoError(t, err)
 	assert.NotZero(t, group.ID)
 
@@ -726,11 +733,11 @@ func TestRBAC_UserGroups(t *testing.T) {
 	ls := newRBACStore(t)
 
 	// Create group.
-	group, err := ls.CreateGroup(ctx, &models.Group{Name: "devs"})
+	group, err := ls.CreateGroup(ctx, &models.Group{Name: "devs", NameFolded: "devs"})
 	require.NoError(t, err)
 
 	// Create user.
-	require.NoError(t, ls.db.Create(&models.User{Username: "dev1", Email: "dev1@example.com"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{Username: "dev1", UsernameFolded: "dev1", Email: "dev1@example.com", EmailFolded: "dev1@example.com"}).Error)
 	var u models.User
 	require.NoError(t, ls.db.Where("username = ?", "dev1").First(&u).Error)
 
@@ -758,7 +765,9 @@ func TestRBAC_DeleteRole(t *testing.T) {
 	ctx := context.Background()
 	ls := newRBACStore(t)
 
-	role, err := ls.CreateRole(ctx, &models.Role{Name: "temp", Description: "temp"})
+	tempName, err := identity.NewFoldedName("temp")
+	require.NoError(t, err)
+	role, err := ls.CreateRole(ctx, tempName, "temp")
 	require.NoError(t, err)
 
 	require.NoError(t, ls.DeleteRole(ctx, role.ID))

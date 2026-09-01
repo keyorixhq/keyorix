@@ -19,6 +19,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -33,24 +34,26 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
 func escapeLike(s string) string { return likeEscaper.Replace(s) }
 
 // isDuplicateEmailViolation reports whether err is a unique-constraint violation on
-// specifically the partial users-email index (uniq_users_email_active, #117), as
+// specifically the partial users-email index (uniq_users_email_folded_active, #117), as
 // distinct from any other unique constraint on the users table (e.g. the username
-// index) or elsewhere. Both SQLite and Postgres include the violated index/constraint
-// name in the driver-native error text for an expression index like this one (SQLite:
-// `UNIQUE constraint failed: index 'uniq_users_email_active'`; Postgres: `duplicate key
-// value violates unique constraint "uniq_users_email_active"`), so matching the index
-// name — rather than the generic isUniqueViolation substrings used for
-// single-unique-index tables like project_memberships — avoids mis-attributing a
-// username collision (or any future users-table unique index) to email. Neither
-// dialector wraps a typed error here (that needs the gorm.Config{TranslateError: true}
-// opt-in, which this codebase doesn't set), so this is driver-native text matching, the
-// same approach already used for "not found"/unique-violation detection elsewhere (e.g.
+// index) or elsewhere. Postgres names the violated constraint in its driver-native error
+// text (`duplicate key value violates unique constraint "uniq_users_email_folded_active"`),
+// so matching the index name there avoids mis-attributing a username collision (or any
+// future users-table unique index) to email. SQLite (modernc.org/sqlite) does NOT name
+// the index at all — it names the violated COLUMN instead (`UNIQUE constraint failed:
+// users.email_folded`) — so the SQLite branch matches the column name, which is equally
+// unambiguous per-column (only one unique index targets email_folded). Neither dialector
+// wraps a typed error here (that needs the gorm.Config{TranslateError: true} opt-in,
+// which this codebase doesn't set), so this is driver-native text matching, the same
+// approach already used for "not found"/unique-violation detection elsewhere (e.g.
 // sso.go, users.go, scim.go, local_memberships.go).
 func isDuplicateEmailViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "uniq_users_email_active")
+	msg := err.Error()
+	return strings.Contains(msg, "uniq_users_email_folded_active") || // Postgres constraint name
+		strings.Contains(msg, "users.email_folded") // SQLite column name
 }
 
 // --- Users ---
@@ -62,7 +65,7 @@ func isDuplicateEmailViolation(err error) bool {
 func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User, _ ...string) (*models.User, error) {
 	if err := ls.db.WithContext(ctx).Create(user).Error; err != nil {
 		if isDuplicateEmailViolation(err) {
-			// The partial unique index uniq_users_email_active (#117) caught a concurrent
+			// The partial unique index uniq_users_email_folded_active (#117) caught a concurrent
 			// duplicate: another create/signup/invite-accept/SCIM-provision for the
 			// identical (case-insensitive) email committed first. Translate to the
 			// sentinel so callers can surface a clean "email already in use" error
@@ -141,9 +144,18 @@ func (ls *LocalStorage) GetUserByEmail(ctx context.Context, email string) (*mode
 	var user models.User
 	// Case-insensitive: email addresses are not case-sensitive in practice, and an
 	// exact match let the ADR-028 invite-accept "account already exists" guard be
-	// evaded by case (Bob@x vs bob@x), minting a duplicate identity. LOWER() on both
-	// sides matches regardless of stored casing (covers legacy mixed-case rows).
-	if err := ls.db.WithContext(ctx).Where("LOWER(email) = LOWER(?)", email).First(&user).Error; err != nil {
+	// evaded by case (Bob@x vs bob@x), minting a duplicate identity. Fold the lookup
+	// key via identity.NewFoldedName and compare against the stored folded column —
+	// not a SQL-side LOWER(email) (#1642: that folds ASCII-only on SQLite but
+	// locale-dependent on Postgres, so the same lookup could resolve differently
+	// depending on backend). An email that itself fails to normalize (control/bidi
+	// characters) cannot match any legitimately-stored row, so treat it as
+	// not-found rather than surfacing a normalization error to a lookup caller.
+	folded, ferr := identity.NewFoldedName(email)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
+	}
+	if err := ls.db.WithContext(ctx).Where("email_folded = ?", folded.Folded()).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Wrap the typed sentinel (matching GetUser/LockUserForUpdate, #504) so
 			// callers can detect "genuinely absent" via
@@ -158,7 +170,14 @@ func (ls *LocalStorage) GetUserByEmail(ctx context.Context, email string) (*mode
 
 func (ls *LocalStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	var user models.User
-	if err := ls.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
+	// Fold the lookup key the same way CreateUser folds it at write time
+	// (#1642) — see GetUserByEmail's identical rationale. A query string that
+	// itself fails to normalize cannot match any legitimately-stored row.
+	folded, ferr := identity.NewFoldedName(username)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
+	}
+	if err := ls.db.WithContext(ctx).Where("username_folded = ?", folded.Folded()).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
@@ -181,7 +200,7 @@ func (ls *LocalStorage) GetUserByExternalID(ctx context.Context, externalID stri
 func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
 	if err := ls.db.WithContext(ctx).Save(user).Error; err != nil {
 		if isDuplicateEmailViolation(err) {
-			// The partial unique index uniq_users_email_active (#117) caught a concurrent
+			// The partial unique index uniq_users_email_folded_active (#117) caught a concurrent
 			// duplicate: another update (e.g. a racing UpdateSCIMUser, #120/#218) already
 			// committed the identical (case-insensitive) email to a different user before
 			// this write landed. Translate to the sentinel so callers surface a clean

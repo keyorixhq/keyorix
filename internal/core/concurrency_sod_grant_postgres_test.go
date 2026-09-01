@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -70,10 +71,14 @@ func TestConcurrency_AssignUserRole_CrossReplicaPostgres_SoDBypass(t *testing.T)
 	require.NotZero(t, rolesAssignID, "roles.assign must be seeded")
 	require.NotZero(t, secretsDeleteID, "secrets.delete must be seeded")
 
-	roleA, err := setupCore.Storage().CreateRole(ctx, &models.Role{Name: "sod-race-role-a", Description: "grants roles.assign"})
+	roleAName, err := identity.NewFoldedName("sod-race-role-a")
+	require.NoError(t, err)
+	roleA, err := setupCore.Storage().CreateRole(ctx, roleAName, "grants roles.assign")
 	require.NoError(t, err)
 	require.NoError(t, setupCore.AssignPermissionToRole(ctx, 0, roleA.ID, rolesAssignID, false))
-	roleB, err := setupCore.Storage().CreateRole(ctx, &models.Role{Name: "sod-race-role-b", Description: "grants secrets.delete"})
+	roleBName, err := identity.NewFoldedName("sod-race-role-b")
+	require.NoError(t, err)
+	roleB, err := setupCore.Storage().CreateRole(ctx, roleBName, "grants secrets.delete")
 	require.NoError(t, err)
 	require.NoError(t, setupCore.AssignPermissionToRole(ctx, 0, roleB.ID, secretsDeleteID, false))
 

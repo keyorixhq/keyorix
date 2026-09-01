@@ -21,6 +21,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -174,8 +175,22 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	if !active {
 		state = AccountDeprovisioned
 	}
+	// #1642: SCIM-provisioned usernames/emails come from an external IdP and
+	// bypass buildUserForCreate entirely, so they need their own fold here —
+	// otherwise an IdP-asserted "Admin"/non-ASCII identity could collide with
+	// (or duplicate) an existing account in a way neither uniqueness check
+	// below would catch.
+	foldedUsername, ferr := identity.NewFoldedName(username)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+	}
+	foldedEmail, ferr := identity.NewFoldedName(email)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+	}
 	created, err := c.storage.CreateUser(ctx, &models.User{
-		Username: username, Email: email, DisplayName: displayName,
+		Username: username, UsernameFolded: foldedUsername.Folded(),
+		Email: email, EmailFolded: foldedEmail.Folded(), DisplayName: displayName,
 		PasswordHash: hash, IsActive: active, AccountState: state, ExternalID: externalID,
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})
@@ -341,7 +356,15 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 		user.DisplayName = *displayName
 	}
 	if email != nil && *email != "" {
+		// #1642: keep EmailFolded in lockstep with Email on every write path,
+		// not just core.UpdateUser's -- a stale EmailFolded here would make
+		// GetUserByEmail keep resolving to the user's OLD address forever.
+		folded, ferr := identity.NewFoldedName(*email)
+		if ferr != nil {
+			return nil, false, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		}
 		user.Email = *email
+		user.EmailFolded = folded.Folded()
 	}
 	deactivated := false
 	applySCIMActiveState(user, active, &deactivated)

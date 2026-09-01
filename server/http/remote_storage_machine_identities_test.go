@@ -11,6 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -392,7 +393,9 @@ func TestRemoteStorageMachineIdentities_RoleGrantAssignRemoveListIDs_RealServer(
 	m, err := downstream.Storage().CreateMachineIdentity(ctx, buildMachineIdentity(now, projectID, "role-test"))
 	require.NoError(t, err)
 
-	role, err := upstream.Storage().CreateRole(ctx, &models.Role{Name: "machine-role-test", Description: "test"})
+	machineRoleTestName, err := identity.NewFoldedName("machine-role-test")
+	require.NoError(t, err)
+	role, err := upstream.Storage().CreateRole(ctx, machineRoleTestName, "test")
 	require.NoError(t, err)
 
 	scope := corestorage.Scope{ProjectID: projectID, EnvironmentID: 0}

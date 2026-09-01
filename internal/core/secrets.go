@@ -16,6 +16,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -82,6 +83,15 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if err := c.validateSecretName(req.Name); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
+	// #1642: NFC-normalize once here, use everywhere below (the duplicate-name
+	// pre-check and the stored row) — secret names are addresses, not
+	// human-verified identity, so unlike username/role/group this does NOT
+	// fold case (PROD_KEY and prod_key must remain distinct); it only closes
+	// the NFC-vs-NFD collision gap.
+	normalizedName, nerr := identity.NewAddressName(req.Name)
+	if nerr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), nerr)
+	}
 	if len(strings.TrimSpace(req.Description)) > maxSecretDescriptionLen {
 		return nil, fmt.Errorf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
 	}
@@ -103,7 +113,7 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
 	}
 
-	existing, err := c.storage.GetSecretByName(ctx, req.Name, req.ProjectID, req.EnvironmentID)
+	existing, err := c.storage.GetSecretByName(ctx, normalizedName.String(), req.ProjectID, req.EnvironmentID)
 	if err == nil && existing != nil {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
 	}
@@ -139,7 +149,7 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	}
 
 	secret := &models.SecretNode{
-		Name:                   req.Name,
+		Name:                   normalizedName.String(),
 		ProjectID:              req.ProjectID,
 		EnvironmentID:          req.EnvironmentID,
 		Type:                   req.Type,
@@ -538,6 +548,15 @@ func (c *KeyorixCore) CreateFolder(
 	if name == "" {
 		return nil, fmt.Errorf("%s: folder name is required", i18n.T("ErrorValidation", nil))
 	}
+	// #1642: folders share secret_nodes' (project, environment, name) unique
+	// index with secrets, so they share the identical NFC-vs-NFD collision
+	// risk CreateSecret closes above — normalize here the same way, not
+	// case-folded (a folder name is an address/path segment, not identity).
+	normalizedFolderName, nerr := identity.NewAddressName(name)
+	if nerr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), nerr)
+	}
+	name = normalizedFolderName.String()
 	if projectID == 0 {
 		return nil, fmt.Errorf("%s: project_id is required", i18n.T("ErrorValidation", nil))
 	}

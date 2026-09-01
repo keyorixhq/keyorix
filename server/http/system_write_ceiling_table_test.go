@@ -59,6 +59,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -103,9 +104,9 @@ func createSystemWriteAndRolesAssignToken(t *testing.T, c *core.KeyorixCore) str
 	require.NoError(t, err)
 	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_roles_assign@example.com", "system_viewer"))
 
-	role, err := c.Storage().CreateRole(ctx, &models.Role{
-		Name: "ceiling_test_system_writer_roles_assign", Description: "test-only role: system.write + roles.assign, nothing else",
-	})
+	ceilingTestSystemWriterRolesAssignName, err := identity.NewFoldedName("ceiling_test_system_writer_roles_assign")
+	require.NoError(t, err)
+	role, err := c.Storage().CreateRole(ctx, ceilingTestSystemWriterRolesAssignName, "test-only role: system.write + roles.assign, nothing else")
 	require.NoError(t, err)
 
 	perms, err := c.ListPermissions(ctx)
@@ -147,9 +148,9 @@ func createSystemWriteAndUsersWriteToken(t *testing.T, c *core.KeyorixCore) stri
 	require.NoError(t, err)
 	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_users_write@example.com", "system_viewer"))
 
-	role, err := c.Storage().CreateRole(ctx, &models.Role{
-		Name: "ceiling_test_system_writer_users_write", Description: "test-only role: system.write + users.write, nothing else",
-	})
+	ceilingTestSystemWriterUsersWriteName, err := identity.NewFoldedName("ceiling_test_system_writer_users_write")
+	require.NoError(t, err)
+	role, err := c.Storage().CreateRole(ctx, ceilingTestSystemWriterUsersWriteName, "test-only role: system.write + users.write, nothing else")
 	require.NoError(t, err)
 
 	perms, err := c.ListPermissions(ctx)
@@ -227,7 +228,9 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 	})
 	require.NoError(t, err)
 
-	normalRole, err := testCore.Storage().CreateRole(ctx, &models.Role{Name: "ceiling_table_normal_role", Description: "non-admin"})
+	ceilingTableNormalRoleName, err := identity.NewFoldedName("ceiling_table_normal_role")
+	require.NoError(t, err)
+	normalRole, err := testCore.Storage().CreateRole(ctx, ceilingTableNormalRoleName, "non-admin")
 	require.NoError(t, err)
 
 	// A SECOND global admin, distinct from the bootstrap admin, so

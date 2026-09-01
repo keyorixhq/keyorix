@@ -36,7 +36,7 @@ func TestConcurrency_LoginLockout_NoLostIncrements(t *testing.T) {
 	const password = "Secret#Pass123"
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost) // MinCost: keep the race tight
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", PasswordHash: string(hash), AccountState: core.AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", PasswordHash: string(hash), AccountState: core.AccountActive}).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	const maxAttempts = 5

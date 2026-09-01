@@ -420,7 +420,7 @@ func TestListGroupsPage_S26_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"alpha", "beta", "gamma"} {
-		_, err := ls.CreateGroup(ctx, &models.Group{Name: name})
+		_, err := ls.CreateGroup(ctx, &models.Group{Name: name, NameFolded: name})
 		require.NoError(t, err)
 	}
 
@@ -436,7 +436,7 @@ func TestAddUserToGroup_S26_UserNotFound(t *testing.T) {
 	ls := newS26Store(t, &models.User{}, &models.Group{}, &models.UserGroup{})
 	ctx := context.Background()
 
-	grp, err := ls.CreateGroup(ctx, &models.Group{Name: "g1"})
+	grp, err := ls.CreateGroup(ctx, &models.Group{Name: "g1", NameFolded: "g1"})
 	require.NoError(t, err)
 
 	// User 9999 doesn't exist.
@@ -451,7 +451,7 @@ func TestAddUserToGroup_S26_GroupNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	user, err := ls.CreateUser(ctx, &models.User{
-		Username: "u1", Email: "u1@test.com", PasswordHash: "x",
+		Username: "u1", UsernameFolded: "u1", Email: "u1@test.com", EmailFolded: "u1@test.com", PasswordHash: "x",
 	})
 	require.NoError(t, err)
 

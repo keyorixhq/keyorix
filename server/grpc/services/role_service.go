@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -58,10 +59,19 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err := validateRoleDescription(req.GetDescription()); err != nil {
 		return nil, err
 	}
+	// #1642: fold once here, use for both the reserved-name check below and
+	// the CreateRole call — see the identical HTTP-side treatment
+	// (RBACHandler.CreateRole) for the full rationale, including why folding
+	// before IsBuiltinRole closes a case-variant gap that check's own exact
+	// map lookup otherwise leaves open.
+	foldedName, ferr := identity.NewFoldedName(req.GetName())
+	if ferr != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid role name: "+ferr.Error())
+	}
 	// #294: reserved role names must never be creatable — see the identical guard (with
 	// full rationale) in the HTTP RBACHandler.CreateRole. This closes the same gap over
 	// gRPC, which has its own independent CreateRole path.
-	if core.IsBuiltinRole(req.GetName()) {
+	if core.IsBuiltinRole(foldedName.Folded()) {
 		return nil, status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	}
 
@@ -70,7 +80,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 		return nil, err
 	}
 
-	role, err := s.core.Storage().CreateRole(ctx, &models.Role{Name: req.GetName(), Description: req.GetDescription()})
+	role, err := s.core.Storage().CreateRole(ctx, foldedName, req.GetDescription())
 	if err != nil {
 		return nil, mapRoleError(err)
 	}

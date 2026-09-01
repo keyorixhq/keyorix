@@ -440,7 +440,7 @@ func TestRunReview_RejectAuth_UnprivilegedUser(t *testing.T) {
 
 	// Create a plain viewer with no roles.assign.
 	viewer, err := svc.Storage().CreateUser(ctx, &models.User{
-		Username: "viewer-only", Email: "viewer@example.com", IsActive: true,
+		Username: "viewer-only", UsernameFolded: "viewer-only", Email: "viewer@example.com", EmailFolded: "viewer@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
 

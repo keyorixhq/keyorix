@@ -180,11 +180,11 @@ func TestEnsureProjectNameIndex_S22_DeletedRowNotCounted(t *testing.T) {
 func TestEnsureUserNameIndex_S22_CleanDB(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "uname-clean.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob', '', NULL)`).Error)
 	require.NoError(t, ensureUserNameIndex(db))
-	assert.True(t, indexExists(db, "uniq_users_username_active"))
+	assert.True(t, indexExists(db, "uniq_users_username_folded_active"))
 }
 
 // TestEnsureUserNameIndex_S22_DropsLegacyIndexes verifies that ensureUserNameIndex
@@ -192,14 +192,14 @@ func TestEnsureUserNameIndex_S22_CleanDB(t *testing.T) {
 func TestEnsureUserNameIndex_S22_DropsLegacyIndexes(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "uname-legacy.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_folded TEXT, deleted_at DATETIME)`).Error)
 	// Create legacy plain unique indexes (old GORM tag names).
 	require.NoError(t, db.Exec(`CREATE UNIQUE INDEX idx_users_username ON users (username)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'charlie', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'charlie', '', NULL)`).Error)
 	require.NoError(t, ensureUserNameIndex(db))
 	// Legacy index must be gone; partial index must exist.
 	assert.False(t, indexExists(db, "idx_users_username"), "legacy plain index must be dropped")
-	assert.True(t, indexExists(db, "uniq_users_username_active"), "partial index must be created")
+	assert.True(t, indexExists(db, "uniq_users_username_folded_active"), "partial index must be created")
 }
 
 // TestEnsureUserNameIndex_S22_DuplicateUsernames verifies that ensureUserNameIndex
@@ -207,9 +207,9 @@ func TestEnsureUserNameIndex_S22_DropsLegacyIndexes(t *testing.T) {
 func TestEnsureUserNameIndex_S22_DuplicateUsernames(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "uname-dup.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'dupe', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'dupe', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'dupe', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'dupe', '', NULL)`).Error)
 	err = ensureUserNameIndex(db)
 	require.Error(t, err, "pre-existing duplicate live usernames must block the migration")
 	assert.Contains(t, err.Error(), "users")
@@ -224,14 +224,14 @@ func TestEnsureUserNameIndex_S22_DuplicateUsernames(t *testing.T) {
 func TestEnsureUserEmailIndex_S22_CleanDB(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "email-clean.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice@x.io', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob@x.io', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'alice@x.io', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'bob@x.io', '', NULL)`).Error)
 	// Multiple users with empty email must not collide with each other.
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (3, '', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (4, '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (3, '', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (4, '', '', NULL)`).Error)
 	require.NoError(t, ensureUserEmailIndex(db))
-	assert.True(t, indexExists(db, "uniq_users_email_active"))
+	assert.True(t, indexExists(db, "uniq_users_email_folded_active"))
 }
 
 // TestEnsureUserEmailIndex_S22_DuplicateEmails verifies that ensureUserEmailIndex
@@ -240,9 +240,9 @@ func TestEnsureUserEmailIndex_S22_CleanDB(t *testing.T) {
 func TestEnsureUserEmailIndex_S22_DuplicateEmails(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "email-dup.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'carol@x.io', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'carol@x.io', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (1, 'carol@x.io', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users VALUES (2, 'carol@x.io', '', NULL)`).Error)
 	err = ensureUserEmailIndex(db)
 	require.Error(t, err, "duplicate live emails must block the migration")
 	assert.Contains(t, err.Error(), "users")
@@ -253,7 +253,7 @@ func TestEnsureUserEmailIndex_S22_DuplicateEmails(t *testing.T) {
 func TestEnsureUserEmailIndex_S22_Idempotent(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "email-idem.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, email_folded TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, ensureUserEmailIndex(db))
 	require.NoError(t, ensureUserEmailIndex(db))
 }
@@ -499,11 +499,11 @@ func TestEnsureSecretVersionIndex_S22_Idempotent(t *testing.T) {
 func TestEnsureGroupNameIndex_S22_CleanDB(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-clean.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'eng', NULL)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'ops', NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'eng', '', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'ops', '', NULL)`).Error)
 	require.NoError(t, ensureGroupNameIndex(db))
-	assert.True(t, indexExists(db, "uniq_groups_name_active"))
+	assert.True(t, indexExists(db, "uniq_groups_name_folded_active"))
 }
 
 // TestEnsureGroupNameIndex_S22_Idempotent verifies that calling ensureGroupNameIndex
@@ -511,7 +511,7 @@ func TestEnsureGroupNameIndex_S22_CleanDB(t *testing.T) {
 func TestEnsureGroupNameIndex_S22_Idempotent(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-idem.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, ensureGroupNameIndex(db))
 	require.NoError(t, ensureGroupNameIndex(db))
 }
@@ -521,12 +521,12 @@ func TestEnsureGroupNameIndex_S22_Idempotent(t *testing.T) {
 func TestEnsureGroupNameIndex_S22_LegacyIndexDropped(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-legacy.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`CREATE UNIQUE INDEX uni_groups_name ON groups (name)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'admins', NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'admins', '', NULL)`).Error)
 	require.NoError(t, ensureGroupNameIndex(db))
 	assert.False(t, indexExists(db, "uni_groups_name"), "legacy plain unique index must be dropped")
-	assert.True(t, indexExists(db, "uniq_groups_name_active"), "new partial index must be created")
+	assert.True(t, indexExists(db, "uniq_groups_name_folded_active"), "new partial index must be created")
 }
 
 // TestEnsureGroupNameIndex_S22_SoftDeletedNotCounted verifies that a soft-deleted
@@ -534,9 +534,9 @@ func TestEnsureGroupNameIndex_S22_LegacyIndexDropped(t *testing.T) {
 func TestEnsureGroupNameIndex_S22_SoftDeletedNotCounted(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "grp-softdel.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'devs', '2024-01-01')`).Error) // deleted
-	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'devs', NULL)`).Error)         // live
+	require.NoError(t, db.Exec(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, name_folded TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (1, 'devs', '', '2024-01-01')`).Error) // deleted
+	require.NoError(t, db.Exec(`INSERT INTO groups VALUES (2, 'devs', '', NULL)`).Error)         // live
 	require.NoError(t, ensureGroupNameIndex(db), "a soft-deleted group must not conflict with a live group of the same name")
 }
 

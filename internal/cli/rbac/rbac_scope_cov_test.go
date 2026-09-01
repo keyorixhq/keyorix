@@ -29,6 +29,7 @@ import (
 	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,7 +111,9 @@ func TestRunAssignRole_Embedded_GlobalScope(t *testing.T) {
 
 	_, err := st.CreateUser(ctx, &models.User{Username: "assign-global", Email: "assign-global@example.com"})
 	require.NoError(t, err)
-	_, err = st.CreateRole(ctx, &models.Role{Name: "assign-global-role", Description: "test"})
+	assignGlobalRoleName, err := identity.NewFoldedName("assign-global-role")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, assignGlobalRoleName, "test")
 	require.NoError(t, err)
 
 	orig, origR, origP, origE := userEmail, roleName, assignProjectFlag, assignEnvFlag
@@ -133,7 +136,9 @@ func TestRunAssignRole_Embedded_WithProject(t *testing.T) {
 
 	_, err := st.CreateUser(ctx, &models.User{Username: "assign-proj", Email: "assign-proj@example.com"})
 	require.NoError(t, err)
-	_, err = st.CreateRole(ctx, &models.Role{Name: "assign-proj-role", Description: "test"})
+	assignProjRoleName, err := identity.NewFoldedName("assign-proj-role")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, assignProjRoleName, "test")
 	require.NoError(t, err)
 	_, err = st.CreateProject(ctx, &models.Project{Name: "assign-proj-project"})
 	require.NoError(t, err)
@@ -178,7 +183,9 @@ func TestRunRemoveRole_Embedded_GlobalScope(t *testing.T) {
 
 	user, err := st.CreateUser(ctx, &models.User{Username: "remove-global", Email: "remove-global@example.com"})
 	require.NoError(t, err)
-	role, err := st.CreateRole(ctx, &models.Role{Name: "remove-global-role", Description: "test"})
+	removeGlobalRoleName, err := identity.NewFoldedName("remove-global-role")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, removeGlobalRoleName, "test")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, user.ID, role.ID, corestorage.Scope{}))
 
@@ -207,7 +214,9 @@ func TestRunRemoveRole_Embedded_WithProjectAndEnv(t *testing.T) {
 
 	user, err := st.CreateUser(ctx, &models.User{Username: "remove-scoped", Email: "remove-scoped@example.com"})
 	require.NoError(t, err)
-	role, err := st.CreateRole(ctx, &models.Role{Name: "remove-scoped-role", Description: "test"})
+	removeScopedRoleName, err := identity.NewFoldedName("remove-scoped-role")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, removeScopedRoleName, "test")
 	require.NoError(t, err)
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "remove-scoped-proj"})
 	require.NoError(t, err)
@@ -264,7 +273,9 @@ func TestRunAssignRoleToGroup_Embedded_GlobalScope(t *testing.T) {
 
 	_, err := st.CreateGroup(ctx, &models.Group{Name: "embed-group-assign", Description: ""})
 	require.NoError(t, err)
-	_, err = st.CreateRole(ctx, &models.Role{Name: "embed-group-role-assign", Description: "test"})
+	embedGroupRoleAssignName, err := identity.NewFoldedName("embed-group-role-assign")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, embedGroupRoleAssignName, "test")
 	require.NoError(t, err)
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
@@ -293,7 +304,9 @@ func TestRunAssignRoleToGroup_Embedded_WithProject(t *testing.T) {
 
 	_, err := st.CreateGroup(ctx, &models.Group{Name: "embed-group-proj", Description: ""})
 	require.NoError(t, err)
-	_, err = st.CreateRole(ctx, &models.Role{Name: "embed-group-role-proj", Description: "test"})
+	embedGroupRoleProjName, err := identity.NewFoldedName("embed-group-role-proj")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, embedGroupRoleProjName, "test")
 	require.NoError(t, err)
 	_, err = st.CreateProject(ctx, &models.Project{Name: "embed-group-project"})
 	require.NoError(t, err)
@@ -355,7 +368,9 @@ func TestRunRemoveRoleFromGroup_Embedded_Success(t *testing.T) {
 
 	grp, err := st.CreateGroup(ctx, &models.Group{Name: "embed-grp-remove", Description: ""})
 	require.NoError(t, err)
-	role, err := st.CreateRole(ctx, &models.Role{Name: "embed-grp-role-remove", Description: "test"})
+	embedGrpRoleRemoveName, err := identity.NewFoldedName("embed-grp-role-remove")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, embedGrpRoleRemoveName, "test")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, grp.ID, role.ID, corestorage.Scope{}))
 
@@ -385,7 +400,9 @@ func TestRunListGroupRoles_Embedded_WithRoles(t *testing.T) {
 
 	grp, err := st.CreateGroup(ctx, &models.Group{Name: "embed-grp-list", Description: ""})
 	require.NoError(t, err)
-	role, err := st.CreateRole(ctx, &models.Role{Name: "embed-grp-list-role", Description: "test"})
+	embedGrpListRoleName, err := identity.NewFoldedName("embed-grp-list-role")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, embedGrpListRoleName, "test")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, grp.ID, role.ID, corestorage.Scope{}))
 
@@ -422,7 +439,9 @@ func TestResolveRoleIDEmbedded_Success(t *testing.T) {
 	_, st := initEmbeddedDB(t)
 	ctx := context.Background()
 
-	role, err := st.CreateRole(ctx, &models.Role{Name: "embed-resolve-role", Description: "test"})
+	embedResolveRoleName, err := identity.NewFoldedName("embed-resolve-role")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, embedResolveRoleName, "test")
 	require.NoError(t, err)
 
 	id, err := resolveRoleIDEmbedded(ctx, st, "embed-resolve-role")
@@ -720,7 +739,9 @@ func TestRunAssignRoleToGroup_GroupNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed a role so resolveRoleIDEmbedded would succeed if we got that far.
-	_, err := st.CreateRole(ctx, &models.Role{Name: "g-grp-nf-role", Description: "test"})
+	gGrpNfRoleName, err := identity.NewFoldedName("g-grp-nf-role")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, gGrpNfRoleName, "test")
 	require.NoError(t, err)
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
@@ -752,7 +773,9 @@ func TestRunAssignRoleToGroup_ScopeError(t *testing.T) {
 
 	_, err := st.CreateGroup(ctx, &models.Group{Name: "grp-scope-err", Description: ""})
 	require.NoError(t, err)
-	_, err = st.CreateRole(ctx, &models.Role{Name: "grp-scope-err-role", Description: "test"})
+	grpScopeErrRoleName, err := identity.NewFoldedName("grp-scope-err-role")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, grpScopeErrRoleName, "test")
 	require.NoError(t, err)
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
@@ -848,7 +871,9 @@ func TestRunRemoveRoleFromGroup_ScopeError(t *testing.T) {
 
 	_, err := st.CreateGroup(ctx, &models.Group{Name: "rrfg-scope-err", Description: ""})
 	require.NoError(t, err)
-	_, err = st.CreateRole(ctx, &models.Role{Name: "rrfg-scope-role", Description: "test"})
+	rrfgScopeRoleName, err := identity.NewFoldedName("rrfg-scope-role")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, rrfgScopeRoleName, "test")
 	require.NoError(t, err)
 
 	origG, origR, origP, origE := removeGroupRoleGroupFlag, removeGroupRoleName, removeGroupRoleProjectFlag, removeGroupRoleEnvFlag
@@ -1629,7 +1654,9 @@ func TestRunCheckPermission_Embedded_HasPermission(t *testing.T) {
 
 	user, err := st.CreateUser(ctx, &models.User{Username: "chkperm-yes", Email: "chkperm-yes@example.com"})
 	require.NoError(t, err)
-	role, err := st.CreateRole(ctx, &models.Role{Name: "chkperm-role", Description: "test"})
+	chkPermRoleName, err := identity.NewFoldedName("chkperm-role")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, chkPermRoleName, "test")
 	require.NoError(t, err)
 	perm, err := st.CreatePermission(ctx, &models.Permission{
 		Name: "chkperm.read", Resource: "chkperm", Action: "read", Description: "test",

@@ -109,6 +109,7 @@ import (
 	"gorm.io/gorm"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -168,7 +169,9 @@ func TestRemoteStorage_S28_CreateRole_APIError(t *testing.T) {
 	}))
 	defer srv.Close()
 	rs := newS28Remote(t, srv.URL)
-	_, err := rs.CreateRole(context.Background(), &models.Role{Name: "admin"})
+	adminName, ferr := identity.NewFoldedName("admin")
+	require.NoError(t, ferr)
+	_, err := rs.CreateRole(context.Background(), adminName, "")
 	assert.Error(t, err)
 }
 

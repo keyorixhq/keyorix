@@ -9,6 +9,7 @@ import (
 	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,9 @@ func TestRemoteStorage_CreateRole(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	role, err := rs.CreateRole(context.Background(), &models.Role{Name: "admin"})
+	adminName, err := identity.NewFoldedName("admin")
+	require.NoError(t, err)
+	role, err := rs.CreateRole(context.Background(), adminName, "")
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), role.ID)
 	assert.Equal(t, "admin", role.Name)

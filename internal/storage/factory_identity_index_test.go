@@ -31,23 +31,23 @@ func TestEmailPartialUniqueIndex(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	alice, err := st.CreateUser(ctx, &models.User{Username: "alice", Email: "alice@x.io", IsActive: true})
+	alice, err := st.CreateUser(ctx, &models.User{Username: "alice", UsernameFolded: "alice", Email: "alice@x.io", EmailFolded: "alice@x.io", IsActive: true})
 	require.NoError(t, err)
 
 	// A second LIVE user with the same email is rejected.
-	_, err = st.CreateUser(ctx, &models.User{Username: "alice2", Email: "alice@x.io", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "alice2", UsernameFolded: "alice2", Email: "alice@x.io", EmailFolded: "alice@x.io", IsActive: true})
 	require.Error(t, err, "two live users may not share an email")
 
 	// Soft-deleting alice frees her email for reuse.
 	require.NoError(t, st.DeleteUser(ctx, alice.ID))
-	reAlice, err := st.CreateUser(ctx, &models.User{Username: "alice-again", Email: "alice@x.io", IsActive: true})
+	reAlice, err := st.CreateUser(ctx, &models.User{Username: "alice-again", UsernameFolded: "alice-again", Email: "alice@x.io", EmailFolded: "alice@x.io", IsActive: true})
 	require.NoError(t, err, "a soft-deleted user's email must be reusable on re-provisioning")
 	assert.NotEqual(t, alice.ID, reAlice.ID)
 
 	// Multiple LIVE users with NO email at all is allowed (empty is excluded).
-	_, err = st.CreateUser(ctx, &models.User{Username: "svc-1", Email: "", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "svc-1", UsernameFolded: "svc-1", Email: "", EmailFolded: "", IsActive: true})
 	require.NoError(t, err)
-	_, err = st.CreateUser(ctx, &models.User{Username: "svc-2", Email: "", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "svc-2", UsernameFolded: "svc-2", Email: "", EmailFolded: "", IsActive: true})
 	require.NoError(t, err, "multiple users with no email must not collide with each other")
 }
 
@@ -68,16 +68,16 @@ func TestExternalIDPartialUniqueIndex(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	_, err = st.CreateUser(ctx, &models.User{Username: "bob", Email: "bob@x.io", ExternalID: "okta|bob", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "bob", UsernameFolded: "bob", Email: "bob@x.io", EmailFolded: "bob@x.io", ExternalID: "okta|bob", IsActive: true})
 	require.NoError(t, err)
 
 	// A second LIVE user claiming the same external_id is rejected.
-	_, err = st.CreateUser(ctx, &models.User{Username: "bob2", Email: "bob2@x.io", ExternalID: "okta|bob", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "bob2", UsernameFolded: "bob2", Email: "bob2@x.io", EmailFolded: "bob2@x.io", ExternalID: "okta|bob", IsActive: true})
 	require.Error(t, err, "two live users may not share a non-empty external_id")
 
 	// Multiple native (local) users with an empty external_id must not collide.
-	_, err = st.CreateUser(ctx, &models.User{Username: "native-1", Email: "n1@x.io", ExternalID: "", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "native-1", UsernameFolded: "native-1", Email: "n1@x.io", EmailFolded: "n1@x.io", ExternalID: "", IsActive: true})
 	require.NoError(t, err)
-	_, err = st.CreateUser(ctx, &models.User{Username: "native-2", Email: "n2@x.io", ExternalID: "", IsActive: true})
+	_, err = st.CreateUser(ctx, &models.User{Username: "native-2", UsernameFolded: "native-2", Email: "n2@x.io", EmailFolded: "n2@x.io", ExternalID: "", IsActive: true})
 	require.NoError(t, err, "multiple native users with no external_id must not collide with each other")
 }

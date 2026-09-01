@@ -28,6 +28,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -804,7 +805,11 @@ func seedS4AdminActor(t *testing.T, cs *core.KeyorixCore) {
 	t.Helper()
 	seedS4AdminActorOnce.Do(func() {
 		ctx := context.Background()
-		role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "shared S4 admin fixture"})
+		systemAdminName, err := identity.NewFoldedName("system_admin")
+		if err != nil {
+			panic("seedS4AdminActor: NewFoldedName: " + err.Error())
+		}
+		role, err := cs.Storage().CreateRole(ctx, systemAdminName, "shared S4 admin fixture")
 		if err != nil {
 			panic("seedS4AdminActor: CreateRole: " + err.Error())
 		}
@@ -11288,7 +11293,9 @@ func TestCreateSoDPolicyProxy_WritesAuditEvent(t *testing.T) {
 	// DB is fresh per-run (openHandlerTestDB), so seed it directly rather than
 	// via the shared-DB seedS4AdminActor helper.
 	ctx := context.Background()
-	role, err := cs.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "admin"})
+	systemAdminName, err := identity.NewFoldedName("system_admin")
+	require.NoError(t, err)
+	role, err := cs.Storage().CreateRole(ctx, systemAdminName, "admin")
 	require.NoError(t, err)
 	require.NoError(t, cs.Storage().AssignRole(ctx, 500, role.ID, corestorage.Scope{}))
 

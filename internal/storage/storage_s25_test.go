@@ -210,14 +210,14 @@ func TestEnsureLegalHoldActiveIndex_S25_NoTableError(t *testing.T) {
 func TestEnsureUserNameIndex_S25_BothLegacyIndexesDropped(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "uname-both-legacy.db"))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_folded TEXT, deleted_at DATETIME)`).Error)
 	// Create both legacy index names.
 	require.NoError(t, db.Exec(`CREATE UNIQUE INDEX idx_users_username ON users (username)`).Error)
 	require.NoError(t, db.Exec(`CREATE UNIQUE INDEX uni_users_username ON users (username)`).Error)
 	require.NoError(t, ensureUserNameIndex(db))
 	assert.False(t, indexExists(db, "idx_users_username"), "first legacy index must be dropped")
 	assert.False(t, indexExists(db, "uni_users_username"), "second legacy index must be dropped")
-	assert.True(t, indexExists(db, "uniq_users_username_active"), "partial index must exist")
+	assert.True(t, indexExists(db, "uniq_users_username_folded_active"), "partial index must exist")
 }
 
 // ---------------------------------------------------------------------------
@@ -422,7 +422,9 @@ func TestMigrateDatabase_S25_UsersLockoutColumns_ElseBranch(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE users (
 		id INTEGER PRIMARY KEY,
 		username TEXT,
+		username_folded TEXT,
 		email TEXT,
+		email_folded TEXT,
 		external_id TEXT NOT NULL DEFAULT '',
 		deleted_at DATETIME
 	)`).Error)

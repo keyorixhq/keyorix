@@ -75,7 +75,7 @@ func TestLogin_TOCTOU_ConcurrentLockTripBeforeMintIsRefused(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.User{
-		ID: 1, Username: "alice", PasswordHash: string(hash), AccountState: core.AccountActive,
+		ID: 1, Username: "alice", UsernameFolded: "alice", PasswordHash: string(hash), AccountState: core.AccountActive,
 	}).Error)
 
 	wrapped := &raceInjectingStorage{
@@ -121,7 +121,7 @@ func TestConcurrency_LoginLockout_MixedBurstCorrectPasswordAmongLockedNeverMints
 	// attempt from the burst is enough to lock the account — maximizing the
 	// chance the burst genuinely races the correct-password attempt's recheck.
 	require.NoError(t, db.Create(&models.User{
-		ID: 1, Username: "alice", PasswordHash: string(hash), AccountState: core.AccountActive,
+		ID: 1, Username: "alice", UsernameFolded: "alice", PasswordHash: string(hash), AccountState: core.AccountActive,
 		FailedLoginAttempts: maxAttempts - 1,
 	}).Error)
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -116,9 +117,17 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 	if len(rejected) > 0 {
 		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
 	}
+	// #1642: SCIM-provisioned group names come from an external IdP and
+	// bypass core.CreateGroup entirely (see the storage-direct note below),
+	// so they need their own fold — mirrors ProvisionSCIMUser's identical
+	// treatment (scim.go).
+	foldedName, ferr := identity.NewFoldedName(displayName)
+	if ferr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+	}
 	// Storage-direct: the SCIM path emits its own scim.group_provisioned event below,
 	// so it must not also fire the generic group.created from CreateGroup.
-	group, err := c.storage.CreateGroup(ctx, &models.Group{Name: displayName})
+	group, err := c.storage.CreateGroup(ctx, &models.Group{Name: displayName, NameFolded: foldedName.Folded()})
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +150,16 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 	}
 	if displayName != "" && displayName != group.Name {
+		// #1642: keep NameFolded in lockstep with Name on every rename path,
+		// not just core.UpdateGroup's — a stale NameFolded here would leave
+		// the DB's uniqueness index checking a value that no longer matches
+		// the group's actual display name.
+		foldedName, ferr := identity.NewFoldedName(displayName)
+		if ferr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		}
 		group.Name = displayName
+		group.NameFolded = foldedName.Folded()
 		if _, err := c.storage.UpdateGroup(ctx, group); err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
@@ -181,7 +199,12 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 	}
 	if newName != nil && *newName != "" && *newName != group.Name {
+		foldedName, ferr := identity.NewFoldedName(*newName)
+		if ferr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		}
 		group.Name = *newName
+		group.NameFolded = foldedName.Folded()
 		if _, err := c.storage.UpdateGroup(ctx, group); err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}

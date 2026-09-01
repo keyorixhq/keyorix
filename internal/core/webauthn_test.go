@@ -30,7 +30,7 @@ func newWebAuthnTestCore(t *testing.T, withRP bool) (*KeyorixCore, *gorm.DB) {
 		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{},
 		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
 	hash, _ := bcrypt.GenerateFromPassword([]byte(webauthnTestPassword), bcrypt.DefaultCost)
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", Email: "a@b.com", EmailFolded: "a@b.com",
 		PasswordHash: string(hash), AccountState: "active"}).Error)
 
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)

@@ -26,7 +26,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
 // freshCatalogHandlerS21 returns a CatalogHandler backed by a fresh in-memory DB.
@@ -59,7 +59,9 @@ func proxyBodyS21(v interface{}) *bytes.Buffer {
 func withOIDCAdminCtxS21(t *testing.T, h *CatalogHandler, r *http.Request) *http.Request {
 	t.Helper()
 	ctx := context.Background()
-	_, err := h.coreService.Storage().CreateRole(ctx, &models.Role{Name: "system_admin", Description: "Administrator"})
+	systemAdminName, err := identity.NewFoldedName("system_admin")
+	require.NoError(t, err)
+	_, err = h.coreService.Storage().CreateRole(ctx, systemAdminName, "Administrator")
 	if err != nil {
 		require.Contains(t, err.Error(), "UNIQUE", "unexpected CreateRole error: %v", err) // already exists from a prior call in this test
 	}
@@ -904,8 +906,9 @@ func TestAssignMachineRoleProxy_HappyPath_S21(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	h2 := NewCatalogHandler(cs)
 
-	// Create a role via direct DB insert.
-	require.NoError(t, db.Exec("INSERT INTO roles (name, description) VALUES (?, ?)", "machine-test-role-s21", "test").Error)
+	// Create a role via direct DB insert. name_folded is NOT NULL (#1642);
+	// already pure-lowercase ASCII.
+	require.NoError(t, db.Exec("INSERT INTO roles (name, name_folded, description) VALUES (?, ?, ?)", "machine-test-role-s21", "machine-test-role-s21", "test").Error)
 
 	createMI := proxyBodyS21(map[string]interface{}{
 		"name": "assign-role-mi-s21", "project_id": 50, "state": "active",

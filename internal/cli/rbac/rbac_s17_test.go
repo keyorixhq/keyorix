@@ -23,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -74,9 +75,13 @@ func TestListRoles_EmbeddedMode_WithRoles(t *testing.T) {
 	_, st := initEmbeddedDB(t)
 
 	ctx := context.Background()
-	_, err := st.CreateRole(ctx, &models.Role{Name: "s17_admin", Description: "S17 Admin"})
+	s17AdminName, err := identity.NewFoldedName("s17_admin")
 	require.NoError(t, err)
-	_, err = st.CreateRole(ctx, &models.Role{Name: "s17_viewer", Description: "S17 Viewer"})
+	_, err = st.CreateRole(ctx, s17AdminName, "S17 Admin")
+	require.NoError(t, err)
+	s17ViewerName, err := identity.NewFoldedName("s17_viewer")
+	require.NoError(t, err)
+	_, err = st.CreateRole(ctx, s17ViewerName, "S17 Viewer")
 	require.NoError(t, err)
 
 	errRun := runListRoles(nil, nil)
@@ -99,7 +104,9 @@ func TestListUserRoles_EmbeddedMode_UserWithRoles(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	role, err := st.CreateRole(ctx, &models.Role{Name: "s17_editor", Description: "S17 Editor"})
+	s17EditorName, err := identity.NewFoldedName("s17_editor")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, s17EditorName, "S17 Editor")
 	require.NoError(t, err)
 
 	require.NoError(t, st.AssignRole(ctx, user.ID, role.ID, corestorage.Scope{}))
@@ -150,7 +157,9 @@ func TestListPermissions_EmbeddedMode_UserWithPermissions(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	role, err := st.CreateRole(ctx, &models.Role{Name: "s17_permrole", Description: "S17 perm role"})
+	s17PermRoleName, err := identity.NewFoldedName("s17_permrole")
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, s17PermRoleName, "S17 perm role")
 	require.NoError(t, err)
 
 	perm, err := st.CreatePermission(ctx, &models.Permission{

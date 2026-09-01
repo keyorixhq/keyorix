@@ -3,6 +3,7 @@ package testhelper
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -148,8 +149,10 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 	}
 
 	for _, role := range roles {
-		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, description) VALUES (?, ?, ?)",
-			role.ID, role.Name, role.Description)
+		// name_folded is NOT NULL (#1642); every seeded role name here is
+		// already pure-lowercase ASCII, so it's its own folded form.
+		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, name_folded, description) VALUES (?, ?, ?, ?)",
+			role.ID, role.Name, role.Name, role.Description)
 	}
 
 	// Create default permissions using raw SQL
@@ -232,9 +235,11 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 // CreateTestUser creates a test user in the database
 func (h *RBACTestHelper) CreateTestUser(t *testing.T, username string, userID uint) *models.User {
 	user := &models.User{
-		ID:       userID,
-		Username: username,
-		Email:    username + "@test.com",
+		ID:             userID,
+		Username:       username,
+		UsernameFolded: strings.ToLower(username),
+		Email:          username + "@test.com",
+		EmailFolded:    strings.ToLower(username) + "@test.com",
 	}
 
 	result := h.DB.Create(user)
@@ -262,6 +267,7 @@ func (h *RBACTestHelper) CreateTestGroup(t *testing.T, name, description string,
 	group := &models.Group{
 		ID:          groupID,
 		Name:        name,
+		NameFolded:  strings.ToLower(name),
 		Description: description,
 	}
 

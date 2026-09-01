@@ -74,9 +74,10 @@ func setupBulkAccessDB(t *testing.T) (k *KeyorixCore, db *gorm.DB, approverID, r
 	require.NoError(t, err)
 	projectID = p.ID
 
-	// Seed roles: admin (id=1) and editor (id=2).
-	require.NoError(t, db.Exec("INSERT INTO roles (id,name,description) VALUES (1,'admin','Admin')").Error)
-	require.NoError(t, db.Exec("INSERT INTO roles (id,name,description) VALUES (2,'editor','Editor')").Error)
+	// Seed roles: admin (id=1) and editor (id=2). name_folded is NOT NULL
+	// (#1642); both names are already pure-lowercase ASCII.
+	require.NoError(t, db.Exec("INSERT INTO roles (id,name,name_folded,description) VALUES (1,'admin','admin','Admin')").Error)
+	require.NoError(t, db.Exec("INSERT INTO roles (id,name,name_folded,description) VALUES (2,'editor','editor','Editor')").Error)
 
 	// Permissions for admin so the ceiling check passes.
 	perms := []struct {
@@ -97,14 +98,16 @@ func setupBulkAccessDB(t *testing.T) (k *KeyorixCore, db *gorm.DB, approverID, r
 	db.Exec("INSERT OR IGNORE INTO role_permissions (role_id,permission_id) VALUES (2,2)") // secrets.write
 	db.Exec("INSERT OR IGNORE INTO role_permissions (role_id,permission_id) VALUES (2,5)") // users.read
 
-	// Approver user (holds global admin role).
-	require.NoError(t, db.Exec("INSERT INTO users (id,username,email) VALUES (10,'approver','approver@example.com')").Error)
+	// Approver user (holds global admin role). username_folded/email_folded
+	// are the columns GetUserByUsername/GetUserByEmail actually query (#1642);
+	// both values here are already pure-lowercase ASCII.
+	require.NoError(t, db.Exec("INSERT INTO users (id,username,username_folded,email,email_folded) VALUES (10,'approver','approver','approver@example.com','approver@example.com')").Error)
 	approverID = 10
 	// Grant approver the admin role at the project scope.
 	require.NoError(t, db.Exec("INSERT INTO user_roles (user_id,role_id,project_id) VALUES (10,1,?)", projectID).Error)
 
 	// Requester user (no role yet).
-	require.NoError(t, db.Exec("INSERT INTO users (id,username,email) VALUES (11,'requester','requester@example.com')").Error)
+	require.NoError(t, db.Exec("INSERT INTO users (id,username,username_folded,email,email_folded) VALUES (11,'requester','requester','requester@example.com','requester@example.com')").Error)
 	requesterID = 11
 
 	return
@@ -165,9 +168,11 @@ func TestBulkApproveAccessRequests_AtBatchLimit_RealApprovals(t *testing.T) {
 	ids := make([]uint, maxBulkAccessRequestBatchSize)
 	for i := range ids {
 		userID := uint(1000 + i)
+		username := fmt.Sprintf("requester%d", i)
+		email := fmt.Sprintf("requester%d@example.com", i)
 		require.NoError(t, db.Exec(
-			"INSERT INTO users (id,username,email) VALUES (?,?,?)",
-			userID, fmt.Sprintf("requester%d", i), fmt.Sprintf("requester%d@example.com", i),
+			"INSERT INTO users (id,username,username_folded,email,email_folded) VALUES (?,?,?,?,?)",
+			userID, username, username, email, email,
 		).Error)
 		ids[i] = seedPendingRequest(t, k, projectID, userID, "editor")
 	}

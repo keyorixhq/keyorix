@@ -28,6 +28,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -533,7 +534,9 @@ func TestG80Sweep12_RevokeBreakGlassActivationProxy_RoleActuallyRemoved(t *testi
 	f := newG80SweepFixture(t)
 	ctx := context.Background()
 
-	role, err := f.core.Storage().CreateRole(ctx, &models.Role{Name: "g80sweep12-emergency-role"})
+	g80Sweep12EmergencyRoleName, err := identity.NewFoldedName("g80sweep12-emergency-role")
+	require.NoError(t, err)
+	role, err := f.core.Storage().CreateRole(ctx, g80Sweep12EmergencyRoleName, "")
 	require.NoError(t, err)
 	scope := core.Scope{ProjectID: f.projectID}
 	require.NoError(t, f.core.Storage().AssignRole(ctx, f.adminID, role.ID, scope))

@@ -23,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -336,7 +337,9 @@ func grantSystemWrite(t *testing.T, upstream *core.KeyorixCore, userID uint) {
 
 	role, err := st.GetRoleByName(ctx, "ar_test_system_writer")
 	if err != nil {
-		role, err = st.CreateRole(ctx, &models.Role{Name: "ar_test_system_writer", Description: "test-only role: system.write and nothing else"})
+		arTestSystemWriterName, err := identity.NewFoldedName("ar_test_system_writer")
+		require.NoError(t, err)
+		role, err = st.CreateRole(ctx, arTestSystemWriterName, "test-only role: system.write and nothing else")
 		require.NoError(t, err)
 		perms, err := upstream.ListPermissions(ctx)
 		require.NoError(t, err)

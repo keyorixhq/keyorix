@@ -44,6 +44,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -1281,7 +1282,11 @@ func TestStartSchedulers_S27_JITExpiredGrantSwept(t *testing.T) {
 	ctx1 := context.Background()
 	store := coreService.Storage()
 
-	role, err := store.CreateRole(ctx1, &models.Role{Name: "s27-jit-role"})
+	s27JitRoleName, err := identity.NewFoldedName("s27-jit-role")
+	if err != nil {
+		t.Fatalf("NewFoldedName: %v", err)
+	}
+	role, err := store.CreateRole(ctx1, s27JitRoleName, "")
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

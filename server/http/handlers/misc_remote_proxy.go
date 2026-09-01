@@ -56,6 +56,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -330,9 +331,26 @@ func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", clientSafe(err))
 		return
 	}
+	// #1642: this endpoint bypasses core.CreateUser/buildUserForCreate
+	// entirely (by design — see the doc comment above), so it needs its own
+	// fold, mirroring ValidateRoleGrantAuthority's own re-implementation of
+	// core's other checks for this wire path. Computed independently from
+	// body.Username/body.Email, never trusted from the wire.
+	foldedUsername, ferr := identity.NewFoldedName(body.Username)
+	if ferr != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid username: "+ferr.Error())
+		return
+	}
+	foldedEmail, ferr := identity.NewFoldedName(body.Email)
+	if ferr != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid email: "+ferr.Error())
+		return
+	}
 	user := &models.User{
 		Username:          body.Username,
+		UsernameFolded:    foldedUsername.Folded(),
 		Email:             body.Email,
+		EmailFolded:       foldedEmail.Folded(),
 		DisplayName:       body.DisplayName,
 		PasswordHash:      body.PasswordHash,
 		IsActive:          body.IsActive,

@@ -163,9 +163,11 @@ func TestCreateUserWithSetupLink_ConflictError_S13(t *testing.T) {
 	cs.SetCredentialDelivery(nil, "https://test.keyorix.example")
 
 	require.NoError(t, db.Create(&models.User{
-		Username:     "setup-conflict-s13",
-		Email:        "setup-conflict-s13@x.com",
-		AccountState: core.AccountActive,
+		Username:       "setup-conflict-s13",
+		UsernameFolded: "setup-conflict-s13",
+		Email:          "setup-conflict-s13@x.com",
+		EmailFolded:    "setup-conflict-s13@x.com",
+		AccountState:   core.AccountActive,
 	}).Error)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -211,9 +213,11 @@ func TestGetUser_Found_S13(t *testing.T) {
 func TestGetUserByEmail_Found_S13(t *testing.T) {
 	uh, _, db := freshUserHandlerS12(t)
 	require.NoError(t, db.Create(&models.User{
-		Username:     "byemail-s13",
-		Email:        "byemail-s13@x.com",
-		AccountState: core.AccountActive,
+		Username:       "byemail-s13",
+		UsernameFolded: "byemail-s13",
+		Email:          "byemail-s13@x.com",
+		EmailFolded:    "byemail-s13@x.com",
+		AccountState:   core.AccountActive,
 	}).Error)
 
 	req := withUserCtx(httptest.NewRequest(
@@ -241,9 +245,11 @@ func TestGetUserByEmail_NotFound_S13(t *testing.T) {
 func TestGetUserByUsername_Found_S13(t *testing.T) {
 	uh, _, db := freshUserHandlerS12(t)
 	require.NoError(t, db.Create(&models.User{
-		Username:     "byusername-s13",
-		Email:        "byusername-s13@x.com",
-		AccountState: core.AccountActive,
+		Username:       "byusername-s13",
+		UsernameFolded: "byusername-s13",
+		Email:          "byusername-s13@x.com",
+		EmailFolded:    "byusername-s13@x.com",
+		AccountState:   core.AccountActive,
 	}).Error)
 
 	req := withUserCtx(httptest.NewRequest(
@@ -281,14 +287,18 @@ func TestUpdateUser_ConflictError_S13(t *testing.T) {
 	uh, _, db := freshUserHandlerS12(t)
 
 	require.NoError(t, db.Create(&models.User{
-		Username:     "existing-user-s13",
-		Email:        "existing-s13@x.com",
-		AccountState: core.AccountActive,
+		Username:       "existing-user-s13",
+		UsernameFolded: "existing-user-s13",
+		Email:          "existing-s13@x.com",
+		EmailFolded:    "existing-s13@x.com",
+		AccountState:   core.AccountActive,
 	}).Error)
 	require.NoError(t, db.Create(&models.User{
-		Username:     "target-user-s13",
-		Email:        "target-s13@x.com",
-		AccountState: core.AccountActive,
+		Username:       "target-user-s13",
+		UsernameFolded: "target-user-s13",
+		Email:          "target-s13@x.com",
+		EmailFolded:    "target-s13@x.com",
+		AccountState:   core.AccountActive,
 	}).Error)
 
 	var target models.User

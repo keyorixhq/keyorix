@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/mock"
 )
@@ -1113,8 +1114,8 @@ func (m *MockStorage) ListGroupMembersByGroupIDs(ctx context.Context, groupIDs [
 
 // Role Management
 
-func (m *MockStorage) CreateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
-	args := m.Called(ctx, role)
+func (m *MockStorage) CreateRole(ctx context.Context, name identity.FoldedName, description string) (*models.Role, error) {
+	args := m.Called(ctx, name, description)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

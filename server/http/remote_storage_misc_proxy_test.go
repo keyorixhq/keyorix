@@ -332,6 +332,20 @@ func TestRemoteStorageCreateUserWithRoleGrants_DuplicateEmail_RealServer(t *test
 	upstream, downstream, _, _, _ := newUpstreamDownstreamForMiscProxy(t)
 	ctx := context.Background()
 
+	// newTestCore only creates the legacy uniq_users_email_active index (a
+	// LOWER(email) expression index, pre-#1642). Production's real partial
+	// unique index is on email_folded (internal/storage/factory.go's
+	// ensureUserEmailIndex) and isDuplicateEmailViolation
+	// (internal/storage/store/local_users.go) only recognizes that index's
+	// name/column text. Mirror production's index here, scoped to this test's
+	// own private in-memory DB only (newTestCore's DSN is unique per call, so
+	// this cannot affect any other test), so the DB-level collision this test
+	// exercises actually fires the sentinel-translation branch it asserts on.
+	realDB, ok := upstream.Storage().(*store.LocalStorage)
+	require.True(t, ok, "upstream storage must be *store.LocalStorage for this in-process index setup")
+	require.NoError(t, realDB.DB().Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_folded_active "+
+		"ON users (email_folded) WHERE deleted_at IS NULL AND email <> ''").Error)
+
 	_, err := upstream.CreateUser(ctx, &core.CreateUserRequest{
 		Username:    "dup-email-owner",
 		Email:       "dup-email@example.com",
@@ -344,12 +358,14 @@ func TestRemoteStorageCreateUserWithRoleGrants_DuplicateEmail_RealServer(t *test
 	require.NoError(t, err)
 
 	_, err = downstream.Storage().CreateUserWithRoleGrants(ctx, &models.User{
-		Username:     "dup-email-newcomer",
-		Email:        "dup-email@example.com",
-		DisplayName:  "Dup Newcomer",
-		PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0", // 60 chars: isPlausibleBcryptHash requires exactly 60
-		IsActive:     true,
-		AccountState: "active",
+		Username:       "dup-email-newcomer",
+		UsernameFolded: "dup-email-newcomer",
+		Email:          "dup-email@example.com",
+		EmailFolded:    "dup-email@example.com",
+		DisplayName:    "Dup Newcomer",
+		PasswordHash:   "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0", // 60 chars: isPlausibleBcryptHash requires exactly 60
+		IsActive:       true,
+		AccountState:   "active",
 	}, []corestorage.RoleGrant{{RoleID: viewerRole.ID}})
 	require.Error(t, err, "creating a user with an already-used email must fail, not silently succeed")
 	assert.True(t, errors.Is(err, corestorage.ErrDuplicateEmail),

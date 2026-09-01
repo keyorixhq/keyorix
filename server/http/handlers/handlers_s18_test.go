@@ -32,9 +32,11 @@ func TestCreateUserWithOTP_Conflict_S18(t *testing.T) {
 	uh, _, db := freshUserHandlerS12(t)
 
 	require.NoError(t, db.Create(&models.User{
-		Username:     "otp-conflict-s18",
-		Email:        "otp-conflict-s18@x.com",
-		AccountState: core.AccountActive,
+		Username:       "otp-conflict-s18",
+		UsernameFolded: "otp-conflict-s18",
+		Email:          "otp-conflict-s18@x.com",
+		EmailFolded:    "otp-conflict-s18@x.com",
+		AccountState:   core.AccountActive,
 	}).Error)
 
 	body, _ := json.Marshal(map[string]interface{}{
