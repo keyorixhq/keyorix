@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -13,16 +12,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// Role Name/Description length bounds. gRPC has no shared internal/core
-// validation layer to inherit these from (unlike other resources), so they
-// are mirrored here exactly from the HTTP-side struct tags in
-// server/http/handlers/rbac.go (CreateRoleRequest/UpdateRoleRequest) to keep
-// the two transports' accepted input identical (#191).
+// Role Name/Description length bounds. #1660: these now alias
+// internal/core.RoleName{Min,Max}Len/RoleDescription{Min,Max}Len — the
+// shared validation layer gRPC previously had none of (this comment used to
+// say so, #191) — rather than independently duplicating the numbers. Kept as
+// local names since the gRPC-side error messages ("name must be between %d
+// and %d characters") predate and differ in wording from HTTP's validator-
+// library message, and callers below reference these short names throughout.
 const (
-	roleNameMinLen        = 3
-	roleNameMaxLen        = 50
-	roleDescriptionMinLen = 1
-	roleDescriptionMaxLen = 200
+	roleNameMinLen        = core.RoleNameMinLen
+	roleNameMaxLen        = core.RoleNameMaxLen
+	roleDescriptionMinLen = core.RoleDescriptionMinLen
+	roleDescriptionMaxLen = core.RoleDescriptionMaxLen
 )
 
 // RoleGRPCService implements pb.RoleServiceServer, backing each RPC with the
@@ -59,28 +60,20 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err := validateRoleDescription(req.GetDescription()); err != nil {
 		return nil, err
 	}
-	// #1642: fold once here, use for both the reserved-name check below and
-	// the CreateRole call — see the identical HTTP-side treatment
-	// (RBACHandler.CreateRole) for the full rationale, including why folding
-	// before IsBuiltinRole closes a case-variant gap that check's own exact
-	// map lookup otherwise leaves open.
-	foldedName, ferr := identity.NewFoldedName(req.GetName())
-	if ferr != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid role name: "+ferr.Error())
-	}
-	// #294: reserved role names must never be creatable — see the identical guard (with
-	// full rationale) in the HTTP RBACHandler.CreateRole. This closes the same gap over
-	// gRPC, which has its own independent CreateRole path.
-	if core.IsBuiltinRole(foldedName.Folded()) {
-		return nil, status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
-	}
-
 	permIDs, err := s.resolvePermissionIDs(ctx, actor.UserID, req.GetPermissions())
 	if err != nil {
 		return nil, err
 	}
 
-	role, err := s.core.Storage().CreateRole(ctx, foldedName, req.GetDescription())
+	// #1660: core.CreateRole is the single place that folds the name (identity.
+	// NewFoldedName — #1642), rejects reserved built-in names (#294:
+	// roleSetContainsAdmin in authz.go grants a full admin bypass by NAME
+	// match alone, so a caller-created row named e.g. "super_admin" would
+	// function as a complete admin-bypass switch the moment it's assigned,
+	// even with zero permissions of its own), and audits the creation —
+	// previously duplicated per-transport (the identical HTTP-side treatment
+	// in RBACHandler.CreateRole called storage.CreateRole directly too).
+	role, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription())
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
@@ -89,10 +82,8 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 			return nil, status.Error(codes.Internal, "failed to assign permissions to role")
 		}
 	}
-	// Audit the role creation, mirroring the HTTP handler — Storage().CreateRole does
-	// not audit internally, so without this a role created over gRPC left no trail.
-	// (Permission grants are audited by AssignPermissionToRole itself.)
-	s.core.LogRoleCreated(ctx, actor.UserID, role.ID, role.Name)
+	// core.CreateRole audits the role.created event itself now (permission
+	// grants are audited by AssignPermissionToRole).
 	return s.roleByID(ctx, role.ID)
 }
 
@@ -130,23 +121,24 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
-	// A built-in role must not be mutable over gRPC either — mirrors the CreateRole/
-	// DeleteRole guards above/below. UpdateRole unconditionally strips a role's entire
-	// current permission set before re-adding the caller-supplied one (see below), so
-	// without this check a roles.write holder could shrink e.g. admin/system_admin down
-	// to whatever subset they hold themselves, silently locking out every administrator
-	// who relies on that built-in role. The HTTP handler applies the identical guard
-	// (handlers/rbac.go); without it here the guard is bypassable by switching transport.
-	if core.IsBuiltinRole(role.Name) {
-		s.core.LogRoleUpdateDenied(ctx, actor.UserID, role.ID, role.Name, "target is a built-in role")
-		return nil, status.Errorf(codes.FailedPrecondition, "cannot update built-in role: %s", role.Name)
-	}
-
 	if req.Description != nil {
 		role.Description = req.GetDescription()
-		if _, err := s.core.Storage().UpdateRole(ctx, role); err != nil {
-			return nil, mapRoleError(err)
-		}
+	}
+	// #1660: core.UpdateRole is the single place that rejects mutating a
+	// built-in role (UpdateRole unconditionally strips a role's entire
+	// current permission set before re-adding the caller-supplied one below,
+	// so without this guard a roles.write holder could shrink e.g. admin/
+	// system_admin down to whatever subset they hold themselves, silently
+	// locking out every administrator who relies on that built-in role) and
+	// audits the update — previously duplicated per-transport (the identical
+	// HTTP-side treatment in RBACHandler.UpdateRole called storage.UpdateRole
+	// directly too). Called unconditionally, even when only Permissions is
+	// being replaced below, so a permission-only update to a built-in role is
+	// still rejected — the guard used to sit unconditionally right after the
+	// fetch for exactly this reason.
+	role, err = s.core.UpdateRole(ctx, actor.UserID, role)
+	if err != nil {
+		return nil, mapRoleError(err)
 	}
 
 	// A provided permission list replaces the entire set.
@@ -167,9 +159,8 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 		}
 	}
 
-	// Audit the role update, mirroring the HTTP handler — Storage().UpdateRole and the
-	// permission swap above do not emit a role.updated event on their own.
-	s.core.LogRoleUpdated(ctx, actor.UserID, role.ID, role.Name)
+	// core.UpdateRole already audited the role.updated event above (permission
+	// grants/removals are audited by AssignPermissionToRole/RemovePermissionFromRole).
 	return s.roleByID(ctx, role.ID)
 }
 
@@ -419,8 +410,17 @@ func mapRoleError(err error) error {
 	switch {
 	case strings.Contains(msg, "not found"):
 		return status.Error(codes.NotFound, "role not found")
+	case strings.Contains(msg, "reserved"):
+		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"), strings.Contains(msg, "unique"):
 		return status.Error(codes.AlreadyExists, "a role with that name already exists")
+	// #1660: core.CreateRole/UpdateRole's own validation (name fold rejects
+	// control/bidi characters, length bounds) surfaces here now that both
+	// RPCs route through them instead of storage directly.
+	case strings.Contains(msg, "validation"):
+		return status.Error(codes.InvalidArgument, err.Error())
+	case strings.Contains(msg, "built-in"):
+		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	default:
 		return status.Error(codes.Internal, "role operation failed")
 	}
