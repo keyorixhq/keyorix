@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -415,16 +414,25 @@ func mapRoleError(err error) error {
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"), strings.Contains(msg, "unique"):
 		return status.Error(codes.AlreadyExists, "a role with that name already exists")
-	// #1660: core.CreateRole's own validation (name fold rejects control/bidi
-	// characters, length bounds) surfaces here now that both RPCs route
-	// through it instead of storage directly. errors.Is against
-	// core.ErrRoleValidation confirms this err.Error() text is
-	// application-generated (never a storage/driver failure), so it's safe
-	// to echo instead of guessing from the message text.
-	case errors.Is(err, core.ErrRoleValidation):
-		return status.Error(codes.InvalidArgument, err.Error()) // nosemgrep: keyorix-raw-error-to-client -- confirmed via errors.Is(err, core.ErrRoleValidation) above; message is CreateRole's own fixed validation text, never storage/driver output
+	// #1660: core.CreateRole/UpdateRole's own validation (name fold rejects
+	// control/bidi characters, length bounds) surfaces here now that both
+	// RPCs route through them instead of storage directly. A fixed message,
+	// not err.Error(), per this file's gRPC convention (semgrep
+	// keyorix-raw-error-to-client): core's validation error wraps
+	// identity.NewFoldedName's raw-input echo (%q of the caller's own
+	// string), which is safe content but not a "known safe sentinel with a
+	// fixed string" the rule's nosemgrep exception covers, so it goes
+	// through mapRoleError like every other case instead of being
+	// special-cased. (An earlier fix on main took the sentinel route --
+	// wrapping CreateRole's validation errors in a core.ErrRoleValidation
+	// marker checked via errors.Is -- but this fixed-message approach is
+	// simpler, matches every other case in this switch, and needs no
+	// wrapper type; the sentinel machinery was removed from
+	// internal/core/rbac_roles.go when resolving this conflict.)
+	case strings.Contains(msg, "validation"):
+		return status.Error(codes.InvalidArgument, "invalid role name or description")
 	case strings.Contains(msg, "built-in"):
-		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
+		return status.Error(codes.FailedPrecondition, "cannot modify a built-in role")
 	default:
 		return status.Error(codes.Internal, "role operation failed")
 	}

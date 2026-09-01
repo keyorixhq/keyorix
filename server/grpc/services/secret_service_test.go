@@ -234,28 +234,31 @@ func TestSecretService_PerSecretOps_ScopedToOtherProjectDenied(t *testing.T) {
 	// Flat list advertises every permission — the bug would have honoured it.
 	ctx := authCtx(3, "scoped", "secrets.read", "secrets.write", "secrets.delete")
 
-	// #G14: authorizeSecretScoped now returns the SAME NotFound a nonexistent ID
-	// would get, not PermissionDenied — a distinct code for "exists but you can't
-	// touch it" is an existence oracle across the project boundary.
+	// ADR-096: authorizeSecretScoped denies as PermissionDenied by default —
+	// user 3 holds secrets.* only scoped to project 1, not globally, so this
+	// is not the narrow real-404 exception. A distinct code for "exists but
+	// you can't touch it" vs. "doesn't exist" would be an existence oracle
+	// across the project boundary; PermissionDenied here is what closes it —
+	// see authorizeScopedTarget (conversions.go).
 	_, err := r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: 50})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "GetSecret cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetSecret cross-project")
 
 	_, err = r.svc.GetSecretValue(ctx, &pb.GetSecretRequest{Id: 50})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "GetSecretValue cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetSecretValue cross-project")
 
 	_, err = r.svc.UpdateSecret(ctx, &pb.UpdateSecretRequest{Id: 50})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "UpdateSecret cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "UpdateSecret cross-project")
 
 	_, err = r.svc.DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: 50})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "DeleteSecret cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "DeleteSecret cross-project")
 
 	_, err = r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: 50})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "GetSecretVersions cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetSecretVersions cross-project")
 }
 
 // A scoped user CAN operate on a secret within a project where they hold the
@@ -494,10 +497,12 @@ func TestSecretService_SetSecretAutoRotate_PermissionDenied(t *testing.T) {
 	owner := authCtx(1, "writer", "secrets.write", "secrets.read")
 	sec := r.createSecret(t, owner, "rotatable", "v")
 
-	// #G14: authorizeSecretScoped returns the same NotFound a nonexistent secret
-	// ID would, not PermissionDenied — see authorizeSecretScoped's doc comment.
+	// ADR-096: authorizeSecretScoped denies as PermissionDenied by default —
+	// user 2 holds no secrets.write grant anywhere, not even globally, so
+	// this is not the narrow real-404 exception — see authorizeScopedTarget's
+	// doc comment (conversions.go).
 	ctx := authCtx(2, "reader", "secrets.read") // no write grant
 	_, err := r.svc.SetSecretAutoRotate(ctx, &pb.SetSecretAutoRotateRequest{Id: sec.GetId(), Enabled: true})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }

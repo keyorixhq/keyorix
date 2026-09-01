@@ -9,6 +9,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -286,6 +287,28 @@ func TestEnforceProjectMFAForProjects_SkipsZeroAndDuplicateIDs(t *testing.T) {
 // ---------------------------------------------------------------------------
 // secret_service.go
 // ---------------------------------------------------------------------------
+
+// TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText proves the
+// concrete leak scenario mapSecretACLError's "invalid"/"required" branch is
+// exposed to: secret_acl.go wraps CreateOrUpdateSecretACL/DeleteSecretACL's
+// raw storage error with "%s: %w" (ErrorStorageFailed/ErrorRetrievalFailed
+// prefix), and a real SQL/driver error can coincidentally contain "invalid"
+// or "required" as a substring (e.g. Postgres' "invalid input syntax for
+// type integer", or a NOT NULL constraint mentioning a "required" column) —
+// which would classify as InvalidArgument and, before this fix, echo the
+// raw driver text straight to the gRPC client. Asserting only the status
+// code (as the sibling classification table test does) can't catch this —
+// only checking the message content can.
+func TestMapSecretACLError_WrappedStorageError_DoesNotLeakRawText(t *testing.T) {
+	rawDriverErr := errors.New(`pq: invalid input syntax for type integer: "abc"`)
+	wrapped := fmt.Errorf("%s: %w", "Storage operation failed", rawDriverErr)
+
+	got := mapSecretACLError(wrapped)
+	require.Error(t, got)
+	assert.Equal(t, codes.InvalidArgument, status.Code(got))
+	assert.NotContains(t, status.Convert(got).Message(), "pq:", "raw driver error text must not reach the client")
+	assert.NotContains(t, status.Convert(got).Message(), "abc", "the caller-irrelevant driver detail must not reach the client")
+}
 
 // mapSecretACLError's classification switch — only the default/NotFound
 // branches are exercised by secret_acl_service_test.go; directly drive the
@@ -567,10 +590,12 @@ func TestDynamicSecretService_ClassifyConfig_InvalidClassification(t *testing.T)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
-// loadConfigScoped/loadLeaseScoped's found-but-unauthorized branch (#G14
-// uniform NotFound): a caller scoped to a different project than the
-// config/lease must get the same NotFound a nonexistent id would.
-func TestDynamicSecretService_CrossProjectAccess_NotFound(t *testing.T) {
+// loadConfigScoped/loadLeaseScoped's found-but-unauthorized branch (ADR-096,
+// via the shared authorizeScopedTarget): a caller scoped to a different
+// project than the config/lease, and not globally privileged, must get the
+// same PermissionDenied a nonexistent id's default branch would — a distinct
+// NotFound would be an existence oracle across the project boundary.
+func TestDynamicSecretService_CrossProjectAccess_PermissionDenied(t *testing.T) {
 	r := newDynTestRigWithFake(t)
 	owner := authCtx(1, "owner")
 	cfg, err := r.svc.CreateConfig(owner, &pb.CreateDynamicConfigRequest{
@@ -587,11 +612,11 @@ func TestDynamicSecretService_CrossProjectAccess_NotFound(t *testing.T) {
 
 	_, err = r.svc.GetConfig(scoped, &pb.GetDynamicConfigRequest{Id: cfg.GetId()})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "GetConfig cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetConfig cross-project")
 
 	_, err = r.svc.RenewLease(scoped, &pb.RenewLeaseRequest{LeaseId: lease.GetLeaseId()})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err), "RenewLease cross-project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "RenewLease cross-project")
 }
 
 // ListConfigs/ListLeases' mapDynamicError branches: both are bare storage

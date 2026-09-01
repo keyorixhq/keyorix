@@ -17,35 +17,12 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
-
-// ErrRoleValidation marks a CreateRole failure as an application-generated
-// validation error (name length, folded-name charset/bidi rejection) rather
-// than a storage/driver failure, so a caller like mapRoleError
-// (server/grpc/services/role_service.go) can confirm via errors.Is that the
-// error's message is safe to echo to a client instead of guessing from its
-// text.
-var ErrRoleValidation = errors.New("role validation")
-
-// roleValidationError tags err as matching ErrRoleValidation for errors.Is,
-// without ErrRoleValidation's own text ever appearing in Error() -- the
-// displayed message stays exactly err's, unchanged from before this marker
-// existed.
-type roleValidationError struct{ err error }
-
-func (e *roleValidationError) Error() string        { return e.err.Error() }
-func (e *roleValidationError) Unwrap() error        { return e.err }
-func (e *roleValidationError) Is(target error) bool { return target == ErrRoleValidation }
-
-// WrapRoleValidation marks err as an ErrRoleValidation match for errors.Is,
-// without altering its Error() text.
-func WrapRoleValidation(err error) error { return &roleValidationError{err: err} }
 
 // Role Name/Description length bounds — the single source of truth both
 // transports' own early-reject validation (server/http/handlers/rbac.go's
@@ -83,11 +60,11 @@ func validateRoleNameLength(name string) error {
 // authenticated principal).
 func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, description string) (*models.Role, error) {
 	if err := validateRoleNameLength(name); err != nil {
-		return nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 	foldedName, ferr := identity.NewFoldedName(name)
 	if ferr != nil {
-		return nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 	}
 	if IsBuiltinRole(foldedName.Folded()) {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this role name is reserved and cannot be created")

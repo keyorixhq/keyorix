@@ -39,7 +39,7 @@ func (h *SecretHandler) RenderTemplate(w http.ResponseWriter, r *http.Request) {
 
 	rendered, err := h.coreService.RenderSecretTemplate(r.Context(), reqBody.Template, uint(id), userCtx.UserID, userCtx.Username, r.RemoteAddr, r.Header.Get("User-Agent"))
 	if err != nil {
-		h.sendRenderTemplateError(w, err)
+		h.sendRenderTemplateError(w, r, userCtx, err)
 		return
 	}
 
@@ -48,12 +48,23 @@ func (h *SecretHandler) RenderTemplate(w http.ResponseWriter, r *http.Request) {
 
 // sendRenderTemplateError dispatches the correct HTTP error for a RenderSecretTemplate
 // failure. Extracted from RenderTemplate to reduce its cognitive complexity.
-func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, err error) {
+func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, r *http.Request, userCtx *middleware.UserContext, err error) {
 	switch {
-	// core.ErrSecretRefNotFound covers both "no such secret" and "exists but no read access"
-	// — must be checked before the generic "not found" / "permission" substring branches.
+	// core.ErrSecretRefNotFound covers both "no such secret" and "exists but no
+	// read access" — must be checked before the generic "not found" / "permission"
+	// substring branches. ADR-096: RequireScopedPermission on this route already
+	// gates access to the PROJECT, but a template can reference secrets by name
+	// anywhere within it, so this is a second, per-reference existence check that
+	// needs the same 403-for-both treatment — only a caller who holds
+	// secrets.read at GLOBAL scope may learn "no such secret" from "exists, you
+	// can't read it"; everyone else gets the identical denial as a real
+	// permission failure (same branch, same body, by construction below).
 	case errors.Is(err, core.ErrSecretRefNotFound):
-		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+		if middleware.AuthorizedAtGlobalScope(r.Context(), h.coreService, userCtx, permSecretsRead) {
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+			return
+		}
+		h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
 	case strings.Contains(err.Error(), "not found"):
 		h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 	case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):

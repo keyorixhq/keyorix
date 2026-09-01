@@ -192,36 +192,35 @@ func TestMapRoleError_Default(t *testing.T) {
 	}
 }
 
-// core.ErrRoleValidation-wrapped errors (CreateRole's own length/charset
-// checks) map to InvalidArgument with their message intact -- safe to echo
-// since errors.Is confirms the text is application-generated, not a
-// storage/driver failure.
+// core.CreateRole's own validation errors (length/charset checks) map to
+// InvalidArgument with a fixed message -- never err.Error() verbatim, since
+// identity.NewFoldedName's error text echoes the caller's raw input (%q) and
+// isn't the "known safe sentinel with a fixed string" this file's
+// keyorix-raw-error-to-client convention requires for echoing.
 func TestMapRoleError_Validation(t *testing.T) {
-	inner := errors.New("role name must be between 3 and 50 characters")
-	err := mapRoleError(core.WrapRoleValidation(inner))
+	err := mapRoleError(fmt.Errorf("validation error: invalid name %q: control characters not allowed", "role\x00name"))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
 	}
-	if st.Message() != "role name must be between 3 and 50 characters" {
-		t.Errorf("expected the validation message to be echoed verbatim, got %q", st.Message())
+	if st.Message() != "invalid role name or description" {
+		t.Errorf("expected the fixed safe message, got %q (raw error text -- including caller input -- must not leak)", st.Message())
 	}
 }
 
-// A plain error whose text merely CONTAINS "validation" -- but isn't wrapped
-// in core.ErrRoleValidation -- must fall through to the generic Internal
-// bucket rather than being echoed to the client. This is the failure mode
-// the old strings.Contains(msg, "validation") check could not distinguish:
-// any storage/driver error mentioning the word "validation" would have had
-// its raw text sent straight to a gRPC client.
-func TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed(t *testing.T) {
-	err := mapRoleError(errors.New("constraint chk_validation_xyz on table roles: internal driver detail"))
+// Rejecting a built-in-role mutation maps to FailedPrecondition with a fixed
+// message -- previously this case used status.Errorf(..., "%s", err.Error()),
+// echoing "cannot update built-in role: <name>" verbatim; dodges this file's
+// AST-pattern-matched semgrep rule (Errorf, not Error) without being any
+// safer in substance, and had zero test coverage.
+func TestMapRoleError_BuiltIn(t *testing.T) {
+	err := mapRoleError(errors.New("permission denied: cannot update built-in role: system_admin"))
 	st, _ := status.FromError(err)
-	if st.Code() != codes.Internal {
-		t.Errorf("expected Internal (no sentinel match), got %v", st.Code())
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("expected FailedPrecondition, got %v", st.Code())
 	}
-	if st.Message() != "role operation failed" {
-		t.Errorf("expected the generic safe message, got %q (raw error text must not leak)", st.Message())
+	if st.Message() != "cannot modify a built-in role" {
+		t.Errorf("expected the fixed safe message, got %q (raw error text must not leak)", st.Message())
 	}
 }
 
