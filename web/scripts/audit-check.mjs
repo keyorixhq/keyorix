@@ -4,10 +4,12 @@
 //
 // Usage: pnpm audit --json --prod | node scripts/audit-check.mjs
 
-// GHSA-qwww-vcr4-c8h2: react-router RSC-mode CSRF bypass (>=7.12.0 <8.3.0).
-// Patched only in the breaking v8.x line. This app is a SPA; the RSC request
-// handler that contains the vulnerability is never loaded or executed.
-const IGNORED = new Set(['GHSA-qwww-vcr4-c8h2']);
+// No advisories are currently suppressed. If one needs to be, document the
+// GHSA id, the vulnerable range, and why it isn't reachable in this app —
+// and remove the entry once the lockfile moves past the vulnerable range
+// (a suppression for a version this app no longer has installed is dead
+// weight that silently stops meaning anything).
+const IGNORED = new Set();
 
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
