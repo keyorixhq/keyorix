@@ -34,8 +34,9 @@ func TestDependencyReachable(t *testing.T) {
 func TestTransitiveDependents(t *testing.T) {
 	// 3 is depended on by 2 and 4; 2 is depended on by 1. So rotating 3 impacts 2,4 (depth1) then 1 (depth2).
 	edges := []*models.SecretDependency{edge(1, 2), edge(2, 3), edge(4, 3)}
-	got := transitiveDependents(edges, 3)
+	got, truncated := transitiveDependents(edges, 3)
 	require.Len(t, got, 3)
+	assert.False(t, truncated)
 	// BFS order: depth-1 dependents of 3 first (2,4 sorted), then 1.
 	assert.Equal(t, uint(2), got[0].id)
 	assert.Equal(t, 1, got[0].depth)
@@ -45,7 +46,55 @@ func TestTransitiveDependents(t *testing.T) {
 	assert.Equal(t, 2, got[2].depth)
 
 	// A leaf nobody depends on has no impact.
-	assert.Empty(t, transitiveDependents(edges, 1))
+	leaf, leafTruncated := transitiveDependents(edges, 1)
+	assert.Empty(t, leaf)
+	assert.False(t, leafTruncated)
+}
+
+// TestTransitiveDependents_DepthCapped is the resource-exhaustion regression:
+// a chain deeper than maxDependencyBFSDepth must stop at the cap and report
+// Truncated, not silently walk the entire graph.
+func TestTransitiveDependents_DepthCapped(t *testing.T) {
+	// Chain: 2 depends on 1, 3 depends on 2, ... 16 depends on 15 -- 15 hops
+	// deep, well past maxDependencyBFSDepth (10).
+	edges := make([]*models.SecretDependency, 0, 15)
+	for i := uint(1); i <= 15; i++ {
+		edges = append(edges, edge(i+1, i))
+	}
+	got, truncated := transitiveDependents(edges, 1)
+	assert.True(t, truncated, "a chain past maxDependencyBFSDepth must be flagged truncated")
+	require.Len(t, got, maxDependencyBFSDepth, "BFS must stop expanding at maxDependencyBFSDepth")
+	for _, n := range got {
+		assert.LessOrEqual(t, n.depth, maxDependencyBFSDepth)
+	}
+}
+
+// TestTransitiveDependents_NodeCapped is the breadth counterpart to the depth
+// cap: depth alone doesn't bound total node count (#G44's reasoning, shared
+// with blastBFS) -- a single secret with a very wide fan-out of direct
+// dependents must still be capped at maxDependencyBFSNodes.
+func TestTransitiveDependents_NodeCapped(t *testing.T) {
+	const fanOut = maxDependencyBFSNodes + 500
+	edges := make([]*models.SecretDependency, 0, fanOut)
+	for i := uint(0); i < fanOut; i++ {
+		// Each of these directly depends on secret 1 -- all at depth 1.
+		edges = append(edges, edge(i+2, 1))
+	}
+	got, truncated := transitiveDependents(edges, 1)
+	assert.True(t, truncated, "fan-out past maxDependencyBFSNodes must be flagged truncated")
+	assert.Len(t, got, maxDependencyBFSNodes, "BFS must stop at maxDependencyBFSNodes regardless of depth")
+}
+
+// TestTransitiveDependents_NotTruncatedWithinBounds is the negative
+// counterpart: a graph within both caps must not be flagged truncated.
+func TestTransitiveDependents_NotTruncatedWithinBounds(t *testing.T) {
+	edges := make([]*models.SecretDependency, 0, 5)
+	for i := uint(1); i <= 5; i++ {
+		edges = append(edges, edge(i+1, i))
+	}
+	got, truncated := transitiveDependents(edges, 1)
+	assert.False(t, truncated)
+	require.Len(t, got, 5)
 }
 
 func TestTopologicalRotationOrder(t *testing.T) {

@@ -12,9 +12,14 @@ import "context"
 type ImpactPreviewResult struct {
 	SecretID             uint   `json:"secret_id"`
 	DirectDependents     int    `json:"direct_dependents"`     // secrets that directly depend on this one (depth=1)
-	TransitiveDependents int    `json:"transitive_dependents"` // full transitive-closure count (excludes root)
-	AffectedSecretIDs    []uint `json:"affected_secret_ids"`   // IDs of all transitively affected secrets
+	TransitiveDependents int    `json:"transitive_dependents"` // transitive-closure count (excludes root), up to maxDependencyBFSNodes
+	AffectedSecretIDs    []uint `json:"affected_secret_ids"`   // IDs of all transitively affected secrets found
 	MaxDepth             int    `json:"max_depth"`             // deepest dependency chain length found
+	// Truncated is true when the true cascade extends beyond what the counts
+	// above report -- the underlying BFS hit maxDependencyBFSNodes or
+	// maxDependencyBFSDepth (see transitiveDependents). When true, every
+	// count above is a LOWER BOUND, not the true cascade size.
+	Truncated bool `json:"truncated"`
 }
 
 // GetSecretImpactPreview computes the cascade-delete impact of removing secretID.
@@ -30,12 +35,17 @@ type ImpactPreviewResult struct {
 // GetSecretImpact returns.
 //
 // #G32: DirectDependents/TransitiveDependents/MaxDepth are computed over the FULL
-// graph — an operator deciding whether to delete secretID needs the true cascade size,
-// even if some affected secrets are outside their own visibility, and a bare count
-// discloses no peer identity. AffectedSecretIDs is the identifying part, though, so it
-// is filtered to only the peers the caller is independently authorized to read (same
-// reasoning as ListSecretDependencies/GetSecretImpact: same-environment membership
-// alone does not prove authorization on a peer).
+// graph (not filtered to what the caller can see) — an operator deciding whether to
+// delete secretID needs the true cascade size, even if some affected secrets are
+// outside their own visibility, and a bare count discloses no peer identity.
+// AffectedSecretIDs is the identifying part, though, so it is filtered to only the
+// peers the caller is independently authorized to read (same reasoning as
+// ListSecretDependencies/GetSecretImpact: same-environment membership alone does not
+// prove authorization on a peer). "Full graph" is itself bounded by
+// transitiveDependents' maxDependencyBFSNodes/maxDependencyBFSDepth (resource-
+// exhaustion guard, same as GetBlastRadius's maxBlastRadiusNodes) — Truncated
+// signals when a pathologically large dependency graph made these counts a lower
+// bound rather than the true cascade size.
 func (c *KeyorixCore) GetSecretImpactPreview(ctx context.Context, actorKind string, actorID, secretID uint) (*ImpactPreviewResult, error) {
 	secret, err := c.requireSecret(ctx, secretID)
 	if err != nil {
@@ -55,11 +65,12 @@ func (c *KeyorixCore) GetSecretImpactPreview(ctx context.Context, actorKind stri
 	// transitiveDependents walks the "dependents" direction (secrets that depend ON
 	// secretID), which is the correct direction for cascade-delete impact: if secretID
 	// is removed, every secret that depended on it is affected.
-	affected := transitiveDependents(edges, secretID)
+	affected, truncated := transitiveDependents(edges, secretID)
 
 	result := &ImpactPreviewResult{
 		SecretID:          secretID,
 		AffectedSecretIDs: make([]uint, 0, len(affected)),
+		Truncated:         truncated,
 	}
 
 	for _, a := range affected {

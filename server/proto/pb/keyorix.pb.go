@@ -1237,10 +1237,15 @@ func (x *ImpactedSecret) GetDepth() int32 {
 }
 
 type SecretImpact struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SecretId      uint32                 `protobuf:"varint,1,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
-	SecretName    string                 `protobuf:"bytes,2,opt,name=secret_name,json=secretName,proto3" json:"secret_name,omitempty"`
-	Affected      []*ImpactedSecret      `protobuf:"bytes,3,rep,name=affected,proto3" json:"affected,omitempty"` // transitive dependents
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SecretId   uint32                 `protobuf:"varint,1,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	SecretName string                 `protobuf:"bytes,2,opt,name=secret_name,json=secretName,proto3" json:"secret_name,omitempty"`
+	Affected   []*ImpactedSecret      `protobuf:"bytes,3,rep,name=affected,proto3" json:"affected,omitempty"` // transitive dependents
+	// truncated is true when the true affected set may extend beyond what
+	// affected contains -- the underlying dependency-graph BFS hit its
+	// resource-exhaustion node/depth cap (internal/core's maxDependencyBFSNodes
+	// / maxDependencyBFSDepth).
+	Truncated     bool `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1294,6 +1299,13 @@ func (x *SecretImpact) GetAffected() []*ImpactedSecret {
 		return x.Affected
 	}
 	return nil
+}
+
+func (x *SecretImpact) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
 }
 
 type RotationStep struct {
@@ -10815,12 +10827,13 @@ const file_keyorix_proto_rawDesc = "" +
 	"\tsecret_id\x18\x01 \x01(\rR\bsecretId\x12\x1f\n" +
 	"\vsecret_name\x18\x02 \x01(\tR\n" +
 	"secretName\x12\x14\n" +
-	"\x05depth\x18\x03 \x01(\x05R\x05depth\"\x84\x01\n" +
+	"\x05depth\x18\x03 \x01(\x05R\x05depth\"\xa2\x01\n" +
 	"\fSecretImpact\x12\x1b\n" +
 	"\tsecret_id\x18\x01 \x01(\rR\bsecretId\x12\x1f\n" +
 	"\vsecret_name\x18\x02 \x01(\tR\n" +
 	"secretName\x126\n" +
-	"\baffected\x18\x03 \x03(\v2\x1a.keyorix.v1.ImpactedSecretR\baffected\"L\n" +
+	"\baffected\x18\x03 \x03(\v2\x1a.keyorix.v1.ImpactedSecretR\baffected\x12\x1c\n" +
+	"\ttruncated\x18\x04 \x01(\bR\ttruncated\"L\n" +
 	"\fRotationStep\x12\x1b\n" +
 	"\tsecret_id\x18\x01 \x01(\rR\bsecretId\x12\x1f\n" +
 	"\vsecret_name\x18\x02 \x01(\tR\n" +
