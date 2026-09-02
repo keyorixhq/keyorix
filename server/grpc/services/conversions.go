@@ -291,7 +291,7 @@ func secretDependenciesToProto(d *core.SecretDependencies) *pb.SecretDependencie
 }
 
 func secretImpactToProto(im *core.SecretImpact) *pb.SecretImpact {
-	out := &pb.SecretImpact{SecretId: intToU32(int(im.SecretID)), SecretName: im.SecretName}
+	out := &pb.SecretImpact{SecretId: intToU32(int(im.SecretID)), SecretName: im.SecretName, Truncated: im.Truncated}
 	for _, a := range im.Affected {
 		out.Affected = append(out.Affected, &pb.ImpactedSecret{
 			SecretId:   intToU32(int(a.SecretID)),

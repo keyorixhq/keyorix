@@ -67,6 +67,10 @@ type SecretImpact struct {
 	SecretID   uint             `json:"secret_id"`
 	SecretName string           `json:"secret_name"`
 	Affected   []ImpactedSecret `json:"affected"`
+	// Truncated is true when the true affected set may extend beyond what
+	// Affected contains -- the underlying BFS hit maxDependencyBFSNodes or
+	// maxDependencyBFSDepth (see transitiveDependents).
+	Truncated bool `json:"truncated"`
 }
 
 // RotationOrder is a safe rotation sequence for a project's dependency graph: each
@@ -268,8 +272,8 @@ func (c *KeyorixCore) GetSecretImpact(ctx context.Context, actorKind string, act
 	}
 	info := c.resolveSecretInfo(ctx, edges)
 	edges = edgesWithinEnvironment(edges, info, secret.EnvironmentID) // defence-in-depth, as in ListSecretDependencies
-	affected := transitiveDependents(edges, secretID)
-	out := &SecretImpact{SecretID: secretID, SecretName: secret.Name, Affected: make([]ImpactedSecret, 0, len(affected))}
+	affected, truncated := transitiveDependents(edges, secretID)
+	out := &SecretImpact{SecretID: secretID, SecretName: secret.Name, Affected: make([]ImpactedSecret, 0, len(affected)), Truncated: truncated}
 	for _, a := range affected {
 		// #G32: the BFS traverses the full graph so a hop through an unauthorized peer
 		// still surfaces further, independently-authorized dependents — but a peer the
@@ -480,14 +484,32 @@ type impacted struct {
 	depth int
 }
 
+// maxDependencyBFSNodes bounds transitiveDependents' total node count — the
+// same resource-exhaustion vector blastBFS's maxBlastRadiusNodes guards
+// (#G44, blast_radius.go): both GetSecretImpact and GetSecretImpactPreview
+// do a per-node canReadSecret call over the result afterward, so an unbounded
+// node count is a per-request cost multiplier reachable via dependency-edge
+// fan-out within a single project (AddSecretDependency rejects cycles and
+// self-edges, but has no cap on total edge/node count). Independently
+// tunable from maxBlastRadiusNodes even though the value matches it today —
+// the two features may need different limits later.
+const maxDependencyBFSNodes = 2000
+
+// maxDependencyBFSDepth mirrors blastBFS's maxDepth, same reasoning.
+const maxDependencyBFSDepth = 10
+
 // transitiveDependents returns every secret that transitively depends on secretID, in
-// breadth-first order with the shortest hop-distance. Excludes secretID itself.
-func transitiveDependents(edges []*models.SecretDependency, secretID uint) []impacted {
+// breadth-first order with the shortest hop-distance, up to maxDependencyBFSNodes
+// total and maxDependencyBFSDepth deep. Excludes secretID itself. truncated is true
+// when either bound was hit — the true dependent set may extend further than what's
+// returned; callers must surface this rather than silently reporting a possibly
+// truncated result as complete (same discipline as blastBFS/#G24).
+func transitiveDependents(edges []*models.SecretDependency, secretID uint) (result []impacted, truncated bool) {
 	adj := dependentsAdjacency(edges)
 	seen := map[uint]bool{secretID: true}
 	out := []impacted{}
 	queue := []impacted{{id: secretID, depth: 0}}
-	for len(queue) > 0 {
+	for len(queue) > 0 && len(out) < maxDependencyBFSNodes {
 		cur := queue[0]
 		queue = queue[1:]
 		for _, dep := range adj[cur.id] {
@@ -495,11 +517,20 @@ func transitiveDependents(edges []*models.SecretDependency, secretID uint) []imp
 				continue
 			}
 			seen[dep] = true
-			out = append(out, impacted{id: dep, depth: cur.depth + 1})
-			queue = append(queue, impacted{id: dep, depth: cur.depth + 1})
+			next := impacted{id: dep, depth: cur.depth + 1}
+			out = append(out, next)
+			if next.depth < maxDependencyBFSDepth {
+				queue = append(queue, next)
+			} else {
+				truncated = true
+			}
+			if len(out) >= maxDependencyBFSNodes {
+				truncated = true
+				break
+			}
 		}
 	}
-	return out
+	return out, truncated
 }
 
 // topologicalRotationOrder returns the secrets in a project's dependency graph in a

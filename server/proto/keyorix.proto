@@ -332,6 +332,11 @@ message SecretImpact {
   uint32 secret_id = 1;
   string secret_name = 2;
   repeated ImpactedSecret affected = 3; // transitive dependents
+  // truncated is true when the true affected set may extend beyond what
+  // affected contains -- the underlying dependency-graph BFS hit its
+  // resource-exhaustion node/depth cap (internal/core's maxDependencyBFSNodes
+  // / maxDependencyBFSDepth).
+  bool truncated = 4;
 }
 
 message RotationStep {
