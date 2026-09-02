@@ -121,7 +121,7 @@ func freshCoreS12WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	// Seed the user context user (UserID=1) as a global admin.
 	// The role name must be in adminRoleNames ("super_admin", "admin",
 	// "system_admin", "project_admin") for the admin bypass to fire.
-	adminRole := &models.Role{Name: "system_admin", NameFolded: "system_admin", Description: "Administrator"}
+	adminRole := &models.Role{Name: "system_admin", NameFolded: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	// withUserCtx injects UserID=1 — seed a user with that implicit first ID.
 	testUser := &models.User{Username: "testuser_s12", UsernameFolded: "testuser_s12", Email: "testuser_s12@example.com", EmailFolded: "testuser_s12@example.com", AccountState: "active"}

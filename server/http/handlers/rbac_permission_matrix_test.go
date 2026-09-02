@@ -40,7 +40,7 @@ func newMatrixHandlerCore(t *testing.T) (*RBACHandler, *gorm.DB) {
 func seedMatrixHandlerData(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0, EnvironmentID: 0}).Error)
@@ -126,7 +126,7 @@ func TestGetPermissionMatrixHandler_CSVWithExpiry(t *testing.T) {
 
 	exp := time.Date(2028, 6, 1, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{
@@ -149,7 +149,7 @@ func TestGetPermissionMatrixHandler_CSVFormulaInjection(t *testing.T) {
 	h, db := newMatrixHandlerCore(t)
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.Project{ID: 9, Name: "=cmd|' /C calc'!A1"}).Error)

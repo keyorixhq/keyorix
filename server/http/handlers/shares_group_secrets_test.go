@@ -29,7 +29,7 @@ func TestListGroupSharedSecretsHandler(t *testing.T) {
 
 	// #G10: ListGroupSharedSecrets now self-authorizes (secrets.read, global scope);
 	// withUserCtx's UserID 1 needs a real grant.
-	role := &models.Role{Name: "admin"}
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 

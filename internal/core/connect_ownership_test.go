@@ -310,9 +310,10 @@ func TestConnectReadableConnectorNames_PlatformVisibleWithPlatformUse(t *testing
 }
 
 // seedRoleForUserAtProject mirrors seedRoleForUser (connect_rbac_test.go) but
-// grants the role at a specific project scope instead of global.
+// grants the role at a specific project scope instead of global. ADR-084:
+// same reserved-name-sets-the-flag behavior as seedRoleForUser.
 func seedRoleForUserAtProject(t *testing.T, db *gorm.DB, userID, roleID uint, name string, projectID uint) {
 	t.Helper()
-	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: name}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: name, BypassesPermissionChecks: isAdminRoleName(name)}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: roleID, ProjectID: projectID}).Error)
 }

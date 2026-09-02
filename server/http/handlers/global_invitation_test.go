@@ -39,7 +39,7 @@ func setupGlobalInvitationTest(t *testing.T) (*CatalogHandler, *gorm.DB) {
 	// roles.assign everywhere and passes the invite privilege ceiling. A non-admin actor
 	// is exercised separately in the ceiling test below.
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "testuser", Email: "testuser@example.com"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 100, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 100, Name: "super_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 100, ProjectID: 0}).Error)
 	return NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db))), db
 }
@@ -119,7 +119,7 @@ func TestCreateGlobalInvitation_EnforcesAssignCeiling(t *testing.T) {
 	h, db := setupGlobalInvitationTest(t)
 	var proj models.Project
 	require.NoError(t, db.Where("name = ?", "default").First(&proj).Error)
-	require.NoError(t, db.Create(&models.Role{Name: "system_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{Name: "system_admin", BypassesPermissionChecks: true}).Error)
 
 	// Strip the actor's admin authority — user 1 now holds no role-granting power.
 	require.NoError(t, db.Where("user_id = ?", 1).Delete(&models.UserRole{}).Error)

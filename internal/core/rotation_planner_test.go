@@ -90,7 +90,7 @@ func newPlannerCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.MachineIdentityRole{}, &models.SecretACL{},
 	))
-	role := &models.Role{Name: "admin"}
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: plannerTestActor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}

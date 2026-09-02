@@ -60,7 +60,7 @@ func newScopedTestDB(t *testing.T) *gorm.DB {
 func seedAdmin(t *testing.T, db *gorm.DB, userID uint) {
 	t.Helper()
 	require.NoError(t, db.Create(&models.User{ID: userID, Username: "admin", AccountState: "active"}).Error)
-	role := &models.Role{Name: "admin"}
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: role.ID}).Error)
 }

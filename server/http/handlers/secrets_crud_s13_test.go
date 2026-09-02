@@ -92,7 +92,7 @@ func freshSecretFixtureS13(t *testing.T) (*SecretHandler, *core.KeyorixCore, *mo
 
 	// Seed user 1 as system_admin so in-handler authorization passes.
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice-s13", AccountState: "active"}).Error)
-	adminRole := &models.Role{Name: "system_admin"}
+	adminRole := &models.Role{Name: "system_admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 

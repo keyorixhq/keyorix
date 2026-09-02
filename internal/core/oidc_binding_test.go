@@ -43,7 +43,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 		c := NewKeyorixCore(store)
 		c.now = time.Now
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
-		store.On("GetRoleByName", ctx, mock.Anything).Return(&models.Role{ID: 99, Name: "system_admin"}, nil)
+		store.On("RoleSetBypassesPermissionChecks", ctx, []uint{99}).Return(true, nil)
 		store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{99}, nil)
 		store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 		store.On("CreateOIDCBinding", ctx, mock.MatchedBy(func(b *models.MachineIdentityOIDCBinding) bool {

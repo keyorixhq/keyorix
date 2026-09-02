@@ -58,7 +58,7 @@ func TestQuotaReportRouteRequiresAuditRead(t *testing.T) {
 	now := time.Now()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "a@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "secretreader", Email: "s@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "secretreader"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "audit.read", Resource: "audit", Action: "read"}).Error)

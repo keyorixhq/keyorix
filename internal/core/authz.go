@@ -350,39 +350,24 @@ func (c *KeyorixCore) scopedRoleIDs(ctx context.Context, userID uint, scope Scop
 	return dedupeUints(append(direct, viaGroups...)), nil
 }
 
-// roleSetContainsAdmin reports whether any role ID in the set is an admin
-// role. Fails closed on a genuine resolution error: a GetRoleByName failure
-// that is NOT "not found" (a transient storage error, a cancelled context) is
-// returned to the caller rather than silently treated as "no admin role
-// found" here — #G17 (enforceProjectMFA/ProjectMFABlocked,
+// roleSetContainsAdmin reports whether any role ID in the set has the
+// structural bypasses_permission_checks flag (ADR-084). This resolves by ID
+// against the flag, not by matching a fixed name list — a rename never moves
+// the flag, and a newly-created role never has it regardless of what it is
+// named (see models.Role.BypassesPermissionChecks's doc comment for exactly
+// where it is ever written). Fails closed on a genuine resolution error: any
+// storage error is returned to the caller rather than silently treated as
+// "no admin role found" — #G17 (enforceProjectMFA/ProjectMFABlocked,
 // server/grpc/services/conversions.go and server/middleware/auth.go) is the
 // precedent this mirrors: a lookup error on a security-relevant path must not
 // be indistinguishable from a legitimate negative result, or a caller can
 // trigger the same lookup error to silently bypass whatever the error would
-// otherwise have blocked. "Role not seeded in this deployment" (the NotFound
-// case) is not an error condition here and keeps its current meaning — every
-// other admin-tier name is still checked.
+// otherwise have blocked.
 func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) (bool, error) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- roleIDs is a principal's resolved current role set (scopedRoleIDs/GetUserRoleIDsAt), not a raw client-supplied array; every call site passes an internally-computed list
 	if len(roleIDs) == 0 {
 		return false, nil
 	}
-	idSet := make(map[uint]struct{}, len(roleIDs))
-	for _, id := range roleIDs {
-		idSet[id] = struct{}{}
-	}
-	for _, name := range adminRoleNames {
-		role, err := c.storage.GetRoleByName(ctx, name)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				continue // role not seeded in this deployment
-			}
-			return false, err
-		}
-		if _, ok := idSet[role.ID]; ok {
-			return true, nil
-		}
-	}
-	return false, nil
+	return c.storage.RoleSetBypassesPermissionChecks(ctx, roleIDs)
 }
 
 // requireGlobalAdminToReinstateAdminRoles refuses to reinstate roleIDs unless

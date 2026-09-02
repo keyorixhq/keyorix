@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -42,19 +41,14 @@ func stubNotAdminCalls(store *MockStorage, ctx context.Context, userID uint) {
 	store.On("GetUserGroupRoleIDsAt", ctx, userID, storage.Scope{}).Return([]uint{}, nil)
 }
 
-// stubAdminCalls sets up IsGlobalAdmin expectations so the user is a global admin.
-// We give them the "admin" role ID and set up GetRoleByName so roleSetContainsAdmin
-// finds a match.
+// stubAdminCalls sets up IsGlobalAdmin expectations so the user is a global
+// admin: role ID 99, flagged as bypassing permission checks (ADR-084) so
+// roleSetContainsAdmin finds a match.
 func stubAdminCalls(store *MockStorage, ctx context.Context, userID uint) {
 	adminRoleID := uint(99)
 	store.On("GetUserRoleIDsAt", ctx, userID, storage.Scope{}).Return([]uint{adminRoleID}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, userID, storage.Scope{}).Return([]uint{}, nil)
-	// roleSetContainsAdmin iterates adminRoleNames; return an error for non-"admin" names
-	// so we don't have to set up all four. For "admin" return the matching role.
-	for _, name := range []string{"super_admin", "system_admin", "project_admin"} {
-		store.On("GetRoleByName", ctx, name).Return(nil, fmt.Errorf("not found")).Maybe()
-	}
-	store.On("GetRoleByName", ctx, "admin").Return(&models.Role{ID: adminRoleID, Name: "admin"}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{adminRoleID}).Return(true, nil)
 }
 
 // TestSuspendInactiveUsers_InvalidDays ensures InactiveDays <= 0 is rejected.

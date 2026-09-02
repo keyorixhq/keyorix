@@ -192,7 +192,7 @@ func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env"}).Error)
 	// CreateDynamicSecretConfig requires admin authority on the project (#162) — seed
 	// a global admin role and grant it to the requesting actor.
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	const actorID = uint(42)
 	require.NoError(t, db.Create(&models.UserRole{UserID: actorID, RoleID: 1}).Error)
 

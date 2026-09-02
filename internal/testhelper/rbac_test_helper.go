@@ -151,8 +151,12 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 	for _, role := range roles {
 		// name_folded is NOT NULL (#1642); every seeded role name here is
 		// already pure-lowercase ASCII, so it's its own folded form.
-		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, name_folded, description) VALUES (?, ?, ?, ?)",
-			role.ID, role.Name, role.Name, role.Description)
+		// ADR-084: bypasses_permission_checks is the structural admin-bypass
+		// flag, not the name — set true here for super_admin/admin exactly
+		// as real bootstrap seeding would, so tests using this helper to
+		// exercise the admin bypass keep working.
+		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, name_folded, description, bypasses_permission_checks) VALUES (?, ?, ?, ?, ?)",
+			role.ID, role.Name, role.Name, role.Description, role.Name == "super_admin" || role.Name == "admin")
 	}
 
 	// Create default permissions using raw SQL

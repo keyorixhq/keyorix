@@ -687,6 +687,19 @@ type Role struct {
 	// here is managed by an explicit ensure*Index function instead.
 	NameFolded  string `gorm:"not null" json:"-"`
 	Description string
+	// BypassesPermissionChecks marks a role whose holder bypasses the
+	// per-permission check entirely, at whatever scope the role is held
+	// (ADR-084) -- the structural replacement for name-based admin
+	// detection (roleSetContainsAdmin, internal/core/authz.go). Written
+	// in exactly two places: the one-time migration that adds this column
+	// (internal/storage/factory.go), and role seeding
+	// (defaultRoles/BootstrapSystem, internal/core/auth_bootstrap.go) via
+	// the dedicated storage.SetRoleBypassesPermissionChecks setter. There
+	// is NO runtime mutation path: CreateRole/UpdateRole (HTTP, gRPC, any
+	// future transport) never accept this from a request DTO, and no
+	// /system proxy writes it. Renaming a role does not move this flag; a
+	// newly-created role never has it regardless of what it is named.
+	BypassesPermissionChecks bool `gorm:"not null;default:false"`
 }
 
 type Permission struct {

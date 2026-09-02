@@ -40,7 +40,7 @@ func newImpactPreviewCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p-impact"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env-impact"}).Error)
-	role := &models.Role{Name: "admin"}
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: impactPreviewTestActor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	now := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)

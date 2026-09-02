@@ -299,6 +299,18 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 			return nil, fmt.Errorf("failed to create role %s: %w", rdef.Name, err)
 		}
 		roleIDs[rdef.Name] = role.ID
+		// ADR-084: the four admin-tier seeded roles get the structural bypass
+		// flag here, at creation, via the one narrow storage primitive that
+		// exists for exactly this — never through CreateRole/UpdateRole's
+		// general (request-reachable) path. isAdminRoleName is the same
+		// fixed-name check requireAuthorityForRole uses to gate a role GRANT
+		// by requested name; using it here to decide which SEEDED roles get
+		// the flag is a one-time bootstrap decision, not an ongoing lookup.
+		if isAdminRoleName(rdef.Name) {
+			if err := c.storage.SetRoleBypassesPermissionChecks(ctx, role.ID, true); err != nil {
+				return nil, fmt.Errorf("failed to flag admin-tier role %s (ADR-084): %w", rdef.Name, err)
+			}
+		}
 		for _, name := range rdef.Permissions {
 			if err := c.storage.AssignPermissionToRole(ctx, role.ID, permIDs[name]); err != nil {
 				return nil, fmt.Errorf("failed to assign permission %s to role %s: %w", name, rdef.Name, err)

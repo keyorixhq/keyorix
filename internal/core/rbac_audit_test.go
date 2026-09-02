@@ -141,7 +141,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 	require.NoError(t, db.Create(&models.Permission{ID: 8, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
 	// #169: AssignPermissionToRole now requires the actor already hold the permission
 	// being bundled — make actor 5 a global admin so the bypass applies.
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1}).Error)
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()

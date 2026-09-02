@@ -1002,6 +1002,14 @@ type Storage interface {
 	UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error)
 	DeleteRole(ctx context.Context, id uint) error
 	ListRoles(ctx context.Context) ([]*models.Role, error)
+	// SetRoleBypassesPermissionChecks sets models.Role.BypassesPermissionChecks
+	// (ADR-084) for roleID. Deliberately NOT reachable from CreateRole/UpdateRole
+	// or any request DTO -- called only by role seeding
+	// (defaultRoles/BootstrapSystem, internal/core/auth_bootstrap.go) for the
+	// four reserved admin-tier role names, immediately after creating them. No
+	// other production caller should exist; this is the one narrow, storage-
+	// internal write path the ADR names, not a general role-mutation primitive.
+	SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error
 
 	// RBAC Operations.
 	// AssignRole/RemoveRole bind a role to a user at the given Scope
@@ -1061,6 +1069,11 @@ type Storage interface {
 	// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (via scopedRoleIDs) per scope.
 	GetUserRoleScopes(ctx context.Context, userID uint) ([]Scope, error)
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
+	// RoleSetBypassesPermissionChecks reports whether any role in roleIDs has
+	// BypassesPermissionChecks = true (ADR-084) -- the structural,
+	// resolve-by-ID replacement for roleSetContainsAdmin's old fixed-name-list
+	// lookup (internal/core/authz.go). Mirrors RoleSetHasPermission's shape.
+	RoleSetBypassesPermissionChecks(ctx context.Context, roleIDs []uint) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 	// GetUserGroupPermissions returns the permissions a user holds via GROUP
 	// membership (group → group_roles → role_permissions), scope-agnostically and

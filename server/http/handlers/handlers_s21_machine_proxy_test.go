@@ -61,10 +61,17 @@ func withOIDCAdminCtxS21(t *testing.T, h *CatalogHandler, r *http.Request) *http
 	ctx := context.Background()
 	systemAdminName, err := identity.NewFoldedName("system_admin")
 	require.NoError(t, err)
-	_, err = h.coreService.Storage().CreateRole(ctx, systemAdminName, "Administrator")
+	role, err := h.coreService.Storage().CreateRole(ctx, systemAdminName, "Administrator")
 	if err != nil {
 		require.Contains(t, err.Error(), "UNIQUE", "unexpected CreateRole error: %v", err) // already exists from a prior call in this test
+		role, err = h.coreService.Storage().GetRoleByName(ctx, "system_admin")
+		require.NoError(t, err)
 	}
+	// ADR-084: BypassesPermissionChecks is the structural admin-bypass flag now,
+	// not the name -- CreateRole (the real production API this helper deliberately
+	// exercises) never sets it from a request DTO, so set it here exactly as real
+	// bootstrap seeding would, via the same narrow storage primitive.
+	require.NoError(t, h.coreService.Storage().SetRoleBypassesPermissionChecks(ctx, role.ID, true))
 	uname := fmt.Sprintf("s21_oidc_admin_%d", time.Now().UnixNano())
 	user, err := h.coreService.CreateUser(ctx, &core.CreateUserRequest{
 		Username: uname, Email: uname + "@example.com", Password: "TestPassword123!",

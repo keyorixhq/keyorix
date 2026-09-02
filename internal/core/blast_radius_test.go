@@ -91,7 +91,10 @@ func newBlastRadiusCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
 	// Global admin bypass for blastRadiusTestActor (see its doc comment above).
-	role := &models.Role{Name: "admin"}
+	// ADR-084: the bypass is now the structural BypassesPermissionChecks flag,
+	// not the "admin" name — a role built via a raw Create like this one, as a
+	// real bootstrap-seeded role would be, must set it explicitly.
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: blastRadiusTestActor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)

@@ -1122,6 +1122,11 @@ func (m *MockStorage) CreateRole(ctx context.Context, name identity.FoldedName, 
 	return args.Get(0).(*models.Role), args.Error(1)
 }
 
+func (m *MockStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error {
+	args := m.Called(ctx, roleID, value)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetRole(ctx context.Context, id uint) (*models.Role, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
@@ -1243,6 +1248,11 @@ func (m *MockStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]sto
 
 func (m *MockStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
 	args := m.Called(ctx, roleIDs, permission)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) RoleSetBypassesPermissionChecks(ctx context.Context, roleIDs []uint) (bool, error) {
+	args := m.Called(ctx, roleIDs)
 	return args.Bool(0), args.Error(1)
 }
 

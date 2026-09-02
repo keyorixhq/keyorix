@@ -184,6 +184,10 @@ func TestCreateSoDPolicyProxy_HappyPath_S13(t *testing.T) {
 	require.NoError(t, err)
 	adminRole, err := h.coreService.Storage().CreateRole(ctx, systemAdminName, "Administrator")
 	require.NoError(t, err)
+	// ADR-084: BypassesPermissionChecks is the structural admin-bypass flag now,
+	// not the name -- CreateRole never sets it from a request DTO, so set it here
+	// exactly as real bootstrap seeding would.
+	require.NoError(t, h.coreService.Storage().SetRoleBypassesPermissionChecks(ctx, adminRole.ID, true))
 	require.NoError(t, h.coreService.Storage().AssignRole(ctx, 1, adminRole.ID, storage.Scope{}))
 
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/",

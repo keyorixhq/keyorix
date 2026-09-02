@@ -52,7 +52,7 @@ func setupScopedRBACCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "viewerA", Email: "viewera@test.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
 
 	// Roles + permissions: admin (global, via bypass) and viewer (secrets.read).
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
@@ -189,7 +189,7 @@ func setupACLOnlyRBACCore(t *testing.T) (cs *core.KeyorixCore, secretWithACL, se
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin3@test.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 3, Username: "aclonly", Email: "aclonly@test.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
 
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
 	// member-noperm: gives user 3 project membership (so GrantSecretACL's
 	// IsProjectMember precondition passes) WITHOUT granting any RBAC permission

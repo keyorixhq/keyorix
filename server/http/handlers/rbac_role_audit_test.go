@@ -39,7 +39,7 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 	// being bundled — make withUserCtx's actor (UserID 1) a global admin so the bypass
 	// applies. Named distinctly from the literal "admin" role a later subtest creates
 	// (Role.Name is unique).
-	adminRole := &models.Role{Name: "system_admin", Description: "Administrator"}
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 
@@ -92,7 +92,7 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 		// role.deleted row (Success=false) alongside the one earlier
 		// successful delete (Success=true), distinguished by the Success flag
 		// per this file's countEvents helper not filtering on it.
-		require.NoError(t, db.Create(&models.Role{Name: "admin", Description: "built-in"}).Error)
+		require.NoError(t, db.Create(&models.Role{Name: "admin", Description: "built-in", BypassesPermissionChecks: true}).Error)
 		var adminID uint
 		require.NoError(t, db.Model(&models.Role{}).Where("name = ?", "admin").Select("id").Scan(&adminID).Error)
 

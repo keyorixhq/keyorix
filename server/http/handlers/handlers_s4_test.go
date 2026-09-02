@@ -813,6 +813,12 @@ func seedS4AdminActor(t *testing.T, cs *core.KeyorixCore) {
 		if err != nil {
 			panic("seedS4AdminActor: CreateRole: " + err.Error())
 		}
+		// ADR-084: BypassesPermissionChecks is the structural admin-bypass flag
+		// now, not the name -- CreateRole never sets it from a request DTO, so
+		// set it here exactly as real bootstrap seeding would.
+		if err := cs.Storage().SetRoleBypassesPermissionChecks(ctx, role.ID, true); err != nil {
+			panic("seedS4AdminActor: SetRoleBypassesPermissionChecks: " + err.Error())
+		}
 		if err := cs.Storage().AssignRole(ctx, s4AdminActorID, role.ID, corestorage.Scope{}); err != nil {
 			panic("seedS4AdminActor: AssignRole: " + err.Error())
 		}
@@ -1352,7 +1358,7 @@ func TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", Email: "root@x.io"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error) // group confers admin, globally
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)  // user 1 is the group's ONLY member
@@ -1456,7 +1462,7 @@ func TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant(t *testing.
 	h, err := NewUserHandler(cs)
 	require.NoError(t, err)
 
-	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "super_admin", BypassesPermissionChecks: true}).Error)
 
 	body := fmt.Sprintf(`{"username":"evil","email":"evil@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[{"role_id":%d,"project_id":0}]}`, 20)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -2820,7 +2826,7 @@ func TestMachineIdentityOIDCBindingProxyWireRoundTrip(t *testing.T) {
 }
 
 func TestRoleProxyWireRoundTrip(t *testing.T) {
-	r := &models.Role{Name: "admin"}
+	r := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	w := newRoleProxyWire(r)
 	assert.Equal(t, "admin", w.Name)
 }
@@ -11307,6 +11313,10 @@ func TestCreateSoDPolicyProxy_WritesAuditEvent(t *testing.T) {
 	require.NoError(t, err)
 	role, err := cs.Storage().CreateRole(ctx, systemAdminName, "admin")
 	require.NoError(t, err)
+	// ADR-084: BypassesPermissionChecks is the structural admin-bypass flag now,
+	// not the name -- CreateRole never sets it from a request DTO, so set it here
+	// exactly as real bootstrap seeding would.
+	require.NoError(t, cs.Storage().SetRoleBypassesPermissionChecks(ctx, role.ID, true))
 	require.NoError(t, cs.Storage().AssignRole(ctx, 500, role.ID, corestorage.Scope{}))
 
 	body := `{"name":"test-audit","permission_a":"read","permission_b":"write"}`

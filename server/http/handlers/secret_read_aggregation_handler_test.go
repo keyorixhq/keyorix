@@ -52,7 +52,7 @@ func newSecretReadAggCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	// #G10: GetSecretReadSummary now self-authorizes (secrets.manage); withUserCtx's
 	// UserID 1 is granted global admin so these handler tests keep exercising the glue
 	// logic (param parsing, status-code mapping), not authorization.
-	role := &models.Role{Name: "admin"}
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db

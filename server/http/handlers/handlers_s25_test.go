@@ -127,7 +127,7 @@ func freshCoreS25WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		&models.SecretVersion{},
 	)
 	require.NoError(t, err)
-	adminRole := &models.Role{Name: "system_admin", Description: "Administrator"}
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	testUser := &models.User{Username: "testuser_s25", Email: "testuser_s25@example.com", AccountState: "active"}
 	require.NoError(t, db.Create(testUser).Error)

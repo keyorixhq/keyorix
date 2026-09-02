@@ -45,7 +45,7 @@ func newTwoGlobalAdminFixture(t *testing.T, dbFile string) (*core.KeyorixCore, *
 		&models.Role{}, &models.UserRole{}, &models.Project{}, &models.Environment{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "a", IsActive: true, AccountState: core.AccountActive, ExternalID: "okta|a"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "b", IsActive: true, AccountState: core.AccountActive, ExternalID: "okta|b"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)

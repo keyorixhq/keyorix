@@ -96,7 +96,7 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	}).Error)
 
 	// Seed an admin role + user_role so user 1 is a global admin (bypasses scope).
-	adminRole := &models.Role{ID: 1, Name: "admin", Description: "Administrator"}
+	adminRole := &models.Role{ID: 1, Name: "admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
 	// ShareSecret/UpdateSharePermission/RevokeShare also gate the OWNER on live

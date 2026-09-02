@@ -515,8 +515,8 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, db.Create(&models.User{ID: 7, Username: "alice"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)  // an admin-bypass role
-	require.NoError(t, db.Create(&models.Role{ID: 9, Name: "viewer"}).Error) // non-admin
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin", BypassesPermissionChecks: true}).Error) // an admin-bypass role
+	require.NoError(t, db.Create(&models.Role{ID: 9, Name: "viewer"}).Error)                                // non-admin
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "keyorix-admins"}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 2, Name: "engineers"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 2}).Error) // group 1 confers admin

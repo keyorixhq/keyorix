@@ -36,7 +36,7 @@ func TestConcurrency_RemoveUserRole_CannotStrandLastTwoAdmins(t *testing.T) {
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.AuditEvent{},
 	))
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 100, RoleID: 1}).Error) // admin #1, global
 	require.NoError(t, db.Create(&models.UserRole{UserID: 101, RoleID: 1}).Error) // admin #2, global
 
@@ -96,7 +96,7 @@ func TestConcurrency_RemoveUserRole_RepeatedPairsNeverStrandInstall(t *testing.T
 				&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 				&models.Project{}, &models.Environment{}, &models.AuditEvent{},
 			))
-			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 			require.NoError(t, db.Create(&models.UserRole{UserID: 200, RoleID: 1}).Error)
 			require.NoError(t, db.Create(&models.UserRole{UserID: 201, RoleID: 1}).Error)
 

@@ -45,7 +45,7 @@ func TestCreateSecret_MaxReadsValidation(t *testing.T) {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessLog{}))
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", AccountState: "active"}).Error)
-	adminRole := &models.Role{Name: "admin"}
+	adminRole := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 
@@ -119,7 +119,7 @@ func TestUpdateSecret_MaxReadsValidation(t *testing.T) {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessLog{}))
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", AccountState: "active"}).Error)
-	adminRole := &models.Role{Name: "admin"}
+	adminRole := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 	// Project-scoped membership required by CheckSecretPermission's IsProjectMember gate.

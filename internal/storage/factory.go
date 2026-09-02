@@ -1021,6 +1021,24 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	}
 
+	// ADR-084: structural admin-bypass flag, replacing roleSetContainsAdmin's old
+	// name-based lookup. Additive column for existing installs (a fresh install
+	// gets it via AutoMigrate's CREATE TABLE, so this is a no-op there); the
+	// backfill runs exactly once, gated on the column having just been added —
+	// a one-time SNAPSHOT of today's four reserved admin-tier names into the
+	// new flag, using the same name list this migration retires as an ongoing
+	// mechanism. After this, the flag is authoritative: renaming a role never
+	// moves it, and no future role acquires it by matching a name.
+	if tableExists(db, "roles") && !columnExists(db, "roles", "bypasses_permission_checks") {
+		if err := exec("ALTER TABLE roles ADD COLUMN bypasses_permission_checks BOOLEAN NOT NULL DEFAULT false"); err != nil {
+			return err
+		}
+		if err := exec("UPDATE roles SET bypasses_permission_checks = true " +
+			"WHERE name IN ('super_admin', 'admin', 'system_admin', 'project_admin')"); err != nil {
+			return err
+		}
+	}
+
 	// RBAC PK rebuild: fresh installs get the full composite PK (user_id, role_id,
 	// project_id, environment_id) via AutoMigrate, but existing GORM-created DBs
 	// keep their old (user_id, role_id) or (user_id, role_id, project_id) PK — so

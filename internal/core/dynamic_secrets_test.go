@@ -42,7 +42,9 @@ func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngi
 	// production installs get.
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_dynamic_secret_configs_project_env_name "+
 		"ON dynamic_secret_configs (project_id, environment_id, name)").Error)
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	// ADR-084: the admin bypass is now the structural BypassesPermissionChecks
+	// flag, not the "admin" name.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
 	// Every config created via mkConfig (or inline in these tests) targets
 	// ProjectID 1 / EnvironmentID 2 — seed real, live rows so IssueLease/
@@ -982,7 +984,9 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{},
 	))
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	// ADR-084: the admin bypass is now the structural BypassesPermissionChecks
+	// flag, not the "admin" name.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "real-factory-project"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 1, Name: "real-factory-env"}).Error)

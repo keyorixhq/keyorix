@@ -97,7 +97,8 @@ func newDepCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "p2"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
-	role := &models.Role{Name: "admin"}
+	// ADR-084: the bypass is now the structural BypassesPermissionChecks flag.
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	for _, actor := range depTestActors {
 		require.NoError(t, db.Create(&models.UserRole{UserID: actor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)

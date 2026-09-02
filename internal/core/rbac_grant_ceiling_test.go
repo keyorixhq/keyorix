@@ -114,7 +114,7 @@ func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
 func TestAssignUserRole_AdminBypassesCeiling(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)

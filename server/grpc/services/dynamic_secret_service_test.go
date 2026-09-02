@@ -55,7 +55,7 @@ func newDynamicTestRig(t *testing.T) *DynamicSecretGRPCService {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
 	// #162: binding a dynamic-secret backend needs admin authority, not just
 	// secrets.write — grant user 1 (also, separately from "writer") a global admin role.
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2}).Error)
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())

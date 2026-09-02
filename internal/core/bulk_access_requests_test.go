@@ -242,10 +242,11 @@ func TestBulkRejectAccessRequests_RejectNonPending(t *testing.T) {
 	}
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{8}).
 		Return([]*models.AccessRequest{already}, nil)
-	// Authorize check: grant admin role so code reaches RejectAccessRequest.
+	// Authorize check: grant admin role (ADR-084: structural flag) so code
+	// reaches RejectAccessRequest.
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{1}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
-	m.On("GetRoleByName", mock.Anything, mock.Anything).Return(&models.Role{ID: 1, Name: "admin"}, nil)
+	m.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{1}).Return(true, nil)
 	m.On("GetAccessRequest", mock.Anything, uint(8)).
 		Return(already, nil)
 

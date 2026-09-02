@@ -54,7 +54,7 @@ func TestConcurrency_SendRotationReminders_NoDuplicateReminder(t *testing.T) {
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "payments"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 2, Name: "production", ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 5, Username: "ada", Email: "ada@x.io", IsActive: true}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1, ProjectID: 1}).Error) // admin
 	// A secret created 100 days ago, never rotated → overdue under a 30-day policy, so
 	// every concurrent run finds something to remind the admin about.
