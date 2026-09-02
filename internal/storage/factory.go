@@ -1855,11 +1855,15 @@ func ensureDynamicSecretConfigNameIndex(db *gorm.DB) error {
 // SQLite and Postgres (both support partial indexes and IF [NOT] EXISTS).
 func ensureGroupNameIndex(db *gorm.DB) error {
 	// Drop the legacy plain unique index from the old `unique` tag, and the
-	// raw-name (exact-match, pre-#1642) partial index this replaces.
-	for _, idx := range []string{"uni_groups_name", "uniq_groups_name_active"} {
-		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- idx ranges over the two-element hardcoded literal above, never external input
-			return fmt.Errorf("failed to drop legacy groups name index %q: %w", idx, err)
-		}
+	// raw-name (exact-match, pre-#1642) partial index this replaces. Unrolled
+	// into individual literal statements (no runtime-built identifier) rather
+	// than looping over a slice, so this can't even shape-match a
+	// string-formatted-query finding.
+	if err := db.Exec("DROP INDEX IF EXISTS uni_groups_name").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy groups name index %q: %w", "uni_groups_name", err)
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS uniq_groups_name_active").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy groups name index %q: %w", "uniq_groups_name_active", err)
 	}
 	// name_folded is Name run through identity.NewFoldedName — see
 	// models.Group.NameFolded's doc comment. Backfilling happens before the
@@ -1950,11 +1954,18 @@ func ensureBreakGlassActiveIndex(db *gorm.DB) error {
 // provisioning run errors indefinitely. Idempotent; works on SQLite and Postgres.
 func ensureUserNameIndex(db *gorm.DB) error {
 	// Drop the legacy plain unique index. GORM's `uniqueIndex` tag names it
-	// idx_users_username; the older `unique` tag would be uni_users_username. Drop both.
-	for _, idx := range []string{"idx_users_username", "uni_users_username", "uniq_users_username_active"} {
-		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- idx ranges over the hardcoded literal above, never external input
-			return fmt.Errorf("failed to drop legacy users username index %q: %w", idx, err)
-		}
+	// idx_users_username; the older `unique` tag would be uni_users_username. Drop
+	// all three. Unrolled into individual literal statements (no runtime-built
+	// identifier) rather than looping over a slice, so this can't even
+	// shape-match a string-formatted-query finding.
+	if err := db.Exec("DROP INDEX IF EXISTS idx_users_username").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy users username index %q: %w", "idx_users_username", err)
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS uni_users_username").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy users username index %q: %w", "uni_users_username", err)
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS uniq_users_username_active").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy users username index %q: %w", "uniq_users_username_active", err)
 	}
 	// #1642: username_folded is Username run through identity.NewFoldedName
 	// (NFC-normalized AND case-folded) — see models.User.UsernameFolded's doc
