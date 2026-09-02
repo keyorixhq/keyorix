@@ -214,14 +214,34 @@ function fmtTime(ts: string): string {
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
 
+// toCsvCell neutralizes spreadsheet formula injection (CWE-1236) and applies
+// standard CSV quoting, mirroring server/http/handlers/csv_safe.go's csvSafe --
+// this is the only client-side CSV builder in the app (every other export fetches
+// an already-escaped .csv blob from the server), so it can't rely on that helper
+// and needs its own equivalent. `actor` in particular has no character-set
+// restriction beyond length (a username can start with =, +, -, or @: see
+// internal/core/users.go's validateUsernameFormat), and audit descriptions can
+// embed one with no fixed literal prefix (internal/core/impersonation.go) -- so
+// both fields need the same protection `description` alone used to get.
+function toCsvCell(value: string): string {
+    let v = value;
+    if (v !== '' && /^[=+\-@\t\r]/.test(v)) {
+        v = "'" + v;
+    }
+    if (/["\n\r,]/.test(v)) {
+        v = `"${v.replaceAll('"', '""')}"`;
+    }
+    return v;
+}
+
 function exportCSV(entries: AuditLogEntry[], filename: string) {
     const header = ['Timestamp', 'Event', 'Actor', 'Actor Type', 'Description'];
     const rows = entries.map((e) => [
         new Date(e.timestamp).toISOString(),
-        e.event_type,
-        e.actor,
-        e.actor_type ?? 'user',
-        `"${(e.description ?? '').replaceAll('"', '""')}"`,
+        toCsvCell(e.event_type),
+        toCsvCell(e.actor),
+        toCsvCell(e.actor_type ?? 'user'),
+        toCsvCell(e.description ?? ''),
     ]);
     const csv = [header, ...rows].map((r) => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

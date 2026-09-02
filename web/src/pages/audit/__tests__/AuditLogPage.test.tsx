@@ -145,6 +145,60 @@ describe('AuditLogPage — audit tab', () => {
         expect(clickSpy).toHaveBeenCalled();
         clickSpy.mockRestore();
     });
+
+    // CWE-1236 (CSV/formula injection): a username has no character-set restriction
+    // beyond length (internal/core/users.go's validateUsernameFormat), and
+    // internal/core/impersonation.go's audit description embeds a username with no
+    // fixed literal prefix -- so `actor` and `description` can both legitimately start
+    // with =, +, -, or @. The backend's own CSV export (audit_export_csv.go) already
+    // neutralizes this via csvSafe; this proves the frontend's independent CSV builder
+    // does too, since it doesn't call that endpoint.
+    it('neutralizes formula-injection and properly quotes CSV-special characters on export', async () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    {
+                        id: 1,
+                        event_type: 'impersonation.start',
+                        actor: "=cmd|'/c calc'!A0",
+                        actor_type: 'user',
+                        description: '@SUM(1+1), with a comma and a "quote"',
+                        timestamp: '2026-01-01T10:00:00Z',
+                    },
+                ],
+                total: 1,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+
+        let capturedBlob: Blob | undefined;
+        (URL as any).createObjectURL = vi.fn((b: Blob) => {
+            capturedBlob = b;
+            return 'blob:mock';
+        });
+        (URL as any).revokeObjectURL = vi.fn();
+        const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+        render(<AuditLogPage />);
+        fireEvent.click(screen.getByTitle('Export as CSV'));
+
+        expect(capturedBlob).toBeDefined();
+        const csvText = await capturedBlob!.text();
+        const [, dataRow] = csvText.split('\n');
+
+        // The actor cell must not put a raw '=' as the first character of its cell --
+        // csvSafe-style neutralization prefixes it with a leading quote first.
+        expect(dataRow.startsWith("2026-01-01T10:00:00.000Z,impersonation.start,'=cmd")).toBe(true);
+        // The description cell contains a comma and a double-quote, so proper CSV
+        // quoting must wrap it in quotes with internal quotes doubled, AND it must
+        // still carry the formula-injection prefix since it starts with '@'.
+        expect(dataRow).toContain('"\'@SUM(1+1), with a comma and a ""quote"""');
+        clickSpy.mockRestore();
+    });
 });
 
 describe('AuditLogPage — url filter banner', () => {
