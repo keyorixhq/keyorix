@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -25,6 +28,22 @@ const (
 	sqlCreateUniqueIdx = "CREATE UNIQUE INDEX IF NOT EXISTS "
 	sqlWhereNotDeleted = "deleted_at IS NULL"
 )
+
+// currentSchemaEpoch (ADR-097) is this binary's compiled-in schema version.
+// Bump it by exactly one in the SAME PR as any change to migrateDatabase
+// below that adds or alters schema (a new ALTER TABLE, a new AutoMigrate
+// model, a new column) -- checkSchemaEpoch uses it to refuse startup if the
+// database was already migrated by a newer binary, closing the class of
+// silent-downgrade regression this ADR documents (an old binary writing new
+// rows via a migrated-in column's DEFAULT, blind to whatever invariant that
+// column encodes). NOT bumped for pure comment/refactor changes that don't
+// touch what gets written to the database.
+const currentSchemaEpoch = 1
+
+// schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
+// key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
+// metadata key name, not a credential.
+const schemaEpochMetadataKey = "schema_epoch"
 
 // migrationMu serializes migrateDatabase across goroutines IN THIS PROCESS (#266).
 // startHTTPServer and startGRPCServer each independently call CreateStorage →
@@ -451,6 +470,63 @@ func tableExists(db *gorm.DB, table string) bool {
 	return count > 0
 }
 
+// checkSchemaEpoch (ADR-097) refuses to let an older binary run migrateDatabase
+// against a database a newer binary already migrated. Called BEFORE any other
+// migration step. system_metadata not existing yet means a fresh install (or a
+// database old enough to predate system_metadata itself, i.e. pre-ADR-029) --
+// either way, there is nothing recorded to compare against, so this proceeds.
+// A missing schema_epoch key means an older binary that predates this guard
+// wrote to this database last -- absence of a recorded epoch cannot itself
+// justify refusing to start, so this proceeds too. Only an explicit, parsed
+// epoch GREATER than currentSchemaEpoch, or a value that fails to parse at
+// all (fail-closed, matching this file's #G54 discipline: a corrupted marker
+// is worse to silently ignore than to loudly refuse), blocks startup.
+func checkSchemaEpoch(db *gorm.DB) error {
+	if !tableExists(db, "system_metadata") {
+		return nil
+	}
+	var m models.SystemMetadata
+	err := db.Where("key = ?", schemaEpochMetadataKey).Take(&m).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to read schema epoch: %w", err)
+	}
+	dbEpoch, parseErr := strconv.Atoi(m.Value)
+	if parseErr != nil {
+		return fmt.Errorf("stored schema epoch %q is not a valid integer -- refusing to start rather than guess whether this database is ahead of this binary (ADR-097)", m.Value)
+	}
+	if dbEpoch > currentSchemaEpoch {
+		return fmt.Errorf(
+			"database schema epoch %d is newer than this binary's schema epoch %d -- "+
+				"this database was migrated by a newer version of Keyorix; running an "+
+				"older binary against it risks silent, undetected regressions in any "+
+				"security invariant a column added since epoch %d encodes. Upgrade this "+
+				"binary to match, or restore a backup taken before the newer version ran (ADR-097)",
+			dbEpoch, currentSchemaEpoch, currentSchemaEpoch)
+	}
+	return nil
+}
+
+// recordSchemaEpoch (ADR-097) upserts currentSchemaEpoch into system_metadata.
+// Called only after migrateDatabase's other steps all succeed -- never on a
+// partial/failed migration, so a crash mid-migration can't advance the
+// recorded epoch past what was actually, successfully applied.
+func recordSchemaEpoch(db *gorm.DB) error {
+	if err := db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&models.SystemMetadata{
+		Key:       schemaEpochMetadataKey,
+		Value:     strconv.Itoa(currentSchemaEpoch),
+		UpdatedAt: time.Now(),
+	}).Error; err != nil {
+		return fmt.Errorf("failed to record schema epoch: %w", err)
+	}
+	return nil
+}
+
 // indexExists reports whether a database index with the given name already
 // exists. The ensure*Index helpers below gate their one-time, pre-existing-
 // duplicate-row scan (#490) on this: once the target unique index is in place,
@@ -726,6 +802,11 @@ func rebuildRolePKPostgres(db *gorm.DB, table, idCol, pkCols, oldConstraint stri
 // On a fresh DB, AutoMigrate creates all tables. On an existing DB,
 // it adds missing columns and indexes without dropping anything.
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR -- cognitive complexity 266, suppress go:S3776
+	// ADR-097: refuse before touching anything if this binary is older than
+	// the database it's pointed at -- must run before every other step below.
+	if err := checkSchemaEpoch(db); err != nil {
+		return err
+	}
 	// #G54: every additive column/index migration below is now checked and
 	// propagated (fail-closed) via this helper, instead of the bare
 	// db.Exec(...) each previously used — which discarded the result
@@ -1693,7 +1774,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if err := ensureShareRecordUniqueIndex(db); err != nil {
 		return err
 	}
-	return ensureSecretVersionIndex(db)
+	if err := ensureSecretVersionIndex(db); err != nil {
+		return err
+	}
+	// ADR-097: only after every migration step above has succeeded -- a crash
+	// or error partway through must not advance the recorded epoch past what
+	// was actually, successfully applied.
+	return recordSchemaEpoch(db)
 }
 
 // ensureRoleNameIndex replaces Role.Name's original plain `unique` gorm tag
