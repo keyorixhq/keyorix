@@ -1199,6 +1199,76 @@ func TestCSRF_RequiredForCookieAuthenticatedMutations(t *testing.T) {
 	})
 }
 
+// TestCSRF_RequiredForLogout is the dedicated regression test the security
+// review's frontend adversarial pass flagged as missing: unlike every other
+// mutating route (covered by the group-wide r.Use(RequireCSRF) at
+// router.go's /api/v1 registration, which TestCSRF_RequiredForCookieAuthenticatedMutations
+// above would catch losing), POST /auth/logout is wired individually
+// (r.With(customMiddleware.RequireCSRF).Post("/auth/logout", ...)) because it
+// lives in the pre-session route group alongside login/refresh/SSO, which are
+// correctly NOT CSRF-gated (no session cookie exists yet at that point).
+// Nothing previously asserted that lone .With(...) call is still there --
+// this closes that gap.
+func TestCSRF_RequiredForLogout(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	_ = createTestToken(t, testCore)
+
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	logoutRequest := func() *http.Request {
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/auth/logout", nil)
+		require.NoError(t, err)
+		return req
+	}
+
+	t.Run("rejected with no CSRF header", func(t *testing.T) {
+		client := newCookieClient(t)
+		resp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		r, err := client.Do(logoutRequest())
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		assert.Equal(t, http.StatusForbidden, r.StatusCode)
+	})
+
+	t.Run("rejected with a wrong CSRF header", func(t *testing.T) {
+		client := newCookieClient(t)
+		resp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		req := logoutRequest()
+		req.Header.Set("X-CSRF-Token", "not-the-right-value")
+		r, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		assert.Equal(t, http.StatusForbidden, r.StatusCode)
+	})
+
+	t.Run("accepted with the matching CSRF header", func(t *testing.T) {
+		client := newCookieClient(t)
+		resp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		req := logoutRequest()
+		req.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+		r, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		assert.Equal(t, http.StatusOK, r.StatusCode)
+	})
+}
+
 // TestImpersonationRoundTrip_CookieSwapAndRestore is the end-to-end proof for
 // the impersonation redesign: the client never sees or holds an admin token at
 // any point — starting impersonation swaps the cookie to the target's session,
