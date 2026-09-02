@@ -120,12 +120,35 @@ func TestEvidenceSignKey_UnavailableWhenUninitialized(t *testing.T) {
 
 // TestEvidenceSignKey_WipedOnShutdown proves Wipe() zeroes the evidence-signing
 // key alongside the DEK, so neither lingers in memory after shutdown.
+// GetEvidenceSignKey always returns a COPY (keymanager_io.go), so asserting
+// ok=false on it afterward only proves the field reference was nilled -- a
+// Wipe() that dropped its wipeBytes(km.evidenceSignKey) call but kept the
+// nil-assignment would pass that check identically while leaving the real key
+// bytes live in memory. This test instead reaches the unexported
+// km.evidenceSignKey field directly (same package as keymanager_lifecycle.go)
+// to capture the actual backing array before Wipe() and assert every byte is
+// zero afterward -- the same memory-scan style
+// TestServiceShutdown_WipesEncryptionServiceDEK (g62_dek_safety_test.go)
+// already uses for the DEK, and TestAuditCheckpointKey_WipedOnShutdown
+// (audit_checkpoint_key_test.go) now uses for its sibling key.
 func TestEvidenceSignKey_WipedOnShutdown(t *testing.T) {
 	svc, _ := newTestService(t, "test-passphrase")
 	if _, _, ok := svc.EvidenceSignKey(); !ok {
 		t.Fatal("EvidenceSignKey unavailable before shutdown")
 	}
+
+	svc.keyManager.mu.RLock()
+	keyRef := svc.keyManager.evidenceSignKey // same backing array wipeBytes must zero in place
+	svc.keyManager.mu.RUnlock()
+	if allZeroBytes(keyRef) {
+		t.Fatal("test setup bug: evidence-signing key was already all-zero before Wipe()")
+	}
+
 	svc.keyManager.Wipe()
+
+	if !allZeroBytes(keyRef) {
+		t.Fatal("evidence-signing key bytes were not wiped by Wipe() -- key remains live in process memory")
+	}
 	if _, _, ok := svc.keyManager.GetEvidenceSignKey(); ok {
 		t.Fatal("expected the evidence-signing key to be gone after Wipe()")
 	}

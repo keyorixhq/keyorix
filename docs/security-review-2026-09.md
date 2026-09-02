@@ -127,10 +127,6 @@ This review's scope was defined by the ambient-state and silent-falsification qu
 server, CLI, storage, RBAC, and CI/supply-chain surfaces. The following were explicitly out of scope, and are
 named here so that omission reads as a stated boundary rather than an implied "checked, fine":
 
-- **Memory zeroization.** Whether secret material is scrubbed from process memory after use (versus left for the
-  garbage collector, or a swapped page, to eventually reclaim) was not examined. Go's runtime and garbage collector
-  make this a substantially harder guarantee to make than it is in a language with manual memory management, and
-  doing it properly is a distinct piece of work with its own design tradeoffs, not a fix-sized finding.
 - **The frontend (`web/`) beyond its CSP configuration**, which surfaced incidentally via the accepted-risk CSP
   finding above and was not otherwise part of this pass's sweep.
 
@@ -176,6 +172,30 @@ that edits its own past claims without a visible trail is exactly the failure mo
   #422) were independently re-verified by running their dedicated tests rather than trusted at face value — both
   genuinely hold. The one real open item, cloud-KMS CMK rotation being entirely outside Keyorix's management, is
   already explicitly recorded as deferred in ADR-041's own scope — a stated boundary, not a gap this pass found.
+- **Memory zeroization, investigated — partial fix, one real gap remains open by design.** Traced where secret
+  material actually lives in process memory. What's genuinely protected: the master KEK (wiped in place
+  immediately after use) and the DEK plus its two KEK-derived siblings — the evidence-signing key and the
+  audit-checkpoint key — all wiped on graceful shutdown and DEK rotation via a real byte-by-byte overwrite
+  (confirmed empirically: the Go compiler lowers `for i := range b { b[i] = 0 }` to a genuine
+  `runtime.memclrNoHeapPointers` call, not eliminated — an initial hypothesis that this needed `runtime.KeepAlive`
+  protection against compiler dead-store elimination did not hold up under a direct compile-and-disassemble check,
+  and was dropped rather than "fixed" as cargo-culting). Two real test-coverage gaps were found and fixed:
+  `TestEvidenceSignKey_WipedOnShutdown`/`TestAuditCheckpointKey_WipedOnShutdown` only asserted the public getter
+  returned `ok=false` post-wipe — which only proves the field reference was nilled, since the getter always returns
+  a copy, not the real backing array. A `Wipe()` regression that dropped its `wipeBytes()` call but kept the
+  nil-assignment would have passed both tests unchanged. Rewritten to the same memory-scan style
+  `TestServiceShutdown_WipesEncryptionServiceDEK` already uses for the DEK (capture the real backing array before
+  wipe, assert all-zero after) and confirmed by mutation: reintroducing the exact dropped-`wipeBytes` regression
+  made both new tests fail as expected. **What remains genuinely unprotected, and why it's a design gap rather
+  than a fix-sized one** (confirming this document's original framing): every secret-VALUE plaintext accumulates
+  at least three unwiped heap copies between decryption and the wire (the `gcm.Open` output, a `string()`
+  conversion — Go strings are immutable and cannot be zeroed once created — and a JSON/protobuf serialization
+  buffer), by construction of `encoding/json`'s and Go strings' own APIs, not from a missed call site; closing it
+  would mean threading `[]byte`-only plaintext through the entire read path and abandoning string-based
+  serialization for secret fields. The master passphrase (`KEYORIX_MASTER_PASSWORD`) is string-shaped from
+  `os.Getenv` onward and, like any Go string, structurally cannot be wiped at all. Neither gap has a workable
+  fix within this pass's scope; both are recorded here as open, not silently left where "not examined" implied
+  no one had looked.
 
 ## Governing ADRs
 
