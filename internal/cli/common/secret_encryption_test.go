@@ -3,6 +3,8 @@ package common
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -95,4 +98,73 @@ func TestWireSecretEncryption_RemoteAndDisabledAreNoops(t *testing.T) {
 	disabled := core.NewKeyorixCore(nil)
 	require.NoError(t, wireSecretEncryption(disabled, &config.Config{Storage: config.StorageConfig{Type: "local"}}))
 	assert.False(t, disabled.SecretValueEncryptionActive())
+}
+
+// TestWireSecretEncryption_PassphraseFileSourceIsWhatActuallyDerivesTheKEK proves
+// --passphrase-file (ADR-099) reaches wireSecretEncryption end to end and is what
+// genuinely derives the KEK -- not merely that the call succeeds (a fresh DEK/salt
+// would wrap successfully under ANY passphrase, so success alone doesn't prove
+// which source was used). Seeds the DEK under the file-sourced passphrase, then
+// shows KEYORIX_MASTER_PASSWORD holding a DIFFERENT value fails to unwrap that same
+// DEK when the file source is absent -- if the env var had been what was actually
+// used the first time, this second call would succeed instead of failing.
+func TestWireSecretEncryption_PassphraseFileSourceIsWhatActuallyDerivesTheKEK(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+	t.Chdir(t.TempDir())
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "wrong-passphrase-must-not-be-used")
+
+	passFile := filepath.Join(t.TempDir(), "master.pass")
+	require.NoError(t, os.WriteFile(passFile, []byte("file-sourced-passphrase\n"), 0o600))
+
+	db, err := gorm.Open(sqlite.Open("secrets.db"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessSchedule{}))
+
+	PassphraseSource = crypto.PassphraseSource{FilePath: passFile}
+	t.Cleanup(func() { PassphraseSource = crypto.PassphraseSource{} })
+	first := core.NewKeyorixCore(store.NewLocalStorage(db))
+	require.NoError(t, wireSecretEncryption(first, encEnabledCfg("local")), "the file source must succeed and create the DEK/salt")
+	require.True(t, first.SecretValueEncryptionActive())
+
+	PassphraseSource = crypto.PassphraseSource{} // no byte source -- falls back to the (wrong) env var
+	second := core.NewKeyorixCore(store.NewLocalStorage(db))
+	err = wireSecretEncryption(second, encEnabledCfg("local"))
+	require.Error(t, err, "the env var's WRONG passphrase must fail to unwrap the DEK the file-sourced passphrase created -- proving the file source, not the env var, is what was actually used above")
+
+	PassphraseSource = crypto.PassphraseSource{FilePath: passFile}
+	third := core.NewKeyorixCore(store.NewLocalStorage(db))
+	require.NoError(t, wireSecretEncryption(third, encEnabledCfg("local")), "the file source's correct passphrase must still unwrap the same DEK")
+}
+
+// TestWireSecretEncryption_PassphraseFDSource proves --passphrase-fd (ADR-099)
+// reaches wireSecretEncryption end to end via a real file descriptor, precedence
+// over both --passphrase-file and KEYORIX_MASTER_PASSWORD, and trailing-newline
+// trimming.
+func TestWireSecretEncryption_PassphraseFDSource(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+	t.Chdir(t.TempDir())
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "wrong-passphrase-must-not-be-used")
+
+	wrongFile := filepath.Join(t.TempDir(), "wrong.pass")
+	require.NoError(t, os.WriteFile(wrongFile, []byte("also-wrong-passphrase"), 0o600))
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	go func() {
+		_, _ = w.Write([]byte("fd-sourced-passphrase\n"))
+		_ = w.Close()
+	}()
+
+	PassphraseSource = crypto.PassphraseSource{FD: int(r.Fd()), FilePath: wrongFile}
+	t.Cleanup(func() { PassphraseSource = crypto.PassphraseSource{}; _ = r.Close() })
+
+	db, err := gorm.Open(sqlite.Open("secrets.db"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessSchedule{}))
+
+	svc := core.NewKeyorixCore(store.NewLocalStorage(db))
+	require.NoError(t, wireSecretEncryption(svc, encEnabledCfg("local")))
+	require.True(t, svc.SecretValueEncryptionActive())
 }

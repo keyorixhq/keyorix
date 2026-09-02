@@ -10,11 +10,22 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
+
+// PassphraseSource holds --passphrase-fd/--passphrase-file/--passphrase-stdin
+// once the root command's persistent flags are parsed (internal/cli/main.go).
+// Zero value (all unset) makes wireSecretEncryption and
+// internal/cli/encryption.masterPassphrase fall back to KEYORIX_MASTER_PASSWORD,
+// matching this CLI's historical behavior -- including in tests, which build a
+// *config.Config and call these functions directly without going through
+// cobra's flag parsing, so this var stays at its zero value for them. See
+// ADR-099 for the sourcing precedence and rationale.
+var PassphraseSource crypto.PassphraseSource
 
 // SanitizeForTerminal strips control characters (CR/LF, ANSI/C1 escapes, NUL,
 // etc.) from untrusted text before it's echoed to the operator's terminal in a
@@ -180,9 +191,17 @@ func wireSecretEncryption(svc *core.KeyorixCore, cfg *config.Config) error {
 	}
 
 	providerType := cfg.Storage.Encryption.KeyProvider.Type
-	passphrase := strings.TrimSpace(os.Getenv("KEYORIX_MASTER_PASSWORD"))
-	if (providerType == "" || providerType == "password") && passphrase == "" {
-		return fmt.Errorf("storage.encryption is enabled but KEYORIX_MASTER_PASSWORD is not set; set it (or configure storage.encryption.key_provider) so the CLI can encrypt/decrypt secret values")
+	var passphrase string
+	if providerType == "" || providerType == "password" {
+		passphraseBytes, err := crypto.ResolvePassphrase(PassphraseSource, "KEYORIX_MASTER_PASSWORD")
+		if err != nil {
+			return fmt.Errorf(
+				"storage.encryption is enabled but no master passphrase is available (%w); set "+
+					"KEYORIX_MASTER_PASSWORD, pass --passphrase-fd/--passphrase-file/--passphrase-stdin, "+
+					"or configure storage.encryption.key_provider so the CLI can encrypt/decrypt secret values", err)
+		}
+		defer crypto.WipeBytes(passphraseBytes)
+		passphrase = string(passphraseBytes)
 	}
 
 	baseDir, err := os.Getwd()

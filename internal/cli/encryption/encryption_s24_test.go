@@ -21,7 +21,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -368,6 +370,53 @@ func TestMasterPassphrase_S24_ExplicitPasswordTypeReadsEnv(t *testing.T) {
 	pw, err := masterPassphrase(cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "explicit-password-type-s24", pw)
+}
+
+// TestMasterPassphrase_FDSourceTakesPrecedenceOverEnv proves --passphrase-fd
+// (ADR-099, common.PassphraseSource) reaches masterPassphrase -- the single
+// chokepoint every command in this package calls through -- end to end via a
+// real file descriptor, and wins over KEYORIX_MASTER_PASSWORD when both are set.
+func TestMasterPassphrase_FDSourceTakesPrecedenceOverEnv(t *testing.T) {
+	cfg := &config.Config{Storage: config.StorageConfig{Encryption: config.EncryptionConfig{Enabled: true}}}
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "wrong-passphrase-must-not-be-used")
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	go func() {
+		_, _ = w.Write([]byte("fd-sourced-s24\n"))
+		_ = w.Close()
+	}()
+	common.PassphraseSource = crypto.PassphraseSource{FD: int(r.Fd())}
+	t.Cleanup(func() { common.PassphraseSource = crypto.PassphraseSource{}; _ = r.Close() })
+
+	pw, err := masterPassphrase(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "fd-sourced-s24", pw)
+}
+
+// TestMasterPassphrase_FileSource proves --passphrase-file (ADR-099) reaches
+// masterPassphrase end to end, refusing a group-readable file.
+func TestMasterPassphrase_FileSource(t *testing.T) {
+	cfg := &config.Config{Storage: config.StorageConfig{Encryption: config.EncryptionConfig{Enabled: true}}}
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "")
+
+	dir := t.TempDir()
+	goodFile := filepath.Join(dir, "pass")
+	require.NoError(t, os.WriteFile(goodFile, []byte("file-sourced-s24"), 0o600))
+	common.PassphraseSource = crypto.PassphraseSource{FilePath: goodFile}
+	t.Cleanup(func() { common.PassphraseSource = crypto.PassphraseSource{} })
+
+	pw, err := masterPassphrase(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "file-sourced-s24", pw)
+
+	badFile := filepath.Join(dir, "world-readable-pass")
+	require.NoError(t, os.WriteFile(badFile, []byte("secret"), 0o644))
+	common.PassphraseSource = crypto.PassphraseSource{FilePath: badFile}
+
+	_, err = masterPassphrase(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group- or world-readable")
 }
 
 // ── initLocalKeyOpService: AcquireSharedKeyLock fails because already-locked ─
