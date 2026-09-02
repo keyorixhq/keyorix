@@ -304,6 +304,35 @@ func (c *KeyorixCore) guardLastProjectAdminGroupMembership(ctx context.Context, 
 	return nil
 }
 
+// guardLastProjectAdminGroupRole is guardLastGlobalAdminGroupRole's project-scope
+// counterpart (FIX-2): refuses to remove a group's roles.assign-conferring role
+// grant at a project's scope when doing so would leave that project with no
+// surviving roles.assign holder (direct or group-derived). A group losing its
+// project-admin-conferring role grant is the third way a group can stop
+// conferring project-admin authority — group deletion and membership removal
+// were already guarded (guardLastProjectAdminGroupDelete/
+// guardLastProjectAdminGroupMembership); this one, exercised through
+// RemoveRoleFromGroup, was not. Mirrors SetProjectMemberRole/
+// RemoveProjectMember's "not a permanent lockout (a global admin can always
+// re-add one), but still an availability risk worth refusing outright" stance
+// for direct grants, rather than guardLastGlobalAdminGroupRole's narrower
+// "project admins are recoverable, so don't bother" one.
+func (c *KeyorixCore) guardLastProjectAdminGroupRole(ctx context.Context, groupID, roleID, projectID uint) error {
+	hasAssign, err := c.storage.RoleSetHasPermission(ctx, []uint{roleID}, permRolesAssign)
+	if err != nil {
+		return err
+	}
+	if !hasAssign {
+		return nil // not removing a roles.assign-bearing role
+	}
+	if err := c.guardProjectAdminSurvivesGroupChange(ctx, projectID, func(a storage.RoleAssignment) bool {
+		return a.PrincipalType == "group" && a.PrincipalID == groupID && a.RoleID == roleID
+	}, nil); err != nil {
+		return fmt.Errorf("refusing to remove role %d from group %d: %w", roleID, groupID, err)
+	}
+	return nil
+}
+
 // projectAdminScopesHeldByGroup returns the project IDs at which groupID
 // holds a project-level (environment_id = 0) role granting roles.assign —
 // every project whose governance depends, at least in part, on this group.
