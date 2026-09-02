@@ -131,18 +131,12 @@ named here so that omission reads as a stated boundary rather than an implied "c
   garbage collector, or a swapped page, to eventually reclaim) was not examined. Go's runtime and garbage collector
   make this a substantially harder guarantee to make than it is in a language with manual memory management, and
   doing it properly is a distinct piece of work with its own design tradeoffs, not a fix-sized finding.
-- **Availability and denial-of-service resistance**, beyond the specific multi-replica-mutex finding recorded
-  above. Rate limiting, resource-exhaustion bounds on individual endpoints, and general load-shedding behavior
-  were not swept as their own class in this pass.
-- **Cryptographic primitive choice and key-management lifecycle** (rotation cadence, HSM/KMS integration
-  correctness) — this review's scope was request-path and process-lifecycle behavior, not the cryptography
-  underneath it.
 - **The frontend (`web/`) beyond its CSP configuration**, which surfaced incidentally via the accepted-risk CSP
   finding above and was not otherwise part of this pass's sweep.
 
-## Update, 2026-09-02
+## Update, 2026-09-02: follow-up investigations
 
-Two changes since this document was first written, recorded here rather than silently folded into the sections
+Changes since this document was first written, recorded here rather than silently folded into the sections
 above, for the same reason #1494's original mis-closure is narrated rather than quietly fixed: a review document
 that edits its own past claims without a visible trail is exactly the failure mode this document exists to avoid.
 
@@ -162,6 +156,26 @@ that edits its own past claims without a visible trail is exactly the failure mo
   (`checkSchemaEpoch`/`recordSchemaEpoch`, `internal/storage/factory.go`) so a binary older than the database
   it's pointed at refuses to start rather than silently running against unknown state — closing the class,
   matching this review's own stated preference for a guard over a per-instance audit.
+- **Availability and denial-of-service resistance, investigated.** Mapped existing defenses first (rate limiting,
+  payload/timeout bounds, pagination, bulk-op batch caps) — found mature and consistently fail-closed, with one
+  gap: `transitiveDependents` (`internal/core/secret_dependencies.go`), the BFS backing `GetSecretImpact`/
+  `GetSecretImpactPreview`, had no node or depth cap — unlike its sibling `blastBFS` (`blast_radius.go`), which
+  bounds both for the same reason (#G44: a per-node authorization check afterward makes an unbounded node count a
+  per-request cost multiplier). Fixed to match `blastBFS`'s exact bound shape, with a `Truncated` flag so a capped
+  result is never silently reported as complete (#G24 discipline).
+- **Cryptographic key-management lifecycle, investigated — clean, no fix needed.** Traced the DEK/KEK envelope
+  hierarchy, KMS/HSM provider integration (`internal/crypto/`), and DEK rotation/re-encryption sweep
+  (`internal/encryption/`) against this review's own methodology (does a provider failure fail closed; is a
+  partial/interrupted operation loud or silently absorbed). Found consistently fail-closed and well-guarded: a KMS
+  provider failure refuses server startup; a weaker-fallback key-provider chain requires an explicit opt-in and
+  logs+audits its own use; DEK rotation is atomic (one DB transaction, all-or-nothing, no partially-swept state
+  possible) with an orphaned-pending-file cleanup on crash; and sweep completeness (every DEK-encrypted model field
+  has a corresponding re-encryption sweep) is enforced by a structural AST-parsing guard
+  (`internal/encryption/sweep_completeness_test.go`), not a hand-maintained list. Two in-code "already fixed"
+  claims (Azure Key Vault key-version pinning against rotation; the historical MFA/dynamic-secret sweep-omission,
+  #422) were independently re-verified by running their dedicated tests rather than trusted at face value — both
+  genuinely hold. The one real open item, cloud-KMS CMK rotation being entirely outside Keyorix's management, is
+  already explicitly recorded as deferred in ADR-041's own scope — a stated boundary, not a gap this pass found.
 
 ## Governing ADRs
 
