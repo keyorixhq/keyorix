@@ -46,6 +46,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
+	"github.com/keyorixhq/keyorix/internal/hardening"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/notary"
@@ -88,6 +89,18 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// automatically on every boot.
 	if err := runStartupValidation(cfg); err != nil {
 		log.Fatalf("startup validation: %v", err)
+	}
+
+	// Lock process memory against swap and disable core dumps before any key material
+	// or decrypted secret value is ever allocated (ADR-098). Narrows, not closes, the
+	// memory-zeroization gap: it protects the durable paths (swap survival across a
+	// reboot, a core file surviving a crash), not the transient in-memory exposure of a
+	// live, healthy process documented alongside #1653's "three unwiped heap copies".
+	if err := hardening.ApplyMemoryHardening(hardening.MemoryConfig{
+		Disabled:       cfg.Security.Mlock.Disabled,
+		RequireSuccess: cfg.Security.Mlock.RequireSuccess,
+	}); err != nil {
+		log.Fatalf("memory hardening: %v", err)
 	}
 
 	// Initialize i18n system

@@ -222,6 +222,22 @@ that edits its own past claims without a visible trail is exactly the failure mo
   `TestBreakGlassReads_NeverPersistState` proves neither read function ever writes. Every changed behavior was
   verified by mutation (revert the fix, confirm the specific test goes red) before landing. #1653 reopened on
   GitHub with the full account, not closed with a note — its premise was falsified, not refined.
+- **Memory zeroization's durable half — swap and core dumps — closed (ADR-098).** The memory-zeroization entry
+  above deliberately scoped itself to the transient in-process exposure and left the durable exposure (plaintext
+  surviving in swap across a reboot, or in a core file after a crash) as future work, not a decision. Closed via
+  `internal/hardening.ApplyMemoryHardening`, called at server startup before any key material or decrypted secret
+  is allocated: `mlockall(MCL_CURRENT|MCL_FUTURE)` locks the process's memory against swap (opt-out via
+  `security.mlock.disabled`, default attempted; failure is a loud `WARNING` by default or fatal with
+  `security.mlock.require_success=true`, mirroring HashiCorp Vault's own mlock behavior), and `RLIMIT_CORE` is
+  unconditionally set to `{Cur:0, Max:0}`, disabling core dumps with no config gate and no operator prerequisite.
+  Verified functionally, not just by reading the config back: `mlockall` success confirmed by quoting a non-zero
+  `VmLck` from `/proc/self/status` in a real Linux container; failure confirmed to warn (not silently no-op) when
+  `CAP_IPC_LOCK`/`RLIMIT_MEMLOCK` are absent, and to be fatal when `require_success=true`; core dump suppression
+  confirmed by actually triggering a crash (`GOTRACEBACK=crash`, deliberate nil dereference) and observing no
+  core file is written even though the parent shell had `ulimit -c unlimited` — versus a 46 MB core file produced
+  by the identical crash without the hardening applied. This narrows, not closes, the zeroization gap: the
+  transient in-process exposure documented above remains, unchanged, by design — see ADR-098's "What this does
+  not protect against" section for the full boundary.
 
 ## Governing ADRs
 
@@ -229,4 +245,4 @@ ADR-084 (admin-bypass structural marker, implemented 2026-09-02), ADR-087 (Remot
 ADR-088 (system proxy layer design), ADR-091 (machine `CreatedBy` attribution classification), ADR-092 (audit
 event `UserID` for a machine principal), ADR-093 (remote `--by`-authority check), ADR-094 (time handling: UTC
 internally, wall-clock distrust), ADR-095 (database path resolution), ADR-096 (anti-enumeration, 403-for-both),
-ADR-097 (schema-epoch downgrade guard).
+ADR-097 (schema-epoch downgrade guard), ADR-098 (process memory hardening: mlock and core dump suppression).
