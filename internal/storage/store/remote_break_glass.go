@@ -114,6 +114,16 @@ func (rs *RemoteStorage) CreateBreakGlassActivation(_ context.Context, _ *models
 	return nil, remoteUnsupported("CreateBreakGlassActivation")
 }
 
+// ReconcileExpiredBreakGlassActivation (ADR-084-adjacent reasoning, #1653
+// reopened) is a server-internal primitive called only from
+// internal/core.ActivateBreakGlass, immediately before CreateBreakGlassActivation
+// -- which is itself remoteUnsupported above (no live caller in either
+// topology, G80 liveness sweep). Reconcile is unreachable for the identical
+// reason: nothing ever gets far enough to call it under storage.type: remote.
+func (rs *RemoteStorage) ReconcileExpiredBreakGlassActivation(_ context.Context, _, _ uint) error {
+	return remoteUnsupported("ReconcileExpiredBreakGlassActivation")
+}
+
 // GetBreakGlassActivation retrieves an activation by ID via GET
 // /api/v1/system/break-glass/{id}.
 func (rs *RemoteStorage) GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error) {

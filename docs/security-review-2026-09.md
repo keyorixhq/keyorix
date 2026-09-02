@@ -58,7 +58,7 @@ are recorded as such. A review that only lists hits reads identically to one tha
 |---|---|
 | Raw-storage-bypass proxies (`/system` routes skipping `internal/core`) | **16 issues, fixed** (#1524, #1529, #1542, #1545–#1547, #1551–#1552, #1572, #1578–#1580, #1585–#1587, #1593), plus a follow-up sweep confirming no further live extent (#1592). The guard mechanism itself widened from 18 hand-picked routes to the full route surface. Governed by ADR-088. |
 | Machine/human actor attribution (audit + model fields) | **4 issues, fixed** (#1530, #1573, #1623, #1626); one further candidate investigated and confirmed by-design, no gap (#1621). Governed by ADR-091, ADR-092. |
-| Wall-clock trust (absolute expiry checks) | **2 issues, fixed** (#1632, #1653), covering 8 individual call sites across auth sessions, OIDC, Connect, classification-gate approvals, and shares. Governed by ADR-094. |
+| Wall-clock trust (absolute expiry checks) | **2 issues, fixed** (#1632, #1653), covering 8 individual call sites across auth sessions, OIDC, Connect, classification-gate approvals, and shares. #1653's break-glass site was reopened and genuinely fixed 2026-09-02 — see "Update" below; its original closure's stated reason for deferring that one site did not hold up. Governed by ADR-094. |
 | RemoteStorage wire-call completeness (dead/stub/unverifiable RPCs) | **5 issues, fixed** (#1511, #1540, #1541, #1576, #1589), including rebuilding the detection guard from regex to structural AST matching after it was found blind to 13 of its own population. Governed by ADR-087. |
 | CI-exclusion drift (packages silently dropped from CI) | **3 issues, fixed** (#1533–#1535) — re-included, and the underlying exclusion-justification mechanism made machine-checked rather than merely asserted. |
 | Reconcile / permission-catalog drift (`ReconcileRBACPermissions`, `adminPermissions` vs. `defaultPermissions`) | **2 issues, fixed** (#1497, #1500); a third confirmed the additive-only reconcile behavior is intentional per ADR-044, not a gap (#1496). |
@@ -104,22 +104,24 @@ being one-offs:
 
 ## What remains open
 
-One item, **deliberately deferred** — a decision was made and the reason still holds. Not scheduled-but-undone,
-and not found to be missed. (#1494/ADR-084 was also listed here at the time this section was first written; it has
-since been implemented — see "Update, 2026-09-02" below. Left here only as a pointer, not re-described, so this
-section states current reality rather than repeating a now-superseded claim.)
+None, as of 2026-09-02. Two items were listed here at earlier points in this document's life — #1494/ADR-084 and
+#1653 — both since resolved. Neither is re-described here; each is a pointer to "Update, 2026-09-02" below, so
+this section states current reality rather than repeating a now-superseded claim.
 
-- **#1653 — six wall-clock ceiling sites named, one (`break_glass.go`'s activation listing) left unfixed.** The
-  fixing commit disclosed this omission explicitly rather than silently claiming full coverage, with the
-  reasoning that the actual access grant a break-glass activation represents is a role assignment, and role
-  assignments are already covered by the RBAC-invariant clock-watermark fix (#1651) — independently corroborated
-  during this reconciliation by tracing `RemoveUserRole`'s call path against the same watermark check. The
-  `BreakGlassActivation.State` field the original issue named is a reporting label on top of that already-guarded
-  grant, not an independent access-control decision point.
+#1653 is worth a specific flag, though: it wasn't a deferral whose reason simply expired — its stated premise was
+independently tested and found false. That distinction matters for reading the rest of this document. Every OTHER
+deferral recorded in this review (the CMK-rotation and memory-zeroization items in the "Update" section below,
+for instance) rests on a premise stated in prose, the same way #1653's did, and none of the others have been
+independently re-tested the way #1653's was. Confirming #1653's premise was false on the first deliberate check
+is a data point, not a coincidence to wave off — a follow-up pass enumerating each remaining deferral's
+load-bearing premise and checking whether anything actually asserts it (matching #1653's own "guard the premise,
+not the conclusion" investigation) is recommended, not yet done.
 
 No item in this review's scope was found to be *believed closed and isn't* with no available explanation, and
 none was found *filed and then lost track of* with no resolution at all — every deferred item, past and present,
 had a stated, current, defensible reason, which is the difference between "deliberately deferred" and "missed."
+#1653 is the one exception on record: its stated reason did not hold up, and is corrected below rather than left
+standing.
 
 ## What was deliberately not examined
 
@@ -196,6 +198,30 @@ that edits its own past claims without a visible trail is exactly the failure mo
   `os.Getenv` onward and, like any Go string, structurally cannot be wiped at all. Neither gap has a workable
   fix within this pass's scope; both are recorded here as open, not silently left where "not examined" implied
   no one had looked.
+- **#1653's break-glass deferral, premise tested and found false — reopened and genuinely fixed.** #1653's
+  original closure deferred one of six wall-clock sites (`break_glass.go`'s activation listing) on the stated
+  premise that `BreakGlassActivation.State` is "a reporting label... not an independent access-control decision
+  point." Asserting that premise directly (guard #1653 itself asked for but the closure never wrote) found it
+  false: `core.RevokeBreakGlass`'s guard, and its remote-storage-proxy mirror
+  (`RevokeBreakGlassActivationProxy`), both read `State` to decide whether to attempt the real de-authorization
+  action, so a wall-clock hiccup in the deferred site's read-path write could silently block a legitimate
+  emergency revoke. The mirror direction also held: a genuinely-expired-but-never-revisited row stayed
+  `state='active'` in the database indefinitely, permanently occupying the DB-level one-active-slot-per-
+  (project,user) partial unique index and blocking a legitimate NEW activation — reproduced directly
+  (`TestActivateBreakGlass_ReactivatesAfterNaturalExpiry` fails once the real production index is added to its
+  fixture, which it wasn't). Both directions disable the control break-glass exists for, bounded by TTL either
+  way (not an access escalation), but availability of the emergency path is most of what break-glass is for.
+  Fixed as one mechanism change, not two guard patches: the list/get read path
+  (`ListBreakGlassActivations`/`GetBreakGlassActivation`) no longer persists a wall-clock transition at all —
+  `State` is now a genuine read-time projection, watermark-clamped by reusing #1651's `rbacEffectiveNow`
+  mechanism (the treatment #1653's own issue body suggested). The one place a TTL-lapse transition is ever
+  persisted moved to `ReconcileExpiredBreakGlassActivation`, called only from `ActivateBreakGlass` (a mutating
+  operation) immediately before its own INSERT. `RevokeBreakGlass`'s guard (and its proxy mirror) now depend only
+  on whether the row has already been explicitly revoked. The durable guard this establishes — the one a future
+  change would break — is asserted directly:
+  `TestBreakGlassReads_NeverPersistState` proves neither read function ever writes. Every changed behavior was
+  verified by mutation (revert the fix, confirm the specific test goes red) before landing. #1653 reopened on
+  GitHub with the full account, not closed with a note — its premise was falsified, not refined.
 
 ## Governing ADRs
 

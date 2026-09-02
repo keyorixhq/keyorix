@@ -154,6 +154,18 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	expiresAt := now.Add(ttl)
 	scope := storage.Scope{ProjectID: projectID}
 
+	// #1653 reopened: reconcile the user's own TTL-lapsed 'active' row in this
+	// project (if one exists) BEFORE creating a new one, so a genuinely-expired
+	// grant nobody has revisited since doesn't hold the partial unique index's
+	// one-active-slot forever — the "backward drift blocks a NEW activation"
+	// mirror of the "forward drift blocks revoke" bug that same finding
+	// produced. Best-effort is wrong here: if this fails, don't silently
+	// proceed to an INSERT that may spuriously reject a genuinely-eligible
+	// reactivation with a misleading "already active" error.
+	if err := c.storage.ReconcileExpiredBreakGlassActivation(ctx, projectID, userID); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
 	// Create the activation record FIRST, before granting anything. This is the
 	// actual race gate: a partial unique index on (project_id, user_id) WHERE
 	// state='active' (ensureBreakGlassActiveIndex) makes the insert itself the source
@@ -214,16 +226,26 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 }
 
 // ListBreakGlassActivations returns the project's activations, newest first. An
-// active record whose expiry has passed is reported as expired and, since this
-// is the most frequently-invoked read path for break-glass state (dashboards,
-// compliance posture snapshots), the transition is also persisted here —
-// best-effort, since the list result above is already correct regardless of
-// whether the write lands. #G43: previously the state was flipped ONLY on the
-// in-memory copy returned to this call's caller — the stored row stayed
-// 'active' in the database indefinitely (until the separate, much-longer-window
-// data-retention purge eventually hard-deletes it), so any consumer reading the
-// row directly (a proxy endpoint under storage.type: remote, a report querying
-// the table directly) saw a stale 'active' state.
+// active record whose expiry has passed is reported as expired — a pure,
+// watermark-clamped (#1651) read-time projection the storage layer computes
+// (LocalStorage.ListBreakGlassActivations), never persisted from here.
+//
+// #1653 reopened (2026-09-02): this function used to ALSO persist that
+// transition on every call — a read path writing access-control-adjacent
+// state. #1653's original deferral rested entirely on the premise that State
+// is "a reporting label... not an independent access-control decision point";
+// nothing asserted that, and it was false: RevokeBreakGlass's own guard (and
+// its remote-storage-proxy mirror) read State to decide whether to even
+// attempt the real de-authorization action, so a wall-clock hiccup in THIS
+// function's old write could silently block a legitimate emergency revoke —
+// and, the mirror direction, could leave a genuinely-expired row occupying
+// the one-active-slot-per-(project,user) index forever, blocking a legitimate
+// new activation. The fix moved the one place a TTL-lapse transition is ever
+// persisted into ActivateBreakGlass itself (a mutating operation, immediately
+// before its own INSERT) via ReconcileExpiredBreakGlassActivation, and made
+// RevokeBreakGlass's guard depend only on whether the row has already been
+// explicitly revoked — never on a clock-derived projection. See
+// docs/security-review-2026-09.md's "Update" section for the full account.
 func (c *KeyorixCore) ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error) {
 	if projectID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
@@ -231,15 +253,6 @@ func (c *KeyorixCore) ListBreakGlassActivations(ctx context.Context, projectID u
 	rows, err := c.storage.ListBreakGlassActivations(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	now := c.now()
-	for _, a := range rows {
-		if a.State == BreakGlassActive && a.ExpiresAt != nil && a.ExpiresAt.Before(now) {
-			a.State = BreakGlassExpired
-			if uerr := c.storage.UpdateBreakGlassActivation(ctx, a); uerr != nil {
-				log.Printf("break-glass: activation %d: failed to persist TTL-lapse state transition to %q: %v", a.ID, BreakGlassExpired, uerr)
-			}
-		}
 	}
 	return rows, nil
 }
@@ -258,7 +271,17 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachin
 	if activation.ProjectID != projectID {
 		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 	}
-	if activation.State != BreakGlassActive {
+	// #1653 reopened: only an ALREADY-revoked activation refuses a revoke. A
+	// TTL-lapsed (State == BreakGlassExpired, a read-time projection —
+	// GetBreakGlassActivation's doc) row is still revocable: revoking it is
+	// always harmless (the role grant it represents is independently governed
+	// by #1651's watermark regardless of what this projection says), and a
+	// caller must never be refused a legitimate revoke because of what a
+	// clock-derived value happens to read at this instant. Fast-path guard
+	// BEFORE touching the role grant; the conditional UPDATE below (accepting
+	// active-OR-expired, RevokeBreakGlassActivation's own doc) is what protects
+	// the STATE TRANSITION from a concurrent double-revoke race, not this check.
+	if activation.State == BreakGlassRevoked {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
 	}
 	// Remove the grant early. A benign "the row is already gone" case (it already
