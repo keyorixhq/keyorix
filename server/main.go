@@ -23,6 +23,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -42,6 +43,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
@@ -64,12 +66,33 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// masterPassphraseSource holds --passphrase-fd/--passphrase-file/--passphrase-stdin
+// once main() parses flags. Zero value (all unset) makes initializeEncryption fall
+// back to KEYORIX_MASTER_PASSWORD, matching this binary's historical behavior --
+// including under `go test`, which never calls main() and so never touches this var.
+var masterPassphraseSource crypto.PassphraseSource
+
 func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// #1647: see main.go's identical call for the full rationale -- an explicit,
 	// restrictive process umask means the SQLite database and its -wal/-shm sidecars
 	// (created deep inside the driver, with no mode this process's Go code controls
 	// directly) are born at 0600 regardless of what umask this process inherited.
 	syscall.Umask(0o077)
+
+	// Byte-based master-passphrase sources (ADR-099): fd is the strongest -- it
+	// never touches argv, an env var, or a path this process opens by name -- and
+	// is the usual answer for systemd's LoadCredential= (redirect the credential
+	// file to an inherited fd in the unit's ExecStart). file and stdin cover the
+	// remaining non-interactive and interactive cases. KEYORIX_MASTER_PASSWORD
+	// keeps working as the last-resort fallback -- see ADR-099 for why it's the
+	// weakest option.
+	flag.IntVar(&masterPassphraseSource.FD, "passphrase-fd", 0,
+		"Read the master passphrase from this already-open file descriptor")
+	flag.StringVar(&masterPassphraseSource.FilePath, "passphrase-file", "",
+		"Read the master passphrase from this file (refused if group- or world-readable)")
+	flag.BoolVar(&masterPassphraseSource.Stdin, "passphrase-stdin", false,
+		"Read the master passphrase from stdin")
+	flag.Parse()
 
 	// Load configuration
 	cfg, err := config.LoadConfig()
@@ -248,24 +271,33 @@ const (
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
 // and returns an initialized encryption.Service. If encryption is disabled in
 // config, it returns nil without error. For the default "password" provider it
-// requires KEYORIX_MASTER_PASSWORD; for the "file"/"env" providers the KEK comes
-// from key material elsewhere, so no passphrase is needed. auditSink, if non-nil,
-// is wired before Initialize so that a key_provider.fallbacks chain actually
-// downgrading KEK strength on THIS boot (not just one the config permits) is
-// recorded as a queryable audit event rather than only a log line — pass
-// store.LogAuditEvent once storage is available; nil is fine (tests, or contexts
-// without a live audit trail) and falls back to logging only.
+// requires a master passphrase, sourced per ADR-099 (masterPassphraseSource --
+// --passphrase-fd, then --passphrase-file, then --passphrase-stdin, then
+// KEYORIX_MASTER_PASSWORD as the weakest fallback); for the "file"/"env"
+// providers the KEK comes from key material elsewhere, so no passphrase is
+// needed. auditSink, if non-nil, is wired before Initialize so that a
+// key_provider.fallbacks chain actually downgrading KEK strength on THIS boot
+// (not just one the config permits) is recorded as a queryable audit event
+// rather than only a log line — pass store.LogAuditEvent once storage is
+// available; nil is fine (tests, or contexts without a live audit trail) and
+// falls back to logging only.
 func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*encryption.Service, error) {
 	if !cfg.Storage.Encryption.Enabled {
 		return nil, nil
 	}
 
 	providerType := cfg.Storage.Encryption.KeyProvider.Type
-	passphrase := strings.TrimSpace(os.Getenv("KEYORIX_MASTER_PASSWORD"))
-	if (providerType == "" || providerType == "password") && passphrase == "" {
-		return nil, fmt.Errorf(
-			"encryption is enabled with the password key provider but KEYORIX_MASTER_PASSWORD " +
-				"is not set; set it, or configure storage.encryption.key_provider (file/env/aws-kms)")
+	var passphrase string
+	if providerType == "" || providerType == "password" {
+		passphraseBytes, err := crypto.ResolvePassphrase(masterPassphraseSource, "KEYORIX_MASTER_PASSWORD")
+		if err != nil {
+			return nil, fmt.Errorf(
+				"encryption is enabled with the password key provider but no master passphrase is "+
+					"available (%w); set KEYORIX_MASTER_PASSWORD, pass --passphrase-fd/--passphrase-file/"+
+					"--passphrase-stdin, or configure storage.encryption.key_provider (file/env/aws-kms)", err)
+		}
+		defer crypto.WipeBytes(passphraseBytes)
+		passphrase = string(passphraseBytes)
 	}
 
 	baseDir := ""

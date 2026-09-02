@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/spf13/cobra"
@@ -22,19 +24,25 @@ func wipeBytes(b []byte) {
 	}
 }
 
-// masterPassphrase reads the master passphrase from KEYORIX_MASTER_PASSWORD. It is
-// required only for the default "password" key provider; with the file/env
-// providers (ADR-038) the KEK comes from key material elsewhere, so it returns ""
-// without error and Service.Initialize sources the KEK from the provider.
+// masterPassphrase resolves the master passphrase per ADR-099's precedence
+// (--passphrase-fd, then --passphrase-file, then --passphrase-stdin, then
+// KEYORIX_MASTER_PASSWORD as the weakest fallback -- common.PassphraseSource
+// is set from the root command's persistent flags, internal/cli/main.go). It
+// is required only for the default "password" key provider; with the
+// file/env providers (ADR-038) the KEK comes from key material elsewhere, so
+// it returns "" without error and Service.Initialize sources the KEK from
+// the provider. The single chokepoint every command in this package calls
+// through, so the sourcing and wipe apply everywhere uniformly.
 func masterPassphrase(cfg *config.Config) (string, error) {
 	if t := cfg.Storage.Encryption.KeyProvider.Type; t != "" && t != "password" {
 		return "", nil
 	}
-	p := os.Getenv("KEYORIX_MASTER_PASSWORD")
-	if p == "" {
-		return "", fmt.Errorf("KEYORIX_MASTER_PASSWORD environment variable is not set")
+	passphraseBytes, err := crypto.ResolvePassphrase(common.PassphraseSource, "KEYORIX_MASTER_PASSWORD")
+	if err != nil {
+		return "", err
 	}
-	return p, nil
+	defer wipeBytes(passphraseBytes)
+	return string(passphraseBytes), nil
 }
 
 // EncryptionCmd is the root command for encryption operations

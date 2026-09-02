@@ -11,6 +11,7 @@ import (
 	billingcli "github.com/keyorixhq/keyorix/internal/cli/billing"
 	"github.com/keyorixhq/keyorix/internal/cli/breakglass"
 	bundlecli "github.com/keyorixhq/keyorix/internal/cli/bundle"
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/cli/compliance"
 	cliconfigcmd "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
@@ -90,6 +91,23 @@ func init() {
 	rootCmd.AddCommand(usage.UsageCmd)
 	rootCmd.AddCommand(billingcli.NewBillingCmd())
 	rootCmd.AddCommand(notification.NotificationCmd)
+
+	// Byte-based master-passphrase sources (ADR-099), available to every
+	// subcommand: fd is the strongest -- it never touches argv, an env var, or
+	// a path this process opens by name. file and stdin cover the remaining
+	// non-interactive and interactive cases. common.PassphraseSource is read by
+	// wireSecretEncryption (internal/cli/common) and masterPassphrase
+	// (internal/cli/encryption), the two chokepoints every storage-touching
+	// command routes through. KEYORIX_MASTER_PASSWORD keeps working as the
+	// last-resort fallback when none of these flags are set -- see ADR-099 for
+	// why it's the weakest option.
+	rootCmd.PersistentFlags().IntVar(&common.PassphraseSource.FD, "passphrase-fd", 0,
+		"Read the master passphrase from this already-open file descriptor")
+	rootCmd.PersistentFlags().StringVar(&common.PassphraseSource.FilePath, "passphrase-file", "",
+		"Read the master passphrase from this file (refused if group- or world-readable)")
+	rootCmd.PersistentFlags().BoolVar(&common.PassphraseSource.Stdin, "passphrase-stdin", false,
+		"Read the master passphrase from stdin")
+	rootCmd.MarkFlagsMutuallyExclusive("passphrase-fd", "passphrase-file", "passphrase-stdin")
 }
 
 // bootstrapI18n initializes i18n with the user's actual configured locale

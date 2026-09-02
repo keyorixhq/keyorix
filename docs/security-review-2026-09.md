@@ -238,6 +238,28 @@ that edits its own past claims without a visible trail is exactly the failure mo
   by the identical crash without the hardening applied. This narrows, not closes, the zeroization gap: the
   transient in-process exposure documented above remains, unchanged, by design — see ADR-098's "What this does
   not protect against" section for the full boundary.
+- **Master passphrase sourcing fixed; the wiping gap stays open by design (ADR-099).** The memory-zeroization
+  entry above also documented that `KEYORIX_MASTER_PASSWORD` "is string-shaped from `os.Getenv` onward and, like
+  any Go string, structurally cannot be wiped at all." Fixed the *sourcing* half: the server and CLI now accept
+  `--passphrase-fd` (strongest — never touches argv, an env var, or a path opened by name; the usual answer for
+  systemd's `LoadCredential=`), `--passphrase-file` (mode-checked — refuses group/world-readable, `O_NOFOLLOW`
+  against symlinks), and `--passphrase-stdin` (no-echo when interactive), each yielding a `[]byte` the caller
+  wipes once consumed. `KEYORIX_MASTER_PASSWORD` keeps working as the last-resort fallback, documented as the
+  weakest option. Implemented once (`internal/crypto.ResolvePassphrase`) and wired into all three real
+  production entry points — `server/main.go`, `internal/cli/common.wireSecretEncryption`, and
+  `internal/cli/encryption.masterPassphrase` (the single chokepoint 13+ CLI commands already routed through).
+  Checked the corollary directly rather than assuming it: a repo-wide sweep of every `exec.Command` call site
+  and every `os.Environ()` call found the passphrase already correctly excluded from child-process environments
+  (`internal/crypto/exec_provider.go`'s minimal `cmd.Env`, `internal/cli/run/run.go`'s `filterSensitiveEnv` —
+  both pre-existing, both still test-covered) and never dumped into a diagnostic bundle; live-verified in a real
+  container that `/proc/self/environ` is clean of both the env var and the passphrase value when a byte source
+  is used instead. The deeper wiping gap — `PasswordKeyProvider` holding the passphrase as an unwipeable
+  `string` for its own lifetime — stays open BY DESIGN, not by oversight: `KEK()` can legitimately be called a
+  second time on the same provider instance during an in-process key rotation, so wiping after the first call
+  would silently break the second, turning a hardening step into a correctness bug. Verified end to end through
+  the real chokepoints, not just the resolver in isolation: seeded a DEK under a file-sourced passphrase, then
+  proved `KEYORIX_MASTER_PASSWORD` holding a *different* value fails to unwrap that same DEK when the file
+  source is absent — proof the file source, not the env var, was what actually derived the KEK.
 
 ## Governing ADRs
 
@@ -245,4 +267,5 @@ ADR-084 (admin-bypass structural marker, implemented 2026-09-02), ADR-087 (Remot
 ADR-088 (system proxy layer design), ADR-091 (machine `CreatedBy` attribution classification), ADR-092 (audit
 event `UserID` for a machine principal), ADR-093 (remote `--by`-authority check), ADR-094 (time handling: UTC
 internally, wall-clock distrust), ADR-095 (database path resolution), ADR-096 (anti-enumeration, 403-for-both),
-ADR-097 (schema-epoch downgrade guard), ADR-098 (process memory hardening: mlock and core dump suppression).
+ADR-097 (schema-epoch downgrade guard), ADR-098 (process memory hardening: mlock and core dump suppression),
+ADR-099 (master passphrase sourcing: fd, file, stdin, env fallback).
