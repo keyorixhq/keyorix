@@ -129,8 +129,13 @@ This review's scope was defined by the ambient-state and silent-falsification qu
 server, CLI, storage, RBAC, and CI/supply-chain surfaces. The following were explicitly out of scope, and are
 named here so that omission reads as a stated boundary rather than an implied "checked, fine":
 
-- **The frontend (`web/`) beyond its CSP configuration**, which surfaced incidentally via the accepted-risk CSP
-  finding above and was not otherwise part of this pass's sweep.
+- **The frontend (`web/`) beyond its CSP configuration and session-token storage** (the latter checked
+  2026-09-02, see "Update" below — not "not examined" any longer). CSP surfaced incidentally via the
+  accepted-risk CSP finding above; nothing else about the frontend was part of this pass's sweep. Scheduled as
+  its own future review, not folded into this one — a frontend security review needs its own scope (XSS surface,
+  dependency posture, CSRF coverage beyond the one double-submit check the token-storage question below
+  incidentally confirmed, build/asset integrity) rather than a single question tacked onto a backend-focused
+  pass.
 
 ## Update, 2026-09-02: follow-up investigations
 
@@ -238,6 +243,26 @@ that edits its own past claims without a visible trail is exactly the failure mo
   by the identical crash without the hardening applied. This narrows, not closes, the zeroization gap: the
   transient in-process exposure documented above remains, unchanged, by design — see ADR-098's "What this does
   not protect against" section for the full boundary.
+- **Frontend session-token storage checked — not web storage, already correct.** Asked the one frontend
+  question this pass scoped in (see "What was deliberately not examined" above): where does the session token
+  live? Traced `web/src/services/client.ts` (the shared axios instance: `withCredentials: true`, a comment
+  noting "no header to reattach, unlike the old Bearer-token flow") and
+  `server/middleware/session_cookie.go`'s `SetSessionCookie` — the session token is delivered exclusively via an
+  `HttpOnly`, `Secure` (TLS-conditional), `SameSite=Lax` cookie (`kx_session`); `SameSite=Lax` rather than
+  `Strict` is a deliberate choice, documented in-code, so a bookmarked link or an OIDC/SAML redirect back into
+  the app doesn't force a spurious re-login. `TestSetSessionCookie`/`server/http/integration_test.go` assert the
+  `HttpOnly`/`SameSite` attributes directly and pass. A companion CSRF cookie (`csrf_token`) is deliberately
+  JS-readable for the double-submit pattern (`RequireCSRF`, `csrf.go`) — correct and expected, not a gap: a
+  double-submit token has to be readable by JS to be echoed back as a header, and it carries no authority on its
+  own. `web/src/store/authStore.ts`'s `localStorage` use (zustand `persist`, key `auth-storage`) holds only
+  non-credential bookkeeping — user profile, expiry timestamps for client-side UX (proactive refresh
+  scheduling) — never the token itself; its own comment states this explicitly ("the session itself is now an
+  httpOnly cookie — there is no token for the client to hold"). The in-code comments on both the cookie helper
+  and the axios client independently confirm this was a deliberate MIGRATION away from an earlier
+  localStorage-token design specifically to close the XSS blast-radius that design had — not an oversight this
+  pass happened to catch. Not web storage, so nothing to file per this task's own instruction (file only if it
+  were); the rest of the frontend remains out of scope for this pass and is scheduled as its own future review
+  (see above).
 
 ## Governing ADRs
 
