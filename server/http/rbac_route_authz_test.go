@@ -38,7 +38,7 @@ func TestUpdateUserRolesRequiresRolesAssign(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "a@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "manager", Email: "m@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
 	// admin role = privilege-bypass; "usermgr" holds only users.read (NOT roles.assign).
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "usermgr"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "users.read", Resource: "users", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)

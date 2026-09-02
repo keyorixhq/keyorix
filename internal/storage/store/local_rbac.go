@@ -88,6 +88,17 @@ func (ls *LocalStorage) CreateRole(ctx context.Context, name identity.FoldedName
 	return role, nil
 }
 
+// SetRoleBypassesPermissionChecks sets models.Role.BypassesPermissionChecks
+// (ADR-084). See the interface doc comment for why this exists and who may
+// call it -- role seeding only, never CreateRole/UpdateRole.
+func (ls *LocalStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error {
+	if err := ls.db.WithContext(ctx).Model(&models.Role{}).Where("id = ?", roleID).
+		Update("bypasses_permission_checks", value).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 func (ls *LocalStorage) GetRole(ctx context.Context, id uint) (*models.Role, error) {
 	var role models.Role
 	if err := ls.db.WithContext(ctx).First(&role, id).Error; err != nil {
@@ -653,6 +664,23 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 		Joins(sqlJoinRolePerms).
 		Where("role_permissions.role_id IN ?", roleIDs).
 		Where("permissions.name = ?", permission).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	return count > 0, nil
+}
+
+// RoleSetBypassesPermissionChecks reports whether any role in roleIDs has
+// BypassesPermissionChecks = true (ADR-084).
+func (ls *LocalStorage) RoleSetBypassesPermissionChecks(ctx context.Context, roleIDs []uint) (bool, error) {
+	if len(roleIDs) == 0 {
+		return false, nil
+	}
+	var count int64
+	err := ls.db.WithContext(ctx).Model(&models.Role{}).
+		Where("id IN ?", roleIDs).
+		Where("bypasses_permission_checks = ?", true).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)

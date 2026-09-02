@@ -355,7 +355,7 @@ func TestSetSecretAutoRotate_BackendRefBothOrNeither(t *testing.T) {
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
 
 	// backend without ref → error
@@ -453,7 +453,7 @@ func TestSetSecretAutoRotate_AdminCanUnbindBackend(t *testing.T) {
 	c, db, fixed := rotationExecCore(t)
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
 
 	require.NoError(t, c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true}, 9),
@@ -509,7 +509,7 @@ func TestSetSecretAutoRotate_RejectsDangerousRefChars(t *testing.T) {
 			c, db, fixed := rotationExecCore(t)
 			seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 			c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
-			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin", BypassesPermissionChecks: true}).Error)
 			require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
 
 			err := c.SetSecretAutoRotate(context.Background(), 1,
@@ -543,7 +543,7 @@ func TestSetSecretAutoRotate_AllowsRealisticLegitimateRefs(t *testing.T) {
 			c, db, fixed := rotationExecCore(t)
 			seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 			c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
-			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin", BypassesPermissionChecks: true}).Error)
 			require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
 
 			err := c.SetSecretAutoRotate(context.Background(), 1,

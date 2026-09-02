@@ -38,7 +38,7 @@ func setupCreateUserAssignmentsTest(t *testing.T) (*UserHandler, *gorm.DB) {
 	// override + project assignments require roles.assign, here via admin-bypass).
 	require.NoError(t, db.Create(&models.User{Username: "admin1", Email: "admin1@x.io", IsActive: true}).Error)
 	var adminRole models.Role
-	require.NoError(t, db.Create(&models.Role{Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Where("name = ?", "admin").First(&adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID, ProjectID: 0}).Error)
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))

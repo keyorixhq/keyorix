@@ -20,7 +20,7 @@ import (
 func TestRemoveRoleFromGroup_RefusesLastGlobalAdmin(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error) // global admin grant
 
@@ -39,7 +39,7 @@ func TestRemoveRoleFromGroup_RefusesLastGlobalAdmin(t *testing.T) {
 func TestRemoveRoleFromGroup_AllowsWhenAnotherAdminExists(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "other-admin", IsActive: true}).Error) // #G03: must exist and be active to count as a surviving admin
@@ -65,7 +65,7 @@ func TestRemoveRoleFromGroup_NonAdminRoleAlwaysRemovable(t *testing.T) {
 func TestDeleteGroup_RefusesWhenHoldsLastGlobalAdminRole(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
 
@@ -83,7 +83,7 @@ func TestDeleteGroup_RefusesWhenHoldsLastGlobalAdminRole(t *testing.T) {
 func TestDeleteGroup_AllowsWhenAnotherAdminExists(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "other-admin", IsActive: true}).Error) // #G03: must exist and be active to count as a surviving admin
@@ -112,7 +112,7 @@ func TestRemoveUserFromGroup_RefusesLastAdminMember(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "sole-admin", Email: "sole@example.com"}).Error)
@@ -134,7 +134,7 @@ func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberRemains(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "admin1", Email: "a1@example.com"}).Error)
@@ -151,7 +151,7 @@ func TestRemoveUserFromGroup_AllowsWhenDirectAdminExists(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "sole-member", Email: "sm@example.com"}).Error)

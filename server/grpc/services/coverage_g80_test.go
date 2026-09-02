@@ -145,7 +145,7 @@ func newAuditServiceWithDB(t *testing.T) (*AuditGRPCService, *gorm.DB) {
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
 	return NewAuditService(core.NewKeyorixCore(store.NewLocalStorage(db))), db
 }
@@ -550,7 +550,7 @@ func newDynTestRigWithFake(t *testing.T) *dynTestRig {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 2}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2}).Error)
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())

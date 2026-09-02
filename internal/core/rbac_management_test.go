@@ -138,7 +138,7 @@ func TestAssignPermissionToRole_AdminBypasses(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
 
 	const admin = uint(9)
@@ -226,7 +226,7 @@ func TestRemovePermissionFromRole_NonBuiltinRole_NoSignal(t *testing.T) {
 func TestAssignPermissionToRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error) // builtin
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error) // builtin
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
 	// Actor must already hold the permission (#169) — make them a global admin.
 	const actor = uint(9)

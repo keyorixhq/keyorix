@@ -55,7 +55,7 @@ func freshDepCovCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	// authorization check would otherwise reject every Add/RemoveSecretDependency call
 	// here (this file tests the handler's glue logic — param parsing, error-status
 	// mapping — not authorization, which is the router middleware's job).
-	role := &models.Role{Name: "admin"}
+	role := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(role).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db

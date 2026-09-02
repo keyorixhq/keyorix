@@ -50,9 +50,15 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 	return c, db
 }
 
+// seedRoleForUser creates a role and grants it to userID globally. ADR-084:
+// if name is one of the four reserved admin-tier names, the structural
+// bypass flag is set too — matching what real bootstrap seeding does for
+// those names — so callers seeding "super_admin"/"admin"/"system_admin"/
+// "project_admin" to test the admin bypass keep working without each needing
+// to know about the flag directly.
 func seedRoleForUser(t *testing.T, db *gorm.DB, userID, roleID uint, name string) {
 	t.Helper()
-	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: name}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: name, BypassesPermissionChecks: isAdminRoleName(name)}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: roleID}).Error)
 }
 

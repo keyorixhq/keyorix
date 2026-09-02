@@ -15,14 +15,11 @@ func stubAuthorizedPrincipal(ms *MockStorage, actorID uint, scope Scope, perm st
 	const roleID = uint(10)
 	ms.On("GetUserRoleIDsAt", mock.Anything, actorID, scope).Return([]uint{roleID}, nil).Maybe()
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, actorID, scope).Return([]uint{}, nil).Maybe()
-	// "not found", not a generic error: roleSetContainsAdmin distinguishes a genuine
-	// storage error (propagated, fails closed) from a role simply not being seeded in
-	// this deployment (skipped, checks the next admin-tier name) — see #G17. This stub
-	// means "none of the four admin-tier roles are seeded/held", not "storage is down".
-	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found")).Maybe()
-	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found")).Maybe()
-	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found")).Maybe()
-	ms.On("GetRoleByName", mock.Anything, "project_admin").Return(nil, errors.New("not found")).Maybe()
+	// ADR-084: roleSetContainsAdmin resolves the admin-tier bypass by structural
+	// flag now, one query over the caller's whole role-ID set, not four separate
+	// by-name lookups. This stub means "none of the caller's roles carry the
+	// bypass flag" — a real error case (storage down) is a different stub.
+	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, mock.Anything).Return(false, nil).Maybe()
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{roleID}, perm).Return(true, nil).Maybe()
 }
 

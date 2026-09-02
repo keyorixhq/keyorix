@@ -48,7 +48,7 @@ func TestConcurrency_PlaceLegalHold_OnlyOneWins(t *testing.T) {
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 	// #377: placement now requires an admin-tier role.
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2}).Error)
 
 	const callers = 32

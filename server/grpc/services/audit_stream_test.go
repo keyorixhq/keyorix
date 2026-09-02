@@ -71,7 +71,7 @@ func newStreamCore(t *testing.T) (*AuditGRPCService, *gorm.DB) {
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin"}).Error)
 	// User 1 = super_admin (global) so the audit.read check passes (stream tests
 	// authenticate as user 1); the denied test uses an ungranted user id.
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
 	return NewAuditService(core.NewKeyorixCore(store.NewLocalStorage(db))), db
 }

@@ -167,7 +167,7 @@ func TestMachineIdentityService_IssueMachineToken_PrivilegeCeilingDeniedIsPermis
 	// would inherit admin authority. User 1's own "machine-admin" role (seeded
 	// by newMachineTestRig) is NOT in adminRoleNames, so IsGlobalAdmin(1) is
 	// false and requireMachinePrivilegeCeiling (MACH-001) must refuse.
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.MachineIdentityRole{
 		MachineIdentityID: uint(m.GetId()), RoleID: 2,
 	}).Error)

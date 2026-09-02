@@ -20,7 +20,7 @@ func TestSuspendUser_RefusesLastAdminDeactivation(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error) // global admin
 
 	err := c.SuspendUser(ctx, 9, 1)
@@ -33,7 +33,7 @@ func TestSuspendUser_AllowsWhenAnotherAdminExists(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "root2", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 10}).Error)
 
@@ -45,7 +45,7 @@ func TestUpdateUser_RefusesLastAdminDeactivation(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", Email: "root@x.io", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)
 
 	no := false
@@ -59,7 +59,7 @@ func TestUpdateUser_AllowsDeactivationWhenAnotherAdminExists(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", Email: "root@x.io", IsActive: true, AccountState: AccountActive}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "root2", Email: "root2@x.io", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 10}).Error)
 
@@ -73,7 +73,7 @@ func TestDeprovisionSCIMGroup_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error) // group confers admin, globally
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)
@@ -99,7 +99,7 @@ func TestReplaceSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)
@@ -117,7 +117,7 @@ func TestPatchSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)
@@ -135,7 +135,7 @@ func TestPatchSCIMGroup_AllowsRemovingMemberWhenAnotherAdminExists(t *testing.T)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "root2", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)

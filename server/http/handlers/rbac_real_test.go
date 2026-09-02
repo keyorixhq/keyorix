@@ -68,7 +68,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 	// A distinct name from any role individual tests create via mustCreateRole (some
 	// create their own role literally named "admin" for unrelated purposes) — Role.Name
 	// is unique, so this must not collide with those.
-	adminRole := &models.Role{Name: "system_admin", Description: "Administrator"}
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 	return db

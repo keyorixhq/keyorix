@@ -47,7 +47,7 @@ func freshCoreACL(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
 	// Make user 1 a global admin so they can call all handlers.
-	adminRole := &models.Role{Name: "system_admin", Description: "Administrator"}
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	// memberRole is a minimal role used to make grant-target users project members.
 	memberRole := &models.Role{Name: "member", Description: "Project member"}

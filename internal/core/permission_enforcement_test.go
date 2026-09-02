@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -768,8 +767,8 @@ func TestCheckSecretPermission_RBACFallback_GrantsAccess(t *testing.T) {
 	// RBAC fallback: user 7 has role [55] in this project scope.
 	mockStorage.On("GetUserRoleIDsAt", mock.Anything, uint(7), mock.Anything).Return([]uint{55}, nil)
 	mockStorage.On("GetUserGroupRoleIDsAt", mock.Anything, uint(7), mock.Anything).Return([]uint{}, nil)
-	// Role 55 is not an admin role — GetRoleByName returns not found for each admin name.
-	mockStorage.On("GetRoleByName", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("not found"))
+	// Role 55 is not an admin role (ADR-084: no bypass flag).
+	mockStorage.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{55}).Return(false, nil)
 	// Role 55 grants secrets.read.
 	mockStorage.On("RoleSetHasPermission", mock.Anything, []uint{55}, "secrets.read").Return(true, nil)
 

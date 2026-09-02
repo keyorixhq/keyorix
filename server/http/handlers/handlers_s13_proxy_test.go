@@ -1040,6 +1040,10 @@ func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
 	require.NoError(t, err)
 	adminRole, err := cs.Storage().CreateRole(context.Background(), systemAdminName, "admin")
 	require.NoError(t, err)
+	// ADR-084: BypassesPermissionChecks is the structural admin-bypass flag now,
+	// not the name -- CreateRole never sets it from a request DTO, so set it here
+	// exactly as real bootstrap seeding would, via the same narrow storage primitive.
+	require.NoError(t, cs.Storage().SetRoleBypassesPermissionChecks(context.Background(), adminRole.ID, true))
 	admin, err := cs.Storage().CreateUser(context.Background(), &models.User{
 		Username: "admin_s13", Email: "admin_s13@example.com", PasswordHash: "x",
 	})

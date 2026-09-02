@@ -55,7 +55,7 @@ func setupRotationStateTest(t *testing.T) (*RotationPolicyHandler, *gorm.DB) {
 	))
 
 	// Make the test user (ID 1) a global admin so scoped permission checks pass.
-	adminRole := &models.Role{Name: "admin", Description: "Administrator"}
+	adminRole := &models.Role{Name: "admin", Description: "Administrator", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 

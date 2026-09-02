@@ -54,18 +54,16 @@ func connectTestCore(t *testing.T, platformUseGranted bool, conns ...connect.Con
 // deterministically to granted for principalID — NOT a blanket "always
 // authorize" stub. Only RoleSetHasPermission's return value depends on
 // granted; every other call in the chain (GetUserRoleIDsAt,
-// GetUserGroupRoleIDsAt, the four GetRoleByName admin-bypass lookups) resolves
-// to "the principal holds one arbitrary non-admin role" — the same shape a
-// real fixture (a seeded role with, or without, the permission granted) would
+// GetUserGroupRoleIDsAt, the admin-bypass flag resolution) resolves to "the
+// principal holds one arbitrary non-admin role" — the same shape a real
+// fixture (a seeded role with, or without, the permission granted) would
 // produce, so a test declaring granted=false genuinely exercises a deny, not a
 // mock that happens to always say yes.
 func stubConnectPlatformUseCheckUser(ms *MockStorage, principalID uint, granted bool) {
 	const testRoleID = 9001
 	ms.On("GetUserRoleIDsAt", mock.Anything, principalID, mock.Anything).Return([]uint{testRoleID}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, principalID, mock.Anything).Return([]uint{}, nil)
-	for _, name := range adminRoleNames {
-		ms.On("GetRoleByName", mock.Anything, name).Return((*models.Role)(nil), errNotFoundStub)
-	}
+	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{testRoleID}).Return(false, nil)
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{testRoleID}, "connect.platform.use").Return(granted, nil)
 }
 
@@ -77,8 +75,6 @@ func stubConnectPlatformUseCheckMachine(ms *MockStorage, principalID uint, grant
 	ms.On("GetMachineRoleIDsAt", mock.Anything, principalID, mock.Anything).Return([]uint{testRoleID}, nil)
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{testRoleID}, "connect.platform.use").Return(granted, nil)
 }
-
-var errNotFoundStub = errors.New("not found (test stub)")
 
 func TestReadFederatedSecret_Success(t *testing.T) {
 	c, ms := connectTestCore(t, true, fakeConnector{name: "aws", val: "v3ry-secret"})

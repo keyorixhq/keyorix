@@ -63,7 +63,7 @@ func freshSecretFixtureS15(t *testing.T) (*SecretHandler, *core.KeyorixCore, *mo
 
 	// Seed the user context user (UserID=1) as a global admin bypass.
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice-s15", AccountState: "active"}).Error)
-	adminRole := &models.Role{Name: "system_admin"}
+	adminRole := &models.Role{Name: "system_admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 

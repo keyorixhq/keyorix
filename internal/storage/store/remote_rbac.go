@@ -50,6 +50,14 @@ func (rs *RemoteStorage) CreateRole(ctx context.Context, name identity.FoldedNam
 	return &result, nil
 }
 
+// SetRoleBypassesPermissionChecks is a server-internal, bootstrap-only
+// primitive (ADR-084). ADR-083 makes this unreachable in practice:
+// storage.type: remote can never back a server process, and BootstrapSystem
+// (the only caller) only ever runs inside one.
+func (rs *RemoteStorage) SetRoleBypassesPermissionChecks(_ context.Context, _ uint, _ bool) error {
+	return remoteUnsupported("SetRoleBypassesPermissionChecks")
+}
+
 // GetRole retrieves a role by ID via remote API.
 func (rs *RemoteStorage) GetRole(ctx context.Context, id uint) (*models.Role, error) {
 	path := fmt.Sprintf("/api/v1/roles/%d", id)
@@ -696,6 +704,12 @@ func (rs *RemoteStorage) GetUserRoleScopes(_ context.Context, _ uint) ([]storage
 // errors.Is-detectable sentinel.
 func (rs *RemoteStorage) RoleSetHasPermission(_ context.Context, _ []uint, _ string) (bool, error) {
 	return false, remoteUnsupported("RoleSetHasPermission")
+}
+
+// RoleSetBypassesPermissionChecks is a server-internal authorization
+// primitive (ADR-084). Same reasoning as RoleSetHasPermission above.
+func (rs *RemoteStorage) RoleSetBypassesPermissionChecks(_ context.Context, _ []uint) (bool, error) {
+	return false, remoteUnsupported("RoleSetBypassesPermissionChecks")
 }
 
 // --- Project / Environment ---
