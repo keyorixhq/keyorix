@@ -9,7 +9,7 @@ func init() {
 	// underlying CRUD calls its own upstream authorizes), so there is no remote
 	// wire route to implement yet.
 	addRemoteUnsupported(map[string]remoteUnsupportedEntry{
-		"GetUserGroupsAt":   {statusIntentional, "scope-aware group-membership check backing CheckGroupPermissions; only reached from local-backend authorization, no remote-storage caller today"},
+		"GetUserGroupsAt":    {statusIntentional, "scope-aware group-membership check backing CheckGroupPermissions; only reached from local-backend authorization, no remote-storage caller today"},
 		"ListGroupMembersAt": {statusIntentional, "scope-aware group-membership check backing the last-global-admin guards; only reached from local-backend authorization, no remote-storage caller today"},
 	})
 }
