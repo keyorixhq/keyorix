@@ -131,8 +131,8 @@ func TestGetSecretOwnershipHistory_PermissionDenied(t *testing.T) {
 	// CheckSecretPermission also checks shares when not the owner.
 	store.On("ListSharesBySecret", ctx, uint(100)).
 		Return([]*models.ShareRecord{}, nil)
-	// CheckGroupPermissions → GetUserGroups needed.
-	store.On("GetUserGroups", ctx, uint(42)).Return([]*models.Group{}, nil)
+	// CheckGroupPermissions → GetUserGroupsAt needed.
+	store.On("GetUserGroupsAt", ctx, uint(42), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): no direct grant, and no ancestor folder grant either → deny.
 	store.On("GetSecretACL", mock.Anything, uint(100), uint(42)).Return(nil, errors.New("record not found"))
 	store.On("GetSecretAncestors", mock.Anything, uint(100)).Return([]uint{}, nil)

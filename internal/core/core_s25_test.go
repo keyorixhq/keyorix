@@ -776,7 +776,7 @@ func TestEnforceSecretOwnerPermission_NotOwner(t *testing.T) {
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, OwnerID: 99}, nil)
 	// ListSharesBySecret returns no shares
 	ms.On("ListSharesBySecret", mock.Anything, uint(5)).Return([]*models.ShareRecord{}, nil)
-	ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+	ms.On("GetUserGroupsAt", mock.Anything, uint(1), mock.Anything).Return([]*models.Group{}, nil)
 	// RBAC fallback (r124): no roles → deny.
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.Anything).Return([]uint{}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.Anything).Return([]uint{}, nil)

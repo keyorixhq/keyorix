@@ -150,7 +150,7 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	}
 
 	// Check group shares.
-	groupPermission, shareID, err := c.CheckGroupPermissions(ctx, secretID, userID, shares)
+	groupPermission, shareID, err := c.CheckGroupPermissions(ctx, secretID, userID, shares, secret.ProjectID)
 	if err == nil && groupPermission != PermissionNone {
 		if c.hasRequiredPermission(groupPermission, requiredPermission) {
 			return &PermissionContext{
@@ -245,8 +245,12 @@ func (c *KeyorixCore) hasRequiredPermission(userPermission, requiredPermission P
 }
 
 // CheckGroupPermissions checks if a user has permission through group membership.
-func (c *KeyorixCore) CheckGroupPermissions(ctx context.Context, secretID, userID uint, shares []*models.ShareRecord) (PermissionLevel, *uint, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
-	userGroups, err := c.storage.GetUserGroups(ctx, userID)
+// Only counts a group share when the user's OWN membership in that group is
+// global or scoped to secretProjectID (#G01) — GetUserGroupsAt, not the
+// unscoped GetUserGroups, so a membership scoped to a different project can't
+// grant access to a secret it was never meant to reach.
+func (c *KeyorixCore) CheckGroupPermissions(ctx context.Context, secretID, userID uint, shares []*models.ShareRecord, secretProjectID uint) (PermissionLevel, *uint, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
+	userGroups, err := c.storage.GetUserGroupsAt(ctx, userID, Scope{ProjectID: secretProjectID})
 	if err != nil {
 		return PermissionNone, nil, err
 	}

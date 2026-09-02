@@ -202,7 +202,7 @@ func TestGetSecretValueByVersionWithPermissionCheck_PermissionDenied(t *testing.
 	secret := &models.SecretNode{ID: 5, OwnerID: 99} // owner != user 2
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(secret, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(5)).Return([]*models.ShareRecord{}, nil)
-	ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+	ms.On("GetUserGroupsAt", mock.Anything, uint(2), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): no direct grant, and no ancestor folder grant either → deny.
 	ms.On("GetSecretACL", mock.Anything, uint(5), uint(2)).Return(nil, errors.New("record not found"))
 	ms.On("GetSecretAncestors", mock.Anything, uint(5)).Return([]uint{}, nil)

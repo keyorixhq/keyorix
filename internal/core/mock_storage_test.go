@@ -1028,6 +1028,14 @@ func (m *MockStorage) ListAllUserGroupMemberships(ctx context.Context) ([]storag
 	return args.Get(0).([]storage.UserGroupMembership), args.Error(1)
 }
 
+func (m *MockStorage) GetUserGroupsAt(ctx context.Context, userID uint, scope storage.Scope) ([]*models.Group, error) {
+	args := m.Called(ctx, userID, scope)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Group), args.Error(1)
+}
+
 func (m *MockStorage) AddPasswordHistory(ctx context.Context, userID uint, hash string, at time.Time) error {
 	args := m.Called(ctx, userID, hash, at)
 	return args.Error(0)
@@ -1103,6 +1111,14 @@ func (m *MockStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID, 
 
 func (m *MockStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {
 	args := m.Called(ctx, groupID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.User), args.Error(1)
+}
+
+func (m *MockStorage) ListGroupMembersAt(ctx context.Context, groupID uint, scope storage.Scope) ([]*models.User, error) {
+	args := m.Called(ctx, groupID, scope)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
