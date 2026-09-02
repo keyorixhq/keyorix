@@ -393,13 +393,21 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 	return campaigns, items, nil
 }
 
-// DeleteExpiredBreakGlassBefore hard-deletes non-active break-glass activations
-// created before the cutoff. Active activations are never purged.
+// DeleteExpiredBreakGlassBefore hard-deletes old break-glass activations before
+// the cutoff: explicitly non-active (revoked, or reconciled-expired) rows, PLUS
+// (#1653 reopened) rows still labeled 'active' whose ExpiresAt has genuinely
+// passed -- ReconcileExpiredBreakGlassActivation only ever reconciles the
+// SAME user's row at their own next activation in the SAME project, so a user
+// who activates once and never revisits that project leaves their row
+// 'active' in the DB indefinitely otherwise; this retention sweep is the
+// backstop that still reclaims it. A row genuinely still active (ExpiresAt in
+// the future, or nil) is never purged either way.
 func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
-	// G81 (BreakGlassActivation.CreatedAt): normalize internally — see GetAuditLogs.
+	// G81 (BreakGlassActivation.CreatedAt/ExpiresAt): normalize internally — see GetAuditLogs.
 	before = before.UTC()
 	result := ls.db.WithContext(ctx).
-		Where("state <> ? AND created_at < ?", "active", before).
+		Where("(state <> ? AND created_at < ?) OR (state = ? AND expires_at IS NOT NULL AND expires_at < ?)",
+			breakGlassActiveState, before, breakGlassActiveState, before).
 		Delete(&models.BreakGlassActivation{})
 	if result.Error != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)

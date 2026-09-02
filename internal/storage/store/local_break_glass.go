@@ -15,13 +15,27 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// breakGlassActiveState / breakGlassRevokedState mirror core.BreakGlassActive /
-// core.BreakGlassRevoked. Duplicated here (rather than imported) because this
-// package is imported BY internal/core — importing core back would cycle.
+// breakGlassActiveState / breakGlassRevokedState / breakGlassExpiredState mirror
+// core.BreakGlassActive / core.BreakGlassRevoked / core.BreakGlassExpired.
+// Duplicated here (rather than imported) because this package is imported BY
+// internal/core — importing core back would cycle.
 const (
 	breakGlassActiveState  = "active"
 	breakGlassRevokedState = "revoked"
+	breakGlassExpiredState = "expired"
 )
+
+// projectEffectiveBreakGlassState returns a's State, EXCEPT an 'active' row past
+// its ExpiresAt (relative to effectiveNow) is reported as 'expired' — a pure
+// in-memory projection for callers, never persisted here (see
+// ReconcileExpiredBreakGlassActivation for the one place a TTL-lapse transition
+// is ever actually written, and why it isn't written here or in ListBreakGlassActivations).
+func projectEffectiveBreakGlassState(a *models.BreakGlassActivation, effectiveNow time.Time) string {
+	if a.State == breakGlassActiveState && a.ExpiresAt != nil && a.ExpiresAt.Before(effectiveNow) {
+		return breakGlassExpiredState
+	}
+	return a.State
+}
 
 // CreateBreakGlassActivation persists a new activation. DoNothing on conflict so a
 // racing duplicate active activation for the same (project_id, user_id) — the
@@ -41,6 +55,11 @@ func (ls *LocalStorage) CreateBreakGlassActivation(ctx context.Context, a *model
 	return a, nil
 }
 
+// GetBreakGlassActivation returns a's row with State projected to 'expired' if
+// its TTL has lapsed relative to the watermark-clamped clock (#1651's
+// rbacEffectiveNow, reused here) -- a read, never a write; see
+// projectEffectiveBreakGlassState's doc for why the projection is never
+// persisted from here.
 func (ls *LocalStorage) GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error) {
 	var a models.BreakGlassActivation
 	if err := ls.db.WithContext(ctx).First(&a, id).Error; err != nil {
@@ -59,9 +78,16 @@ func (ls *LocalStorage) GetBreakGlassActivation(ctx context.Context, id uint) (*
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	a.State = projectEffectiveBreakGlassState(&a, ls.rbacEffectiveNow(time.Now().UTC()))
 	return &a, nil
 }
 
+// ListBreakGlassActivations returns the project's rows, newest first, with each
+// row's State projected the same way GetBreakGlassActivation's is -- a read,
+// never a write. Prior to #1653's reopening this function persisted the
+// TTL-lapse transition it computed (a read path writing access-control-adjacent
+// state was the actual defect #1653's original deferral rested on without ever
+// asserting it); it now only ever reads.
 func (ls *LocalStorage) ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error) {
 	var rows []*models.BreakGlassActivation
 	err := ls.db.WithContext(ctx).
@@ -71,7 +97,37 @@ func (ls *LocalStorage) ListBreakGlassActivations(ctx context.Context, projectID
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	effectiveNow := ls.rbacEffectiveNow(time.Now().UTC())
+	for _, a := range rows {
+		a.State = projectEffectiveBreakGlassState(a, effectiveNow)
+	}
 	return rows, nil
+}
+
+// ReconcileExpiredBreakGlassActivation transitions userID's own TTL-lapsed
+// 'active' row in projectID to 'expired', if one exists -- an atomic conditional
+// UPDATE, watermark-clamped (#1651's rbacEffectiveNow) so a transiently
+// backward-stepped clock can never treat a genuinely-live grant as expired. The
+// ONLY place a TTL-lapse transition is ever persisted (see
+// projectEffectiveBreakGlassState's doc): called from ActivateBreakGlass, a
+// mutating operation, immediately before it attempts to create a new
+// activation, so a real-but-un-reconciled prior grant's row doesn't hold the
+// partial unique index's one-active-slot-per-(project,user) indefinitely once
+// its TTL has genuinely passed (#1653 reopened: this was the "backward drift
+// blocks a NEW activation" mirror of the "forward drift blocks revoke" bug the
+// original guard-reading-State finding also produced). Deliberately scoped to
+// the single row that matters for the caller's own upcoming INSERT, not a
+// broad sweep -- see DeleteExpiredBreakGlassBefore (local_purge.go) for the
+// longer-horizon retention cleanup of rows nobody ever reconciles this way.
+func (ls *LocalStorage) ReconcileExpiredBreakGlassActivation(ctx context.Context, projectID, userID uint) error {
+	effectiveNow := ls.rbacEffectiveNow(time.Now().UTC())
+	if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
+		Where("project_id = ? AND user_id = ? AND state = ? AND expires_at IS NOT NULL AND expires_at <= ?",
+			projectID, userID, breakGlassActiveState, effectiveNow).
+		Update("state", breakGlassExpiredState).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
 }
 
 func (ls *LocalStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
@@ -81,14 +137,21 @@ func (ls *LocalStorage) UpdateBreakGlassActivation(ctx context.Context, a *model
 	return nil
 }
 
-// RevokeBreakGlassActivation conditionally transitions activation id from active to
-// revoked in a single UPDATE ... WHERE state = 'active' — not a read-then-write —
-// so a concurrent revoke of the same activation cannot silently overwrite this
-// one's RevokedBy/RevokedAt. Returns storage.ErrBreakGlassNotActive (wrapped) if
-// the row was not active (already revoked, or absent).
+// RevokeBreakGlassActivation conditionally transitions activation id from
+// active-OR-expired to revoked in a single UPDATE — not a read-then-write — so
+// a concurrent revoke of the same activation cannot silently overwrite this
+// one's RevokedBy/RevokedAt. Accepts a row already reconciled to 'expired'
+// (ReconcileExpiredBreakGlassActivation) as well as 'active': revoking a
+// TTL-lapsed-but-not-yet-revoked activation is always allowed and always
+// harmless (the role grant it represents is independently, correctly governed
+// by #1651's watermark regardless of what this row's State says) -- #1653
+// reopened: a caller must never be refused a revoke because of what a
+// clock-derived State happens to read. Only 'revoked' (already revoked)
+// excludes a row. Returns storage.ErrBreakGlassNotActive (wrapped) if the row
+// was already revoked, or absent.
 func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error {
 	result := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
-		Where("id = ? AND state = ?", id, breakGlassActiveState).
+		Where("id = ? AND state IN ?", id, []string{breakGlassActiveState, breakGlassExpiredState}).
 		Updates(map[string]interface{}{
 			"state":                          breakGlassRevokedState,
 			"revoked_by":                     revokedBy,

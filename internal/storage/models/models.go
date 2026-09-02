@@ -287,15 +287,25 @@ type BreakGlassActivation struct {
 	RevokedAt                  *time.Time `json:"revoked_at,omitempty"`
 }
 
-// BeforeSave normalises CreatedAt to UTC so SQLite string comparisons are
-// timezone-consistent regardless of the caller's local timezone (G81 —
-// currently latent: write and the one range-query bound (local_purge.go,
-// DeleteExpiredBreakGlassBefore) both use time.Now()-family, consistently,
-// today). ExpiresAt is never range-queried in SQL (only compared via Go's
-// Location-independent time.Time.Before/After), so it's out of scope for this
-// bug class.
+// BeforeSave normalises CreatedAt and ExpiresAt to UTC so SQLite string
+// comparisons are timezone-consistent regardless of the caller's local
+// timezone (G81). CreatedAt's write and its one range-query bound
+// (local_purge.go, DeleteExpiredBreakGlassBefore) both use time.Now()-family,
+// consistently. ExpiresAt was originally exempted here with the reasoning "only
+// compared via Go's Location-independent time.Time.Before/After" — true when
+// written, but #1653's reopening added a real SQL range-query bound on it
+// (ReconcileExpiredBreakGlassActivation, local_break_glass.go: `WHERE ...
+// expires_at <= ?`, watermark-clamped), so that exemption no longer holds: a
+// caller-supplied ExpiresAt in local time (as in
+// TestActivateBreakGlass_ReactivatesAfterNaturalExpiry, which failed exactly
+// this way before this fix) would silently fail to match the UTC-bound query
+// parameter under SQLite's string comparison.
 func (b *BreakGlassActivation) BeforeSave(_ *gorm.DB) error {
 	b.CreatedAt = b.CreatedAt.UTC()
+	if b.ExpiresAt != nil {
+		utc := b.ExpiresAt.UTC()
+		b.ExpiresAt = &utc
+	}
 	return nil
 }
 

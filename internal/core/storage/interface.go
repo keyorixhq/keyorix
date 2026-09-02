@@ -456,16 +456,32 @@ type Storage interface {
 	ConsumeSSOLoginState(ctx context.Context, state string) (*models.SSOLoginState, error)
 
 	// Break-glass emergency-access activations (NIS2/DORA incident response).
+	// GetBreakGlassActivation/ListBreakGlassActivations project State to
+	// 'expired' for a TTL-lapsed 'active' row (watermark-clamped) as a pure
+	// read-time computation -- never persisted from either (#1653 reopened: a
+	// list/get read path persisting an access-control-adjacent state transition
+	// was the actual defect, not merely a premise nobody had asserted).
 	CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error)
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)
 	ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error)
 	UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error
-	// RevokeBreakGlassActivation atomically transitions activation id from active to
-	// revoked, recording who revoked it and when, via a single conditional UPDATE
-	// (WHERE state = active) rather than a read-modify-write — so two concurrent
-	// revokes of the same activation cannot both "win": only the first transitions
-	// state, and the second gets ErrBreakGlassNotActive rather than silently
-	// overwriting the first revoker's attribution.
+	// ReconcileExpiredBreakGlassActivation transitions userID's own TTL-lapsed
+	// 'active' row in projectID to 'expired' (watermark-clamped), if one
+	// exists. The one place a TTL-lapse transition is ever persisted -- called
+	// only from ActivateBreakGlass, a mutating operation, immediately before it
+	// attempts to create a new activation, so a genuinely-expired-but-never-
+	// revisited prior row doesn't hold the one-active-slot-per-(project,user)
+	// partial unique index forever.
+	ReconcileExpiredBreakGlassActivation(ctx context.Context, projectID, userID uint) error
+	// RevokeBreakGlassActivation atomically transitions activation id from
+	// active-OR-expired to revoked, recording who revoked it and when, via a
+	// single conditional UPDATE rather than a read-modify-write — so two
+	// concurrent revokes of the same activation cannot both "win": only the
+	// first transitions state, and the second gets ErrBreakGlassNotActive
+	// rather than silently overwriting the first revoker's attribution.
+	// Accepts 'expired' as well as 'active' so a caller is never refused a
+	// revoke because of what a clock-derived State happens to read; only an
+	// already-'revoked' row is excluded.
 	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)

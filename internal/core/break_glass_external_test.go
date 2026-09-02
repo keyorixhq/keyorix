@@ -22,6 +22,15 @@ func enableBreakGlass(h *testhelper.RBACTestHelper, role string, def, max time.D
 
 func migrateBreakGlass(t *testing.T, h *testhelper.RBACTestHelper) {
 	require.NoError(t, h.DB.AutoMigrate(&models.BreakGlassActivation{}, &models.AuditEvent{}))
+	// Mirrors ensureBreakGlassActiveIndex (internal/storage/factory.go) — this is
+	// the real production constraint ActivateBreakGlass's "already active" path
+	// depends on; without it here, these tests exercise a materially weaker
+	// invariant than production actually enforces (internal/storage/store/
+	// local_break_glass_test.go's newBreakGlassStore creates the same index for
+	// the same reason).
+	require.NoError(t, h.DB.Exec(
+		"CREATE UNIQUE INDEX uniq_break_glass_active_project_user ON break_glass_activations (project_id, user_id) WHERE state = 'active'",
+	).Error)
 }
 
 // makeProjectMember gives the user a baseline (viewer) role at the project so they
@@ -186,6 +195,43 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	require.Error(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID))
 }
 
+// #1653 reopened: a caller must never be refused a revoke because of what a
+// wall-clock-derived State reads. This activation's persisted state has
+// already been reconciled to 'expired' (simulating ReconcileExpiredBreakGlassActivation
+// having run, e.g. because the same user re-activated after this grant's TTL
+// lapsed) -- revoking a DIFFERENT, still-un-revoked activation by its own ID
+// must still succeed, exercising the exact guard (RevokeBreakGlass's
+// `activation.State == BreakGlassRevoked` check) and the exact storage-layer
+// conditional UPDATE (`state IN ('active','expired')`) this finding fixed.
+func TestRevokeBreakGlass_NotBlockedByExpiredState(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
+	require.NoError(t, err)
+
+	// Simulate the reconciliation that happens on a genuine TTL lapse -- the
+	// row's PERSISTED state, not just a read-time projection.
+	require.NoError(t, h.DB.Model(&models.BreakGlassActivation{}).
+		Where("id = ?", act.ID).
+		Update("state", core.BreakGlassExpired).Error)
+
+	err = h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID)
+	require.NoError(t, err, "revoking a TTL-lapsed (State == expired) activation must succeed, not be refused as 'not active'")
+
+	list, err := h.CoreService.ListBreakGlassActivations(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, core.BreakGlassRevoked, list[0].State, "the activation must end up genuinely revoked, not left expired")
+}
+
 // #1573: a machine identity holding project-scoped roles.assign can revoke a
 // break-glass activation. actorID (0, ADR-030) alone loses which machine did
 // it; RevokedByMachineIdentityID must carry it through to the persisted row.
@@ -298,7 +344,20 @@ func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
 	assert.Equal(t, winner, list[0].RevokedBy, "attribution must belong to whichever admin's conditional update actually won")
 }
 
-// List reports an active record past its expiry as expired (lazy reconciliation).
+// List reports an active record past its expiry as expired -- a read-time
+// projection, never persisted.
+//
+// #1653 reopened (2026-09-02): this test originally asserted the OPPOSITE --
+// that the transition WAS persisted (#G43) -- reasoning that any consumer
+// reading the table directly would otherwise see a stale 'active' state.
+// That reasoning missed that persisting from THIS read path was itself the
+// defect: RevokeBreakGlass's guard (and its remote-storage-proxy mirror) read
+// State to decide whether to attempt the real de-authorization action, so a
+// wall-clock hiccup in the old persisting write could silently block a
+// legitimate emergency revoke. The fix moved persistence to
+// ReconcileExpiredBreakGlassActivation, called only from ActivateBreakGlass
+// (a mutating operation) -- this function, and the storage layer beneath it,
+// must now NEVER write from a read.
 func TestListBreakGlassActivations_ExpiredReconciliation(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
@@ -317,14 +376,12 @@ func TestListBreakGlassActivations_ExpiredReconciliation(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, core.BreakGlassExpired, list[0].State, "an active grant past expiry reads as expired")
 
-	// #G43: the transition must be PERSISTED to the row, not just reflected in
-	// the in-memory copy returned above — otherwise any consumer reading the
-	// table directly (a storage.type: remote proxy endpoint, a report) sees a
-	// stale 'active' state until the much-later data-retention purge deletes
-	// the row outright.
+	// The persisted row must be UNCHANGED -- still 'active' -- proving this
+	// read never wrote anything. This is the durable invariant #1653's fix
+	// establishes: State is never persisted from a read path.
 	var stored models.BreakGlassActivation
 	require.NoError(t, h.DB.First(&stored, list[0].ID).Error)
-	assert.Equal(t, core.BreakGlassExpired, stored.State, "the TTL-lapse transition must be persisted to the database row")
+	assert.Equal(t, core.BreakGlassActive, stored.State, "a list (read) must never persist the TTL-lapse transition to the database row")
 }
 
 // An expired break-glass grant must confer NO access at the authorization boundary — not
@@ -446,7 +503,15 @@ func TestActivateBreakGlass_ReactivatesAfterNaturalExpiry(t *testing.T) {
 	// user_roles row's expiry AND the activation record's expiry into the past — the
 	// same effect a real elapsed TTL has, without waiting hours in the test. Critically,
 	// unlike RevokeBreakGlass, this does NOT delete the user_roles row.
-	past := time.Now().Add(-time.Minute)
+	// .UTC() matters here (G81/#1653): this raw .Update() bypasses
+	// BreakGlassActivation's BeforeSave hook's normal UTC normalization (a
+	// single-column GORM Update does not re-derive its bound value from a
+	// hook-mutated struct field), so a naive local-time value here would not
+	// match ReconcileExpiredBreakGlassActivation's UTC-bound SQL comparison —
+	// not a real gap, since CreateBreakGlassActivation (the only real write
+	// path) always normalizes via BeforeSave; only this test's own shortcut
+	// for simulating elapsed time needs to mirror that normalization by hand.
+	past := time.Now().UTC().Add(-time.Minute)
 	require.NoError(t, h.DB.Model(&models.UserRole{}).
 		Where("user_id = ? AND role_id = ?", 10, 3).
 		Update("expires_at", past).Error)

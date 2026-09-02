@@ -1137,6 +1137,39 @@ func TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
+// TestRevokeBreakGlassActivationProxy_ExpiredStateStillRevocable_S26 is #1653
+// reopened's regression test for this call site: a TTL-lapsed activation
+// (State == expired, whether via read-time projection or the persisted
+// ReconcileExpiredBreakGlassActivation transition) must still be revocable --
+// refusing it here because of a clock-derived value was the exact defect this
+// finding produced, duplicated at this second (remote-storage-proxy) call
+// site alongside core.RevokeBreakGlass's own guard.
+func TestRevokeBreakGlassActivationProxy_ExpiredStateStillRevocable_S26(t *testing.T) {
+	cs := freshCoreS26(t)
+	h := NewCatalogHandler(cs)
+
+	activation, err := cs.Storage().CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 1, RoleID: 1, RoleName: "test_role",
+		Justification: "ttl-lapsed fixture", State: "expired",
+	})
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"revoked_by": 1,
+		"revoked_at": time.Now(),
+	})
+	req := withUserCtx(withChiParam_S25(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
+			bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", activation.ID),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.RevokeBreakGlassActivationProxy(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "an expired-but-not-yet-revoked activation must be revocable, body: %s", w.Body.String())
+}
+
 // TestRevokeBreakGlassActivationProxy_RemovesRoleGrant is the G80 documented-
 // exception fix's own regression test: before the fix, this handler flipped the
 // activation to state=revoked WITHOUT ever removing the underlying role

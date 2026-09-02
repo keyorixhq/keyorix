@@ -179,6 +179,40 @@ func TestDeleteExpiredBreakGlassBefore_SkipsActive(t *testing.T) {
 	assert.Equal(t, int64(1), active)
 }
 
+// TestDeleteExpiredBreakGlassBefore_ReclaimsUnreconciledExpired is #1653
+// reopened's regression test: ReconcileExpiredBreakGlassActivation only ever
+// reconciles the SAME user's row at their own next activation in the SAME
+// project, so a row nobody ever revisits (the user never re-activates, and
+// nobody revokes it) stays labeled 'active' in the DB forever otherwise. This
+// retention sweep must still reclaim it once genuinely TTL-lapsed AND past
+// the cutoff -- while a row that's merely OLD but still genuinely live
+// (ExpiresAt in the future) must never be purged, cutoff or not.
+func TestDeleteExpiredBreakGlassBefore_ReclaimsUnreconciledExpired(t *testing.T) {
+	ls := newRetentionTestStore(t)
+	ctx := context.Background()
+	old := time.Now().AddDate(0, 0, -120)
+	longExpired := old.Add(time.Hour) // TTL lapsed shortly after creation, well before the cutoff below
+	stillLive := time.Now().AddDate(1, 0, 0)
+
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
+		ID: 4, State: "active", CreatedAt: old, ExpiresAt: &longExpired,
+	}).Error)
+	// Genuinely still active (far-future ExpiresAt) despite being old — must
+	// never be purged regardless of TTL-lapse reasoning.
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
+		ID: 5, State: "active", CreatedAt: old, ExpiresAt: &stillLive,
+	}).Error)
+
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().AddDate(0, 0, -90))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "the unreconciled-but-genuinely-expired row is reclaimed")
+
+	var remaining []models.BreakGlassActivation
+	require.NoError(t, ls.db.Find(&remaining).Error)
+	require.Len(t, remaining, 1)
+	assert.Equal(t, uint(5), remaining[0].ID, "the still-live row must survive")
+}
+
 func TestDeleteResolvedAccessRequestsBefore_CascadesAndSkipsPending(t *testing.T) {
 	ls := newRetentionTestStore(t)
 	ctx := context.Background()

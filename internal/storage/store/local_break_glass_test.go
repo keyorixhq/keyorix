@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -137,4 +138,47 @@ func TestCreateBreakGlassActivation_ConcurrentRaceYieldsExactlyOneWinner(t *test
 		Where("project_id = ? AND user_id = ? AND state = ?", 2, 10, "active").
 		Count(&count).Error)
 	assert.EqualValues(t, 1, count)
+}
+
+// TestBreakGlassReads_NeverPersistState is #1653's durable guard, rewritten
+// for the new target state (2026-09-02): the original guard question was "no
+// authorization decision reads BreakGlassActivation.State" -- correct
+// question, and the answer turned out to be no (core.RevokeBreakGlass's own
+// guard, and its remote-storage-proxy mirror, both did). The actual defect
+// was upstream of that: ListBreakGlassActivations, a read path, computed a
+// wall-clock transition and PERSISTED it -- a list/get endpoint writing
+// access-control-adjacent state is a defect on its own terms, independent of
+// clocks, because it means a benign read by anyone who can list/get
+// activations is what triggers the write. Once State is a genuine read-time
+// projection (projectEffectiveBreakGlassState), the durable invariant this
+// fix establishes -- the one a future change would break -- is: neither
+// GetBreakGlassActivation nor ListBreakGlassActivations EVER writes. This
+// test proves it directly: seed a TTL-lapsed 'active' row, call both read
+// functions, then re-query the row's raw persisted state and assert it is
+// UNCHANGED. See ReconcileExpiredBreakGlassActivation for the one place
+// (a mutating operation, ActivateBreakGlass) a TTL-lapse transition is ever
+// actually written.
+func TestBreakGlassReads_NeverPersistState(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	ctx := context.Background()
+	past := time.Now().Add(-time.Hour)
+
+	seeded, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 2, UserID: 10, RoleID: 3, RoleName: "editor", State: "active", ExpiresAt: &past,
+	})
+	require.NoError(t, err)
+
+	got, err := ls.GetBreakGlassActivation(ctx, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "expired", got.State, "GetBreakGlassActivation must project the TTL-lapse for the caller")
+
+	list, err := ls.ListBreakGlassActivations(ctx, 2)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "expired", list[0].State, "ListBreakGlassActivations must project the TTL-lapse for the caller")
+
+	var stored models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&stored, seeded.ID).Error)
+	assert.Equal(t, "active", stored.State,
+		"neither read above may have persisted the projection -- the row's real, stored state must be unchanged")
 }

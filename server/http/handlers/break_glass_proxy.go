@@ -251,7 +251,15 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 	// same role had since been re-granted for an unrelated, legitimate reason — the
 	// conditional UPDATE below only protects the STATE TRANSITION from a concurrent
 	// double-revoke race, not this sequential case.
-	if activation.State != core.BreakGlassActive {
+	//
+	// #1653 reopened: only an ALREADY-revoked activation refuses a revoke, matching
+	// core.RevokeBreakGlass's own fix (internal/core/break_glass.go) exactly. A
+	// TTL-lapsed (State == core.BreakGlassExpired, a read-time projection --
+	// GetBreakGlassActivation's doc, internal/storage/store/local_break_glass.go)
+	// row is still revocable: refusing it here because of a clock-derived value
+	// was the original defect this same finding produced, duplicated at this
+	// second call site.
+	if activation.State == core.BreakGlassRevoked {
 		writeRemoteAPIError(w, http.StatusConflict, breakGlassNotActiveCode, coreStorage.ErrBreakGlassNotActive.Error())
 		return
 	}

@@ -377,17 +377,27 @@ var beforeSaveBypassAllowlistG1619 = map[string]string{
 		"normalization would be a no-op. (This model's OWN read path, ListUsersInStateBefore, IS a real SQL " +
 		"range query — unlike the PAT case above, this one is benign because the value is canonical, not " +
 		"because the query is immune.)",
-	"internal/core/break_glass_external_test.go:356": "UserRole.ExpiresAt — `past := " +
-		"time.Now().UTC().Add(-time.Hour)` (declared a few lines above, shared with the group-share style " +
-		"pre-normalization pattern), already canonical. This test (TestBreakGlass_ExpiredGrantDeniesAuthorization) " +
+	"internal/core/break_glass_external_test.go:413": "UserRole.ExpiresAt — the value is " +
+		"`time.Now().UTC().Add(-time.Hour)`, already canonical. This test (TestBreakGlass_ExpiredGrantDeniesAuthorization) " +
 		"deliberately exercises the real SQL-range-query path (Authorize -> GetUserRoleIDsAt's expires_at filter, " +
 		"per its own doc comment) — protected because the value is canonical, not because the read path is immune.",
-	"internal/core/break_glass_external_test.go:450": "UserRole.ExpiresAt — `past := time.Now().Add(-time.Minute)` " +
-		"is NOT pre-normalized, but this test (TestActivateBreakGlass_ReactivatesAfterNaturalExpiry) never " +
-		"exercises GetUserRoleIDsAt's SQL range query against this row: the only downstream check that reads it " +
-		"is assignUserRole's existing-row guard (local_rbac.go), a single-row fetch by composite key compared via " +
-		"Go's Location-independent existing.ExpiresAt.After(time.Now()) — immune regardless of the raw value's " +
-		"Location, the same reasoning as the PersonalAccessToken case above.",
+	"internal/core/break_glass_external_test.go:515": "UserRole.ExpiresAt — `past := " +
+		"time.Now().UTC().Add(-time.Minute)` (declared a few lines above, shared with the " +
+		"BreakGlassActivation.ExpiresAt entry below), already canonical (#1653: this test previously used a " +
+		"non-UTC `past`, which this same reopening fixed — see this file's own comment immediately above the " +
+		"declaration). This test (TestActivateBreakGlass_ReactivatesAfterNaturalExpiry) never exercises " +
+		"GetUserRoleIDsAt's SQL range query against this row: the only downstream check that reads it is " +
+		"assignUserRole's existing-row guard (local_rbac.go), a single-row fetch by composite key compared via " +
+		"Go's Location-independent existing.ExpiresAt.After(time.Now()) — doubly protected, both because the " +
+		"value is canonical and because the read path is immune.",
+	"internal/core/break_glass_external_test.go:518": "BreakGlassActivation.ExpiresAt — same " +
+		"`past := time.Now().UTC().Add(-time.Minute)` as the UserRole.ExpiresAt entry immediately above (one " +
+		"variable, two raw writes in TestActivateBreakGlass_ReactivatesAfterNaturalExpiry), already canonical. " +
+		"#1653 reopened added a real SQL range-query read path for this exact column " +
+		"(ReconcileExpiredBreakGlassActivation, local_break_glass.go: `WHERE ... expires_at <= ?`, called from " +
+		"ActivateBreakGlass) — this site is exactly the one that motivated adding ExpiresAt to " +
+		"BreakGlassActivation.BeforeSave's normalization in the first place; protected because the value is " +
+		"canonical, not because this read path is immune (it is not).",
 }
 
 // TestBeforeSaveBypassGuard_NoUnrecognizedRawWritesToHookedColumns is #1619's
