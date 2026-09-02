@@ -65,7 +65,7 @@ are recorded as such. A review that only lists hits reads identically to one tha
 | Existence-oracle consistency (404-vs-403) | **1 issue, fixed** (#1645) — a house convention (ADR-096) plus an incremental, independently-testable migration, not a single patch. |
 | Role-creation core-bypass | **1 issue, fixed** (#1660). |
 | Multi-replica safety (mutex-only invariants) | **1 issue, fixed** (#1646), covering 6 named invariants. |
-| RBAC admin-detection structural integrity | **1 issue investigated, decision recorded (ADR-084), implementation deliberately deferred** (#1494) — see "What remains open." |
+| RBAC admin-detection structural integrity | **1 issue, fixed** (#1494) — decision recorded in ADR-084, implemented 2026-09-02. See "Update, 2026-09-02" below; deferred at the time this table was first written. |
 | Identity normalisation (Unicode NFC/NFD collision) | **1 issue, fixed** (#1642). |
 | File-creation permissions (umask inheritance) | **1 issue, fixed** (#1647). |
 | Request-context lifecycle (audit durability across client disconnect) | **1 issue, fixed** (#1650). |
@@ -104,18 +104,11 @@ being one-offs:
 
 ## What remains open
 
-Two items, both **deliberately deferred** — a decision was made in each case, and the reason still holds. Neither
-is scheduled-but-undone, and neither was found to be missed.
+One item, **deliberately deferred** — a decision was made and the reason still holds. Not scheduled-but-undone,
+and not found to be missed. (#1494/ADR-084 was also listed here at the time this section was first written; it has
+since been implemented — see "Update, 2026-09-02" below. Left here only as a pointer, not re-described, so this
+section states current reality rather than repeating a now-superseded claim.)
 
-- **#1494 / ADR-084 — replace name-based admin-role detection with a structural `bypasses_permission_checks`
-  column.** The live exploit surface this issue originally worried about (creating or renaming a role to acquire
-  the four reserved admin names) is closed today by an independent, structural guard
-  (`TestUpdateRoleRequest_CarriesNoNameField` — neither transport's update path can rename a role at all, so
-  there is no rename-based bypass to begin with). ADR-084 records the decision on the more resilient
-  long-term mechanism, with alternatives considered and rejected, and explicitly defers implementation as
-  not-urgent follow-up work — correctly so, since there is no live gap forcing an earlier timeline. This issue
-  was closed once, contrary to its own investigation's recommendation, with a corrupted closing comment; it has
-  been reopened, retitled to name ADR-084 directly, and the record corrected.
 - **#1653 — six wall-clock ceiling sites named, one (`break_glass.go`'s activation listing) left unfixed.** The
   fixing commit disclosed this omission explicitly rather than silently claiming full coverage, with the
   reasoning that the actual access grant a break-glass activation represents is a role assignment, and role
@@ -125,8 +118,8 @@ is scheduled-but-undone, and neither was found to be missed.
   grant, not an independent access-control decision point.
 
 No item in this review's scope was found to be *believed closed and isn't* with no available explanation, and
-none was found *filed and then lost track of* with no resolution at all — the two items above both have a stated,
-current, defensible reason, which is the difference between "deliberately deferred" and "missed."
+none was found *filed and then lost track of* with no resolution at all — every deferred item, past and present,
+had a stated, current, defensible reason, which is the difference between "deliberately deferred" and "missed."
 
 ## What was deliberately not examined
 
@@ -138,10 +131,6 @@ named here so that omission reads as a stated boundary rather than an implied "c
   garbage collector, or a swapped page, to eventually reclaim) was not examined. Go's runtime and garbage collector
   make this a substantially harder guarantee to make than it is in a language with manual memory management, and
   doing it properly is a distinct piece of work with its own design tradeoffs, not a fix-sized finding.
-- **Migration downgrade paths.** This review's wall-clock and path-resolution findings touch storage and config
-  loading, but whether a downgrade (running an older binary against a database a newer version has migrated)
-  fails safely was not tested. The existing migration system's `down` migrations were touched by an earlier,
-  separate piece of work (adding pre-drop backups) that predates this review and is not re-verified here.
 - **Availability and denial-of-service resistance**, beyond the specific multi-replica-mutex finding recorded
   above. Rate limiting, resource-exhaustion bounds on individual endpoints, and general load-shedding behavior
   were not swept as their own class in this pass.
@@ -151,9 +140,33 @@ named here so that omission reads as a stated boundary rather than an implied "c
 - **The frontend (`web/`) beyond its CSP configuration**, which surfaced incidentally via the accepted-risk CSP
   finding above and was not otherwise part of this pass's sweep.
 
+## Update, 2026-09-02
+
+Two changes since this document was first written, recorded here rather than silently folded into the sections
+above, for the same reason #1494's original mis-closure is narrated rather than quietly fixed: a review document
+that edits its own past claims without a visible trail is exactly the failure mode this document exists to avoid.
+
+- **#1494 / ADR-084 implemented.** `models.Role.BypassesPermissionChecks`, resolved by role ID via
+  `storage.RoleSetBypassesPermissionChecks`, now replaces `roleSetContainsAdmin`'s old fixed-name lookup at all
+  8 call sites (`authz.go` ×5, `dynamic_secrets.go`, `invitations.go`, `scim_groups.go`). Written only by role
+  seeding (`defaultRoles`/`BootstrapSystem`) and a one-time migration snapshot for existing installs;
+  `CreateRole`/`UpdateRole` never accept it from a request DTO on any transport, matching the ADR's decision.
+  `installAdminRoleIDSet` and `isAdminRoleName`/`adminRoleNames` remain unchanged, per the ADR's explicit scope.
+  This is no longer an open item.
+- **Migration downgrade paths, examined (ADR-097).** Tracing the security-relevant columns `migrateDatabase`
+  has added to date (`roles.bypasses_permission_checks`, `user_roles`/`group_roles.environment_id`,
+  `secret_nodes.classification` and its siblings, `audit_events.prev_hash`/`entry_hash`) through their actual
+  authorization/verification call sites found every one of them defaults in the safe direction if an older
+  binary — one that doesn't know the column exists — writes a new row. That holds only because each migration's
+  author independently chose the correct default; nothing enforced it. ADR-097 adds a schema-epoch startup guard
+  (`checkSchemaEpoch`/`recordSchemaEpoch`, `internal/storage/factory.go`) so a binary older than the database
+  it's pointed at refuses to start rather than silently running against unknown state — closing the class,
+  matching this review's own stated preference for a guard over a per-instance audit.
+
 ## Governing ADRs
 
-ADR-084 (admin-bypass structural marker, deferred implementation), ADR-087 (RemoteStorage deletion pass),
+ADR-084 (admin-bypass structural marker, implemented 2026-09-02), ADR-087 (RemoteStorage deletion pass),
 ADR-088 (system proxy layer design), ADR-091 (machine `CreatedBy` attribution classification), ADR-092 (audit
 event `UserID` for a machine principal), ADR-093 (remote `--by`-authority check), ADR-094 (time handling: UTC
-internally, wall-clock distrust), ADR-095 (database path resolution), ADR-096 (anti-enumeration, 403-for-both).
+internally, wall-clock distrust), ADR-095 (database path resolution), ADR-096 (anti-enumeration, 403-for-both),
+ADR-097 (schema-epoch downgrade guard).
