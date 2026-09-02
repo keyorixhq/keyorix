@@ -149,7 +149,7 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 		sendError(w, "ValidationError", "action must be verify, provision, activate, or revoke", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.TransitionMembership(r.Context(), uint(projectID), uint(membershipID), to, actor.UserID)
+	m, err := h.coreService.TransitionMembership(r.Context(), uint(projectID), uint(membershipID), to, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

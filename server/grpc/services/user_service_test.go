@@ -136,11 +136,17 @@ func TestUserService_CreateUser_RoleGrantRequiresAssign(t *testing.T) {
 	t.Cleanup(h.Cleanup)
 
 	// A role that can create users but cannot assign roles — the realistic
-	// "user administrator" persona that the bug let escalate.
+	// "user administrator" persona that the bug let escalate. Every new user
+	// gets the default system_viewer role (system.read) whether or not the
+	// caller asks for one, so under FIX-1's permission-derived ceiling
+	// (requireGranterHoldsRolePermissions) a provisioner must hold system.read
+	// itself too, or even PLAIN user creation would be handing out a
+	// permission the actor doesn't have — the same escalation-by-proxy shape
+	// this test's explicit-role cases below are pinning, just implicit.
 	h.CreateTestRole(t, "user_provisioner", "Can create users, cannot assign roles", 50)
 	_, err := h.SqlDB.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
 		SELECT r.id, p.id FROM roles r, permissions p
-		WHERE r.name = 'user_provisioner' AND p.name = 'users.write'`)
+		WHERE r.name = 'user_provisioner' AND p.name IN ('users.write', 'system.read')`)
 	require.NoError(t, err)
 	h.AssignUserRole(t, 8, 50, nil)
 

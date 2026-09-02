@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
@@ -3083,6 +3084,17 @@ func TestCountMembershipsByUsersProxy_HappyPath(t *testing.T) {
 
 func TestCreateMembershipProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
+	// role by ID, so it must exist as a real row. sharedS4Core is a
+	// process-wide singleton reused across every s4/s5/s9 test (and across
+	// `-count=N` reruns), so create idempotently rather than assume this is
+	// the row's first creation.
+	if _, err := h.coreService.Storage().GetRoleByName(context.Background(), "member"); err != nil {
+		memberName, ferr := identity.NewFoldedName("member")
+		require.NoError(t, ferr)
+		_, cerr := h.coreService.Storage().CreateRole(context.Background(), memberName, "test-only role")
+		require.NoError(t, cerr)
+	}
 	body := `{"project_id":1,"user_id":1,"role":"member","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()

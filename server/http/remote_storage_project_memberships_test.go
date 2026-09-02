@@ -99,13 +99,19 @@ func TestRemoteStorageMembership_CreateGetList_RealServer(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "invitee1", "invitee1@example.com")
+	// FIX-1's requireGranterHoldsRolePermissions ceiling means a machine/node-
+	// token caller (as `downstream` authenticates) can't be granted "viewer"
+	// (it bundles a real permission the machine actor can never satisfy —
+	// see arTestPermissionlessRole's doc). A permission-less role isolates
+	// this test to its actual subject — create/get/list round-tripping.
+	role := arTestPermissionlessRole(t, upstream)
 
-	m, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "viewer", 1))
+	m, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, role, 1))
 	require.NoError(t, err, "creating a membership must succeed via storage.type: remote")
 	require.NotZero(t, m.ID, "the upstream must assign a real ID")
 	assert.Equal(t, projectID, m.ProjectID)
 	assert.Equal(t, userID, m.UserID)
-	assert.Equal(t, "viewer", m.Role)
+	assert.Equal(t, role, m.Role)
 	assert.Equal(t, core.MembershipInvited, m.State)
 
 	// Confirm it is a REAL row in the upstream's own storage (not just "the call
@@ -128,7 +134,7 @@ func TestRemoteStorageMembership_CreateGetList_RealServer(t *testing.T) {
 	// A second membership for a different user, then list both back via the
 	// downstream's ListProjectMemberships.
 	userID2 := mustCreateUser(t, upstream, "invitee2", "invitee2@example.com")
-	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID2, "viewer", 1))
+	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID2, role, 1))
 	require.NoError(t, err)
 
 	rows, err := downstream.Storage().ListProjectMemberships(ctx, projectID)
@@ -160,8 +166,9 @@ func TestRemoteStorageMembership_GetActive_RealServer(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "activeuser", "activeuser@example.com")
+	role := arTestPermissionlessRole(t, upstream)
 
-	m, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "viewer", 1))
+	m, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, role, 1))
 	require.NoError(t, err)
 
 	active, err := downstream.Storage().GetActiveProjectMembership(ctx, projectID, userID)
@@ -208,15 +215,16 @@ func TestRemoteStorageMembership_DuplicateActiveMembership_RealServer(t *testing
 	ctx := context.Background()
 	now := time.Now()
 	userID := mustCreateUser(t, upstream, "dupuser", "dupuser@example.com")
+	role := arTestPermissionlessRole(t, upstream)
 
-	_, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "viewer", 1))
+	_, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, role, 1))
 	require.NoError(t, err)
 
 	// A second, concurrent-in-spirit invite for the SAME (project, user) pair must
 	// be rejected by the upstream's real DB-level unique index, and the rejection
 	// must reconstruct as storage.ErrDuplicateActiveMembership on this side of the
 	// HTTP hop.
-	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, "editor", 1))
+	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, userID, role, 1))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, coreStorage.ErrDuplicateActiveMembership),
 		"a duplicate active membership must surface as storage.ErrDuplicateActiveMembership, not an opaque error: %v", err)
@@ -232,10 +240,11 @@ func TestRemoteStorageMembership_ListStaleInvited_RealServer(t *testing.T) {
 	fresh := time.Now()
 	staleUserID := mustCreateUser(t, upstream, "staleuser", "staleuser@example.com")
 	freshUserID := mustCreateUser(t, upstream, "freshuser", "freshuser@example.com")
+	role := arTestPermissionlessRole(t, upstream)
 
-	_, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(old, projectID, staleUserID, "viewer", 1))
+	_, err := downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(old, projectID, staleUserID, role, 1))
 	require.NoError(t, err)
-	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(fresh, projectID, freshUserID, "viewer", 1))
+	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(fresh, projectID, freshUserID, role, 1))
 	require.NoError(t, err)
 
 	cutoff := time.Now().Add(-7 * 24 * time.Hour)
@@ -263,6 +272,7 @@ func TestRemoteStorageMembership_ListByUserAndCounts_RealServer(t *testing.T) {
 
 	project2, err := upstream.CreateProject(ctx, "Second Project", "")
 	require.NoError(t, err)
+	role := arTestPermissionlessRole(t, upstream)
 
 	// Built already-active (rather than created invited then transitioned to
 	// active): UpdateProjectMembership/UpdateMembershipProxy was DELETED
@@ -271,15 +281,15 @@ func TestRemoteStorageMembership_ListByUserAndCounts_RealServer(t *testing.T) {
 	// initial state the caller builds, exactly as inviteMemberWithMode does
 	// for LocalStorage.
 	activatedAt := time.Now()
-	m1Data := buildInvitedMembership(now, projectID, userID, "viewer", 1)
+	m1Data := buildInvitedMembership(now, projectID, userID, role, 1)
 	m1Data.State = core.MembershipActive
 	m1Data.ActivatedAt = &activatedAt
 	_, err = downstream.Storage().CreateProjectMembership(ctx, m1Data)
 	require.NoError(t, err)
 
-	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, project2.ID, userID, "viewer", 1))
+	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, project2.ID, userID, role, 1))
 	require.NoError(t, err)
-	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, otherUserID, "viewer", 1))
+	_, err = downstream.Storage().CreateProjectMembership(ctx, buildInvitedMembership(now, projectID, otherUserID, role, 1))
 	require.NoError(t, err)
 
 	rows, err := downstream.Storage().ListUserProjectMemberships(ctx, userID)

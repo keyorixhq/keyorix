@@ -42,7 +42,7 @@ func TestRunCreate_WithExpires_UserShare(t *testing.T) {
 		Username: "exptgt", Email: "exptgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup, origExpires :=
 		createSecretID, createRecipientID, createPermission, createIsGroup, createExpires
@@ -82,7 +82,7 @@ func TestRunCreate_WithExpires_GroupShare(t *testing.T) {
 	// ShareSecretWithGroup verifies the group is scoped to the secret's project.
 	role, err := svc.Storage().GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
-	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}))
+	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}, false))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup, origExpires :=
 		createSecretID, createRecipientID, createPermission, createIsGroup, createExpires

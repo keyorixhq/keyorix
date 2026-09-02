@@ -475,7 +475,7 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 
 	scope := core.Scope{ProjectID: uint(projectID)}
 	if grant {
-		err = h.coreService.AssignMachineRole(r.Context(), uint(machineID), roleID, scope, actor.UserID)
+		err = h.coreService.AssignMachineRole(r.Context(), uint(machineID), roleID, scope, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
 	} else {
 		err = h.coreService.RemoveMachineRole(r.Context(), uint(machineID), roleID, scope, actor.UserID)
 	}

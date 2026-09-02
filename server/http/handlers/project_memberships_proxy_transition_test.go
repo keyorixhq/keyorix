@@ -43,8 +43,21 @@ func setupTransitionMembershipFixture(t *testing.T) (cs *core.KeyorixCore, membe
 	if _, err := cs.Storage().GetRoleByName(ctx, "project_admin"); err != nil {
 		projectAdminName, err := identity.NewFoldedName("project_admin")
 		require.NoError(t, err)
-		_, err = cs.Storage().CreateRole(ctx, projectAdminName, "test")
+		role, err := cs.Storage().CreateRole(ctx, projectAdminName, "test")
 		require.NoError(t, err)
+		// FIX-1's requireGranterHoldsRolePermissions ceiling derives its check
+		// from the role's OWN bundled permissions, not its name -- an
+		// admin-NAMED role with no bundled permissions is trivially grantable
+		// by anyone (nothing to check), unlike production's real project_admin
+		// (BypassesPermissionChecks). Bundle a real permission so "nobody"
+		// (holding none) is genuinely blocked, matching production semantics.
+		// This fixture's minimal schema doesn't pre-seed a standard permission
+		// catalog, so create one fresh rather than looking one up.
+		perm, err := cs.Storage().CreatePermission(ctx, &models.Permission{
+			Name: "g80_1546.write", Resource: "g80_1546", Action: "write",
+		})
+		require.NoError(t, err)
+		require.NoError(t, cs.AssignPermissionToRole(ctx, 0, role.ID, perm.ID, false))
 	}
 
 	target, err := cs.CreateUser(ctx, &core.CreateUserRequest{

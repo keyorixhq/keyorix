@@ -110,8 +110,8 @@ func TestRemoveRoleHTTPScopedToTargetProject(t *testing.T) {
 	// project B (bypassing HTTP, via the core choke point directly with the
 	// system pseudo-actor) so the removal attempts below only exercise the
 	// roles.assign scope gate, not the assignment step.
-	require.NoError(t, c.AssignUserRole(context.Background(), 0, 3, 2, core.Scope{ProjectID: 1}))
-	require.NoError(t, c.AssignUserRole(context.Background(), 0, 3, 2, core.Scope{ProjectID: 2}))
+	require.NoError(t, c.AssignUserRole(context.Background(), 0, 3, 2, core.Scope{ProjectID: 1}, false))
+	require.NoError(t, c.AssignUserRole(context.Background(), 0, 3, 2, core.Scope{ProjectID: 2}, false))
 
 	router, err := NewRouter(&config.Config{}, c)
 	require.NoError(t, err)

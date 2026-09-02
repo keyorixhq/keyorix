@@ -74,8 +74,8 @@ func TestConcurrency_AssignUserRole_SoDGrantRace(t *testing.T) {
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(2)
-		go func() { defer wg.Done(); <-start; _ = c.AssignUserRole(ctx, 0, 1, roleAID, core.Scope{}) }()
-		go func() { defer wg.Done(); <-start; _ = c.AssignUserRole(ctx, 0, 1, roleBID, core.Scope{}) }()
+		go func() { defer wg.Done(); <-start; _ = c.AssignUserRole(ctx, 0, 1, roleAID, core.Scope{}, false) }()
+		go func() { defer wg.Done(); <-start; _ = c.AssignUserRole(ctx, 0, 1, roleBID, core.Scope{}, false) }()
 		close(start)
 		wg.Wait()
 

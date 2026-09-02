@@ -174,7 +174,7 @@ func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r 
 		return
 	}
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if err := h.coreService.AssignGroupRoleWithExpiry(r.Context(), actorID(r), body.GroupID, body.RoleID, scope, body.ExpiresAt); err != nil {
+	if err := h.coreService.AssignGroupRoleWithExpiry(r.Context(), actorID(r), body.GroupID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r)); err != nil {
 		log.Printf("rbac role-grants proxy: assign role to group with expiry failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

@@ -61,14 +61,21 @@ func persistsRoleGrantDirectly(t *testing.T, handlerName string) bool {
 }
 
 // callsRequireAuthorityForRole reports whether the named handler's body
-// calls RequireAuthorityForRole anywhere (this guard does not check ordering
-// relative to the storage write — a handler decoding, checking, THEN
-// persisting is the only sane shape in practice, and ordering bugs are a
-// different, more targeted review question than this guard's population
-// check).
+// calls the escalation-by-proxy ceiling anywhere (this guard does not check
+// ordering relative to the storage write — a handler decoding, checking,
+// THEN persisting is the only sane shape in practice, and ordering bugs are
+// a different, more targeted review question than this guard's population
+// check). FIX-1 deleted core.RequireAuthorityForRole (name-based: only fired
+// for 4 canonical admin-tier role names) and replaced every caller with
+// core.RequireGranterHoldsRolePermissions (derives the ceiling from the
+// role's real bundled permissions) — recognize both names so a handler still
+// carrying the old symbol (pre-FIX-1) and one already migrated are equally
+// detected as having a check.
 func callsRequireAuthorityForRole(t *testing.T, handlerName string) bool {
 	t.Helper()
-	return strings.Contains(handlerBodyText(t, handlerName), "RequireAuthorityForRole(")
+	body := handlerBodyText(t, handlerName)
+	return strings.Contains(body, "RequireAuthorityForRole(") ||
+		strings.Contains(body, "RequireGranterHoldsRolePermissions(")
 }
 
 // roleGrantAuthorityAllowlist is the exhaustive, reasoned inventory of every

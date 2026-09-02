@@ -106,7 +106,7 @@ func runAssignRoleToGroup(cmd *cobra.Command, args []string) error {
 	// (requireAuthorityForRole) and SoD check (requireGroupGrantNoSoDViolation)
 	// the remote/HTTP path enforces (#G66) — a direct storage write here bypassed
 	// both and skipped the RBAC audit event.
-	if err := core.NewKeyorixCore(st).AssignRoleToGroup(ctx, common.ResolveActorID(), groupID, roleID, scope); err != nil {
+	if err := core.NewKeyorixCore(st).AssignRoleToGroup(ctx, common.ResolveActorID(), groupID, roleID, scope, false); err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
 

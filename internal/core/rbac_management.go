@@ -169,20 +169,20 @@ func (c *KeyorixCore) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*
 }
 
 // AssignRoleToGroup verifies both exist, applies the escalation-by-proxy ceiling
-// (requireAuthorityForRole — granting a group an admin role inherits to every
-// member, so it is gated exactly like a direct user grant), then assigns the role
-// at scope and records an RBAC audit event. actorID is the acting principal (0 =
-// none; requireAuthorityForRole refuses an admin grant for an unauthenticated
-// actor, since this path is only ever reached via an authenticated HTTP request).
-func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
+// (requireGranterHoldsRolePermissions — granting a group a role inherits to every
+// member, so it is gated exactly like a direct user grant, and by the role's real
+// bundled permissions rather than only its name), then assigns the role at scope
+// and records an RBAC audit event. actorID is the acting principal (0 = none, the
+// trusted system pseudo-actor); actorIsMachine distinguishes a machine-credential
+// caller (also actorID==0) from that true unauthenticated case.
+func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope, actorIsMachine bool) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
-	role, err := c.storage.GetRole(ctx, roleID)
-	if err != nil {
+	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
 	// #1646: see AssignUserRole's identical WithNamedLock use.
@@ -299,7 +299,9 @@ func (c *KeyorixCore) GetUserPermissionsByID(ctx context.Context, userID uint) (
 // given scope. Only assignments at exactly that scope are considered: roles
 // present there but not in roleIDs are removed; roles in roleIDs not already
 // assigned there are added. Assignments at other scopes are left untouched.
-func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, roleIDs []uint, scope Scope) error {
+// actorIsMachine distinguishes a machine-credential-authenticated caller (also
+// actorID==0) from the true actorID==0 system pseudo-actor.
+func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, roleIDs []uint, scope Scope, actorIsMachine bool) error {
 	current, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -321,7 +323,7 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 	}
 	for _, id := range roleIDs {
 		if !currentSet[id] {
-			if err := c.AssignUserRole(ctx, actorID, userID, id, scope); err != nil {
+			if err := c.AssignUserRole(ctx, actorID, userID, id, scope, actorIsMachine); err != nil {
 				return err
 			}
 		}
@@ -345,15 +347,16 @@ func sodGrantLockKey(principalType string, principalID uint) string {
 // admin-rank-ceiling check on the grant (#93/#107/#141), and requireNoSoDViolation
 // (sod.go) for the separation-of-duties preventive gate (#419).
 //
-// Passes actorIsMachine=false unconditionally to requireGranterHoldsRolePermissions
-// -- unlike AssignUserRoleWithExpiry, this permanent-grant path has no caller
-// fixed as part of #1542, so its actorID==0 exemption behavior is left
-// unchanged here. Several of ITS OWN callers (AddProjectMember/
-// SetProjectMemberRole, the AssignRole gRPC/HTTP endpoints) are reachable by
-// a general machine identity the same way #1545 found for other functions --
-// tracked as a sibling finding, not fixed in this pass.
-func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
-	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, false); err != nil {
+// actorIsMachine distinguishes a machine-credential-authenticated caller
+// (also actorID==0, per server/middleware/auth.go) from the true actorID==0
+// "system" pseudo-actor -- see requireGranterHoldsRolePermissions's doc
+// comment. Every caller of this permanent-grant path is reachable by a
+// general machine identity the same way #1545 found for AssignPermissionToRole
+// (AddProjectMember/SetProjectMemberRole, the AssignRole gRPC/HTTP endpoints);
+// this closes that sibling instance by threading the real value through
+// instead of hardcoding false.
+func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
 	// #1646: the check-then-write below must be serialized across every replica of

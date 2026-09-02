@@ -65,7 +65,7 @@ func TestDeleteGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
 	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u.ID, group.ID, 0))
 	// An independent, direct project_admin grant at the same project survives
 	// the group's deletion.
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, other.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, other.ID, "project_admin", false))
 
 	err = c.DeleteGroup(ctx, actor, group.ID)
 	require.NoError(t, err, "deleting the group is fine when another project admin survives")
@@ -104,7 +104,7 @@ func TestDeleteGroup_RefusesWhenGroupAdminsMultipleProjects(t *testing.T) {
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: projB}))
 	require.NoError(t, c.AddUserToGroup(ctx, actor, false, u.ID, group.ID, 0))
 	// projB has an independent survivor; projA does not.
-	require.NoError(t, c.AddProjectMember(ctx, actor, projB, other.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, projB, other.ID, "project_admin", false))
 
 	err = c.DeleteGroup(ctx, actor, group.ID)
 	require.Error(t, err, "must refuse when even ONE of the group's administered projects would be left with no admin")

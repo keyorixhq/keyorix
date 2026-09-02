@@ -24,6 +24,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -784,6 +786,14 @@ func TestCreateMembershipProxy_MissingFields_S19(t *testing.T) {
 func TestCreateMembershipProxy_Success_S19(t *testing.T) {
 	cs := freshCoreS19(t)
 	h := NewCatalogHandler(cs)
+	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
+	// role by ID (unlike the old name-based check), so it must exist even
+	// though this unauthenticated request (actorID 0) is exempt from the
+	// ceiling itself.
+	viewerName, err := identity.NewFoldedName("viewer")
+	require.NoError(t, err)
+	_, err = cs.Storage().CreateRole(context.Background(), viewerName, "test-only role")
+	require.NoError(t, err)
 	body, _ := json.Marshal(map[string]interface{}{
 		"project_id": 1,
 		"user_id":    1,

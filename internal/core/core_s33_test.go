@@ -147,19 +147,19 @@ func TestAssignGroupRoleWithExpiry_RoleNotFound_s33(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(99)).Return(nil, errors.New("role not found"))
 	c := NewKeyorixCore(ms)
-	err := c.AssignGroupRoleWithExpiry(context.Background(), 0, 1, 99, Scope{}, time.Now().Add(time.Hour))
+	err := c.AssignGroupRoleWithExpiry(context.Background(), 0, 1, 99, Scope{}, time.Now().Add(time.Hour), false)
 	require.Error(t, err)
 }
 
 func TestAssignGroupRoleWithExpiry_Success(t *testing.T) {
 	ms := new(MockStorage)
-	role := &models.Role{ID: 2, Name: "viewer"} // non-admin role → no authority check needed
+	role := &models.Role{ID: 2, Name: "viewer"} // actorID 0, actorIsMachine false → trusted system pseudo-actor, ceiling skipped
 	ms.On("GetRole", mock.Anything, uint(2)).Return(role, nil)
 	// requireGroupGrantNoSoDViolation: ListSoDPolicies stub returns nil → OK
 	ms.On("AssignRoleToGroupWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope"), mock.AnythingOfType("time.Time")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
-	err := c.AssignGroupRoleWithExpiry(context.Background(), 0, 1, 2, Scope{}, time.Now().Add(time.Hour))
+	err := c.AssignGroupRoleWithExpiry(context.Background(), 0, 1, 2, Scope{}, time.Now().Add(time.Hour), false)
 	require.NoError(t, err)
 }
 

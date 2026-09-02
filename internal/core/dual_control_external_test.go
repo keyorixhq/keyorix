@@ -157,17 +157,37 @@ func TestApprove_DualControl_RequiresRoleAtRequestTime(t *testing.T) {
 // treated the second machine's genuinely distinct approval as a duplicate of
 // the first, and the threshold could never be reached via machine approvers.
 // Exploit-shaped: two different approverMachineID values, both approverID=0
-// (the real production shape — no role grant needed since "editor" is
-// non-admin and requireAuthorityForRole only gates admin-tier roles).
+// (the real production shape).
+//
+// Target role is a fresh permission-less role, not "editor": FIX-1
+// (requireGranterHoldsRolePermissions's actorID==0 fast-path no longer trusts
+// a machine caller unconditionally) means the threshold-crossing grant now
+// runs the real ceiling check for a machine approver too — and that check
+// resolves permissions via c.Authorize(ctx, actorID, ...), which is keyed on
+// UserID (always 0 for a machine caller), not the machine's real principal ID
+// via AuthorizePrincipal/GetMachineRoleIDsAt. A machine actor therefore cannot
+// currently satisfy the ceiling for any role bundling a real permission,
+// including one it may legitimately hold via machine_identity_roles — a
+// separate, pre-existing gap in requireGranterHoldsRolePermissions (already
+// present for actorIsMachine=true on AssignUserRoleWithExpiry since #1542),
+// not something this test is exercising. Using a permission-less role isolates
+// this test to its actual subject — the distinct-approver dedup logic — same
+// as TestAssignUserRole_EmptyRoleAlwaysGrantable's pattern for the identical
+// "nothing to ceiling-check" case.
 func TestApprove_DualControl_TwoDistinctMachineApprovers(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
+	h.CreateTestRole(t, "empty-role", "no bundled permissions", 99)
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10) // requester (human — RequestProjectAccess requires nonzero UserID)
 	h.CoreService.SetDualControlPolicy(2)
-	reqID := seedPendingRequest(t, h, 10)
+	req0, err := h.Storage.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: 2, UserID: 10, SuggestedRole: "empty-role", State: "pending",
+	})
+	require.NoError(t, err)
+	reqID := req0.ID
 
 	// Machine 101 approves: still pending, no grant yet.
 	req, err := h.CoreService.ApproveAccessRequestWithExpiry(ctx, 2, reqID, 0, 101, "", 0)
@@ -181,22 +201,34 @@ func TestApprove_DualControl_TwoDistinctMachineApprovers(t *testing.T) {
 	require.NoError(t, err, "a second, distinct machine approver must not be treated as a duplicate of the first")
 	assert.Equal(t, "approved", req.State)
 	ids, _ := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: 2})
-	assert.Contains(t, ids, uint(3), "editor granted once two distinct machine approvers signed off")
+	assert.Contains(t, ids, uint(99), "empty-role granted once two distinct machine approvers signed off")
 }
 
 // Positive control: dual control must still reject a genuine duplicate — the
 // SAME machine identity attempting to approve twice. The fix must narrow the
 // false-positive (two different machines colliding on ApproverID=0) without
 // widening a false-negative (the same machine approving twice).
+//
+// Target role is a fresh permission-less role, not "editor" (seedPendingRequest's
+// default) — see TestApprove_DualControl_TwoDistinctMachineApprovers's comment:
+// a machine approver cannot currently satisfy requireGranterHoldsRolePermissions
+// for any role bundling a real permission (a separate, pre-existing gap, not
+// something this test exercises). Using a permission-less role isolates this
+// test to its actual subject — same-machine dedup.
 func TestApprove_DualControl_SameMachineApproverTwiceRejected(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
+	h.CreateTestRole(t, "empty-role", "no bundled permissions", 99)
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.CoreService.SetDualControlPolicy(2)
-	reqID := seedPendingRequest(t, h, 10)
+	req0, err := h.Storage.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: 2, UserID: 10, SuggestedRole: "empty-role", State: "pending",
+	})
+	require.NoError(t, err)
+	reqID := req0.ID
 
 	req, err := h.CoreService.ApproveAccessRequestWithExpiry(ctx, 2, reqID, 0, 101, "", 0)
 	require.NoError(t, err)
@@ -215,6 +247,10 @@ func TestListAccessRequests_AnnotatesProgress(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	h.CreateTestUser(t, "admin1", 11)
+	// #93/#107/#141: the approver must themselves hold every permission of the
+	// role being granted (editor: secrets.read/write, users.read) — grant them
+	// "admin" globally so the ceiling check's admin bypass applies.
+	h.AssignUserRole(t, 11, 2, nil)
 	h.CoreService.SetDualControlPolicy(2)
 	reqID := seedPendingRequest(t, h, 10)
 	_, err := h.CoreService.ApproveAccessRequestWithExpiry(ctx, 2, reqID, 11, 0, "", 0)

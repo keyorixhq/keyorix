@@ -408,7 +408,7 @@ func TestAssignGroupRoleWithExpiry_RoleNotFound(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
-	err := c.AssignGroupRoleWithExpiry(context.Background(), 1, 2, 99, Scope{}, time.Now().Add(time.Hour))
+	err := c.AssignGroupRoleWithExpiry(context.Background(), 1, 2, 99, Scope{}, time.Now().Add(time.Hour), false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Role not found")
 }

@@ -166,7 +166,7 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		sendError(w, "ValidationError", "user_id and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, id, body.UserID, body.Role); err != nil {
+	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, id, body.UserID, body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -212,7 +212,7 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		sendError(w, "ValidationError", "role is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, id, uint(userID), body.Role); err != nil {
+	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, id, uint(userID), body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

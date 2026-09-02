@@ -255,7 +255,7 @@ func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
 	// Grant the machine viewer (secrets.read) in project 2 only.
-	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1))
+	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
 
 	var captured context.Context
 	interceptor := AuthInterceptor(h.CoreService, false)
@@ -357,7 +357,7 @@ func TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC(t *testing.T) {
 		AllowedCIDRs: []string{"10.0.0.0/8"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1))
+	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1, false))
 
 	interceptor := AuthInterceptor(h.CoreService, false)
 

@@ -251,7 +251,7 @@ func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequ
 	if err := authorizeScoped(ctx, s.core, actor, "roles.assign", scope); err != nil {
 		return nil, err
 	}
-	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
+	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope, actor.ActorKind() == core.ActorTypeMachine); err != nil {
 		return nil, mapRoleError(err)
 	}
 	return &pb.RoleAssignment{

@@ -29,7 +29,7 @@ func TestRBACAuditTrail_AssignAndRemove(t *testing.T) {
 	c := newRBACAuditCore(t)
 	ctx := context.Background()
 
-	require.NoError(t, c.AssignUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3}, false))
 	require.NoError(t, c.RemoveUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3}))
 
 	entries, total, err := c.ListRBACAuditLogs(ctx, 1, 50)
@@ -70,7 +70,7 @@ func TestRBACAuditTrail_EnvironmentIDRoundTrips(t *testing.T) {
 	c := newRBACAuditCore(t)
 	ctx := context.Background()
 
-	require.NoError(t, c.AssignUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3, EnvironmentID: 7}))
+	require.NoError(t, c.AssignUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3, EnvironmentID: 7}, false))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestRBACAuditTrail_SystemActor(t *testing.T) {
 	c := newRBACAuditCore(t)
 	ctx := context.Background()
 
-	require.NoError(t, c.AssignUserRole(ctx, 0, 11, 4, Scope{}))
+	require.NoError(t, c.AssignUserRole(ctx, 0, 11, 4, Scope{}, false))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -107,13 +107,14 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Group{}, &models.Role{}, &models.GroupRole{}, &models.SoDPolicy{},
+		&models.Permission{}, &models.RolePermission{},
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
-	require.NoError(t, c.AssignRoleToGroup(ctx, 5, 7, 2, Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignRoleToGroup(ctx, 5, 7, 2, Scope{ProjectID: 3}, false))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -174,9 +175,9 @@ func TestRBACAuditTrail_SetUserRolesEmitsPerChange(t *testing.T) {
 	ctx := context.Background()
 
 	// From {} to {1,2}: two assignments.
-	require.NoError(t, c.SetUserRoles(ctx, 9, 20, []uint{1, 2}, Scope{}))
+	require.NoError(t, c.SetUserRoles(ctx, 9, 20, []uint{1, 2}, Scope{}, false))
 	// From {1,2} to {2,3}: remove 1, add 3.
-	require.NoError(t, c.SetUserRoles(ctx, 9, 20, []uint{2, 3}, Scope{}))
+	require.NoError(t, c.SetUserRoles(ctx, 9, 20, []uint{2, 3}, Scope{}, false))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)

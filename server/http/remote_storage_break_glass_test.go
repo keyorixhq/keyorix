@@ -200,7 +200,7 @@ func TestRemoteStorageBreakGlass_RevokeActuallyRemovesTheRoleGrant(t *testing.T)
 		Username: "bg-grant-holder", Email: "bg-grant-holder@example.com", Password: "Bg9!Qr7#Kp2$Lm5@",
 	})
 	require.NoError(t, err)
-	require.NoError(t, upstream.AssignUserRole(ctx, 0, holder.ID, editorRole.ID, coreStorage.Scope{ProjectID: projectID}))
+	require.NoError(t, upstream.AssignUserRole(ctx, 0, holder.ID, editorRole.ID, coreStorage.Scope{ProjectID: projectID}, false))
 
 	stillHasIt, err := upstream.Authorize(ctx, holder.ID, "secrets.write", coreStorage.Scope{ProjectID: projectID})
 	require.NoError(t, err)

@@ -169,7 +169,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		for _, a := range projAssignments {
 			assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
 		}
-		created, err = h.coreService.CreateUserWithAssignments(r.Context(), req, role, assignments, userCtx.UserID)
+		created, err = h.coreService.CreateUserWithAssignments(r.Context(), req, role, assignments, userCtx.UserID, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
 		created, err = h.coreService.CreateUser(r.Context(), req)
 	}
@@ -178,7 +178,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		switch {
 		case errors.Is(err, core.ErrUserAlreadyExists):
 			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
-		case strings.Contains(err.Error(), "only an administrator can grant"):
+		case strings.Contains(err.Error(), "cannot grant this role"):
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		case strings.Contains(err.Error(), "unknown role"), strings.Contains(err.Error(), "unknown project"),
 			strings.Contains(err.Error(), "each project assignment"),

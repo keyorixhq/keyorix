@@ -196,11 +196,20 @@ func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{6}).Return(false, nil)
+	// FIX-1: the ceiling now derives from project_admin's own bundled
+	// permissions rather than its name, so the mock must resolve them —
+	// and the inviter's own role (6) must not carry that permission either.
+	store.On("GetRolePermissions", ctx, uint(4)).Return([]*models.Permission{{ID: 50, Name: "projects.admin"}}, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{6}, "projects.admin").Return(false, nil)
+	// project_developer (role 6) itself bundles no permissions relevant to this
+	// test, so the second invite below (inviting AS project_developer) hits the
+	// ceiling check for role 6 too.
+	store.On("GetRolePermissions", ctx, uint(6)).Return([]*models.Permission{}, nil)
 
 	// Inviting as project_admin → refused before any invitation is created.
 	_, err := c.InviteToProject(ctx, 1, "a@b.io", "project_admin", 9, 0)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only an administrator can grant")
+	assert.Contains(t, err.Error(), "do not hold permission")
 	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
 
 	// Inviting as a non-admin role is allowed (isAdminRoleName false → no ceiling).
@@ -226,10 +235,15 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{6}).Return(false, nil)
+	// FIX-1: the ceiling now derives from admin's own bundled permissions
+	// rather than its name, so the mock must resolve them — and the
+	// approver's own role (6) must not carry that permission either.
+	store.On("GetRolePermissions", ctx, uint(2)).Return([]*models.Permission{{ID: 51, Name: "system.admin"}}, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{6}, "system.admin").Return(false, nil)
 
 	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "admin")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only an administrator can grant")
+	assert.Contains(t, err.Error(), "do not hold permission")
 	// The grant was refused before any role assignment or approval record.
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	store.AssertNotCalled(t, "CreateAccessRequestApproval", mock.Anything, mock.Anything)

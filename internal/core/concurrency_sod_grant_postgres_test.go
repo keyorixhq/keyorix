@@ -103,12 +103,12 @@ func TestConcurrency_AssignUserRole_CrossReplicaPostgres_SoDBypass(t *testing.T)
 	go func() {
 		defer wg.Done()
 		<-start
-		errA = coreA.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleA.ID, Scope{})
+		errA = coreA.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleA.ID, Scope{}, false)
 	}()
 	go func() {
 		defer wg.Done()
 		<-start
-		errB = coreB.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleB.ID, Scope{})
+		errB = coreB.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleB.ID, Scope{}, false)
 	}()
 	close(start)
 	wg.Wait()

@@ -75,17 +75,18 @@ func (c *KeyorixCore) assignUserRoleWithExpirySkipSoD(ctx context.Context, actor
 
 // AssignGroupRoleWithExpiry assigns a time-bound role to a group at scope, gated by
 // the same escalation-by-proxy ceiling as the permanent grant (AssignRoleToGroup —
-// a JIT admin grant to a group is just as much a self-escalation vector as a
-// permanent one); see AssignUserRoleWithExpiry. Also gated by the #419
-// separation-of-duties preventive check (requireGroupGrantNoSoDViolation) — no
-// caller of this function needs a break-glass-style carve-out, unlike the direct
-// user grant above.
-func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt time.Time) error {
-	role, err := c.storage.GetRole(ctx, roleID)
-	if err != nil {
+// a JIT grant to a group is just as much a self-escalation vector as a permanent
+// one, and is gated by the role's real bundled permissions, not only its name);
+// see AssignUserRoleWithExpiry. Also gated by the #419 separation-of-duties
+// preventive check (requireGroupGrantNoSoDViolation) — no caller of this function
+// needs a break-glass-style carve-out, unlike the direct user grant above.
+// actorIsMachine distinguishes a machine-credential caller (also actorID==0) from
+// the true actorID==0 system pseudo-actor.
+func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt time.Time, actorIsMachine bool) error {
+	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
 	// #1646: see AssignUserRole's identical WithNamedLock use.

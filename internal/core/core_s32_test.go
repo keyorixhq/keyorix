@@ -115,7 +115,7 @@ func TestSetProjectMemberRole_RoleNotFound_s32(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "nonexistent").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
 	// actorID=0, projectID=1, userID=1, roleName="nonexistent"
-	err := c.SetProjectMemberRole(context.Background(), 0, 1, 1, "nonexistent")
+	err := c.SetProjectMemberRole(context.Background(), 0, 1, 1, "nonexistent", false)
 	require.Error(t, err)
 }
 

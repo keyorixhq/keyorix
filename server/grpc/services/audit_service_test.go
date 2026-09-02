@@ -258,7 +258,7 @@ func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
-	require.NoError(t, c.AssignUserRole(context.Background(), 5, 10, 2, core.Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignUserRole(context.Background(), 5, 10, 2, core.Scope{ProjectID: 3}, false))
 
 	svc := NewAuditService(c)
 	resp, err := svc.GetRBACAuditLogs(auditCtx(), &pb.GetRBACAuditLogsRequest{})

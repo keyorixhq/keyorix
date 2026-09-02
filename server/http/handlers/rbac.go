@@ -489,7 +489,7 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		// actorID==0 local-CLI exemption inside requireGranterHoldsRolePermissions.
 		err = h.coreService.AssignUserRoleWithExpiry(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope, *req.ExpiresAt, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
-		err = h.coreService.AssignUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope)
+		err = h.coreService.AssignUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
 	}
 	if err != nil {
 		log.Printf("Error assigning role: %v", err)
@@ -785,9 +785,9 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	// A set expiry routes through the time-bound (JIT) path.
 	var err error
 	if body.ExpiresAt != nil {
-		err = h.coreService.AssignGroupRoleWithExpiry(r.Context(), userCtx.UserID, groupID, body.RoleID, scope, *body.ExpiresAt)
+		err = h.coreService.AssignGroupRoleWithExpiry(r.Context(), userCtx.UserID, groupID, body.RoleID, scope, *body.ExpiresAt, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
-		err = h.coreService.AssignRoleToGroup(r.Context(), userCtx.UserID, groupID, body.RoleID, scope)
+		err = h.coreService.AssignRoleToGroup(r.Context(), userCtx.UserID, groupID, body.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
 	}
 	if err != nil {
 		log.Printf("Error assigning role to group: %v", err)

@@ -322,7 +322,7 @@ func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *ht
 			Scope:  storage.Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID},
 		})
 	}
-	if err := h.coreService.ValidateRoleGrantAuthority(r.Context(), actorID(r), grants); err != nil {
+	if err := h.coreService.ValidateRoleGrantAuthority(r.Context(), actorID(r), isMachineActor(r), grants); err != nil {
 		// Fail closed: an underlying storage error while evaluating authority is
 		// indistinguishable from a genuine refusal at this layer, and reporting it
 		// as anything other than a flat denial risks leaking whether a specific

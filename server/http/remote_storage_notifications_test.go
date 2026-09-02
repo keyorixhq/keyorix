@@ -80,7 +80,7 @@ func TestRemoteStorageCreateNotification_ClosesTheFailsOpenLoop(t *testing.T) {
 	// project_admin is one of notify's own approverRoleNames
 	// (internal/core/notifications.go) — the exact role notifyAccessRequested
 	// checks for before notifying a project member of a new request.
-	require.NoError(t, upstream.AddProjectMember(ctx, 0, projectID, approver.ID, "project_admin"))
+	require.NoError(t, upstream.AddProjectMember(ctx, 0, projectID, approver.ID, "project_admin", false))
 
 	requester, err := upstream.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "notif-1589-requester", Email: "notif-1589-requester@example.com", Password: pw,

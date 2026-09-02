@@ -40,6 +40,25 @@ func newCatalogHandlerS4(t *testing.T) *CatalogHandler {
 	return NewCatalogHandler(newHandlerCoreS4(t))
 }
 
+// ensureS4TestRole idempotently creates roleName with no bundled permissions
+// in sharedS4Core -- a process-wide singleton reused across every s4/s5/s9
+// test (and across `-count=N` reruns), so a plain CreateRole call would
+// collide with the same role created by a different test. FIX-1's
+// requireGranterHoldsRolePermissions ceiling resolves a granted role by ID
+// (unlike the old name-based check it replaced), so tests that persist a
+// role grant now need the named role to exist as a real row even when the
+// caller is exempt from the ceiling itself (e.g. actorID 0).
+func ensureS4TestRole(t *testing.T, h *CatalogHandler, roleName string) {
+	t.Helper()
+	if _, err := h.coreService.Storage().GetRoleByName(context.Background(), roleName); err == nil {
+		return
+	}
+	folded, err := identity.NewFoldedName(roleName)
+	require.NoError(t, err)
+	_, err = h.coreService.Storage().CreateRole(context.Background(), folded, "test-only role")
+	require.NoError(t, err)
+}
+
 // ── access_request_proxy.go ───────────────────────────────────────────────────
 
 func TestValidAccessRequestTargetState(t *testing.T) {
@@ -1451,10 +1470,23 @@ func TestCreateSetupTokenProxy_InvitationAccept_RefusesEmailMismatch(t *testing.
 // regression: CreateUserWithRoleGrantsProxy previously called
 // storage.CreateUserWithRoleGrants directly, persisting whatever grants the
 // caller supplied with none of core.CreateUserWithAssignments's
-// escalation-ceiling check (requireAuthorityForRole). A caller with no admin
-// authority of its own (actorID 0 — no user context, matching an unauthenticated
-// or under-privileged system.write holder) must be refused when the grant set
-// includes an admin-tier role, and no user must be persisted.
+// escalation-ceiling check. A caller with no admin authority of its own must
+// be refused when the grant set includes an admin-tier role, and no user
+// must be persisted.
+//
+// FIX-1 rerouted this ceiling from requireAuthorityForRole (name-based: fired
+// unconditionally for actorID 0, no exemption) to requireGranterHoldsRolePermissions,
+// which has an EXPLICIT actorID==0-and-not-machine fast path (the trusted
+// local-CLI/embedded-caller convention, already relied on by other callers
+// since #1542). This handler is an HTTP /system route reachable only through
+// RequirePermission(permSystemWrite) — that middleware fails closed
+// (401 "User context not found") on a nil UserContext, so actorID(r) can
+// never resolve to 0-and-not-machine for a REAL caller reaching this code;
+// a raw unauthenticated request (as this test originally simulated by
+// calling the handler with no context at all) is not a state the deployed
+// router can produce here. The realistic unauthorized case per this test's
+// own original framing is an AUTHENTICATED caller who holds system.write
+// but no admin authority — simulated below with a genuine non-zero UserID.
 func TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant(t *testing.T) {
 	db := openHandlerTestDB(t)
 	require.NoError(t, i18n.InitializeForTesting())
@@ -1463,9 +1495,17 @@ func TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant(t *testing.
 	require.NoError(t, err)
 
 	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "super_admin", BypassesPermissionChecks: true}).Error)
+	// The target role must bundle a real permission -- an admin-NAMED role
+	// with nothing bundled is trivially grantable by anyone under the new
+	// permission-derived ceiling (nothing to check), unlike production's real
+	// super_admin (BypassesPermissionChecks covers its OWN holder, not what a
+	// granter must hold to hand it out).
+	perm := &models.Permission{Name: "s4.super_admin.marker", Resource: "s4marker", Action: "write"}
+	require.NoError(t, db.Create(perm).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 20, PermissionID: perm.ID}).Error)
 
 	body := fmt.Sprintf(`{"username":"evil","email":"evil@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[{"role_id":%d,"project_id":0}]}`, 20)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
 	w := httptest.NewRecorder()
 	h.CreateUserWithRoleGrantsProxy(w, req)
 
@@ -4696,6 +4736,7 @@ func TestCreateInvitationProxy_MissingFields(t *testing.T) {
 
 func TestCreateInvitationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	ensureS4TestRole(t, h, "viewer")
 	body := `{"project_id":1,"email":"x@example.com","role":"viewer","state":"pending"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -6084,6 +6125,7 @@ func TestResolveSecretNames_Empty(t *testing.T) {
 
 func TestUpdateInvitationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	ensureS4TestRole(t, h, "viewer")
 	// First create an invitation to update
 	createBody := `{"project_id":1,"email":"x@example.com","role":"viewer","state":"pending"}`
 	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
@@ -10802,8 +10844,23 @@ func TestCatalogHandler_CreateAccessRequestProxy_HappyPath(t *testing.T) {
 
 func TestCatalogHandler_UpdateAccessRequestProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
+	// role by ID once the update transitions to "approved", so this needs a
+	// real, resolvable role -- create its own access request rather than
+	// relying on a hardcoded id "1" from a sibling test (which happened to
+	// have an empty suggested_role).
+	ensureS4TestRole(t, h, "s4-update-ar-role")
+	createBody := `{"project_id":1,"user_id":1,"state":"pending","suggested_role":"s4-update-ar-role"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createW := httptest.NewRecorder()
+	h.CreateAccessRequestProxy(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+	var createResp remoteAPIResponse
+	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
+
 	body := `{"state":"approved"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
+	idStr := fmt.Sprintf("%v", createResp.Data.(map[string]interface{})["id"])
+	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", idStr)
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
@@ -10906,6 +10963,7 @@ func TestCatalogHandler_CreateMembershipProxy_MissingFields(t *testing.T) {
 
 func TestCatalogHandler_CreateMembershipProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	ensureS4TestRole(t, h, "viewer")
 	body := `{"user_id":1,"project_id":1,"role":"viewer","state":"active"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()

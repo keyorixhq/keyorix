@@ -215,7 +215,7 @@ const maxUserCreateAssignments = 500
 // any custom role, so without this check a non-admin roles.assign holder could
 // mint a brand-new super_admin account directly — no invite/accept step an admin
 // could notice or revoke in between, unlike InviteGlobal.
-func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *CreateUserRequest, systemRole string, assignments []ProjectAssignment, actorID uint) (*models.User, error) {
+func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *CreateUserRequest, systemRole string, assignments []ProjectAssignment, actorID uint, actorIsMachine bool) (*models.User, error) {
 	if len(assignments) > maxUserCreateAssignments {
 		return nil, fmt.Errorf("assignments exceeds the maximum batch size of %d", maxUserCreateAssignments)
 	}
@@ -239,14 +239,16 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	}
 	// Escalation-by-proxy guard (#480), mirroring InviteGlobal (#231): a global
 	// system role is the most powerful grant this flow can mint, so it needs the
-	// same admin-authority ceiling check, at global scope (projectID 0).
-	if err := c.requireAuthorityForRole(ctx, actorID, 0, sysRole); err != nil {
+	// same ceiling check requireGranterHoldsRolePermissions applies everywhere
+	// else — the actor's real bundled permissions, not just the role's name —
+	// at global scope (projectID 0).
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, sr.ID, Scope{}, actorIsMachine); err != nil {
 		return nil, err
 	}
 	addRoleGrant(&grants, seen, sr.ID, 0)
 
 	for _, a := range assignments {
-		g, err := c.resolveProjectRoleGrant(ctx, actorID, a)
+		g, err := c.resolveProjectRoleGrant(ctx, actorID, actorIsMachine, a)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +300,7 @@ func addRoleGrant(grants *[]storage.RoleGrant, seen map[[2]uint]bool, roleID, pr
 
 // resolveProjectRoleGrant validates and resolves a single ProjectAssignment into a
 // storage.RoleGrant, enforcing the same authority-ceiling check as InviteGlobal.
-func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint, a ProjectAssignment) (storage.RoleGrant, error) {
+func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint, actorIsMachine bool, a ProjectAssignment) (storage.RoleGrant, error) {
 	if a.ProjectID == 0 || a.Role == "" {
 		return storage.RoleGrant{}, fmt.Errorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
 	}
@@ -309,7 +311,7 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 	if err != nil {
 		return storage.RoleGrant{}, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
 	}
-	if err := c.requireAuthorityForRole(ctx, actorID, a.ProjectID, a.Role); err != nil {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, r.ID, Scope{ProjectID: a.ProjectID}, actorIsMachine); err != nil {
 		return storage.RoleGrant{}, err
 	}
 	return storage.RoleGrant{RoleID: r.ID, Scope: storage.Scope{ProjectID: a.ProjectID}}, nil
@@ -327,17 +329,16 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 // and, unlike the human-facing path, never has a plaintext password or role
 // names to work with, only role IDs. Kept in core rather than duplicated in
 // the handler so the ceiling+SoD logic is defined exactly once (#G79).
-func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID uint, grants []storage.RoleGrant) error {
+func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID uint, actorIsMachine bool, grants []storage.RoleGrant) error {
 	if len(grants) > maxUserCreateAssignments {
 		return fmt.Errorf("%s: grants exceeds the maximum batch size of %d", i18n.T("ErrorValidation", nil), maxUserCreateAssignments)
 	}
 	roleIDs := make([]uint, 0, len(grants))
 	for _, g := range grants {
-		role, err := c.storage.GetRole(ctx, g.RoleID)
-		if err != nil {
+		if _, err := c.storage.GetRole(ctx, g.RoleID); err != nil {
 			return fmt.Errorf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID)
 		}
-		if err := c.requireAuthorityForRole(ctx, actorID, g.Scope.ProjectID, role.Name); err != nil {
+		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, g.RoleID, Scope{ProjectID: g.Scope.ProjectID, EnvironmentID: g.Scope.EnvironmentID}, actorIsMachine); err != nil {
 			return err
 		}
 		roleIDs = append(roleIDs, g.RoleID)

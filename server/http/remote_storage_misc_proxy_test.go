@@ -354,7 +354,14 @@ func TestRemoteStorageCreateUserWithRoleGrants_DuplicateEmail_RealServer(t *test
 	})
 	require.NoError(t, err)
 
-	viewerRole, err := upstream.Storage().GetRoleByName(ctx, "system_viewer")
+	// FIX-1's requireGranterHoldsRolePermissions ceiling means a machine/node-
+	// token caller (as `downstream` authenticates) can't be granted
+	// "system_viewer" (it bundles a real permission the machine actor can
+	// never satisfy — see arTestPermissionlessRole's doc). A permission-less
+	// role isolates this test to its actual subject — the duplicate-email
+	// sentinel surviving the HTTP hop — not the ceiling.
+	roleName := arTestPermissionlessRole(t, upstream)
+	role, err := upstream.Storage().GetRoleByName(ctx, roleName)
 	require.NoError(t, err)
 
 	_, err = downstream.Storage().CreateUserWithRoleGrants(ctx, &models.User{
@@ -366,7 +373,7 @@ func TestRemoteStorageCreateUserWithRoleGrants_DuplicateEmail_RealServer(t *test
 		PasswordHash:   "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0", // 60 chars: isPlausibleBcryptHash requires exactly 60
 		IsActive:       true,
 		AccountState:   "active",
-	}, []corestorage.RoleGrant{{RoleID: viewerRole.ID}})
+	}, []corestorage.RoleGrant{{RoleID: role.ID}})
 	require.Error(t, err, "creating a user with an already-used email must fail, not silently succeed")
 	assert.True(t, errors.Is(err, corestorage.ErrDuplicateEmail),
 		"the storage.ErrDuplicateEmail sentinel must survive the storage.type: remote HTTP hop")

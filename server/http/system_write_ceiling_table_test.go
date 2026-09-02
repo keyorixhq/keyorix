@@ -204,7 +204,7 @@ func setupCeilingTableFixtures(t *testing.T) ceilingTableFixtures {
 	require.NoError(t, err)
 	adminRole, err := testCore.Storage().GetRoleByName(ctx, "system_admin")
 	require.NoError(t, err)
-	require.NoError(t, testCore.AssignMachineRole(ctx, adminMachine.ID, adminRole.ID, core.Scope{ProjectID: projectID}, admin.ID))
+	require.NoError(t, testCore.AssignMachineRole(ctx, adminMachine.ID, adminRole.ID, core.Scope{ProjectID: projectID}, admin.ID, false))
 
 	revokedMachine, err := testCore.CreateMachineIdentity(ctx, projectID, "ceiling-table-revoked", core.MachineTypeService, "", "", admin.ID, 0)
 	require.NoError(t, err)

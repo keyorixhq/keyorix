@@ -158,13 +158,23 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 	// grants only), so a machine actor's actorID(r) is always 0 here and
 	// correctly never passes -- inviting someone is a human-only decision.
 	if body.Role != "" {
-		if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), body.ProjectID, body.Role); err != nil {
+		roleModel, roleErr := h.coreService.Storage().GetRoleByName(r.Context(), body.Role)
+		if roleErr != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "unknown role: "+roleErr.Error())
+			return
+		}
+		if err := h.coreService.RequireGranterHoldsRolePermissions(r.Context(), actorID(r), roleModel.ID, core.Scope{ProjectID: body.ProjectID}, isMachineActor(r)); err != nil {
 			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 			return
 		}
 	}
 	if body.SystemRole != "" {
-		if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), 0, body.SystemRole); err != nil {
+		sysRoleModel, roleErr := h.coreService.Storage().GetRoleByName(r.Context(), body.SystemRole)
+		if roleErr != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "unknown role: "+roleErr.Error())
+			return
+		}
+		if err := h.coreService.RequireGranterHoldsRolePermissions(r.Context(), actorID(r), sysRoleModel.ID, core.Scope{}, isMachineActor(r)); err != nil {
 			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 			return
 		}
@@ -176,7 +186,12 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 			return
 		}
 		for _, a := range assignments {
-			if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), a.ProjectID, a.Role); err != nil {
+			assignRoleModel, roleErr := h.coreService.Storage().GetRoleByName(r.Context(), a.Role)
+			if roleErr != nil {
+				writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "unknown role: "+roleErr.Error())
+				return
+			}
+			if err := h.coreService.RequireGranterHoldsRolePermissions(r.Context(), actorID(r), assignRoleModel.ID, core.Scope{ProjectID: a.ProjectID}, isMachineActor(r)); err != nil {
 				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 				return
 			}
