@@ -146,13 +146,34 @@ func TestAuditCheckpointKey_ChangesAcrossKEKMigration(t *testing.T) {
 
 // TestAuditCheckpointKey_WipedOnShutdown proves Wipe() zeroes the
 // audit-checkpoint key alongside the DEK, so neither lingers in memory after
-// shutdown.
+// shutdown. GetAuditCheckpointKey always returns a COPY (keymanager_io.go),
+// so asserting ok=false on it afterward only proves the field reference was
+// nilled -- a Wipe() that dropped its wipeBytes(km.auditCheckpointKey) call
+// but kept the nil-assignment would pass that check identically while
+// leaving the real key bytes live in memory. This test instead reaches the
+// unexported km.auditCheckpointKey field directly (same package as
+// keymanager_lifecycle.go) to capture the actual backing array before Wipe()
+// and assert every byte is zero afterward -- the same memory-scan style
+// TestServiceShutdown_WipesEncryptionServiceDEK (g62_dek_safety_test.go)
+// already uses for the DEK.
 func TestAuditCheckpointKey_WipedOnShutdown(t *testing.T) {
 	svc, _ := newTestService(t, "test-passphrase")
 	if _, _, ok := svc.AuditCheckpointKey(); !ok {
 		t.Fatal("AuditCheckpointKey unavailable before shutdown")
 	}
+
+	svc.keyManager.mu.RLock()
+	keyRef := svc.keyManager.auditCheckpointKey // same backing array wipeBytes must zero in place
+	svc.keyManager.mu.RUnlock()
+	if allZeroBytes(keyRef) {
+		t.Fatal("test setup bug: audit-checkpoint key was already all-zero before Wipe()")
+	}
+
 	svc.keyManager.Wipe()
+
+	if !allZeroBytes(keyRef) {
+		t.Fatal("audit-checkpoint key bytes were not wiped by Wipe() -- key remains live in process memory")
+	}
 	if _, _, ok := svc.keyManager.GetAuditCheckpointKey(); ok {
 		t.Fatal("expected the audit-checkpoint key to be gone after Wipe()")
 	}
