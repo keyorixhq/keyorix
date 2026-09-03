@@ -786,6 +786,13 @@ func (rs *RemoteStorage) ListAllUserGroupMemberships(_ context.Context) ([]stora
 	return nil, remoteUnsupported("ListAllUserGroupMemberships")
 }
 
+// GetUserGroupsAt is not needed by any current RemoteStorage caller — the
+// scope-aware group-membership check it backs (#G01) only runs against a
+// local backend today.
+func (rs *RemoteStorage) GetUserGroupsAt(_ context.Context, _ uint, _ storage.Scope) ([]*models.Group, error) {
+	return nil, remoteUnsupported("GetUserGroupsAt")
+}
+
 // --- Groups ---
 
 // CreateGroup creates a new group via POST /api/v1/system/groups — a raw
@@ -955,6 +962,13 @@ func (rs *RemoteStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]
 		users = append(users, w.toModel())
 	}
 	return users, nil
+}
+
+// ListGroupMembersAt is not needed by any current RemoteStorage caller — the
+// scope-aware last-global-admin guards it backs (#G01) only run against a
+// local backend today.
+func (rs *RemoteStorage) ListGroupMembersAt(_ context.Context, _ uint, _ storage.Scope) ([]*models.User, error) {
+	return nil, remoteUnsupported("ListGroupMembersAt")
 }
 
 // ListGroupMembersByGroupIDs is the batch form of ListGroupMembers via GET

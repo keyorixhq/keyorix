@@ -162,6 +162,53 @@ func TestRemoveUserFromGroup_AllowsWhenDirectAdminExists(t *testing.T) {
 	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1, 0)) // projectID=0: global membership
 }
 
+// DeleteGroup: #G01 regression. The group holds the install's only global
+// admin-tier role grant, but its sole "member" row is scoped to project 7, not
+// global (project_id=0). Before the fix, ListGroupMembers ignored that scope
+// entirely and counted this project-scoped member as deriving GLOBAL admin
+// authority — over-counting holders and letting the group (the install's true
+// last global admin route) be deleted, silently stranding the deployment with
+// zero real global admins even though the guard reported success.
+func TestDeleteGroup_ProjectScopedSoleMemberNotCountedAsGlobalAdmin(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error) // GLOBAL admin grant
+	require.NoError(t, db.Create(&models.User{ID: 42, Username: "scoped-member", Email: "sm@example.com"}).Error)
+	// The member's own UserGroup row is scoped to project 7 — NOT global.
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 42, GroupID: 1, ProjectID: 7}).Error)
+
+	err := c.DeleteGroup(ctx, 0, 1)
+	require.Error(t, err, "a project-scoped member must not be counted as a global admin holder")
+	assert.Contains(t, err.Error(), "last administrative role grant")
+
+	g, gerr := c.GetGroup(ctx, 1)
+	require.NoError(t, gerr)
+	assert.Equal(t, uint(1), g.ID, "the group must survive — it was never actually safe to delete")
+}
+
+// DeleteGroup: the #G01 counterpart — a member whose UserGroup row IS global
+// (project_id=0) correctly counts as a global admin holder, so the group
+// remains deletable once ANOTHER such member exists.
+func TestDeleteGroup_GlobalMemberCountedAsGlobalAdmin(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 2, Name: "ops2"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 2, RoleID: 1}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 42, Username: "global-member", Email: "gm@example.com"}).Error)
+	// This member's UserGroup row for group 2 IS global (project_id=0, default).
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 42, GroupID: 2}).Error)
+
+	// Deleting group 1 is safe: group 2's global member still carries admin authority.
+	require.NoError(t, c.DeleteGroup(ctx, 0, 1))
+}
+
 // RemoveUserFromGroup: membership in a group with no admin-tier grant is always
 // removable, regardless of the install's overall admin count.
 func TestRemoveUserFromGroup_NonAdminGroupAlwaysRemovable(t *testing.T) {

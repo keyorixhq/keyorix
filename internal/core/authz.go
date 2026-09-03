@@ -716,8 +716,16 @@ func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]
 	return holders, nil
 }
 
+// resolveGroupAdminMembers expands groupID's membership into holders, but ONLY
+// members whose own UserGroup row is global (project_id=0) — resolveGlobalAdminHolders
+// is always resolving GLOBAL-scope role assignments, so a member whose
+// membership in this group is itself scoped to one project does not derive
+// GLOBAL admin authority from it (#G01: ListGroupMembers ignored this scope
+// entirely, over-counting global admin holders and letting the true last
+// global admin be removed because a project-scoped member was miscounted as a
+// backup).
 func (c *KeyorixCore) resolveGroupAdminMembers(ctx context.Context, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
-	members, merr := c.storage.ListGroupMembers(ctx, groupID)
+	members, merr := c.storage.ListGroupMembersAt(ctx, groupID, Scope{})
 	if merr != nil {
 		return fmt.Errorf("failed to resolve group %d membership: %w", groupID, merr)
 	}

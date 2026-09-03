@@ -946,7 +946,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// escaped segment as a wildcard "*" the way normalizeChiPath already does
 	// for a chi {param}), just a different one than the query-string case.
 	"remote_rbac.go:499":  pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
-	"remote_users.go:974": pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
+	"remote_users.go:988": pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
 
 	// Category: the ENTIRE path is a bare call to a locally-defined helper
 	// function (buildAuditFilterPath/buildRBACAuditFilterPath/
