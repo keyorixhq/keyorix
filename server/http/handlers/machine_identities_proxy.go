@@ -95,6 +95,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // isAlreadyAssignedErr reports whether err is local_machine_credentials.go's
@@ -776,27 +777,34 @@ type revokeMachineIdentityCredentialProxyBody struct {
 // `id = ? AND machine_identity_id IN (project's machines)`), so a single
 // passthrough call here preserves that guarantee exactly.
 //
-// #1551: project_id is now part of the wire request (previously this route
-// took only the credential id, with no tenant check at all). The
-// legitimate spoke topology (a CLI running under storage.type: remote calls
-// core.RevokeMachineToken, which already runs core.machineInProject's
-// ownership check client-side against its own RemoteStorage-backed read
-// before ever reaching this route) never depended on this route enforcing
-// tenancy itself. A caller reaching this route directly (holding the
-// blanket system.write raw-storage capability every /system proxy in this
-// package trusts, but not going through core.RevokeMachineToken) had no
-// such check at all: any credential ID could be revoked by naming any
-// project, since neither ID was ever cross-checked against the other. The
-// fix pushes the ownership check into the storage primitive itself
-// (RevokeMachineIdentityCredential's own project_id parameter, enforced in
-// its WHERE clause) rather than adding a second, parallel authorization
-// primitive at this handler — deriving from the existing
-// core.machineInProject check's *shape*, not inventing a new one: a
-// caller-claimed tenant is now verified against the credential's real
-// owning project before the write, the same "claim vs. ground truth"
-// pattern already applied to wire-supplied actors elsewhere in this
-// package (e.g. CreateMembershipProxy's #1578 fix), just for a tenant
-// field instead of an actor field.
+// #1551, corrected 2026-09-03: the 2026-08-29 fix added project_id to the
+// wire request and enforced it in the storage WHERE clause, believing that
+// verified "a caller-claimed tenant against the credential's real owning
+// project." It does not: the WHERE clause only checks whether the credential
+// belongs to the NAMED project — a fact the attacker also knows, since it's
+// exactly the fact they're attacking with. A cross-tenant caller simply
+// supplies the credential's REAL (victim) project_id, which the WHERE
+// clause happily confirms, and the write proceeds. Nothing in that fix ever
+// asked whether the CALLER is entitled to that project — a "claim vs.
+// ground truth" check only stops a caller who gets the tenant claim WRONG,
+// not one who deliberately gets it right. Independently reproduced live
+// (HTTP 200, DB write confirmed) during the 2026-09-02 adversarial review.
+//
+// The real fix: resolve the credential's project SERVER-SIDE (never trust
+// the wire value to identify which tenant is being acted on) and require
+// the AUTHENTICATED caller to hold roles.assign at that resolved project —
+// the same permission server/http/router.go's human-facing route
+// (DELETE /projects/{id}/machine-identities/{machineId}/tokens/{tokenId})
+// requires via RequireScopedPermission(permRolesAssign, projectScope), now
+// re-derived here the way AssignMachineRoleProxy/RemoveMachineRoleProxy
+// already re-derive their own equivalents (this file's own top-of-file doc:
+// "this route group's gate also admits any caller... holding the
+// system.write PERMISSION directly, with no node credential, and THAT
+// caller is not relaying anyone's already-checked decision"). The wire
+// project_id is kept as a client-supplied assertion, still cross-checked
+// against the resolved value (a real mismatch is still a real bug worth
+// surfacing as 404, matching a genuinely unknown credential), but it is no
+// longer what authorization is computed from.
 func (h *CatalogHandler) RevokeMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -812,7 +820,42 @@ func (h *CatalogHandler) RevokeMachineIdentityCredentialProxy(w http.ResponseWri
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id is required")
 		return
 	}
-	if err := h.coreService.Storage().RevokeMachineIdentityCredential(r.Context(), body.ProjectID, uint(id)); err != nil {
+	cred, err := h.coreService.Storage().GetMachineIdentityCredentialByID(r.Context(), uint(id))
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
+			return
+		}
+		log.Printf("machine-credentials proxy: revoke: resolving credential failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	machine, err := h.coreService.Storage().GetMachineIdentity(r.Context(), cred.MachineIdentityID)
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
+			return
+		}
+		log.Printf("machine-credentials proxy: revoke: resolving machine identity failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	if machine.ProjectID != body.ProjectID {
+		writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
+		return
+	}
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
+			"revoking a machine credential requires the roles.assign permission at the credential's project")
+		return
+	}
+	if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: machine.ProjectID}); aerr != nil || !ok {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
+			"revoking a machine credential requires the roles.assign permission at the credential's project")
+		return
+	}
+	if err := h.coreService.Storage().RevokeMachineIdentityCredential(r.Context(), machine.ProjectID, uint(id)); err != nil {
 		if isNotFoundErr(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
 			return
