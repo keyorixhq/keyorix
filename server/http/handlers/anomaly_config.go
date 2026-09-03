@@ -9,6 +9,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -52,6 +53,19 @@ func UpdateAnomalyConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := coreService.UpdateAnomalyConfig(r.Context(), &cfg, updatedBy); err != nil {
+		// core.UpdateAnomalyConfig returns a plain (unwrapped) validation error
+		// from validateAnomalyConfig when a knob exceeds its ceiling (#G44) --
+		// e.g. "lookback_days exceeds the maximum of 365" -- before ever
+		// reaching storage. That's caller input error, not a server failure;
+		// treating it as 500 (as this used to, unconditionally) misreports a
+		// bad request as an internal error, same class of fix as
+		// secrets_bulk_rotate.go's BulkRotateSecrets/catalog.go's
+		// CloneEnvironment string-matching their own core layer's validation
+		// errors.
+		if strings.Contains(err.Error(), "exceeds the maximum") {
+			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
 		sendError(w, "InternalError", "Failed to save anomaly config", http.StatusInternalServerError, nil)
 		return
 	}
