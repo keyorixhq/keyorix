@@ -96,6 +96,24 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind strin
 	return data, "application/json; charset=utf-8", err
 }
 
+// csvSafe neutralizes spreadsheet formula injection (CWE-1236): a CSV cell
+// beginning with =, +, -, @, TAB, or CR is prefixed with a single quote so
+// Excel / LibreOffice / Sheets treat it as text rather than executing it as a
+// formula. Duplicated locally rather than shared, matching this codebase's
+// existing per-layer convention (server/http/handlers/csv_safe.go,
+// internal/cli/common/csv_safe.go each carry their own copy) -- core must not
+// import either of those packages.
+func csvSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	}
+	return s
+}
+
 func encodeCSV(rows []AccessLogExportRow) []byte {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
@@ -110,8 +128,8 @@ func encodeCSV(rows []AccessLogExportRow) []byte {
 			fmt.Sprintf("%d", r.EventID),
 			fmt.Sprintf("%d", r.SecretID),
 			userID,
-			r.ActorType,
-			r.IPAddress,
+			csvSafe(r.ActorType),
+			csvSafe(r.IPAddress),
 			fmt.Sprintf("%t", r.Success),
 			r.EventTime.UTC().Format(time.RFC3339),
 		})

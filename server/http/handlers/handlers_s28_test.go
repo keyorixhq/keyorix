@@ -1124,7 +1124,7 @@ func TestRevokeMachineIdentityCredentialProxy_NotFound_S28(t *testing.T) {
 // credential then revokes it.
 func TestRevokeMachineIdentityCredentialProxy_HappyPath_S28(t *testing.T) {
 	t.Parallel()
-	cs := freshCoreS28(t)
+	cs, _ := freshCoreS28WithAdmin(t)
 	ctx := context.Background()
 	mi, err := cs.Storage().CreateMachineIdentity(ctx, &models.MachineIdentity{
 		Name: "s28-revoke-machine", ProjectID: 1, IdentityType: "workload", State: "active",
@@ -1138,7 +1138,7 @@ func TestRevokeMachineIdentityCredentialProxy_HappyPath_S28(t *testing.T) {
 	require.NoError(t, err)
 
 	h := NewCatalogHandler(cs)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(fmt.Sprintf(`{"project_id":%d}`, mi.ProjectID)))), "id", uintStrS28(cred.ID))
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(fmt.Sprintf(`{"project_id":%d}`, mi.ProjectID)))), "id", uintStrS28(cred.ID)))
 	w := httptest.NewRecorder()
 	h.RevokeMachineIdentityCredentialProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

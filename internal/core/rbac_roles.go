@@ -17,12 +17,48 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// ErrRoleValidation marks a CreateRole failure as an application-generated
+// validation error (name length, folded-name charset/bidi rejection) rather
+// than a storage/driver failure, so a caller like mapRoleError
+// (server/grpc/services/role_service.go) can confirm via errors.Is that the
+// failure is safe to classify as InvalidArgument instead of guessing from
+// its text.
+//
+// FIX-4 (adversarial review run 2), restored 2026-09-03: this sentinel was
+// introduced by #1668 (e78bab59) and reverted 22 hours later by #1669, as a
+// side effect of resolving a merge conflict while ALSO fixing a genuinely
+// real, separate problem (see mapRoleError's comment) — #1669's commit
+// message says so explicitly: "the sentinel machinery was removed... this
+// fixed-message approach is simpler." That conflation is exactly the gap:
+// #1669's message-safety fix (never pass err.Error() to status.Error,
+// required by the keyorix-raw-error-to-client Semgrep gate) is correct and
+// stays; #1669's classification regression (back to strings.Contains(msg,
+// "validation"), the imprecise substring match #1668 existed specifically
+// to close) does not need to accompany it — the two are independent, and
+// restoring the sentinel here does not require echoing its content anywhere.
+var ErrRoleValidation = errors.New("role validation")
+
+// roleValidationError tags err as matching ErrRoleValidation for errors.Is,
+// without ErrRoleValidation's own text ever appearing in Error() -- the
+// displayed message stays exactly err's, unchanged from before this marker
+// existed.
+type roleValidationError struct{ err error }
+
+func (e *roleValidationError) Error() string        { return e.err.Error() }
+func (e *roleValidationError) Unwrap() error        { return e.err }
+func (e *roleValidationError) Is(target error) bool { return target == ErrRoleValidation }
+
+// WrapRoleValidation marks err as an ErrRoleValidation match for errors.Is,
+// without altering its Error() text.
+func WrapRoleValidation(err error) error { return &roleValidationError{err: err} }
 
 // Role Name/Description length bounds — the single source of truth both
 // transports' own early-reject validation (server/http/handlers/rbac.go's
@@ -60,11 +96,11 @@ func validateRoleNameLength(name string) error {
 // authenticated principal).
 func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, description string) (*models.Role, error) {
 	if err := validateRoleNameLength(name); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	foldedName, ferr := identity.NewFoldedName(name)
 	if ferr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		return nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
 	}
 	if IsBuiltinRole(foldedName.Folded()) {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this role name is reserved and cannot be created")

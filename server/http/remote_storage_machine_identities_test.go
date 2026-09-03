@@ -382,6 +382,67 @@ func TestRemoteStorageMachineIdentities_RevokeCredential_CrossTenantRejected_Rea
 	assert.True(t, revoked.Revoked, "revoking with the credential's real project_id must still succeed")
 }
 
+// TestRemoteStorageMachineIdentities_RevokeCredential_UnauthorizedCallerRejected_RealServer
+// is #1551's REAL exploit shape, corrected 2026-09-03: the CrossTenantRejected
+// test above only proves the wire-supplied project_id is checked against the
+// credential's real owner — it does not prove the CALLER is entitled to that
+// project. A caller supplying the credential's actual (correct) project_id
+// was never rejected by that check at all, since the WHERE clause happily
+// confirms a true fact. This drives exactly that: a caller holding
+// system.write (passes the /system group's own gate) but NO roles.assign
+// grant anywhere revokes a credential by naming its real, correct project —
+// before the 2026-09-03 fix this succeeded outright (independently
+// reproduced live: HTTP 200, DB write confirmed); now it must be refused.
+func TestRemoteStorageMachineIdentities_RevokeCredential_UnauthorizedCallerRejected_RealServer(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+
+	upstream := newTestCore(t)
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "0"}}}
+	router, err := NewRouter(cfg, upstream)
+	require.NoError(t, err)
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+	project, err := upstream.CreateProject(ctx, "Unauthorized Revoke Test Project", "")
+	require.NoError(t, err)
+
+	adminToken := createNodeToken(t, upstream) // holds admin -- used only to set up fixtures
+	adminRS, err := store.NewRemoteStorage(&remote.Config{BaseURL: srv.URL, APIKey: adminToken, TimeoutSeconds: 5, TLSVerify: true})
+	require.NoError(t, err)
+	admin := core.NewKeyorixCore(adminRS)
+
+	now := time.Now()
+	m, err := admin.Storage().CreateMachineIdentity(ctx, buildMachineIdentity(now, project.ID, "unauth-revoke-test"))
+	require.NoError(t, err)
+	const hash = "deadbeef00112233445566778899aabbccddeeff0011223344556677889900"
+	cred, err := admin.Storage().CreateMachineIdentityCredential(ctx, buildMachineIdentityCredential(now, m.ID, hash))
+	require.NoError(t, err)
+
+	// A caller with system.write and nothing else — no roles.assign anywhere.
+	weakToken := createSystemWriteOnlyToken(t, upstream)
+	weakRS, err := store.NewRemoteStorage(&remote.Config{BaseURL: srv.URL, APIKey: weakToken, TimeoutSeconds: 5, TLSVerify: true})
+	require.NoError(t, err)
+	weak := core.NewKeyorixCore(weakRS)
+
+	// The CORRECT project_id — this is the point: the old fix's check would
+	// have PASSED here, because the claim is true. Only the caller's own
+	// authority is what should be able to refuse this.
+	err = weak.Storage().RevokeMachineIdentityCredential(ctx, project.ID, cred.ID)
+	require.Error(t, err, "a caller with no roles.assign grant must not be able to revoke a credential, even by naming its real project")
+
+	stillLive, err := admin.Storage().GetMachineIdentityCredentialByID(ctx, cred.ID)
+	require.NoError(t, err)
+	assert.False(t, stillLive.Revoked, "an unauthorized revoke attempt must not revoke the credential")
+
+	// Positive control: the SAME credential is still revocable by the admin caller.
+	require.NoError(t, admin.Storage().RevokeMachineIdentityCredential(ctx, project.ID, cred.ID))
+	revoked, err := admin.Storage().GetMachineIdentityCredentialByID(ctx, cred.ID)
+	require.NoError(t, err)
+	assert.True(t, revoked.Revoked, "an authorized caller must still be able to revoke")
+}
+
 // TestRemoteStorageMachineIdentities_RoleGrantAssignRemoveListIDs_RealServer
 // proves the fix for AssignMachineRole/RemoveMachineRole/GetMachineRoleIDsAt/
 // GetMachineRoles.

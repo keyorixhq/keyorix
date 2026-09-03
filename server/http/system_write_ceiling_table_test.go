@@ -27,13 +27,15 @@
 // -- no live caller). Its
 // RevokeMachineIdentityCredentialProxy coverage
 // (RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate below) was
-// originally gate-level only, since the wire contract (POST-by-bare-
-// credential-ID, no project/scope parameter at all) couldn't express a
-// per-grant scope check without a RemoteStorage client-side change first —
-// filed as #1551. That wire change landed (Wave 2, 2026-08-29): the route now
-// requires project_id and rejects a cross-tenant claim in the storage layer's
-// own WHERE clause (see raw_storage_bypass_guard_test.go's entry for this
-// handler for the still-open residual, audit + cache-eviction hand-off).
+// gate-level (a bare node credential is refused before the request body is
+// ever read). The deeper #1551 cross-tenant gap -- any system.write holder
+// could revoke any credential by naming any project -- is fixed separately
+// (2026-09-03): the handler resolves the credential's real project
+// server-side and requires the caller hold roles.assign there via
+// AuthorizePrincipal, inline before the raw storage call (see
+// raw_storage_bypass_guard_test.go's rawStorageBypassAllowlist entry for
+// this handler for the full reasoning and the still-open, narrower audit +
+// cache-eviction residual).
 //
 // A second dimension: "Node-credential-path rows" below exercise the
 // human-caller rows' SAME write routes again, but with a bare node-type
@@ -758,11 +760,12 @@ func TestSystemWriteCeiling_AssignRoleWithExpiryProxy_NodeCredential_DeniedAtGat
 // group's own system.write gate (ADR-085) — before the request body is ever
 // read, so this holds regardless of the handler's own body shape. #1551's
 // deeper cross-tenant gap (any system.write holder could revoke any
-// credential by naming any project) is now FIXED separately (Wave 2,
-// 2026-08-29): RevokeMachineIdentityCredentialProxy requires project_id on
-// the wire and storage.Storage.RevokeMachineIdentityCredential enforces it in
-// its WHERE clause. Audit + cache-eviction hand-off remain a separate, still-
-// open residual (raw_storage_bypass_guard_test.go's own entry for this
+// credential by naming any project) is now FIXED separately (2026-09-03):
+// the handler resolves the credential's real project server-side and
+// requires the caller hold roles.assign there via AuthorizePrincipal,
+// inline before the raw storage call. Audit + cache-eviction hand-off
+// remain a separate, still-open residual (raw_storage_bypass_guard_test.go's
+// own entry for this
 // handler).
 func TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate(t *testing.T) {
 	f := setupCeilingTableFixtures(t)

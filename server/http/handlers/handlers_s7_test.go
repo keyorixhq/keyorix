@@ -398,12 +398,26 @@ func TestCatalogHandler_DeleteSoDPolicy_BadID_S7(t *testing.T) {
 }
 
 // TestCatalogHandler_DeleteSoDPolicy_NotFound_S7 tests deleting non-existent policy.
+// FIX-6 (#1645 403-for-both): a non-admin-tier actor gets the same 403 denial
+// for a nonexistent policy id as for an existing-but-foreign one, not a
+// distinguishing 404. Deliberately does NOT use withUserCtxS7's shared
+// UserID=1 -- newCatalogHandlerS7 backs onto newHandlerCoreS4's PACKAGE-WIDE
+// shared DB, and some other S4/S7 test elsewhere in this huge shared-fixture
+// suite grants UserID=1 admin-tier authority without reverting it, making
+// this assertion flaky/order-dependent on that ambient state (observed
+// failing in CI's handlers-4 shard while passing locally). A dedicated,
+// never-referenced-elsewhere actor ID sidesteps the ambiguity entirely.
 func TestCatalogHandler_DeleteSoDPolicy_NotFound_S7(t *testing.T) {
 	h := newCatalogHandlerS7(t)
-	req := withUserCtxS7(withChiParamS7(httptest.NewRequest(http.MethodDelete, "/sod/policies/9999", nil), "id", "9999"))
+	dedicatedNonAdminActor := &middleware.UserContext{
+		UserID: 55501002, Username: "sod-notfound-nonadmin-s7", Email: "sod-notfound-nonadmin-s7@example.com",
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/sod/policies/9999", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), dedicatedNonAdminActor))
+	req = withChiParamS7(req, "id", "9999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── machine_token_hygiene.go: MachineTokenHygiene ──────────────────────────

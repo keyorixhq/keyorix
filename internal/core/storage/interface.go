@@ -931,7 +931,9 @@ type Storage interface {
 	// DeleteClosedAccessReviewsBefore removes closed campaigns (closed_at < before)
 	// and their snapshot items, returning (campaigns, items) removed.
 	DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (campaigns int64, items int64, err error)
-	// DeleteExpiredBreakGlassBefore removes non-active activations (created_at < before).
+	// DeleteExpiredBreakGlassBefore reconciles any TTL-lapsed 'active' row to
+	// 'expired' (without deleting it in the same pass -- see local_purge.go's
+	// doc comment), then removes non-active activations (created_at < before).
 	DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error)
 	// DeleteResolvedAccessRequestsBefore removes terminal-state requests (resolved_at
 	// < before) and their approval records, returning (requests, approvals) removed.

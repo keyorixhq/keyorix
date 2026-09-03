@@ -282,7 +282,7 @@ since a point in time with --since --all.`,
 					}
 					_ = cw.Write([]string{
 						strconv.FormatUint(uint64(row.ID), 10), row.Timestamp, common.CSVSafe(row.EventType),
-						common.CSVSafe(row.Actor), row.ActorType, uintPtrStr(row.UserID), uintPtrStr(row.ProjectID),
+						common.CSVSafe(row.Actor), common.CSVSafe(row.ActorType), uintPtrStr(row.UserID), uintPtrStr(row.ProjectID),
 						uintPtrStr(row.SecretID), common.CSVSafe(row.IPAddress), strconv.FormatBool(row.Success), common.CSVSafe(row.Description),
 					})
 					continue

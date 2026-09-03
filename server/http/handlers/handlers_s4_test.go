@@ -2047,12 +2047,15 @@ func TestDeleteSoDPolicyProxy_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// FIX-6 (#1645 403-for-both): no user context resolves actorID(r) to 0, not
+// admin-tier, so a nonexistent policy id gets the same denial as an
+// existing-but-foreign one.
 func TestDeleteSoDPolicyProxy_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── deployment_hygiene.go ─────────────────────────────────────────────────────
@@ -8498,12 +8501,28 @@ func TestSoDPolicy_Create_MissingFields(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// FIX-6 (#1645 403-for-both): a non-admin-tier actor gets the same 403 denial
+// for a nonexistent policy id as for an existing-but-foreign one, not a
+// distinguishing 404. Deliberately does NOT use withUserCtx's shared UserID=1
+// -- this test runs against the S4 package-wide shared DB (newHandlerCoreS4),
+// and some other S4 test elsewhere in this huge shared-fixture file grants
+// UserID=1 admin-tier authority without reverting it, making this assertion
+// flaky/order-dependent on that ambient state (observed failing in CI's
+// handlers-4 shard while passing locally, where the interfering test wasn't
+// in the executed set). A dedicated, never-referenced-elsewhere actor ID
+// sidesteps the ambiguity entirely rather than depending on shared-DB
+// execution order.
 func TestSoDPolicy_Delete_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999"))
+	dedicatedNonAdminActor := &middleware.UserContext{
+		UserID: 55501001, Username: "sod-notfound-nonadmin", Email: "sod-notfound-nonadmin@example.com",
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), dedicatedNonAdminActor))
+	req = withChiParam(req, "id", "9999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── secrets_reassign_owner.go: ReassignOwner ─────────────────────────────────

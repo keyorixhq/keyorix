@@ -196,15 +196,37 @@ func TestMapRoleError_Default(t *testing.T) {
 // InvalidArgument with a fixed message -- never err.Error() verbatim, since
 // identity.NewFoldedName's error text echoes the caller's raw input (%q) and
 // isn't the "known safe sentinel with a fixed string" this file's
-// keyorix-raw-error-to-client convention requires for echoing.
+// keyorix-raw-error-to-client convention requires for echoing. Classification
+// goes through core.WrapRoleValidation/errors.Is (restored by FIX-4), not a
+// substring match on the word "validation" -- see
+// TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed for why that
+// distinction matters.
 func TestMapRoleError_Validation(t *testing.T) {
-	err := mapRoleError(fmt.Errorf("validation error: invalid name %q: control characters not allowed", "role\x00name"))
+	err := mapRoleError(core.WrapRoleValidation(fmt.Errorf("validation error: invalid name %q: control characters not allowed", "role\x00name")))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
 	}
 	if st.Message() != "invalid role name or description" {
 		t.Errorf("expected the fixed safe message, got %q (raw error text -- including caller input -- must not leak)", st.Message())
+	}
+}
+
+// A storage/driver error that merely happens to mention the word
+// "validation" (e.g. a constraint or column named *_validation_*) must NOT
+// be classified as InvalidArgument just because its text contains that
+// substring -- only an error the application itself marked with
+// core.WrapRoleValidation (via errors.Is) is a real validation failure. This
+// is the precision gap #1668 introduced core.ErrRoleValidation to close and
+// #1669 regressed 22 hours later (reverting mapRoleError's classification to
+// strings.Contains(msg, "validation") as a side effect of a different,
+// legitimate fix); FIX-4 restores the errors.Is check without reintroducing
+// #1669's real problem (see TestMapRoleError_Validation's fixed message).
+func TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed(t *testing.T) {
+	err := mapRoleError(errors.New("pq: insert failed: check constraint \"role_name_validation_chk\" violated"))
+	st, _ := status.FromError(err)
+	if st.Code() != codes.Internal {
+		t.Errorf("expected Internal (not InvalidArgument) for an unmarked error that merely mentions \"validation\", got %v", st.Code())
 	}
 }
 

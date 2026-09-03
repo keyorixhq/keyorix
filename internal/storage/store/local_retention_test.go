@@ -187,12 +187,20 @@ func TestDeleteExpiredBreakGlassBefore_SkipsActive(t *testing.T) {
 // retention sweep must still reclaim it once genuinely TTL-lapsed AND past
 // the cutoff -- while a row that's merely OLD but still genuinely live
 // (ExpiresAt in the future) must never be purged, cutoff or not.
+//
+// FIX-7 (adversarial review run 2): reclaiming an unreconciled-but-expired
+// row now takes TWO sweep calls, not one -- the first reconciles it to
+// 'expired' without deleting it (closing the race a single reconcile+delete
+// statement had with any concurrent operation still expecting to find the
+// row), the second deletes it like any other already-terminal old row. See
+// DeleteExpiredBreakGlassBefore's doc comment.
 func TestDeleteExpiredBreakGlassBefore_ReclaimsUnreconciledExpired(t *testing.T) {
 	ls := newRetentionTestStore(t)
 	ctx := context.Background()
 	old := time.Now().AddDate(0, 0, -120)
 	longExpired := old.Add(time.Hour) // TTL lapsed shortly after creation, well before the cutoff below
 	stillLive := time.Now().AddDate(1, 0, 0)
+	cutoff := time.Now().AddDate(0, 0, -90)
 
 	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
 		ID: 4, State: "active", CreatedAt: old, ExpiresAt: &longExpired,
@@ -203,14 +211,62 @@ func TestDeleteExpiredBreakGlassBefore_ReclaimsUnreconciledExpired(t *testing.T)
 		ID: 5, State: "active", CreatedAt: old, ExpiresAt: &stillLive,
 	}).Error)
 
-	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().AddDate(0, 0, -90))
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, cutoff)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), n, "the unreconciled-but-genuinely-expired row is reclaimed")
+	assert.Zero(t, n, "first sweep only reconciles the unreconciled-but-expired row, doesn't delete it yet")
+
+	var afterFirstSweep []models.BreakGlassActivation
+	require.NoError(t, ls.db.Order("id").Find(&afterFirstSweep).Error)
+	require.Len(t, afterFirstSweep, 2, "both rows still present after the first sweep")
+	assert.Equal(t, "expired", afterFirstSweep[0].State, "row 4 reconciled to expired, not yet deleted")
+	assert.Equal(t, "active", afterFirstSweep[1].State, "the still-live row untouched")
+
+	n, err = ls.DeleteExpiredBreakGlassBefore(ctx, cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "second sweep reclaims the now-reconciled row like any other old terminal row")
 
 	var remaining []models.BreakGlassActivation
 	require.NoError(t, ls.db.Find(&remaining).Error)
 	require.Len(t, remaining, 1)
 	assert.Equal(t, uint(5), remaining[0].ID, "the still-live row must survive")
+}
+
+// TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable is FIX-7's
+// core proving test: a row the retention sweep JUST reconciled to 'expired'
+// must still be revocable by a concurrent/subsequent RevokeBreakGlassActivation
+// call, not silently gone. Under the pre-fix behavior (reconcile-and-delete in
+// one statement), the row would already be hard-deleted by the time a
+// concurrent admin's RevokeBreakGlass reached RevokeBreakGlassActivation
+// (having already removed the real RBAC grant via RemoveUserRole first),
+// producing ErrBreakGlassNotActive despite the revoke having genuinely taken
+// effect -- losing the revoke's own audit trail (LogBreakGlassRevoked is only
+// called on success).
+func TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable(t *testing.T) {
+	ls := newRetentionTestStore(t)
+	ctx := context.Background()
+	old := time.Now().AddDate(0, 0, -120)
+	longExpired := old.Add(time.Hour)
+	cutoff := time.Now().AddDate(0, 0, -90)
+
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
+		ID: 6, State: "active", CreatedAt: old, ExpiresAt: &longExpired,
+	}).Error)
+
+	// One sweep pass: reconciles the row to 'expired' without deleting it.
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, cutoff)
+	require.NoError(t, err)
+	assert.Zero(t, n)
+
+	// A concurrent (or immediately-following) revoke must still find and
+	// transition the row -- RevokeBreakGlassActivation's own WHERE clause
+	// already accepts 'expired', but that only helps if the row still EXISTS.
+	revokedAt := time.Now()
+	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, 6, 1, 0, revokedAt),
+		"a row the sweep just reconciled (not yet deleted) must still be revocable")
+
+	var row models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&row, 6).Error)
+	assert.Equal(t, "revoked", row.State)
 }
 
 func TestDeleteResolvedAccessRequestsBefore_CascadesAndSkipsPending(t *testing.T) {

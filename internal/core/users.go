@@ -565,6 +565,55 @@ const (
 // invisible until an operator goes looking for it.
 const EventUserDeactivationCleanupFailed = "user.deactivation_cleanup_failed"
 
+// RevokeUserCredentialsForDeactivation performs the SAME mandatory PAT/session
+// revocation UpdateUser's own local deactivating branch applies inline
+// against storage directly (see that branch's comment) — a MANDATORY,
+// already-decided consequence of a deactivation that has ALREADY been
+// committed by the caller, not an independent action a caller is choosing to
+// take on its own (that case is RevokeAllPersonalAccessTokensForUser/
+// DeleteSessionsForUserExcept above, which correctly gate on
+// requireUserCredentialsRevokeAuthority because there the revocation IS the
+// whole ask). #1572: the /system UpdateUserIfActiveStateMatchesProxy handler
+// used to call THOSE ceiling-gated wrappers for its own post-deactivation
+// cleanup — any caller reaching that route without users.write (the route's
+// own gate is the broader, non-project-scoped system.write every /system
+// proxy accepts, not users.write specifically) would have the deactivation
+// itself succeed while this cleanup silently failed the ceiling check and
+// was swallowed as "best-effort." Calling storage directly here, exactly as
+// UpdateUser's local branch does, removes the inappropriate re-authorization
+// instead of threading it through — the deactivation decision was already
+// authorized (or not) upstream of this call by whatever decided to persist
+// IsActive=false; revocation is not a second decision.
+//
+// Session-cache eviction is unconditional: sessionHashes is collected BEFORE
+// the revocation attempt (mirroring UpdateUser exactly) so the up-to-30s
+// warm-auth-cache window (server/middleware/auth.go's serveAuthCacheHit)
+// closes immediately regardless of whether the row deletion itself
+// succeeds — a session already blocked by IsActive=false at the DB layer
+// could otherwise still authenticate against a stale cache entry for that
+// window. PAT-hash eviction remains conditional on the revoke call
+// succeeding (it needs the returned hashes to know what to evict), matching
+// UpdateUser's identical asymmetry — a row a failed revocation leaves behind
+// is inert regardless (ValidatePATToken's live IsActive re-check blocks it),
+// only the up-to-30s cache window differs, same tradeoff UpdateUser already
+// accepts. Fire-and-forget: audits on failure, returns nothing, exactly like
+// the code path it mirrors.
+func (c *KeyorixCore) RevokeUserCredentialsForDeactivation(ctx context.Context, userID uint) {
+	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	patHashes, patErr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, userID)
+	sessionErr := c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
+	c.invalidateTokenCache(sessionHashes...)
+	if patErr == nil {
+		c.invalidateTokenCache(patHashes...)
+	}
+	if patErr != nil || sessionErr != nil {
+		c.writeAuditEventFailed(ctx, EventUserDeactivationCleanupFailed, nil, nil, "",
+			fmt.Sprintf("user %d deactivated, but credential cleanup was incomplete (pat_error=%v, session_error=%v) — "+
+				"the account is already login-blocked regardless, but a stale row may remain until its own expiry",
+				userID, patErr, sessionErr))
+	}
+}
+
 // DeleteUser deprovisions and soft-deletes a user by ID: blocks login
 // (AccountDeprovisioned, mirroring DeprovisionSCIMUser), terminates every session,
 // revokes every personal access token, and evicts them from the auth cache — then
