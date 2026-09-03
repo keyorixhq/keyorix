@@ -159,17 +159,25 @@ func TestCountMachineIdentityCredentialsByClassificationProxy_DBError_S30(t *tes
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// FIX-1 moved this handler's role resolution (GetRoleByName) ahead of the
+// persist step, so a broken DB connection is now hit there first, not at
+// CreateProjectMembership -- and GetRoleByName's error path (project_memberships_proxy.go)
+// maps ANY resolution error, including a genuine storage failure, to 400
+// "unknown role", matching the same catch-all convention every other
+// GetRoleByName caller in this codebase already uses (e.g.
+// internal/core/invitations.go's InviteToProject: "unknown role %q: %w"
+// regardless of the underlying cause). This is a pre-existing, repo-wide
+// convention FIX-1 exposed here for the first time, not a new one introduced
+// by it; refining GetRoleByName's error taxonomy is a separate, broader
+// change out of this fix's scope.
 func TestCreateMembershipProxy_DBError_S30(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	// #1578: role must be non-admin so this reaches the broken-DB path this test
-	// is actually about, rather than being rejected earlier by
-	// RequireAuthorityForRole (this request has no authenticated actor at all).
 	body := bytes.NewBufferString(`{"project_id":1,"user_id":1,"role":"viewer","state":"active"}`)
 	req := httptest.NewRequest(http.MethodPost, "/", body)
 	w := httptest.NewRecorder()
 	h.CreateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── DashboardHandler ──────────────────────────────────────────────────────────

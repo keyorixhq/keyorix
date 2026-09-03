@@ -47,7 +47,7 @@ func TestAssignUserRole_BlocksNewSoDViolation(t *testing.T) {
 	// newly completes the policy, so the grant must be refused. actorID 0 is the
 	// system pseudo-actor (bypasses the unrelated grant-ceiling check — #93/#107/
 	// #141 — so only the SoD gate under test is exercised).
-	err = h.CoreService.AssignUserRole(ctx, 0, 10, 3, core.Scope{})
+	err = h.CoreService.AssignUserRole(ctx, 0, 10, 3, core.Scope{}, false)
 	require.Error(t, err, "granting editor must be blocked: it would create a new SoD violation")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 
@@ -74,7 +74,7 @@ func TestAssignUserRole_AllowsNonViolatingGrant(t *testing.T) {
 	// auditor (audit.read, audit.admin, system.read, users.read, roles.read) shares
 	// no permission with either side of the policy beyond what bob already holds
 	// alone — granting it completes nothing.
-	err = h.CoreService.AssignUserRole(ctx, 0, 11, 5, core.Scope{})
+	err = h.CoreService.AssignUserRole(ctx, 0, 11, 5, core.Scope{}, false)
 	require.NoError(t, err, "a non-violating grant must succeed unimpeded")
 
 	ids, gerr := h.Storage.GetUserRoleIDsAt(ctx, 11, storage.Scope{})
@@ -163,7 +163,7 @@ func TestAssignRoleToGroup_BlocksNewSoDViolationForMember(t *testing.T) {
 
 	// Granting editor (secrets.write) to the GROUP would complete the policy for
 	// erin, its member.
-	err = h.CoreService.AssignRoleToGroup(ctx, 1, 30, 3, core.Scope{})
+	err = h.CoreService.AssignRoleToGroup(ctx, 1, 30, 3, core.Scope{}, false)
 	require.Error(t, err, "the group grant must be blocked on behalf of the member it would newly violate for")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 
@@ -191,7 +191,7 @@ func TestAssignRoleToGroup_AllowsNonViolatingGrant(t *testing.T) {
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
-	err = h.CoreService.AssignRoleToGroup(ctx, 1, 31, 5, core.Scope{}) // auditor: no conflict
+	err = h.CoreService.AssignRoleToGroup(ctx, 1, 31, 5, core.Scope{}, false) // auditor: no conflict
 	require.NoError(t, err, "a non-violating group grant must succeed unimpeded")
 
 	roles, gerr := h.CoreService.GetGroupRoles(ctx, 31)
@@ -225,7 +225,7 @@ func TestCreateUserWithAssignments_BlocksNewSoDViolationAcrossGrantSet(t *testin
 	// ("default") is already seeded by testhelper.seedTestData.
 	_, err = h.CoreService.CreateUserWithAssignments(ctx, &core.CreateUserRequest{
 		Username: "grace", Email: "grace@test.com", DisplayName: "Grace", Password: "Sup3rS3cret!Pass",
-	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "editor"}}, 0)
+	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "editor"}}, 0, false)
 	require.Error(t, err, "the combined grant set must be refused for completing an SoD policy")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 
@@ -248,7 +248,7 @@ func TestCreateUserWithAssignments_AllowsNonViolatingGrantSet(t *testing.T) {
 	// Project 1 ("default") is already seeded by testhelper.seedTestData.
 	created, err := h.CoreService.CreateUserWithAssignments(ctx, &core.CreateUserRequest{
 		Username: "heidi", Email: "heidi@test.com", DisplayName: "Heidi", Password: "Sup3rS3cret!Pass",
-	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "auditor"}}, 0)
+	}, "viewer", []core.ProjectAssignment{{ProjectID: 1, Role: "auditor"}}, 0, false)
 	require.NoError(t, err, "a non-violating grant set must succeed unimpeded")
 	assert.NotZero(t, created.ID)
 }
@@ -306,7 +306,7 @@ func TestAssignUserRole_AdminBypassNotBlockedBySoD(t *testing.T) {
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 
-	err = h.CoreService.AssignUserRole(ctx, 0, 17, 3, core.Scope{}) // editor
+	err = h.CoreService.AssignUserRole(ctx, 0, 17, 3, core.Scope{}, false) // editor
 	require.NoError(t, err, "granting a role to an existing admin-bypass holder must not be refused by the SoD gate")
 }
 
@@ -335,7 +335,7 @@ func TestAssignUserRole_ProjectScopedAdminNotExemptFromSoD(t *testing.T) {
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-audit-admin", "", "secrets.write", "audit.admin")
 	require.NoError(t, err)
 
-	err = h.CoreService.AssignUserRole(ctx, 0, 18, 5, core.Scope{}) // auditor
+	err = h.CoreService.AssignUserRole(ctx, 0, 18, 5, core.Scope{}, false) // auditor
 	require.Error(t, err, "a project-scoped admin must still be blocked by the SoD gate, unlike a true global admin")
 	assert.Contains(t, err.Error(), "separation-of-duties")
 }

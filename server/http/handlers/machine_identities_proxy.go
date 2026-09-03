@@ -910,7 +910,7 @@ func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if err := h.coreService.AssignMachineRole(r.Context(), uint(machineID), uint(roleID), scope, actorID(r)); err != nil {
+	if err := h.coreService.AssignMachineRole(r.Context(), uint(machineID), uint(roleID), scope, actorID(r), isMachineActor(r)); err != nil {
 		if isAlreadyAssignedErr(err) {
 			writeRemoteAPIError(w, http.StatusConflict, "ALREADY_ASSIGNED", "role already assigned")
 			return

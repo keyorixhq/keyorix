@@ -118,7 +118,12 @@ func (h *CatalogHandler) CreateMembershipProxy(w http.ResponseWriter, r *http.Re
 	// a project-admin credential) could mint itself or anyone else an
 	// admin-tier active membership. Derive the same ceiling the human-facing
 	// path uses, by reference, rather than re-deriving an equivalent check.
-	if err := h.coreService.RequireAuthorityForRole(r.Context(), actorID(r), body.ProjectID, body.Role); err != nil {
+	membershipRole, roleErr := h.coreService.Storage().GetRoleByName(r.Context(), body.Role)
+	if roleErr != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "unknown role: "+roleErr.Error())
+		return
+	}
+	if err := h.coreService.RequireGranterHoldsRolePermissions(r.Context(), actorID(r), membershipRole.ID, core.Scope{ProjectID: body.ProjectID}, isMachineActor(r)); err != nil {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 		return
 	}
@@ -245,7 +250,7 @@ func (h *CatalogHandler) TransitionMembershipProxy(w http.ResponseWriter, r *htt
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "membership.state (the target state) is required")
 		return
 	}
-	_, err = h.coreService.TransitionMembership(r.Context(), body.Membership.ProjectID, uint(id), body.Membership.State, actorID(r))
+	_, err = h.coreService.TransitionMembership(r.Context(), body.Membership.ProjectID, uint(id), body.Membership.State, actorID(r), isMachineActor(r))
 	if err != nil {
 		// #G42: a lost CAS race is a normal outcome on this wire contract
 		// (matched=false), not a server error -- matches every other

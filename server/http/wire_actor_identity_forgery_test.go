@@ -64,17 +64,26 @@ func TestWireActorForgery_CreateInvitationProxy_RealAdminSucceeds(t *testing.T) 
 
 // TestWireActorForgery_CreateInvitationProxy_PersistedInvitedByIsAlwaysCaller
 // closes a gap in the two tests above: both only exercise a FORBIDDEN path
-// (system_admin is admin-tier, so requireAuthorityForRole rejects the request
-// before model.InvitedBy is ever assigned), so neither can tell whether the
+// (system_admin is admin-tier, so the ceiling rejects the request before
+// model.InvitedBy is ever assigned), so neither can tell whether the
 // persisted attribution fix (model.InvitedBy = actorID(r), invitations_proxy.go)
-// is load-bearing or dead code. A non-admin role clears requireAuthorityForRole
-// for ANY system.write caller by design (see that function's doc), so this
-// drives a request that actually SUCCEEDS with a forged invited_by, then reads
-// the persisted row back and asserts it names the real caller, not the forgery.
+// is load-bearing or dead code. FIX-1 replaced the name-based ceiling
+// (requireAuthorityForRole, which cleared for ANY non-admin-tier role name
+// regardless of the caller's real permissions) with
+// requireGranterHoldsRolePermissions, which derives the ceiling from the
+// role's actual bundled permissions -- so the invited role here must be
+// created with NO bundled permissions for a system.write-only caller to
+// still clear it. Using a permission-less role isolates this test to its
+// actual subject -- persisted-attribution -- not the ceiling itself.
 func TestWireActorForgery_CreateInvitationProxy_PersistedInvitedByIsAlwaysCaller(t *testing.T) {
 	f := newMachinePrivilegeCeilingFixture(t)
 	ctx := context.Background()
 	caller, err := f.core.GetUserByEmail(ctx, "sys_write_only@example.com")
+	require.NoError(t, err)
+
+	roleName, err := identity.NewFoldedName("ceiling_test_non_admin_invitee_role")
+	require.NoError(t, err)
+	_, err = f.core.Storage().CreateRole(ctx, roleName, "test-only role: no bundled permissions")
 	require.NoError(t, err)
 
 	status, body := f.do(t, f.swToken, http.MethodPost, "/api/v1/system/invitations", map[string]any{
@@ -138,11 +147,14 @@ func TestWireActorForgery_UpdateAccessRequestProxy_CannotForgeResolvedBy(t *test
 // closes the same gap as the invitation-proxy counterpart above: the SecretID!=nil
 // (restricted-secret) path used by CannotForgeResolvedBy is denied by
 // RequireAdminAuthorityAt before ResolvedBy is ever assigned, so it can't tell
-// whether `existing.ResolvedBy = resolverID` is load-bearing. The
-// project/role-scoped path (SecretID==nil) clears RequireAuthorityForRole for
-// ANY caller when the suggested role is non-admin, exactly like
-// CreateInvitationProxy's non-admin-role path -- drive that path to a real
-// 200 with a forged resolved_by and check the persisted row.
+// whether `existing.ResolvedBy = resolverID` is load-bearing. FIX-1 replaced
+// the name-based ceiling on the project/role-scoped path (SecretID==nil) with
+// requireGranterHoldsRolePermissions, which derives the ceiling from the
+// role's actual bundled permissions -- so the granted role here must be a
+// fresh permission-less role, not "project_viewer" (which bundles
+// secrets.read the system.write-only caller doesn't hold), for this to still
+// reach a real 200. Using a permission-less role isolates this test to its
+// actual subject -- persisted-attribution -- not the ceiling itself.
 func TestWireActorForgery_UpdateAccessRequestProxy_PersistedResolvedByIsAlwaysCaller(t *testing.T) {
 	f := newMachinePrivilegeCeilingFixture(t)
 	ctx := context.Background()
@@ -156,11 +168,16 @@ func TestWireActorForgery_UpdateAccessRequestProxy_PersistedResolvedByIsAlwaysCa
 	requester, err := f.core.GetUserByEmail(ctx, "wire_forge_requester3@example.com")
 	require.NoError(t, err)
 
-	req, err := f.core.RequestProjectAccess(ctx, f.projectID, requester.ID, "project_viewer", "need role access for a task, at least 20 chars")
+	roleName, err := identity.NewFoldedName("ceiling_test_non_admin_grant_role")
+	require.NoError(t, err)
+	_, err = f.core.Storage().CreateRole(ctx, roleName, "test-only role: no bundled permissions")
+	require.NoError(t, err)
+
+	req, err := f.core.RequestProjectAccess(ctx, f.projectID, requester.ID, "ceiling_test_non_admin_grant_role", "need role access for a task, at least 20 chars")
 	require.NoError(t, err)
 
 	status, body := f.do(t, f.swToken, http.MethodPut, fmt.Sprintf("/api/v1/system/access-requests/%d", req.ID), map[string]any{
-		"id": req.ID, "project_id": f.projectID, "user_id": requester.ID, "granted_role": "project_viewer",
+		"id": req.ID, "project_id": f.projectID, "user_id": requester.ID, "granted_role": "ceiling_test_non_admin_grant_role",
 		"state": "approved", "reason": "approved", "resolved_by": f.adminID, "resolved_at": time.Now(),
 	})
 	t.Logf("PUT /system/access-requests/%d (system.write-only, non-admin role, resolved_by forged to real admin %d): status=%d body=%s", req.ID, f.adminID, status, body)

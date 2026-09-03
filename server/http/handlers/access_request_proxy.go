@@ -305,7 +305,12 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 			if role == "" {
 				role = existing.SuggestedRole
 			}
-			if err := h.coreService.RequireAuthorityForRole(r.Context(), resolverID, existing.ProjectID, role); err != nil {
+			roleModel, roleErr := h.coreService.Storage().GetRoleByName(r.Context(), role)
+			if roleErr != nil {
+				writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "unknown role: "+roleErr.Error())
+				return
+			}
+			if err := h.coreService.RequireGranterHoldsRolePermissions(r.Context(), resolverID, roleModel.ID, core.Scope{ProjectID: existing.ProjectID}, resolverType == core.ActorTypeMachine); err != nil {
 				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 				return
 			}

@@ -99,7 +99,7 @@ var g80TriageClosureClaims = []g80ClosureClaim{
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1558 (CreateInvitationProxy/UpdateInvitationProxy escalation-by-proxy bypass)",
 		sha: "28b52cfbeec5a1acd2bf2d81e32afb42328e4590",
 		marker: g80ClosureMarker{file: "server/http/handlers/invitations_proxy.go",
-			mustExist: "RequireAuthorityForRole"}},
+			mustExist: "RequireGranterHoldsRolePermissions"}},
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1559 (SoD policy and risk-exception authority gaps)",
 		sha: "f83d63c63a03a6bedc79a4440eb84def3805a471",
 		marker: g80ClosureMarker{file: "internal/core/sod.go",

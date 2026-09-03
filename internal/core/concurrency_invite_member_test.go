@@ -31,7 +31,7 @@ func TestConcurrency_InviteMember_NoDuplicateActiveMembership(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "invite.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Role{}, &models.ProjectMembership{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Role{}, &models.ProjectMembership{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{}))
 	// Mirror factory.go's ensureProjectMembershipIndex exactly, so this test exercises the
 	// same DB-level guard production installs get (rather than only the in-process check).
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+

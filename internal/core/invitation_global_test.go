@@ -111,7 +111,7 @@ func TestInviteGlobal_RejectsNonAdminGrantingGlobalAdminRole(t *testing.T) {
 
 	_, err := c.InviteGlobal(ctx, "mallory@acme.io", "admin", nil, nonAdminID, 0)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only an administrator can grant")
+	assert.Contains(t, err.Error(), "do not hold permission")
 }
 
 // #231: the per-project assignments bundled into a global invite must be
@@ -130,7 +130,7 @@ func TestInviteGlobal_RejectsNonAdminGrantingProjectAdminAssignment(t *testing.T
 		{ProjectID: proj.ID, Role: "project_admin"},
 	}, nonAdminID, 0)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only an administrator can grant")
+	assert.Contains(t, err.Error(), "do not hold permission")
 }
 
 func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {

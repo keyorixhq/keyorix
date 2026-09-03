@@ -353,23 +353,26 @@ func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineToke
 // AssignMachineRole grants a role to a machine identity at the given scope and
 // audits it. The machine must belong to scope.ProjectID — the caller is only
 // proven to hold roles.assign at that project, so a machine in another project
-// must not be reachable through this path. Granting an admin role is additionally
-// gated by requireAuthorityForRole (the same escalation-by-proxy ceiling
-// AddProjectMember applies) — an admin-credentialed machine identity is just as
-// much a self-escalation vector as an admin user grant. Also gated by the #419
+// must not be reachable through this path. The grant is additionally gated by
+// requireGranterHoldsRolePermissions (the same escalation-by-proxy ceiling
+// AddProjectMember applies, and by the role's real bundled permissions, not only
+// its name) — an admin-credentialed machine identity is just as much a
+// self-escalation vector as an admin user grant. Also gated by the #419
 // separation-of-duties preventive check (requireMachineGrantNoSoDViolation,
 // sod.go) — a machine identity holds real permissions too and Authorize
 // authorizes it, so the same toxic-permission-pair concern applies.
-func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint) error {
+// actorIsMachine distinguishes a machine-credential-authenticated GRANTING actor
+// (also actorID==0) from the true actorID==0 system pseudo-actor — distinct from
+// machineID, the role's TARGET.
+func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint, actorIsMachine bool) error {
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
 		return err
 	}
-	role, err := c.storage.GetRole(ctx, roleID)
-	if err != nil {
+	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return err
 	}
-	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
 	if err := c.requireMachineGrantNoSoDViolation(ctx, machineID, roleID); err != nil {

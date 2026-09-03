@@ -242,6 +242,9 @@ func TestCreateMembershipProxy_Valid_S21(t *testing.T) {
 	require.NoError(t, db.Create(proj).Error)
 	user := &models.User{Username: "s21-pm-user", Email: "s21pm@example.com", AccountState: "active"}
 	require.NoError(t, db.Create(user).Error)
+	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
+	// role by ID, so it must exist as a real row.
+	require.NoError(t, db.Create(&models.Role{Name: "member"}).Error)
 
 	wire := membershipProxyWire{
 		ProjectID: proj.ID,

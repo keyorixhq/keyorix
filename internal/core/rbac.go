@@ -25,7 +25,7 @@ func (c *KeyorixCore) AssignUserRoleScoped(ctx context.Context, userEmail, roleN
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	if err := c.AssignUserRole(ctx, 0, user.ID, role.ID, scope); err != nil {
+	if err := c.AssignUserRole(ctx, 0, user.ID, role.ID, scope, false); err != nil {
 		return err
 	}
 	return nil

@@ -191,17 +191,16 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 // only exists because two of the group's OWN roles combine with each other —
 // see requireGroupJoinNoSoDViolation's doc comment (sod.go) for the concrete
 // gap and how this mirrors requireGrantSetNoSoDViolation's set-based shape.
-func (c *KeyorixCore) validateGroupJoinRoles(ctx context.Context, actorID, userID, groupID uint) error {
+func (c *KeyorixCore) validateGroupJoinRoles(ctx context.Context, actorID uint, actorIsMachine bool, userID, groupID uint) error {
 	grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, g := range grants {
-		role, err := c.storage.GetRole(ctx, g.RoleID)
-		if err != nil {
+		if _, err := c.storage.GetRole(ctx, g.RoleID); err != nil {
 			continue
 		}
-		if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
+		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, g.RoleID, Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID}, actorIsMachine); err != nil {
 			return err
 		}
 	}
@@ -259,7 +258,7 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 	// (AssignUserRole has the identical race).
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("user", userID), func(ctx context.Context) error {
 		if actorID != 0 || actorIsMachine {
-			if err := c.validateGroupJoinRoles(ctx, actorID, userID, groupID); err != nil {
+			if err := c.validateGroupJoinRoles(ctx, actorID, actorIsMachine, userID, groupID); err != nil {
 				return err
 			}
 		}

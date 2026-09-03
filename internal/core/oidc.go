@@ -266,7 +266,7 @@ func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineI
 	if strings.TrimSpace(issuer) == "" || strings.TrimSpace(subject) == "" {
 		return nil, fmt.Errorf("issuer and subject are required")
 	}
-	if err := c.requireAuthorityForRole(ctx, actorID, 0, "system_admin"); err != nil {
+	if err := c.requireAdminAuthorityAt(ctx, actorID, 0); err != nil {
 		return nil, fmt.Errorf("binding an OIDC subject requires install-wide admin authority: %w", err)
 	}
 	// Surface operator typos early: a binding to an issuer Keyorix doesn't trust

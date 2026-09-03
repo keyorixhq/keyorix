@@ -45,7 +45,7 @@ func TestAssignMachineRole_GlobalScopeRejected(t *testing.T) {
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
 	c := NewKeyorixCore(ms)
 
-	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 0}, 1)
+	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 0}, 1, false)
 
 	require.Error(t, err, "a machine identity must never be grantable a role at global scope")
 	ms.AssertNotCalled(t, "AssignMachineRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -73,7 +73,7 @@ func TestAssignMachineRole_GlobalScopeRejected_EvenIfMachineLookupSomehowReturne
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 
-	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 0}, 1)
+	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 0}, 1, false)
 
 	require.NoError(t, err, "machineInProject matches ProjectID 0 == 0 -- this documents the gap rather than hiding it")
 	ms.AssertCalled(t, "AssignMachineRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)

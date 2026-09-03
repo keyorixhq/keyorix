@@ -167,7 +167,7 @@ func TestAssignMachineRole_MachineNotFound(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
-	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1)
+	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1, false)
 	require.Error(t, err)
 }
 
@@ -177,7 +177,7 @@ func TestAssignMachineRole_RoleNotFound(t *testing.T) {
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
 	ms.On("GetRole", mock.Anything, uint(2)).Return(nil, errors.New("role not found"))
 	c := NewKeyorixCore(ms)
-	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1)
+	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1, false)
 	require.Error(t, err)
 }
 
@@ -193,7 +193,7 @@ func TestAssignMachineRole_Success(t *testing.T) {
 	// LogAuditEvent for logMachineEvent → writeAuditEventFull.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
-	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1)
+	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1, false)
 	require.NoError(t, err)
 }
 

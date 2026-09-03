@@ -78,7 +78,7 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(err.Error(), "not found"):
 			sendError(w, "NotFound", "User or group not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "only an administrator can grant"):
+		case strings.Contains(err.Error(), "cannot grant this role"):
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		default:
 			sendError(w, "InternalError", "Failed to add group member", http.StatusInternalServerError, nil)

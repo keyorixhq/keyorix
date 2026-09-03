@@ -45,7 +45,7 @@ func TestProjectMemberLifecycle(t *testing.T) {
 	grantGlobalAdmin(t, st, actor)
 
 	// Add as project_viewer.
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
 	members, err = c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -53,10 +53,10 @@ func TestProjectMemberLifecycle(t *testing.T) {
 	assert.Equal(t, "project_viewer", members[0].RoleName)
 
 	// Adding the same role again is a conflict.
-	require.Error(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+	require.Error(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
 
 	// Change role to project_developer — replaces, doesn't accumulate.
-	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_developer"))
+	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_developer", false))
 	members, err = c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
 	require.Len(t, members, 1, "member should have exactly one project role after change")
@@ -82,7 +82,7 @@ func TestAddProjectMemberUnknownRole(t *testing.T) {
 	ctx := context.Background()
 	u, err := st.CreateUser(ctx, &models.User{Username: "bob", Email: "bob@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.Error(t, c.AddProjectMember(ctx, 99, 1, u.ID, "no_such_role"))
+	require.Error(t, c.AddProjectMember(ctx, 99, 1, u.ID, "no_such_role", false))
 }
 
 // ADR-022's domain allowlist previously only gated the email-based
@@ -100,7 +100,7 @@ func TestAddProjectMember_RejectsDisallowedDomain(t *testing.T) {
 	u, err := st.CreateUser(ctx, &models.User{Username: "mallory", Email: "mallory@evil.com", IsActive: true})
 	require.NoError(t, err)
 
-	err = c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer")
+	err = c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not on the allowlist")
 
@@ -123,7 +123,7 @@ func TestSetProjectMemberRole_RejectsDisallowedDomainForNewMember(t *testing.T) 
 	u, err := st.CreateUser(ctx, &models.User{Username: "trent", Email: "trent@evil.com", IsActive: true})
 	require.NoError(t, err)
 
-	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer")
+	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not on the allowlist")
 }
@@ -140,12 +140,12 @@ func TestSetProjectMemberRole_AllowsRoleChangeForExistingMemberRegardlessOfDomai
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "peggy", Email: "peggy@evil.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
 
 	// The allowlist is only turned on AFTER peggy already joined.
 	c.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
-	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_developer"))
+	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_developer", false))
 	members, err := c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -166,7 +166,7 @@ func TestProjectMemberGrantIsRBACAudited(t *testing.T) {
 	u, err := st.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com", IsActive: true})
 	require.NoError(t, err)
 
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestRemoveProjectMember_RevokesEnvironmentScopedGrantToo(t *testing.T) {
 	require.NoError(t, err)
 
 	// Project-level membership (what the Members UI shows)...
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_developer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_developer", false))
 	// ...plus a SEPARATE environment-scoped grant (e.g. "prod-only access"),
 	// created the way POST /user-roles would (gated by GLOBAL roles.assign).
 	require.NoError(t, st.AssignRole(ctx, u.ID, role.ID, storage.Scope{ProjectID: proj, EnvironmentID: prodEnv}))
@@ -252,7 +252,7 @@ func TestRemoveProjectMember_RefusesLastAdmin(t *testing.T) {
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "dave", Email: "dave@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin", false))
 
 	err = c.RemoveProjectMember(ctx, actor, proj, u.ID)
 	require.Error(t, err)
@@ -276,9 +276,9 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion(t *testing.T) {
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "erin", Email: "erin@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin", false))
 
-	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer")
+	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "last administrator")
 
@@ -301,8 +301,8 @@ func TestRemoveProjectMember_AllowsNonLastAdmin(t *testing.T) {
 	require.NoError(t, err)
 	u2, err := st.CreateUser(ctx, &models.User{Username: "grace", Email: "grace@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u1.ID, "project_admin"))
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u2.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u1.ID, "project_admin", false))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u2.ID, "project_admin", false))
 
 	// Removing one of two admins succeeds — the other keeps the project governed.
 	require.NoError(t, c.RemoveProjectMember(ctx, actor, proj, u1.ID))
@@ -341,7 +341,7 @@ func TestRemoveProjectMember_RevokesSecretACLGrants(t *testing.T) {
 	// Create a user and add them to the project.
 	u, err := st.CreateUser(ctx, &models.User{Username: "ivy", Email: "ivy@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
 
 	// Grant the user a per-secret ACL on the secret.
 	require.NoError(t, c.GrantSecretACL(ctx, actor, sec.ID, u.ID, []string{"secrets.read"}))
@@ -377,7 +377,7 @@ func TestRemoveProjectMember_NonAdminAlwaysRemovable(t *testing.T) {
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "henry", Email: "henry@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer", false))
 
 	require.NoError(t, c.RemoveProjectMember(ctx, actor, proj, u.ID))
 	members, err := c.ListProjectMembers(ctx, proj)
@@ -404,7 +404,7 @@ func TestRemoveProjectMember_RefusesLastAdmin_EmptyAdminGroup(t *testing.T) {
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "ivan", Email: "ivan@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin", false))
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)
@@ -433,7 +433,7 @@ func TestRemoveProjectMember_RefusesLastAdmin_AllGroupMembersDeactivated(t *test
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "judy", Email: "judy@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin", false))
 
 	// Created active, then explicitly deactivated via UpdateUser: models.User.IsActive
 	// has a `gorm:"default:true"` tag, so GORM treats an explicit IsActive:false on
@@ -474,7 +474,7 @@ func TestRemoveProjectMember_RefusesLastAdmin_SoftDeletedAdminGroup(t *testing.T
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "karl", Email: "karl@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin", false))
 
 	member, err := st.CreateUser(ctx, &models.User{Username: "leo", Email: "leo@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -508,7 +508,7 @@ func TestRemoveProjectMember_AllowsRemoval_WhenAdminGroupHasLiveMember(t *testin
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "mike", Email: "mike@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin", false))
 
 	member, err := st.CreateUser(ctx, &models.User{Username: "nancy", Email: "nancy@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -540,7 +540,7 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion_EmptyAdminGroup(t *testin
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "oscar", Email: "oscar@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin", false))
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)
@@ -548,7 +548,7 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion_EmptyAdminGroup(t *testin
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{ProjectID: proj}))
 
-	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer")
+	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer", false)
 	require.Error(t, err, "an admin group with zero live members must not count as a surviving admin")
 	assert.Contains(t, err.Error(), "last administrator")
 

@@ -90,7 +90,7 @@ func seedShareData(t *testing.T, svc *core.KeyorixCore) (ownerID, secretID, proj
 	// membership (RBAC-001, requireLiveOwnerAuthority) — CreateProject alone
 	// doesn't grant the creator a project-scoped role, so add it explicitly,
 	// matching real onboarding (a project creator adds themselves as a member).
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, proj.ID, ownerID, "project_admin"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, proj.ID, ownerID, "project_admin", false))
 
 	// CreateProject seeds default environments; fetch the first one.
 	envs, err := svc.Storage().ListEnvironmentsByProject(ctx, proj.ID)
@@ -131,7 +131,7 @@ func TestRunCreate_UserShare_Success(t *testing.T) {
 		Username: "recipient", Email: "recipient@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup :=
 		createSecretID, createRecipientID, createPermission, createIsGroup
@@ -168,7 +168,7 @@ func TestRunCreate_GroupShare_Success(t *testing.T) {
 	// ShareSecretWithGroup verifies the group is scoped to the secret's project.
 	role, err := svc.Storage().GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
-	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}))
+	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}, false))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup :=
 		createSecretID, createRecipientID, createPermission, createIsGroup
@@ -203,7 +203,7 @@ func TestRunCreate_WithTTL_Success(t *testing.T) {
 		Username: "recv2", Email: "recv2@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup, origTTL :=
 		createSecretID, createRecipientID, createPermission, createIsGroup, createTTL
@@ -241,7 +241,7 @@ func TestRunList_PrintsTableForExistingShares(t *testing.T) {
 		Username: "listtgt", Email: "listtgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	_, err = svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -272,7 +272,7 @@ func TestRunList_PrintsTableWithExpiry(t *testing.T) {
 		Username: "listtgt2", Email: "listtgt2@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	exp := time.Now().Add(48 * time.Hour)
 	_, err = svc.ShareSecret(ctx, &core.ShareSecretRequest{
@@ -307,7 +307,7 @@ func TestRunRevoke_Success(t *testing.T) {
 		Username: "revoketgt", Email: "revoketgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -347,7 +347,7 @@ func TestRunGroupShares_PrintsTable(t *testing.T) {
 	// ShareSecretWithGroup verifies the group is scoped to the secret's project.
 	role, err := svc.Storage().GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
-	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}))
+	require.NoError(t, svc.AssignRoleToGroup(ctx, ownerID, grp.ID, role.ID, core.Scope{ProjectID: projID}, false))
 
 	_, err = svc.ShareSecretWithGroup(ctx, &core.GroupShareSecretRequest{
 		SecretID:   secretID,
@@ -387,7 +387,7 @@ func TestRunSharedSecrets_PrintsTable(t *testing.T) {
 		Username: "sharedtgt", Email: "sharedtgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	_, err = svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -421,7 +421,7 @@ func TestRunUpdate_Success(t *testing.T) {
 		Username: "updatetgt", Email: "updatetgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -459,7 +459,7 @@ func TestRunUpdate_WithTTL_Success(t *testing.T) {
 		Username: "updatetgt2", Email: "updatetgt2@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -497,7 +497,7 @@ func TestRunUpdate_ClearExpiry_Success(t *testing.T) {
 		Username: "clearexptgt", Email: "clearexptgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer", false))
 
 	exp := time.Now().Add(24 * time.Hour)
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{

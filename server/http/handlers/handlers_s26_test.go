@@ -1410,6 +1410,9 @@ func TestUpdateAccessRequestProxy_HappyPath_S26(t *testing.T) {
 
 	proj := &models.Project{Name: "s26-update-ar-proj"}
 	require.NoError(t, db.Create(proj).Error)
+	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
+	// role by ID, so it must exist as a real row.
+	require.NoError(t, db.Create(&models.Role{Name: "viewer"}).Error)
 	ar := &models.AccessRequest{
 		UserID:        1,
 		ProjectID:     proj.ID,

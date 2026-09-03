@@ -144,9 +144,13 @@ func TestGetAccessRequestProxy_Success_S9(t *testing.T) {
 
 func TestUpdateAccessRequestProxy_Success_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
+	// role by ID once the update transitions to "approved", so a real role
+	// must exist for the (empty by default) suggested_role to resolve to.
+	ensureS4TestRole(t, h, "s9-approve-role")
 
 	// Create a pending access request
-	createBody := `{"project_id":3,"user_id":3,"state":"pending","requester_id":3}`
+	createBody := `{"project_id":3,"user_id":3,"state":"pending","requester_id":3,"suggested_role":"s9-approve-role"}`
 	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
 	createW := httptest.NewRecorder()
 	h.CreateAccessRequestProxy(createW, createReq)

@@ -94,12 +94,19 @@ func TestRemoteStorageInvitation_CreateGetList_RealServer(t *testing.T) {
 	upstream, downstream, projectID, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
+	// FIX-1's requireGranterHoldsRolePermissions ceiling means a machine/node-
+	// token caller (as `downstream` authenticates) can't be granted "viewer"
+	// (it bundles a real permission the machine actor can never satisfy —
+	// see TestApprove_DualControl_TwoDistinctMachineApprovers's rationale in
+	// internal/core). A permission-less role isolates this test to its actual
+	// subject — create/get/list round-tripping — not the ceiling.
+	role := arTestPermissionlessRole(t, upstream)
 
-	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "invitee@example.com", "viewer", 1))
+	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "invitee@example.com", role, 1))
 	require.NoError(t, err, "creating an invitation must succeed via storage.type: remote")
 	require.NotZero(t, inv.ID, "the upstream must assign a real ID")
 	assert.Equal(t, "invitee@example.com", inv.Email)
-	assert.Equal(t, "viewer", inv.Role)
+	assert.Equal(t, role, inv.Role)
 	assert.Equal(t, core.InvitationPending, inv.State)
 	assert.Equal(t, projectID, inv.ProjectID)
 	assert.NotNil(t, inv.ExpiresAt, "the 14-day TTL must round-trip")
@@ -123,7 +130,7 @@ func TestRemoteStorageInvitation_CreateGetList_RealServer(t *testing.T) {
 
 	// A second invitation to a different email, then list both back via the
 	// downstream's ListProjectInvitations.
-	_, err = downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "second@example.com", "viewer", 1))
+	_, err = downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "second@example.com", role, 1))
 	require.NoError(t, err)
 
 	rows, err := downstream.Storage().ListProjectInvitations(ctx, projectID)
@@ -156,7 +163,8 @@ func TestRemoteStorageInvitation_UpdateAlreadyResolved_RealServer(t *testing.T) 
 	ctx := context.Background()
 	now := time.Now()
 
-	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "resolved@example.com", "viewer", 1))
+	role := arTestPermissionlessRole(t, upstream)
+	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "resolved@example.com", role, 1))
 	require.NoError(t, err)
 
 	// Resolve it once (accept) directly against the upstream's real storage.
@@ -192,11 +200,12 @@ func TestRemoteStorageInvitation_UpdateAlreadyResolved_RealServer(t *testing.T) 
 // on, even across a network hop — not a client-side
 // "GET, check state, then PUT" sequence, which would reopen exactly this race.
 func TestRemoteStorageInvitation_ConcurrentAcceptRace_RealServer(t *testing.T) {
-	_, downstream, projectID, _ := newUpstreamDownstreamForInvitations(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForInvitations(t)
 	ctx := context.Background()
 	now := time.Now()
+	role := arTestPermissionlessRole(t, upstream)
 
-	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "race@example.com", "viewer", 1))
+	inv, err := downstream.Storage().CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "race@example.com", role, 1))
 	require.NoError(t, err)
 
 	const n = 20
@@ -342,8 +351,13 @@ func TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition(t *t
 	inviterSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "inv-real-inviter", Password: pw})
 	require.NoError(t, err)
 	asInviter := newDeleteProjectScopeRemoteClient(t, baseURL, inviterSess.SessionToken)
+	// FIX-1's requireGranterHoldsRolePermissions ceiling means the inviter
+	// (system.write only, no other role) can't grant "viewer" — see
+	// arTestPermissionlessRole's doc. A permission-less role isolates this
+	// test to its actual subject — the update path's field-narrowing.
+	role := arTestPermissionlessRole(t, upstream)
 
-	inv, err := asInviter.CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "real-invitee@example.com", "viewer", 1))
+	inv, err := asInviter.CreateProjectInvitation(ctx, buildPendingInvitation(now, projectID, "real-invitee@example.com", role, 1))
 	require.NoError(t, err)
 
 	acceptedAt := time.Now()
@@ -364,7 +378,7 @@ func TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition(t *t
 	require.NoError(t, err)
 	assert.Equal(t, core.InvitationAccepted, fetched.State, "the state transition itself must apply")
 	assert.Equal(t, "real-invitee@example.com", fetched.Email, "the original email must survive, not the forged one")
-	assert.Equal(t, "viewer", fetched.Role, "the original role must survive, not the forged admin role")
+	assert.Equal(t, role, fetched.Role, "the original role must survive, not the forged admin role")
 	assert.Empty(t, fetched.SystemRole, "no system role was ever set on this invitation; the forged one must not appear")
 	assert.Equal(t, inviter.ID, fetched.InvitedBy, "the original inviter must survive, not the forged one")
 	assert.Equal(t, projectID, fetched.ProjectID, "the original project must survive")

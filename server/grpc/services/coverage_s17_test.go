@@ -117,7 +117,7 @@ func TestMapUserError_Duplicate(t *testing.T) {
 }
 
 func TestMapUserError_AdministratorCanGrant(t *testing.T) {
-	err := mapUserError(errors.New("only an administrator can grant this role"))
+	err := mapUserError(errors.New("cannot grant this role: you do not hold permission \"system.write\" yourself"))
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 

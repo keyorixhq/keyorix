@@ -23,7 +23,7 @@ func TestAssignUserRole_RequiresActorHoldRolePermissions(t *testing.T) {
 
 	const attacker = uint(9) // holds roles.assign in the real exploit (irrelevant here — no roles at all)
 	const target = uint(10)
-	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{ProjectID: 3})
+	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{ProjectID: 3}, false)
 	require.Error(t, err, "a roles.assign holder must not grant a role bundling a permission they don't hold themselves")
 	assert.Contains(t, err.Error(), "do not hold permission")
 
@@ -51,7 +51,7 @@ func TestAssignUserRole_CannotGrantToThirdPartyEither(t *testing.T) {
 	const victim = uint(20) // a third party, not the attacker themselves
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 3, ProjectID: 3}).Error)
 
-	err := c.AssignUserRole(ctx, attacker, victim, 2, Scope{ProjectID: 3})
+	err := c.AssignUserRole(ctx, attacker, victim, 2, Scope{ProjectID: 3}, false)
 	require.Error(t, err, "holding roles.assign alone must not be enough to grant a role bundling secrets.delete")
 	assert.Contains(t, err.Error(), "do not hold permission")
 }
@@ -73,12 +73,12 @@ func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
 	// attacker holds secrets.delete only at project 3, not globally.
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 3, ProjectID: 3}).Error)
 
-	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{}) // global grant attempt
+	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{}, false) // global grant attempt
 	require.Error(t, err, "a project-scoped holder must not grant the role globally")
 	assert.Contains(t, err.Error(), "do not hold permission")
 
 	// The SAME grant at the project scope they actually hold the permission at succeeds.
-	require.NoError(t, c.AssignUserRole(ctx, attacker, target, 2, Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignUserRole(ctx, attacker, target, 2, Scope{ProjectID: 3}, false))
 }
 
 // An actor who genuinely holds every bundled permission (directly, at an
@@ -100,7 +100,7 @@ func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
 	const target = uint(10)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 3}).Error) // global grant
 
-	require.NoError(t, c.AssignUserRole(ctx, holder, target, 2, Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignUserRole(ctx, holder, target, 2, Scope{ProjectID: 3}, false))
 
 	var count int64
 	require.NoError(t, db.Model(&models.UserRole{}).Where("user_id = ? AND role_id = ?", target, 2).Count(&count).Error)
@@ -123,7 +123,7 @@ func TestAssignUserRole_AdminBypassesCeiling(t *testing.T) {
 	const target = uint(10)
 	require.NoError(t, db.Create(&models.UserRole{UserID: admin, RoleID: 1}).Error)
 
-	require.NoError(t, c.AssignUserRole(ctx, admin, target, 2, Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignUserRole(ctx, admin, target, 2, Scope{ProjectID: 3}, false))
 }
 
 // actorID 0 is the established "system" pseudo-actor for genuinely non-attacker-
@@ -138,7 +138,7 @@ func TestAssignUserRole_SystemActorBypassesCeiling(t *testing.T) {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 
 	const target = uint(10)
-	require.NoError(t, c.AssignUserRole(ctx, 0, target, 2, Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignUserRole(ctx, 0, target, 2, Scope{ProjectID: 3}, false))
 
 	var count int64
 	require.NoError(t, db.Model(&models.UserRole{}).Where("user_id = ? AND role_id = ?", target, 2).Count(&count).Error)
@@ -154,5 +154,5 @@ func TestAssignUserRole_EmptyRoleAlwaysGrantable(t *testing.T) {
 
 	const actor = uint(9) // holds nothing
 	const target = uint(10)
-	require.NoError(t, c.AssignUserRole(ctx, actor, target, 2, Scope{ProjectID: 3}))
+	require.NoError(t, c.AssignUserRole(ctx, actor, target, 2, Scope{ProjectID: 3}, false))
 }

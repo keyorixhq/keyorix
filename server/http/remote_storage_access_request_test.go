@@ -150,6 +150,32 @@ func TestRemoteStorageAccessRequest_GetUnknown_RealServer(t *testing.T) {
 	require.Error(t, err)
 }
 
+// arTestPermissionlessRole creates (if needed) a test-only role with NO
+// bundled permissions and returns its name. UpdateAccessRequestProxy's
+// Approved-state transition now runs requireGranterHoldsRolePermissions
+// (FIX-1) against whatever role is granted — a machine/node-token caller
+// (as these RealServer tests authenticate) can never satisfy that ceiling
+// for a role bundling a real permission (a separate, pre-existing gap: the
+// ceiling resolves permissions via c.Authorize, keyed on UserID, which is
+// always 0 for a machine caller, not via AuthorizePrincipal/
+// GetMachineRoleIDsAt — see TestApprove_DualControl_TwoDistinctMachineApprovers's
+// identical rationale). Using a permission-less role isolates these tests to
+// their actual subject — the conditional-update race guarantee — not the
+// ceiling itself.
+func arTestPermissionlessRole(t *testing.T, upstream *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+	const name = "ar_test_permissionless_role"
+	if _, err := upstream.Storage().GetRoleByName(ctx, name); err == nil {
+		return name
+	}
+	folded, err := identity.NewFoldedName(name)
+	require.NoError(t, err)
+	_, err = upstream.Storage().CreateRole(ctx, folded, "test-only role: no bundled permissions")
+	require.NoError(t, err)
+	return name
+}
+
 // TestRemoteStorageAccessRequest_UpdateConditional_RealServer proves
 // UpdateAccessRequestProxy performs the SAME conditional
 // `WHERE id = ? AND state = 'pending'` write local_invitations.go's
@@ -159,9 +185,10 @@ func TestRemoteStorageAccessRequest_GetUnknown_RealServer(t *testing.T) {
 // clobbering it — the #277 race guarantee ApproveAccessRequestWithExpiry/
 // RejectAccessRequest/WithdrawAccessRequest all depend on.
 func TestRemoteStorageAccessRequest_UpdateConditional_RealServer(t *testing.T) {
-	_, downstream, projectID, _ := newUpstreamDownstreamForAccessRequests(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForAccessRequests(t)
 	ctx := context.Background()
 	now := time.Now()
+	grantRole := arTestPermissionlessRole(t, upstream)
 
 	req := buildAccessRequest(now, projectID, 7, "developer")
 	created, err := downstream.Storage().CreateAccessRequest(ctx, req)
@@ -169,7 +196,7 @@ func TestRemoteStorageAccessRequest_UpdateConditional_RealServer(t *testing.T) {
 
 	// First transition: pending -> approved. Must match the row.
 	created.State = "approved"
-	created.GrantedRole = "developer"
+	created.GrantedRole = grantRole
 	resolvedAt := now.Add(time.Minute)
 	created.ResolvedAt = &resolvedAt
 	created.ResolvedBy = 99
@@ -180,7 +207,7 @@ func TestRemoteStorageAccessRequest_UpdateConditional_RealServer(t *testing.T) {
 	fetched, err := downstream.Storage().GetAccessRequest(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "approved", fetched.State)
-	assert.Equal(t, "developer", fetched.GrantedRole)
+	assert.Equal(t, grantRole, fetched.GrantedRole)
 
 	// Second transition attempt (e.g. a concurrent reject/withdraw that lost
 	// the race): the row is no longer "pending", so this must cleanly report
@@ -206,9 +233,10 @@ func TestRemoteStorageAccessRequest_UpdateConditional_RealServer(t *testing.T) {
 // this race. Mirrors #521's
 // TestRemoteStorageSSOState_ConcurrentConsumeRace_RealServer exactly.
 func TestRemoteStorageAccessRequest_ConcurrentUpdateRace_RealServer(t *testing.T) {
-	_, downstream, projectID, _ := newUpstreamDownstreamForAccessRequests(t)
+	upstream, downstream, projectID, _ := newUpstreamDownstreamForAccessRequests(t)
 	ctx := context.Background()
 	now := time.Now()
+	grantRole := arTestPermissionlessRole(t, upstream)
 
 	req := buildAccessRequest(now, projectID, 11, "developer")
 	created, err := downstream.Storage().CreateAccessRequest(ctx, req)
@@ -228,7 +256,7 @@ func TestRemoteStorageAccessRequest_ConcurrentUpdateRace_RealServer(t *testing.T
 				ProjectID:     created.ProjectID,
 				UserID:        created.UserID,
 				SuggestedRole: created.SuggestedRole,
-				GrantedRole:   "developer",
+				GrantedRole:   grantRole,
 				State:         "approved",
 				ExpiresAt:     created.ExpiresAt,
 				CreatedAt:     created.CreatedAt,

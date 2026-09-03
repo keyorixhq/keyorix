@@ -22,12 +22,14 @@ func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([
 
 // AddProjectMember assigns roleName to userID at the project scope. actorID is the
 // acting principal (0 = no authenticated principal, e.g. a system-driven onboarding
-// transition); see AssignUserRole for actorID semantics — including the
+// transition); actorIsMachine distinguishes a machine-credential-authenticated
+// caller (also actorID==0) from that true unauthenticated case — see
+// AssignUserRole for actorID semantics — including the
 // requireGranterHoldsRolePermissions escalation-by-proxy ceiling (#93/#107/#141)
 // AssignUserRole applies to every grant, so a non-admin roles.assign holder cannot
 // mint a project_admin (or any role bundling permissions they don't hold) through
 // this direct entry point.
-func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string) error {
+func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
 	if err := c.domainAllowedForUser(ctx, userID); err != nil {
 		return err
 	}
@@ -35,13 +37,13 @@ func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, 
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
 	}
-	return c.AssignUserRole(ctx, actorID, userID, role.ID, Scope{ProjectID: projectID})
+	return c.AssignUserRole(ctx, actorID, userID, role.ID, Scope{ProjectID: projectID}, actorIsMachine)
 }
 
 // SetProjectMemberRole replaces the user's role(s) at the project scope with
 // roleName, adding the member if they had none. See AddProjectMember for actorID
 // semantics.
-func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, projectID, userID uint, roleName string) error {
+func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
@@ -86,7 +88,7 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 		if hasTarget {
 			return nil
 		}
-		return c.AssignUserRole(ctx, actorID, userID, role.ID, scope)
+		return c.AssignUserRole(ctx, actorID, userID, role.ID, scope, actorIsMachine)
 	})
 }
 

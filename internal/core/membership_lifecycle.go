@@ -152,7 +152,8 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	if role == "" {
 		return nil, fmt.Errorf("a project role is required")
 	}
-	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
+	inviteMemberRole, err := c.storage.GetRoleByName(ctx, role)
+	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
 	if err := c.domainAllowedForUser(ctx, userID); err != nil {
@@ -166,10 +167,11 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("project %d not found or deleted", projectID)
 	}
-	// Escalation-by-proxy guard: onboarding a member as an admin role requires the
-	// inviter to hold admin authority at the project (parallel to the access-request
-	// approval ceiling). idpResolved invites still pass through here.
-	if err := c.requireAuthorityForRole(ctx, invitedBy, projectID, role); err != nil {
+	// Escalation-by-proxy guard: onboarding a member requires the inviter to already
+	// hold every permission the role bundles (parallel to the access-request
+	// approval ceiling), not merely an admin-tier role name. idpResolved invites
+	// still pass through here.
+	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteMemberRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
 		return nil, err
 	}
 	// One active onboarding per (project, user).
@@ -207,7 +209,7 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	c.logMembershipEvent(ctx, "membership.invited", created, invitedBy)
 	// If the mode put us straight into active, grant the role now.
 	if created.State == MembershipActive {
-		if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role); err != nil {
+		if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role, invitedByMachineID != 0); err != nil {
 			// #309: created just committed as `active` above; if the role grant that's
 			// supposed to back it fails (e.g. the composite user_roles primary key
 			// rejects a grant that already exists via some other, independent path —
@@ -252,7 +254,9 @@ func initialMembershipStateForMode(mode string, idpResolved bool) string {
 // TransitionMembership advances a membership to the next state, enforcing the
 // state machine. Reaching `active` grants the project role; `revoked` removes it.
 // actorID is the user performing the transition (for the audit trail).
-func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membershipID uint, to string, actorID uint) (*models.ProjectMembership, error) {
+// actorIsMachine distinguishes a machine-credential-authenticated caller (also
+// actorID==0) from the true actorID==0 system pseudo-actor.
+func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membershipID uint, to string, actorID uint, actorIsMachine bool) (*models.ProjectMembership, error) {
 	m, err := c.storage.GetProjectMembership(ctx, membershipID)
 	if err != nil {
 		return nil, fmt.Errorf("membership not found")
@@ -266,11 +270,15 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		return nil, fmt.Errorf("cannot transition membership from %s to %s", m.State, to)
 	}
 	// Activating a membership grants its role, so the same escalation-by-proxy ceiling
-	// applies: the actor must hold admin authority at the project to activate a membership
-	// carrying an admin role. (Revocation/other transitions remove or don't grant, so
+	// applies: the actor must already hold every permission the membership's role
+	// bundles to activate it. (Revocation/other transitions remove or don't grant, so
 	// they're unaffected.)
 	if to == MembershipActive {
-		if err := c.requireAuthorityForRole(ctx, actorID, m.ProjectID, m.Role); err != nil {
+		activateRole, err := c.storage.GetRoleByName(ctx, m.Role)
+		if err != nil {
+			return nil, fmt.Errorf("unknown role %q: %w", m.Role, err)
+		}
+		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, activateRole.ID, Scope{ProjectID: m.ProjectID}, actorIsMachine); err != nil {
 			return nil, err
 		}
 	}
@@ -303,7 +311,7 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	// Side effects on the role grant.
 	switch to {
 	case MembershipActive:
-		if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role); err != nil {
+		if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role, actorIsMachine); err != nil {
 			// #309: m just committed as `active` above; if the role grant fails, revert
 			// to the state m held before this transition (not straight to revoked) —
 			// unlike inviteMemberWithMode's straight-to-active create, this row already

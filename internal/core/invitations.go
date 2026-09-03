@@ -51,22 +51,19 @@ const (
 
 // ── Invitations ────────────────────────────────────────────────────────────
 
-// requireAuthorityForRole refuses to GRANT an admin role (super_admin/admin/system_admin/
-// project_admin) unless the actor holds admin authority at the project scope. The various
-// grant entry points (access-request approval, project invite, membership activation) are
-// gated by roles.assign, but that alone would let a non-admin roles.assign holder mint a
-// principal more powerful than themselves — escalation-by-proxy. Non-admin roles pass (the
-// roles.assign gate covers them). actorID==0 (a system/unauthenticated path) cannot grant
-// an admin role through these flows.
-func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, projectID uint, role string) error {
-	if !isAdminRoleName(role) {
-		return nil
-	}
-	if err := c.requireAdminAuthorityAt(ctx, actorID, projectID); err != nil {
-		return fmt.Errorf("only an administrator can grant the administrative role %q: %w", role, err)
-	}
-	return nil
-}
+// requireAuthorityForRole (REMOVED, FIX-1): used to refuse a role GRANT only
+// when the role's NAME matched the fixed canonical admin-tier list
+// (super_admin/admin/system_admin/project_admin), doing nothing for any other
+// role regardless of what permissions it actually bundled. A custom role
+// bundling real permissions under a non-canonical name passed this check
+// unconditionally on 9 entry points (AssignRoleToGroup, AssignGroupRoleWithExpiry,
+// AssignMachineRole, AddUserToGroup, CreateUserWithAssignments, InviteToProject/
+// InviteGlobal, ApproveAccessRequestWithExpiry, TransitionMembership, plus the
+// /system proxy re-derivations), letting a low-privilege actor mint an
+// arbitrary permission-rich role via any of them. All 9 (plus the proxy layer)
+// now call requireGranterHoldsRolePermissions instead — the same mechanism
+// AssignUserRole/AssignUserRoleWithExpiry already used, deriving the ceiling
+// from the role's real bundled permissions, not its name.
 
 // RequireAdminAuthorityAt exports requireAdminAuthorityAt for the /system proxy
 // layer (server/http/handlers), which cannot call unexported KeyorixCore methods
@@ -80,10 +77,13 @@ func (c *KeyorixCore) RequireAdminAuthorityAt(ctx context.Context, actorID, proj
 	return c.requireAdminAuthorityAt(ctx, actorID, projectID)
 }
 
-// RequireAuthorityForRole exports requireAuthorityForRole for the same reason as
-// RequireAdminAuthorityAt above.
-func (c *KeyorixCore) RequireAuthorityForRole(ctx context.Context, actorID, projectID uint, role string) error {
-	return c.requireAuthorityForRole(ctx, actorID, projectID, role)
+// RequireGranterHoldsRolePermissions exports requireGranterHoldsRolePermissions
+// for the /system proxy layer, for the same reason as RequireAdminAuthorityAt
+// above -- re-deriving, at the hub, the escalation-by-proxy grant ceiling a
+// matching core method already enforces locally on a downstream node before
+// relaying a state change here.
+func (c *KeyorixCore) RequireGranterHoldsRolePermissions(ctx context.Context, actorID, roleID uint, scope Scope, actorIsMachine bool) error {
+	return c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine)
 }
 
 // requireAdminAuthorityAt refuses unless actorID holds an admin role (adminRoleNames)
@@ -116,12 +116,14 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 	if !c.domainAllowed(email) {
 		return nil, fmt.Errorf("email domain is not on the allowlist")
 	}
-	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
+	inviteRole, err := c.storage.GetRoleByName(ctx, role)
+	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
-	// Escalation-by-proxy guard: inviting someone as an admin role requires the inviter
-	// to hold admin authority at the project (parallel to the access-request ceiling).
-	if err := c.requireAuthorityForRole(ctx, invitedBy, projectID, role); err != nil {
+	// Escalation-by-proxy guard: the inviter must already hold every permission the
+	// invited role bundles (parallel to the access-request ceiling), not merely an
+	// admin-tier role name.
+	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
 		return nil, err
 	}
 	now := c.now()
@@ -211,13 +213,15 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 	if sysRole == "" {
 		sysRole = "system_viewer"
 	}
-	if _, err := c.storage.GetRoleByName(ctx, sysRole); err != nil {
+	sysRoleModel, err := c.storage.GetRoleByName(ctx, sysRole)
+	if err != nil {
 		return nil, fmt.Errorf("unknown role %q (system): %w", sysRole, err)
 	}
 	// Escalation-by-proxy guard (#231), mirroring InviteToProject: a global system
-	// role is the most powerful grant this flow can mint, so it needs the same
-	// admin-authority ceiling check, at global scope (projectID 0).
-	if err := c.requireAuthorityForRole(ctx, invitedBy, 0, sysRole); err != nil {
+	// role is the most powerful grant this flow can mint, so it needs the ceiling
+	// check applied everywhere else — the inviter's real bundled permissions, not
+	// just the role's name — at global scope (projectID 0).
+	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, sysRoleModel.ID, Scope{}, invitedByMachineID != 0); err != nil {
 		return nil, err
 	}
 
@@ -235,14 +239,15 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 		if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
 			return nil, fmt.Errorf("unknown project %d: %w", a.ProjectID, err)
 		}
-		if _, err := c.storage.GetRoleByName(ctx, a.Role); err != nil {
+		assignRole, err := c.storage.GetRoleByName(ctx, a.Role)
+		if err != nil {
 			return nil, fmt.Errorf("unknown role %q: %w", a.Role, err)
 		}
 		// Same ceiling check InviteToProject applies to its own role parameter —
-		// without this, a non-admin roles.assign holder could bundle an
-		// admin-conferring project assignment into an otherwise-innocuous global
+		// without this, a non-admin roles.assign holder could bundle a
+		// permission-rich project assignment into an otherwise-innocuous global
 		// invite.
-		if err := c.requireAuthorityForRole(ctx, invitedBy, a.ProjectID, a.Role); err != nil {
+		if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, assignRole.ID, Scope{ProjectID: a.ProjectID}, invitedByMachineID != 0); err != nil {
 			return nil, err
 		}
 		clean = append(clean, ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
@@ -329,7 +334,7 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 			// grant for a global invitation (up to and including super_admin), which
 			// previously left zero trace of any kind (#299). Attributed to the inviter,
 			// consistent with the per-project assignment grants below.
-			if err := c.AssignUserRole(ctx, inv.InvitedBy, userID, role.ID, Scope{ProjectID: 0}); err != nil {
+			if err := c.AssignUserRole(ctx, inv.InvitedBy, userID, role.ID, Scope{ProjectID: 0}, inv.InvitedByMachineIdentityID != 0); err != nil {
 				return fmt.Errorf("failed to grant system role: %w", err)
 			}
 		}
@@ -694,9 +699,10 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
-	// Privilege ceiling: an approver may not grant an admin role unless they themselves
-	// hold admin authority at this project (escalation-by-proxy guard).
-	if err := c.requireAuthorityForRole(ctx, approverID, req.ProjectID, role); err != nil {
+	// Privilege ceiling: an approver may not grant a role unless they themselves
+	// hold every permission it bundles (escalation-by-proxy guard), not merely an
+	// admin-tier role name.
+	if err := c.requireGranterHoldsRolePermissions(ctx, approverID, roleModel.ID, Scope{ProjectID: req.ProjectID}, approverMachineID != 0); err != nil {
 		return nil, err
 	}
 	// One sign-off per distinct approver.
@@ -784,15 +790,17 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 		expiresAt := now.Add(grantTTL)
 		// Routed through the audited wrapper so this grant lands in the RBAC audit
 		// trail with a structured RoleID, alongside the generic access_request.approved
-		// event below (#298). actorIsMachine=false: unchanged from before #1542 --
-		// approverID here isn't threaded from a live actor-kind signal at this call
-		// site; a machine-driven approval chain is a sibling finding, not fixed here.
-		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt, false); err != nil {
+		// event below (#298). approverMachineID (mirroring ApproverMachineIdentityID's
+		// own attribution convention: approverID is 0 when the approver was a machine
+		// identity, and approverMachineID carries the real ID) closes the sibling gap
+		// #1542 left open here — a machine-driven approval no longer gets the trusted
+		// actorID==0 exemption unconditionally.
+		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt, approverMachineID != 0); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", roleModel.Name, expiresAt.UTC().Format(time.RFC3339), grantTTL)
 	} else {
-		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); err != nil {
+		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope, approverMachineID != 0); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 	}
