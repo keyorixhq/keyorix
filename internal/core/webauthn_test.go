@@ -84,6 +84,33 @@ func TestWebAuthn_DisabledServerRejects(t *testing.T) {
 	require.ErrorIs(t, err, ErrWebAuthnDisabled)
 }
 
+// FinishWebAuthnRegistration and FinishWebAuthnLogin must refuse just as
+// early as their Begin counterparts when no relying party is configured --
+// neither should reach the requireReauth/challenge-consumption steps below.
+func TestWebAuthn_FinishDisabledServerRejects(t *testing.T) {
+	c, _ := newWebAuthnTestCore(t, false)
+	ctx := context.Background()
+	_, err := c.FinishWebAuthnRegistration(ctx, 1, "tok", "laptop", webauthnTestPassword, nil)
+	require.ErrorIs(t, err, ErrWebAuthnDisabled)
+	_, _, err = c.FinishWebAuthnLogin(ctx, "ch", "tok", "ua", "1.2.3.4", nil)
+	require.ErrorIs(t, err, ErrWebAuthnDisabled)
+}
+
+// A malformed/unknown webauthn ceremony session token must be rejected before
+// any assertion is parsed -- distinct from TestWebAuthn_FinishLoginRejectsMismatchedSession,
+// which covers a session that consumes fine but belongs to the wrong purpose/user.
+func TestWebAuthn_FinishLoginRejectsInvalidSessionToken(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	_, _, err = c.FinishWebAuthnLogin(ctx, ch, "not-a-real-session-token", "ua", "1.2.3.4", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "webauthn session")
+}
+
 func TestWebAuthn_RegistrationBeginIssuesSingleUseSession(t *testing.T) {
 	c, _ := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
