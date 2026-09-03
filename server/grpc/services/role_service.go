@@ -177,24 +177,9 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	// Resolve the name for the audit log before the row is gone (mirrors HTTP).
-	role, _, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
-	if err != nil {
+	if err := s.core.DeleteRole(ctx, actor.UserID, uint(req.GetId())); err != nil {
 		return nil, mapRoleError(err)
 	}
-	// A built-in role must not be deletable over gRPC either — the HTTP handler
-	// refuses it (handlers/rbac.go), and deleting e.g. super_admin/admin would
-	// invalidate live assignments and can lock every administrator out. Without
-	// this the guard is bypassable by switching transport.
-	if core.IsBuiltinRole(role.Name) {
-		s.core.LogRoleDeleteDenied(ctx, actor.UserID, role.ID, role.Name, "target is a built-in role")
-		return nil, status.Errorf(codes.FailedPrecondition, "cannot delete built-in role: %s", role.Name)
-	}
-	if err := s.core.Storage().DeleteRole(ctx, uint(req.GetId())); err != nil {
-		return nil, mapRoleError(err)
-	}
-	// Audit the deletion — Storage().DeleteRole does not audit internally.
-	s.core.LogRoleDeleted(ctx, actor.UserID, role.ID, role.Name)
 	return &emptypb.Empty{}, nil
 }
 

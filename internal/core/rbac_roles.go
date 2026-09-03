@@ -137,3 +137,36 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 	c.LogRoleUpdated(ctx, actorID, updated.ID, updated.Name)
 	return updated, nil
 }
+
+// DeleteRole deletes a role definition by id. Rejects deleting a built-in
+// role (mirrors CreateRole/UpdateRole's reserved-name guard — deleting
+// e.g. admin/super_admin would invalidate every live assignment of it and
+// can lock every administrator out).
+//
+// #1660 sibling sweep (Part 2 regression audit continuation): both
+// transports' DeleteRole handlers used to call storage.Storage.DeleteRole
+// directly, the SAME direct-to-storage shape #1665 fixed for CreateRole/
+// UpdateRole, recurring exactly as that issue's own "worthwhile follow-up"
+// predicted. Unlike the original pre-#1665 CreateRole gap, this one was
+// NOT a live, exploitable hole — both transports had already, deliberately,
+// kept an inline IsBuiltinRole check and audit call in sync (the gRPC side's
+// own comment: "the guard is bypassable by switching transport" shows the
+// duplication was intentional and watched, not accidental) — but the
+// architectural risk (duplicated logic that could silently drift) is the
+// same one #1665 closed for the other two operations. Consolidating here
+// for the same reason, not because a gap was found live.
+func (c *KeyorixCore) DeleteRole(ctx context.Context, actorID, id uint) error {
+	role, err := c.storage.GetRole(ctx, id)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if IsBuiltinRole(role.Name) {
+		c.LogRoleDeleteDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "cannot delete built-in role: "+role.Name)
+	}
+	if err := c.storage.DeleteRole(ctx, id); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.LogRoleDeleted(ctx, actorID, role.ID, role.Name)
+	return nil
+}

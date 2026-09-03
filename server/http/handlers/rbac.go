@@ -415,32 +415,20 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, err := h.coreService.Storage().GetRole(r.Context(), id)
-	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
+	if err := h.coreService.DeleteRole(r.Context(), userCtx.UserID, id); err != nil {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, errNotFound):
 			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
-		} else {
-			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
-		}
-		return
-	}
-	if core.IsBuiltinRole(role.Name) {
-		h.coreService.LogRoleDeleteDenied(r.Context(), userCtx.UserID, role.ID, role.Name, "target is a built-in role")
-		sendError(w, "Forbidden", "Cannot delete built-in role: "+role.Name, http.StatusForbidden, nil)
-		return
-	}
-
-	if err := h.coreService.Storage().DeleteRole(r.Context(), id); err != nil {
-		log.Printf("Error deleting role: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
-		} else {
+		case strings.Contains(msg, "built-in role"):
+			sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
+		default:
+			log.Printf("Error deleting role: %v", err)
 			sendError(w, "InternalError", "Failed to delete role", http.StatusInternalServerError, nil)
 		}
 		return
 	}
 
-	h.coreService.LogRoleDeleted(r.Context(), userCtx.UserID, role.ID, role.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
