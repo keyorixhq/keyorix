@@ -116,8 +116,34 @@ func TestDeleteSoDPolicy_BadID_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// FIX-6 (adversarial review run 2, #1645 403-for-both): withUserCtx's
+// hardcoded UserID=1 has no role assigned, so it is not admin-tier -- a
+// nonexistent policy id now surfaces the SAME 403 a non-admin caller gets for
+// an existing-but-foreign policy (TestDeleteSoDPolicy_PermissionDenied_S13
+// below), not a distinguishing 404. Real 404 is reserved for an admin-tier
+// caller; see TestDeleteSoDPolicy_AdminTier_NotFound_S13.
 func TestDeleteSoDPolicy_NotFound_S13(t *testing.T) {
 	h := newCatalogHandlerSoDSodS13(t)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999"))
+	w := httptest.NewRecorder()
+	h.DeleteSoDPolicy(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// The real-404 exception: an admin-tier caller gets a genuine not-found for a
+// nonexistent policy id, since they could delete any policy regardless of
+// which one this is -- the same standing #1645/ADR-096 requires for the
+// real-404 exception to apply.
+func TestDeleteSoDPolicy_AdminTier_NotFound_S13(t *testing.T) {
+	h := newCatalogHandlerSoDSodS13(t)
+	ctx := context.Background()
+	systemAdminName, err := identity.NewFoldedName("system_admin")
+	require.NoError(t, err)
+	adminRole, err := h.coreService.Storage().CreateRole(ctx, systemAdminName, "Administrator")
+	require.NoError(t, err)
+	require.NoError(t, h.coreService.Storage().SetRoleBypassesPermissionChecks(ctx, adminRole.ID, true))
+	require.NoError(t, h.coreService.Storage().AssignRole(ctx, 1, adminRole.ID, storage.Scope{}))
+
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999"))
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicy(w, req)
@@ -235,10 +261,15 @@ func TestDeleteSoDPolicyProxy_BadID_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// FIX-6: a request with no user context resolves actorID(r) to 0 (an
+// uncredentialed/system pseudo-actor), which DeleteSoDPolicy's #1529
+// authority check has never treated as admin-tier -- so a nonexistent policy
+// id surfaces the same 403 denial as an existing-but-foreign one, not a
+// distinguishing 404 (see DeleteSoDPolicyProxy's doc comment).
 func TestDeleteSoDPolicyProxy_NotFound_S13(t *testing.T) {
 	h := newCatalogHandlerSoDSodS13(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }

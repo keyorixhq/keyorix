@@ -466,6 +466,15 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("AddUserToGroup", mock.Anything, uint(7), uint(1), uint(0)).Return(nil)      // admins: asserted, not current → add (global)
 		store.On("RemoveUserFromGroup", mock.Anything, uint(7), uint(3), uint(0)).Return(nil) // ops: current, not asserted → remove (global)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+		// FIX-2: removals now route through the guarded RemoveUserFromGroupGlobal
+		// (guardLastGlobalAdminMembership, guardLastProjectAdminGroupMembership)
+		// instead of calling storage.RemoveUserFromGroup directly — both guards
+		// short-circuit cleanly (no admin-tier role anywhere in this fixture), but
+		// still need these lookups stubbed.
+		store.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError)
+		store.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
+		store.On("ListGroupRoleAssignments", mock.Anything, uint(3)).Return(nil, nil)
 
 		c.syncSSOGroups(context.Background(), p, 7, raw)
 

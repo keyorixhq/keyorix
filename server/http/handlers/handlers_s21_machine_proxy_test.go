@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -759,13 +760,13 @@ func TestRevokeMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 	require.Equal(t, http.StatusOK, cw2.Code)
 	var credResp remoteAPIResponse
 	require.NoError(t, json.NewDecoder(cw2.Body).Decode(&credResp))
-	credID := "1"
-	_ = credResp
+	credID := strconv.FormatUint(uint64(credResp.Data.(map[string]interface{})["id"].(float64)), 10)
 
 	req := withChiParam(
 		httptest.NewRequest(http.MethodPost, "/system/machine-credentials/"+credID+"/revoke", proxyBodyS21(map[string]interface{}{"project_id": 40})),
 		"id", credID,
 	)
+	req = withOIDCAdminCtxS21(t, h, req)
 	w := httptest.NewRecorder()
 	h.RevokeMachineIdentityCredentialProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

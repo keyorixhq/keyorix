@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -15,6 +16,41 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// ErrSoDValidation, ErrSoDPermissionDenied, and ErrSoDNotFound classify
+// CreateSoDPolicy/DeleteSoDPolicy failures for server/http/handlers/sod.go to
+// match via errors.Is, rather than the substring text match it used to do
+// against these functions' i18n-prefixed messages (e.g.
+// strings.Contains(msg, "permission denied")). That match only worked because
+// every shipped locale left the underlying translation key (ErrorValidation/
+// ErrorPermissionDenied) untranslated -- the first deployment whose locale
+// translates it would silently fall through to the handler's generic 500
+// default instead of the correct 400/403.
+var (
+	ErrSoDValidation       = errors.New("sod validation")
+	ErrSoDPermissionDenied = errors.New("sod permission denied")
+	ErrSoDNotFound         = errors.New("sod policy not found")
+)
+
+// sodClassifiedError tags err as matching target for errors.Is, without
+// target's own text ever appearing in Error() -- same shape as FIX-4's
+// roleValidationError (internal/core/rbac_roles.go).
+type sodClassifiedError struct {
+	err    error
+	target error
+}
+
+func (e *sodClassifiedError) Error() string        { return e.err.Error() }
+func (e *sodClassifiedError) Unwrap() error        { return e.err }
+func (e *sodClassifiedError) Is(target error) bool { return target == e.target }
+
+func wrapSoDValidation(err error) error {
+	return &sodClassifiedError{err: err, target: ErrSoDValidation}
+}
+func wrapSoDPermissionDenied(err error) error {
+	return &sodClassifiedError{err: err, target: ErrSoDPermissionDenied}
+}
+func wrapSoDNotFound(err error) error { return &sodClassifiedError{err: err, target: ErrSoDNotFound} }
 
 // SoD audit event types. Create/Delete denial paths below reuse these SAME
 // constants (Success=false via writeAuditEventFailed distinguishes a denied
@@ -101,13 +137,13 @@ func (c *KeyorixCore) CreateSoDPolicy(ctx context.Context, actorID uint, name, d
 	permA = strings.TrimSpace(permA)
 	permB = strings.TrimSpace(permB)
 	if name == "" {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a policy name is required")
+		return nil, wrapSoDValidation(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a policy name is required"))
 	}
 	if permA == "" || permB == "" {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "two permissions are required")
+		return nil, wrapSoDValidation(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "two permissions are required"))
 	}
 	if permA == permB {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the two permissions must be different")
+		return nil, wrapSoDValidation(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the two permissions must be different"))
 	}
 	// #1529 authority check runs AFTER field validation (mirrors PlaceLegalHold's
 	// own order: cheap input checks before a DB-backed authority resolution) --
@@ -115,8 +151,8 @@ func (c *KeyorixCore) CreateSoDPolicy(ctx context.Context, actorID uint, name, d
 	if c.isGlobalAdminRoleName(ctx, actorID) == "" {
 		c.writeAuditEventFailed(ctx, EventSoDPolicyCreated, actorPtr(actorID), nil, "",
 			fmt.Sprintf("SoD policy create DENIED: actor %d is not an admin-tier principal", actorID))
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
-			"only an admin-tier principal may define a SoD policy")
+		return nil, wrapSoDPermissionDenied(fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only an admin-tier principal may define a SoD policy"))
 	}
 	policy, err := c.storage.CreateSoDPolicy(ctx, &models.SoDPolicy{
 		Name: name, Description: description, PermissionA: permA, PermissionB: permB,
@@ -155,16 +191,49 @@ func (c *KeyorixCore) ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy,
 // mirrors LiftLegalHold's creator-or-admin precedent exactly: only the
 // principal who originally created the policy, or a global-admin-tier
 // principal, may delete it. A denied attempt is itself audited.
+//
+// FIX-6 (adversarial review run 2): the authority check used to run AFTER the
+// existence lookup, and returned that lookup's error verbatim on failure --
+// so a caller holding the deliberately-broad system.write (this route's own
+// gate; see this file's own doc comment) but no creator/admin-tier standing
+// could tell "policy id doesn't exist" (404, from GetSoDPolicy's own error)
+// apart from "policy id exists but isn't mine" (403, from the check below): a
+// reliable ID-enumeration oracle. Fixed per ADR-096's 403-for-both
+// convention, already the house standard for exactly this shape
+// (server/middleware/auth.go's handleScopeResolutionError): a real 404 is
+// safe ONLY for a caller already authorized at global admin-tier -- the SAME
+// standing that would grant access to this resource had it existed, mirroring
+// handleScopeResolutionError's own "authorized at global scope" condition --
+// since an admin-tier caller can already see/delete every policy regardless
+// of which id this is. Every other caller gets the IDENTICAL
+// ErrSoDPermissionDenied response whether the id is missing or just not
+// theirs -- same status, same message, same error classification -- closing
+// the oracle rather than merely renaming it.
 func (c *KeyorixCore) DeleteSoDPolicy(ctx context.Context, actorID, id uint) error {
+	isAdminTier := c.isGlobalAdminRoleName(ctx, actorID) != ""
+
 	policy, err := c.storage.GetSoDPolicy(ctx, id)
 	if err != nil {
+		if isAdminTier && errors.Is(err, storage.ErrSoDPolicyNotFound) {
+			return wrapSoDNotFound(err)
+		}
+		if errors.Is(err, storage.ErrSoDPolicyNotFound) {
+			// Non-admin caller: collapse "doesn't exist" into the identical
+			// denial a non-owning caller gets for an EXISTING policy below --
+			// see this function's doc comment.
+			c.writeAuditEventFailed(ctx, EventSoDPolicyDeleted, actorPtr(actorID), nil, "",
+				fmt.Sprintf("SoD policy %d delete DENIED: actor %d is not an admin-tier principal (policy lookup found no match)", id, actorID))
+			return wrapSoDPermissionDenied(fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+				"only the creating admin or an admin-tier principal may delete this SoD policy"))
+		}
 		return err
 	}
-	if actorID != policy.CreatedBy && c.isGlobalAdminRoleName(ctx, actorID) == "" {
+
+	if actorID != policy.CreatedBy && !isAdminTier {
 		c.writeAuditEventFailed(ctx, EventSoDPolicyDeleted, actorPtr(actorID), nil, "",
 			fmt.Sprintf("SoD policy %d delete DENIED: actor %d is neither the creator (%d) nor an admin-tier principal", id, actorID, policy.CreatedBy))
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
-			"only the creating admin or an admin-tier principal may delete this SoD policy")
+		return wrapSoDPermissionDenied(fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only the creating admin or an admin-tier principal may delete this SoD policy"))
 	}
 	if err := c.storage.DeleteSoDPolicy(ctx, id); err != nil {
 		return err
