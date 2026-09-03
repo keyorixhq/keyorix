@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -414,22 +415,24 @@ func mapRoleError(err error) error {
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"), strings.Contains(msg, "unique"):
 		return status.Error(codes.AlreadyExists, "a role with that name already exists")
-	// #1660: core.CreateRole/UpdateRole's own validation (name fold rejects
-	// control/bidi characters, length bounds) surfaces here now that both
-	// RPCs route through them instead of storage directly. A fixed message,
-	// not err.Error(), per this file's gRPC convention (semgrep
-	// keyorix-raw-error-to-client): core's validation error wraps
-	// identity.NewFoldedName's raw-input echo (%q of the caller's own
-	// string), which is safe content but not a "known safe sentinel with a
-	// fixed string" the rule's nosemgrep exception covers, so it goes
-	// through mapRoleError like every other case instead of being
-	// special-cased. (An earlier fix on main took the sentinel route --
-	// wrapping CreateRole's validation errors in a core.ErrRoleValidation
-	// marker checked via errors.Is -- but this fixed-message approach is
-	// simpler, matches every other case in this switch, and needs no
-	// wrapper type; the sentinel machinery was removed from
-	// internal/core/rbac_roles.go when resolving this conflict.)
-	case strings.Contains(msg, "validation"):
+	// #1660/FIX-4 (restored 2026-09-03): core.CreateRole's own validation
+	// (name fold rejects control/bidi characters, length bounds) surfaces
+	// here now that the RPC routes through it instead of storage directly.
+	// errors.Is against core.ErrRoleValidation confirms the failure is
+	// application-generated (never a storage/driver error that merely
+	// happens to mention the word "validation", e.g. a constraint named
+	// *_validation_*) — restoring #1668's actual precision guarantee, lost
+	// 22 hours later when #1669 reverted the classification back to the
+	// bare substring match as a side effect of ALSO (correctly) fixing a
+	// different problem: err.Error() here wraps identity.NewFoldedName's
+	// raw-input echo (%q of the caller's own string) — safe content, but
+	// not a "known safe sentinel with an already-fixed string" the
+	// keyorix-raw-error-to-client Semgrep gate's nosemgrep exception
+	// requires, so it is NOT echoed to the client; the fixed message #1669
+	// introduced is kept. The two fixes are independent: restoring
+	// PRECISION here does not require reintroducing the CI-blocking MESSAGE
+	// #1669 was correct to remove.
+	case errors.Is(err, core.ErrRoleValidation):
 		return status.Error(codes.InvalidArgument, "invalid role name or description")
 	case strings.Contains(msg, "built-in"):
 		return status.Error(codes.FailedPrecondition, "cannot modify a built-in role")
