@@ -197,14 +197,13 @@ type LocalStorage struct {
 	// LocalStorage must share its parent's mutex.
 	bootstrapMu *sync.Mutex
 	// namedLockMu is the in-process fallback for WithNamedLock (#1646) on a
-	// non-Postgres backend (SQLite, single-process by construction): a single
-	// shared mutex, not sharded per lock key, mirroring auditCheckpointMu/
-	// bootstrapMu's own single-mutex shape. On PostgreSQL, WithNamedLock instead
-	// takes a session advisory lock keyed by lockKey's hash, extending the
-	// serialization across replicas (ADR-039 HA) -- this mutex is skipped
-	// entirely on that path. A pointer for the same sharing reason as every
+	// non-Postgres backend (SQLite, single-process by construction): a registry
+	// handing out one *sync.Mutex per lock key, mirroring PostgreSQL's
+	// per-key pg_advisory_lock semantics exactly (see WithNamedLock's own doc
+	// comment, FIX-5) rather than one shared mutex serializing every unrelated
+	// key against every other. A pointer for the same sharing reason as every
 	// other mutex on this struct.
-	namedLockMu *sync.Mutex
+	namedLockMu *namedLockRegistry
 	// consumeClockWatermark backs consumeClockLooksRegressed (#1632): an
 	// in-memory monotonic high-water mark of the latest wall-clock instant a
 	// single-use-token consumption (ConsumeMFAChallenge, ConsumeWebAuthnSession)
@@ -243,7 +242,7 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		auditChainMu:          &sync.Mutex{},
 		auditCheckpointMu:     &sync.Mutex{},
 		bootstrapMu:           &sync.Mutex{},
-		namedLockMu:           &sync.Mutex{},
+		namedLockMu:           newNamedLockRegistry(),
 		consumeClockWatermark: &clockWatermark{},
 		rbacClockWatermark:    &clockWatermark{},
 	}
