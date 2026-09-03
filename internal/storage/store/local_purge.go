@@ -394,21 +394,63 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 }
 
 // DeleteExpiredBreakGlassBefore hard-deletes old break-glass activations before
-// the cutoff: explicitly non-active (revoked, or reconciled-expired) rows, PLUS
-// (#1653 reopened) rows still labeled 'active' whose ExpiresAt has genuinely
-// passed -- ReconcileExpiredBreakGlassActivation only ever reconciles the
-// SAME user's row at their own next activation in the SAME project, so a user
-// who activates once and never revisits that project leaves their row
-// 'active' in the DB indefinitely otherwise; this retention sweep is the
-// backstop that still reclaims it. A row genuinely still active (ExpiresAt in
-// the future, or nil) is never purged either way.
+// the cutoff: explicitly non-active (revoked, or reconciled-expired) rows.
+// Before doing so it reconciles ('active' -> 'expired') rows still labeled
+// 'active' whose ExpiresAt has genuinely passed -- ReconcileExpiredBreakGlassActivation
+// only ever reconciles the SAME user's row at their own next activation in the
+// SAME project, so a user who activates once and never revisits that project
+// leaves their row 'active' in the DB indefinitely otherwise; this retention
+// sweep is the backstop that still reclaims it. A row genuinely still active
+// (ExpiresAt in the future, or nil) is never touched either way.
+//
+// FIX-7 (adversarial review run 2): #1653 reopened's widen hard-deleted a
+// still-'active' row in the SAME statement as the reconciliation, the instant
+// its ExpiresAt passed the retention cutoff -- racing any concurrent operation
+// that expected to still find the row (in ANY state) to act on it, e.g. an
+// admin's RevokeBreakGlass, which removes the real RBAC grant
+// (c.RemoveUserRole) FIRST and only afterward conditionally updates this row
+// (RevokeBreakGlassActivation, whose WHERE already accepts BOTH 'active' and
+// 'expired' for exactly this reason). If the purge deletes the row between
+// those two steps, the already-successful revoke's own state-transition and
+// audit-event write (LogBreakGlassRevoked, only called on success) are lost --
+// the caller sees a misleading "activation is not active" error despite
+// having just genuinely revoked the grant.
+//
+// Fixed by reconciling and deleting as two separate steps: a row transitioned
+// 'active' -> 'expired' by THIS call is deliberately excluded from THIS
+// call's own delete and left for the NEXT sweep to hard-delete -- its
+// CreatedAt does not change at reconciliation, so it would otherwise ALSO
+// match the terminal-row delete criteria in this same pass (CreatedAt <=
+// ExpiresAt < before already holds); explicitly tracking and excluding the
+// IDs this call itself just reconciled is what actually defers them. On the
+// next sweep they're no longer excluded and qualify like any other
+// already-terminal row, giving one full sweep interval of grace for a
+// concurrent revoke (or any other in-flight reader) to still observe and act
+// on the row before it's purged. The original #edee956e/#1653 guarantee this
+// widen exists for is unaffected: an abandoned 'active' row is still
+// reconciled (freeing the partial-unique-index slot) on every sweep, just
+// hard-deleted one cycle later than before.
 func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
 	// G81 (BreakGlassActivation.CreatedAt/ExpiresAt): normalize internally — see GetAuditLogs.
 	before = before.UTC()
-	result := ls.db.WithContext(ctx).
-		Where("(state <> ? AND created_at < ?) OR (state = ? AND expires_at IS NOT NULL AND expires_at < ?)",
-			breakGlassActiveState, before, breakGlassActiveState, before).
-		Delete(&models.BreakGlassActivation{})
+	var justReconciledIDs []uint
+	if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
+		Where("state = ? AND expires_at IS NOT NULL AND expires_at < ?", breakGlassActiveState, before).
+		Pluck("id", &justReconciledIDs).Error; err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if len(justReconciledIDs) > 0 {
+		if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
+			Where("id IN ?", justReconciledIDs).
+			Update("state", breakGlassExpiredState).Error; err != nil {
+			return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+	}
+	q := ls.db.WithContext(ctx).Where("state <> ? AND created_at < ?", breakGlassActiveState, before)
+	if len(justReconciledIDs) > 0 {
+		q = q.Where("id NOT IN ?", justReconciledIDs)
+	}
+	result := q.Delete(&models.BreakGlassActivation{})
 	if result.Error != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
