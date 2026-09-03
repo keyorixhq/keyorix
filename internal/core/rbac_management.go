@@ -201,13 +201,29 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 // RemoveRoleFromGroup verifies the group exists then removes the role at scope
 // and records an RBAC audit event. actorID is the acting principal (0 = none). It
 // refuses to remove the install's last global-admin-conferring group grant (#107;
-// see guardLastGlobalAdminGroupRole).
+// see guardLastGlobalAdminGroupRole), OR a project's last roles.assign-conferring
+// group grant (FIX-2; see guardLastProjectAdminGroupRole) — a group losing its
+// project-admin-conferring role is the third way (alongside group deletion and
+// membership removal, both already guarded — guardLastProjectAdminGroupDelete/
+// guardLastProjectAdminGroupMembership) a group can stop conferring project-admin
+// authority, and had no guard at all.
 func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
 	if err := c.guardLastGlobalAdminGroupRole(ctx, groupID, roleID, scope); err != nil {
 		return err
+	}
+	if scope.ProjectID != 0 && scope.EnvironmentID == 0 {
+		// #1646: serialize the guard's read against every HA replica via the same
+		// per-project named lock SetProjectMemberRole/RemoveProjectMember/
+		// RemoveUserRole use, so a concurrent removal racing this one can't each
+		// observe "another admin survives" before either write commits.
+		if err := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+			return c.guardLastProjectAdminGroupRole(ctx, groupID, roleID, scope.ProjectID)
+		}); err != nil {
+			return err
+		}
 	}
 	if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -440,20 +456,28 @@ func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, us
 // kept as a cheap same-process fast-path serializer (mirroring
 // login_lockout.go's recordFailedLogin two-layer pattern), not as the sole
 // correctness mechanism.
+//
+// FIX-2: RemoveUserRole was scope-blind past the global check — a project-scoped
+// removal (scope.ProjectID != 0) fell straight through to storage.RemoveRole with
+// no last-admin protection at all, even though this is THE shared primitive
+// SetProjectMemberRole/RemoveProjectMember funnel through for their OWN
+// project-scope guard (guardLastProjectAdmin, itself WithNamedLock-wrapped by
+// those two callers per #1646). Any OTHER caller reaching this primitive
+// directly at project scope — and there are several: the plain /user-roles HTTP
+// route (RemoveRole, server/http/handlers/rbac.go), the gRPC RemoveRole RPC, and
+// the /system RemoveRoleGrantProxy — bypassed project-admin protection entirely,
+// letting a project's last roles.assign holder remove their own (or anyone's)
+// project-admin grant with no refusal. Guard the primitive itself, scope-aware,
+// so no entry point can bypass it going forward — the same "move the check to
+// where it cannot be skipped" fix SetProjectMemberRole/RemoveProjectMember
+// already apply one layer up, generalized to the actual choke point.
 func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
-	c.globalAdminGuardMu.Lock()
-	defer c.globalAdminGuardMu.Unlock()
-
 	if scope.ProjectID == 0 && scope.EnvironmentID == 0 {
-		adminIDs := c.installAdminRoleIDSet(ctx)
-		if adminIDs[roleID] {
-			ids := make([]uint, 0, len(adminIDs))
-			for id := range adminIDs {
-				ids = append(ids, id)
-			}
-			if err := c.storage.RemoveGlobalAdminRoleGuarded(ctx, userID, roleID, ids); err != nil {
-				return err
-			}
+		handled, err := c.removeGlobalAdminRoleIfApplicable(ctx, userID, roleID)
+		if err != nil {
+			return err
+		}
+		if handled {
 			c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
 			// Evict the auth cache so a just-revoked role stops authorizing on the
 			// very next request instead of the up-to-30s positive-cache window every
@@ -464,12 +488,65 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 			return nil
 		}
 	}
+	if scope.ProjectID != 0 && scope.EnvironmentID == 0 {
+		// #1646: the guard's read (existing roles) and the removal below must be
+		// serialized across every replica of an HA deployment, matching
+		// SetProjectMemberRole/RemoveProjectMember's identical use of the same
+		// per-project named lock — two concurrent removals of two different
+		// project admins' grants could otherwise each observe "another admin
+		// survives" before either write commits.
+		if err := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+			existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
+			if err != nil {
+				return err
+			}
+			after := make([]uint, 0, len(existing))
+			for _, id := range existing {
+				if id != roleID {
+					after = append(after, id)
+				}
+			}
+			return c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after)
+		}); err != nil {
+			return err
+		}
+	}
 	if err := c.storage.RemoveRole(ctx, userID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
 	c.evictUserSessionCache(ctx, userID)
 	return nil
+}
+
+// removeGlobalAdminRoleIfApplicable performs RemoveUserRole's global-scope
+// admin-conferring-role removal (the #340/#525 atomic path) when roleID is one
+// of installAdminRoleNames, returning handled=true (removal performed or
+// refused) in that case. handled=false means roleID is not a global-admin role
+// and the caller should fall through to the ordinary removal path. Split out of
+// RemoveUserRole so globalAdminGuardMu's critical section stays scoped to
+// exactly this branch — it must never be held while the function's OTHER branch
+// (the project-scope guard below) acquires storage.WithNamedLock, or a
+// project-scope RemoveUserRole call racing a SetProjectMemberRole/
+// RemoveProjectMember call (which acquires WithNamedLock BEFORE calling back
+// into RemoveUserRole, per #1646) would lock-order-invert: the former acquires
+// globalAdminGuardMu then waits on WithNamedLock, the latter holds WithNamedLock
+// and waits on globalAdminGuardMu.
+func (c *KeyorixCore) removeGlobalAdminRoleIfApplicable(ctx context.Context, userID, roleID uint) (handled bool, err error) {
+	c.globalAdminGuardMu.Lock()
+	defer c.globalAdminGuardMu.Unlock()
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	if !adminIDs[roleID] {
+		return false, nil
+	}
+	ids := make([]uint, 0, len(adminIDs))
+	for id := range adminIDs {
+		ids = append(ids, id)
+	}
+	if err := c.storage.RemoveGlobalAdminRoleGuarded(ctx, userID, roleID, ids); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 // installAdminRoleNames are the roles that confer install-wide administration when

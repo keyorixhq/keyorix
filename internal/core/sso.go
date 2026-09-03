@@ -657,11 +657,25 @@ func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uin
 	return added, blocked
 }
 
+// FIX-2: this used to call c.storage.RemoveUserFromGroup directly, bypassing
+// the core-layer RemoveUserFromGroup's last-admin guards entirely
+// (guardLastGlobalAdminMembership, guardLastProjectAdminGroupMembership) — an
+// IdP that stopped asserting a user's admin-conferring group membership (a
+// misconfigured claim, a stale IdP-side group, or a malicious IdP) could
+// silently strand the install or a project with no admin on the user's very
+// next login, with no refusal and no error surfaced anywhere. Routed through
+// RemoveUserFromGroupGlobal — the guarded wrapper this file's own doc comment
+// already names as the one JIT/SSO de-provisioning callers should use — so
+// this is exactly as safe as any other de-provisioning path.
 func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint, desired, currentSet map[uint]bool) (removed int) {
-	// De-escalating removals are unconditional (dropping a group only reduces privilege).
+	// De-escalating removals are unconditional (dropping a group only reduces
+	// privilege) EXCEPT when doing so would strand the install or a project
+	// with no remaining admin — RemoveUserFromGroupGlobal refuses those. The
+	// acting principal is the logging-in user themself, matching this file's
+	// audit-logging convention (actorPtr(userID), reconcileSSOGroups above).
 	for id := range currentSet {
 		if !desired[id] {
-			if err := c.storage.RemoveUserFromGroup(ctx, userID, id, 0); err == nil {
+			if err := c.RemoveUserFromGroupGlobal(ctx, userID, userID, id); err == nil {
 				removed++
 			}
 		}

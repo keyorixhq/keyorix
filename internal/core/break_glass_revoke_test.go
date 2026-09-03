@@ -42,6 +42,14 @@ func TestRevokeBreakGlass_GenuineRoleRemovalFailureAbortsRevoke(t *testing.T) {
 	activation := newTestActivation()
 	mockStorage.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(activation, nil)
 
+	// FIX-2: RemoveUserRole now guards project-scope removals too
+	// (guardLastProjectAdmin) — "editor" (role 3) doesn't carry roles.assign, so
+	// the guard's own permission check short-circuits before it needs to resolve
+	// any project administrators, but the mock still needs these two calls
+	// stubbed to reach that short-circuit.
+	mockStorage.On("GetUserRoleIDsExact", mock.Anything, uint(10), storage.Scope{ProjectID: 2}).Return([]uint{3}, nil)
+	mockStorage.On("RoleSetHasPermission", mock.Anything, []uint{3}, permRolesAssign).Return(false, nil)
+
 	dbErr := errors.New("connection reset by peer")
 	mockStorage.On("RemoveRole", mock.Anything, uint(10), uint(3), storage.Scope{ProjectID: 2}).Return(dbErr)
 
@@ -68,6 +76,10 @@ func TestRevokeBreakGlass_AlreadyGoneRoleRemovalIsNotAFailure(t *testing.T) {
 
 	activation := newTestActivation()
 	mockStorage.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(activation, nil)
+	// FIX-2: see the identical stubs' comment in
+	// TestRevokeBreakGlass_GenuineRoleRemovalFailureAbortsRevoke above.
+	mockStorage.On("GetUserRoleIDsExact", mock.Anything, uint(10), storage.Scope{ProjectID: 2}).Return([]uint{3}, nil)
+	mockStorage.On("RoleSetHasPermission", mock.Anything, []uint{3}, permRolesAssign).Return(false, nil)
 	mockStorage.On("RemoveRole", mock.Anything, uint(10), uint(3), storage.Scope{ProjectID: 2}).
 		Return(storage.ErrRoleNotAssigned)
 	mockStorage.On("RevokeBreakGlassActivation", mock.Anything, uint(7), uint(1), uint(0), now).Return(nil)
