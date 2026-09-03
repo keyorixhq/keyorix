@@ -511,6 +511,32 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 			return err
 		}
 	}
+	return c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
+}
+
+// removeUserRoleUnguarded performs the actual role removal, audit log, and
+// cache eviction WITHOUT re-running guardLastProjectAdmin -- the tail
+// RemoveUserRole itself uses after its own guard above passes.
+//
+// Part 2 regression audit (adversarial review run 2): SetProjectMemberRole
+// swapping a project's SOLE administrator directly from one admin-tier role
+// to ANOTHER (both carrying roles.assign) already validates that full
+// transition safely, atomically, under its own WithNamedLock, via its own
+// guardLastProjectAdmin(existing, []uint{newRole.ID}) call BEFORE touching
+// anything (see SetProjectMemberRole). But its removal loop used to call the
+// public, guarded RemoveUserRole for the outgoing role -- whose OWN
+// project-scope guard (added by this same FIX-2, above) re-derives "after"
+// as "existing minus roleID", blind to the compensating AssignUserRole
+// SetProjectMemberRole is about to make. For a sole admin with exactly one
+// existing role, that blind re-check saw an empty "after" and refused the
+// swap outright ("cannot remove or demote the project's last administrator")
+// even though the operation, viewed as a whole -- which is exactly what
+// SetProjectMemberRole's own upfront guard already confirmed -- never
+// actually left the project without an administrator. SetProjectMemberRole
+// now calls this unguarded primitive directly for its removal-loop steps,
+// relying on its own already-correct, whole-operation guard instead of
+// RemoveUserRole's necessarily narrower, single-call one.
+func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
 	if err := c.storage.RemoveRole(ctx, userID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

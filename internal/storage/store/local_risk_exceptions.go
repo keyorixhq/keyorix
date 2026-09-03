@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -38,7 +39,7 @@ func (ls *LocalStorage) GetRiskException(ctx context.Context, id uint) (*models.
 	var e models.RiskException
 	err := ls.db.WithContext(ctx).First(&e, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrRiskExceptionNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

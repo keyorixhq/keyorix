@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -126,8 +128,10 @@ func (h *DashboardHandler) RevokeRiskException(w http.ResponseWriter, r *http.Re
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "concurrently"):
 			status = http.StatusConflict
-		case strings.Contains(msg, "not found"):
+		case errors.Is(err, core.ErrRiskExceptionNotFoundPublic):
 			status = http.StatusNotFound
+		case errors.Is(err, core.ErrRiskExceptionPermissionDenied):
+			status = http.StatusForbidden
 		default:
 			log.Printf("Error revoking risk exception %d: %v", id, err)
 			msg = clientSafe(err)

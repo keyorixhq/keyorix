@@ -610,6 +610,34 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 // existing callers not part of that fix pass false unchanged (see #1545 for
 // the broader sibling instances of this same exemption elsewhere -- not
 // fixed here, tracked separately).
+//
+// Part 2 regression audit (adversarial review run 2) attempted and REVERTED
+// a fix here: every caller passes actorID==0 for a machine-authenticated
+// granter (server middleware's UserID==0-for-any-machine-token convention),
+// so the loop below unconditionally refuses every machine-authenticated
+// grant regardless of the granting machine's real permissions -- a
+// false-refusal regression, not an escalation. The obvious fix (resolve the
+// real granting machine's ID from ctx via WithMachineActor and check ITS
+// permissions via AuthorizePrincipal) is UNSAFE as a blanket change: several
+// of this function's callers are /system proxy handlers relaying a raw
+// storage call with NO real acting-user identity at all (actorID==0 by
+// construction, e.g. RemoteStorage.AddUserToGroup) -- the only "machine" ctx
+// can resolve there is the NODE CREDENTIAL's own machine identity, which
+// integration tests deliberately grant admin-tier roles for legitimate
+// node-trust reasons ("no role, including admin, grants node status" --
+// server/http/integration_test.go's createNodeToken). Resolving and using
+// that node identity's own permissions here lets ANY node credential
+// self-authorize an admin-tier grant it's merely relaying on behalf of an
+// unidentified downstream actor -- confirmed via
+// TestRemoteStorageGroup_Membership_AdminConferringGroup_DeniesNodeCredential
+// and its Invitation/Membership proxy siblings, which went from correctly
+// denying to silently succeeding under the attempted fix. Fixing the
+// false-refusal safely requires distinguishing "a machine acting as itself"
+// from "a node credential relaying an anonymous call" BEFORE resolving
+// ctx-tagged permissions, which callers don't currently make distinguishable
+// -- left as a known, filed gap rather than shipped fail-open. Every
+// machine-authenticated grant stays unconditionally refused until that
+// distinction exists.
 func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, actorID, roleID uint, scope Scope, actorIsMachine bool) error {
 	if actorID == 0 && !actorIsMachine {
 		return nil
