@@ -169,7 +169,15 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		for _, a := range projAssignments {
 			assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
 		}
-		created, err = h.coreService.CreateUserWithAssignments(r.Context(), req, role, assignments, userCtx.UserID, userCtx.ActorKind() == core.ActorTypeMachine)
+		ctx := r.Context()
+		if userCtx.ActorKind() == core.ActorTypeMachine {
+			// A genuine, directly-authenticated machine actor requesting this
+			// grant as itself (not a /system proxy relay) -- tag ctx so
+			// requireGranterHoldsRolePermissions checks ITS real permissions
+			// instead of unconditionally refusing. See that function's doc.
+			ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
+		}
+		created, err = h.coreService.CreateUserWithAssignments(ctx, req, role, assignments, userCtx.UserID, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
 		created, err = h.coreService.CreateUser(r.Context(), req)
 	}

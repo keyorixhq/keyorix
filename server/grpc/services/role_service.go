@@ -252,6 +252,13 @@ func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequ
 	if err := authorizeScoped(ctx, s.core, actor, "roles.assign", scope); err != nil {
 		return nil, err
 	}
+	if actor.ActorKind() == core.ActorTypeMachine {
+		// A genuine, directly-authenticated machine actor requesting this
+		// grant as itself (not a /system proxy relay) -- tag ctx so
+		// requireGranterHoldsRolePermissions checks ITS real permissions
+		// instead of unconditionally refusing. See that function's doc.
+		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+	}
 	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope, actor.ActorKind() == core.ActorTypeMachine); err != nil {
 		return nil, mapRoleError(err)
 	}

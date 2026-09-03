@@ -149,7 +149,15 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 		sendError(w, "ValidationError", "action must be verify, provision, activate, or revoke", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.TransitionMembership(r.Context(), uint(projectID), uint(membershipID), to, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
+	ctx := r.Context()
+	if actor.ActorKind() == core.ActorTypeMachine {
+		// A genuine, directly-authenticated machine actor requesting this
+		// transition as itself (not a /system proxy relay) -- tag ctx so
+		// requireGranterHoldsRolePermissions checks ITS real permissions
+		// instead of unconditionally refusing. See that function's doc.
+		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+	}
+	m, err := h.coreService.TransitionMembership(ctx, uint(projectID), uint(membershipID), to, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
