@@ -1555,12 +1555,15 @@ func TestSoDProxy_DeleteSoDPolicyProxy_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// FIX-6 (#1645 403-for-both): no user context resolves actorID(r) to 0, which
+// is not admin-tier, so a nonexistent policy id gets the same denial as an
+// existing-but-foreign one -- see DeleteSoDPolicyProxy's doc comment.
 func TestSoDProxy_DeleteSoDPolicyProxy_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── webauthn_proxy.go ──────────────────────────────────────────────────────────
@@ -3694,8 +3697,9 @@ func TestDeleteSoDPolicyProxy_NotFoundS5(t *testing.T) {
 	req := withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", "99999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicyProxy(w, req)
-	// No such policy → 404, not bad-request.
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// No such policy, and no user context (actorID 0, not admin-tier) → 403
+	// (FIX-6, #1645 403-for-both), not the 404 that would leak existence.
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── setup_tokens_proxy.go — missing happy paths ───────────────────────────────

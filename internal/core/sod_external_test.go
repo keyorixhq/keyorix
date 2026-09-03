@@ -2,8 +2,10 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
@@ -270,4 +272,63 @@ func TestDeleteSoDPolicy_CreatorSucceedsEvenIfNoLongerAdmin(t *testing.T) {
 	h.ExecuteRawSQL(t, "DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", 1, 1)
 
 	require.NoError(t, h.CoreService.DeleteSoDPolicy(ctx, 1, p.ID), "the creator must still be able to delete their own policy without admin-tier status")
+}
+
+// FIX-6 (adversarial review run 2): a non-admin, non-creator caller must get
+// the IDENTICAL denial (same error classification, same message) whether the
+// target policy id doesn't exist at all, or exists but belongs to someone
+// else -- otherwise a caller holding this route's own gate (system.write) but
+// no creator/admin standing can enumerate valid SoD policy IDs by watching
+// which response they get. Before this fix, a nonexistent id surfaced
+// GetSoDPolicy's raw "not found" error (404) while an existing-but-foreign id
+// surfaced a distinct "permission denied" error (403) -- a reliable oracle.
+func TestDeleteSoDPolicy_NonAdmin_NonExistentAndNonOwned_IdenticalDenial(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
+	ctx := context.Background()
+
+	h.AssignUserRole(t, 1, 1, nil) // actor 1: admin-tier, creates the policy
+	p, err := h.CoreService.CreateSoDPolicy(ctx, 1, "no-write-and-audit", "", "secrets.write", "audit.read")
+	require.NoError(t, err)
+
+	h.CreateTestUser(t, "grace", 22)
+	h.AssignUserRole(t, 22, 4, nil) // viewer -- neither creator nor admin-tier
+
+	errOwned := h.CoreService.DeleteSoDPolicy(ctx, 22, p.ID)
+	require.Error(t, errOwned)
+	require.True(t, errors.Is(errOwned, core.ErrSoDPermissionDenied),
+		"existing-but-foreign policy must classify as ErrSoDPermissionDenied")
+
+	const nonExistentID = 999999
+	errMissing := h.CoreService.DeleteSoDPolicy(ctx, 22, nonExistentID)
+	require.Error(t, errMissing)
+	require.True(t, errors.Is(errMissing, core.ErrSoDPermissionDenied),
+		"nonexistent policy id, for a non-admin caller, must ALSO classify as ErrSoDPermissionDenied -- not ErrSoDNotFound")
+	require.False(t, errors.Is(errMissing, core.ErrSoDNotFound),
+		"a non-admin caller must never observe the not-found classification -- that's the oracle")
+
+	assert.Equal(t, errOwned.Error(), errMissing.Error(),
+		"the two denials must be byte-identical, not just the same HTTP status -- #1645 403-for-both requires identical bodies")
+}
+
+// FIX-6: the real-404 exception is narrow -- an admin-tier caller, who could
+// delete ANY policy regardless of which one this is, gets a genuine
+// ErrSoDNotFound for a nonexistent id rather than the generic denial a
+// non-admin caller gets. This is the "same standing that would have granted
+// access had it existed" condition ADR-096/#1645 requires for the exception
+// to apply.
+func TestDeleteSoDPolicy_AdminTier_NonExistentGetsRealNotFound(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
+	ctx := context.Background()
+
+	h.AssignUserRole(t, 1, 1, nil) // actor 1: admin-tier
+
+	const nonExistentID = 999999
+	err := h.CoreService.DeleteSoDPolicy(ctx, 1, nonExistentID)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, core.ErrSoDNotFound),
+		"an admin-tier caller must get the real not-found classification, not the generic denial")
 }

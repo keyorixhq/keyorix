@@ -12,6 +12,17 @@ import (
 // gone?" — should match it with errors.Is rather than treating any error as absence.
 var ErrUserNotFound = errors.New("user not found")
 
+// ErrSoDPolicyNotFound is returned (wrapped) by GetSoDPolicy when no policy exists
+// for the given id, as distinct from a transient retrieval failure. DeleteSoDPolicy
+// (internal/core/sod.go) matches it with errors.Is to decide whether a real 404 is
+// safe to return (only when the caller is authorized at global admin-tier
+// regardless of which policy this is) versus collapsing it into the same
+// permission-denied response a non-admin caller gets for an existing policy they
+// don't own (#1645 403-for-both) — a string match against a translatable "not
+// found" message would silently stop working the moment that translation key is
+// actually translated.
+var ErrSoDPolicyNotFound = errors.New("sod policy not found")
+
 // ErrRoleNotAssigned is returned (wrapped) by RemoveRole when the (user, role, scope)
 // row positively does not exist — e.g. it already auto-expired or was already
 // removed — as distinct from a genuine storage failure. Callers for whom "already

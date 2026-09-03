@@ -398,12 +398,15 @@ func TestCatalogHandler_DeleteSoDPolicy_BadID_S7(t *testing.T) {
 }
 
 // TestCatalogHandler_DeleteSoDPolicy_NotFound_S7 tests deleting non-existent policy.
+// FIX-6 (#1645 403-for-both): withUserCtxS7's actor has no admin-tier role,
+// so a nonexistent policy id gets the same 403 denial as an
+// existing-but-foreign one, not a distinguishing 404.
 func TestCatalogHandler_DeleteSoDPolicy_NotFound_S7(t *testing.T) {
 	h := newCatalogHandlerS7(t)
 	req := withUserCtxS7(withChiParamS7(httptest.NewRequest(http.MethodDelete, "/sod/policies/9999", nil), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── machine_token_hygiene.go: MachineTokenHygiene ──────────────────────────
