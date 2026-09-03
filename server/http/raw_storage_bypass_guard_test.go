@@ -1126,6 +1126,35 @@ var rawStorageBypassAllowlist = map[string]string{
 	"DeleteRole": "no-independent-ceiling: internal/core has no exported wrapper for role deletion at all -- " +
 		"this route (DELETE /api/v1/roles/{id}, RequirePermission(permRolesWrite)) IS the authoritative " +
 		"implementation, with its own built-in-role guard (rbac.go:426) already inline.",
+	// #1551, corrected 2026-09-03 (adversarial review run 2, FIX-3): moved from
+	// knownUnfixedRawStorageBypasses -- the 2026-08-29 "PARTIALLY FIXED" entry
+	// there believed the project_id-on-the-wire, enforced-in-the-WHERE-clause
+	// check closed the cross-tenant gap. It did not: that check only verifies
+	// the NAMED project actually owns the credential, a fact an attacker also
+	// knows (it's exactly the fact they're attacking with) -- it never asked
+	// whether the CALLER is entitled to that project. A cross-tenant caller
+	// simply supplied the credential's real (victim) project_id and the
+	// "verification" happily confirmed it. Independently reproduced live
+	// (HTTP 200, DB write confirmed) during the 2026-09-02 adversarial
+	// review. Real fix: the handler now resolves the credential's project
+	// SERVER-SIDE (GetMachineIdentityCredentialByID -> GetMachineIdentity,
+	// never trusting the wire value to identify the tenant) and calls
+	// AuthorizePrincipal(actor, "roles.assign", Scope{ProjectID: resolved})
+	// inline before the raw storage call -- the same permission the
+	// human-facing route (DELETE /projects/{id}/machine-identities/{machineId}/tokens/{tokenId})
+	// requires via RequireScopedPermission, now re-derived here the way
+	// AssignMachineRoleProxy/RemoveMachineRoleProxy already re-derive their
+	// own equivalents. The wire project_id is kept as a client assertion,
+	// still cross-checked against the resolved value (a mismatch is a 404,
+	// matching an unknown credential), but authorization no longer comes
+	// from it. Audit + cache-eviction hand-off remain a SEPARATE, still-open,
+	// narrower residual (unchanged by this fix, not silently dropped) --
+	// this raw call still doesn't log an audit event or evict the auth-token
+	// cache the way core.RevokeMachineToken's caller-side eviction contract
+	// expects; out of this fix's scope (not an escalation).
+	"RevokeMachineIdentityCredentialProxy": "FIXED: AuthorizePrincipal(actor, \"roles.assign\", " +
+		"Scope{ProjectID: <server-resolved from the credential>}) now runs inline before the raw storage call -- " +
+		"see the FIXED comment immediately above this entry for the full reasoning.",
 }
 
 // knownUnfixedRawStorageBypasses is the set of /system handlers confirmed, by
@@ -1256,36 +1285,14 @@ var knownUnfixedRawStorageBypasses = map[string]string{
 	// CreateMachineIdentityProxy is FIXED (moved to rawStorageBypassAllowlist);
 	// CreateMachineIdentityCredentialProxy is HALF-FIXED (see its entry below) --
 	// neither belongs here with its original pre-fix text.
-	// #1551 cross-tenant half FIXED 2026-08-29 (Wave 2, ADR-088):
-	// storage.Storage.RevokeMachineIdentityCredential now takes a projectID
-	// parameter, enforced in the WHERE clause (LocalStorage) and carried on
-	// the wire (RemoteStorage/RevokeMachineIdentityCredentialProxy) --
-	// deriving the existing core.machineInProject ownership-check *shape*
-	// rather than inventing a new authorization primitive: a caller-claimed
-	// project_id is now verified against the credential's real owning
-	// project before the write, the same claim-vs-ground-truth pattern
-	// already used for wire-supplied actors elsewhere in this package.
-	// Verified red/green via a real upstream/downstream integration test
-	// (server/http/remote_storage_machine_identities_test.go,
-	// TestRemoteStorageMachineIdentities_RevokeCredential_CrossTenantRejected_RealServer).
-	// Audit + cache-eviction hand-off remain a SEPARATE, still-open residual
-	// (unchanged by this fix, not silently dropped): this raw call still
-	// doesn't log an audit event or return the token hash for auth-cache
-	// eviction the way core.RevokeMachineToken's caller-side eviction
-	// contract expects -- and unlike the tenant check, that gap isn't closed
-	// by a wire parameter alone (it needs either an audit call here or a
-	// wire-carried hash in the response), so still belongs in this list under
-	// its own remaining half.
-	"RevokeMachineIdentityCredentialProxy": "PARTIALLY FIXED 2026-08-29 (#1551, Wave 2): cross-tenant revoke is " +
-		"now rejected (project_id required on the wire, enforced in the storage layer's WHERE clause). Still " +
-		"open: no audit event, no token-hash returned for auth-cache eviction (core.RevokeMachineToken's own " +
-		"caller-side eviction contract is unmet by this raw passthrough) -- narrower residual, not an " +
-		"escalation, not part of #1551's stated cross-tenant scope. " +
-		"ADR-085 (Accepted, 2026-08-25) closed the node-credential axis specifically: the /system group's own " +
-		"gate now requires system.write for every caller (see " +
-		"TestSystemWriteCeiling_RevokeMachineIdentityCredentialProxy_NodeCredential_DeniedAtGate, " +
-		"system_write_ceiling_table_test.go) -- irrelevant to the tenant check either way, since that check now " +
-		"runs for every caller regardless of credential class.",
+	// #1551: RevokeMachineIdentityCredentialProxy moved to
+	// rawStorageBypassAllowlist 2026-09-03 -- the 2026-08-29 "PARTIALLY
+	// FIXED" claim here was itself wrong (the WHERE-clause check it relied on
+	// verifies the named project owns the credential, not that the CALLER is
+	// entitled to that project -- an attacker who supplies the credential's
+	// real project_id sails through). See that entry for the real fix
+	// (AuthorizePrincipal, server-resolved project, inline before the raw
+	// call) and what narrower residual (audit + cache-eviction) remains.
 	// UpsertMFASecretProxy, CreateMFAStepUpGrantProxy, UpdateProjectProxy,
 	// RestoreProjectProxy, DeleteAnomalyAlertsBeforeProxy,
 	// DeleteClosedAccessReviewsBeforeProxy, DeleteExpiredBreakGlassBeforeProxy,
