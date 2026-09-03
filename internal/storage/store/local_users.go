@@ -439,6 +439,23 @@ func (ls *LocalStorage) ListAllUserGroupMemberships(ctx context.Context) ([]stor
 	return rows, nil
 }
 
+// GetUserGroupsAt is GetUserGroups scoped to scope.ProjectID (#G01): only groups
+// where userID's own UserGroup row is global (project_id=0) OR matches
+// scope.ProjectID, mirroring GetUserGroupRoleIDsAt's "project_id = 0 OR
+// project_id = ?" union.
+func (ls *LocalStorage) GetUserGroupsAt(ctx context.Context, userID uint, scope storage.Scope) ([]*models.Group, error) {
+	var groups []*models.Group
+	err := ls.db.WithContext(ctx).Model(&models.Group{}).
+		Joins("JOIN user_groups ON user_groups.group_id = groups.id").
+		Where("user_groups.user_id = ?", userID).
+		Where("user_groups.project_id = 0 OR user_groups.project_id = ?", scope.ProjectID).
+		Find(&groups).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return groups, nil
+}
+
 // --- Groups ---
 
 func (ls *LocalStorage) CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
@@ -568,6 +585,24 @@ func (ls *LocalStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*
 	err := ls.db.WithContext(ctx).Model(&models.User{}).
 		Joins("JOIN user_groups ON user_groups.user_id = users.id").
 		Where("user_groups.group_id = ?", groupID).
+		Find(&users).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return users, nil
+}
+
+// ListGroupMembersAt is ListGroupMembers scoped to scope.ProjectID (#G01): only
+// members whose own UserGroup row is global (project_id=0) OR matches
+// scope.ProjectID — mirroring GetUserGroupRoleIDsAt's "project_id = 0 OR
+// project_id = ?" union. Does not verify the group exists (like
+// ListGroupMembersByGroupIDs) — callers already have a real group ID.
+func (ls *LocalStorage) ListGroupMembersAt(ctx context.Context, groupID uint, scope storage.Scope) ([]*models.User, error) {
+	var users []*models.User
+	err := ls.db.WithContext(ctx).Model(&models.User{}).
+		Joins("JOIN user_groups ON user_groups.user_id = users.id").
+		Where("user_groups.group_id = ?", groupID).
+		Where("user_groups.project_id = 0 OR user_groups.project_id = ?", scope.ProjectID).
 		Find(&users).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
