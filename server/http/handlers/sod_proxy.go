@@ -42,11 +42,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -109,7 +111,18 @@ func (h *CatalogHandler) ListSoDPoliciesProxy(w http.ResponseWriter, r *http.Req
 
 // DeleteSoDPolicyProxy handles DELETE /api/v1/system/sod-policies/{id}. Routes
 // through core.KeyorixCore.DeleteSoDPolicy (not a bare storage.DeleteSoDPolicy)
-// so the audit-event write also covers a deletion via node-sync (#G79).
+// so the audit-event write also covers a deletion via node-sync (#G79) --
+// which also means it's subject to DeleteSoDPolicy's own creator-or-admin-tier
+// authority check (#1529: an uncredentialed proxy caller, actorID==0, is
+// exactly the case that check exists to deny).
+//
+// FIX-6 (adversarial review run 2): classifies core.ErrSoDPermissionDenied as
+// 403, not just core.ErrSoDNotFound as 404 -- previously ANY error besides a
+// bare not-found (including a real permission-denied from the authority
+// check above) fell through to a generic 500, and errors.Is against the
+// core-layer sentinels (rather than isNotFoundErr's substring match) is what
+// makes DeleteSoDPolicy's own 403-for-both fix (see its doc comment) actually
+// observable as 403 here instead of masquerading as 500.
 func (h *CatalogHandler) DeleteSoDPolicyProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -117,12 +130,15 @@ func (h *CatalogHandler) DeleteSoDPolicyProxy(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := h.coreService.DeleteSoDPolicy(r.Context(), actorID(r), uint(id)); err != nil {
-		if isNotFoundErr(err) {
+		switch {
+		case errors.Is(err, core.ErrSoDNotFound):
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "SoD policy not found")
-			return
+		case errors.Is(err, core.ErrSoDPermissionDenied):
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "only the creating admin or an admin-tier principal may delete this SoD policy")
+		default:
+			log.Printf("sod-policies proxy: delete failed: %v", err)
+			writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		}
-		log.Printf("sod-policies proxy: delete failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})

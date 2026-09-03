@@ -1578,6 +1578,9 @@ func TestListSoDPoliciesProxy_HappyPath_S11(t *testing.T) {
 }
 
 // TestDeleteSoDPolicyProxy_NotFound_S11 — nonexistent policy → 404.
+// FIX-6 (#1645 403-for-both): no user context resolves actorID(r) to 0, not
+// admin-tier, so a nonexistent policy id gets the same denial as an
+// existing-but-foreign one, not a distinguishing 404.
 func TestDeleteSoDPolicyProxy_NotFound_S11(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreS11(t))
@@ -1585,8 +1588,7 @@ func TestDeleteSoDPolicyProxy_NotFound_S11(t *testing.T) {
 	r = withChiParamS8(r, "id", "99999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicyProxy(w, r)
-	// SQLite returns not-found for a DELETE on a missing row.
-	assert.True(t, w.Code == http.StatusNotFound || w.Code == http.StatusOK, "unexpected: %d", w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // TestDeleteSoDPolicyProxy_BadID_S11 — non-numeric id → 400.

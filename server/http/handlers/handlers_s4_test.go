@@ -2047,12 +2047,15 @@ func TestDeleteSoDPolicyProxy_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// FIX-6 (#1645 403-for-both): no user context resolves actorID(r) to 0, not
+// admin-tier, so a nonexistent policy id gets the same denial as an
+// existing-but-foreign one.
 func TestDeleteSoDPolicyProxy_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── deployment_hygiene.go ─────────────────────────────────────────────────────
@@ -8498,12 +8501,15 @@ func TestSoDPolicy_Create_MissingFields(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// FIX-6 (#1645 403-for-both): withUserCtx's actor has no admin-tier role, so
+// a nonexistent policy id gets the same 403 denial as an existing-but-foreign
+// one, not a distinguishing 404.
 func TestSoDPolicy_Delete_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.DeleteSoDPolicy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── secrets_reassign_owner.go: ReassignOwner ─────────────────────────────────

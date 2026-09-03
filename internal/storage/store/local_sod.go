@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -33,7 +34,7 @@ func (ls *LocalStorage) GetSoDPolicy(ctx context.Context, id uint) (*models.SoDP
 	var p models.SoDPolicy
 	err := ls.db.WithContext(ctx).First(&p, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrSoDPolicyNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

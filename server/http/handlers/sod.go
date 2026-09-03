@@ -7,13 +7,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -50,9 +51,9 @@ func (h *CatalogHandler) CreateSoDPolicy(w http.ResponseWriter, r *http.Request)
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "required") || strings.Contains(msg, "must be different"):
+		case errors.Is(err, core.ErrSoDValidation):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "permission denied"):
+		case errors.Is(err, core.ErrSoDPermissionDenied):
 			status = http.StatusForbidden
 		default:
 			log.Printf("Error creating SoD policy: %v", err)
@@ -81,9 +82,9 @@ func (h *CatalogHandler) DeleteSoDPolicy(w http.ResponseWriter, r *http.Request)
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case errors.Is(err, core.ErrSoDNotFound):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "permission denied"):
+		case errors.Is(err, core.ErrSoDPermissionDenied):
 			status = http.StatusForbidden
 		default:
 			log.Printf("Error deleting SoD policy %d: %v", id, err)
