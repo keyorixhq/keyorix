@@ -263,6 +263,23 @@ const defaultIdleTransferTimeout = 30 * time.Second
 func newRemoteTransport(connectTimeout, idleTimeout time.Duration) *http.Transport {
 	dialer := &net.Dialer{Timeout: connectTimeout}
 	return &http.Transport{
+		// #1606 regression (Part 2 regression audit, 2026-09-04): the #1521
+		// connect/idle timeout split replaced the implicit http.DefaultTransport
+		// (via a bare &http.Client{Timeout: ...}, which silently fell back to
+		// DefaultTransport and its Proxy: http.ProxyFromEnvironment) with this
+		// hand-rolled Transport -- which omitted Proxy entirely, silently
+		// dropping HTTP_PROXY/HTTPS_PROXY/NO_PROXY support for every one of
+		// this client's 100+ CLI remote-mode call sites. In an on-prem/
+		// regulated deployment that mandates all egress through an audit/DLP
+		// proxy, every CLI command upgrading to this version would silently
+		// stop using it -- either failing to connect (safe-but-broken) or,
+		// worse, connecting directly and escaping the organization's
+		// monitored egress path if a direct route happens to be reachable.
+		// DialContext below is unaffected either way: when Proxy returns a
+		// proxy URL, net/http's own Transport machinery dials/CONNECTs to the
+		// PROXY via this DialContext and negotiates the tunnel itself -- the
+		// idle-timeout wrapping here is orthogonal to proxying.
+		Proxy: http.ProxyFromEnvironment,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := dialer.DialContext(ctx, network, addr)
 			if err != nil {
