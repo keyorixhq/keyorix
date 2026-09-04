@@ -498,13 +498,32 @@ func checkSchemaEpoch(db *gorm.DB) error {
 		return fmt.Errorf("stored schema epoch %q is not a valid integer -- refusing to start rather than guess whether this database is ahead of this binary (ADR-097)", m.Value)
 	}
 	if dbEpoch > currentSchemaEpoch {
+		// #1674 (Part 2 continuation, design decision recorded in
+		// docs/adr-101-schema-epoch-compatibility-floor.md): this refusal is NOT
+		// made conditional on how recently the newer epoch was recorded, or on
+		// how many epochs ahead it is -- from inside this process, "a sibling
+		// replica migrated moments ago mid-rollout" and "an operator just
+		// downgraded onto an already-migrated schema" are the SAME observable
+		// state (a higher epoch than this binary knows). Any arithmetic on the
+		// timestamp below to auto-proceed would legalize the second case (the
+		// most common real downgrade: roll back shortly after a bad deploy) to
+		// silence the first. The timestamp is reported to help a human tell them
+		// apart, not consulted to decide for them.
 		return fmt.Errorf(
-			"database schema epoch %d is newer than this binary's schema epoch %d -- "+
-				"this database was migrated by a newer version of Keyorix; running an "+
-				"older binary against it risks silent, undetected regressions in any "+
-				"security invariant a column added since epoch %d encodes. Upgrade this "+
-				"binary to match, or restore a backup taken before the newer version ran (ADR-097)",
-			dbEpoch, currentSchemaEpoch, currentSchemaEpoch)
+			"database schema epoch %d is newer than this binary's schema epoch %d "+
+				"(recorded at %s, %s ago) -- this database was migrated by a newer "+
+				"version of Keyorix. Two things produce this, and this process cannot "+
+				"tell them apart on its own: (a) a rolling upgrade in progress -- a "+
+				"sibling replica already migrated to the new epoch, and this pod is "+
+				"still running the old binary; it is expected to be replaced by the new "+
+				"image shortly, and this failure is self-resolving once that happens "+
+				"(this repo does not orchestrate that rollout for you -- see "+
+				"docs/adr-039-ha-deployment.md for the supported multi-replica "+
+				"topology), or (b) this binary was downgraded against a schema a newer "+
+				"version already migrated -- if so, upgrade this binary to match, or "+
+				"restore a backup taken before the newer version ran. Refusing to start "+
+				"is the safe default in both cases (ADR-097)",
+			dbEpoch, currentSchemaEpoch, m.UpdatedAt.Format(time.RFC3339), time.Since(m.UpdatedAt).Round(time.Second))
 	}
 	return nil
 }
