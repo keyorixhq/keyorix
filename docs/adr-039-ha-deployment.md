@@ -74,6 +74,16 @@ moment and does the periodic work; the rest serve API traffic and skip the job.
 - **No data-loss risk from the schedulers either way**: the gating is an
   efficiency/cleanliness improvement; the underlying operations were already
   idempotent (status checks on revoke, soft-delete cutoffs on purge).
+- **A rolling upgrade that bumps the schema epoch (ADR-097) transiently
+  CrashLoopBackOffs any replica still on the old binary once a sibling has
+  migrated.** This is a real, known gap in this topology — see
+  [`docs/SELF_HOSTING.md`'s troubleshooting table](SELF_HOSTING.md) for the
+  operator-facing symptom/fix, and [ADR-100](adr-100-schema-epoch-compatibility-floor.md)
+  for the actual design fix (deferred; must land before `currentSchemaEpoch` is
+  first bumped past its current value of 1). Neither this repo nor the bundled
+  Helm chart (pinned to 1 replica) currently orchestrates or tests the rollout
+  ordering that would avoid it — a genuine bring-your-own-manifests deployment
+  concern for anyone running this topology today.
 
 ## Verification
 
