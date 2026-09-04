@@ -1118,14 +1118,14 @@ var rawStorageBypassAllowlist = map[string]string{
 	// wrapper for role deletion at all -- there is no separate operation for
 	// this raw call to bypass. The handler carries its own built-in-role
 	// protection inline (core.IsBuiltinRole check, rbac.go:426) before ever
-	// reaching the raw call. (CreateRole/UpdateRole used to be listed here
-	// too, with the identical "no core wrapper" reasoning -- #1660 gave both
-	// a real internal/core.CreateRole/UpdateRole wrapper, so their raw
-	// storage calls are gone, not merely justified; removed from this list
-	// rather than re-justified.)
-	"DeleteRole": "no-independent-ceiling: internal/core has no exported wrapper for role deletion at all -- " +
-		"this route (DELETE /api/v1/roles/{id}, RequirePermission(permRolesWrite)) IS the authoritative " +
-		"implementation, with its own built-in-role guard (rbac.go:426) already inline.",
+	// reaching the raw call. (CreateRole/UpdateRole/DeleteRole used to be
+	// listed here too, all with the identical "no core wrapper" reasoning --
+	// #1660 gave all three a real internal/core.CreateRole/UpdateRole/
+	// DeleteRole wrapper, so their raw storage calls are gone, not merely
+	// justified; removed from this list rather than re-justified. DeleteRole
+	// was the last of the three: both server/http/handlers/rbac.go and
+	// server/grpc/services/role_service.go now call core.DeleteRole instead
+	// of storage.Storage.DeleteRole directly.)
 	// #1551, corrected 2026-09-03 (adversarial review run 2, FIX-3): moved from
 	// knownUnfixedRawStorageBypasses -- the 2026-08-29 "PARTIALLY FIXED" entry
 	// there believed the project_id-on-the-wire, enforced-in-the-WHERE-clause
