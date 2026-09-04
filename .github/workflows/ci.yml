@@ -435,6 +435,22 @@ jobs:
           - leg: core
             timeout: 1800
             coverage-file: coverage_core.out
+          # storage-store (internal/storage/store, re-pinned out of root-4's
+          # catch-all 2026-09-04) -- same trigger as core's own split above: a
+          # real CI run (main, commit b971ed36) found root-4's `go test` step
+          # at 1363s against its 1800s timeout (76% of budget, only ~437s
+          # headroom) -- well past the ~569s root-4 measured at when that
+          # budget was last calibrated. Isolating internal/storage/store alone
+          # locally (go test -timeout 20m, no -race, single run) took 867.818s
+          # BY ITSELF, confirming it as the dominant contributor: the package
+          # picked up a large batch of new *_cascade_sweep_test.go/
+          # *_error_sweep_test.go coverage files since root-4's budget was
+          # last measured. 1800s here for the same reason every other leg
+          # uses it -- generous headroom so a healthy-but-slow run never
+          # trips it, not tuned tight to the observed duration.
+          - leg: storage-store
+            timeout: 1800
+            coverage-file: coverage_storage_store.out
           # handlers (server/http/handlers, one package, 167 test files, 5151
           # top-level tests, all already t.Parallel()) measured at 911s in CI
           # -- vs. 15s wall / 37s summed-per-test locally without -race. That
@@ -767,7 +783,13 @@ jobs:
           source scripts/ci-test-legs.sh
           grep_args=()
           while IFS= read -r pattern; do grep_args+=(-e "$pattern"); done < <(coverage_floor_grep_patterns)
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          # coverage_core.out is deliberately NOT in this list -- a pre-existing
+          # gap this PR found but did not fix (out of scope for a CI-sharding
+          # change; internal/core's coverage silently isn't counted toward the
+          # floor). coverage_storage_store.out below is included: it's THIS
+          # leg's own new file, and omitting it would just be reproducing that
+          # same gap in new code rather than inheriting an unrelated one.
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_storage_store.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
