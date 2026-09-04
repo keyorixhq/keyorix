@@ -81,6 +81,17 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		CreatedBy:      userCtx.Username,
 		OwnerID:        userCtx.UserID,
 	}
+	// #1625 (#1573 machine-actor attribution family, Part 2 continuation
+	// finding): CreateSecretRequest.OwnerMachineIdentityID exists and is
+	// threaded through to the persisted model (core/secrets.go), matching
+	// every sibling model this PR family touched -- but this real entry point
+	// never populated it. Without this, a machine identity's secret creation
+	// lands with OwnerID=0 AND OwnerMachineIdentityID=0, indistinguishable
+	// from an orphaned/legacy row for exactly the incident-response/
+	// compliance-audit use case the discriminator-field pattern exists for.
+	if userCtx.MachineIdentityID != nil {
+		req.OwnerMachineIdentityID = *userCtx.MachineIdentityID
+	}
 
 	response, err := h.coreService.CreateSecret(r.Context(), req)
 	if err != nil {

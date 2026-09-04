@@ -66,6 +66,16 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 		CreatedBy:     user.Username,
 		OwnerID:       user.UserID,
 	}
+	// #1625 (#1573 machine-actor attribution family, Part 2 continuation
+	// finding): mirrors the HTTP CreateSecret handler's identical fix --
+	// OwnerMachineIdentityID exists on CreateSecretRequest and is threaded
+	// through to the persisted model, but this gRPC entry point never
+	// populated it, so a machine caller's secret creation over gRPC landed
+	// with zero identifying information (same gap as the HTTP path, just
+	// unfixed here too).
+	if user.ActorType == core.ActorTypeMachine {
+		coreReq.OwnerMachineIdentityID = user.MachineIdentityID
+	}
 	if req.ParentId != nil && req.GetParentId() != 0 {
 		pID := uint(req.GetParentId())
 		coreReq.ParentID = &pID

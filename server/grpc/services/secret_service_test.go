@@ -49,6 +49,7 @@ func newSecretTestRig(t *testing.T) *secretTestRig {
 		&models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.DynamicSecretConfig{}, &models.SecretACL{}, &models.SecretAccessSchedule{},
+		&models.MachineIdentity{}, &models.MachineIdentityRole{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "development"}).Error)
