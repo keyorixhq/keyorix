@@ -53,10 +53,23 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 		if dbPath == "" {
 			dbPath = "./secrets.db"
 		}
+		// #1647 sibling gap (Part 2 regression audit continuation): this opens the
+		// SAME local secrets.db the factory's createLocalStorage path does, for the
+		// DEK-rotation/auth-encryption-stats CLI admin commands named in this
+		// function's own doc comment -- but until this fix, skipped BOTH
+		// permission-hardening steps #1647 added there (explicit-mode pre-creation
+		// and retroactive tightening of a pre-existing lax-mode file). A database
+		// file that predates #1647 was never corrected when opened through this
+		// path, leaving it world/group-readable exactly as #1647 closed for the
+		// primary storage path.
+		if err := prepareLocalStorageFile(dbPath); err != nil {
+			return nil, err
+		}
 		db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to database: %w", err)
 		}
+		tightenExistingLocalStorageFiles(dbPath)
 		if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
 			return nil, err
 		}

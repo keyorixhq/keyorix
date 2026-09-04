@@ -2017,7 +2017,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// machine callers. Layered on top of, not replacing, the group's
 			// system.write gate.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, projectScope)).Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
-			r.Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
+			// #1657 sibling gap (Part 2 regression audit continuation): this route
+			// deletes the exact same project as DeleteProjectProxy immediately
+			// above (force=false vs force=true, per project_catalog_proxy.go's
+			// package doc) but was left gated only by the group's flat
+			// system.write check -- the identical root-cause gap #1657 fixed one
+			// route above it. Same wrapper, same scope.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, projectScope)).Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
 			r.Get(pathProjectMembers, catalogHandler.ListProjectMembersProxy)
 			r.Get(pathProjectEnvs, catalogHandler.ListEnvironmentsByProjectProxy)
 			r.Get("/environments", catalogHandler.ListEnvironmentsProxy)

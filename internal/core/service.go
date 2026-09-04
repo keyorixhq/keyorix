@@ -399,6 +399,46 @@ type KeyorixCore struct {
 	sessionRefreshWatermark          time.Time
 	accessRequestApprovalWatermarkMu sync.Mutex
 	accessRequestApprovalWatermark   time.Time
+	// authTokenClockWatermark backs authEffectiveNow (auth.go): an in-memory
+	// monotonic high-water mark of the latest wall-clock instant this process
+	// has observed while validating a presented authentication credential's
+	// expiry -- ValidateSessionToken (session ExpiresAt + AbsoluteExpiresAt),
+	// ValidatePATToken (IsPATExpired), ValidateMachineToken (credential
+	// ExpiresAt, both the primary and CIDR-restriction lookup paths), and
+	// HasActiveMFAStepUp (GetActiveMFAStepUpGrant's cutoff).
+	//
+	// Part 2 regression audit continuation (2026-09-04): the #1632/#1651/#1653
+	// wall-clock hardening wave covered RBAC permission-resolution queries
+	// (rbacClockWatermark), Connect/share validity (connectClockWatermark/
+	// shareClockWatermark), single-use MFA/WebAuthn challenge CONSUMPTION
+	// (consumeClockWatermark), session REFRESH and access-request APPROVAL
+	// (sessionRefreshWatermark/accessRequestApprovalWatermark) -- but never
+	// the four functions above, which validate a presented credential's own
+	// expiry on every authenticated request/read, before any RBAC query even
+	// runs. All four compared a bare c.now() directly against a stored
+	// ExpiresAt with no regression protection of any kind -- the same
+	// backward-host-clock threat model #1632 names ("an operator, or an
+	// NTP-less clock correction, stepping the host clock back") would let an
+	// already-expired session, PAT, machine credential, or MFA step-up grant
+	// validate as still live.
+	//
+	// CLAMPs rather than refuses, matching rbacClockWatermark/
+	// connectClockWatermark/shareClockWatermark's reasoning (local_rbac.go):
+	// these are pervasive, every-request/every-read paths, not a single
+	// discrete action -- hard-refusing authentication outright the moment a
+	// regression is detected would turn a narrow clock-integrity concern into
+	// a total outage (every credential rejected, for every principal, until
+	// the clock recovers), a strictly worse outcome than the hazard being
+	// defended against. One shared watermark across all four, not four
+	// separate ones: unlike Connect/shares (unrelated subsystems, kept
+	// separate per #1632's own precedent), these four are all "is a
+	// presented credential still within its validity window" -- the same
+	// concept applied to four credential kinds, so sharing loses no
+	// meaningful precision (the point is tracking the latest wall-clock
+	// instant this process has legitimately observed, not per-credential
+	// state).
+	authTokenClockWatermarkMu sync.Mutex
+	authTokenClockWatermark   time.Time
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).

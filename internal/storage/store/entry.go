@@ -291,7 +291,19 @@ const consumeClockRegressionTolerance = 30 * time.Second
 // backward, for the same reason as internal/core's
 // checkSecretExpiryClockNotRegressed: a second, slower backward step must
 // not walk the watermark down unnoticed).
+//
+// Part 2 regression audit continuation (2026-09-04): .UTC() below strips any
+// monotonic clock reading now carries -- both real callers named above
+// (c.now()==time.Now, and a bare time.Now()) attach one. Two monotonic-
+// carrying values compare using ONLY their monotonic delta (see time.Time's
+// package doc), which never regresses even when the OS wall clock steps
+// backward, so this comparison could never actually detect the regression
+// it exists to catch without this. Same root cause as
+// checkSecretExpiryClockNotRegressed's identical fix (internal/core/versions.go,
+// #1635) and this function's own new authEffectiveNow sibling
+// (internal/core/auth.go) -- fixed in all three at once, same underlying bug.
 func (ls *LocalStorage) consumeClockLooksRegressed(now time.Time) bool {
+	now = now.UTC()
 	wm := ls.consumeClockWatermark
 	wm.mu.Lock()
 	defer wm.mu.Unlock()

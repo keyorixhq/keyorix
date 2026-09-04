@@ -83,10 +83,14 @@ type OIDCVerifier struct {
 // effectiveNow returns v.now() clamped so it never regresses relative to a
 // reading this verifier has already legitimately observed. See
 // clockWatermark's doc comment above for what this defends against.
+//
+// .UTC() strips any monotonic clock reading v.now() carries — see
+// KeyorixCore.authEffectiveNow's doc comment (auth.go) for why an unstripped
+// comparison here would never actually detect a backward wall-clock step.
 func (v *OIDCVerifier) effectiveNow() time.Time {
 	v.clockWatermarkMu.Lock()
 	defer v.clockWatermarkMu.Unlock()
-	now := v.now()
+	now := v.now().UTC()
 	if now.Before(v.clockWatermark) {
 		return v.clockWatermark
 	}
