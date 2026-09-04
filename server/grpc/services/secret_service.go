@@ -534,7 +534,7 @@ func mapSecretError(err error) error {
 	// could cause.
 	var tooLarge *core.SecretValueTooLargeError
 	if errors.As(err, &tooLarge) {
-		return status.Error(codes.ResourceExhausted, tooLarge.Error())
+		return status.Error(codes.ResourceExhausted, tooLarge.Error()) // nosemgrep: keyorix-raw-error-to-client -- SecretValueTooLargeError.Error() is a fixed-format string carrying only the submitted size and configured limit (both already known to the caller), never secret content
 	}
 	msg := err.Error()
 	switch {
