@@ -113,6 +113,10 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 func runConfigSetRemote(rc *common.RemoteClient, cmd *cobra.Command) error {
 	// NOTE on the GET-then-PUT race (unsynchronized read-modify-write):
 	//
+	// The server-side full-replace PUT semantic this relies on is a deliberate,
+	// accepted tradeoff, not a bug -- confirmed during a repo-wide full-row-
+	// overwrite sweep (see internal/core/anomaly_config.go's UpdateAnomalyConfig).
+	//
 	// This is a full-replace update: we GET the current config, patch only the
 	// flags the caller passed on the CLI, and PUT the whole object back. If two
 	// "anomaly config set" invocations (or any other future writer of this
