@@ -111,15 +111,45 @@ func backfillFoldedColumn(db *gorm.DB, table, idColumn, sourceColumn, foldColumn
 // columns do. Only rows whose normalized form actually differs from the
 // stored value are written, so this is a no-op for an already-normalized
 // database. Same fail-loud collision refusal as backfillFoldedColumn: if two
-// existing rows normalize to the same value, nothing is written and the
-// error lists every colliding pair for manual resolution.
-func normalizeColumnInPlace(db *gorm.DB, table, idColumn, column, whereClause string, normalize func(string) (string, error)) error {
+// existing rows normalize to the same value WITHIN THE SAME scopeColumns
+// tuple, nothing is written and the error lists every colliding pair for
+// manual resolution.
+//
+// scopeColumns is a comma-separated list of column names (or "" for no
+// scoping) that participate in the column's own real uniqueness constraint.
+// This matters because not every normalized column is globally unique the
+// way roles.name_folded/users.username_folded are: secret_nodes.name is only
+// unique within (project_id, environment_id) — see
+// uniq_secret_nodes_project_env_name_active — so two secrets legitimately
+// named "DATABASE_URL" in different projects are not a collision and must
+// not be grouped together. Passing "" preserves the original global-grouping
+// behavior for callers whose column genuinely has no scope (the *_folded
+// columns).
+func normalizeColumnInPlace(db *gorm.DB, table, idColumn, column, whereClause, scopeColumns string, normalize func(string) (string, error)) error {
 	type row struct {
 		ID     uint
 		Source string
+		Scope  string
 	}
 	var rows []row
-	q := db.Table(table).Select(idColumn + " AS id, " + column + " AS source")
+	// scopeColumns is a comma-separated raw column-name list (matching
+	// warnIfDuplicatesExist's keyExpr convention elsewhere in this package),
+	// combined here into one delimited string via the portable CAST(...AS
+	// TEXT) || sep || ... form (both SQLite and Postgres support TEXT casts
+	// and the || concatenation operator identically) rather than any
+	// dialect-specific tuple/ROW syntax. \x1f (ASCII unit separator) can't
+	// appear in an integer column's textual representation, so it can't be
+	// spoofed into a false cross-scope match.
+	scopeExpr := "''"
+	if scopeColumns != "" {
+		cols := strings.Split(scopeColumns, ",")
+		parts := make([]string, len(cols))
+		for i, c := range cols {
+			parts[i] = "CAST(" + strings.TrimSpace(c) + " AS TEXT)"
+		}
+		scopeExpr = strings.Join(parts, " || '\x1f' || ")
+	}
+	q := db.Table(table).Select(idColumn + " AS id, " + column + " AS source, (" + scopeExpr + ") AS scope")
 	if whereClause != "" {
 		q = q.Where(whereClause)
 	}
@@ -135,22 +165,34 @@ func normalizeColumnInPlace(db *gorm.DB, table, idColumn, column, whereClause st
 		new string
 	}
 	var changes []change
-	idsByNormalized := make(map[string][]uint, len(rows))
+	// Keyed on scope+"\x00"+normalized so two rows only collide when they
+	// share BOTH the same scope tuple and the same normalized value — a
+	// NUL byte can't appear in either half (scope is numeric column values
+	// joined by SQL concatenation; normalized is a validated identity/
+	// address string), so this can't be spoofed into a false match.
+	idsByScopeAndNormalized := make(map[string][]uint, len(rows))
+	keyLabel := make(map[string]string, len(rows))
 	for _, r := range rows {
 		normalized, err := normalize(r.Source)
 		if err != nil {
 			return fmt.Errorf("failed to normalize %s.%s=%q (id=%d): %w", table, column, r.Source, r.ID, err)
 		}
-		idsByNormalized[normalized] = append(idsByNormalized[normalized], r.ID)
+		key := r.Scope + "\x00" + normalized
+		idsByScopeAndNormalized[key] = append(idsByScopeAndNormalized[key], r.ID)
+		if scopeColumns != "" {
+			keyLabel[key] = fmt.Sprintf("%q (scope %s=%s)", normalized, scopeColumns, r.Scope)
+		} else {
+			keyLabel[key] = fmt.Sprintf("%q", normalized)
+		}
 		if normalized != r.Source {
 			changes = append(changes, change{id: r.ID, new: normalized})
 		}
 	}
 
 	var collisions []string
-	for normalized, ids := range idsByNormalized {
+	for key, ids := range idsByScopeAndNormalized {
 		if len(ids) > 1 {
-			collisions = append(collisions, fmt.Sprintf("%q shared by %s row id(s) %v", normalized, table, ids))
+			collisions = append(collisions, fmt.Sprintf("%s shared by %s row id(s) %v", keyLabel[key], table, ids))
 		}
 	}
 	if len(collisions) > 0 {
