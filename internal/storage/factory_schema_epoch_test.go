@@ -132,6 +132,43 @@ func TestSchemaEpoch_CorruptRecordedEpoch_FailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a valid integer")
 }
 
+// TestCheckSchemaEpoch_ReadQueryError_FailsClosed exercises checkSchemaEpoch's
+// third error branch: system_metadata exists (tableExists is true) but the
+// query against it fails for a reason OTHER than "no row" -- here, the table
+// is missing the very "key" column the WHERE clause references, so the read
+// itself errors instead of returning gorm.ErrRecordNotFound. This is
+// deliberately NOT the same branch as
+// TestSchemaEpoch_CorruptRecordedEpoch_FailsClosed (a value that reads fine
+// but fails to parse) -- that test never reaches this one, since a
+// successful read short-circuits past it.
+func TestCheckSchemaEpoch_ReadQueryError_FailsClosed(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "epoch-read-error.db"))
+	require.NoError(t, err)
+	// system_metadata exists (so tableExists is true) but has no "key" column.
+	require.NoError(t, db.Exec(`CREATE TABLE system_metadata (id INTEGER PRIMARY KEY, value TEXT)`).Error)
+
+	err = checkSchemaEpoch(db)
+	require.Error(t, err, "a genuine query error reading schema_epoch must fail closed, not be treated as absent")
+	assert.Contains(t, err.Error(), "failed to read schema epoch")
+}
+
+// TestRecordSchemaEpoch_MissingTable_ReturnsError exercises recordSchemaEpoch
+// directly (rather than through migrateDatabase, which always AutoMigrates
+// system_metadata first and so never reaches this branch): the upsert Create
+// call against a database where system_metadata was never created must
+// return a wrapped error, not panic or silently no-op.
+func TestRecordSchemaEpoch_MissingTable_ReturnsError(t *testing.T) {
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "epoch-record-missing-table.db"))
+	require.NoError(t, err)
+
+	err = recordSchemaEpoch(db)
+	require.Error(t, err, "recordSchemaEpoch against a database with no system_metadata table must return an error")
+	assert.Contains(t, err.Error(), "failed to record schema epoch")
+}
+
 // TestSchemaEpoch_FailedMigration_DoesNotAdvanceEpoch: if a later migration
 // step fails, the epoch must NOT be recorded -- recordSchemaEpoch only runs
 // after every other step succeeds, so a crash mid-migration can't advance

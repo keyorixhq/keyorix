@@ -123,3 +123,17 @@ func TestWithNamedLock_NestedDifferentKey_StillSerializesAgainstOtherHolder(t *t
 		t.Fatal("nested WithNamedLock(key-B) never completed after the holder released")
 	}
 }
+
+// namedLockKey must be a pure, stable function of its input: the Postgres
+// path (local_named_lock.go's WithNamedLock) relies on the same lockKey
+// string always hashing to the same advisory-lock key, on every connection,
+// every process, every run -- otherwise two replicas naming the "same" lock
+// key would take out advisory locks on two DIFFERENT Postgres keys and never
+// actually serialize against each other.
+func TestNamedLockKey_StableAndKeyDependent(t *testing.T) {
+	require.Equal(t, namedLockKey("project-admin-guard"), namedLockKey("project-admin-guard"),
+		"the same lockKey string must always hash to the same advisory-lock key")
+	require.NotEqual(t, namedLockKey("key-A"), namedLockKey("key-B"),
+		"different lockKey strings should (in practice) hash to different keys")
+	require.NotEqual(t, int64(0), namedLockKey(""), "even an empty lockKey must produce a deterministic, usable key")
+}

@@ -200,3 +200,35 @@ func TestGetMachineRoleIDsAt_DeletedEnvironmentStopsAuthorizing(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []uint{30}, ids, "restored environment: the grant authorizes again")
 }
+
+// GetMachineRoleScopes returns the distinct (project, environment) pairs a
+// machine identity holds ANY role grant at -- used to enumerate a machine's
+// reachable scopes without needing to know which role IDs to ask about.
+func TestGetMachineRoleScopes(t *testing.T) {
+	ls := newMachineCredTestStore(t)
+	ctx := context.Background()
+	const machineID = uint(1)
+
+	require.NoError(t, ls.AssignMachineRole(ctx, machineID, 100, storage.Scope{})) // global: (0, 0)
+	require.NoError(t, ls.AssignMachineRole(ctx, machineID, 200, storage.Scope{ProjectID: 2}))
+	require.NoError(t, ls.AssignMachineRole(ctx, machineID, 300, storage.Scope{ProjectID: 2, EnvironmentID: 5}))
+	// A second role at the SAME scope as an existing grant must not duplicate the scope.
+	require.NoError(t, ls.AssignMachineRole(ctx, machineID, 400, storage.Scope{ProjectID: 2}))
+	// A different machine's grant must not leak into machineID's scopes.
+	require.NoError(t, ls.AssignMachineRole(ctx, 2, 500, storage.Scope{ProjectID: 9}))
+
+	scopes, err := ls.GetMachineRoleScopes(ctx, machineID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []storage.Scope{
+		{ProjectID: 0, EnvironmentID: 0},
+		{ProjectID: 2, EnvironmentID: 0},
+		{ProjectID: 2, EnvironmentID: 5},
+	}, scopes)
+}
+
+func TestGetMachineRoleScopes_NoGrantsReturnsEmpty(t *testing.T) {
+	ls := newMachineCredTestStore(t)
+	scopes, err := ls.GetMachineRoleScopes(context.Background(), 404)
+	require.NoError(t, err)
+	assert.Empty(t, scopes)
+}

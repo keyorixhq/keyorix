@@ -45,7 +45,7 @@ func shareRecordData(id, secretID, ownerID, recipientID uint) map[string]interfa
 // TestRemoteStorage_CreateShareRecord_Unsupported: #1511/G80 deletion pass —
 // no matching route; see docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_CreateShareRecord_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CreateShareRecord(context.Background(), testShareRecord(0, 10, 2, 3))
@@ -58,7 +58,7 @@ func TestRemoteStorage_CreateShareRecord_Unsupported(t *testing.T) {
 // TestRemoteStorage_GetShareRecord_Unsupported: #1511/G80 deletion pass — no
 // matching route; see docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_GetShareRecord_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetShareRecord(context.Background(), 1)
@@ -145,7 +145,7 @@ func TestRemoteStorage_ListSharesBySecretIDs(t *testing.T) {
 }
 
 func TestRemoteStorage_ListSharesBySecretIDs_Empty(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	results, err := rs.ListSharesBySecretIDs(context.Background(), nil)
@@ -224,7 +224,7 @@ func TestRemoteStorage_ListSharesByGroup(t *testing.T) {
 // TestRemoteStorage_ListSharedSecrets_Unsupported: #1511/G80 deletion pass —
 // no matching route; see docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_ListSharedSecrets_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.ListSharedSecrets(context.Background(), 3)
@@ -238,7 +238,7 @@ func TestRemoteStorage_ListSharedSecrets_Unsupported(t *testing.T) {
 // — no matching route, and core.CheckSharePermission itself has zero callers
 // anywhere; see docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_CheckSharePermission_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CheckSharePermission(context.Background(), 10, 3)

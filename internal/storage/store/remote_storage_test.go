@@ -25,6 +25,21 @@ func testConfig(serverURL string) *remote.Config {
 	}
 }
 
+// testConfigNoRetry is testConfig with RetryAttempts: 0, for tests that
+// deliberately hit an unreachable target (e.g. "http://127.0.0.1:0") just to
+// exercise a transport-error (`err != nil`) return branch. HTTPClient.Request's
+// retry loop backs off attempt*attempt seconds between attempts
+// (internal/storage/remote/client.go), so testConfig's RetryAttempts: 3 burns a
+// full, unavoidable 1+4+9=14s per call against a target that can never succeed —
+// harmless for one test, but serial-additive across the many such tests in this
+// package. RetryAttempts: 0 makes exactly one attempt (no backoff), hitting the
+// identical code path in a few milliseconds instead.
+func testConfigNoRetry(serverURL string) *remote.Config {
+	cfg := testConfig(serverURL)
+	cfg.RetryAttempts = 0
+	return cfg
+}
+
 func apiOK(data interface{}) []byte {
 	type resp struct {
 		Success bool        `json:"success"`

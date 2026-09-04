@@ -182,3 +182,86 @@ func TestBreakGlassReads_NeverPersistState(t *testing.T) {
 	assert.Equal(t, "active", stored.State,
 		"neither read above may have persisted the projection -- the row's real, stored state must be unchanged")
 }
+
+// TestReconcileExpiredBreakGlassActivation_TransitionsOnlyTheMatchingRow is
+// the ONE place a TTL-lapse transition is actually persisted (see
+// ActivateBreakGlass, its sole caller) -- it must flip exactly the row named
+// by (projectID, userID) that is still 'active' and past its expiry, and
+// leave every other row (different project/user, already revoked, not yet
+// expired, permanent/no-expiry) untouched.
+func TestReconcileExpiredBreakGlassActivation_TransitionsOnlyTheMatchingRow(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	ctx := context.Background()
+	past := time.Now().Add(-time.Hour)
+	future := time.Now().Add(time.Hour)
+
+	target, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "active", ExpiresAt: &past,
+	})
+	require.NoError(t, err)
+
+	// Different user, same project, also expired -- must stay untouched.
+	otherUser, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 11, RoleID: 3, RoleName: "editor", State: "active", ExpiresAt: &past,
+	})
+	require.NoError(t, err)
+
+	// Same (project, user) but not yet expired -- must stay 'active'.
+	notExpired, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 2, UserID: 10, RoleID: 3, RoleName: "editor", State: "active", ExpiresAt: &future,
+	})
+	require.NoError(t, err)
+
+	// Permanent grant (no expiry) for the same (project, user) -- must never
+	// be reconciled regardless of how much time has passed.
+	permanent, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 3, UserID: 10, RoleID: 3, RoleName: "editor", State: "active",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, ls.ReconcileExpiredBreakGlassActivation(ctx, 1, 10))
+
+	var got1 models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&got1, target.ID).Error)
+	assert.Equal(t, "expired", got1.State, "the matching, expired, still-active row must transition")
+
+	var got2 models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&got2, otherUser.ID).Error)
+	assert.Equal(t, "active", got2.State, "a different user's expired row must not be touched")
+
+	var got3 models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&got3, notExpired.ID).Error)
+	assert.Equal(t, "active", got3.State, "a not-yet-expired row for the same user must stay active")
+
+	var got4 models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&got4, permanent.ID).Error)
+	assert.Equal(t, "active", got4.State, "a permanent (no ExpiresAt) grant must never be reconciled to expired")
+}
+
+// A row already revoked must not be reverted to 'expired' by a later
+// reconcile -- Reconcile only ever transitions FROM active, never from
+// revoked (#1653's "revoked always wins" invariant).
+func TestReconcileExpiredBreakGlassActivation_LeavesRevokedRowAlone(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	ctx := context.Background()
+	past := time.Now().Add(-time.Hour)
+
+	activation, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "active", ExpiresAt: &past,
+	})
+	require.NoError(t, err)
+	require.NoError(t, ls.db.Model(&models.BreakGlassActivation{}).Where("id = ?", activation.ID).
+		Update("state", "revoked").Error)
+
+	require.NoError(t, ls.ReconcileExpiredBreakGlassActivation(ctx, 1, 10))
+
+	var got models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&got, activation.ID).Error)
+	assert.Equal(t, "revoked", got.State, "a revoked row must never be reverted to expired by a later reconcile")
+}
+
+// No matching row at all is a harmless no-op, not an error.
+func TestReconcileExpiredBreakGlassActivation_NoMatchIsNoop(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	require.NoError(t, ls.ReconcileExpiredBreakGlassActivation(context.Background(), 404, 404))
+}
