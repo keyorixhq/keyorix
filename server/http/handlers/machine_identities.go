@@ -475,7 +475,15 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 
 	scope := core.Scope{ProjectID: uint(projectID)}
 	if grant {
-		err = h.coreService.AssignMachineRole(r.Context(), uint(machineID), roleID, scope, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
+		ctx := r.Context()
+		if actor.ActorKind() == core.ActorTypeMachine {
+			// A genuine, directly-authenticated machine actor requesting this
+			// grant as itself (not a /system proxy relay) -- tag ctx so
+			// requireGranterHoldsRolePermissions checks ITS real permissions
+			// instead of unconditionally refusing. See that function's doc.
+			ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+		}
+		err = h.coreService.AssignMachineRole(ctx, uint(machineID), roleID, scope, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
 	} else {
 		err = h.coreService.RemoveMachineRole(r.Context(), uint(machineID), roleID, scope, actor.UserID)
 	}

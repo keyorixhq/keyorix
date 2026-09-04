@@ -415,32 +415,20 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, err := h.coreService.Storage().GetRole(r.Context(), id)
-	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
+	if err := h.coreService.DeleteRole(r.Context(), userCtx.UserID, id); err != nil {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, errNotFound):
 			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
-		} else {
-			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
-		}
-		return
-	}
-	if core.IsBuiltinRole(role.Name) {
-		h.coreService.LogRoleDeleteDenied(r.Context(), userCtx.UserID, role.ID, role.Name, "target is a built-in role")
-		sendError(w, "Forbidden", "Cannot delete built-in role: "+role.Name, http.StatusForbidden, nil)
-		return
-	}
-
-	if err := h.coreService.Storage().DeleteRole(r.Context(), id); err != nil {
-		log.Printf("Error deleting role: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
-		} else {
+		case strings.Contains(msg, "built-in role"):
+			sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
+		default:
+			log.Printf("Error deleting role: %v", err)
 			sendError(w, "InternalError", "Failed to delete role", http.StatusInternalServerError, nil)
 		}
 		return
 	}
 
-	h.coreService.LogRoleDeleted(r.Context(), userCtx.UserID, role.ID, role.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -481,15 +469,23 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	// Through the audited core choke point (records role.assigned with the actor),
 	// not storage directly — keeps this endpoint in the RBAC audit trail. A set
 	// expiry routes through the time-bound (JIT) path.
+	ctx := r.Context()
+	if userCtx.ActorKind() == core.ActorTypeMachine {
+		// A genuine, directly-authenticated machine actor requesting this
+		// grant as itself (not a /system proxy relay) -- tag ctx so
+		// requireGranterHoldsRolePermissions checks ITS real permissions
+		// instead of unconditionally refusing. See that function's doc.
+		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
+	}
 	var err error
 	if req.ExpiresAt != nil {
 		// #1542: a machine identity (UserID==0 by construction, see
 		// server/middleware/auth.go's UserContext doc) reaching this endpoint via
 		// RequireScopedPermission must not be treated as the trusted
 		// actorID==0 local-CLI exemption inside requireGranterHoldsRolePermissions.
-		err = h.coreService.AssignUserRoleWithExpiry(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope, *req.ExpiresAt, userCtx.ActorKind() == core.ActorTypeMachine)
+		err = h.coreService.AssignUserRoleWithExpiry(ctx, userCtx.UserID, req.UserID, req.RoleID, scope, *req.ExpiresAt, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
-		err = h.coreService.AssignUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
+		err = h.coreService.AssignUserRole(ctx, userCtx.UserID, req.UserID, req.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
 	}
 	if err != nil {
 		log.Printf("Error assigning role: %v", err)
@@ -783,11 +779,19 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 
 	scope := core.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
 	// A set expiry routes through the time-bound (JIT) path.
+	ctx := r.Context()
+	if userCtx.ActorKind() == core.ActorTypeMachine {
+		// A genuine, directly-authenticated machine actor requesting this
+		// grant as itself (not a /system proxy relay) -- tag ctx so
+		// requireGranterHoldsRolePermissions checks ITS real permissions
+		// instead of unconditionally refusing. See that function's doc.
+		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
+	}
 	var err error
 	if body.ExpiresAt != nil {
-		err = h.coreService.AssignGroupRoleWithExpiry(r.Context(), userCtx.UserID, groupID, body.RoleID, scope, *body.ExpiresAt, userCtx.ActorKind() == core.ActorTypeMachine)
+		err = h.coreService.AssignGroupRoleWithExpiry(ctx, userCtx.UserID, groupID, body.RoleID, scope, *body.ExpiresAt, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
-		err = h.coreService.AssignRoleToGroup(r.Context(), userCtx.UserID, groupID, body.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
+		err = h.coreService.AssignRoleToGroup(ctx, userCtx.UserID, groupID, body.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
 	}
 	if err != nil {
 		log.Printf("Error assigning role to group: %v", err)

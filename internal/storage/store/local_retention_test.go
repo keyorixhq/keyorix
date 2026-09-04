@@ -269,6 +269,46 @@ func TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable(t *testing.T)
 	assert.Equal(t, "revoked", row.State)
 }
 
+// TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate is a
+// Part 2 regression audit finding (adversarial review run 2): the reconcile
+// step reads the set of rows to transition (Pluck), then updates them by that
+// captured ID list. If a concurrent RevokeBreakGlassActivation lands on one of
+// those rows AFTER the Pluck but BEFORE the Update -- legal, since the row was
+// still 'active' right after the Pluck -- the Update must not blindly
+// overwrite the now-'revoked' row back to 'expired'. Reproduced by running the
+// exact same two queries DeleteExpiredBreakGlassBefore issues, with a real
+// RevokeBreakGlassActivation call interleaved between them.
+func TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate(t *testing.T) {
+	ls := newRetentionTestStore(t)
+	ctx := context.Background()
+	old := time.Now().AddDate(0, 0, -120)
+	longExpired := old.Add(time.Hour)
+	cutoff := time.Now().AddDate(0, 0, -90)
+
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
+		ID: 7, State: "active", CreatedAt: old, ExpiresAt: &longExpired,
+	}).Error)
+
+	// Step 1 of DeleteExpiredBreakGlassBefore, the actual production function.
+	justReconciledIDs, err := ls.pluckExpiredActiveBreakGlassIDs(ctx, cutoff.UTC())
+	require.NoError(t, err)
+	require.Equal(t, []uint{7}, justReconciledIDs)
+
+	// Interleaved: a concurrent admin revoke lands on the row while it's still 'active'.
+	require.NoError(t, ls.RevokeBreakGlassActivation(ctx, 7, 1, 0, time.Now()))
+	var afterRevoke models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&afterRevoke, 7).Error)
+	require.Equal(t, "revoked", afterRevoke.State)
+
+	// Step 2, the actual production function, using the now-stale Plucked ID list.
+	require.NoError(t, ls.reconcileBreakGlassIDsToExpired(ctx, justReconciledIDs))
+
+	var row models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&row, 7).Error)
+	assert.Equal(t, "revoked", row.State, "the concurrent revoke must not be clobbered back to 'expired'")
+	assert.Equal(t, uint(1), row.RevokedBy, "revoked_by must stay consistent with state=revoked")
+}
+
 func TestDeleteResolvedAccessRequestsBefore_CascadesAndSkipsPending(t *testing.T) {
 	ls := newRetentionTestStore(t)
 	ctx := context.Background()

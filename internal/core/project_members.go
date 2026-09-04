@@ -81,7 +81,15 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 				hasTarget = true
 				continue
 			}
-			if err := c.RemoveUserRole(ctx, actorID, userID, rid, scope); err != nil {
+			// removeUserRoleUnguarded, not RemoveUserRole: the guardLastProjectAdmin
+			// call above already validated the FULL before/after transition
+			// (existing -> []uint{role.ID}) atomically under this call's own
+			// WithNamedLock. RemoveUserRole's own project-scope guard can only see
+			// this one role's removal in isolation -- blind to the AssignUserRole
+			// below that's about to restore admin coverage -- and would falsely
+			// refuse swapping the project's sole administrator directly from one
+			// admin-tier role to another (see removeUserRoleUnguarded's doc).
+			if err := c.removeUserRoleUnguarded(ctx, actorID, userID, rid, scope); err != nil {
 				return err
 			}
 		}

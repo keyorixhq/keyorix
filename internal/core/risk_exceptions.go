@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -57,6 +58,42 @@ var (
 	ErrRiskExceptionRevokedNotApprovable = errors.New("cannot approve a revoked risk exception")
 	ErrRiskExceptionConcurrentlyDecided  = errors.New("risk exception was concurrently revoked or approved by another request")
 )
+
+// ErrRiskExceptionPermissionDenied and ErrRiskExceptionNotFound (re-exported
+// from storage.ErrRiskExceptionNotFound for errors.Is convenience) classify
+// RevokeRiskException failures for server/http/handlers/risk_exceptions.go to
+// match via errors.Is, rather than the substring text match it used to do
+// (strings.Contains(msg, "not found"), with no case at all for permission
+// denial, which fell through to a generic 500). Same pattern as FIX-4/FIX-6.
+//
+// Part 2 regression audit (adversarial review run 2): RevokeRiskException's
+// authority check ran AFTER the existence lookup (GetRiskException),
+// returning that lookup's raw error on failure -- so a caller holding this
+// route's own gate (system.write) but no creator/admin-tier standing could
+// distinguish "exception id doesn't exist" from "exists but isn't mine" by
+// the different status codes/bodies that produced, exactly the oracle
+// PR #1695 fixed for the identically-shaped DeleteSoDPolicy but never swept
+// to this sibling site.
+var (
+	ErrRiskExceptionPermissionDenied = errors.New("risk exception permission denied")
+	ErrRiskExceptionNotFoundPublic   = errors.New("risk exception not found")
+)
+
+type riskExceptionClassifiedError struct {
+	err    error
+	target error
+}
+
+func (e *riskExceptionClassifiedError) Error() string        { return e.err.Error() }
+func (e *riskExceptionClassifiedError) Unwrap() error        { return e.err }
+func (e *riskExceptionClassifiedError) Is(target error) bool { return target == e.target }
+
+func wrapRiskExceptionPermissionDenied(err error) error {
+	return &riskExceptionClassifiedError{err: err, target: ErrRiskExceptionPermissionDenied}
+}
+func wrapRiskExceptionNotFoundPublic(err error) error {
+	return &riskExceptionClassifiedError{err: err, target: ErrRiskExceptionNotFoundPublic}
+}
 
 // validExceptionCategories are the risk areas an exception may cover (aligned with
 // the posture controls so an exception can annotate a specific gap).
@@ -238,16 +275,38 @@ func (c *KeyorixCore) CountExpiredRiskExceptions(ctx context.Context) (int, erro
 // LiftLegalHold's creator-or-admin precedent exactly: only the principal who
 // created the exception, or a global-admin-tier principal, may revoke it. A
 // denied attempt is itself audited.
+//
+// Part 2 regression audit fix (adversarial review run 2): the authority check
+// used to run AFTER the existence lookup, returning that lookup's error
+// verbatim on failure -- the same #1645 403-for-both oracle PR #1695 fixed
+// for DeleteSoDPolicy, present here too since this function shares the exact
+// same shape and was never swept. A real 404 is now safe ONLY for a caller
+// already authorized at global admin-tier (the same standing that would
+// grant access to ANY exception); every other caller gets the identical
+// ErrRiskExceptionPermissionDenied response whether the id is missing or
+// just not theirs.
 func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint) error {
+	isAdminTier := c.isGlobalAdminRoleName(ctx, actorID) != ""
+
 	e, err := c.storage.GetRiskException(ctx, id)
 	if err != nil {
+		if isAdminTier && errors.Is(err, storage.ErrRiskExceptionNotFound) {
+			return wrapRiskExceptionNotFoundPublic(err)
+		}
+		if errors.Is(err, storage.ErrRiskExceptionNotFound) {
+			c.writeAuditEventFailed(ctx, EventRiskExceptionRevoked, actorPtr(actorID), nil, "",
+				fmt.Sprintf("risk exception %d revoke DENIED: actor %d is not an admin-tier principal (exception lookup found no match)", id, actorID))
+			return wrapRiskExceptionPermissionDenied(fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+				"only the creating admin or an admin-tier principal may revoke this risk exception"))
+		}
 		return err
 	}
-	if actorID != e.CreatedBy && c.isGlobalAdminRoleName(ctx, actorID) == "" {
+
+	if actorID != e.CreatedBy && !isAdminTier {
 		c.writeAuditEventFailed(ctx, EventRiskExceptionRevoked, actorPtr(actorID), nil, "",
 			fmt.Sprintf("risk exception %d revoke DENIED: actor %d is neither the creator (%d) nor an admin-tier principal", id, actorID, e.CreatedBy))
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
-			"only the creating admin or an admin-tier principal may revoke this risk exception")
+		return wrapRiskExceptionPermissionDenied(fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only the creating admin or an admin-tier principal may revoke this risk exception"))
 	}
 	if e.Revoked {
 		return fmt.Errorf("risk exception %d is already revoked: %w", id, ErrRiskExceptionAlreadyRevoked)

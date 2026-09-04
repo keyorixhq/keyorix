@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"hash/fnv"
 	"sync"
@@ -87,6 +88,32 @@ func heldNamedLockKeys(ctx context.Context) map[string]bool {
 	return held
 }
 
+// namedLockConnCtxKey carries the *sql.Conn an outer WithNamedLock call
+// checked out of the pool, so a nested call under a DIFFERENT key (Postgres
+// path only) reuses it instead of checking out a second connection.
+//
+// Part 2 regression audit (adversarial review run 2), found in FIX-5 itself:
+// PostgreSQL advisory locks are SESSION-scoped, not per-acquisition -- one
+// connection can hold pg_advisory_lock on any number of distinct keys at
+// once. Before this, every WithNamedLock call (nested or not) pulled its own
+// connection via sqlDB.Conn(ctx), so a call chain nesting N distinct keys
+// needed N simultaneous pooled connections. Under a constrained pool (e.g.
+// max_open_conns: 1 or 2, unenforced by internal/config), the outer call
+// holds the pool's only connection for the ENTIRE duration of fn -- which is
+// itself the blocked inner call waiting on sqlDB.Conn(ctx) for a connection
+// only the outer call could release. Verified: an indefinite deadlock (not
+// contention -- it never resolved on its own; only an artificial context
+// timeout ended it), reproduced against real Postgres with MaxOpenConns(1).
+// Reusing the outer call's connection for every nested key removes the
+// per-chain connection-count dependency entirely: a chain nesting any number
+// of distinct keys still needs only ONE pooled connection.
+type namedLockConnCtxKey struct{}
+
+func heldNamedLockConn(ctx context.Context) *sql.Conn {
+	conn, _ := ctx.Value(namedLockConnCtxKey{}).(*sql.Conn)
+	return conn
+}
+
 // WithNamedLock runs fn with every OTHER caller using the identical lockKey
 // serialized against it: a per-key process-level mutex (namedLockRegistry)
 // covers the common single-writer self-host topology and SQLite (inherently
@@ -129,6 +156,22 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 		return fn(ctx)
 	}
 
+	key := namedLockKey(lockKey)
+
+	// Reuse an outer call's already-checked-out connection if this call chain
+	// has one (see namedLockConnCtxKey) -- a nested call under a different key
+	// must still acquire its OWN advisory lock, but never needs a SECOND
+	// pooled connection to do it.
+	if conn := heldNamedLockConn(ctx); conn != nil {
+		if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
+			return fmt.Errorf("failed to acquire named advisory lock %q: %w", lockKey, err)
+		}
+		defer func() {
+			_, _ = conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", key)
+		}()
+		return fn(ctx)
+	}
+
 	sqlDB, err := ls.db.DB()
 	if err != nil {
 		return err
@@ -139,7 +182,6 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 	}
 	defer func() { _ = conn.Close() }() // returns the conn to the pool (after the unlock below)
 
-	key := namedLockKey(lockKey)
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
 		return fmt.Errorf("failed to acquire named advisory lock %q: %w", lockKey, err)
 	}
@@ -148,5 +190,8 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 		_, _ = conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", key)
 	}()
 
+	// Make this connection available to any nested WithNamedLock call under a
+	// different key, for the remainder of this call chain.
+	ctx = context.WithValue(ctx, namedLockConnCtxKey{}, conn)
 	return fn(ctx)
 }

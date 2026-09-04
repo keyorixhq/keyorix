@@ -8,13 +8,14 @@ set -euo pipefail
 
 dupes=$(find docs -maxdepth 1 -type f -name 'adr-[0-9]*.md' -print \
     | sed -E 's#.*/adr-([0-9]+)-.*#\1#' \
+    | awk '{printf "%d\n", $1}' \
     | sort -n \
     | uniq -d)
 
 if [ -n "$dupes" ]; then
     echo "FAIL: duplicate ADR number(s) found:"
     for n in $dupes; do
-        find docs -maxdepth 1 -type f -name "adr-${n}-*.md"
+        find docs -maxdepth 1 -type f -regex ".*/adr-0*${n}-.*"
     done
     exit 1
 fi

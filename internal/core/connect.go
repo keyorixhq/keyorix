@@ -27,10 +27,13 @@ const EventConnectSecretRead = "connect.secret_read"
 // connectorHasAnyDelegationForActor are reached on every federated read —
 // see rbacEffectiveNow's doc comment (internal/storage/store/local_rbac.go)
 // for why this clamps rather than refuses.
+// .UTC() strips any monotonic clock reading c.now() carries — see
+// authEffectiveNow's doc comment (auth.go) for why an unstripped comparison
+// here would never actually detect a backward wall-clock step.
 func (c *KeyorixCore) connectEffectiveNow() time.Time {
 	c.connectClockWatermarkMu.Lock()
 	defer c.connectClockWatermarkMu.Unlock()
-	now := c.now()
+	now := c.now().UTC()
 	if now.Before(c.connectClockWatermark) {
 		return c.connectClockWatermark
 	}

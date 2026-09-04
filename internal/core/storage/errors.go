@@ -23,6 +23,20 @@ var ErrUserNotFound = errors.New("user not found")
 // actually translated.
 var ErrSoDPolicyNotFound = errors.New("sod policy not found")
 
+// ErrRiskExceptionNotFound is returned (wrapped) by GetRiskException when no
+// exception exists for the given id, as distinct from a transient retrieval
+// failure. Same convention and same reason as ErrSoDPolicyNotFound above —
+// RevokeRiskException (internal/core/risk_exceptions.go) matches it with
+// errors.Is to decide whether a real 404 is safe (admin-tier caller only) vs
+// collapsing it into the same permission-denied response a non-admin caller
+// gets for an existing-but-foreign exception (#1645 403-for-both). Part 2
+// regression audit (adversarial review run 2): RevokeRiskException still had
+// this exact gap (existence lookup before the creator/admin check) after
+// PR #1695 fixed the identical shape for DeleteSoDPolicy but didn't sweep to
+// this sibling site, despite risk_exceptions.go's own doc comment already
+// naming the same #1529 precedent SoD's fix cites.
+var ErrRiskExceptionNotFound = errors.New("risk exception not found")
+
 // ErrRoleNotAssigned is returned (wrapped) by RemoveRole when the (user, role, scope)
 // row positively does not exist — e.g. it already auto-expired or was already
 // removed — as distinct from a genuine storage failure. Callers for whom "already

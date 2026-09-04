@@ -456,7 +456,11 @@ const sessionRefreshClockRegressionTolerance = 30 * time.Second
 // message, so a caller cannot use it as an oracle confirming clock
 // manipulation had an effect. On success, advances the watermark to now
 // (never backward).
+// .UTC() strips any monotonic clock reading now carries — see
+// authEffectiveNow's doc comment (same file) for why an unstripped
+// comparison here would never actually detect a backward wall-clock step.
 func (c *KeyorixCore) checkSessionRefreshClockNotRegressed(now time.Time) error {
+	now = now.UTC()
 	c.sessionRefreshWatermarkMu.Lock()
 	defer c.sessionRefreshWatermarkMu.Unlock()
 	if !c.sessionRefreshWatermark.IsZero() && now.Before(c.sessionRefreshWatermark.Add(-sessionRefreshClockRegressionTolerance)) {
@@ -503,6 +507,35 @@ func (c *KeyorixCore) handleSessionReuse(ctx context.Context, old *models.Sessio
 	}
 }
 
+// authEffectiveNow returns a wall-clock reading that never regresses relative
+// to what this process has already observed while validating a presented
+// authentication credential's expiry (session/PAT/machine token/MFA step-up
+// -- see authTokenClockWatermark's doc comment, service.go). CLAMPs rather
+// than refuses: max(c.now(), authTokenClockWatermark), always advancing the
+// watermark forward.
+//
+// .UTC() is not cosmetic here: it strips any monotonic clock reading Go
+// attaches to a real time.Now() value (see time.Time's package doc). Two
+// monotonic-carrying Time values compare using ONLY their monotonic delta,
+// which never regresses even when the OS wall clock is stepped backward --
+// so an unstripped watermark comparison would silently never detect the
+// exact regression this mechanism exists to catch, matching #1635's own
+// root-cause bug in checkSecretExpiryClockNotRegressed (fixed alongside this
+// one, same root cause). rbacEffectiveNow (local_rbac.go, #1651) already
+// gets this right by always being called with time.Now().UTC(); mirrored
+// here explicitly rather than trusting every future caller of c.now() to
+// remember to strip it themselves.
+func (c *KeyorixCore) authEffectiveNow() time.Time {
+	now := c.now().UTC()
+	c.authTokenClockWatermarkMu.Lock()
+	defer c.authTokenClockWatermarkMu.Unlock()
+	if now.Before(c.authTokenClockWatermark) {
+		return c.authTokenClockWatermark
+	}
+	c.authTokenClockWatermark = now
+	return now
+}
+
 // ValidateSessionToken looks up a session token, checks expiry, and returns the user and
 // their role names. Used by the auth middleware on every authenticated request.
 func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
@@ -510,7 +543,7 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if err != nil {
 		return nil, nil, fmt.Errorf("session not found")
 	}
-	if session.ExpiresAt != nil && c.now().After(*session.ExpiresAt) {
+	if session.ExpiresAt != nil && c.authEffectiveNow().After(*session.ExpiresAt) {
 		return nil, nil, fmt.Errorf("session expired")
 	}
 	// Enforce the hard absolute-lifetime ceiling at the validation boundary, not only via
@@ -519,7 +552,7 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	// DEPEND on every issuer having clamped correctly — a session whose access window is
 	// still open yet whose ceiling has passed (a future non-clamping path, or a tampered
 	// row) is rejected here. Self-checking invariant.
-	if session.AbsoluteExpiresAt != nil && c.now().After(*session.AbsoluteExpiresAt) {
+	if session.AbsoluteExpiresAt != nil && c.authEffectiveNow().After(*session.AbsoluteExpiresAt) {
 		return nil, nil, fmt.Errorf("session lifetime exceeded")
 	}
 	user, err := c.storage.GetUser(ctx, session.UserID)

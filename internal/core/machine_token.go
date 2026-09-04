@@ -262,7 +262,7 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 	if cred.Revoked {
 		return nil, nil, nil, 0, ErrMachineTokenRevoked
 	}
-	if cred.ExpiresAt != nil && c.now().After(*cred.ExpiresAt) {
+	if cred.ExpiresAt != nil && c.authEffectiveNow().After(*cred.ExpiresAt) {
 		return nil, nil, nil, 0, ErrMachineTokenExpired
 	}
 	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)
@@ -315,7 +315,7 @@ func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw st
 	if cred.Revoked {
 		return nil, ErrMachineTokenRevoked
 	}
-	if cred.ExpiresAt != nil && c.now().After(*cred.ExpiresAt) {
+	if cred.ExpiresAt != nil && c.authEffectiveNow().After(*cred.ExpiresAt) {
 		return nil, ErrMachineTokenExpired
 	}
 	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)

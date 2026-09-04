@@ -111,6 +111,13 @@ func TestRevokeRiskException(t *testing.T) {
 	// #1529: RevokeRiskException now requires creator-or-admin. CreatedBy: 3
 	// makes actor 3 the creator, satisfying the check without needing to stand
 	// up an RBAC mock chain for the admin branch.
+	// FIX-5 (Part 2 regression audit): isGlobalAdminRoleName is now evaluated
+	// unconditionally up front (needed to decide the not-found-vs-denied
+	// classification below, see #1645 403-for-both) rather than only on the
+	// non-creator path, so even this creator-only case now needs the RBAC
+	// lookup mocked.
+	store.On("GetUserRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{}, nil)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
 	store.On("RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
 		return e.ID == 5 && e.Revoked && e.RevokedBy == 3 && e.RevokedAt != nil
@@ -176,6 +183,10 @@ func TestRevokeRiskException_LostRaceReturnsError(t *testing.T) {
 	// #1529: CreatedBy: 3 makes actor 3 the creator, satisfying the
 	// creator-or-admin check so this test still exercises the lost-race path
 	// it's actually about.
+	// FIX-5: see TestRevokeRiskException above -- the admin-tier RBAC lookup
+	// now runs unconditionally, before the creator check.
+	store.On("GetUserRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{}, nil)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
 	store.On("RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.Anything).Return(false, nil)
 

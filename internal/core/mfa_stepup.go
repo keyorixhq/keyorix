@@ -74,7 +74,7 @@ func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code
 // HasActiveMFAStepUp reports whether userID holds a current, unexpired step-up
 // grant. Returns (false, nil) — not an error — when no grant exists.
 func (c *KeyorixCore) HasActiveMFAStepUp(ctx context.Context, userID uint) (bool, error) {
-	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, c.now())
+	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, c.authEffectiveNow())
 	if err != nil {
 		return false, err
 	}
