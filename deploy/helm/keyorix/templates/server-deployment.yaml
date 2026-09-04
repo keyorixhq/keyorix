@@ -95,9 +95,11 @@ spec:
             {{- if .Values.server.resources }}
             {{- toYaml .Values.server.resources | nindent 12 }}
             {{- else }}
+            # Kept in sync with values.yaml's own server.resources default --
+            # see its comment for the Guaranteed-QoS/measurement derivation.
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 1000m
+              memory: 512Mi
               ephemeral-storage: 64Mi
             limits:
               cpu: 1000m
