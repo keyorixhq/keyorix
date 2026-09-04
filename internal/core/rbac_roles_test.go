@@ -121,3 +121,46 @@ func TestUpdateRole_HappyPathAudited(t *testing.T) {
 	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", EventRoleUpdated).Count(&n).Error)
 	assert.Equal(t, int64(1), n, "UpdateRole must audit exactly once")
 }
+
+// #1660 sibling sweep (Part 2 regression audit continuation): DeleteRole was
+// the one role-CRUD operation #1665's original consolidation missed -- both
+// transports still called storage.Storage.DeleteRole directly, duplicating
+// (correctly, but separately) the built-in-role guard and audit call. These
+// tests exercise the now-shared core.DeleteRole directly, the same way
+// TestCreateRole_*/TestUpdateRole_* above prove the OTHER two operations'
+// validation genuinely lives in internal/core and isn't just something both
+// transports happen to still do for themselves.
+func TestDeleteRole_RejectsBuiltin(t *testing.T) {
+	c, db := newRoleCRUDTestCore(t)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", NameFolded: "super_admin"}).Error)
+
+	err := c.DeleteRole(context.Background(), 1, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "built-in")
+
+	var role models.Role
+	require.NoError(t, db.First(&role, 1).Error, "a rejected delete must not remove the row")
+}
+
+func TestDeleteRole_HappyPathAudited(t *testing.T) {
+	c, db := newRoleCRUDTestCore(t)
+	created, err := c.CreateRole(context.Background(), 1, "deletable-role", "desc")
+	require.NoError(t, err)
+
+	require.NoError(t, c.DeleteRole(context.Background(), 9, created.ID))
+
+	var count int64
+	require.NoError(t, db.Model(&models.Role{}).Where("id = ?", created.ID).Count(&count).Error)
+	assert.Zero(t, count, "the role row must actually be gone")
+
+	var n int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", EventRoleDeleted).Count(&n).Error)
+	assert.Equal(t, int64(1), n, "DeleteRole must audit exactly once")
+}
+
+func TestDeleteRole_NonexistentReturnsError(t *testing.T) {
+	c, _ := newRoleCRUDTestCore(t)
+	err := c.DeleteRole(context.Background(), 1, 999999)
+	require.Error(t, err)
+	assert.Contains(t, strings.ToLower(err.Error()), "not found")
+}

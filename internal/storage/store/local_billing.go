@@ -198,9 +198,13 @@ func (ls *LocalStorage) billingCountsByProject(ctx context.Context, from, to tim
 	if err != nil {
 		return nil, err
 	}
+	// "machine_identity" (models.AuditEvent.ActorType / core.ActorTypeMachine), not
+	// "machine" — this previously used the wrong literal, so MachineReads always
+	// reported 0 regardless of real machine-identity read activity; caught by
+	// GetBillingReport's first real (non-zero-coverage) test.
 	machineReads, err := ls.countByProject(ctx, "audit_events",
 		"project_id IN ? AND event_type = ? AND actor_type = ? AND event_time >= ? AND event_time < ?",
-		projectIDs, "secret.read", "machine", from, to)
+		projectIDs, "secret.read", "machine_identity", from, to)
 	if err != nil {
 		return nil, err
 	}

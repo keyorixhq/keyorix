@@ -192,9 +192,14 @@ func TestListAccessRequestsProxy_WithData_S9(t *testing.T) {
 
 func TestCreateAccessRequestApprovalProxy_Success_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	// CreateAccessRequestApprovalProxy now re-derives the same authority
+	// ceiling core.ApproveAccessRequestWithExpiry applies (access-request-proxy-
+	// create-approval-ceiling finding), which resolves the request's role by
+	// name -- suggested_role must be a real, resolvable role.
+	ensureS4TestRole(t, h, "s9-approval-role")
 
 	// Create an access request first
-	createBody := `{"project_id":5,"user_id":5,"state":"pending","requester_id":5}`
+	createBody := `{"project_id":5,"user_id":5,"state":"pending","requester_id":5,"suggested_role":"s9-approval-role"}`
 	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
 	createW := httptest.NewRecorder()
 	h.CreateAccessRequestProxy(createW, createReq)
@@ -219,9 +224,13 @@ func TestCreateAccessRequestApprovalProxy_Success_S9(t *testing.T) {
 
 func TestListAccessRequestApprovalsProxy_WithData_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	// CreateAccessRequestApprovalProxy now re-derives an authority ceiling
+	// that resolves the request's role by name -- suggested_role must be a
+	// real, resolvable role.
+	ensureS4TestRole(t, h, "s9-approval-role")
 
 	// Create access request and an approval
-	createBody := `{"project_id":6,"user_id":6,"state":"pending","requester_id":6}`
+	createBody := `{"project_id":6,"user_id":6,"state":"pending","requester_id":6,"suggested_role":"s9-approval-role"}`
 	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
 	createW := httptest.NewRecorder()
 	h.CreateAccessRequestProxy(createW, createReq)

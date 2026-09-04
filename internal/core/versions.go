@@ -27,7 +27,23 @@ const secretExpiryClockRegressionTolerance = 30 * time.Second
 // does not protect against. On success, advances the watermark to now (never
 // backward — the watermark itself must not regress, or a second, slower
 // backward step could walk it down unnoticed).
+//
+// Part 2 regression audit continuation (2026-09-04): .UTC() below is not
+// cosmetic — it strips any monotonic clock reading a real time.Now()-derived
+// now carries (see time.Time's package doc). Before this fix, comparing two
+// monotonic-carrying values (this call's now against the previously-stored
+// secretExpiryWatermark, both ultimately from c.now()==time.Now in
+// production) used ONLY their monotonic delta, which never regresses even
+// when the OS wall clock is stepped backward — so this guard could never
+// actually detect the exact regression it exists to catch. The guard's own
+// tests never caught this because their now values come from time.Date(...)
+// test doubles, which the stdlib guarantees never carry a monotonic
+// reading — the tests exercised wall-clock-only comparisons throughout,
+// silently different semantics from the real production path. Stripped
+// locally (not just relying on the caller) so this function is correct
+// regardless of what future callers pass in.
 func (c *KeyorixCore) checkSecretExpiryClockNotRegressed(now time.Time) error {
+	now = now.UTC()
 	c.secretExpiryWatermarkMu.Lock()
 	defer c.secretExpiryWatermarkMu.Unlock()
 	if !c.secretExpiryWatermark.IsZero() && now.Before(c.secretExpiryWatermark.Add(-secretExpiryClockRegressionTolerance)) {

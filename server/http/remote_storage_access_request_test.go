@@ -308,7 +308,13 @@ func TestRemoteStorageAccessRequest_Approvals_RealServer(t *testing.T) {
 	asApprover1 := newDeleteProjectScopeRemoteClient(t, baseURL, sess1.SessionToken)
 	asApprover2 := newDeleteProjectScopeRemoteClient(t, baseURL, sess2.SessionToken)
 
-	req := buildAccessRequest(now, projectID, 21, "developer")
+	// CreateAccessRequestApprovalProxy now re-derives the same authority
+	// ceiling core.ApproveAccessRequestWithExpiry applies, which resolves
+	// SuggestedRole by name -- must be a real, resolvable role. Permission-less
+	// isolates this test to its actual subject (dedup/persistence), not the
+	// ceiling itself, matching arTestPermissionlessRole's established use
+	// elsewhere in this file.
+	req := buildAccessRequest(now, projectID, 21, arTestPermissionlessRole(t, upstream))
 	created, err := downstream.Storage().CreateAccessRequest(ctx, req)
 	require.NoError(t, err)
 

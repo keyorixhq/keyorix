@@ -143,7 +143,7 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	if pat.Revoked {
 		return nil, nil, nil, 0, ErrPATRevoked
 	}
-	if IsPATExpired(pat, c.now()) {
+	if IsPATExpired(pat, c.authEffectiveNow()) {
 		c.emitPATExpiredNotification(ctx, pat)
 		return nil, nil, nil, 0, ErrPATExpired
 	}
@@ -273,7 +273,7 @@ func (c *KeyorixCore) CurrentPATRestriction(ctx context.Context, raw string) (*P
 	if pat.Revoked {
 		return nil, ErrPATRevoked
 	}
-	if IsPATExpired(pat, c.now()) {
+	if IsPATExpired(pat, c.authEffectiveNow()) {
 		return nil, ErrPATExpired
 	}
 	return patRestrictionFrom(pat), nil

@@ -99,6 +99,10 @@ func freshCoreS7(t *testing.T) *core.KeyorixCore {
 		&models.SecretAccessLog{},
 		// s7 addition: required for BootstrapSystem's initialized-state check.
 		&models.SystemMetadata{},
+		// coverage-sweep addition: required by anomaly_config_test.go's
+		// GetAnomalyConfig/UpdateAnomalyConfig real-server tests, and by
+		// BootstrapSystem's password-history write.
+		&models.AnomalyConfigRecord{}, &models.PasswordHistory{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))

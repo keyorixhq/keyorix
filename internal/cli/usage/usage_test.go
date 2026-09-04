@@ -18,6 +18,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // resetFlags restores the package-level flag vars to their zero/default
@@ -170,6 +172,120 @@ func TestRunShow_LocalModeStorageInitFailure(t *testing.T) {
 	err := runShow(nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load config")
+}
+
+// setupEmbeddedUsageMode points config.Load("") at a temp-dir keyorix.yaml
+// (local/embedded SQLite storage) and clears remote-mode signals, mirroring
+// internal/cli/rbac's setupEmbeddedMode helper. HOME is also redirected so
+// common.NewRemoteClient() can't pick up a real ~/.keyorix/cli.yaml on the
+// machine running the test (see TestRunShow_LocalModeStorageInitFailure's
+// comment for the same pitfall).
+func setupEmbeddedUsageMode(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	yaml := "storage:\n  type: local\n  database:\n    path: " + dir + "/secrets.db\n"
+	require.NoError(t, os.WriteFile(dir+"/keyorix.yaml", []byte(yaml), 0600))
+}
+
+// TestRunShow_LocalModeSuccess_NoProjectFilter drives runShow's embedded-mode
+// success path (InitializeStorage -> core.NewKeyorixCore -> GetUsageReport ->
+// printReport) with flagProjectID left at zero, covering the "all projects"
+// branch (the projectID pointer stays nil) plus the final printReport call.
+func TestRunShow_LocalModeSuccess_NoProjectFilter(t *testing.T) {
+	resetFlags(t)
+	setupEmbeddedUsageMode(t)
+
+	flagDays = 30
+	flagProjectID = 0
+	flagFormat = "table"
+
+	out, err := captureStdout(t, func() error { return runShow(nil, nil) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "last 30 days")
+	assert.Contains(t, out, "(no data)")
+}
+
+// TestRunShow_LocalModeSuccess_WithProjectFilter covers the flagProjectID != 0
+// branch inside runShow (the `id := flagProjectID; projectID = &id` block),
+// which TestRunShow_LocalModeSuccess_NoProjectFilter's zero-value flag can't
+// reach. The filtered project need not exist in storage — GetProjectUsageStats
+// simply returns no matching rows, which is enough to exercise the branch.
+func TestRunShow_LocalModeSuccess_WithProjectFilter(t *testing.T) {
+	resetFlags(t)
+	setupEmbeddedUsageMode(t)
+
+	flagDays = 7
+	flagProjectID = 99
+	flagFormat = "json"
+
+	out, err := captureStdout(t, func() error { return runShow(nil, nil) })
+	require.NoError(t, err)
+
+	var decoded storage.UsageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	assert.Equal(t, 7, decoded.WindowDays)
+}
+
+// TestRunShow_LocalModeGetUsageReportError covers runShow's
+// "failed to generate usage report" wrap -- the one embedded-mode branch not
+// reachable via a plain InitializeStorage success/failure. GetUsageReport's
+// only error source is the underlying GetProjectUsageStats query
+// (internal/storage/store/local_usage.go), which is a raw GORM Scan into a
+// `ProjectID uint` field. audit_events.project_id has no NOT NULL/CHECK
+// constraint at the schema level (see models.AuditEvent), so a row inserted
+// via a raw connection with project_id = -1 passes SQLite's dynamic typing
+// on INSERT but fails database/sql's uint conversion on Scan
+// ("converting driver.Value type int64 (\"-1\") to a uint: invalid syntax"),
+// producing a genuine backend error without any storage/interface changes.
+func TestRunShow_LocalModeGetUsageReportError(t *testing.T) {
+	resetFlags(t)
+	setupEmbeddedUsageMode(t)
+
+	_, err := common.InitializeStorage()
+	require.NoError(t, err)
+
+	rawDB, err := gorm.Open(sqlite.Open("secrets.db"))
+	require.NoError(t, err)
+	res := rawDB.Exec("INSERT INTO audit_events (event_type, project_id, event_time, success) VALUES (?, ?, ?, ?)",
+		"secret.read", -1, time.Now().UTC(), true)
+	require.NoError(t, res.Error)
+
+	flagDays = 30
+	flagProjectID = 0
+	flagFormat = "table"
+
+	err = runShow(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to generate usage report")
+}
+
+// TestPrintReport_NoDataWriteError forces the "(no data)" Fprintln call to
+// fail by closing os.Stdout before printReport runs. This is the one
+// tabwriter-buffered write error branch that's actually reachable: per
+// text/tabwriter's Write implementation, a line with no tab characters (a
+// single cell) triggers an immediate internal flush to the underlying
+// writer, unlike the header/row lines below which contain tabs and stay
+// buffered until an explicit Flush() (see the header/row write-error
+// branches' doc comment on why those can't be covered the same way).
+func TestPrintReport_NoDataWriteError(t *testing.T) {
+	resetFlags(t)
+	flagFormat = "table"
+
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	require.NoError(t, w.Close())
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	report := &storage.UsageReport{WindowDays: 30, GeneratedAt: time.Now()}
+	err = printReport(report)
+	require.Error(t, err)
 }
 
 func TestPrintReport_JSONFormat(t *testing.T) {

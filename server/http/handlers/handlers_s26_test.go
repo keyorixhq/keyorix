@@ -1449,8 +1449,17 @@ func TestCreateAccessRequestApprovalProxy_HappyPath_S26(t *testing.T) {
 
 	proj := &models.Project{Name: "s26-create-ara-proj"}
 	require.NoError(t, db.Create(proj).Error)
+	// CreateAccessRequestApprovalProxy now re-derives the same authority
+	// ceiling core.ApproveAccessRequestWithExpiry applies, which resolves
+	// SuggestedRole by name -- this fixture seeds no default roles, so
+	// "viewer" must exist as a real row for GetRoleByName to resolve it.
+	require.NoError(t, db.Create(&models.Role{Name: "viewer", NameFolded: "viewer"}).Error)
+	// UserID must differ from withUserCtx's actor (1) -- CreateAccessRequestApprovalProxy
+	// now refuses self-approval (access-request-proxy-create-approval-ceiling
+	// finding), so a request from the same user as the approving actor would
+	// no longer reach 200.
 	ar := &models.AccessRequest{
-		UserID:        1,
+		UserID:        2,
 		ProjectID:     proj.ID,
 		SuggestedRole: "viewer",
 		State:         "pending",

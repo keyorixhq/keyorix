@@ -58,7 +58,7 @@ func apiNotOK(code, message string) []byte {
 // TestRemoteCov_GetStats_Unsupported: #1511/G80 deletion pass — no matching
 // route, server-only caller; see docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteCov_GetStats_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetStats(context.Background())

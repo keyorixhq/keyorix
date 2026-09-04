@@ -19,6 +19,7 @@
 package storage
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -401,18 +402,26 @@ func TestMigrateDatabase_Cov_SecretACLsPreExisting(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestOpenGormDB_Cov_SQLiteOpenError verifies that OpenGormDB returns a wrapped
-// error when the SQLite file path is in a directory that does not exist.
-// gorm.Open(sqlite.Open(...)) propagates the driver error in this case.
+// error when the SQLite file path is genuinely unreachable.
+//
+// #1647 sibling-gap fix (Part 2 regression audit continuation, 2026-09-04):
+// OpenGormDB now calls prepareLocalStorageFile before gorm.Open (matching
+// createLocalStorage's existing behavior), which os.MkdirAll's the parent
+// directory into existence — so a merely-missing parent directory (this
+// test's original scenario) is no longer unreachable, it's auto-created.
+// Use a path a directory genuinely cannot be created at instead: a parent
+// path component that already exists as a regular FILE, which MkdirAll
+// cannot create a directory through.
 func TestOpenGormDB_Cov_SQLiteOpenError(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Type = "local"
-	// Point to a path whose parent directory does not exist — SQLite cannot create
-	// the file and must return an error.
-	cfg.Storage.Database.Path = filepath.Join(t.TempDir(), "nonexistent", "subdir", "db.sqlite")
+	blockingFile := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blockingFile, []byte("x"), 0o600))
+	cfg.Storage.Database.Path = filepath.Join(blockingFile, "subdir", "db.sqlite")
 
 	_, err := OpenGormDB(cfg)
 	require.Error(t, err, "OpenGormDB must return an error when the SQLite path is unreachable")
-	assert.Contains(t, err.Error(), "failed to connect to database")
+	assert.Contains(t, err.Error(), "failed to create database directory")
 }
 
 // ---------------------------------------------------------------------------

@@ -113,7 +113,15 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		if req.GetPassword() == "" {
 			return nil, status.Error(codes.InvalidArgument, "password is required unless deliver_setup_link or generate_one_time_password is set")
 		}
-		u, err = s.core.CreateUserWithAssignments(ctx, coreReq, role, assignments, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
+		grantCtx := ctx
+		if actor.ActorKind() == core.ActorTypeMachine {
+			// A genuine, directly-authenticated machine actor requesting this
+			// grant as itself (not a /system proxy relay) -- tag ctx so
+			// requireGranterHoldsRolePermissions checks ITS real permissions
+			// instead of unconditionally refusing. See that function's doc.
+			grantCtx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+		}
+		u, err = s.core.CreateUserWithAssignments(grantCtx, coreReq, role, assignments, actor.UserID, actor.ActorKind() == core.ActorTypeMachine)
 	}
 	if err != nil {
 		return nil, mapUserError(err)

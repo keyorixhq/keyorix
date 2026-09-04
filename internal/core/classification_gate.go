@@ -335,7 +335,11 @@ const accessRequestApprovalClockRegressionTolerance = 30 * time.Second
 // refusal text both callers' own expiry check already returns
 // ("access request has expired"), not a distinct message, so a caller
 // cannot use it as an oracle confirming clock manipulation had an effect.
+// .UTC() strips any monotonic clock reading now carries — see
+// authEffectiveNow's doc comment (auth.go) for why an unstripped comparison
+// here would never actually detect a backward wall-clock step.
 func (c *KeyorixCore) checkAccessRequestApprovalClockNotRegressed(now time.Time) error {
+	now = now.UTC()
 	c.accessRequestApprovalWatermarkMu.Lock()
 	defer c.accessRequestApprovalWatermarkMu.Unlock()
 	if !c.accessRequestApprovalWatermark.IsZero() && now.Before(c.accessRequestApprovalWatermark.Add(-accessRequestApprovalClockRegressionTolerance)) {

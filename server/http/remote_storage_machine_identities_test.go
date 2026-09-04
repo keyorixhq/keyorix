@@ -2,7 +2,10 @@ package http
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -441,6 +444,73 @@ func TestRemoteStorageMachineIdentities_RevokeCredential_UnauthorizedCallerRejec
 	revoked, err := admin.Storage().GetMachineIdentityCredentialByID(ctx, cred.ID)
 	require.NoError(t, err)
 	assert.True(t, revoked.Revoked, "an authorized caller must still be able to revoke")
+}
+
+// TestRemoteStorageMachineIdentities_RevokeCredential_ProjectGuessOracleClosed
+// is a Part 2 regression audit finding (adversarial review run 2), found in
+// this exact FIX-3 fix (#1551): the project-match check
+// (machine.ProjectID != body.ProjectID) ran BEFORE the roles.assign
+// authorization check, so a caller holding only system.write (no
+// roles.assign anywhere) could distinguish "wrong project_id guess" (404)
+// from "right project_id guess, no permission there" (403) -- a
+// binary-searchable oracle for which project owns a given credential ID.
+// This drives raw HTTP requests directly (not through the RemoteStorage
+// wrapper, which only surfaces error/no-error) to compare the literal status
+// codes for both cases.
+func TestRemoteStorageMachineIdentities_RevokeCredential_ProjectGuessOracleClosed(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+
+	upstream := newTestCore(t)
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "0"}}}
+	router, err := NewRouter(cfg, upstream)
+	require.NoError(t, err)
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+	realProject, err := upstream.CreateProject(ctx, "Oracle Test Real Project", "")
+	require.NoError(t, err)
+	wrongProject, err := upstream.CreateProject(ctx, "Oracle Test Wrong Project", "")
+	require.NoError(t, err)
+
+	adminToken := createNodeToken(t, upstream) // holds admin -- used only to set up fixtures
+	adminRS, err := store.NewRemoteStorage(&remote.Config{BaseURL: srv.URL, APIKey: adminToken, TimeoutSeconds: 5, TLSVerify: true})
+	require.NoError(t, err)
+	admin := core.NewKeyorixCore(adminRS)
+
+	now := time.Now()
+	m, err := admin.Storage().CreateMachineIdentity(ctx, buildMachineIdentity(now, realProject.ID, "oracle-probe-test"))
+	require.NoError(t, err)
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
+	cred, err := admin.Storage().CreateMachineIdentityCredential(ctx, buildMachineIdentityCredential(now, m.ID, hash))
+	require.NoError(t, err)
+
+	weakToken := createSystemWriteOnlyToken(t, upstream) // system.write, no roles.assign anywhere
+
+	postRevoke := func(projectID uint) int {
+		t.Helper()
+		body := fmt.Sprintf(`{"project_id":%d}`, projectID)
+		req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/v1/system/machine-credentials/%d/revoke", srv.URL, cred.ID), strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+weakToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	wrongStatus := postRevoke(wrongProject.ID)
+	rightStatus := postRevoke(realProject.ID)
+
+	assert.Equal(t, wrongStatus, rightStatus,
+		"a caller with no roles.assign grant must get the SAME status for a wrong project_id guess (%d) as for the credential's real project_id (%d) -- otherwise the status code itself is an oracle for which project owns this credential", wrongStatus, rightStatus)
+	assert.Equal(t, http.StatusForbidden, rightStatus, "the unauthorized caller must be refused, not accidentally succeed")
+
+	stillLive, err := admin.Storage().GetMachineIdentityCredentialByID(ctx, cred.ID)
+	require.NoError(t, err)
+	assert.False(t, stillLive.Revoked, "neither probe must have actually revoked the credential")
 }
 
 // TestRemoteStorageMachineIdentities_RoleGrantAssignRemoveListIDs_RealServer

@@ -430,21 +430,58 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 // widen exists for is unaffected: an abandoned 'active' row is still
 // reconciled (freeing the partial-unique-index slot) on every sweep, just
 // hard-deleted one cycle later than before.
+// pluckExpiredActiveBreakGlassIDs reads the ids of still-'active' rows whose
+// ExpiresAt has passed before -- the reconcile step's read half. Split out
+// from reconcileBreakGlassIDsToExpired (rather than one combined
+// Pluck-then-Update) so a test can deterministically interleave a concurrent
+// write between the two steps without a real, inherently-flaky goroutine race
+// -- see local_retention_test.go's
+// TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate.
+func (ls *LocalStorage) pluckExpiredActiveBreakGlassIDs(ctx context.Context, before time.Time) ([]uint, error) {
+	var ids []uint
+	if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
+		Where("state = ? AND expires_at IS NOT NULL AND expires_at < ?", breakGlassActiveState, before).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return ids, nil
+}
+
+// reconcileBreakGlassIDsToExpired transitions ids from 'active' to 'expired'
+// -- the reconcile step's write half.
+//
+// Part 2 regression audit (adversarial review run 2): this UPDATE must
+// re-check state = 'active' at write time, not just act on an ID list a
+// caller Plucked a moment earlier -- otherwise a concurrent
+// RevokeBreakGlassActivation landing between the read and this write (legal:
+// the row was still 'active' right after the read) gets silently overwritten
+// back to 'expired' here, while revoked_by/revoked_at stay populated --
+// corrupting the audit-relevant distinction between "an admin actively
+// revoked this" and "it merely timed out" on a security-sensitive control.
+// Same live-predicate-at-write-time discipline this file's sibling functions
+// (DeleteClosedAccessReviewsBefore, DeleteResolvedAccessRequestsBefore, #G21)
+// already use for exactly this class of race.
+func (ls *LocalStorage) reconcileBreakGlassIDsToExpired(ctx context.Context, ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
+		Where("id IN ? AND state = ?", ids, breakGlassActiveState).
+		Update("state", breakGlassExpiredState).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
 	// G81 (BreakGlassActivation.CreatedAt/ExpiresAt): normalize internally — see GetAuditLogs.
 	before = before.UTC()
-	var justReconciledIDs []uint
-	if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
-		Where("state = ? AND expires_at IS NOT NULL AND expires_at < ?", breakGlassActiveState, before).
-		Pluck("id", &justReconciledIDs).Error; err != nil {
-		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	justReconciledIDs, err := ls.pluckExpiredActiveBreakGlassIDs(ctx, before)
+	if err != nil {
+		return 0, err
 	}
-	if len(justReconciledIDs) > 0 {
-		if err := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
-			Where("id IN ?", justReconciledIDs).
-			Update("state", breakGlassExpiredState).Error; err != nil {
-			return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-		}
+	if err := ls.reconcileBreakGlassIDsToExpired(ctx, justReconciledIDs); err != nil {
+		return 0, err
 	}
 	q := ls.db.WithContext(ctx).Where("state <> ? AND created_at < ?", breakGlassActiveState, before)
 	if len(justReconciledIDs) > 0 {

@@ -582,6 +582,40 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 	return nil
 }
 
+// selfMachineGranterCtxKey is the unexported context key carrying a machine
+// identity ID that authenticated the CURRENT request itself and is
+// requesting a grant on its own behalf -- distinct from audit_context.go's
+// WithMachineActor/machineActorFromContext, which is set for EVERY
+// machine-authenticated request (including /system proxy relays) purely
+// for audit-trail attribution and is deliberately never consulted for an
+// authorization decision. See requireGranterHoldsRolePermissions's doc for
+// why the distinction matters: a /system proxy relay's authenticating node
+// credential must never have ITS OWN permissions treated as authorizing an
+// operation relayed on behalf of an unidentified downstream actor.
+type selfMachineGranterCtxKey struct{}
+
+// WithSelfMachineGranter tags ctx with machineID as a genuine, directly
+// (non-proxy) authenticated machine actor requesting a grant AS ITSELF.
+// Call this ONLY from a direct HTTP/gRPC handler that authenticated a real
+// machine token for the CURRENT request and is about to call a core method
+// that may reach requireGranterHoldsRolePermissions with actorIsMachine
+// true -- NEVER from a /system proxy handler, which by construction cannot
+// know the real downstream actor's identity. A zero machineID is a no-op
+// (mirrors WithMachineActor/WithImpersonation).
+func WithSelfMachineGranter(ctx context.Context, machineID uint) context.Context {
+	if machineID == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, selfMachineGranterCtxKey{}, machineID)
+}
+
+// selfMachineGranterFromContext returns the tagged machine identity ID and
+// whether ctx carries one.
+func selfMachineGranterFromContext(ctx context.Context) (uint, bool) {
+	machineID, ok := ctx.Value(selfMachineGranterCtxKey{}).(uint)
+	return machineID, ok && machineID != 0
+}
+
 // requireGranterHoldsRolePermissions refuses to GRANT roleID at scope unless the
 // actor already holds, at that scope or broader, EVERY permission bundled into the
 // role — the admin-rank-ceiling check on the GRANT step (#93/#107/#141), distinct
@@ -610,6 +644,44 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 // existing callers not part of that fix pass false unchanged (see #1545 for
 // the broader sibling instances of this same exemption elsewhere -- not
 // fixed here, tracked separately).
+//
+// Part 2 regression audit (adversarial review run 2) first attempted and
+// REVERTED a blanket fix here, then landed this narrower one. Every caller
+// passes actorID==0 for a machine-authenticated granter (server
+// middleware's UserID==0-for-any-machine-token convention), so a naive
+// c.Authorize(ctx, actorID=0, ...) always denies -- a false-refusal
+// regression, not an escalation. The FIRST fix attempt resolved the real
+// granting machine's ID from ctx via the general-purpose WithMachineActor
+// tag (set for EVERY machine-authenticated request, audit-trail purposes)
+// and checked ITS permissions via AuthorizePrincipal. That was unsafe:
+// several of this function's callers are /system proxy handlers relaying a
+// raw storage call with NO real acting-user identity at all (actorID==0 by
+// construction, e.g. RemoteStorage.AddUserToGroup) -- the only "machine"
+// WithMachineActor's tag can resolve there is the NODE CREDENTIAL's own
+// machine identity, which integration tests deliberately grant admin-tier
+// roles for legitimate node-trust reasons ("no role, including admin,
+// grants node status" -- server/http/integration_test.go's createNodeToken).
+// A node credential is, at the auth layer, structurally indistinguishable
+// from any other machine token -- resolving and using its own permissions
+// here let ANY node credential self-authorize an admin-tier grant it was
+// merely relaying on behalf of an unidentified downstream actor,
+// confirmed via TestRemoteStorageGroup_Membership_AdminConferringGroup_
+// DeniesNodeCredential and its Invitation/Membership proxy siblings going
+// from correctly denying to silently succeeding.
+//
+// This fix instead checks a SEPARATE, narrowly-scoped context tag,
+// selfMachineGranterFromContext (WithSelfMachineGranter), that is ONLY set
+// by DIRECT (non-proxy) HTTP/gRPC handlers immediately before they call
+// into a core method that reaches this function -- a machine genuinely
+// authenticating and requesting a grant AS ITSELF. No /system proxy
+// handler ever sets it (grep for WithSelfMachineGranter finds only direct
+// handlers and gRPC services), so a relayed call's ctx never carries it,
+// and the machine-actor branch below falls through to the same fail-closed
+// refusal the pre-fix code always gave -- never worse than before, and
+// correct (not merely "no worse") for the direct-call case the tag DOES
+// cover. Adding a tag call at a handler is purely additive: a direct entry
+// point this pass didn't get to simply keeps failing closed, exactly as
+// before -- there is no way to reach fail-open by omission.
 func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, actorID, roleID uint, scope Scope, actorIsMachine bool) error {
 	if actorID == 0 && !actorIsMachine {
 		return nil
@@ -618,8 +690,24 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, ac
 	if err != nil {
 		return fmt.Errorf("failed to resolve role permissions: %w", err)
 	}
+	selfMachineID, isSelfMachineGrant := uint(0), false
+	if actorIsMachine {
+		selfMachineID, isSelfMachineGrant = selfMachineGranterFromContext(ctx)
+	}
 	for _, p := range perms {
-		ok, aerr := c.Authorize(ctx, actorID, p.Name, scope)
+		var ok bool
+		var aerr error
+		switch {
+		case isSelfMachineGrant:
+			ok, aerr = c.AuthorizePrincipal(ctx, ActorTypeMachine, selfMachineID, p.Name, scope)
+		case actorIsMachine:
+			// actorIsMachine but ctx carries no WithSelfMachineGranter tag: a
+			// /system proxy relay (or any call site not yet updated to tag
+			// itself) -- fail closed exactly as before this fix.
+			ok = false
+		default:
+			ok, aerr = c.Authorize(ctx, actorID, p.Name, scope)
+		}
 		if aerr != nil {
 			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 		}

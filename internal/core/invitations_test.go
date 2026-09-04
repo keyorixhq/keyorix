@@ -44,11 +44,17 @@ func TestInviteToProject_RecordsActingMachineIdentity(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
-	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
-	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
+	// mock.Anything for ctx, not the exact ctx value: PART2-CONT-6's fix tags
+	// ctx with WithSelfMachineGranter for a real machine inviter
+	// (invitedByMachineID != 0, as this test's own name says) before the
+	// storage calls below, which legitimately changes ctx's identity --
+	// that's the fix working as intended, not something this test should
+	// pin down.
+	store.On("GetRoleByName", mock.Anything, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	store.On("CreateProjectInvitation", mock.Anything, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.InvitedBy == 0 && inv.InvitedByMachineIdentityID == 42
 	})).Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
-	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	_, err := c.InviteToProject(ctx, 1, "a@b.com", "project_developer", 0, 42)
 	require.NoError(t, err)
@@ -512,8 +518,15 @@ func TestInviteToProjectWithLink_RecordsActingMachineIdentityOnSetupToken(t *tes
 	fixed := c.now()
 	anyAudit(store)
 
+	// mock.Anything for CreateProjectInvitation's ctx, not the exact ctx
+	// value: PART2-CONT-6's fix tags ctx with WithSelfMachineGranter inside
+	// InviteToProject (called by InviteToProjectWithLink below) for a real
+	// machine inviter (invitedByMachineID != 0) -- that tagged ctx is local
+	// to InviteToProject's own call to CreateProjectInvitation and does not
+	// propagate back to this test's ctx variable, so every OTHER call below
+	// still legitimately matches the exact original ctx.
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
-	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
+	store.On("CreateProjectInvitation", mock.Anything, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.InvitedBy == 0 && inv.InvitedByMachineIdentityID == 42
 	})).Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
 	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com", ptr(uint(1))).Return(nil)

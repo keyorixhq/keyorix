@@ -203,12 +203,21 @@ func (w *wrappedServerStream) Context() context.Context {
 //
 // Without this, switching transport to gRPC silently dropped both tags — machine
 // actions were logged as user actions and impersonated actions lost the admin.
+//
+// Also tags WHICH machine (core.WithMachineActor), not just that a machine
+// acted — the HTTP path has always done this (buildRequestContext), but gRPC
+// never called it, so writeAuditEvent* recorded gRPC machine mutations
+// without a MachineIdentityID. Audit-trail attribution only: this tag is
+// deliberately NOT consulted for any authorization decision (see authz.go's
+// requireGranterHoldsRolePermissions doc for why resolving a ctx-tagged
+// machine's own permissions there is unsafe for /system proxy relays).
 func withAuditAttribution(ctx context.Context, userCtx *UserContext) context.Context {
 	if userCtx == nil {
 		return ctx
 	}
 	if userCtx.ActorType == core.ActorTypeMachine {
 		ctx = core.WithActorType(ctx, core.ActorTypeMachine)
+		ctx = core.WithMachineActor(ctx, userCtx.MachineIdentityID)
 	}
 	if userCtx.ImpersonatedBy != nil {
 		ctx = core.WithImpersonation(ctx, *userCtx.ImpersonatedBy)

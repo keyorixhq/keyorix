@@ -123,6 +123,9 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 	// Escalation-by-proxy guard: the inviter must already hold every permission the
 	// invited role bundles (parallel to the access-request ceiling), not merely an
 	// admin-tier role name.
+	if invitedByMachineID != 0 {
+		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
 		return nil, err
 	}
@@ -221,6 +224,9 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 	// role is the most powerful grant this flow can mint, so it needs the ceiling
 	// check applied everywhere else — the inviter's real bundled permissions, not
 	// just the role's name — at global scope (projectID 0).
+	if invitedByMachineID != 0 {
+		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, sysRoleModel.ID, Scope{}, invitedByMachineID != 0); err != nil {
 		return nil, err
 	}
@@ -323,6 +329,15 @@ func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRol
 // single project role. Everything was validated at invite time, so a failure here
 // is a storage error (leaving the invitation pending/resendable), not bad input.
 func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) error { // NOSONAR -- cognitive complexity 22, suppress go:S3776
+	// A genuine machine inviter (not a /system proxy relay) -- tag ctx so the
+	// requireGranterHoldsRolePermissions calls reached via AssignUserRole/
+	// inviteMemberWithMode below check ITS real permissions instead of
+	// unconditionally refusing. This ctx is freshly built by the accept-time
+	// caller (completeInvitationAccept), so it does not already carry the tag
+	// InviteToProject/InviteGlobal set at invite time.
+	if inv.InvitedByMachineIdentityID != 0 {
+		ctx = WithSelfMachineGranter(ctx, inv.InvitedByMachineIdentityID)
+	}
 	// Global invite: system role + multi-project assignments.
 	if inv.SystemRole != "" || inv.AssignmentsJSON != "" {
 		if inv.SystemRole != "" {
@@ -702,6 +717,9 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	// Privilege ceiling: an approver may not grant a role unless they themselves
 	// hold every permission it bundles (escalation-by-proxy guard), not merely an
 	// admin-tier role name.
+	if approverMachineID != 0 {
+		ctx = WithSelfMachineGranter(ctx, approverMachineID)
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, approverID, roleModel.ID, Scope{ProjectID: req.ProjectID}, approverMachineID != 0); err != nil {
 		return nil, err
 	}

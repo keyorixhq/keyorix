@@ -193,7 +193,7 @@ func TestRemoteStorage_RestoreSecret(t *testing.T) {
 // PurgeDeletedSecretsBeforeProxy was deleted (#1593,
 // docs/adr-089-mfa-purge-relay-deletion.md) -- no live caller.
 func TestRemoteStorage_PurgeDeletedSecretsBefore_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.PurgeDeletedSecretsBefore(context.Background(), time.Now())
@@ -201,7 +201,7 @@ func TestRemoteStorage_PurgeDeletedSecretsBefore_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_ListProjectSecretsForDrift_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.ListProjectSecretsForDrift(context.Background(), 1)
@@ -209,7 +209,7 @@ func TestRemoteStorage_ListProjectSecretsForDrift_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_ListOrphanedSecrets_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.ListOrphanedSecrets(context.Background(), 1)
@@ -217,7 +217,7 @@ func TestRemoteStorage_ListOrphanedSecrets_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_CountOrphanedSecretsByProject_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CountOrphanedSecretsByProject(context.Background(), []uint{1, 2})
@@ -225,7 +225,7 @@ func TestRemoteStorage_CountOrphanedSecretsByProject_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_CountExpiringSecretsByProject_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CountExpiringSecretsByProject(context.Background(), []uint{1, 2}, time.Now())
@@ -233,7 +233,7 @@ func TestRemoteStorage_CountExpiringSecretsByProject_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_ListLiveSecretNamesByProject_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, _, err = rs.ListLiveSecretNamesByProject(context.Background(), []uint{1}, 100)
@@ -241,7 +241,7 @@ func TestRemoteStorage_ListLiveSecretNamesByProject_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_GetSecretTags_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetSecretTags(context.Background(), 1)
@@ -249,7 +249,7 @@ func TestRemoteStorage_GetSecretTags_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_SetSecretTags_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.SetSecretTags(context.Background(), 1, []string{"prod"})
@@ -257,7 +257,7 @@ func TestRemoteStorage_SetSecretTags_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_SetSecretCertNotAfter_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	now := time.Now()
@@ -266,7 +266,7 @@ func TestRemoteStorage_SetSecretCertNotAfter_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_TryIncrementSecretReadCount_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	ok, err := rs.TryIncrementSecretReadCount(context.Background(), 1, 5)
@@ -275,7 +275,7 @@ func TestRemoteStorage_TryIncrementSecretReadCount_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_TryIncrementSecretNodeReadCount_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	ok, err := rs.TryIncrementSecretNodeReadCount(context.Background(), 1, 5)
@@ -290,7 +290,7 @@ func TestRemoteStorage_TryIncrementSecretNodeReadCount_Unsupported(t *testing.T)
 // see docs/adr-087-remote-storage-deletion-pass.md); the method is now a
 // permanent stub, no HTTP server needed.
 func TestRemoteStorage_CreateSecretVersion_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CreateSecretVersion(context.Background(), &models.SecretVersion{SecretNodeID: 42})
@@ -377,7 +377,7 @@ func TestRemoteStorage_GetSecretVersions(t *testing.T) {
 // intact; see docs/adr-087-remote-storage-deletion-pass.md); the method is
 // now a permanent stub.
 func TestRemoteStorage_GetLatestSecretVersion_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetLatestSecretVersion(context.Background(), 42)
@@ -390,7 +390,7 @@ func TestRemoteStorage_GetLatestSecretVersion_Unsupported(t *testing.T) {
 // route and zero callers anywhere in internal/core; see
 // docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_IncrementSecretReadCount_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.IncrementSecretReadCount(context.Background(), 100)

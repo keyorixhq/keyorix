@@ -840,10 +840,22 @@ func (h *CatalogHandler) RevokeMachineIdentityCredentialProxy(w http.ResponseWri
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
-	if machine.ProjectID != body.ProjectID {
-		writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
-		return
-	}
+	// Part 2 regression audit (adversarial review run 2), found in this exact
+	// FIX-3 fix: authorize BEFORE revealing whether the caller's claimed
+	// project_id actually matches the credential's real, server-resolved
+	// project -- checking the project-match first (as the original version of
+	// this fix did) let a caller holding only this route's own gate
+	// (system.write, no roles.assign anywhere) distinguish "wrong project
+	// guess" (404) from "right project, no roles.assign there" (403), a
+	// binary-searchable oracle for which project owns a given credential ID.
+	// Authorization is still checked against machine.ProjectID (the real,
+	// server-resolved project) -- never body.ProjectID -- that's #1551's own
+	// fix and is unchanged; only the ORDER relative to the project-match
+	// check moved. An unauthorized caller now gets the identical 403
+	// regardless of what project_id they guessed, since the project-match
+	// check is only reached AFTER authorization succeeds -- at which point
+	// the caller already has standing at the credential's real project, so
+	// revealing a project_id mismatch to them is no longer a probe.
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
@@ -853,6 +865,10 @@ func (h *CatalogHandler) RevokeMachineIdentityCredentialProxy(w http.ResponseWri
 	if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: machine.ProjectID}); aerr != nil || !ok {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN",
 			"revoking a machine credential requires the roles.assign permission at the credential's project")
+		return
+	}
+	if machine.ProjectID != body.ProjectID {
+		writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
 		return
 	}
 	if err := h.coreService.Storage().RevokeMachineIdentityCredential(r.Context(), machine.ProjectID, uint(id)); err != nil {
