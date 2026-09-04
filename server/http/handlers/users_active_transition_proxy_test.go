@@ -202,6 +202,128 @@ func TestUpdateUserIfActiveStateMatchesProxy_DuplicateEmail(t *testing.T) {
 	assert.NotEqual(t, "Should Not Persist", unchanged.DisplayName, "rejected write must not persist")
 }
 
+// TestUpdateUserIfActiveStateMatchesProxy_PreservesPasswordHashAndAccountState
+// is the containment fix's own regression test: this route used to build a
+// caller-controlled *models.User with every field this route's wire body
+// doesn't carry left at Go's zero value, then persist it via a Select("*")
+// full-row overwrite -- silently blanking PasswordHash and AccountState on
+// EVERY successful call, not just a malicious one (RemoteStorage's client
+// never sends either field to begin with: PasswordHash is json:"-" and never
+// crosses the wire, and account_state has no field in this route's wire
+// format at all). Blanking AccountState on a suspended/deprovisioned account
+// is a fail-open authentication bypass (AccountLoginBlocked treats an
+// unrecognized/empty state as NOT blocked) -- this test proves the fetch-first
+// fix closes it: a real password hash and a non-active account state survive
+// a legitimate, successful call to this route completely unchanged.
+func TestUpdateUserIfActiveStateMatchesProxy_PreservesPasswordHashAndAccountState(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h, err := NewUserHandler(cs)
+	require.NoError(t, err)
+	target := &models.User{
+		Username: "s12nonadmin-hashcheck", Email: "s12nonadmin-hashcheck@example.com",
+		PasswordHash: "REAL_BCRYPT_HASH_MUST_SURVIVE", AccountState: "suspended", IsActive: true,
+	}
+	require.NoError(t, db.Create(target).Error)
+	idStr := machineUintToStr(target.ID)
+
+	body := proxyJSON(map[string]interface{}{
+		"username":     target.Username,
+		"email":        target.Email,
+		"display_name": "Updated Name",
+		"active":       true,
+		"from_active":  true,
+	})
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", body),
+		"id", idStr,
+	)
+	w := httptest.NewRecorder()
+	h.UpdateUserIfActiveStateMatchesProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeRemoteResp(t, w)
+	require.True(t, resp.Success)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, true, data["matched"], "the call itself must have succeeded for this test to prove anything")
+
+	updated, err := cs.Storage().GetUser(req.Context(), target.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Updated Name", updated.DisplayName, "the legitimately-carried field DID change")
+	assert.Equal(t, "REAL_BCRYPT_HASH_MUST_SURVIVE", updated.PasswordHash,
+		"PasswordHash must survive a call to this route unchanged")
+	assert.Equal(t, "suspended", updated.AccountState,
+		"AccountState must survive a call to this route unchanged")
+}
+
+// TestUpdateUserIfActiveStateMatchesProxy_MismatchLeavesRowCompletelyUnchanged
+// re-verifies, for this route, the same mutate-before-checking ordering bug
+// caught in the WebAuthn authz fix: a from_active precondition mismatch must
+// leave the ENTIRE row untouched, not just fail to apply the intended
+// transition. Because the fix fetches first and the storage layer's own
+// WHERE-gated Updates() either matches the row (and writes it) or matches zero
+// rows (and writes nothing) as a single atomic operation, there is no window
+// where a partial write could land -- this test proves that empirically,
+// including for the fields the earlier bug used to zero.
+func TestUpdateUserIfActiveStateMatchesProxy_MismatchLeavesRowCompletelyUnchanged(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h, err := NewUserHandler(cs)
+	require.NoError(t, err)
+	target := &models.User{
+		Username: "s12nonadmin-mismatch", Email: "s12nonadmin-mismatch@example.com",
+		PasswordHash: "UNCHANGED_HASH", AccountState: "active", IsActive: true,
+		DisplayName: "Original Name",
+	}
+	require.NoError(t, db.Create(target).Error)
+	idStr := machineUintToStr(target.ID)
+
+	// from_active asserts false, but the row is actually true -- a stale/wrong
+	// precondition, matching the LostRace test's own shape.
+	body := proxyJSON(map[string]interface{}{
+		"username":     target.Username,
+		"email":        target.Email,
+		"display_name": "Should Not Persist",
+		"active":       false,
+		"from_active":  false,
+	})
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", body),
+		"id", idStr,
+	)
+	w := httptest.NewRecorder()
+	h.UpdateUserIfActiveStateMatchesProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeRemoteResp(t, w)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, false, data["matched"], "the precondition mismatch must be reported")
+
+	unchanged, err := cs.Storage().GetUser(req.Context(), target.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Original Name", unchanged.DisplayName, "no field may change on a rejected precondition")
+	assert.Equal(t, "UNCHANGED_HASH", unchanged.PasswordHash)
+	assert.Equal(t, "active", unchanged.AccountState)
+	assert.True(t, unchanged.IsActive)
+}
+
+// TestUpdateUserIfActiveStateMatchesProxy_RejectsUnknownField proves a body
+// carrying a field this route doesn't declare -- e.g. an attempt to smuggle
+// password_hash or account_state through it -- is rejected outright (400),
+// not silently ignored.
+func TestUpdateUserIfActiveStateMatchesProxy_RejectsUnknownField(t *testing.T) {
+	h := freshUserHandlerForProxyS13(t)
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition",
+			strings.NewReader(`{"username":"x","email":"x@y.com","display_name":"x","active":true,`+
+				`"from_active":true,"password_hash":"sneaky"}`)),
+		"id", "1",
+	)
+	w := httptest.NewRecorder()
+	h.UpdateUserIfActiveStateMatchesProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
+}
+
 // TestUpdateUserIfActiveStateMatchesProxy_DuplicateUsername is the #G79
 // regression: this proxy previously ran no uniqueness pre-check at all
 // (unlike core.UpdateUser, which checks GetUserByUsername/GetUserByEmail

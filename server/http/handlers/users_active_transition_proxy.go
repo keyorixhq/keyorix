@@ -11,13 +11,32 @@
 // system.write RBAC permission every other RemoteStorage-primitive proxy in
 // this package already needs — no new privilege class).
 //
-// This is a thin passthrough onto the SAME storage.Storage.
-// UpdateUserIfActiveStateMatches primitive internal/core/users.go's UpdateUser
-// already calls against a local backend — no update-request validation
-// (uniqueness checks, which fields the original caller actually meant to
-// change) is made here; that stays entirely in the CALLING server's own
-// internal/core.KeyorixCore, exactly as it does against a local backend. This
-// handler only persists the row it's given, conditionally.
+// This is NOT a thin passthrough of a caller-supplied row (it used to be, and
+// that was an authentication-bypass bug -- see below): storage.Storage.
+// UpdateUserIfActiveStateMatches is a `Select("*")` full-row overwrite, and
+// this route's own wire body (userActiveTransitionProxyBody) only carries
+// username/email/display_name/active/updated_at -- it structurally cannot
+// carry PasswordHash, AccountState, or any other models.User field. A
+// caller-constructed struct built directly from that body therefore left
+// every OTHER field at its Go zero value, and Select("*") persisted those
+// zeros over the real, existing values -- confirmed to blank PasswordHash and
+// AccountState on every call, and blanking AccountState reactivates a
+// suspended/deprovisioned account for login (AccountLoginBlocked treats an
+// unrecognized/empty state as NOT blocked), chaining into full account
+// takeover via any subsequent setup-token/password-reset completion. This is
+// reachable from a genuinely benign, storage.type: remote spoke relay just as
+// easily as from a malicious direct call to this route -- PasswordHash never
+// crosses the wire at all (models.User.PasswordHash is json:"-"), so ANY
+// legitimate profile-edit relayed through this route already zeroed it,
+// independent of intent.
+//
+// Fixed: this handler now fetches the existing row first and patches only
+// the fields the wire body actually carries onto it, so every field this
+// route was never meant to touch survives unchanged. No update-request
+// validation (uniqueness checks, which fields the original caller actually
+// meant to change) beyond that is made here; that stays entirely in the
+// CALLING server's own internal/core.KeyorixCore, exactly as it does against
+// a local backend.
 //
 // Deliberately NOT the human-facing PUT /api/v1/users/{id} route
 // (users_crud.go's UserHandler.UpdateUser): that route re-runs the UPSTREAM
@@ -48,7 +67,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/identity"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // userActiveTransitionProxyBody mirrors RemoteStorage's
@@ -95,7 +113,15 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 		return
 	}
 	var body userActiveTransitionProxyBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	dec := json.NewDecoder(r.Body)
+	// Reject a body carrying any field this route doesn't declare (e.g.
+	// password_hash, account_state) rather than silently ignoring it -- a
+	// caller trying to smuggle a security-critical field through this route
+	// should get a 400, not a request that quietly succeeds having done
+	// nothing with the extra field. See the containment fix below for why
+	// this route must never accept those fields at all.
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
 	}
@@ -151,17 +177,31 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 			return
 		}
 	}
-	user := &models.User{
-		ID:             uint(id),
-		Username:       body.Username,
-		UsernameFolded: foldedUsername.Folded(),
-		Email:          body.Email,
-		EmailFolded:    foldedEmail.Folded(),
-		DisplayName:    body.DisplayName,
-		IsActive:       body.Active,
-		UpdatedAt:      body.UpdatedAt,
+	// Fetch the existing row FIRST and patch only the fields this route is
+	// legitimately allowed to change onto it -- storage.UpdateUserIfActiveStateMatches
+	// is a `Select("*")` full-row overwrite (see its own doc comment), so a
+	// caller-constructed struct with unset fields would silently zero every
+	// column this route's own wire body doesn't carry, including PasswordHash
+	// and AccountState. Confirmed empirically: this used to blank both on any
+	// call, and blanking AccountState on a suspended/deprovisioned account
+	// bypasses AccountLoginBlocked's deny-list check entirely (fail-open) --
+	// this was a full authentication-bypass chain, not just data loss. The
+	// fetch happens before any write; a caller whose target user doesn't
+	// exist is refused here, before the storage layer's own conditional
+	// write ever runs.
+	existing, err := h.coreService.Storage().GetUser(r.Context(), uint(id))
+	if err != nil {
+		writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+		return
 	}
-	matched, err := h.coreService.Storage().UpdateUserIfActiveStateMatches(r.Context(), user, body.FromActive)
+	existing.Username = body.Username
+	existing.UsernameFolded = foldedUsername.Folded()
+	existing.Email = body.Email
+	existing.EmailFolded = foldedEmail.Folded()
+	existing.DisplayName = body.DisplayName
+	existing.IsActive = body.Active
+	existing.UpdatedAt = body.UpdatedAt
+	matched, err := h.coreService.Storage().UpdateUserIfActiveStateMatches(r.Context(), existing, body.FromActive)
 	if err != nil {
 		if errors.Is(err, storage.ErrDuplicateEmail) {
 			writeRemoteAPIError(w, http.StatusConflict, duplicateEmailProxyCode, storage.ErrDuplicateEmail.Error())
