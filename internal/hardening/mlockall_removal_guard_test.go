@@ -101,7 +101,20 @@ func TestMlockallRemovalGuard_FiresOnADeliberateReintroduction(t *testing.T) {
 	}
 	root := strings.TrimSpace(string(repoRoot))
 
-	violationPath := root + "/.scratch/mlockall_reintroduction_synthetic_test.go"
+	// .scratch/ is gitignored and, unlike a tracked directory, is not
+	// guaranteed to exist in a fresh checkout (e.g. CI, or any clone that
+	// hasn't already written a scratch file some other way) -- os.WriteFile
+	// does not create parent directories, so without this the write below
+	// fails with ENOENT on exactly that fresh-checkout case. Confirmed this
+	// was masked on a dev machine that already had .scratch/ from prior,
+	// unrelated scratch-file use, and reproduced the CI failure locally by
+	// running against a checkout with no .scratch/ directory at all.
+	scratchDir := root + "/.scratch"
+	if err := os.MkdirAll(scratchDir, 0700); err != nil {
+		t.Fatalf("creating .scratch/ directory: %v", err)
+	}
+
+	violationPath := scratchDir + "/mlockall_reintroduction_synthetic_test.go"
 	violationSrc := "package scratch\n\nimport \"golang.org/x/sys/unix\"\n\nfunc poison() error {\n\treturn unix.Mlockall(unix.MCL_CURRENT)\n}\n"
 	if err := os.WriteFile(violationPath, []byte(violationSrc), 0600); err != nil {
 		t.Fatalf("writing synthetic violation file: %v", err)
