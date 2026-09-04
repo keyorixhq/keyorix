@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -136,4 +139,77 @@ func TestNamedLockKey_StableAndKeyDependent(t *testing.T) {
 	require.NotEqual(t, namedLockKey("key-A"), namedLockKey("key-B"),
 		"different lockKey strings should (in practice) hash to different keys")
 	require.NotEqual(t, int64(0), namedLockKey(""), "even an empty lockKey must produce a deterministic, usable key")
+}
+
+// TestWithNamedLock_RegistryReclaimsEntriesAfterUse is the #1690 regression
+// pin (Part 2 regression audit, 2026-09-04): FIX-5's namedLockRegistry map
+// grew by one entry per distinct lockKey ever seen and never shrank -- an
+// unbounded-memory-growth surface on any long-uptime SQLite/single-process
+// deployment (lockKey's key space is per-entity: one lock per user/group/
+// project ID ever role-managed). After each WithNamedLock call fully
+// completes and no other caller is contending for that same key, the
+// registry must not still be holding that key's entry.
+func TestWithNamedLock_RegistryReclaimsEntriesAfterUse(t *testing.T) {
+	ls := newNamedLockTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 500; i++ {
+		key := fmt.Sprintf("entity-%d", i)
+		require.NoError(t, ls.WithNamedLock(ctx, key, func(ctx context.Context) error {
+			return nil
+		}))
+	}
+
+	ls.namedLockMu.mu.Lock()
+	size := len(ls.namedLockMu.locks)
+	ls.namedLockMu.mu.Unlock()
+	assert.Equal(t, 0, size, "the registry must reclaim each key's entry once its last holder releases it, not retain one entry per distinct key forever")
+}
+
+// TestWithNamedLock_ConcurrentSameKey_MutualExclusionSurvivesReclamation
+// proves the refcounted-reclamation fix (#1690) did not reopen the mutual-
+// exclusion guarantee WithNamedLock exists for: many goroutines racing
+// acquire/release on the SAME key, including races that land exactly on a
+// reclaim-and-recreate boundary, must never observe two goroutines inside the
+// critical section at once. Run with -race to also catch a data race on the
+// shared counter if two goroutines ever held two DIFFERENT mutex objects for
+// what should be one logical key.
+func TestWithNamedLock_ConcurrentSameKey_MutualExclusionSurvivesReclamation(t *testing.T) {
+	ls := newNamedLockTestStore(t)
+
+	const goroutines = 50
+	const itersPerGoroutine = 20
+	var inCriticalSection int32
+	var overlapDetected bool
+	var mu sync.Mutex // guards overlapDetected only
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < itersPerGoroutine; i++ {
+				err := ls.WithNamedLock(context.Background(), "shared-key", func(ctx context.Context) error {
+					n := inCriticalSection + 1
+					inCriticalSection = n
+					if n != 1 {
+						mu.Lock()
+						overlapDetected = true
+						mu.Unlock()
+					}
+					inCriticalSection--
+					return nil
+				})
+				assert.NoError(t, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	assert.False(t, overlapDetected, "two goroutines observed inside WithNamedLock's critical section for the same key at once -- reclamation raced ahead of an active holder")
+
+	ls.namedLockMu.mu.Lock()
+	size := len(ls.namedLockMu.locks)
+	ls.namedLockMu.mu.Unlock()
+	assert.Equal(t, 0, size, "the registry must end empty once every goroutine has released the shared key")
 }

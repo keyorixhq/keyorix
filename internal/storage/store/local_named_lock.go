@@ -22,29 +22,67 @@ import (
 // (old, wrong) silently skipping it, or (a naive per-key reentrancy fix atop
 // the OLD single shared mutex) self-deadlocking by re-locking the same mutex
 // the outer call already holds.
+//
+// #1690 regression (Part 2 regression audit, 2026-09-04): FIX-5's own map
+// (originally map[string]*sync.Mutex) never deleted an entry once created --
+// lockKey's key space is per-entity (sodGrantLockKey("user"/"group", ID),
+// projectAdminGuardLockKey(projectID)), so on a long-uptime SQLite/
+// single-process deployment the map grows by one entry per distinct
+// user/group/project ID ever role-managed and never shrinks: an unbounded
+// memory-growth surface the old single-mutex design had no way to exhibit,
+// by construction. Fixed with a refcounted entry: acquire increments refs
+// under r.mu before locking the entry's own mutex; release decrements refs
+// (also under r.mu) after unlocking it and deletes the map entry only once
+// refs reaches zero -- i.e. only once no goroutine anywhere in the process is
+// still holding or waiting on that specific entry. A racing acquire for the
+// same key between another caller's unlock and its release either sees the
+// entry still in the map (bumps refs, reuses the SAME mutex object -- no
+// correctness gap) or finds it already deleted (creates a fresh one for a
+// genuinely uncontended key) -- there is never a window where two different
+// mutex objects are live for the same key at once.
+type namedLockEntry struct {
+	mu   sync.Mutex
+	refs int // guarded by namedLockRegistry.mu, not by mu above
+}
+
 type namedLockRegistry struct {
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]*namedLockEntry
 }
 
 func newNamedLockRegistry() *namedLockRegistry {
-	return &namedLockRegistry{locks: make(map[string]*sync.Mutex)}
+	return &namedLockRegistry{locks: make(map[string]*namedLockEntry)}
 }
 
-// forKey returns the mutex for lockKey, creating it if this is the first
-// caller to ever name it. The registry's own mu only guards the map lookup
-// itself, not the returned mutex's Lock/Unlock -- callers hold the returned
-// mutex for the duration of their critical section, same as before this type
-// existed.
-func (r *namedLockRegistry) forKey(lockKey string) *sync.Mutex {
+// acquire locks and returns the entry for lockKey, creating it if this is the
+// first caller to ever name it (or if a prior entry was already reclaimed).
+// The caller MUST pass the returned entry to release(lockKey, entry) exactly
+// once, after its critical section, to unlock it and let the registry
+// reclaim it once no one else is using it.
+func (r *namedLockRegistry) acquire(lockKey string) *namedLockEntry {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	m, ok := r.locks[lockKey]
+	e, ok := r.locks[lockKey]
 	if !ok {
-		m = &sync.Mutex{}
-		r.locks[lockKey] = m
+		e = &namedLockEntry{}
+		r.locks[lockKey] = e
 	}
-	return m
+	e.refs++
+	r.mu.Unlock()
+	e.mu.Lock()
+	return e
+}
+
+// release unlocks e and, if no other caller is currently holding or waiting
+// on it, removes lockKey's entry from the registry so its memory is
+// reclaimed rather than retained for the rest of the process's lifetime.
+func (r *namedLockRegistry) release(lockKey string, e *namedLockEntry) {
+	e.mu.Unlock()
+	r.mu.Lock()
+	e.refs--
+	if e.refs == 0 {
+		delete(r.locks, lockKey)
+	}
+	r.mu.Unlock()
 }
 
 // namedLockKey derives a stable int64 advisory-lock key from an arbitrary lockKey
@@ -150,9 +188,8 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 	ctx = context.WithValue(ctx, namedLockHeldCtxKey{}, next)
 
 	if ls.db.Dialector.Name() != "postgres" {
-		mu := ls.namedLockMu.forKey(lockKey)
-		mu.Lock()
-		defer mu.Unlock()
+		entry := ls.namedLockMu.acquire(lockKey)
+		defer ls.namedLockMu.release(lockKey, entry)
 		return fn(ctx)
 	}
 
