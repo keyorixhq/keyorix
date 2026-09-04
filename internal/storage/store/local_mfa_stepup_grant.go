@@ -43,7 +43,14 @@ func (ls *LocalStorage) DeleteMFAStepUpGrantsFor(ctx context.Context, userID uin
 // PruneMFAStepUpGrants deletes grants whose ExpiresAt predates `before` and
 // returns how many were removed (store-mfa-002 maintenance sweep — see
 // internal/core.KeyorixCore.PruneMFAStepUpGrants, the sole intended caller).
+//
+// G81 (ExpiresAt, this file's third recurrence): normalize `before` internally
+// rather than trusting the caller — see GetAuditLogs. core.KeyorixCore's cutoff
+// is derived from time.Now() (server-local, not guaranteed UTC), while
+// MFAStepUpGrant.BeforeSave always normalizes ExpiresAt to UTC before writing;
+// on SQLite (plain string comparison) a non-UTC `before` silently drifts from
+// what's actually stored whenever the server process isn't pinned to TZ=UTC.
 func (ls *LocalStorage) PruneMFAStepUpGrants(ctx context.Context, before time.Time) (int64, error) {
-	res := ls.db.WithContext(ctx).Where("expires_at < ?", before).Delete(&models.MFAStepUpGrant{})
+	res := ls.db.WithContext(ctx).Where("expires_at < ?", before.UTC()).Delete(&models.MFAStepUpGrant{})
 	return res.RowsAffected, res.Error
 }

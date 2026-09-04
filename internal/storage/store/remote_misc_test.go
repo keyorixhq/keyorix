@@ -604,7 +604,7 @@ func TestRemoteStorage_GetRiskException(t *testing.T) {
 // UpdateRiskExceptionProxy is not registered in router.go); zero production
 // callers. See docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_UpdateRiskException_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.UpdateRiskException(context.Background(), &models.RiskException{ID: 6})

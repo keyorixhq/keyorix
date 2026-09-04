@@ -125,7 +125,7 @@ func TestRemoteStorage_DeleteSession_Error(t *testing.T) {
 // pass — no matching route, zero callers in any topology; see
 // docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_CleanupExpiredSessions_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.CleanupExpiredSessions(context.Background())

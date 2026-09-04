@@ -415,7 +415,7 @@ func TestRemoteStorage_RestoreUser(t *testing.T) {
 // docs/adr-089-mfa-purge-relay-deletion.md -- no live caller) ---
 
 func TestRemoteStorage_PurgeDeletedUsersBefore_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.PurgeDeletedUsersBefore(context.Background(), time.Now())
@@ -423,7 +423,7 @@ func TestRemoteStorage_PurgeDeletedUsersBefore_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_PurgeDeletedProjectsBefore_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.PurgeDeletedProjectsBefore(context.Background(), time.Now())
@@ -431,7 +431,7 @@ func TestRemoteStorage_PurgeDeletedProjectsBefore_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_PurgeDeletedEnvironmentsBefore_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.PurgeDeletedEnvironmentsBefore(context.Background(), time.Now())

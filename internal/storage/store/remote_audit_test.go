@@ -43,7 +43,7 @@ func TestRemoteStorage_LogAuditEvent(t *testing.T) {
 // (no live caller under storage.type: remote), converted to an explicit stub.
 
 func TestRemoteStorage_CreateSecretAccessLog_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.CreateSecretAccessLog(context.Background(), &models.SecretAccessLog{})
@@ -56,7 +56,7 @@ func TestRemoteStorage_CreateSecretAccessLog_Unsupported(t *testing.T) {
 // — confirmed DEAD, converted to an explicit stub.
 
 func TestRemoteStorage_CountImpersonatedActions_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CountImpersonatedActions(context.Background(), 1, 2, time.Now())
@@ -173,7 +173,7 @@ func TestRemoteStorage_GetRBACAuditLogs_WithFilter(t *testing.T) {
 // --- ListSecretAccessLogs (unsupported) ---
 
 func TestRemoteStorage_ListSecretAccessLogs_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.ListSecretAccessLogs(context.Background(), 1, time.Now())
@@ -183,7 +183,7 @@ func TestRemoteStorage_ListSecretAccessLogs_Unsupported(t *testing.T) {
 // --- CountSecretReadsBySecretIDs (unsupported) ---
 
 func TestRemoteStorage_CountSecretReadsBySecretIDs_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CountSecretReadsBySecretIDs(context.Background(), []uint{1, 2}, time.Now())
@@ -193,7 +193,7 @@ func TestRemoteStorage_CountSecretReadsBySecretIDs_Unsupported(t *testing.T) {
 // --- PrincipalSecretFirstSeen (unsupported) ---
 
 func TestRemoteStorage_PrincipalSecretFirstSeen_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.PrincipalSecretFirstSeen(context.Background(), time.Now())
@@ -203,7 +203,7 @@ func TestRemoteStorage_PrincipalSecretFirstSeen_Unsupported(t *testing.T) {
 // --- MostAccessedSecrets (unsupported) ---
 
 func TestRemoteStorage_MostAccessedSecrets_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.MostAccessedSecrets(context.Background(), nil, nil, time.Now(), 10)
@@ -213,7 +213,7 @@ func TestRemoteStorage_MostAccessedSecrets_Unsupported(t *testing.T) {
 // --- UnusedSecrets (unsupported) ---
 
 func TestRemoteStorage_UnusedSecrets_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.UnusedSecrets(context.Background(), nil, nil, time.Now())
@@ -223,7 +223,7 @@ func TestRemoteStorage_UnusedSecrets_Unsupported(t *testing.T) {
 // --- CountUnusedSecretsByProject (unsupported) ---
 
 func TestRemoteStorage_CountUnusedSecretsByProject_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CountUnusedSecretsByProject(context.Background(), []uint{1}, time.Now())
@@ -233,7 +233,7 @@ func TestRemoteStorage_CountUnusedSecretsByProject_Unsupported(t *testing.T) {
 // --- AuditRetentionStats (unsupported) ---
 
 func TestRemoteStorage_AuditRetentionStats_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.AuditRetentionStats(context.Background())
@@ -243,7 +243,7 @@ func TestRemoteStorage_AuditRetentionStats_Unsupported(t *testing.T) {
 // --- VerifyAuditChain (unsupported) ---
 
 func TestRemoteStorage_VerifyAuditChain_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.VerifyAuditChain(context.Background(), nil)
@@ -251,7 +251,7 @@ func TestRemoteStorage_VerifyAuditChain_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_MigrateAuditChainEncoding_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.MigrateAuditChainEncoding(context.Background(), true, nil)
@@ -261,7 +261,7 @@ func TestRemoteStorage_MigrateAuditChainEncoding_Unsupported(t *testing.T) {
 // --- CreateAuditCheckpoint (unsupported) ---
 
 func TestRemoteStorage_CreateAuditCheckpoint_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.CreateAuditCheckpoint(context.Background(), &models.AuditCheckpoint{})
@@ -271,7 +271,7 @@ func TestRemoteStorage_CreateAuditCheckpoint_Unsupported(t *testing.T) {
 // --- LatestAuditCheckpoint (unsupported) ---
 
 func TestRemoteStorage_LatestAuditCheckpoint_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.LatestAuditCheckpoint(context.Background())
@@ -281,7 +281,7 @@ func TestRemoteStorage_LatestAuditCheckpoint_Unsupported(t *testing.T) {
 // --- UpdateAuditCheckpointAnchor (unsupported) ---
 
 func TestRemoteStorage_UpdateAuditCheckpointAnchor_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.UpdateAuditCheckpointAnchor(context.Background(), 1, []byte("anchor"), time.Now(), "tsa-url")
@@ -291,7 +291,7 @@ func TestRemoteStorage_UpdateAuditCheckpointAnchor_Unsupported(t *testing.T) {
 // --- AuditEntryHashByID (unsupported) ---
 
 func TestRemoteStorage_AuditEntryHashByID_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, _, err = rs.AuditEntryHashByID(context.Background(), 1)
@@ -301,7 +301,7 @@ func TestRemoteStorage_AuditEntryHashByID_Unsupported(t *testing.T) {
 // --- GetSystemMetadata (unsupported) ---
 
 func TestRemoteStorage_GetSystemMetadata_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, _, err = rs.GetSystemMetadata(context.Background(), "key")
@@ -311,7 +311,7 @@ func TestRemoteStorage_GetSystemMetadata_Unsupported(t *testing.T) {
 // --- SetSystemMetadata (unsupported) ---
 
 func TestRemoteStorage_SetSystemMetadata_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.SetSystemMetadata(context.Background(), "key", "value")
@@ -321,7 +321,7 @@ func TestRemoteStorage_SetSystemMetadata_Unsupported(t *testing.T) {
 // --- CreateAnomalyAlert (unsupported) ---
 
 func TestRemoteStorage_CreateAnomalyAlert_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.CreateAnomalyAlert(context.Background(), &models.AnomalyAlert{})
@@ -331,7 +331,7 @@ func TestRemoteStorage_CreateAnomalyAlert_Unsupported(t *testing.T) {
 // --- ListAnomalyAlerts (unsupported) ---
 
 func TestRemoteStorage_ListAnomalyAlerts_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	acked := false
@@ -342,7 +342,7 @@ func TestRemoteStorage_ListAnomalyAlerts_Unsupported(t *testing.T) {
 // --- AcknowledgeAnomalyAlert (unsupported) ---
 
 func TestRemoteStorage_AcknowledgeAnomalyAlert_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.AcknowledgeAnomalyAlert(context.Background(), 1, 2, time.Now())
@@ -352,7 +352,7 @@ func TestRemoteStorage_AcknowledgeAnomalyAlert_Unsupported(t *testing.T) {
 // --- ListUnalertedAnomalyAlerts (unsupported) ---
 
 func TestRemoteStorage_ListUnalertedAnomalyAlerts_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.ListUnalertedAnomalyAlerts(context.Background())
@@ -362,7 +362,7 @@ func TestRemoteStorage_ListUnalertedAnomalyAlerts_Unsupported(t *testing.T) {
 // --- MarkAnomalyAlertAlerted (unsupported) ---
 
 func TestRemoteStorage_MarkAnomalyAlertAlerted_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.MarkAnomalyAlertAlerted(context.Background(), 1)
@@ -372,7 +372,7 @@ func TestRemoteStorage_MarkAnomalyAlertAlerted_Unsupported(t *testing.T) {
 // --- GetDistinctActiveUserIDs (unsupported) ---
 
 func TestRemoteStorage_GetDistinctActiveUserIDs_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetDistinctActiveUserIDs(context.Background(), time.Now())
@@ -382,7 +382,7 @@ func TestRemoteStorage_GetDistinctActiveUserIDs_Unsupported(t *testing.T) {
 // --- DeleteAuditLogsBefore (unsupported in remote mode) ---
 
 func TestRemoteStorage_DeleteAuditLogsBefore_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	n, anchor, err := rs.DeleteAuditLogsBefore(context.Background(), time.Now())

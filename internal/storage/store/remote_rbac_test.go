@@ -129,7 +129,7 @@ func TestRemoteStorage_ListRoles(t *testing.T) {
 // TestRemoteStorage_AssignRole_Unsupported: #1511/G80 deletion pass — no
 // matching route; see docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_AssignRole_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.AssignRole(context.Background(), 10, 1, corestorage.Scope{ProjectID: 0, EnvironmentID: 0})
@@ -140,7 +140,7 @@ func TestRemoteStorage_AssignRole_Unsupported(t *testing.T) {
 // TestRemoteStorage_RemoveRole_Unsupported: #1511/G80 deletion pass — no
 // matching route; see docs/adr-087-remote-storage-deletion-pass.md.
 func TestRemoteStorage_RemoveRole_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.RemoveRole(context.Background(), 10, 1, corestorage.Scope{ProjectID: 0, EnvironmentID: 0})
@@ -274,7 +274,7 @@ func TestRemoteStorage_GetUserPermissions(t *testing.T) {
 }
 
 func TestRemoteStorage_GetUserGroupPermissions_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetUserGroupPermissions(context.Background(), 1)
@@ -284,7 +284,7 @@ func TestRemoteStorage_GetUserGroupPermissions_Unsupported(t *testing.T) {
 // --- Permission management (unsupported in remote mode) ---
 
 func TestRemoteStorage_CreatePermission_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CreatePermission(context.Background(), &models.Permission{Name: "test.read"})
@@ -292,7 +292,7 @@ func TestRemoteStorage_CreatePermission_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_AssignPermissionToRole_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.AssignPermissionToRole(context.Background(), 1, 2)
@@ -516,7 +516,7 @@ func TestRemoteStorage_RemoveRoleFromGroup_SendsScope(t *testing.T) {
 // --- Server-internal authorization primitives (unsupported in remote mode) ---
 
 func TestRemoteStorage_GetUserRoleIDsAt_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetUserRoleIDsAt(context.Background(), 1, corestorage.Scope{})
@@ -524,7 +524,7 @@ func TestRemoteStorage_GetUserRoleIDsAt_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_GetUserRoleIDsExact_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetUserRoleIDsExact(context.Background(), 1, corestorage.Scope{})
@@ -532,7 +532,7 @@ func TestRemoteStorage_GetUserRoleIDsExact_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_IsProjectMember_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.IsProjectMember(context.Background(), 1, 2)
@@ -540,7 +540,7 @@ func TestRemoteStorage_IsProjectMember_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_GetUserGroupRoleIDsAt_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetUserGroupRoleIDsAt(context.Background(), 1, corestorage.Scope{})
@@ -548,7 +548,7 @@ func TestRemoteStorage_GetUserGroupRoleIDsAt_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_GetUserRoleScopes_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.GetUserRoleScopes(context.Background(), 1)
@@ -556,7 +556,7 @@ func TestRemoteStorage_GetUserRoleScopes_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_RoleSetHasPermission_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.RoleSetHasPermission(context.Background(), []uint{1, 2}, "secrets.read")
@@ -566,7 +566,7 @@ func TestRemoteStorage_RoleSetHasPermission_Unsupported(t *testing.T) {
 // --- Project / Environment catalog ---
 
 func TestRemoteStorage_CreateProject_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CreateProject(context.Background(), &models.Project{Name: "test"})
@@ -574,7 +574,7 @@ func TestRemoteStorage_CreateProject_Unsupported(t *testing.T) {
 }
 
 func TestRemoteStorage_CreateEnvironment_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	_, err = rs.CreateEnvironment(context.Background(), &models.Environment{Name: "prod"})

@@ -192,3 +192,68 @@ func TestLocalACL_DeleteMissing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
+
+// ── ListSecretACLsByUser ────────────────────────────────────────────────────────
+
+// TestLocalACL_ListByUser verifies ListSecretACLsByUser returns every ACL row
+// for a user across secrets, and none for a different user.
+func TestLocalACL_ListByUser(t *testing.T) {
+	ls, secretID := newACLStore(t)
+	ctx := context.Background()
+
+	second := &models.SecretNode{ProjectID: 1, EnvironmentID: 1, Name: "acl-store-secret-2", IsSecret: true, Status: "active"}
+	require.NoError(t, ls.db.Create(second).Error)
+
+	require.NoError(t, ls.CreateOrUpdateSecretACL(ctx, &models.SecretACL{
+		SecretID: secretID, UserID: 70, Permissions: `["secrets.read"]`, GrantedBy: 1,
+	}))
+	require.NoError(t, ls.CreateOrUpdateSecretACL(ctx, &models.SecretACL{
+		SecretID: second.ID, UserID: 70, Permissions: `["secrets.write"]`, GrantedBy: 1,
+	}))
+	require.NoError(t, ls.CreateOrUpdateSecretACL(ctx, &models.SecretACL{
+		SecretID: secretID, UserID: 71, Permissions: `["secrets.read"]`, GrantedBy: 1,
+	}))
+
+	rows, err := ls.ListSecretACLsByUser(ctx, 70)
+	require.NoError(t, err)
+	assert.Len(t, rows, 2, "both grants for user 70, across secrets, must be returned")
+
+	rows, err = ls.ListSecretACLsByUser(ctx, 999)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+// ── DeleteSecretACLsByUserAndProject ────────────────────────────────────────────
+
+// TestLocalACL_DeleteByUserAndProject verifies that only ACL grants for the
+// given user on secrets belonging to the given project are removed — a grant
+// for the same user on a DIFFERENT project's secret must survive (#G53:
+// offboarding a user from one project must not touch their access elsewhere).
+func TestLocalACL_DeleteByUserAndProject(t *testing.T) {
+	ls, secretID := newACLStore(t) // secretID belongs to project 1
+	ctx := context.Background()
+
+	otherProjectSecret := &models.SecretNode{ProjectID: 2, EnvironmentID: 1, Name: "other-project-secret", IsSecret: true, Status: "active"}
+	require.NoError(t, ls.db.Create(otherProjectSecret).Error)
+
+	require.NoError(t, ls.CreateOrUpdateSecretACL(ctx, &models.SecretACL{
+		SecretID: secretID, UserID: 80, Permissions: `["secrets.read"]`, GrantedBy: 1,
+	}))
+	require.NoError(t, ls.CreateOrUpdateSecretACL(ctx, &models.SecretACL{
+		SecretID: otherProjectSecret.ID, UserID: 80, Permissions: `["secrets.read"]`, GrantedBy: 1,
+	}))
+
+	require.NoError(t, ls.DeleteSecretACLsByUserAndProject(ctx, 80, 1))
+
+	_, err := ls.GetSecretACL(ctx, secretID, 80)
+	require.Error(t, err, "the project-1 grant must be gone")
+
+	got, err := ls.GetSecretACL(ctx, otherProjectSecret.ID, 80)
+	require.NoError(t, err, "the project-2 grant for the same user must survive")
+	assert.Equal(t, uint(80), got.UserID)
+}
+
+func TestLocalACL_DeleteByUserAndProject_NoMatchIsNoop(t *testing.T) {
+	ls, _ := newACLStore(t)
+	require.NoError(t, ls.DeleteSecretACLsByUserAndProject(context.Background(), 404, 404))
+}
