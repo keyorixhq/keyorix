@@ -96,10 +96,15 @@ type KeyorixCore struct {
 	// KeyorixCore-level mutex: a per-process mutex here would only serialize
 	// callers within ONE replica, same gap #339 originally closed for concurrent
 	// same-process callers only.
-	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
-	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
-	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
-	loginLockout      LoginLockoutPolicy // per-account login lockout (disabled by default)
+	secretValuePolicy SecretValuePolicy // optional quality gate on secret values (off by default)
+	// maxSecretSize caps a secret value's size in bytes (see
+	// secret_size_policy.go) — unlike secretValuePolicy, this is on by default
+	// (NewKeyorixCore sets it to DefaultMaxSecretSize) rather than requiring
+	// an explicit opt-in.
+	maxSecretSize    int
+	secretNamePolicy SecretNamePolicy   // optional naming convention for secrets (off by default)
+	secretNameRe     *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
+	loginLockout     LoginLockoutPolicy // per-account login lockout (disabled by default)
 	// recordFailedLogin (and the pre-session-mint recheck in
 	// checkLockAndClearLoginFailures) so concurrent failures can't lose an increment.
 	// Combined with the row lock LockUserForUpdate takes on Postgres, the lockout
@@ -659,6 +664,7 @@ func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 		now:            time.Now,
 		passwordPolicy: DefaultPasswordPolicy(),
 		auditStream:    newAuditBroker(),
+		maxSecretSize:  DefaultMaxSecretSize,
 	}
 }
 

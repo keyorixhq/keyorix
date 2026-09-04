@@ -32,6 +32,14 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 
 	// Create server options
 	opts := []grpc.ServerOption{
+		// Consistent with the HTTP API's secret-write-route body limit
+		// (server/http/router.go's secretBodyLimit) — both are derived from the
+		// same secrets.limits.max_secret_size via config.DeriveMaxRequestBodySize,
+		// so a caller cannot bypass the HTTP transport's tighter limit by
+		// switching to gRPC. gRPC's default MaxRecvMsgSize (4 MiB) would
+		// otherwise silently let a request through this transport that the HTTP
+		// API already rejects at the wire level for the same secret.
+		grpc.MaxRecvMsgSize(int(config.DeriveMaxRequestBodySize(cfg.Secrets.Limits.MaxSecretSize))),
 		// grpc.ChainUnaryInterceptor/ChainStreamInterceptor run interceptors in the
 		// order listed: the first is OUTERMOST (executes first on the way in, last on
 		// the way out), wrapping every interceptor listed after it. RecoveryInterceptor

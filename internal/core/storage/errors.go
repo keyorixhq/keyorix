@@ -98,6 +98,17 @@ var ErrDuplicateProjectName = errors.New("a project with this name already exist
 // the rotation outright on ordinary concurrent contention.
 var ErrDuplicateSecretVersion = errors.New("a secret version with this version number already exists")
 
+// ErrSecretValueTooLarge is returned (wrapped, with the actual size and limit) by
+// LocalStorage.CreateSecretVersion when a version's encrypted value exceeds
+// MaxSecretSizeHardCeiling (internal/storage/store/local_secrets.go). This is
+// defense-in-depth: internal/core.checkSecretSize already enforces the
+// operator-configured (possibly smaller) secrets.limits.max_secret_size on every
+// write path BEFORE this is ever reached, so this check should never actually
+// fire in normal operation — it exists so that a bug in, or a future write path
+// that bypasses, the core-layer check cannot silently persist a secret value
+// above the architectural maximum regardless of what an operator configured.
+var ErrSecretValueTooLarge = errors.New("secret value exceeds the maximum allowed size")
+
 // ErrUnsupportedByBackend is returned (wrapped) by a storage.Storage implementation
 // when an operation has no meaningful implementation under the ACTIVE backend —
 // distinct from a transient failure of that backend. The original motivating case

@@ -883,8 +883,23 @@ func (ls *LocalStorage) SetSecretTags(ctx context.Context, secretID uint, tagNam
 
 // --- Versions ---
 
+// maxSecretVersionValueSize is the storage layer's own, unconditional backstop on
+// a secret version's stored (encrypted) value size — see
+// storage.ErrSecretValueTooLarge's doc comment for why this exists as defense in
+// depth behind internal/core.checkSecretSize's operator-configured, potentially
+// smaller limit, rather than duplicating that configured value here.
+// internal/storage/store deliberately does not import internal/config (this
+// package sits below it in the dependency layering), so this is independently
+// defined rather than shared — kept in sync with config.MaxSecretSizeHardCeiling
+// by TestMaxSecretVersionValueSize_MatchesConfigHardCeiling.
+const maxSecretVersionValueSize = 1 << 20 // 1 MiB, mirrors config.MaxSecretSizeHardCeiling
+
 // CreateSecretVersion creates a new version of a secret.
 func (ls *LocalStorage) CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
+	if len(version.EncryptedValue) > maxSecretVersionValueSize {
+		return nil, fmt.Errorf("%w: %d bytes exceeds the %d-byte hard ceiling",
+			storage.ErrSecretValueTooLarge, len(version.EncryptedValue), maxSecretVersionValueSize)
+	}
 	if err := ls.db.WithContext(ctx).Create(version).Error; err != nil {
 		if isUniqueViolation(err) {
 			// The unique index on (secret_node_id, version_number) (#121) caught a

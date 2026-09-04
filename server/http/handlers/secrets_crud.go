@@ -44,6 +44,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		if h.trySendSecretSizeError(w, err) {
+			return
+		}
 		h.sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
@@ -96,6 +99,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	response, err := h.coreService.CreateSecret(r.Context(), req)
 	if err != nil {
 		log.Printf("Error creating secret: %v", err)
+		if h.trySendSecretSizeError(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "already exists") {
 			h.sendError(w, "ConflictError", "Secret with this name already exists", http.StatusConflict, nil)
 		} else if strings.Contains(err.Error(), "does not belong to project") || strings.Contains(err.Error(), "environment") && strings.Contains(err.Error(), errNotFound) {
@@ -467,6 +473,9 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		Secret *models.SecretNode `json:"secret,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		if h.trySendSecretSizeError(w, err) {
+			return
+		}
 		h.sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
@@ -573,6 +582,9 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) {
+	if h.trySendSecretSizeError(w, err) {
+		return
+	}
 	if strings.Contains(err.Error(), "not found") {
 		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 	} else if strings.Contains(err.Error(), "permission denied") {
