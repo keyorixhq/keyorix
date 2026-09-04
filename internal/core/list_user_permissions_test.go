@@ -127,6 +127,37 @@ func TestListUserPermissions_PaginatesOwnedSecretsBeyondOnePage(t *testing.T) {
 	ms.AssertNumberOfCalls(t, "ListSecrets", 2)
 }
 
+// TestListUserPermissions_ClockSteppedBackward_ExpiredShareStaysExcluded is the
+// #1655 sibling to TestListSecretShares_ClockSteppedBackward_ExpiredShareStaysExcluded
+// (share_clock_regression_test.go): ListUserPermissions was the 8th of 8 shareActive
+// call sites left on a bare c.now() instead of the monotonic-watermark
+// c.shareEffectiveNow(), so a share already expired relative to a time this process
+// has previously observed could be resurrected by a real clock reading that looks
+// earlier (a backward-stepped host clock, e.g. NTP correction or VM pause/resume).
+func TestListUserPermissions_ClockSteppedBackward_ExpiredShareStaysExcluded(t *testing.T) {
+	ctx := context.Background()
+	const userID = uint(13)
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+
+	future := time.Now().Add(24 * time.Hour)
+	c.shareClockWatermark = future
+
+	// Genuinely expired relative to the watermark, but NOT expired relative to the
+	// real, un-mocked time.Now() this test actually runs at.
+	expiry := time.Now().Add(time.Hour)
+
+	ms.On("ListSecrets", ctx, mock.AnythingOfType("*storage.SecretFilter")).
+		Return([]*models.SecretNode{}, int64(0), nil)
+	ms.On("ListSharesByUser", ctx, userID).
+		Return([]*models.ShareRecord{{ID: 20, SecretID: 2, Permission: "read", ExpiresAt: &expiry}}, nil)
+	ms.On("GetUserGroups", ctx, userID).Return([]*models.Group{}, nil)
+
+	perms, err := c.ListUserPermissions(ctx, userID)
+	require.NoError(t, err)
+	assert.Empty(t, perms, "a share already expired relative to a time this process has previously observed must not be resurrected by a real clock reading that looks earlier")
+}
+
 func TestListUserPermissions_NoGroups(t *testing.T) {
 	ctx := context.Background()
 	const userID = uint(8)
