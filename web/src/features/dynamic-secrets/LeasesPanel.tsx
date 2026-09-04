@@ -6,6 +6,7 @@ import { Alert } from '../../components/ui/Alert';
 import { IssuedCredential } from '../../services/dynamicSecrets';
 import { useDynamicLeases, useIssueLease, useRevokeLease, useRevokeAllLeases } from './api';
 import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
+import { copyToClipboard } from '../../utils';
 
 const leaseStatusStyle = (status: string): React.CSSProperties => {
     switch (status) {
@@ -29,8 +30,8 @@ const fieldLabel = (key: string): string => {
 
 const CopyRow: React.FC<{ label: string; value: string }> = ({ label, value }) => {
     const [copied, setCopied] = useState(false);
-    const copy = () => {
-        navigator.clipboard?.writeText(value);
+    const copy = async () => {
+        await copyToClipboard(value);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };

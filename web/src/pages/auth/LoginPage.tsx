@@ -4,6 +4,7 @@ import { LoginForm, PasswordResetForm, useAuth } from '../../features/auth';
 import { authService } from '../../services/auth';
 import { LoginFormData, PasswordResetRequest } from '../../types';
 import { ROUTES } from '../../constants';
+import { isSafeReturnTo } from '../../utils/routing';
 
 type AuthMode = 'login' | 'reset' | 'reset-success';
 
@@ -34,17 +35,20 @@ export const LoginPage: React.FC = () => {
         };
     }, []);
 
-    // Where to land after SSO — preserve the originally-requested route.
-    const ssoReturnTo = (location.state as any)?.from?.pathname || ROUTES.DASHBOARD;
+    // Where to land after SSO — preserve the originally-requested route. Validated
+    // the same way SSOCompletePage validates its own return_to on the way back
+    // (isSafeReturnTo), so a crafted `from` can't be smuggled through either leg.
+    const requestedFrom = (location.state as any)?.from?.pathname;
+    const safeFrom = requestedFrom && isSafeReturnTo(requestedFrom) ? requestedFrom : ROUTES.DASHBOARD;
+    const ssoReturnTo = safeFrom;
     const ssoHref = (name: string) =>
         `/auth/sso/${encodeURIComponent(name)}/login?return_to=${encodeURIComponent(ssoReturnTo)}`;
 
     useEffect(() => {
         if (isAuthenticated) {
-            const from = (location.state as any)?.from?.pathname || ROUTES.DASHBOARD;
-            navigate(from, { replace: true });
+            navigate(safeFrom, { replace: true });
         }
-    }, [isAuthenticated, navigate, location]);
+    }, [isAuthenticated, navigate, safeFrom]);
 
     useEffect(() => {
         clearError();

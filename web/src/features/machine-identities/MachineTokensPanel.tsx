@@ -7,6 +7,7 @@ import { IssuedMachineToken } from '../../services/machineIdentities';
 import { classificationMeta, CLASSIFICATION_LEVELS } from '../secrets/classification';
 import { useMachineTokens, useIssueMachineToken, useRevokeMachineToken, useClassifyMachineToken } from './api';
 import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
+import { copyToClipboard } from '../../utils';
 
 /**
  * Machine-token credentials for one machine identity (ADR-030): issue an opaque
@@ -52,9 +53,9 @@ export const MachineTokensPanel: React.FC<{
         );
     };
 
-    const copy = () => {
+    const copy = async () => {
         if (!issued) return;
-        navigator.clipboard?.writeText(issued.token);
+        await copyToClipboard(issued.token);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };

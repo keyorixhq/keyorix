@@ -338,14 +338,18 @@ describe('LeasesPanel', () => {
         issueMutate.mockImplementation((_vars, opts) =>
             opts.onSuccess({ leaseId: 'lease-copy', username: 'app_user', password: 'super-secret' })
         );
-        vi.useFakeTimers();
+        // shouldAdvanceTime: copy() now routes through the async copyToClipboard
+        // util, so the label flip lands on a microtask after the click, not
+        // synchronously -- waitFor's internal polling needs real timer ticks to
+        // observe that, even though the timers below are otherwise faked.
+        vi.useFakeTimers({ shouldAdvanceTime: true });
 
         render(<LeasesPanel configId={5} canManage />);
         fireEvent.click(screen.getByRole('button', { name: /issue credential/i }));
 
         const copyButtons = screen.getAllByRole('button', { name: 'Copy' });
         fireEvent.click(copyButtons[0]);
-        expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(1);
+        await waitFor(() => expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(1));
 
         await act(async () => {
             await vi.advanceTimersByTimeAsync(2000);
