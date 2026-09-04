@@ -100,7 +100,28 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 	// permission being bundled, so the #169 self-permission check only applies to a
 	// real (non-zero) actor OR a machine-credential-authenticated one (#1545).
 	if actorID != 0 || actorIsMachine {
-		if ok, aerr := c.Authorize(ctx, actorID, perm.Name, Scope{}); aerr != nil {
+		// #1545 sibling gap (Part 2 regression audit, 2026-09-04): c.Authorize
+		// is the USER-only lookup (GetUserRoleIDsAt); for a machine caller
+		// actorID is always 0 (ADR-030, no UserID), so this call could never
+		// succeed for ANY machine actor -- even one that genuinely holds the
+		// permission via its own machine role. Use AuthorizePrincipal (the
+		// actor-aware primitive every other machine-auth path in this
+		// codebase uses) instead, resolving the machine's real principal ID
+		// from WithSelfMachineGranter the same way requireGranterHoldsRolePermissions
+		// does -- fail closed if the caller (a /system proxy relay, or any
+		// direct caller that forgot to tag ctx) never tagged itself as the
+		// self-acting machine granter.
+		if actorIsMachine {
+			granterID, tagged := selfMachineGranterFromContext(ctx)
+			if !tagged {
+				return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
+			}
+			if ok, aerr := c.AuthorizePrincipal(ctx, ActorTypeMachine, granterID, perm.Name, Scope{}); aerr != nil {
+				return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+			} else if !ok {
+				return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
+			}
+		} else if ok, aerr := c.Authorize(ctx, actorID, perm.Name, Scope{}); aerr != nil {
 			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 		} else if !ok {
 			return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)

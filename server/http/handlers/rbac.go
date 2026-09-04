@@ -672,7 +672,16 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, roleID, body.PermissionID, isMachineActor(r)); err != nil {
+	ctx := r.Context()
+	if userCtx.ActorKind() == core.ActorTypeMachine {
+		// #1545 sibling gap: without this tag, AssignPermissionToRole's
+		// machine-actor branch fails closed for EVERY machine caller, even
+		// one that genuinely holds the permission via its own machine role
+		// -- see that function's doc comment. Mirrors this file's other
+		// WithSelfMachineGranter call sites.
+		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
+	}
+	if err := h.coreService.AssignPermissionToRole(ctx, userCtx.UserID, roleID, body.PermissionID, isMachineActor(r)); err != nil {
 		log.Printf("Error assigning permission to role: %v", err)
 		switch {
 		case strings.Contains(err.Error(), errNotFound):
