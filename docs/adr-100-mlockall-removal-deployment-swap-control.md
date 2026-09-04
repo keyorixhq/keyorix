@@ -314,10 +314,12 @@ described here).
   scenario above and arguably the more concerning finding. It is **not a
   permanent leak**: 5 minutes after the driver stopped entirely, `VmRSS` had
   fallen to 59276 kB, close to the true cold-boot baseline (~23 MB) — the
-  memory is reclaimable, just not reclaimed fast enough relative to the
-  sustained allocation rate for Go's default GC pacing (`GOGC=100`, no
-  `GOMEMLIMIT`) to keep the process anywhere near its steady-state minimum
-  while load continues.
+  memory is reclaimable once the underlying cause (below) stops adding
+  pressure faster than it clears, not gone for good the way a genuine leak
+  would be. This is NOT primarily a GC-pacing problem that a soft memory
+  limit would fix — see "Sustained load is not a memory-sizing problem"
+  below, correcting this ADR's own earlier claim that `GOMEMLIMIT` closes
+  this gap.
 
   **Leading cause identified, not just observed:** the server log for this
   run contains 704 occurrences of `SECURITY: failed to persist audit event
@@ -419,11 +421,15 @@ multi-user load, not an attack.
 **Recommended: raise `server.resources.requests/limits.memory` to 768Mi**,
 keeping `requests == limits` (Guaranteed QoS, unchanged rationale). Headroom
 math: the single-burst worst case measured (100 concurrent × 2MB,
-uncapped) peaked at 582 MB; 768Mi (805,306,368 bytes) is ~1.4x that. This
-does **not** cover the sustained-pass peak (723 MB) with real margin on its
-own — see the `GOMEMLIMIT` recommendation below, which is what actually
-closes that gap, not a larger static number chasing an unbounded sustained
-scenario.
+uncapped) peaked at 582 MB; 768Mi (805,306,368 bytes) is ~1.4x that. **This
+number is sized for bursts. It does not cover the sustained-load finding,
+and no static memory number should try to** — 768Mi is only ~1.06x the
+sustained pass's own peak (723 MB), and that run had not plateaued when it
+stopped at 30 minutes; a longer run could plausibly have exceeded 768Mi too.
+See "Sustained load is not a memory-sizing problem" below (correcting this
+ADR's earlier claim that `GOMEMLIMIT` closes this gap — it does not) for
+why the sustained case needs a different fix entirely, not a bigger number
+here.
 
 **What this trades off:** every default install now permanently reserves
 768Mi instead of 512Mi — 256Mi of additional capacity every customer holds
@@ -433,16 +439,29 @@ matrix demonstrated) is not a real option once the risk is measured, not
 assumed — a Guaranteed-QoS pod that gets OOM-killed under ordinary
 concurrent use fails the exact goal (surviving ordinary load without
 disruption) the QoS change in the first follow-up was made for. This
-number is **not** sized to survive the sustained-load scenario indefinitely
-at 25-concurrency — see below for why that is deliberately a `GOMEMLIMIT`
-problem instead of an ever-larger static reservation.
+raise is scoped to bursts, deliberately: see below for why chasing the
+sustained scenario with an ever-larger static reservation is the wrong
+tool for that specific problem.
 
 **Not implemented in this pass** — `deploy/helm/keyorix/values.yaml` still
 reads 512Mi as of this write-up; this is a recommendation for the next
 follow-up PR, stated here so the measurement and the decision aren't
 separated in time.
 
-## `GOMEMLIMIT`: recommended, ~85% of the container limit
+## `GOMEMLIMIT`: recommended for bursts, ~85% of the container limit — corrected 2026-09-04
+
+**Correction to this section's original text**, made before anyone acted on
+it: the original version claimed `GOMEMLIMIT` is "what actually closes th[e]
+gap" for the sustained-load finding. **That is wrong.** `GOMEMLIMIT` is a
+*soft* limit — Go responds to approaching it by spending more CPU on GC,
+not by staying under the ceiling. It is a real, useful mitigation for
+*bounded* memory pressure (a burst that will subside once the requests
+finish). It is the wrong tool against the sustained-load finding
+specifically, because that growth was traced (see "Leading cause
+identified" above, and the #1679 follow-up round's Step 1 audit-persist
+investigation) to **structurally unbounded** causes — an un-checkpointed
+WAL and SQLite write-lock contention under sustained concurrent load, not a
+bounded working set GC can shrink by working harder.
 
 **Recommend setting `GOMEMLIMIT` to approximately 85% of
 `server.resources.limits.memory`** (e.g. `GOMEMLIMIT=650MiB` against a 768Mi
@@ -451,35 +470,55 @@ per the Go team's own guidance for using `GOMEMLIMIT` as a backstop
 alongside percentage-based GC, not a replacement for it), set as an
 environment variable on the server container (no code change needed — the
 Go runtime reads it directly; `internal/config`/`server/main.go` need no
-new field).
+new field). **Scope this recommendation to bursts** — the single-burst
+worst case (582 MB, concurrency=100) is bounded: once those requests
+finish, allocation pressure stops and GC can catch up. `GOMEMLIMIT` genuinely
+helps there: it makes GC work harder as heap approaches the limit during
+the burst's peak, instead of the runtime pacing purely off heap growth with
+no awareness a cgroup ceiling exists at all (confirmed zero
+`GOMEMLIMIT`/`SetMemoryLimit` references anywhere in this repo, `git grep -n
+"GOMEMLIMIT\|SetMemoryLimit" -- '*.go' '*.yaml' '*Dockerfile*'`).
 
-**Why:** the sustained-load finding above is exactly the failure mode
-`GOMEMLIMIT` exists for. Go's default GC (`GOGC=100`, no memory limit
-awareness at all when `GOMEMLIMIT` is unset — confirmed by `git grep -n
-"GOMEMLIMIT\|SetMemoryLimit" -- '*.go' '*.yaml' '*Dockerfile*'` returning
-zero hits anywhere in this repo, both before and after this pass) paces
-collection off heap *growth*, not proximity to any external ceiling — it has
-no way to know a hard cgroup limit exists at all, let alone that it is
-approaching one. Under the sustained scenario measured, RSS climbed for 30
-straight minutes with no sign of slowing down on its own; the only reason it
-didn't end in an OOM-kill is that the container had no cap during that
-specific run. With `GOMEMLIMIT` set, the runtime is required to run
-additional GC cycles as live heap approaches the configured limit — trading
-CPU (more frequent, harder-working collections) for staying alive, changing
-the failure mode from "hard kill, mid-request, no warning" to "degraded
-throughput/latency, visible in metrics, process stays up." This is a
-strictly better outcome for the exact scenario this pass measured, at the
-cost of GC CPU overhead under sustained pressure — not measured directly in
-this pass (would require comparing sustained-load CPU utilization with and
-without `GOMEMLIMIT` set, a follow-up measurement, not inferred here).
+## Sustained load is not a memory-sizing problem
 
-**Not a substitute for the base container limit being large enough for
-ordinary bursts.** `GOMEMLIMIT` makes the GC work harder as the heap
-approaches it; it does not create memory the process doesn't have. A
-container limit sized for the single-burst worst case (the 768Mi
-recommendation above) still matters — `GOMEMLIMIT` is what keeps a
-*sustained* load from reaching that ceiling in the first place, not a way to
-shrink the ceiling itself.
+**Against genuinely unbounded growth, `GOMEMLIMIT` does not fail safely —
+it produces a GC death spiral, which is operationally worse than a clean
+OOM-kill.** If the underlying cause keeps producing new live-reachable-looking
+pressure faster than GC can reclaim (a WAL that never gets checkpointed,
+writers piling up behind lock contention that never clears), the runtime
+does exactly what `GOMEMLIMIT` tells it to: run more GC cycles, more often,
+harder. Heap keeps climbing toward the limit anyway, because the cause was
+never memory the GC could actually free — it was on-disk WAL growth and
+in-flight contended writers backing up, both invisible to the Go garbage
+collector's own view of "live heap." The practical result: CPU spent
+almost entirely on GC, request throughput collapsing toward zero, `/health`
+possibly still returning 200 (it doesn't check GC pressure or request
+latency), no crash, no restart — a pod that LOOKS alive to Kubernetes and
+IS unusable, indefinitely, until someone notices and intervenes by hand.
+Kubernetes has no automatic response to this failure mode the way it does
+to an OOM-kill (pod dies → rescheduled → alerting fires on the restart
+count, a well-understood, well-instrumented signal every operator already
+watches for). A clean OOM-kill is the *better* outcome here, not the one to
+engineer around.
+
+**The sizing math already shows this doesn't close the gap even optimistically:**
+768Mi is ~1.4x the single-burst worst case (582 MB) but only ~1.06x the
+sustained pass's own observed peak (723 MB) — and that 30-minute run had
+not plateaued. Reaching for a bigger static number instead doesn't fix
+this either: the growth pattern gives no evidence of where (or whether) it
+stops on its own; sizing a "safe" ceiling for it requires knowing that
+ceiling exists, which this measurement pass specifically did not establish.
+
+**This has no memory-limit fix — bounded or soft.** The actual fix is
+closing the unbounded-growth cause at its source: WAL checkpointing (the
+`.db-wal` file grew to 59.5 MB over the sustained run without being
+checkpointed back into the main database file) and tighter write
+serialization under concurrent load (the same contention responsible for
+the 704 dropped audit-persist writes the #1679 follow-up round's Step 1
+audit investigated). That work is tracked as its own item, referencing
+Step 1's findings directly — not proposed or scoped here, since it's a
+correctness/durability fix to the storage layer, not a resource-sizing
+decision.
 
 **Not implemented in this pass**, same status as the memory-limit
 recommendation above — stated here for the next follow-up PR to carry out.
