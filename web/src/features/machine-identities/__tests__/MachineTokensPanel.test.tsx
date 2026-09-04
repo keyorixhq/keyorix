@@ -136,7 +136,7 @@ describe('MachineTokensPanel', () => {
             vi.useRealTimers();
         });
 
-        it('reverts the Copy button label back to "Copy" after the timeout elapses', () => {
+        it('reverts the Copy button label back to "Copy" after the timeout elapses', async () => {
             issueMutate.mockImplementation((_vars, opts) => {
                 opts.onSuccess({
                     token: 'kx_machine_copy_secret',
@@ -145,14 +145,18 @@ describe('MachineTokensPanel', () => {
                     classification: '',
                 });
             });
-            vi.useFakeTimers();
+            // shouldAdvanceTime: copy() now routes through the async copyToClipboard
+            // util, so the label flip lands on a microtask after the click, not
+            // synchronously -- waitFor's internal polling needs real timer ticks to
+            // observe that, even though the timers below are otherwise faked.
+            vi.useFakeTimers({ shouldAdvanceTime: true });
 
             render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
             fireEvent.change(screen.getByPlaceholderText('Token name…'), { target: { value: 'copy-test' } });
             fireEvent.click(screen.getByRole('button', { name: /issue token/i }));
 
             fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-            expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+            await waitFor(() => expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument());
 
             act(() => {
                 vi.advanceTimersByTime(2000);

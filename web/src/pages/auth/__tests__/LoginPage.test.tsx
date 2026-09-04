@@ -149,6 +149,16 @@ describe('LoginPage', () => {
         expect(navigateMock).toHaveBeenCalledWith('/secrets', { replace: true });
     });
 
+    it('falls back to the dashboard rather than navigating to an unsafe protocol-relative from-path', () => {
+        window.history.pushState({ usr: { from: { pathname: '//evil.example.com/phish' } } }, '', '/login');
+        authState.isAuthenticated = true;
+        authState.isLoading = false;
+        render(<LoginPage />);
+
+        expect(navigateMock).toHaveBeenCalledWith('/dashboard', { replace: true });
+        expect(navigateMock).not.toHaveBeenCalledWith('//evil.example.com/phish', expect.anything());
+    });
+
     it('shows an SSO error banner from the sso_error query param', () => {
         window.history.pushState({}, '', '/login?sso_error=access_denied');
         render(<LoginPage />);
@@ -184,6 +194,15 @@ describe('LoginPage', () => {
 
         const oktaLink = screen.getByRole('link', { name: 'Sign in with okta' });
         expect(oktaLink).toHaveAttribute('href', '/auth/sso/okta/login?return_to=%2Fdashboard');
+    });
+
+    it('falls back to the dashboard in the SSO return_to param for an unsafe protocol-relative from-path', async () => {
+        window.history.pushState({ usr: { from: { pathname: '//evil.example.com/phish' } } }, '', '/login');
+        getSSOProvidersMock.mockResolvedValue(['google']);
+        render(<LoginPage />);
+
+        const googleLink = await screen.findByRole('link', { name: 'Sign in with google' });
+        expect(googleLink).toHaveAttribute('href', '/auth/sso/google/login?return_to=%2Fdashboard');
     });
 
     it('preserves the originally-requested route in the SSO return_to param', async () => {
