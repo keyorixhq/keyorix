@@ -406,7 +406,10 @@ func TestGetWebAuthnCredentialByCredIDProxy_DBError_S31(t *testing.T) {
 func TestUpdateWebAuthnCredentialProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	body := bytes.NewBufferString(`{"user_id":1,"credential_id":"AQIDBA==","name":"YubiKey","credential_blob":"AQIDBA==","created_at":"2024-01-01T00:00:00Z"}`)
+	// #1714: disabled:true is required to reach the storage-touching path at
+	// all (anything else is rejected before any lookup, so it would never
+	// observe the broken DB).
+	body := bytes.NewBufferString(`{"user_id":1,"credential_id":"AQIDBA==","disabled":true}`)
 	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/webauthn/credentials/1", body), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateWebAuthnCredentialProxy(w, r)

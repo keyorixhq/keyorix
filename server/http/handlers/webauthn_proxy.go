@@ -50,12 +50,14 @@ package handlers
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -214,11 +216,31 @@ func (h *AuthHandler) GetWebAuthnCredentialByCredIDProxy(w http.ResponseWriter, 
 }
 
 // UpdateWebAuthnCredentialProxy handles PUT /api/v1/system/webauthn/credentials/{id}.
-// A raw persist (storage.Storage.UpdateWebAuthnCredential is an unconditional
-// full-row Save, matching LocalStorage's own semantics exactly) — used by
-// rejectIfCloned's best-effort "mark disabled" write. The signature-counter
-// advance path does NOT go through this route; see
-// AdvanceWebAuthnCredentialCounterProxy below.
+//
+// #1714: this used to be a raw, unconditional full-row Save trusting the
+// entire caller-supplied body -- an authz-ceiling bypass, not merely an audit
+// gap (reclassified from the original "audit-completeness" framing). Two
+// distinct things a system.write holder could do with the old code, neither
+// requiring any WebAuthn ceremony at all:
+//   - Reassign a credential's ownership: the handler applied body.UserID to
+//     the row unconditionally, with no check that it matched the row the URL
+//     {id} actually names.
+//   - Silently re-enable a clone-disabled credential (disabled: false),
+//     directly contradicting models.WebAuthnCredential's own documented
+//     invariant ("Never auto-re-enabled").
+//
+// The route's ONLY legitimate purpose, repo-wide, is rejectIfCloned's
+// disable-on-clone write (internal/core/webauthn.go is the sole internal/core
+// caller of storage.Storage.UpdateWebAuthnCredential). This handler is now
+// narrowed to exactly that: identify the row by (credential_id, user_id) --
+// which scopes ownership by construction, the same reasoning
+// rejectIfCloned's own lookup already relies on (#307) -- reject outright if
+// that pair doesn't resolve to the URL's {id}, and reject outright unless
+// disabled is exactly true. Routes through
+// KeyorixCore.MarkWebAuthnCredentialClonedByLookup, which performs the
+// mutation and the EventWebAuthnCloneDetected audit write as one unit; see
+// that function's doc. The signature-counter advance path does NOT go
+// through this route; see AdvanceWebAuthnCredentialCounterProxy below.
 func (h *AuthHandler) UpdateWebAuthnCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -230,16 +252,40 @@ func (h *AuthHandler) UpdateWebAuthnCredentialProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
-	// #G79: matches CreateWebAuthnCredentialProxy's validation — this route is
-	// an unconditional full-row Save (see the doc above), so a body missing
-	// user_id/credential_id would zero those columns on the existing row, not
-	// merely leave them unset.
 	if body.UserID == 0 || len(body.CredentialID) == 0 {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and credential_id are required")
 		return
 	}
-	body.ID = uint(id)
-	if err := h.coreService.Storage().UpdateWebAuthnCredential(r.Context(), body.toModel()); err != nil {
+	// The only transition this route ever legitimately performs is
+	// disable-on-clone (false -> true). Anything else -- re-enabling, or a
+	// body that omits disabled entirely (Go's zero value is false) -- is
+	// rejected outright, not silently ignored: the model's own invariant is
+	// "never auto-re-enabled," so there is no reachable legitimate use of
+	// disabled: false via this route, ever.
+	if !body.Disabled {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY",
+			"this route only disables a credential on a clone-detection signal; disabled must be true")
+		return
+	}
+	_, err = h.coreService.MarkWebAuthnCredentialClonedByLookup(r.Context(), body.CredentialID, body.UserID, uint(id), clientIP(r))
+	if err != nil {
+		if errors.Is(err, core.ErrWebAuthnCredentialIDMismatch) {
+			// (credential_id, user_id) resolved to a REAL, owned row, but not the
+			// one the URL named -- the caller is targeting one credential's ID
+			// while authenticating the request against a different one's
+			// identity. Rejected BEFORE any mutation (see the domain function's
+			// own doc) -- log it, since this is either a caller bug or an
+			// attempt to probe/confuse the id<->identity binding.
+			log.Printf("webauthn proxy: update credential: URL id %d does not match the credential named by "+
+				"the body's (user_id=%d, credential_id); rejecting, nothing changed", id, body.UserID)
+			writeRemoteAPIError(w, http.StatusConflict, "ID_MISMATCH",
+				"the credential identified by user_id and credential_id does not match the id in the URL")
+			return
+		}
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errWebAuthnCredNotFound)
+			return
+		}
 		log.Printf("webauthn proxy: update credential failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

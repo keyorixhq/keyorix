@@ -65,9 +65,13 @@ var unsafeSiblingPairs = map[string]string{
 // or the route removed) — same discipline as
 // rawStorageBypassAllowlist/knownUnfixedRawStorageBypasses above.
 var unsafeSiblingAllowlist = map[string]string{
-	"UpdateWebAuthnCredentialProxy": "capability-reducing: the proxy's own doc comment establishes it backs " +
-		"rejectIfCloned's best-effort 'mark disabled' write -- disabling a suspected-cloned credential is the " +
-		"safe direction, not an authorization gate to bypass. No independent ceiling to skip.",
+	// UpdateWebAuthnCredentialProxy entry removed (#1714): reclassified from
+	// "capability-reducing, no independent ceiling" to a real authz bypass --
+	// the old raw call trusted an attacker-controlled full-row body
+	// (ownership reassignment via a mismatched user_id, silent re-enable of a
+	// clone-disabled credential). Fixed by routing through
+	// KeyorixCore.MarkWebAuthnCredentialClonedByLookup; the handler no longer
+	// makes an unsafe-sibling call at all, so this guard no longer flags it.
 	"DeleteProjectProxy": "no-independent-ceiling: core.DeleteProject(force=true) intentionally skips the " +
 		"force=false guard+cascade atomicity problem entirely and calls the plain, unconditional " +
 		"storage.DeleteProject cascade -- no actor-authority check of any kind exists at the core layer for " +
