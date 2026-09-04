@@ -2480,11 +2480,14 @@ func TestCountWebAuthnCredentialsProxy_HappyPathS5(t *testing.T) {
 
 func TestUpdateWebAuthnCredentialProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"user_id":1,"credential_id":"AQID","public_key":"AQID","sign_count":0,"name":"k","user_handle":"AQID","aaguid":"AQID"}`
+	// #1714: this route only ever disables a credential on a clone signal —
+	// disabled:true is required, or the request is rejected before any lookup.
+	body := `{"user_id":1,"credential_id":"AQID","disabled":true}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateWebAuthnCredentialProxy(w, req)
-	// Not a bad-request (body + ID are valid)
+	// Not a bad-request (body + ID are well-formed; the credential itself may
+	// not exist in this shared test DB, which is a 404, not a 400).
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 

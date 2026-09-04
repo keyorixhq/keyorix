@@ -14,8 +14,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -289,7 +291,9 @@ func TestGetWebAuthnCredentialByCredIDProxy_StorageError_S13B(t *testing.T) {
 }
 
 // TestUpdateWebAuthnCredentialProxy_Success_S13B — seed a credential then
-// update it → 200.
+// disable it (the ONLY legitimate use of this route, #1714) → 200, Disabled
+// becomes true, and fields this route may NOT change (Name) are untouched --
+// this route no longer applies a caller-supplied full-row replacement.
 func TestUpdateWebAuthnCredentialProxy_Success_S13B(t *testing.T) {
 	h, _, db := setupMFAReauthTest(t)
 	blob, _ := json.Marshal(webauthn.Credential{ID: []byte("cred-upd")})
@@ -302,18 +306,22 @@ func TestUpdateWebAuthnCredentialProxy_Success_S13B(t *testing.T) {
 	require.NoError(t, db.Create(cred).Error)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":         1,
-		"credential_id":   []byte("cred-upd"),
-		"credential_blob": blob,
-		"name":            "new-name",
+		"user_id":       1,
+		"credential_id": []byte("cred-upd"),
+		"disabled":      true,
 	})
 	r := httptest.NewRequest(http.MethodPut,
-		"/api/v1/system/webauthn/credentials/1",
+		fmt.Sprintf("/api/v1/system/webauthn/credentials/%d", cred.ID),
 		bytes.NewReader(body))
-	r = withChiParams(r, map[string]string{"id": "1"})
+	r = withChiParams(r, map[string]string{"id": strconv.FormatUint(uint64(cred.ID), 10)})
 	w := httptest.NewRecorder()
 	h.UpdateWebAuthnCredentialProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	var reloaded models.WebAuthnCredential
+	require.NoError(t, db.First(&reloaded, cred.ID).Error)
+	assert.True(t, reloaded.Disabled, "the credential must be disabled")
+	assert.Equal(t, "old-name", reloaded.Name, "this route must not change Name")
 }
 
 // TestAdvanceWebAuthnCredentialCounterProxy_NotFound_S13B — valid body but

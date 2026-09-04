@@ -689,9 +689,18 @@ var rawStorageBypassAllowlist = map[string]string{
 		"is a marshal + token-generation + the SAME storage.CreateWebAuthnSession call, no additional check -- " +
 		"session data isn't privilege-bearing until consumed (same shape as the already-verified " +
 		"CreateSSOLoginStateProxy: identity is anchored at consume time, not creation time).",
-	"UpdateWebAuthnCredentialProxy": "no-independent-ceiling: the proxy's own doc comment establishes it backs " +
-		"rejectIfCloned's best-effort 'mark disabled' write -- a defensive, capability-REDUCING action (disabling " +
-		"a suspected-cloned credential), not an authorization gate to bypass.",
+	// UpdateWebAuthnCredentialProxy entry removed (#1714): the original
+	// "no-independent-ceiling" framing was wrong for this handler -- it
+	// wasn't just capability-reducing, it trusted an attacker-controlled
+	// full-row body (ownership reassignment via a mismatched user_id, and
+	// silent re-enable of a clone-disabled credential, directly contradicting
+	// models.WebAuthnCredential's own "never auto-re-enabled" invariant).
+	// Reclassified as an authz bypass, not a no-op-ceiling case. Fixed by
+	// routing through KeyorixCore.MarkWebAuthnCredentialClonedByLookup, which
+	// rejects a body that doesn't resolve to the URL's {id} BEFORE any
+	// mutation and rejects disabled:false outright -- the handler no longer
+	// makes a raw storage.UpdateWebAuthnCredential call at all, so this
+	// guard's own detection no longer flags it.
 	// ExpireSetupTokenProxy entry removed (#1622): the handler no longer makes
 	// a raw storage.MarkSetupTokenExpired call at all -- it now goes through
 	// KeyorixCore.ExpireSetupTokenByID, so this guard's own detection no
@@ -1048,7 +1057,9 @@ var rawStorageBypassAllowlist = map[string]string{
 	// files correctly, not a blind spot for new code.
 	//
 	// No-independent-ceiling (same shape as unsafe_sibling_write_guard_test.go's
-	// UpdateWebAuthnCredentialProxy/DeleteProjectProxy entries): internal/core
+	// DeleteProjectProxy entry -- NOT UpdateWebAuthnCredentialProxy, whose own
+	// entry above was reclassified and removed by #1714: that one turned out
+	// to be a real authz bypass, not a no-op-ceiling case): internal/core
 	// applies NO ceiling to notification creation at all -- there is no
 	// authorization decision for this proxy to skip. models.Notification
 	// carries no actor, sender, or origin field; UserID is the recipient, not
