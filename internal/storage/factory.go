@@ -1798,6 +1798,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if err := ensureUserExternalIDIndex(db); err != nil {
 		return err
 	}
+	// ADR-025 account-state root-cause fix: backfill any blank/unset
+	// account_state to an explicit "active" before adding the constraint
+	// that refuses to let a NEW blank land -- see backfillBlankAccountState's
+	// own doc for why this matters (AccountLoginBlocked treats blank the
+	// same as active, silently reactivating a suspended/deprovisioned
+	// account for login).
+	if err := backfillBlankAccountState(db); err != nil {
+		return err
+	}
+	if err := guardAccountStateNotBlank(db); err != nil {
+		return err
+	}
 	if err := ensureProjectNameIndex(db); err != nil {
 		return err
 	}
