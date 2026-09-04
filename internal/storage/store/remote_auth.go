@@ -276,6 +276,17 @@ func (rs *RemoteStorage) GetSetupTokenByHash(ctx context.Context, hash string) (
 	return decodeSetupTokenResponse(resp.Data)
 }
 
+// GetSetupTokenByID has no RemoteStorage caller and no /system route: it only
+// exists to resolve purpose/subject detail hub-side, inside
+// KeyorixCore.ExpireSetupTokenByID (#1622), before its audit write --
+// server/http/handlers is always LocalStorage-backed
+// (validateRemoteStorageNotServer forbids the reverse), so this is genuinely
+// unreachable in any deployment, matching MarkSetupTokenConsumed's own stub
+// below.
+func (rs *RemoteStorage) GetSetupTokenByID(_ context.Context, _ uint) (*models.SetupToken, error) {
+	return nil, remoteUnsupported("GetSetupTokenByID")
+}
+
 // SupersedeActiveSetupTokens flips every active token for (purpose, email) to
 // superseded via POST /api/v1/system/setup-tokens/supersede, preserving
 // local_auth.go's exact semantics: a reissue kills the prior link atomically.

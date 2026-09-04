@@ -1654,6 +1654,14 @@ func (m *MockStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*mo
 	return args.Get(0).(*models.SetupToken), args.Error(1)
 }
 
+func (m *MockStorage) GetSetupTokenByID(ctx context.Context, id uint) (*models.SetupToken, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SetupToken), args.Error(1)
+}
+
 func (m *MockStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string, projectID *uint) error {
 	args := m.Called(ctx, purpose, email, projectID)
 	return args.Error(0)

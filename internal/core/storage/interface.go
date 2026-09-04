@@ -1605,6 +1605,12 @@ type Storage interface {
 	CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error)
 	// GetSetupTokenByHash is the consumption lookup (indexed equality on token_hash).
 	GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error)
+	// GetSetupTokenByID looks up a setup token by primary key. Only ever called
+	// hub-side (KeyorixCore.ExpireSetupTokenByID, #1622) to resolve purpose/subject
+	// detail for an explicit (non-lazy-read) expiry's audit write — no
+	// RemoteStorage caller needs this, since server/http/handlers is always
+	// LocalStorage-backed (validateRemoteStorageNotServer forbids the reverse).
+	GetSetupTokenByID(ctx context.Context, id uint) (*models.SetupToken, error)
 	// SupersedeActiveSetupTokens flips every active token for (purpose, email) to
 	// superseded, so reissuing ("resend") atomically kills the prior link.
 	// projectID, when non-nil, additionally restricts the flip to tokens whose

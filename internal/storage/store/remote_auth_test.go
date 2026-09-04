@@ -411,6 +411,18 @@ func TestRemoteStorage_MarkSetupTokenConsumed_Unsupported(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestRemoteStorage_GetSetupTokenByID_Unsupported: no RemoteStorage caller
+// needs this (#1622) -- it only resolves purpose/subject detail hub-side,
+// inside KeyorixCore.ExpireSetupTokenByID, before its audit write. Hard stub,
+// same shape as MarkSetupTokenConsumed above.
+func TestRemoteStorage_GetSetupTokenByID_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://localhost:9"))
+	require.NoError(t, err)
+
+	_, err = rs.GetSetupTokenByID(context.Background(), 10)
+	assert.Error(t, err)
+}
+
 func TestRemoteStorage_MarkSetupTokenExpired(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
