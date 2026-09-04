@@ -436,18 +436,16 @@ func TestMachineIdentity_CRUD(t *testing.T) {
 	_, err = ls.LockMachineIdentityForUpdate(ctx, 99999)
 	require.Error(t, err)
 
-	// Update.
+	// Update (via TransitionMachineIdentityState, which persists the full row).
 	m.Description = "updated"
-	require.NoError(t, ls.UpdateMachineIdentity(ctx, m))
-	got2, err := ls.GetMachineIdentity(ctx, m.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "updated", got2.Description)
-
-	// TransitionMachineIdentityState.
 	m.State = "suspended"
 	won, err := ls.TransitionMachineIdentityState(ctx, m, "active")
 	require.NoError(t, err)
 	assert.True(t, won)
+	got2, err := ls.GetMachineIdentity(ctx, m.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "updated", got2.Description)
+	assert.Equal(t, "suspended", got2.State)
 
 	// Already transitioned → won = false.
 	m.State = "revoked"

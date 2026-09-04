@@ -42,11 +42,13 @@ func TestRiskExceptions_CreateListRevoke(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
 
-	// Revoke via update; it then drops out of the active list.
+	// Revoke; it then drops out of the active list.
 	got, err := ls.GetRiskException(ctx, a.ID)
 	require.NoError(t, err)
 	got.Revoked = true
-	require.NoError(t, ls.UpdateRiskException(ctx, got))
+	revoked, err := ls.RevokeRiskExceptionIfNotRevoked(ctx, got)
+	require.NoError(t, err)
+	require.True(t, revoked)
 	active, err = ls.ListRiskExceptions(ctx, true)
 	require.NoError(t, err)
 	assert.Empty(t, active)

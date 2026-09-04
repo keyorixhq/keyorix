@@ -185,12 +185,6 @@ func TestRemoteStorage_ListInactiveUsers_Unsupported(t *testing.T) {
 
 // --- remote_machine_identities.go ---
 
-func TestRemoteStorage_UpdateMachineIdentity_Unsupported(t *testing.T) {
-	rs := newStubTestRemoteStorage(t)
-	err := rs.UpdateMachineIdentity(context.Background(), &models.MachineIdentity{})
-	assertRemoteUnsupported(t, err)
-}
-
 // GetMachineRoleScopes predates the remoteUnsupported/ErrRemoteUnsupported
 // convention and still returns a plain fmt.Errorf, so it's checked for a
 // non-nil error only, not the sentinel.
@@ -199,14 +193,6 @@ func TestRemoteStorage_GetMachineRoleScopes_Unsupported(t *testing.T) {
 	scopes, err := rs.GetMachineRoleScopes(context.Background(), 1)
 	assert.Nil(t, scopes)
 	require.Error(t, err)
-}
-
-// --- remote_memberships.go ---
-
-func TestRemoteStorage_UpdateProjectMembership_Unsupported(t *testing.T) {
-	rs := newStubTestRemoteStorage(t)
-	err := rs.UpdateProjectMembership(context.Background(), &models.ProjectMembership{})
-	assertRemoteUnsupported(t, err)
 }
 
 // --- remote_mfa.go ---

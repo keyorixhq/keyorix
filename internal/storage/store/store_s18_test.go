@@ -209,49 +209,6 @@ func TestUpdateLegalHold_BrokenDB(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// local_memberships.go:56 — UpdateProjectMembership
-// ---------------------------------------------------------------------------
-
-func TestUpdateProjectMembership_HappyPath(t *testing.T) {
-	ls := newS18Store(t, &models.ProjectMembership{})
-	ctx := context.Background()
-
-	m := &models.ProjectMembership{
-		ProjectID: 1,
-		UserID:    2,
-		State:     "invited",
-		InvitedBy: 3,
-		InvitedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	require.NoError(t, ls.db.Create(m).Error)
-
-	m.State = "active"
-	err := ls.UpdateProjectMembership(ctx, m)
-	require.NoError(t, err)
-}
-
-func TestUpdateProjectMembership_BrokenDB(t *testing.T) {
-	ls := newS18Store(t, &models.ProjectMembership{})
-	ctx := context.Background()
-
-	m := &models.ProjectMembership{
-		ProjectID: 1,
-		UserID:    2,
-		State:     "invited",
-		InvitedBy: 3,
-		InvitedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	require.NoError(t, ls.db.Create(m).Error)
-	closeS18DB(t, ls)
-
-	m.State = "active"
-	err := ls.UpdateProjectMembership(ctx, m)
-	require.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
 // local_notifications.go:133 — MarkAllNotificationsRead
 // ---------------------------------------------------------------------------
 
@@ -395,49 +352,6 @@ func TestRemoveAllProjectRoleGrants_BrokenDB(t *testing.T) {
 	closeS18DB(t, ls)
 
 	err := ls.RemoveAllProjectRoleGrants(context.Background(), 1, 5)
-	require.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// local_risk_exceptions.go:49 — UpdateRiskException
-// ---------------------------------------------------------------------------
-
-func TestUpdateRiskException_HappyPath(t *testing.T) {
-	ls := newS18Store(t, &models.RiskException{})
-	ctx := context.Background()
-
-	e := &models.RiskException{
-		Title:         "SoD exception",
-		Category:      "sod",
-		Justification: "approved by CISO",
-		CreatedBy:     1,
-		CreatedAt:     time.Now(),
-		ExpiresAt:     time.Now().Add(30 * 24 * time.Hour),
-	}
-	require.NoError(t, ls.db.Create(e).Error)
-
-	e.Justification = "updated"
-	err := ls.UpdateRiskException(ctx, e)
-	require.NoError(t, err)
-}
-
-func TestUpdateRiskException_BrokenDB(t *testing.T) {
-	ls := newS18Store(t, &models.RiskException{})
-	ctx := context.Background()
-
-	e := &models.RiskException{
-		Title:         "SoD exception",
-		Category:      "sod",
-		Justification: "approved by CISO",
-		CreatedBy:     1,
-		CreatedAt:     time.Now(),
-		ExpiresAt:     time.Now().Add(30 * 24 * time.Hour),
-	}
-	require.NoError(t, ls.db.Create(e).Error)
-	closeS18DB(t, ls)
-
-	e.Justification = "updated"
-	err := ls.UpdateRiskException(ctx, e)
 	require.Error(t, err)
 }
 
