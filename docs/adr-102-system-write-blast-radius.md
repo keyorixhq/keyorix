@@ -98,6 +98,64 @@ capability of the permission as currently scoped, exercised through routes
 that (before #1622, and possibly others — see #1622's sibling list) do not all
 audit their own use.
 
+### A second instance: actor misattribution via `UpdateUserIfActiveStateMatchesProxy`
+
+The "user account state" bullet above names `UpdateUserIfActiveStateMatchesProxy`
+as one of the 148 routes a flat `system.write` grant reaches. A closer look at
+that one route shows the same flat-capability design producing a second,
+independent instance of actor misattribution, not just an over-broad grant —
+this time going past an unaudited action to a full account-takeover chain,
+already confirmed end to end.
+
+`UpdateUserIfActiveStateMatchesProxy` is a RemoteStorage HTTP-relay proxy
+route. It used to build its storage-layer struct directly from the request
+body, with no fetch of the existing row first, and hand that struct straight
+to `UpdateUserIfActiveStateMatches` — a `Select("*")` full-row overwrite.
+Every field the route's wire format doesn't carry, including `PasswordHash`
+and `AccountState`, was silently zeroed on any call, whether or not the
+caller intended to touch either one.
+
+`AccountLoginBlocked` — the single choke point every login/session/PAT/SSO/
+WebAuthn/MFA-step-up/impersonation-target path in this codebase calls to
+decide whether an account may authenticate — is written as a deny-list: it
+blocks only the recognized `suspended`/`deprovisioned` states, not an
+allow-list requiring an explicit "permitted" value. A blanked `AccountState`
+therefore read as not blocked, silently reactivating a disabled account.
+Chained with the setup-token/password-reset completion flow
+(`completePasswordSetup`, which itself gates only on `AccountLoginBlocked`),
+this produced a full, empirically-confirmed account-takeover chain: a
+`system.write` holder blanks the target's `AccountState` via this route,
+obtains or mints a setup token for that account, completes setup with an
+attacker-chosen password, and receives a real, valid session — for the
+target's account, not their own. Every subsequent action that session takes
+is attributed to the account it belongs to, not to the `system.write` holder
+who actually controls it.
+
+The victim class this reactivates is not arbitrary. `suspended` and
+`deprovisioned` are the two states an admin (or SCIM/IdP deactivation)
+deliberately put an account into — in practice, terminated employees. That is
+what makes this a real security-incident class rather than a theoretical
+gap: the account a blanked `AccountState` reactivates is, definitionally, one
+an admin already decided should no longer have access.
+
+This is a second instance, within this ADR, of `system.write`'s flat design
+producing actor misattribution rather than merely an over-broad grant. The
+audit-trail case above left an action's actor unrecorded entirely; this one
+goes further, actively reassigning the resulting session — and every action
+taken through it — to a different, innocent identity. Both are evidence for
+the same question this ADR poses, not resolutions of it: whether (a) or (b)
+is the right model determines whether the fix for this class of finding is
+alerting on the pattern or narrowing the grant that makes the pattern
+possible.
+
+This specific chain is already closed on the reactivation-mechanics side: the
+route now fetches the existing row before writing, so a request that doesn't
+carry `PasswordHash`/`AccountState` no longer zeroes them. Closing
+`AccountLoginBlocked`'s fail-open itself — the account-state gate's deny-list
+shape — is a separate, still-in-progress migration. It is recorded here as
+evidence of what the flat capability already demonstrated once fixed, not as
+an open, exploitable path.
+
 ## The two candidate positions
 
 **(a) `system.write` is break-glass / root-equivalent.** If that is the
