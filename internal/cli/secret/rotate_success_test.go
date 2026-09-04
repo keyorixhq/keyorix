@@ -36,8 +36,8 @@ func TestRunRotate_RotateRequestError(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet:
+		switch r.Method {
+		case http.MethodGet:
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":9,"Name":"db-password"}]}}`))
 		default:
 			http.Error(w, "boom", http.StatusInternalServerError)

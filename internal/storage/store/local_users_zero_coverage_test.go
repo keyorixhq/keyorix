@@ -40,7 +40,8 @@ func TestListInactiveUsers(t *testing.T) {
 	// Never logged in, created before threshold -- inactive.
 	u3 := &models.User{Username: "u3", UsernameFolded: "u3", Email: "u3@x.io", EmailFolded: "u3@x.io"}
 	require.NoError(t, db.Create(u3).Error)
-	require.NoError(t, db.Model(u3).Update("created_at", oldCreated).Error)
+	u3.CreatedAt = oldCreated
+	require.NoError(t, db.Save(u3).Error)
 	// Never logged in, created after threshold -- active (too new to judge).
 	require.NoError(t, db.Create(&models.User{Username: "u4", UsernameFolded: "u4", Email: "u4@x.io", EmailFolded: "u4@x.io"}).Error)
 
