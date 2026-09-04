@@ -497,11 +497,11 @@ func TestUpdateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 	require.NoError(t, h.coreService.Storage().CreateWebAuthnCredential(context.Background(), cred))
 	require.NotZero(t, cred.ID)
 
-	// Update. #G79: UpdateWebAuthnCredentialProxy is an unconditional full-row
-	// Save, so the request must carry the full row (matching Create) — a body
-	// missing credential_id would otherwise zero that column on the existing row.
+	// Update: #1714 narrowed this route to the ONE legitimate transition
+	// (disable-on-clone) — it no longer accepts an arbitrary full-row
+	// replacement (name/credential_id could previously be overwritten wholesale).
 	idStr := strconv.FormatUint(uint64(cred.ID), 10)
-	updateBody := `{"name":"Updated S9","user_id":99,"credential_id":"dGVzdC1jcmVkLXM5NA=="}`
+	updateBody := `{"user_id":99,"credential_id":"dGVzdC1jcmVkLXM5NA==","disabled":true}`
 	updateReq := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(updateBody)), "id", idStr)
 	updateW := httptest.NewRecorder()
 	h.UpdateWebAuthnCredentialProxy(updateW, updateReq)

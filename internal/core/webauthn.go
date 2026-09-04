@@ -541,6 +541,52 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 	return fmt.Errorf("assertion verification failed: signature counter did not advance (possible cloned authenticator)")
 }
 
+// ErrWebAuthnCredentialIDMismatch is returned by MarkWebAuthnCredentialClonedByLookup
+// when (credentialID, userID) resolves to a real, owned row, but that row's ID
+// does not match the caller's expectedID. This is deliberately distinct from
+// "not found": the pair is real and does belong to userID, it just isn't the
+// SAME credential the caller is claiming to act on — a mismatch a caller must
+// never have silently coerced into acting on whichever row the lookup actually
+// named instead.
+var ErrWebAuthnCredentialIDMismatch = errors.New("webauthn credential id does not match (credential_id, user_id)")
+
+// MarkWebAuthnCredentialClonedByLookup explicitly disables a WebAuthn
+// credential on a clone-detection signal, identified by (credentialID,
+// userID) rather than an already-resolved row — the ONE thing
+// UpdateWebAuthnCredentialProxy (#1714) is allowed to do. The
+// GetWebAuthnCredentialByCredID lookup scopes ownership: a caller cannot
+// reach a credential it doesn't legitimately identify by both its own
+// credentialID and userID together, so there is no separate ownership check
+// needed here, matching rejectIfCloned's own "#307" reasoning.
+//
+// expectedID is checked BEFORE any mutation happens — never after. An
+// earlier draft of this fix fetched, mutated, and only THEN compared IDs,
+// which would disable the WRONG credential (the one (credentialID, userID)
+// actually named) before rejecting the request; that ordering is exactly the
+// "stored row is unchanged" property callers of this function get in
+// exchange for passing expectedID at all. Returns
+// ErrWebAuthnCredentialIDMismatch, unmutated, if the row's real ID doesn't
+// match.
+//
+// This is the authz half of #1714 (narrowing the write): it does NOT yet
+// audit its own mutation -- that unification with rejectIfCloned lands as
+// its own, independently-revertable commit (markWebAuthnCredentialClonedDisabled).
+func (c *KeyorixCore) MarkWebAuthnCredentialClonedByLookup(ctx context.Context, credentialID []byte, userID, expectedID uint, ip string) (*models.WebAuthnCredential, error) {
+	_ = ip // reserved for the audit write added by the follow-up commit
+	row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, credentialID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if row.ID != expectedID {
+		return nil, ErrWebAuthnCredentialIDMismatch
+	}
+	row.Disabled = true
+	if err := c.storage.UpdateWebAuthnCredential(ctx, row); err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
 // persistUpdatedCredential writes back the credential's advanced signature counter
 // (and clone-warning flag) plus a last-used timestamp. Best-effort: a write error
 // must not fail an otherwise-valid login.
