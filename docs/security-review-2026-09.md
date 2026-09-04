@@ -227,22 +227,27 @@ that edits its own past claims without a visible trail is exactly the failure mo
   `TestBreakGlassReads_NeverPersistState` proves neither read function ever writes. Every changed behavior was
   verified by mutation (revert the fix, confirm the specific test goes red) before landing. #1653 reopened on
   GitHub with the full account, not closed with a note — its premise was falsified, not refined.
-- **Memory zeroization's durable half — swap and core dumps — closed (ADR-098).** The memory-zeroization entry
-  above deliberately scoped itself to the transient in-process exposure and left the durable exposure (plaintext
-  surviving in swap across a reboot, or in a core file after a crash) as future work, not a decision. Closed via
-  `internal/hardening.ApplyMemoryHardening`, called at server startup before any key material or decrypted secret
-  is allocated: `mlockall(MCL_CURRENT|MCL_FUTURE)` locks the process's memory against swap (opt-out via
-  `security.mlock.disabled`, default attempted; failure is a loud `WARNING` by default or fatal with
-  `security.mlock.require_success=true`, mirroring HashiCorp Vault's own mlock behavior), and `RLIMIT_CORE` is
-  unconditionally set to `{Cur:0, Max:0}`, disabling core dumps with no config gate and no operator prerequisite.
-  Verified functionally, not just by reading the config back: `mlockall` success confirmed by quoting a non-zero
-  `VmLck` from `/proc/self/status` in a real Linux container; failure confirmed to warn (not silently no-op) when
-  `CAP_IPC_LOCK`/`RLIMIT_MEMLOCK` are absent, and to be fatal when `require_success=true`; core dump suppression
-  confirmed by actually triggering a crash (`GOTRACEBACK=crash`, deliberate nil dereference) and observing no
-  core file is written even though the parent shell had `ulimit -c unlimited` — versus a 46 MB core file produced
-  by the identical crash without the hardening applied. This narrows, not closes, the zeroization gap: the
-  transient in-process exposure documented above remains, unchanged, by design — see ADR-098's "What this does
-  not protect against" section for the full boundary.
+- **Memory zeroization's durable half — swap and core dumps — closed (ADR-098), swap half later reversed
+  (ADR-100).** The memory-zeroization entry above deliberately scoped itself to the transient in-process exposure
+  and left the durable exposure (plaintext surviving in swap across a reboot, or in a core file after a crash) as
+  future work, not a decision. Initially closed via `internal/hardening.ApplyMemoryHardening`, called at server
+  startup before any key material or decrypted secret is allocated: `mlockall(MCL_CURRENT|MCL_FUTURE)` locked the
+  process's memory against swap, and `RLIMIT_CORE` is unconditionally set to `{Cur:0, Max:0}`, disabling core
+  dumps with no config gate and no operator prerequisite. At the time, verified functionally, not just by reading
+  the config back: `mlockall` success confirmed by quoting a non-zero `VmLck` from `/proc/self/status` in a real
+  Linux container; failure confirmed to warn (not silently no-op) when `CAP_IPC_LOCK`/`RLIMIT_MEMLOCK` were
+  absent; core dump suppression confirmed by actually triggering a crash (`GOTRACEBACK=crash`, deliberate nil
+  dereference) and observing no core file is written even though the parent shell had `ulimit -c unlimited` —
+  versus a 46 MB core file produced by the identical crash without the hardening applied.
+  **`mlockall` was removed 2026-09-04 (ADR-100):** measured against the real server binary, it pinned `VmLck` at
+  ~2.6× the shipped Helm chart's default 512Mi memory limit at rest, growing further under ordinary load and never
+  shrinking — a real availability regression (risk of cgroup OOM-kill under legitimate traffic) on exactly the
+  deployments that followed this control's own guidance, and structurally incapable of working as intended in a
+  garbage-collected runtime regardless of tuning. Swap protection is now a deployment-level concern (disable swap
+  on the node / in the container runtime) rather than in-process. **Core dump suppression is unaffected and
+  remains in effect exactly as verified above.** This narrows, not closes, the zeroization gap: the transient
+  in-process exposure documented above remains, unchanged, by design — see ADR-098's "What this does not protect
+  against" section and ADR-100 for the full current boundary.
 - **Master passphrase sourcing fixed; the wiping gap stays open by design (ADR-099).** The memory-zeroization
   entry above also documented that `KEYORIX_MASTER_PASSWORD` "is string-shaped from `os.Getenv` onward and, like
   any Go string, structurally cannot be wiped at all." Fixed the *sourcing* half: the server and CLI now accept

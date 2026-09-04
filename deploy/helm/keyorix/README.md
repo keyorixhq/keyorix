@@ -57,3 +57,9 @@ helm test keyorix
 - **Backups:** back up both the database and the `*-server-keys` PVC. You need
   both (plus the master password) to recover.
 - **TLS:** terminate at the ingress (`ingress.tls` + cert-manager annotations).
+- **Swap:** run the nodes backing this deployment with swap disabled (the
+  Kubernetes default). Decrypted secret memory is not locked against swap
+  in-process (see `docs/adr-100-mlockall-removal-deployment-swap-control.md`
+  for why an in-process lock was tried and removed) — this is now a
+  deployment-level control, not something the chart or server configures for
+  you.
