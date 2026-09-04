@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -268,7 +269,7 @@ func TestRunValidateAuthEncryption_S23_ResetTokenValidationError(t *testing.T) {
 // non-"password" provider type returns ("", nil) without reading any env var.
 func TestTargetPassphrase_S23_NonPasswordReturnsEmpty(t *testing.T) {
 	for _, typ := range []string{"env", "file", "exec", "shamir", "tpm", "aws-kms", "gcp-kms", "azure-kms"} {
-		pass, err := targetPassphrase(typ)
+		pass, err := targetPassphrase(typ, crypto.PassphraseSource{})
 		require.NoError(t, err, "provider type %q", typ)
 		assert.Empty(t, pass, "provider type %q should yield empty passphrase", typ)
 	}
@@ -278,7 +279,7 @@ func TestTargetPassphrase_S23_NonPasswordReturnsEmpty(t *testing.T) {
 // provider reads KEYORIX_NEW_MASTER_PASSWORD when it is set.
 func TestTargetPassphrase_S23_PasswordWithEnvSet(t *testing.T) {
 	t.Setenv(newMasterPasswordEnv, "new-secret-pass-s23")
-	pass, err := targetPassphrase("password")
+	pass, err := targetPassphrase("password", crypto.PassphraseSource{})
 	require.NoError(t, err)
 	assert.Equal(t, "new-secret-pass-s23", pass)
 }

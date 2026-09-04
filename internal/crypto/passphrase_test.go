@@ -33,7 +33,7 @@ func TestResolvePassphrase_FD(t *testing.T) {
 		_ = w.Close()
 	}()
 
-	got, err := ResolvePassphrase(PassphraseSource{FD: int(r.Fd())}, "UNUSED")
+	got, err := ResolvePassphrase(PassphraseSource{FD: int(r.Fd()), FDSet: true}, "UNUSED")
 	require.NoError(t, err)
 	assert.Equal(t, "passphrase-from-fd", string(got), "trailing newline must be trimmed")
 }
@@ -51,7 +51,7 @@ func TestResolvePassphrase_FDPrecedenceOverFileAndStdin(t *testing.T) {
 	filePath := filepath.Join(dir, "pass")
 	require.NoError(t, os.WriteFile(filePath, []byte("from-file"), 0o600))
 
-	got, err := ResolvePassphrase(PassphraseSource{FD: int(r.Fd()), FilePath: filePath, Stdin: true}, "UNUSED")
+	got, err := ResolvePassphrase(PassphraseSource{FD: int(r.Fd()), FDSet: true, FilePath: filePath, Stdin: true}, "UNUSED")
 	require.NoError(t, err)
 	assert.Equal(t, "from-fd", string(got), "FD must win when more than one source is set")
 }

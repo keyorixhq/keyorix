@@ -157,7 +157,7 @@ func TestWireSecretEncryption_PassphraseFDSource(t *testing.T) {
 		_ = w.Close()
 	}()
 
-	PassphraseSource = crypto.PassphraseSource{FD: int(r.Fd()), FilePath: wrongFile}
+	PassphraseSource = crypto.PassphraseSource{FD: int(r.Fd()), FDSet: true, FilePath: wrongFile}
 	t.Cleanup(func() { PassphraseSource = crypto.PassphraseSource{}; _ = r.Close() })
 
 	db, err := gorm.Open(sqlite.Open("secrets.db"), &gorm.Config{})

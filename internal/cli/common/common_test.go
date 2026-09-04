@@ -4,8 +4,11 @@ import (
 	"os"
 	"testing"
 
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/crypto"
 )
 
 // TestResolveProject_FlagWins verifies the --project flag has highest priority.
@@ -146,4 +149,50 @@ locale:
 	svc, err := InitializeCoreService()
 	require.NoError(t, err)
 	assert.NotNil(t, svc)
+}
+
+// TestRegisterPassphraseFlags_FDNotPassedLeavesFDUnset verifies that when
+// --passphrase-fd is never passed on the command line, FDSet stays false —
+// so ResolvePassphrase correctly falls through to weaker sources instead of
+// treating the flag's zero value as an explicit fd 0.
+func TestRegisterPassphraseFlags_FDNotPassedLeavesFDUnset(t *testing.T) {
+	var src crypto.PassphraseSource
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterPassphraseFlags(fs, &src, "", "master passphrase")
+
+	require.NoError(t, fs.Parse(nil))
+	assert.False(t, src.FDSet, "FDSet must stay false when --passphrase-fd was never passed")
+	assert.Equal(t, 0, src.FD)
+}
+
+// TestRegisterPassphraseFlags_FDZeroIsExplicit is the regression test for the
+// bug this fix closes: an earlier version of this check used `FD > 0`, which
+// silently treated an explicit `--passphrase-fd=0` identically to the flag
+// never having been passed at all, falling through to a weaker source with no
+// error. --passphrase-fd=0 must set FDSet=true so ResolvePassphrase routes
+// through the fd path instead.
+func TestRegisterPassphraseFlags_FDZeroIsExplicit(t *testing.T) {
+	var src crypto.PassphraseSource
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterPassphraseFlags(fs, &src, "", "master passphrase")
+
+	require.NoError(t, fs.Parse([]string{"--passphrase-fd=0"}))
+	assert.True(t, src.FDSet, "FDSet must be true for an explicit --passphrase-fd=0")
+	assert.Equal(t, 0, src.FD)
+}
+
+// TestRegisterPassphraseFlags_MutualExclusionNames verifies the prefix is
+// applied consistently to all three returned flag names, so callers wire
+// MarkFlagsMutuallyExclusive against the flags actually registered.
+func TestRegisterPassphraseFlags_MutualExclusionNames(t *testing.T) {
+	var src crypto.PassphraseSource
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	fdFlag, fileFlag, stdinFlag := RegisterPassphraseFlags(fs, &src, "new-", "new master passphrase")
+
+	assert.Equal(t, "new-passphrase-fd", fdFlag)
+	assert.Equal(t, "new-passphrase-file", fileFlag)
+	assert.Equal(t, "new-passphrase-stdin", stdinFlag)
+	assert.NotNil(t, fs.Lookup(fdFlag))
+	assert.NotNil(t, fs.Lookup(fileFlag))
+	assert.NotNil(t, fs.Lookup(stdinFlag))
 }

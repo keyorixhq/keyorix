@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -263,28 +264,28 @@ func TestRestoreBackup_Success(t *testing.T) {
 // ──────────────────────────── targetPassphrase ─────────────────────────────
 
 func TestTargetPassphrase_NonPasswordProvider(t *testing.T) {
-	pw, err := targetPassphrase("file")
+	pw, err := targetPassphrase("file", crypto.PassphraseSource{})
 	require.NoError(t, err)
 	assert.Equal(t, "", pw)
 }
 
 func TestTargetPassphrase_PasswordProvider_Set(t *testing.T) {
 	t.Setenv(newMasterPasswordEnv, "newpassphrase")
-	pw, err := targetPassphrase("password")
+	pw, err := targetPassphrase("password", crypto.PassphraseSource{})
 	require.NoError(t, err)
 	assert.Equal(t, "newpassphrase", pw)
 }
 
 func TestTargetPassphrase_PasswordProvider_Empty(t *testing.T) {
 	t.Setenv(newMasterPasswordEnv, "")
-	_, err := targetPassphrase("password")
+	_, err := targetPassphrase("password", crypto.PassphraseSource{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), newMasterPasswordEnv)
 }
 
 func TestTargetPassphrase_EmptyTypeIsPassword(t *testing.T) {
 	t.Setenv(newMasterPasswordEnv, "")
-	_, err := targetPassphrase("") // empty type also treated as password
+	_, err := targetPassphrase("", crypto.PassphraseSource{}) // empty type also treated as password
 	require.Error(t, err)
 }
 

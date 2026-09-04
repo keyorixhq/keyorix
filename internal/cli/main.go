@@ -101,13 +101,9 @@ func init() {
 	// command routes through. KEYORIX_MASTER_PASSWORD keeps working as the
 	// last-resort fallback when none of these flags are set -- see ADR-099 for
 	// why it's the weakest option.
-	rootCmd.PersistentFlags().IntVar(&common.PassphraseSource.FD, "passphrase-fd", 0,
-		"Read the master passphrase from this already-open file descriptor")
-	rootCmd.PersistentFlags().StringVar(&common.PassphraseSource.FilePath, "passphrase-file", "",
-		"Read the master passphrase from this file (refused if group- or world-readable)")
-	rootCmd.PersistentFlags().BoolVar(&common.PassphraseSource.Stdin, "passphrase-stdin", false,
-		"Read the master passphrase from stdin")
-	rootCmd.MarkFlagsMutuallyExclusive("passphrase-fd", "passphrase-file", "passphrase-stdin")
+	fdFlag, fileFlag, stdinFlag := common.RegisterPassphraseFlags(
+		rootCmd.PersistentFlags(), &common.PassphraseSource, "", "master passphrase")
+	rootCmd.MarkFlagsMutuallyExclusive(fdFlag, fileFlag, stdinFlag)
 }
 
 // bootstrapI18n initializes i18n with the user's actual configured locale

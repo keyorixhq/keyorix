@@ -386,7 +386,7 @@ func TestMasterPassphrase_FDSourceTakesPrecedenceOverEnv(t *testing.T) {
 		_, _ = w.Write([]byte("fd-sourced-s24\n"))
 		_ = w.Close()
 	}()
-	common.PassphraseSource = crypto.PassphraseSource{FD: int(r.Fd())}
+	common.PassphraseSource = crypto.PassphraseSource{FD: int(r.Fd()), FDSet: true}
 	t.Cleanup(func() { common.PassphraseSource = crypto.PassphraseSource{}; _ = r.Close() })
 
 	pw, err := masterPassphrase(cfg)

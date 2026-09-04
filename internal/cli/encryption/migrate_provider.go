@@ -19,7 +19,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
@@ -51,6 +53,12 @@ var (
 
 	mpCleanupConfirm bool
 	mpCleanupDryRun  bool
+
+	// mpNewPassphraseSource holds the byte-based sources (ADR-099) for the new
+	// master passphrase when migrating TO the password provider, mirroring
+	// common.PassphraseSource (which supplies the OLD passphrase via
+	// masterPassphrase).
+	mpNewPassphraseSource crypto.PassphraseSource
 )
 
 var migrateProviderCmd = &cobra.Command{
@@ -115,6 +123,10 @@ func init() {
 	f.StringVar(&mpToTPMDevice, "to-tpm-device", "", "TPM 2.0 device path (tpm type; default /dev/tpmrm0)")
 	f.StringVar(&mpToSaltPath, "to-salt-path", "", "salt path for the target password provider (default: current salt_path)")
 	f.BoolVar(&mpConfirm, "confirm", false, "required acknowledgement before re-wrapping the DEK")
+
+	fdFlag, fileFlag, stdinFlag := common.RegisterPassphraseFlags(
+		f, &mpNewPassphraseSource, "new-", "new master passphrase (--to-type password only)")
+	migrateProviderCmd.MarkFlagsMutuallyExclusive(fdFlag, fileFlag, stdinFlag)
 
 	migrateProviderCmd.AddCommand(migrateProviderCleanupCmd)
 	cf := migrateProviderCleanupCmd.Flags()
@@ -314,17 +326,19 @@ func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (con
 }
 
 // targetPassphrase resolves the passphrase for the TARGET provider. Only the
-// password provider needs one (from KEYORIX_NEW_MASTER_PASSWORD); the others source
-// the KEK from key material / KMS and return "".
-func targetPassphrase(providerType string) (string, error) {
+// password provider needs one (sourced per src's precedence, falling back to
+// KEYORIX_NEW_MASTER_PASSWORD); the others source the KEK from key material /
+// KMS and return "".
+func targetPassphrase(providerType string, src crypto.PassphraseSource) (string, error) {
 	if providerType != "" && providerType != "password" {
 		return "", nil
 	}
-	p := os.Getenv(newMasterPasswordEnv)
-	if p == "" {
-		return "", fmt.Errorf("target provider is password — set %s to the new master passphrase", newMasterPasswordEnv)
+	passphraseBytes, err := crypto.ResolvePassphrase(src, newMasterPasswordEnv)
+	if err != nil {
+		return "", err
 	}
-	return p, nil
+	defer wipeBytes(passphraseBytes)
+	return string(passphraseBytes), nil
 }
 
 // migrateProviderWithConfig is the testable core: it does no flag parsing and takes
@@ -356,7 +370,7 @@ func migrateProviderWithConfig(cfg *config.Config, opts migrateOpts, confirm boo
 	if err != nil {
 		return err
 	}
-	newPass, err := targetPassphrase(tgtEnc.KeyProvider.Type)
+	newPass, err := targetPassphrase(tgtEnc.KeyProvider.Type, mpNewPassphraseSource)
 	if err != nil {
 		return err
 	}

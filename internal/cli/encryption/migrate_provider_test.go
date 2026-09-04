@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 )
 
@@ -215,6 +216,62 @@ func TestMigrateProvider_EndToEnd_PasswordToEnv(t *testing.T) {
 	if len(matches) == 0 {
 		t.Fatalf("expected a dek.key.migrate-backup.* file")
 	}
+}
+
+// TestMigrateProvider_EndToEnd_EnvToPassword_NewPassphraseFDSource proves
+// --new-passphrase-fd (ADR-099) reaches targetPassphrase, and therefore
+// migrateProviderWithConfig, end to end via a real file descriptor when
+// migrating TO the password provider -- winning over
+// KEYORIX_NEW_MASTER_PASSWORD when both are set.
+func TestMigrateProvider_EndToEnd_EnvToPassword_NewPassphraseFDSource(t *testing.T) {
+	const fdSourcedPass = "fd-sourced-target-passphrase"
+
+	dir := t.TempDir()
+	t.Chdir(dir) // migrateProviderWithConfig resolves key paths under cwd
+
+	raw := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
+		t.Fatalf("gen kek: %v", err)
+	}
+	t.Setenv("KEYORIX_SOURCE_KEK", hex.EncodeToString(raw))
+	t.Setenv("KEYORIX_NEW_MASTER_PASSWORD", "wrong-passphrase-must-not-be-used")
+
+	cfg := enabledLocalCfg()
+	cfg.Storage.Encryption.DEKPath = "dek.key"
+	cfg.Storage.Encryption.SaltPath = "kek.salt"
+	cfg.Storage.Encryption.KeyProvider = config.KeyProviderConfig{Type: "env", EnvVar: "KEYORIX_SOURCE_KEK"}
+
+	// Provision key material under the source (env) provider first.
+	svc := encryption.NewService(&cfg.Storage.Encryption, dir)
+	if err := svc.Initialize(""); err != nil {
+		t.Fatalf("provision key material under env provider: %v", err)
+	}
+	svc.Shutdown()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	go func() {
+		_, _ = w.Write([]byte(fdSourcedPass + "\n"))
+		_ = w.Close()
+	}()
+	old := mpNewPassphraseSource
+	mpNewPassphraseSource = crypto.PassphraseSource{FD: int(r.Fd()), FDSet: true}
+	t.Cleanup(func() { mpNewPassphraseSource = old; _ = r.Close() })
+
+	opts := migrateOpts{toType: "password"}
+	if err := migrateProviderWithConfig(cfg, opts, true); err != nil {
+		t.Fatalf("migrate env -> password: %v", err)
+	}
+
+	tgt := cfg.Storage.Encryption
+	tgt.KeyProvider = config.KeyProviderConfig{Type: "password"}
+	svcNew := encryption.NewService(&tgt, dir)
+	if err := svcNew.Initialize(fdSourcedPass); err != nil {
+		t.Fatalf("fd-sourced new passphrase rejected after migration: %v", err)
+	}
+	svcNew.Shutdown()
 }
 
 // TestMigrateProviderCleanup_EndToEnd runs a real migration (leaving a backup file
