@@ -288,6 +288,17 @@ jobs:
       - name: Assert every docs/adr-NNN-*.md number is unique
         run: ./scripts/check-adr-numbers.sh
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Self-test the closure guard (must be able to go red)
+        run: ./scripts/check-closures.sh --self-test
+
+      - name: Verify every security closure claim names a passing test
+        run: ./scripts/check-closures.sh
+
   # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
   # not a replacement for it. That hook is the PRIMARY guard: it runs on the
   # contributor's own machine before a broken workflow file is ever pushed,

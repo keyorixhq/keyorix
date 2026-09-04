@@ -1,0 +1,26 @@
+# Security closure ledger. Verified by scripts/check-closures.sh, which fails the
+# build if a named test does not exist, skips, or fails.
+#
+# claim_id	package	proving_test	landed_commit	note
+#
+# landed_commit is INFORMATIONAL. This repo squash-merges, so ancestry checks
+# return false for every correctly landed PR. Closure is verified by test.
+
+G01	./internal/core	TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects	e6f018a0	project-scoped group membership must not grant cross-project secret read
+FIX-2-primitive	./internal/core	TestRemoveUserRole_RefusesLastProjectAdminAtThePrimitive	6b512b90	last-admin refused at the primitive, not only at entry points
+FIX-2-sso	./internal/core	TestReconcileSSOGroups_RefusesStrandingLastProjectAdmin	6b512b90	the SSO path must not bypass the group guards
+FIX-3-1551	./server/http	TestRemoteStorageMachineIdentities_RevokeCredential_UnauthorizedCallerRejected_RealServer	6b512b90	#1551 cross-tenant credential revoke must be refused
+FIX-3-1572	./server/http/handlers	TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentialsEvenWithoutUsersWrite_RealServer	6b512b90	#1572 deactivation must not leave tokens live
+FIX-4-sentinel	./server/grpc/services	TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed	6b512b90	#1668/#1669 sentinel must survive adjacent commits
+FIX-5-namedlock	./internal/storage/store	TestWithNamedLock_NestedDifferentKey_StillSerializesAgainstOtherHolder	fca6d401	reentrancy guard keys on lockKey, not "any lock held"
+FIX-6-sod-oracle	./internal/core	TestDeleteSoDPolicy_NonAdmin_NonExistentAndNonOwned_IdenticalDenial	6b512b90	403/404 split must not be an existence oracle
+FIX-7-breakglass	./internal/storage/store	TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable	d1b93444	purge must not hard-delete a row mid-reconciliation
+FIX-8-csv	./internal/core	TestCSVWriters_EncodeAgainstFormulaInjection	d1b93444	structural: every CSV writer applies an encoder
+INV-1-grant-authority	./server/http	TestEveryDirectRoleGrantChecksAuthority	pre-existing	structural: every direct role grant checks authority
+
+# NOT LISTED, deliberately:
+#   FIX-1 actorID==0 fast-path (internal/core/authz.go:614). The eight-site reroute
+#   landed (#68e5116c) and actorIsMachine is threaded rather than hardcoded, but the
+#   fast-path itself remains and is now DOCUMENTED as the local-CLI path. A documented
+#   exception is a claim, not a fact -- 3 of 13 were false last time. It belongs in the
+#   documented-exception sweep, not in this ledger, until a test settles it.

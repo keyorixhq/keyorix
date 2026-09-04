@@ -222,3 +222,15 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
   off the upstream server's own storage and asserts one exists — the only
   assertion that could have told `CreateNotification` was a permanently-
   failing stub from `CreateNotification` genuinely working.
+
+## Closing a security fix
+
+- Add a row to `docs/security-closures.tsv`: claim id, package, proving test, commit.
+  `scripts/check-closures.sh` fails the build if the named test does not exist,
+  skips, or fails. Verify by test, never by commit — this repo squash-merges.
+- If the root cause has sibling call sites, the fix is an invariant test, not a
+  site patch. Extend an existing registry test
+  (`TestEveryDirectRoleGrantChecksAuthority`, `remote_reachability_registry_test.go`)
+  rather than adding a one-off.
+- Reasoning and the failures behind these:
+  `keyorix-private/adversarial-review/LESSONS-LEARNED.md` and `SECURITY-INVARIANTS.md`.
