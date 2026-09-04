@@ -1,6 +1,6 @@
 // factory_schema_epoch_1674_test.go — #1674 regression guard.
 //
-// #1674's investigation and its recorded decision (docs/adr-100-schema-epoch-
+// #1674's investigation and its recorded decision (docs/adr-101-schema-epoch-
 // compatibility-floor.md) explicitly keep checkSchemaEpoch's refusal
 // unconditional -- no grace window, no retry, no N+1 tolerance -- while making
 // the refusal self-diagnosing (report the recorded-at timestamp and both

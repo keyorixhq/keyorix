@@ -499,7 +499,7 @@ func checkSchemaEpoch(db *gorm.DB) error {
 	}
 	if dbEpoch > currentSchemaEpoch {
 		// #1674 (Part 2 continuation, design decision recorded in
-		// docs/adr-100-schema-epoch-compatibility-floor.md): this refusal is NOT
+		// docs/adr-101-schema-epoch-compatibility-floor.md): this refusal is NOT
 		// made conditional on how recently the newer epoch was recorded, or on
 		// how many epochs ahead it is -- from inside this process, "a sibling
 		// replica migrated moments ago mid-rollout" and "an operator just

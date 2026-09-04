@@ -1,11 +1,11 @@
-# ADR-100: Schema-epoch compatibility floor (replaces monotonic-epoch refusal)
+# ADR-101: Schema-epoch compatibility floor (replaces monotonic-epoch refusal)
 
 ## Status
 
 **Accepted — deferred (2026-09-04).** This is a design decision for a fix that has
 not been implemented yet. It must land **before `currentSchemaEpoch`
 (`internal/storage/factory.go`) is first bumped past its current value of 1** — see
-Trigger below. A test enforces this (`TestCurrentSchemaEpoch_StillOne_SeeADR100` /
+Trigger below. A test enforces this (`TestCurrentSchemaEpoch_StillOne_SeeADR101` /
 `internal/storage/schema_epoch_tripwire_test.go`); its failure message points here.
 
 Until this lands, ADR-097's guard stays exactly as it is: a hard, unconditional
