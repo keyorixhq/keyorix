@@ -162,7 +162,12 @@ func TestGetAccessRequestProxy_DBError_S31(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/access-requests/1", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetAccessRequestProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// GetAccessRequest (local_invitations.go) used to wrap EVERY error,
+	// including a closed/unreachable DB, as "not found" regardless of cause
+	// -- fixed to match GetMachineIdentityCredentialByID's already-established
+	// pattern (distinguish genuine gorm.ErrRecordNotFound from everything
+	// else), so a real storage failure is now correctly a 500, not a 404.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestUpdateAccessRequestProxy_DBError_S31(t *testing.T) {
@@ -172,11 +177,10 @@ func TestUpdateAccessRequestProxy_DBError_S31(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-requests/1", body), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, r)
-	// UpdateAccessRequestProxy now re-fetches the row first (AR-001); local
-	// storage wraps GetAccessRequest's underlying error as "not found"
-	// regardless of cause, so isNotFoundErr-style matching surfaces this as
-	// 404 — same pre-existing wart as access-review-campaigns' equivalent test.
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// UpdateAccessRequestProxy re-fetches the row first (AR-001); GetAccessRequest's
+	// error wrapping was fixed (see TestGetAccessRequestProxy_DBError_S31 above),
+	// so a real storage failure now correctly surfaces as 500, not 404.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestListAccessRequestsProxy_DBError_S31(t *testing.T) {

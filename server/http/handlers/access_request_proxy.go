@@ -290,7 +290,8 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 	// approving dual-control access is a human-only decision, not something
 	// ADR-085 changed.
 	resolverType, resolverID := requestActorKindAndID(r)
-	if body.State == core.AccessRequestApproved {
+	switch body.State {
+	case core.AccessRequestApproved:
 		if resolverType == core.ActorTypeUser && resolverID == existing.UserID {
 			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "a requester cannot approve their own access request")
 			return
@@ -314,6 +315,30 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 				writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 				return
 			}
+		}
+	case core.AccessRequestWithdrawn:
+		// Mirrors core.WithdrawAccessRequest's own self-only check exactly,
+		// including its "not found" (not "forbidden") classification -- a
+		// non-owner must not be able to distinguish "this request doesn't
+		// exist" from "it exists but isn't yours to withdraw" via this proxy
+		// any more than the human-facing WithdrawAccessRequest allows.
+		if resolverType != core.ActorTypeUser || resolverID != existing.UserID {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "access request not found")
+			return
+		}
+	case core.AccessRequestRejected, core.AccessRequestExpired:
+		// Mirrors the local human-facing reject path's router-level gate
+		// (RequireScopedPermission(permRolesAssign, projectScope) ahead of
+		// core.RejectAccessRequest, which has no authority check of its own)
+		// -- this proxy bypasses that router entirely, so it must re-derive
+		// the same ceiling before writing. "expired" has no direct
+		// client-facing equivalent at all (locally only set as a side effect
+		// of internal lazy-TTL-expiry logic); held to the same roles.assign
+		// ceiling as reject rather than left unchecked, since forcing a
+		// request into either terminal state is the same governance action.
+		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), resolverType, resolverID, "roles.assign", core.Scope{ProjectID: existing.ProjectID}); aerr != nil || !ok {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "roles.assign is required at this request's project to reject or expire it")
+			return
 		}
 	}
 	existing.State = body.State
@@ -391,10 +416,52 @@ func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter,
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
-	_, approverID := requestActorKindAndID(r)
+	approverType, approverID := requestActorKindAndID(r)
 	if approverID == 0 {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "approver_id must identify an attributable, authenticated caller")
 		return
+	}
+	// #1642-shape ceiling gap, closed the same way UpdateAccessRequestProxy's
+	// approve branch already is: re-derive maker!=checker plus the same
+	// authority ceiling core.ApproveAccessRequestWithExpiry applies before an
+	// approval is ever recorded, since this is an independent, storage-bypass
+	// write into the SAME access_request_approvals table the hub's own
+	// dual-control threshold count reads. Without this, a caller could plant
+	// a phantom approval vote (diluting a K-of-N dual-control threshold) or
+	// self-approve their own request (the maker!=checker check never running).
+	existing, err := h.coreService.Storage().GetAccessRequest(r.Context(), uint(id))
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "access request not found")
+			return
+		}
+		log.Printf("access-requests proxy: create approval lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	if approverType == core.ActorTypeUser && approverID == existing.UserID {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "a requester cannot approve their own access request")
+		return
+	}
+	if existing.SecretID != nil {
+		if err := h.coreService.RequireAdminAuthorityAt(r.Context(), approverID, existing.ProjectID); err != nil {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "only an administrator can approve access to a restricted secret: "+err.Error())
+			return
+		}
+	} else {
+		role := existing.GrantedRole
+		if role == "" {
+			role = existing.SuggestedRole
+		}
+		roleModel, roleErr := h.coreService.Storage().GetRoleByName(r.Context(), role)
+		if roleErr != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "unknown role: "+roleErr.Error())
+			return
+		}
+		if err := h.coreService.RequireGranterHoldsRolePermissions(r.Context(), approverID, roleModel.ID, core.Scope{ProjectID: existing.ProjectID}, approverType == core.ActorTypeMachine); err != nil {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 	}
 	approval := &models.AccessRequestApproval{
 		RequestID:  uint(id),

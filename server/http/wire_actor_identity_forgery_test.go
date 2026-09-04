@@ -231,12 +231,23 @@ func TestWireActorForgery_CreateAccessRequestApprovalProxy_ApproverIsAlwaysCalle
 	f := newMachinePrivilegeCeilingFixture(t)
 	ctx := context.Background()
 
+	// CreateAccessRequestApprovalProxy now re-derives the same authority
+	// ceiling core.ApproveAccessRequestWithExpiry applies (see the
+	// access-request-proxy-create-approval-ceiling finding), so SuggestedRole
+	// must be a real, resolvable role for the request to reach the
+	// attribution check this test actually targets -- same reasoning as
+	// PersistedResolvedByIsAlwaysCaller's fresh role above.
+	roleName, err := identity.NewFoldedName("ceiling_test_approval_forge_role")
+	require.NoError(t, err)
+	_, err = f.core.Storage().CreateRole(ctx, roleName, "test-only role: no bundled permissions")
+	require.NoError(t, err)
+
 	requester, err := f.core.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "approval_forge_requester", Email: "approval_forge_requester@example.com", Password: "Rq9!Qr7#Kp2$Lm5@",
 	})
 	require.NoError(t, err)
 	req, err := f.core.Storage().CreateAccessRequest(ctx, &models.AccessRequest{
-		ProjectID: f.projectID, UserID: requester.ID, SuggestedRole: "developer", State: "pending", CreatedAt: time.Now(),
+		ProjectID: f.projectID, UserID: requester.ID, SuggestedRole: "ceiling_test_approval_forge_role", State: "pending", CreatedAt: time.Now(),
 	})
 	require.NoError(t, err)
 

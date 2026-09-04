@@ -160,7 +160,25 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
 		return nil, err
 	}
-	if err := s.core.AddUserToGroup(ctx, actor.UserID, false, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0); requireUser above guarantees a real human actor, never a machine
+	// #PM-006 sibling: actorIsMachine must be derived from the real actor kind. The
+	// removed comment here ("requireUser above guarantees a real human actor, never
+	// a machine") was false -- requireUser only checks GetUserFromGRPCContext != nil,
+	// and the gRPC auth interceptor routes a kx_machine_-prefixed token through the
+	// same UserContext path (validateGRPCMachineToken sets ActorType: ActorTypeMachine)
+	// for every RPC including this one. A hardcoded false made AddUserToGroup's outer
+	// skip-gate (`actorID != 0 || actorIsMachine`) treat a machine caller (UserID==0,
+	// ADR-030) the same as no actor at all, silently skipping the entire per-role
+	// authority-ceiling check (validateGroupJoinRoles) for any machine identity holding
+	// only roles.assign.
+	actorIsMachine := actor.ActorKind() == core.ActorTypeMachine
+	if actorIsMachine {
+		// A genuine, directly-authenticated machine actor requesting this
+		// membership as itself (not a /system proxy relay) -- tag ctx so
+		// requireGranterHoldsRolePermissions checks ITS real permissions
+		// instead of unconditionally refusing. See that function's doc.
+		ctx = core.WithSelfMachineGranter(ctx, actor.PrincipalID())
+	}
+	if err := s.core.AddUserToGroup(ctx, actor.UserID, actorIsMachine, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
 		return nil, groupError(err)
 	}
 	return &emptypb.Empty{}, nil
