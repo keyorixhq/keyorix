@@ -122,7 +122,7 @@ func TestNormalizeColumnInPlace_RefusesOnCollision(t *testing.T) {
 	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (1, ?, NULL)`, nfcCafe).Error)
 	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (2, ?, NULL)`, nfdCafe).Error)
 
-	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", normalizeAddress)
+	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", "", normalizeAddress)
 	require.Error(t, err, "two rows normalizing to the same NFC form must refuse the entire pass")
 	assert.Contains(t, err.Error(), "cannot normalize secret_nodes.name")
 
@@ -133,8 +133,48 @@ func TestNormalizeColumnInPlace_RefusesOnCollision(t *testing.T) {
 	require.NoError(t, db2.Exec(`CREATE TABLE secret_nodes (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, db2.Exec(`INSERT INTO secret_nodes VALUES (1, 'PROD_KEY', NULL)`).Error)
 	require.NoError(t, db2.Exec(`INSERT INTO secret_nodes VALUES (2, 'prod_key', NULL)`).Error)
-	require.NoError(t, normalizeColumnInPlace(db2, "secret_nodes", "id", "name", "", normalizeAddress),
+	require.NoError(t, normalizeColumnInPlace(db2, "secret_nodes", "id", "name", "", "", normalizeAddress),
 		"case-distinct secret names must not be treated as colliding")
+}
+
+// TestNormalizeColumnInPlace_ScopedCollision_DifferentProjectsNotAColliding
+// proves the fix for a real regression: secret_nodes.name is only unique
+// within (project_id, environment_id) -- uniq_secret_nodes_project_env_name_active
+// -- not globally, so two secrets legitimately named the same address in two
+// different projects/environments must NOT be reported as a collision, and
+// each row's own scope-local normalization must still be applied.
+func TestNormalizeColumnInPlace_ScopedCollision_DifferentProjectsNotAColliding(t *testing.T) {
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "normalize-scoped.db"))
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE secret_nodes (id INTEGER PRIMARY KEY, project_id INTEGER, environment_id INTEGER, name TEXT, deleted_at DATETIME)`).Error)
+	// Same NFD-form address in two different projects: legitimate, must not collide.
+	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (1, 1, 1, ?, NULL)`, nfdCafe).Error)
+	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (2, 2, 1, ?, NULL)`, nfdCafe).Error)
+
+	require.NoError(t, normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", "project_id, environment_id", normalizeAddress),
+		"the same secret name in two different projects must not be reported as a collision")
+
+	var got1, got2 string
+	require.NoError(t, db.Table("secret_nodes").Where("id = 1").Select("name").Scan(&got1).Error)
+	require.NoError(t, db.Table("secret_nodes").Where("id = 2").Select("name").Scan(&got2).Error)
+	assert.Equal(t, nfcCafe, got1, "row 1 must still be NFC-normalized despite sharing a name with row 2")
+	assert.Equal(t, nfcCafe, got2, "row 2 must still be NFC-normalized despite sharing a name with row 1")
+}
+
+// TestNormalizeColumnInPlace_ScopedCollision_SameProjectStillCollides proves
+// the scoped collision check still catches a REAL collision: two rows
+// sharing both the same scope AND the same normalized name must still be
+// refused.
+func TestNormalizeColumnInPlace_ScopedCollision_SameProjectStillCollides(t *testing.T) {
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "normalize-scoped-collide.db"))
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE secret_nodes (id INTEGER PRIMARY KEY, project_id INTEGER, environment_id INTEGER, name TEXT, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (1, 1, 1, ?, NULL)`, nfcCafe).Error)
+	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (2, 1, 1, ?, NULL)`, nfdCafe).Error)
+
+	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", "project_id, environment_id", normalizeAddress)
+	require.Error(t, err, "two rows in the SAME project+environment normalizing to the same NFC form must still refuse")
+	assert.Contains(t, err.Error(), "cannot normalize secret_nodes.name")
 }
 
 // TestNormalizeColumnInPlace_ReadQueryError exercises the Scan error branch:
@@ -146,7 +186,7 @@ func TestNormalizeColumnInPlace_ReadQueryError(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE secret_nodes (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (1, 'prod_key', NULL)`).Error)
 
-	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "no_such_column = 1", normalizeAddress)
+	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "no_such_column = 1", "", normalizeAddress)
 	require.Error(t, err, "a query error reading rows to normalize must be surfaced, not panic or skip silently")
 	assert.Contains(t, err.Error(), "failed to read secret_nodes for name normalization")
 }
@@ -161,7 +201,7 @@ func TestNormalizeColumnInPlace_NormalizeFunctionError(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE secret_nodes (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (1, ?, NULL)`, "bad\nname").Error)
 
-	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", normalizeAddress)
+	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", "", normalizeAddress)
 	require.Error(t, err, "a raw value the normalize function rejects must fail the pass, not panic or skip silently")
 	assert.Contains(t, err.Error(), "failed to normalize secret_nodes.name")
 }
@@ -176,7 +216,7 @@ func TestNormalizeColumnInPlace_UpdateError(t *testing.T) {
 	require.NoError(t, db.Exec(`INSERT INTO secret_nodes VALUES (1, ?, NULL)`, nfdCafe).Error)
 	require.NoError(t, db.Exec(`CREATE TRIGGER block_secret_nodes_update BEFORE UPDATE ON secret_nodes BEGIN SELECT RAISE(ABORT, 'blocked for test'); END`).Error)
 
-	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", normalizeAddress)
+	err = normalizeColumnInPlace(db, "secret_nodes", "id", "name", "", "", normalizeAddress)
 	require.Error(t, err, "a write failure during normalization must be surfaced, not swallowed")
 	assert.Contains(t, err.Error(), "failed to normalize secret_nodes.name for id=1")
 }

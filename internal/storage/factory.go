@@ -1648,6 +1648,42 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	}
 
+	// #1642: roles.name_folded and secret_nodes' NFC-normalized name were only
+	// ever wired into the fresh-DB tail below, never into this additive,
+	// existing-DB-safe path -- unlike every sibling *_folded/normalized column
+	// above (groups.name_folded, users.username_folded/email_folded), which is
+	// called from both here AND the fresh-DB tail. Since migrateDatabase
+	// returns early below once projectsExists is true (an already-initialized
+	// database), the fresh-DB-only call site never ran on any upgrade: the
+	// roles table never gained name_folded, while models.Role and
+	// CreateRole/UpdateRole unconditionally reference that column in every
+	// generated INSERT/UPDATE -- breaking role creation/update outright on
+	// every real upgrade the first time either is called. Mirrors
+	// ensureUserNameIndex's tableExists guard above exactly. Additive +
+	// idempotent; the full AutoMigrate below covers fresh DBs.
+	if tableExists(db, "roles") {
+		// ensureRoleNameIndex/backfillFoldedColumn assume name_folded already
+		// exists (true on a fresh install, where AutoMigrate added it from
+		// models.Role's struct tag) -- they only backfill and index an
+		// EXISTING column, they never ALTER TABLE ADD COLUMN it themselves.
+		// On an existing install AutoMigrate never runs, so this ADD COLUMN
+		// step -- mirroring the groups.DeletedAt AddColumn immediately above
+		// this comment block -- is what actually has to add it here.
+		if m := db.Migrator(); !m.HasColumn(&models.Role{}, "NameFolded") {
+			if err := m.AddColumn(&models.Role{}, "NameFolded"); err != nil {
+				return fmt.Errorf("failed to add roles.name_folded column: %w", err)
+			}
+		}
+		if err := ensureRoleNameIndex(db); err != nil {
+			return err
+		}
+	}
+	if tableExists(db, "secret_nodes") {
+		if err := ensureSecretNodeNameNFC(db); err != nil {
+			return err
+		}
+	}
+
 	// Close the share-create race (#136): a partial unique index on live rows so two
 	// concurrent CreateShareRecord calls for the same (secret, recipient, is_group)
 	// can no longer both succeed as separate rows. Additive + idempotent; the full
@@ -1826,7 +1862,14 @@ func ensureRoleNameIndex(db *gorm.DB) error {
 // never holds two different Unicode representations of what a human reads as
 // the same address.
 func ensureSecretNodeNameNFC(db *gorm.DB) error {
-	return normalizeColumnInPlace(db, "secret_nodes", "id", "name", sqlWhereNotDeleted, normalizeAddress)
+	// Scoped by (project_id, environment_id): secret_nodes.name is only
+	// unique WITHIN that scope (uniq_secret_nodes_project_env_name_active),
+	// not globally -- two secrets legitimately named "DATABASE_URL" in two
+	// different projects are not a collision. Passing this unscoped would
+	// make normalizeColumnInPlace group by name alone and falsely refuse to
+	// migrate any installation with the same secret name reused across
+	// projects, an extremely common pattern.
+	return normalizeColumnInPlace(db, "secret_nodes", "id", "name", sqlWhereNotDeleted, "project_id, environment_id", normalizeAddress)
 }
 
 // ensureShareRecordUniqueIndex creates a partial unique index on share_records
