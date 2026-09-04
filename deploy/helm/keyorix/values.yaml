@@ -45,10 +45,36 @@ server:
     size: 1Gi
     storageClass: ""
     accessMode: ReadWriteOnce
+  # requests == limits for both cpu and memory (Guaranteed QoS -- see
+  # docs/adr-100-mlockall-removal-deployment-swap-control.md): under Kubernetes'
+  # NodeSwap, only Burstable-QoS pods are eligible for swap at all -- Guaranteed
+  # (and BestEffort) pods receive zero swap unconditionally
+  # (github.com/kubernetes/enhancements/blob/master/keps/sig-node/2400-node-swap/README.md:
+  # "Swap access is granted only for pods of Burstable QoS"). Since mlockall was
+  # removed, this is now the ONLY control preventing decrypted secret memory from
+  # being swapped to disk on a cluster where a node opts into swap -- a
+  # requests==limits mismatch here silently reopens exactly the gap ADR-100 closed.
+  # ephemeral-storage is NOT part of QoS classification and is left as before.
+  #
+  # memory: 512Mi is unchanged from before mlockall removal, but re-derived from
+  # measurement rather than inherited: the real server binary
+  # (server/Dockerfile, linux/arm64 via this environment's Docker backend --
+  # see ADR-100's own environment caveat) measured VmRSS at rest ~22.5MB, peak
+  # (VmHWM) ~82MB after creating 50 secrets (20 * 500KB + 30 * 2MB payloads) via
+  # the real HTTP API -- 512Mi is ~6.4x that observed peak, headroom for
+  # larger production bulk operations (bigger secret exports, wider audit
+  # queries) this synthetic load didn't exercise.
+  #
+  # cpu: previously 100m request / 1 limit (Burstable). Request raised to match
+  # the existing limit -- the trade-off: every server pod now permanently
+  # reserves a full CPU core from the node's allocatable capacity, even at
+  # idle, instead of bursting into it opportunistically. Not re-derived from
+  # measurement (no CPU load test was run); kept at the existing limit value
+  # rather than picked arbitrarily.
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 1
+      memory: 512Mi
       ephemeral-storage: 64Mi
     limits:
       cpu: 1
