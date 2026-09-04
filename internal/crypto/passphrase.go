@@ -27,13 +27,22 @@ import (
 // once it has been consumed, and never touches the process environment at
 // all.
 type PassphraseSource struct {
-	// FD, if > 0, is an already-open file descriptor to read the passphrase
-	// from until EOF. The strongest option: the value never appears in argv,
-	// an env var, or a file on disk that this process has to open by path.
-	// The usual answer for systemd's LoadCredential= (the unit's ExecStart
-	// redirects the credential file to an inherited fd; see
-	// docs/adr-099-master-passphrase-sourcing.md for a worked example).
+	// FD is an already-open file descriptor to read the passphrase from
+	// until EOF, honored only when FDSet is true. The strongest option: the
+	// value never appears in argv, an env var, or a file on disk that this
+	// process has to open by path. The usual answer for systemd's
+	// LoadCredential= (the unit's ExecStart redirects the credential file to
+	// an inherited fd; see docs/adr-099-master-passphrase-sourcing.md for a
+	// worked example).
 	FD int
+	// FDSet reports whether FD was actually provided (e.g. --passphrase-fd
+	// explicitly passed), as opposed to FD merely holding its zero value.
+	// This distinction matters because 0 (stdin) is itself a legitimate,
+	// deliberate fd choice — an earlier version of this check used `FD > 0`,
+	// which silently treated an explicit `--passphrase-fd=0` identically to
+	// "the flag was never passed" and fell through to the weakest source
+	// (the environment variable) with no error or warning.
+	FDSet bool
 	// FilePath, if non-empty, is a file to read the passphrase from. Refused
 	// if the file is group- or world-readable (mode & 0o077 != 0) — a
 	// passphrase file readable by anyone but its owner defeats the point of
@@ -58,7 +67,7 @@ type PassphraseSource struct {
 // pre-existing behavior.
 func ResolvePassphrase(src PassphraseSource, envVarName string) ([]byte, error) {
 	switch {
-	case src.FD > 0:
+	case src.FDSet:
 		return readPassphraseFD(src.FD)
 	case src.FilePath != "":
 		return readPassphraseFile(src.FilePath)

@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/spf13/cobra"
+
+	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 )
 
 // newMasterPasswordEnvKEK is the env var that carries the new master passphrase
@@ -42,10 +45,20 @@ fingerprint (ack-...) will change, because both are derived from the KEK.`,
 
 var rotateKEKConfirm bool
 
+// rotateKEKNewPassphraseSource holds the byte-based sources (ADR-099) for the
+// NEW master passphrase, mirroring common.PassphraseSource (which supplies the
+// OLD passphrase via masterPassphrase). Registered under a "new-" flag prefix
+// so both sets of flags can coexist on this command.
+var rotateKEKNewPassphraseSource crypto.PassphraseSource
+
 func init() {
 	EncryptionCmd.AddCommand(rotateKEKCmd)
 	rotateKEKCmd.Flags().BoolVar(&rotateKEKConfirm, "confirm", false,
 		"required acknowledgement that the master passphrase will be changed")
+
+	fdFlag, fileFlag, stdinFlag := common.RegisterPassphraseFlags(
+		rotateKEKCmd.Flags(), &rotateKEKNewPassphraseSource, "new-", "new master passphrase")
+	rotateKEKCmd.MarkFlagsMutuallyExclusive(fdFlag, fileFlag, stdinFlag)
 }
 
 func runRotateKEK(cmd *cobra.Command, args []string) error {
@@ -76,10 +89,12 @@ func rotateKEKWithConfig(cfg *config.Config, confirm bool) error {
 		return err
 	}
 
-	newPassphrase := os.Getenv(newMasterPasswordEnvKEK)
-	if newPassphrase == "" {
-		return fmt.Errorf("%s environment variable is not set — set it to the new master passphrase", newMasterPasswordEnvKEK)
+	newPassphraseBytes, err := crypto.ResolvePassphrase(rotateKEKNewPassphraseSource, newMasterPasswordEnvKEK)
+	if err != nil {
+		return err
 	}
+	defer wipeBytes(newPassphraseBytes)
+	newPassphrase := string(newPassphraseBytes)
 	if oldPassphrase == newPassphrase {
 		return fmt.Errorf("new passphrase must differ from the old passphrase")
 	}

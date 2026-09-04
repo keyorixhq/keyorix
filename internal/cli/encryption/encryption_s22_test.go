@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -320,7 +321,7 @@ func TestFindMigrateBackups_S22_SkipsSubdirWithMatchingPrefix(t *testing.T) {
 // KEYORIX_NEW_MASTER_PASSWORD is unset.
 func TestTargetPassphrase_S22_PasswordNoEnv(t *testing.T) {
 	t.Setenv(newMasterPasswordEnv, "")
-	_, err := targetPassphrase("password")
+	_, err := targetPassphrase("password", crypto.PassphraseSource{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), newMasterPasswordEnv)
 }
@@ -329,7 +330,7 @@ func TestTargetPassphrase_S22_PasswordNoEnv(t *testing.T) {
 // type (treated as "password") also returns an error when the env var is not set.
 func TestTargetPassphrase_S22_EmptyTypeNoEnv(t *testing.T) {
 	t.Setenv(newMasterPasswordEnv, "")
-	_, err := targetPassphrase("")
+	_, err := targetPassphrase("", crypto.PassphraseSource{})
 	require.Error(t, err)
 }
 

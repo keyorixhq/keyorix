@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 )
 
@@ -176,6 +177,51 @@ func TestRotateKEKCommand_Success_OldPassphraseNoLongerWorks(t *testing.T) {
 	if _, err := os.Stat("kek.salt.pending"); !os.IsNotExist(err) {
 		t.Errorf("kek.salt.pending still exists after successful rotation")
 	}
+}
+
+// TestRotateKEKCommand_NewPassphraseFDSource proves --new-passphrase-fd
+// (ADR-099) reaches rotateKEKWithConfig end to end via a real file
+// descriptor, winning over KEYORIX_NEW_MASTER_PASSWORD when both are set.
+func TestRotateKEKCommand_NewPassphraseFDSource(t *testing.T) {
+	const (
+		oldPass = "fd-source-old-passphrase"
+		newPass = "fd-sourced-new-passphrase"
+	)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	cfg := enabledLocalCfgKEK()
+	svc := encryption.NewService(&cfg.Storage.Encryption, dir)
+	if err := svc.Initialize(oldPass); err != nil {
+		t.Fatalf("provision key material: %v", err)
+	}
+	svc.Shutdown()
+
+	t.Setenv("KEYORIX_MASTER_PASSWORD", oldPass)
+	t.Setenv("KEYORIX_NEW_MASTER_PASSWORD", "wrong-passphrase-must-not-be-used")
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	go func() {
+		_, _ = w.Write([]byte(newPass + "\n"))
+		_ = w.Close()
+	}()
+	old := rotateKEKNewPassphraseSource
+	rotateKEKNewPassphraseSource = crypto.PassphraseSource{FD: int(r.Fd()), FDSet: true}
+	t.Cleanup(func() { rotateKEKNewPassphraseSource = old; _ = r.Close() })
+
+	if err := rotateKEKWithConfig(cfg, true); err != nil {
+		t.Fatalf("rotateKEKWithConfig: %v", err)
+	}
+
+	svcNew := encryption.NewService(&cfg.Storage.Encryption, dir)
+	if err := svcNew.Initialize(newPass); err != nil {
+		t.Fatalf("fd-sourced new passphrase rejected after rotation: %v", err)
+	}
+	svcNew.Shutdown()
 }
 
 // ── runRotateKEK: the thin cobra shim (config.Load + delegate) ──────────────
