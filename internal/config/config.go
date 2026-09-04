@@ -724,31 +724,6 @@ type SecurityConfig struct {
 	// common, supported deployment), but when off the server logs a prominent warning if
 	// it serves cleartext, so the exposure is never silent.
 	RequireTransportTLS bool `yaml:"require_transport_tls"`
-	// Mlock configures process-memory hardening applied once at startup
-	// (mlockall + core dump suppression). See ADR-098. It narrows, not
-	// closes, the memory-zeroization gap: it protects decrypted secret
-	// plaintext from surviving a reboot (swap) or a crash (core file), not
-	// from the transient in-memory exposure of a live, healthy process.
-	Mlock MlockConfig `yaml:"mlock"`
-}
-
-// MlockConfig controls whether the process locks its memory pages against
-// swap (mlockall) at startup, and how an mlockall failure is handled. Core
-// dump suppression (RLIMIT_CORE=0) is unconditional and not gated by this
-// struct — see ADR-098 for why.
-type MlockConfig struct {
-	// Disabled opts out of mlockall(MCL_CURRENT|MCL_FUTURE) at startup.
-	// mlockall is attempted by default (mirroring HashiCorp Vault's own
-	// mlock default); set this when the host/container cannot grant
-	// CAP_IPC_LOCK or a raised RLIMIT_MEMLOCK and the resulting startup
-	// warning is unwanted noise.
-	Disabled bool `yaml:"disabled"`
-	// RequireSuccess makes a failed mlockall attempt fatal at startup
-	// instead of a logged warning. Default false: mlockall failure is
-	// warned and startup continues (matching Vault's default). Set true to
-	// fail closed when swap-exposure must be guaranteed closed rather than
-	// best-effort.
-	RequireSuccess bool `yaml:"require_success"`
 }
 
 // parseDurationDefault parses a Go duration string, returning def when empty or

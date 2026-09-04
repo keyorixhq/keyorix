@@ -114,15 +114,16 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("startup validation: %v", err)
 	}
 
-	// Lock process memory against swap and disable core dumps before any key material
-	// or decrypted secret value is ever allocated (ADR-098). Narrows, not closes, the
-	// memory-zeroization gap: it protects the durable paths (swap survival across a
-	// reboot, a core file surviving a crash), not the transient in-memory exposure of a
+	// Disable core dumps before any key material or decrypted secret value is ever
+	// allocated (ADR-098). Narrows, not closes, the memory-zeroization gap: it protects
+	// a core file from surviving a crash, not the transient in-memory exposure of a
 	// live, healthy process documented alongside #1653's "three unwiped heap copies".
-	if err := hardening.ApplyMemoryHardening(hardening.MemoryConfig{
-		Disabled:       cfg.Security.Mlock.Disabled,
-		RequireSuccess: cfg.Security.Mlock.RequireSuccess,
-	}); err != nil {
+	// This package previously also called mlockall to protect against swap; that was
+	// removed (ADR-100) — it pinned RSS well above the shipped Helm chart's default
+	// memory limit with no ceiling, and cannot work as intended in a garbage-collected
+	// runtime. Swap exposure is now addressed at the deployment level (disable swap on
+	// the node / in the container runtime) rather than in-process.
+	if err := hardening.ApplyMemoryHardening(); err != nil {
 		log.Fatalf("memory hardening: %v", err)
 	}
 

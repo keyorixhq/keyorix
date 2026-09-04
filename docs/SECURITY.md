@@ -168,6 +168,10 @@ Groups:
 3. **Network Segmentation**: Deploy in secure network segments
 4. **Regular Updates**: Keep system and dependencies updated
 5. **Monitoring**: Implement security monitoring and alerting
+6. **Disable swap**: run the node/host with swap disabled (Kubernetes' default) so
+   decrypted secret memory cannot be written to disk under memory pressure. This is a
+   deployment-level control, not something the server process configures — see
+   `docs/adr-100-mlockall-removal-deployment-swap-control.md`.
 
 ### Configuration Security
 ```yaml

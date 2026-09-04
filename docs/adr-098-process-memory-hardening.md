@@ -2,7 +2,23 @@
 
 ## Status
 
-**Accepted (2026-09-02).** Follow-up to the 2026-09 security review
+**Partially superseded (2026-09-04) — see
+[ADR-100](adr-100-mlockall-removal-deployment-swap-control.md).** The
+`mlockall` half of this decision is removed: measured against the real
+server binary and the shipped Helm chart's default memory limit, it pins an
+ever-growing, never-shrinking floor of locked memory (`VmLck`) that already
+exceeds that default at rest, and cannot deliver its intended protection in
+a garbage-collected runtime regardless of tuning (the GC moves and copies
+memory a locked address does not follow). **Core dump suppression
+(`RLIMIT_CORE=0`) is unaffected and remains exactly as documented below** —
+only the mlockall-specific content in this document (the Summary's item 1,
+the "mlockall is opt-out" design decision, and the Operator prerequisites
+section) describes a mechanism no longer in the code; everything else here
+is still accurate. This document is kept as the historical record of why
+mlockall was originally adopted and how it was verified at the time — see
+ADR-100 for the removal decision and its own verification.
+
+**Originally accepted (2026-09-02).** Follow-up to the 2026-09 security review
 (`docs/security-review-2026-09.md`), specifically its memory-zeroization
 finding: `internal/crypto`'s wipe-after-use discipline closes the transient
 in-process exposure of decrypted secret values (three unwiped heap copies,
@@ -16,7 +32,7 @@ Two independent hardening steps are applied once, at server startup, before
 any key material or decrypted secret value is allocated
 (`internal/hardening.ApplyMemoryHardening`, called from `server/main.go`):
 
-1. **`mlockall(MCL_CURRENT | MCL_FUTURE)`** — locks the process's already-
+1. **[Superseded by ADR-100 — removed.] `mlockall(MCL_CURRENT | MCL_FUTURE)`** — locks the process's already-
    mapped pages, and every page mapped for the rest of the process's
    lifetime, into physical RAM. The kernel can never swap a locked page to
    disk, so a decrypted secret value can no longer survive in a swap file or
@@ -63,7 +79,9 @@ a container runtime) that explicitly sets `LimitCORE=` or `ulimit -c` before
 before this code ever runs, and is out of this code's control — see
 Operator prerequisites below.
 
-**mlockall is opt-out (`security.mlock.disabled`, default false — attempted
+**[Superseded by ADR-100 — mlockall and this config are removed from the
+code; kept here only as the historical record of the original design.]**
+mlockall is opt-out (`security.mlock.disabled`, default false — attempted
 by default), and its failure mode is config-driven
 (`security.mlock.require_success`, default false — warn and continue).**
 `mlockall` requires `CAP_IPC_LOCK` or a raised `RLIMIT_MEMLOCK`, and many
@@ -112,6 +130,10 @@ it does **not** protect against:
 - **The CLI process** (see Scope above).
 
 ## Operator prerequisites
+
+**[Superseded by ADR-100 — mlockall is removed; this section no longer
+applies. See ADR-100's "Operator guidance: deployment-level swap control"
+for the current recommendation.]**
 
 `mlockall` needs one of:
 
