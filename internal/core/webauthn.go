@@ -529,16 +529,40 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 	// Scoped to userID (#307) — the lookup itself enforces ownership, so no separate
 	// row.UserID check is needed here.
 	if row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, cred.ID, userID); err == nil {
-		row.Disabled = true
-		_ = c.storage.UpdateWebAuthnCredential(ctx, row)
+		// Mutation + audit as one unit (#1714) — see markWebAuthnCredentialClonedDisabled.
+		_ = c.markWebAuthnCredentialClonedDisabled(ctx, row, ip)
+	} else {
+		// Row lookup failed (rare — e.g. a race with the credential being deleted
+		// between assertion verification and this call). Nothing to disable, but
+		// the clone signal for THIS login attempt is still real and must still be
+		// recorded — this is the one case where the audit write is not paired with
+		// a mutation, since there is no row to mutate.
+		uid := userID
+		c.writeAuditEventFull(ctx, EventWebAuthnCloneDetected, &uid, nil, nil, ip,
+			fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — credential lookup failed, nothing disabled", userID))
 	}
-	uid := userID
-	c.writeAuditEventFull(ctx, EventWebAuthnCloneDetected, &uid, nil, nil, ip,
-		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — credential disabled pending re-registration", userID))
 	c.notify(ctx, userID, NotificationWebAuthnCloneDetected, "Passkey clone suspected",
 		"A sign-in attempt was blocked because one of your passkeys reported a signature-counter regression — a sign that its private key may exist on more than one device. The passkey has been disabled; please remove it and register a new one.",
 		nil, "/account/security")
 	return fmt.Errorf("assertion verification failed: signature counter did not advance (possible cloned authenticator)")
+}
+
+// markWebAuthnCredentialClonedDisabled performs a WebAuthn credential's
+// disable-on-clone-signal mutation (Disabled: false -> true) and its
+// EventWebAuthnCloneDetected audit write as a single unit (#1714), so no
+// exported path can do one without the other. row must already be the
+// caller's own fetched, owned row (rejectIfCloned's GetWebAuthnCredentialByCredID
+// call scopes ownership by construction; MarkWebAuthnCredentialClonedByLookup
+// below does the same for a caller that only has (credentialID, userID)).
+func (c *KeyorixCore) markWebAuthnCredentialClonedDisabled(ctx context.Context, row *models.WebAuthnCredential, ip string) error {
+	row.Disabled = true
+	if err := c.storage.UpdateWebAuthnCredential(ctx, row); err != nil {
+		return err
+	}
+	uid := row.UserID
+	c.writeAuditEventFull(ctx, EventWebAuthnCloneDetected, &uid, nil, nil, ip,
+		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — credential disabled pending re-registration", row.UserID))
+	return nil
 }
 
 // ErrWebAuthnCredentialIDMismatch is returned by MarkWebAuthnCredentialClonedByLookup
@@ -567,12 +591,7 @@ var ErrWebAuthnCredentialIDMismatch = errors.New("webauthn credential id does no
 // exchange for passing expectedID at all. Returns
 // ErrWebAuthnCredentialIDMismatch, unmutated, if the row's real ID doesn't
 // match.
-//
-// This is the authz half of #1714 (narrowing the write): it does NOT yet
-// audit its own mutation -- that unification with rejectIfCloned lands as
-// its own, independently-revertable commit (markWebAuthnCredentialClonedDisabled).
 func (c *KeyorixCore) MarkWebAuthnCredentialClonedByLookup(ctx context.Context, credentialID []byte, userID, expectedID uint, ip string) (*models.WebAuthnCredential, error) {
-	_ = ip // reserved for the audit write added by the follow-up commit
 	row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, credentialID, userID)
 	if err != nil {
 		return nil, err
@@ -580,8 +599,7 @@ func (c *KeyorixCore) MarkWebAuthnCredentialClonedByLookup(ctx context.Context, 
 	if row.ID != expectedID {
 		return nil, ErrWebAuthnCredentialIDMismatch
 	}
-	row.Disabled = true
-	if err := c.storage.UpdateWebAuthnCredential(ctx, row); err != nil {
+	if err := c.markWebAuthnCredentialClonedDisabled(ctx, row, ip); err != nil {
 		return nil, err
 	}
 	return row, nil

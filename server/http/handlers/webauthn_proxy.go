@@ -237,12 +237,10 @@ func (h *AuthHandler) GetWebAuthnCredentialByCredIDProxy(w http.ResponseWriter, 
 // rejectIfCloned's own lookup already relies on (#307) -- reject outright if
 // that pair doesn't resolve to the URL's {id}, and reject outright unless
 // disabled is exactly true. Routes through
-// KeyorixCore.MarkWebAuthnCredentialClonedByLookup; see that function's doc.
-// This is the authz half of the #1714 fix -- the audit half (unifying this
-// path with rejectIfCloned's own EventWebAuthnCloneDetected write into one
-// mutation+audit unit) lands as its own, independently-revertable commit.
-// The signature-counter advance path does NOT go through this route; see
-// AdvanceWebAuthnCredentialCounterProxy below.
+// KeyorixCore.MarkWebAuthnCredentialClonedByLookup, which performs the
+// mutation and the EventWebAuthnCloneDetected audit write as one unit; see
+// that function's doc. The signature-counter advance path does NOT go
+// through this route; see AdvanceWebAuthnCredentialCounterProxy below.
 func (h *AuthHandler) UpdateWebAuthnCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
