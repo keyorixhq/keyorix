@@ -64,6 +64,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 		&models.Project{},
 		&models.Environment{},
 		&models.SoDPolicy{},
+		&models.MachineIdentityRole{},
 	))
 	// A distinct name from any role individual tests create via mustCreateRole (some
 	// create their own role literally named "admin" for unrelated purposes) — Role.Name
@@ -194,6 +195,41 @@ func TestRBACReal_AssignPermissionToRole_MachineActorDenied(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ? AND permission_id = ?", role.ID, perm.ID).Count(&count).Error)
 	assert.Zero(t, count, "the permission must not have been assigned")
+}
+
+// TestRBACReal_AssignPermissionToRole_MachineActorHoldingPermissionAllowed
+// (Part 2 regression audit, #1545 sibling gap, 2026-09-04): the #1545 fix
+// closed the attacker path (a machine actor with NO role at all could
+// bundle any permission) but broke the legitimate case too -- the new check
+// routed through c.Authorize (USER-only, GetUserRoleIDsAt), which can never
+// succeed for a machine caller (actorID is always 0, ADR-030). This is the
+// positive control TestRBACReal_AssignPermissionToRole_MachineActorDenied
+// never had: the same machine identity (42, matching withMachineCtx) that
+// genuinely holds the target permission via its own machine role must still
+// be allowed to bundle it into another role.
+func TestRBACReal_AssignPermissionToRole_MachineActorHoldingPermissionAllowed(t *testing.T) {
+	handler, coreService, db := setupRBACTestWithDB(t)
+	role := mustCreateRole(t, db, "target-role")
+	perm := mustCreatePermission(t, db, "system.write", "system", "write")
+
+	holderRole := mustCreateRole(t, db, "machine-holder-role")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: holderRole.ID, PermissionID: perm.ID}).Error)
+	require.NoError(t, coreService.Storage().AssignMachineRole(context.Background(), 42, holderRole.ID, core.Scope{}))
+
+	body := fmt.Sprintf(`{"permission_id":%d}`, perm.ID)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/roles/%d/permissions", role.ID),
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withMachineCtx(withChiParam(req, "id", fmt.Sprintf("%d", role.ID)))
+	w := httptest.NewRecorder()
+
+	handler.AssignPermissionToRole(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code, "a machine actor that genuinely holds the permission via its own machine role must be allowed to bundle it, body=%s", w.Body.String())
+
+	var count int64
+	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ? AND permission_id = ?", role.ID, perm.ID).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "the permission must have been assigned")
 }
 
 func TestRBACReal_RemovePermissionFromRole204(t *testing.T) {

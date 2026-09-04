@@ -365,7 +365,15 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 	// A time-bound share stops granting access the instant it expires, so it must
 	// not appear in the access listing either — same filter the read-path
 	// authorization (CheckSecretPermission via activeShares) applies.
-	now := c.now()
+	//
+	// #1655 (Part 2 regression audit, 2026-09-04): this was the 8th of 8 shareActive
+	// call sites -- the other 7 were hardened against a backward-stepped host clock
+	// via shareEffectiveNow's monotonic watermark, but this one, despite the exact
+	// comment above naming it as sharing the read-path's filter, was left on a bare
+	// c.now(). Currently unreachable (ListUserPermissions has zero production
+	// callers), but matching the sibling sites closes the gap before any caller
+	// exists rather than after.
+	now := c.shareEffectiveNow()
 
 	directShares, err := c.storage.ListSharesByUser(ctx, userID)
 	if err != nil {

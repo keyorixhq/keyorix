@@ -5,10 +5,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -87,7 +89,17 @@ func (ls *LocalStorage) CreateAccessRequest(ctx context.Context, req *models.Acc
 func (ls *LocalStorage) GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error) {
 	var req models.AccessRequest
 	if err := ls.db.WithContext(ctx).First(&req, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		// Was an unconditional "not found" wrap regardless of the underlying
+		// error, so a genuine storage failure (e.g. a closed/unreachable DB)
+		// read identically to a real not-found to any caller string-matching
+		// on it (server/http/handlers' access_request_proxy.go among them).
+		// Distinguish genuine not-found (gorm.ErrRecordNotFound) from
+		// everything else, matching GetMachineIdentityCredentialByID's
+		// already-established fix for the identical bug class.
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &req, nil
 }

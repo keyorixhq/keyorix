@@ -138,22 +138,21 @@ func TestReadFederatedSecret_BackendErrorAudited(t *testing.T) {
 // connect-read is attributed on the audit event as ActorTypeMachine (ADR-023), not
 // silently defaulted to "user" — even when the caller passes a bare, untagged
 // context.Background() (i.e. WITHOUT the transport layer having already called
-// core.WithActorType). ReadFederatedSecret must stamp actorType itself rather than
-// trust that upstream middleware tagged the context.
+// core.WithActorType or core.WithMachineActor). ReadFederatedSecret must stamp both
+// tags itself rather than trust that upstream middleware already did.
 //
 // #1626: UserID must NOT hold principalID here — emitAudit clears UserID
 // unconditionally once ActorType is machine, since a machine's raw ID in a
-// human-attribution column is exactly the bug that issue fixed. This test
-// previously asserted the opposite (UserID == the machine's raw ID) as if it
-// were the correct, proven behavior; that assertion enshrined the bug rather
-// than testing for it. MachineIdentityID is correctly nil here too — but only
-// because THIS test deliberately uses a bare, untagged context.Background()
-// to probe ActorType's own defense-in-depth (see doc comment above); it does
-// not call WithMachineActor the way real HTTP/gRPC middleware does for an
-// actual machine-authenticated request. In production, MachineIdentityID
-// would be populated from that upstream tag regardless of what
-// ReadFederatedSecret does internally — this test's artificial premise (a
-// context nothing has ever tagged) is why it stays nil here specifically.
+// human-attribution column is exactly the bug that issue fixed.
+//
+// #1628 (Part 2 regression audit, 2026-09-04): MachineIdentityID must NOT be nil
+// here either. Before that fix, ReadFederatedSecret tagged WithActorType from its
+// parameter but never paired it with WithMachineActor, so this exact bare-context
+// call produced an audit row with BOTH UserID and MachineIdentityID nil — zero
+// identifying information, worse than the pre-#1626 misattribution it replaced.
+// This test's bare context.Background() is deliberate (it probes the function's
+// own untagged-context defense, not upstream middleware) — MachineIdentityID must
+// still land correctly because ReadFederatedSecret now tags it itself.
 func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 	ms := new(MockStorage)
 	var got *models.AuditEvent
@@ -172,6 +171,8 @@ func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, ActorTypeMachine, got.ActorType, "machine-identity read must be actored as machine_identity, not default to user")
 	assert.Nil(t, got.UserID, "#1626: a machine's raw ID must never occupy UserID, a human-attribution column")
+	require.NotNil(t, got.MachineIdentityID, "#1628: an untagged-context machine caller must still get MachineIdentityID stamped, not lose all identifying information")
+	assert.Equal(t, uint(42), *got.MachineIdentityID)
 }
 
 // TestReadFederatedSecret_UserAuditedAsUser is the counterpart: an ordinary user read

@@ -73,7 +73,22 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "user_id is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, false, body.UserID, uint(groupID), body.ProjectID); err != nil {
+	// #PM-006 sibling: actorIsMachine must be derived from the real actor kind, not
+	// hardcoded false -- a machine-authenticated caller has UserID==0 (ADR-030), and
+	// AddUserToGroup's outer skip-gate (`actorID != 0 || actorIsMachine`) treats a
+	// hardcoded false the same as "no actor at all", silently skipping the entire
+	// per-role authority-ceiling check (validateGroupJoinRoles) for every machine
+	// caller reaching this route. isMachineActor(r) is the same helper every other
+	// ceiling-sensitive handler in this package already uses for this purpose.
+	ctx := r.Context()
+	if userCtx.ActorKind() == core.ActorTypeMachine {
+		// A genuine, directly-authenticated machine actor requesting this
+		// membership as itself (not a /system proxy relay) -- tag ctx so
+		// requireGranterHoldsRolePermissions checks ITS real permissions
+		// instead of unconditionally refusing. See that function's doc.
+		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
+	}
+	if err := h.coreService.AddUserToGroup(ctx, userCtx.UserID, isMachineActor(r), body.UserID, uint(groupID), body.ProjectID); err != nil {
 		log.Printf("Error adding group member: %v", err)
 		switch {
 		case strings.Contains(err.Error(), "not found"):

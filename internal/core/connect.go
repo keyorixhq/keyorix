@@ -302,8 +302,25 @@ func (c *KeyorixCore) connectOwnershipSatisfied(ctx context.Context, actorType s
 // attributed as ActorTypeMachine (ADR-023) even if a future/CLI caller reaches this
 // function with an untagged context, not silently default to "user". The value is
 // returned to the caller and never persisted.
+//
+// #1628/#1626 regression (Part 2 regression audit, 2026-09-04): emitAudit
+// unconditionally nils AuditEvent.UserID once ActorType is machine (correct —
+// UserID is a human-attribution column), and separately fills MachineIdentityID
+// from the context's WithMachineActor tag if the caller hasn't already set it.
+// This function tags WithActorType from its parameter (exactly the untagged-
+// context defense described above) but, before this fix, never paired it with
+// WithMachineActor(ctx, principalID) — so a caller reaching this function with a
+// genuinely untagged context and actorType=machine produced an audit row with
+// BOTH UserID and MachineIdentityID nil: zero identifying information, not just
+// misattributed. Tagging both together closes the gap the same way the real HTTP/
+// gRPC entry points already do (server/middleware/auth.go, server/grpc/
+// interceptors/auth.go), so an untagged caller now gets the same MachineIdentityID
+// stamping a properly-tagged one would.
 func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (string, error) {
 	ctx = WithActorType(ctx, actorType)
+	if actorType == ActorTypeMachine {
+		ctx = WithMachineActor(ctx, principalID)
+	}
 	uid := principalID
 
 	if c.connectManager == nil {

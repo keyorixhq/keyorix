@@ -61,6 +61,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -477,12 +478,42 @@ func (h *CatalogHandler) UpdateAccessReviewItemProxy(w http.ResponseWriter, r *h
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "decided_by must identify an attributable, authenticated human reviewer")
 		return
 	}
-	if body.PrincipalType == "user" && decidedBy == body.PrincipalID {
+	// ARC-005 continued (adversarial review, documented-exception re-verification,
+	// 2026-09-04): the self-cert check above compared decidedBy against
+	// body.PrincipalType/body.PrincipalID -- CLIENT-SUPPLIED wire fields, not
+	// the item's real, server-side principal. A caller could lie about
+	// PrincipalType (e.g. claim "role" for what the DB row actually records
+	// as "user") to skip the check entirely, then self-certify their own
+	// access-review item -- the exact adversary class this comment's own
+	// threat model claims to defend against, just via the field the check
+	// forgot to anchor to server truth. Compounding this, `body.toModel()`
+	// used to persist every wire field verbatim via Select("*").Updates,
+	// including the attacker's fabricated PrincipalType/PrincipalID,
+	// corrupting the frozen-at-campaign-open evidence snapshot this endpoint
+	// exists to preserve (ISO 27001 A.5.18). Fetch the real item first and
+	// self-cert against ITS principal, then apply only the caller-legitimate
+	// decision fields onto it -- mirroring the real (non-proxy) path,
+	// core.DecideAccessReviewItem, which fetches from storage before calling
+	// checkReviewerIndependence with the fetched values, never client input.
+	existing, err := h.coreService.Storage().GetAccessReviewItem(r.Context(), uint(id))
+	if err != nil {
+		if strings.Contains(err.Error(), errNotFound) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "access review item not found")
+			return
+		}
+		log.Printf("access-review-campaigns proxy: get item for update failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	if existing.PrincipalType == "user" && decidedBy == existing.PrincipalID {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "self-certification is not allowed; an independent reviewer is required")
 		return
 	}
-	body.DecidedBy = decidedBy
-	updated, err := h.coreService.Storage().UpdateAccessReviewItem(r.Context(), body.toModel())
+	existing.Decision = body.Decision
+	existing.Reason = body.Reason
+	existing.DecidedBy = decidedBy
+	existing.DecidedAt = body.DecidedAt
+	updated, err := h.coreService.Storage().UpdateAccessReviewItem(r.Context(), existing)
 	if err != nil {
 		log.Printf("access-review-campaigns proxy: update item failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

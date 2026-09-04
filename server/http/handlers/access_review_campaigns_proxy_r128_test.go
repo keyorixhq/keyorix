@@ -12,6 +12,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -159,6 +160,14 @@ func TestCreateAccessReviewItemsProxy_StripsDecisionFields_R128(t *testing.T) {
 // no effect on the outcome.
 func TestUpdateAccessReviewItemProxy_RejectsSelfCertification_R128(t *testing.T) {
 	h := freshCatalogHandlerS13(t)
+	// The self-cert check now fetches the real item from storage first
+	// (documented-exception re-verification fix: it used to trust the wire
+	// body's principal_type/principal_id, letting a caller lie about
+	// principal_type to skip the check) -- seed a genuine item with
+	// PrincipalType "user" / PrincipalID 1, matching withUserCtx's actor.
+	require.NoError(t, h.coreService.Storage().CreateAccessReviewItems(context.Background(), []*models.AccessReviewItem{{
+		ID: 1, CampaignID: 1, PrincipalType: "user", PrincipalID: 1, Decision: "pending",
+	}}))
 	body, _ := json.Marshal(map[string]interface{}{
 		"principal_type": "user",
 		"principal_id":   1,
