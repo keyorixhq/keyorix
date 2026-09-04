@@ -69,7 +69,7 @@ func (r *namedLockRegistry) acquire(lockKey string) *namedLockEntry {
 	e.refs++
 	r.mu.Unlock()
 	e.mu.Lock()
-	return e
+	return e // nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return -- intentional lock handoff: e.mu is returned still locked BY DESIGN, unlocked by the paired release(lockKey, e) call the caller is contractually required to make (see doc comment above); tested under -race in TestWithNamedLock_ConcurrentSameKey_MutualExclusionSurvivesReclamation
 }
 
 // release unlocks e and, if no other caller is currently holding or waiting
