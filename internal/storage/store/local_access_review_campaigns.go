@@ -155,7 +155,17 @@ func (ls *LocalStorage) CountPendingAccessReviewItems(ctx context.Context, campa
 func (ls *LocalStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error) {
 	var item models.AccessReviewItem
 	if err := ls.db.WithContext(ctx).First(&item, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		// Was an unconditional "not found" wrap regardless of the underlying
+		// error, so a genuine storage failure (e.g. a closed/unreachable DB)
+		// read identically to a real not-found to any caller string-matching
+		// on it. Distinguish genuine not-found (gorm.ErrRecordNotFound) from
+		// everything else, matching GetMachineIdentityCredentialByID's/
+		// GetAccessRequest's already-established fix for the identical bug
+		// class.
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &item, nil
 }

@@ -127,7 +127,12 @@ func TestGetAccessReviewItemProxy_DBError_S31(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/access-review-campaigns/items/1", nil), "itemID", "1")
 	w := httptest.NewRecorder()
 	h.GetAccessReviewItemProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// GetAccessReviewItem (local_access_review_campaigns.go) used to wrap
+	// EVERY error, including a closed/unreachable DB, as "not found" -- fixed
+	// to match GetAccessRequest/GetMachineIdentityCredentialByID's
+	// already-established pattern, so a real storage failure is now
+	// correctly a 500, not a 404.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestUpdateAccessReviewItemProxy_DBError_S31(t *testing.T) {

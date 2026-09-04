@@ -66,70 +66,83 @@ import (
 // tagged `gorm:"-"` on the model itself (transient, computed by
 // internal/core/invitations.go only on a value about to be returned to an
 // HTTP caller), so there is nothing here to persist or round-trip.
+// ResolvedByMachineIdentityID (#1573/#1622 sibling) is mirrored explicitly --
+// see internal/storage/store/remote_invitations.go's identical comment on
+// accessRequestWire for why dropping it on this hop would silently lose
+// which machine identity resolved a request.
 type accessRequestProxyWire struct {
-	ID            uint       `json:"id"`
-	ProjectID     uint       `json:"project_id"`
-	UserID        uint       `json:"user_id"`
-	SuggestedRole string     `json:"suggested_role"`
-	GrantedRole   string     `json:"granted_role"`
-	SecretID      *uint      `json:"secret_id"`
-	State         string     `json:"state"`
-	Reason        string     `json:"reason"`
-	ResolvedBy    uint       `json:"resolved_by"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ResolvedAt    *time.Time `json:"resolved_at"`
+	ID                          uint       `json:"id"`
+	ProjectID                   uint       `json:"project_id"`
+	UserID                      uint       `json:"user_id"`
+	SuggestedRole               string     `json:"suggested_role"`
+	GrantedRole                 string     `json:"granted_role"`
+	SecretID                    *uint      `json:"secret_id"`
+	State                       string     `json:"state"`
+	Reason                      string     `json:"reason"`
+	ResolvedBy                  uint       `json:"resolved_by"`
+	ResolvedByMachineIdentityID uint       `json:"resolved_by_machine_identity_id"`
+	ExpiresAt                   *time.Time `json:"expires_at"`
+	CreatedAt                   time.Time  `json:"created_at"`
+	ResolvedAt                  *time.Time `json:"resolved_at"`
 }
 
 func newAccessRequestProxyWire(req *models.AccessRequest) accessRequestProxyWire {
 	return accessRequestProxyWire{
-		ID:            req.ID,
-		ProjectID:     req.ProjectID,
-		UserID:        req.UserID,
-		SuggestedRole: req.SuggestedRole,
-		GrantedRole:   req.GrantedRole,
-		SecretID:      req.SecretID,
-		State:         req.State,
-		Reason:        req.Reason,
-		ResolvedBy:    req.ResolvedBy,
-		ExpiresAt:     req.ExpiresAt,
-		CreatedAt:     req.CreatedAt,
-		ResolvedAt:    req.ResolvedAt,
+		ID:                          req.ID,
+		ProjectID:                   req.ProjectID,
+		UserID:                      req.UserID,
+		SuggestedRole:               req.SuggestedRole,
+		GrantedRole:                 req.GrantedRole,
+		SecretID:                    req.SecretID,
+		State:                       req.State,
+		Reason:                      req.Reason,
+		ResolvedBy:                  req.ResolvedBy,
+		ResolvedByMachineIdentityID: req.ResolvedByMachineIdentityID,
+		ExpiresAt:                   req.ExpiresAt,
+		CreatedAt:                   req.CreatedAt,
+		ResolvedAt:                  req.ResolvedAt,
 	}
 }
 
 func (w accessRequestProxyWire) toModel() *models.AccessRequest {
 	return &models.AccessRequest{
-		ID:            w.ID,
-		ProjectID:     w.ProjectID,
-		UserID:        w.UserID,
-		SuggestedRole: w.SuggestedRole,
-		GrantedRole:   w.GrantedRole,
-		SecretID:      w.SecretID,
-		State:         w.State,
-		Reason:        w.Reason,
-		ResolvedBy:    w.ResolvedBy,
-		ExpiresAt:     w.ExpiresAt,
-		CreatedAt:     w.CreatedAt,
-		ResolvedAt:    w.ResolvedAt,
+		ID:                          w.ID,
+		ProjectID:                   w.ProjectID,
+		UserID:                      w.UserID,
+		SuggestedRole:               w.SuggestedRole,
+		GrantedRole:                 w.GrantedRole,
+		SecretID:                    w.SecretID,
+		State:                       w.State,
+		Reason:                      w.Reason,
+		ResolvedBy:                  w.ResolvedBy,
+		ResolvedByMachineIdentityID: w.ResolvedByMachineIdentityID,
+		ExpiresAt:                   w.ExpiresAt,
+		CreatedAt:                   w.CreatedAt,
+		ResolvedAt:                  w.ResolvedAt,
 	}
 }
 
 // accessRequestApprovalProxyWire mirrors models.AccessRequestApproval's
 // fields exactly (snake_case).
+// ApproverMachineIdentityID (#1622) is mirrored explicitly -- see
+// internal/storage/store/remote_invitations.go's identical comment on
+// accessRequestApprovalWire for why dropping it on this hop would reopen
+// #1622's fixed bug for storage.type:remote deployments.
 type accessRequestApprovalProxyWire struct {
-	ID         uint      `json:"id"`
-	RequestID  uint      `json:"request_id"`
-	ApproverID uint      `json:"approver_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID                        uint      `json:"id"`
+	RequestID                 uint      `json:"request_id"`
+	ApproverID                uint      `json:"approver_id"`
+	ApproverMachineIdentityID uint      `json:"approver_machine_identity_id"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 func newAccessRequestApprovalProxyWire(a *models.AccessRequestApproval) accessRequestApprovalProxyWire {
 	return accessRequestApprovalProxyWire{
-		ID:         a.ID,
-		RequestID:  a.RequestID,
-		ApproverID: a.ApproverID,
-		CreatedAt:  a.CreatedAt,
+		ID:                        a.ID,
+		RequestID:                 a.RequestID,
+		ApproverID:                a.ApproverID,
+		ApproverMachineIdentityID: a.ApproverMachineIdentityID,
+		CreatedAt:                 a.CreatedAt,
 	}
 }
 
@@ -345,11 +358,23 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 	existing.GrantedRole = body.GrantedRole
 	existing.Reason = body.Reason
 	// ResolvedBy is now always the AUTHENTICATED caller, never the wire-supplied
-	// value -- see the finding above. A machine actor's resolverID (0) is a
-	// pre-existing, unrelated limitation of core.AccessRequest.ResolvedBy's
-	// uint-only shape (it can't distinguish "no resolver" from "machine
-	// resolver 0" either way); not something this fix changes.
-	existing.ResolvedBy = resolverID
+	// value -- see the finding above.
+	//
+	// #1622 sibling gap: resolverID here is requestActorKindAndID's
+	// PrincipalID() -- the MACHINE's own ID for a machine resolver
+	// (ADR-030), NOT zero, contrary to what an earlier version of this
+	// comment claimed. A machine actor CAN reach this assignment for a
+	// project/role-scoped approval (RequireGranterHoldsRolePermissions
+	// above accepts a machine granter via actorIsMachine). Route into the
+	// matching discriminator field instead of unconditionally overwriting
+	// the USER-scoped ResolvedBy column with a machine's principal ID --
+	// the same fix CreateAccessRequestApprovalProxy needed for
+	// ApproverID/ApproverMachineIdentityID.
+	if resolverType == core.ActorTypeMachine {
+		existing.ResolvedByMachineIdentityID = resolverID
+	} else {
+		existing.ResolvedBy = resolverID
+	}
 	existing.ResolvedAt = body.ResolvedAt
 	updated, err := h.coreService.Storage().UpdateAccessRequest(r.Context(), existing)
 	if err != nil {
@@ -463,10 +488,36 @@ func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter,
 			return
 		}
 	}
+	// #1622 sibling gap: ApproverID (approverID here) is actually PrincipalID()
+	// -- the MACHINE's own ID for a machine caller, per ADR-030's "machine
+	// identities have no UserID" convention every other caller of
+	// requestActorKindAndID in this file already respects (see the SecretID/
+	// role-authority branches above, which correctly pass approverType
+	// alongside it). Setting ApproverID unconditionally would persist a
+	// machine's principal ID into the USER discriminator column, colliding
+	// hasAlreadyApproved's dual-control tuple check against a real UserID
+	// that happens to match, and never populating ApproverMachineIdentityID
+	// at all -- reopening the false-collision bug #1622 fixed for
+	// LocalStorage callers.
+	// #1622 sibling gap: ApproverID (approverID here) is actually PrincipalID()
+	// -- the MACHINE's own ID for a machine caller, per ADR-030's "machine
+	// identities have no UserID" convention every other caller of
+	// requestActorKindAndID in this file already respects (see the SecretID/
+	// role-authority branches above, which correctly pass approverType
+	// alongside it). Setting ApproverID unconditionally would persist a
+	// machine's principal ID into the USER discriminator column, colliding
+	// hasAlreadyApproved's dual-control tuple check against a real UserID
+	// that happens to match, and never populating ApproverMachineIdentityID
+	// at all -- reopening the false-collision bug #1622 fixed for
+	// LocalStorage callers.
 	approval := &models.AccessRequestApproval{
-		RequestID:  uint(id),
-		ApproverID: approverID,
-		CreatedAt:  body.CreatedAt,
+		RequestID: uint(id),
+		CreatedAt: body.CreatedAt,
+	}
+	if approverType == core.ActorTypeMachine {
+		approval.ApproverMachineIdentityID = approverID
+	} else {
+		approval.ApproverID = approverID
 	}
 	if err := h.coreService.Storage().CreateAccessRequestApproval(r.Context(), approval); err != nil {
 		log.Printf("access-requests proxy: create approval failed: %v", err)

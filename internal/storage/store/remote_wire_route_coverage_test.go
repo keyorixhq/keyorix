@@ -920,7 +920,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	"remote_dynamic.go:358":                 urlValuesEntry(),
 	"remote_dynamic.go:391":                 urlValuesEntry(),
 	"remote_invitations.go:229":             urlValuesEntry(),
-	"remote_invitations.go:396":             urlValuesEntry(),
+	"remote_invitations.go:413":             urlValuesEntry(),
 	"remote_login_attempts.go:52":           urlValuesEntry(),
 	"remote_machine_identities.go:337":      urlValuesEntry(),
 	"remote_machine_identities.go:686":      urlValuesEntry(),

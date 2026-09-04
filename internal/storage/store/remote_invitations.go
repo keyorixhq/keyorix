@@ -257,52 +257,60 @@ func (rs *RemoteStorage) ListProjectInvitations(ctx context.Context, projectID u
 // type to carry. See invitationWire's comment above for why every field is
 // named explicitly rather than relying on encoding/json's case-insensitive
 // fallback onto a GORM model with no json tags of its own.
+// ResolvedByMachineIdentityID (#1573/#1622 sibling) is mirrored explicitly
+// for the same reason accessRequestApprovalWire's ApproverMachineIdentityID
+// is -- dropping it on this wire hop silently loses which machine identity
+// resolved a request for a storage.type:remote deployment (attribution-only,
+// not check-defeating on its own, but the same class of gap).
 type accessRequestWire struct {
-	ID            uint       `json:"id"`
-	ProjectID     uint       `json:"project_id"`
-	UserID        uint       `json:"user_id"`
-	SuggestedRole string     `json:"suggested_role"`
-	GrantedRole   string     `json:"granted_role"`
-	SecretID      *uint      `json:"secret_id"`
-	State         string     `json:"state"`
-	Reason        string     `json:"reason"`
-	ResolvedBy    uint       `json:"resolved_by"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ResolvedAt    *time.Time `json:"resolved_at"`
+	ID                          uint       `json:"id"`
+	ProjectID                   uint       `json:"project_id"`
+	UserID                      uint       `json:"user_id"`
+	SuggestedRole               string     `json:"suggested_role"`
+	GrantedRole                 string     `json:"granted_role"`
+	SecretID                    *uint      `json:"secret_id"`
+	State                       string     `json:"state"`
+	Reason                      string     `json:"reason"`
+	ResolvedBy                  uint       `json:"resolved_by"`
+	ResolvedByMachineIdentityID uint       `json:"resolved_by_machine_identity_id"`
+	ExpiresAt                   *time.Time `json:"expires_at"`
+	CreatedAt                   time.Time  `json:"created_at"`
+	ResolvedAt                  *time.Time `json:"resolved_at"`
 }
 
 func newAccessRequestWire(req *models.AccessRequest) accessRequestWire {
 	return accessRequestWire{
-		ID:            req.ID,
-		ProjectID:     req.ProjectID,
-		UserID:        req.UserID,
-		SuggestedRole: req.SuggestedRole,
-		GrantedRole:   req.GrantedRole,
-		SecretID:      req.SecretID,
-		State:         req.State,
-		Reason:        req.Reason,
-		ResolvedBy:    req.ResolvedBy,
-		ExpiresAt:     req.ExpiresAt,
-		CreatedAt:     req.CreatedAt,
-		ResolvedAt:    req.ResolvedAt,
+		ID:                          req.ID,
+		ProjectID:                   req.ProjectID,
+		UserID:                      req.UserID,
+		SuggestedRole:               req.SuggestedRole,
+		GrantedRole:                 req.GrantedRole,
+		SecretID:                    req.SecretID,
+		State:                       req.State,
+		Reason:                      req.Reason,
+		ResolvedBy:                  req.ResolvedBy,
+		ResolvedByMachineIdentityID: req.ResolvedByMachineIdentityID,
+		ExpiresAt:                   req.ExpiresAt,
+		CreatedAt:                   req.CreatedAt,
+		ResolvedAt:                  req.ResolvedAt,
 	}
 }
 
 func (w accessRequestWire) toModel() *models.AccessRequest {
 	return &models.AccessRequest{
-		ID:            w.ID,
-		ProjectID:     w.ProjectID,
-		UserID:        w.UserID,
-		SuggestedRole: w.SuggestedRole,
-		GrantedRole:   w.GrantedRole,
-		SecretID:      w.SecretID,
-		State:         w.State,
-		Reason:        w.Reason,
-		ResolvedBy:    w.ResolvedBy,
-		ExpiresAt:     w.ExpiresAt,
-		CreatedAt:     w.CreatedAt,
-		ResolvedAt:    w.ResolvedAt,
+		ID:                          w.ID,
+		ProjectID:                   w.ProjectID,
+		UserID:                      w.UserID,
+		SuggestedRole:               w.SuggestedRole,
+		GrantedRole:                 w.GrantedRole,
+		SecretID:                    w.SecretID,
+		State:                       w.State,
+		Reason:                      w.Reason,
+		ResolvedBy:                  w.ResolvedBy,
+		ResolvedByMachineIdentityID: w.ResolvedByMachineIdentityID,
+		ExpiresAt:                   w.ExpiresAt,
+		CreatedAt:                   w.CreatedAt,
+		ResolvedAt:                  w.ResolvedAt,
 	}
 }
 
@@ -316,19 +324,28 @@ func decodeAccessRequestResponse(data []byte) (*models.AccessRequest, error) {
 
 // accessRequestApprovalWire mirrors models.AccessRequestApproval's fields
 // exactly (snake_case).
+// ApproverMachineIdentityID (#1622) is mirrored explicitly -- it is the
+// discriminator hasAlreadyApproved's dual-control tuple check depends on to
+// tell two distinct machine approvers apart (both have ApproverID==0, ADR-030).
+// Dropping it on this wire hop would silently collapse every machine
+// approver back to the same (RequestID, ApproverID=0) tuple for a
+// storage.type:remote deployment, reopening the exact false-collision/
+// false-rejection bug #1622 fixed for LocalStorage.
 type accessRequestApprovalWire struct {
-	ID         uint      `json:"id"`
-	RequestID  uint      `json:"request_id"`
-	ApproverID uint      `json:"approver_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID                        uint      `json:"id"`
+	RequestID                 uint      `json:"request_id"`
+	ApproverID                uint      `json:"approver_id"`
+	ApproverMachineIdentityID uint      `json:"approver_machine_identity_id"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 func newAccessRequestApprovalWire(a *models.AccessRequestApproval) accessRequestApprovalWire {
 	return accessRequestApprovalWire{
-		ID:         a.ID,
-		RequestID:  a.RequestID,
-		ApproverID: a.ApproverID,
-		CreatedAt:  a.CreatedAt,
+		ID:                        a.ID,
+		RequestID:                 a.RequestID,
+		ApproverID:                a.ApproverID,
+		ApproverMachineIdentityID: a.ApproverMachineIdentityID,
+		CreatedAt:                 a.CreatedAt,
 	}
 }
 
@@ -454,10 +471,11 @@ func (rs *RemoteStorage) ListAccessRequestApprovals(ctx context.Context, request
 	rows := make([]*models.AccessRequestApproval, 0, len(result.Approvals))
 	for _, w := range result.Approvals {
 		rows = append(rows, &models.AccessRequestApproval{
-			ID:         w.ID,
-			RequestID:  w.RequestID,
-			ApproverID: w.ApproverID,
-			CreatedAt:  w.CreatedAt,
+			ID:                        w.ID,
+			RequestID:                 w.RequestID,
+			ApproverID:                w.ApproverID,
+			ApproverMachineIdentityID: w.ApproverMachineIdentityID,
+			CreatedAt:                 w.CreatedAt,
 		})
 	}
 	return rows, nil
