@@ -183,17 +183,33 @@ chart's own default resource shape, not by operator diligence alone:
 
 ## Verification
 
-**Follow-up pass (2026-09-04): observed values, real binary, real Linux
-container.** The original version of this ADR asserted the measurements
-above from a companion evidence document rather than from commands run in
-this ADR's own verification pass — the same evidence-provenance gap ADR-098
-itself had (verified under a configuration, `--cap-add=IPC_LOCK`, the
-shipped chart does not grant). This section closes that gap with commands
-run directly against `server/Dockerfile`'s image, `linux/arm64` via this
+**Follow-up pass (2026-09-04, superseded again same day): observed values,
+real binary, real Linux container.** The original version of this ADR
+asserted the measurements above from a companion evidence document rather
+than from commands run in this ADR's own verification pass. A first
+follow-up (below, now itself superseded) closed that gap but used a single
+narrow scenario (50 secrets, one client) to size a Guaranteed-QoS
+reservation — insufficient, because `requests == limits` means the chosen
+number is capacity every install permanently withholds from its node. This
+section replaces that narrow measurement with a fuller matrix: secret count
+and client concurrency varied independently, the bundled deployment-wide CSV
+export and audit-log export surfaces exercised at the largest count tier,
+one memory-capped run to directly test for an OOM-kill at the limit
+`values.yaml` set, and one 30-minute sustained-load pass. All commands run
+directly against `server/Dockerfile`'s image, `linux/arm64` via this
 environment's Docker backend (OrbStack — not the `linux/amd64` architecture
 the shipped `ghcr.io/keyorixhq/keyorix-server` image and most production
 Kubernetes nodes run; not independently re-measured on `amd64` from this
-pass).
+pass). Method: `docker exec <container> cat /proc/6/status` (PID 6 is the
+real server process; PID 1 is `entrypoint.sh`), reading `VmRSS`/`VmHWM`
+(peak-ever resident set for the process's lifetime so far);
+`docker inspect -f '{{.State.OOMKilled}}'` for the OOM check; load generated
+via real HTTP calls (`/auth/login` then `POST /api/v1/secrets`,
+`GET /api/v1/secrets`, `GET /api/v1/secrets/{id}` — not synthetic in-process
+allocation) using a small Python `ThreadPoolExecutor`-based driver
+(`.scratch/measure.py`, `.scratch/sustained.py`, not committed — throwaway
+per this repo's `.scratch/` convention, reproducible from the commands
+described here).
 
 - **`VmLck` is 0 at rest, confirming mlockall is genuinely gone** — the
   literal line from `/proc/<pid>/status` inside the running container, no
@@ -201,22 +217,122 @@ pass).
   ```
   VmLck:	       0 kB
   ```
-- **RSS at rest and under load**, same container, SQLite storage, real
-  `/auth/login` + `POST /api/v1/secrets` HTTP calls (not synthetic
-  allocation) — 20 secrets at ~500KB then 30 more at ~2MB (~70MB of secret
-  payload total), then a 30-second idle period:
+- **Secret-count axis, concurrency held at 1** (sequential, one client),
+  cumulative on one running instance — 50 secrets at ~500KB (matching the
+  original narrow test, kept for continuity), then 950 more at a realistic
+  ~200B (typical API-key/password size) to reach 1,000, then 9,000 more at
+  ~200B to reach 10,000:
   | Point | `VmRSS` | `VmHWM` (peak) |
   |---|---|---|
-  | At rest (boot, before any secret) | 22704 kB | 47452 kB |
-  | After 20×~500KB secrets | 48684 kB | 52884 kB |
-  | After 30 more ×~2MB secrets (peak load) | 75284 kB | 81736 kB |
-  | After 30s idle (health-polled every 5s) | 70336 kB | 81736 kB |
+  | At rest | 23148 kB | 51192 kB |
+  | 50 secrets (50×~500KB) | 59084 kB | 61096 kB |
+  | 1,000 secrets (+950×~200B) | 44904 kB | 61096 kB (unchanged) |
+  | 10,000 secrets (+9,000×~200B) | 48040 kB | 61096 kB (unchanged) |
 
-  Unlike the pre-removal measurement (byte-for-byte identical before/after
-  a 30s idle period — `mlockall`'s locked pages could not be reclaimed),
-  RSS here **decreases** during the idle period (75284 → 70336 kB) — the Go
-  runtime's scavenger can now actually return freed pages to the OS, because
-  nothing is pinning them.
+  **Row count alone, at realistic per-secret size, does not drive memory.**
+  Growing the store 200x (50 → 10,000 rows) via small sequential writes
+  never raised the peak past what the original 50×500KB burst had already
+  set — each request's working set is independent and reclaimed before the
+  next.
+- **Bulk endpoints at the 10,000-row tier** (the scenario this matrix was
+  specifically designed to exercise — a large count meeting a bulk read):
+  | Endpoint | Response size | `VmRSS` after | `VmHWM` (peak) |
+  |---|---|---|---|
+  | `GET /api/v1/secrets?...&page_size=100` (paginated list) | 85029 B | 69236 kB | 69236 kB |
+  | `GET /api/v1/secrets/inventory.csv` (deployment-wide, **unbounded** — no `LIMIT`) | 746706 B (10,050 rows) | 57928 kB | 68288 kB |
+  | `GET /api/v1/audit/export.csv?limit=10000` (bounded, `csvExportMaxRows` cap) | 1221918 B (10,000 rows) | 48296 kB | 68288 kB (unchanged) |
+
+  **Also negligible.** The unbounded deployment-wide inventory export
+  materializes all 10,050 rows into memory before writing a single CSV byte
+  (`server/http/handlers/secrets_inventory_deployment_csv.go`) but each row
+  is metadata only (name, id, project, classification, owner, timestamps —
+  never a secret value), so 10k rows costs single-digit MB, not the
+  "row count becomes resident memory" risk this test was built to catch. Row
+  count is not the dominant cost driver for this dataset shape; concurrency
+  and per-request payload size are (below).
+- **Concurrency axis, secret count and size held fixed** (100 secrets per
+  burst, added on top of the running 10k-row instance), isolating
+  concurrency's own effect:
+  | Concurrency | Secret size | `VmHWM` (peak) after burst |
+  |---|---|---|
+  | 1 | 100KB | 68288 kB (unchanged) |
+  | 25 | 100KB | 85304 kB |
+  | 100 | 100KB | 128728 kB |
+  | 100 | 500KB | 237248 kB |
+  | 100 | 2MB | **581864 kB — exceeds the 512Mi (524288 KiB) limit** |
+
+  **Concurrency is the dominant driver, not count.** Throughput barely
+  changed between concurrency 1/25/100 at the same 100-secret/100KB size
+  (111 → 102 → 97.5 req/s — consistent with SQLite's single-writer lock
+  serializing the actual writes), but peak memory rose monotonically and
+  steeply (68 → 85 → 129 MB) purely from more requests being held in flight
+  simultaneously, with no corresponding throughput benefit. Combined with
+  payload size the effect compounds: 100 concurrent × 2MB secrets peaked at
+  568 MB, already past the shipped 512Mi limit, in an UNCAPPED container —
+  a smaller reservation would not have "handled" this more gracefully, it
+  would have been killed before reaching this reading.
+- **5-minute idle after the 2MB/concurrency=100 peak:** `VmRSS` fell from
+  the 332564 kB reading taken immediately after the burst to 36632 kB —
+  reclaimed almost completely once load actually stops. The peak is
+  transient, but it still has to be survived in the moment it happens.
+- **OOM-kill test, at the exact limit `values.yaml` sets.** Fresh container,
+  `docker run --memory=512m` (matching `server.resources.limits.memory:
+  512Mi` verbatim):
+  - Replaying the identical 100×2MB/concurrency=100 burst: peaked at 500864
+    kB (95.5% of the 524288 KiB cap) — survived, but by a margin thin enough
+    that GC-timing luck, not design headroom, is the reason it didn't tip
+    over (the uncapped run of the same scenario read 581864 kB — above the
+    cap — showing this is not a stable, repeatable "safe" number).
+  - Escalating to 200×2MB/concurrency=200 on the same capped container: the
+    process was killed. `docker inspect -f '{{.State.OOMKilled}}'` → `true`,
+    exit code 137. **The current 512Mi default is empirically not safe
+    against a plausible concurrent-large-secret burst.**
+- **30-minute sustained pass, moderate concurrency (25), mixed realistic
+  workload** (random per-iteration choice of create-a-~300B-secret /
+  paginated-list / list-then-fetch-one, real HTTP calls throughout, fresh
+  container):
+  | t | Iterations | `VmRSS` | `VmHWM` (peak) |
+  |---|---|---|---|
+  | start | 0 | 119948 kB | 198492 kB |
+  | +2min | 4,989 | 265104 kB | 298924 kB |
+  | +10min | 14,514 | 468256 kB | 506724 kB |
+  | +18min | 19,503 | 576680 kB | 618552 kB |
+  | +26min | 24,249 | 685712 kB | 713616 kB |
+  | +30min (test end) | 26,263 | 655172 kB | **723336 kB** |
+  | +5min further idle (test fully stopped) | — | 59276 kB | 723336 kB (unchanged) |
+
+  (The `start` reading is elevated above true cold-boot baseline — an
+  earlier, interrupted launch attempt of this same driver had already sent
+  some requests to this container before being killed and restarted; the
+  trend from `+2min` onward is unaffected and is what matters here.)
+
+  **RSS climbs steadily for the full 30 minutes and does not plateau** —
+  every 2-minute sample is higher than the last, right through the end of
+  the run, peaking at 723336 kB (**~1.4x the 512Mi limit**, achieved under
+  only *moderate* concurrency doing a realistic mixed workload, not an
+  adversarial burst). This is a lower bar to trigger than the burst
+  scenario above and arguably the more concerning finding. It is **not a
+  permanent leak**: 5 minutes after the driver stopped entirely, `VmRSS` had
+  fallen to 59276 kB, close to the true cold-boot baseline (~23 MB) — the
+  memory is reclaimable, just not reclaimed fast enough relative to the
+  sustained allocation rate for Go's default GC pacing (`GOGC=100`, no
+  `GOMEMLIMIT`) to keep the process anywhere near its steady-state minimum
+  while load continues.
+
+  **Leading cause identified, not just observed:** the server log for this
+  run contains 704 occurrences of `SECURITY: failed to persist audit event
+  "..." ... database is locked (SQLITE_BUSY)` out of 27,351 iterations
+  (~2.6%) — SQLite's single-writer lock rejecting concurrent audit-event
+  inserts under this load (logged and dropped, not silently — a real,
+  separate finding: audit events are lost under write contention on the
+  shipped default backend, worth its own follow-up, out of scope here). The
+  `.db-wal` file also grew to 59.5 MB over the run without being
+  checkpointed. Neither fact alone accounts for the full ~600 MB of growth,
+  but both point the same direction: **this is concurrent write contention
+  against the bundled SQLite backend under sustained load, not a Go-level
+  memory leak** — the growth's shape (steady climb, then full reclaim once
+  load stops) matches GC pacing lagging a sustained allocation rate, not an
+  accumulating retained data structure.
 - **Core dump suppression, red and green, via the real `ApplyMemoryHardening`
   code path** (not a unit test in isolation): a throwaway harness
   (`internal/hardening.ApplyMemoryHardening()` then a deliberate nil-pointer
@@ -290,3 +406,80 @@ pass).
 - Confirmed no other reference to `MlockConfig`, `mlockallFn`, or
   `security.mlock.*` remains anywhere in the repository (`git grep`, not
   `grep -r`, across `*.go`/`*.yaml`/`*.yml`/`*.md`).
+
+## Sizing recommendation (2026-09-04 follow-up — not yet implemented)
+
+**The matrix above shows 512Mi is not a safe Guaranteed-QoS reservation.**
+It was OOM-killed under a directly-reproduced burst scenario, and a separate
+30-minute moderate-concurrency sustained run peaked at 723 MB (1.4x the
+limit) without plateauing. Neither is a contrived adversarial case — 100-200
+concurrent clients and 25 concurrent clients sustained are both ordinary
+multi-user load, not an attack.
+
+**Recommended: raise `server.resources.requests/limits.memory` to 768Mi**,
+keeping `requests == limits` (Guaranteed QoS, unchanged rationale). Headroom
+math: the single-burst worst case measured (100 concurrent × 2MB,
+uncapped) peaked at 582 MB; 768Mi (805,306,368 bytes) is ~1.4x that. This
+does **not** cover the sustained-pass peak (723 MB) with real margin on its
+own — see the `GOMEMLIMIT` recommendation below, which is what actually
+closes that gap, not a larger static number chasing an unbounded sustained
+scenario.
+
+**What this trades off:** every default install now permanently reserves
+768Mi instead of 512Mi — 256Mi of additional capacity every customer holds
+whether or not they ever approach it, on a product positioned as
+lightweight. The alternative (leave 512Mi and accept the OOM risk this
+matrix demonstrated) is not a real option once the risk is measured, not
+assumed — a Guaranteed-QoS pod that gets OOM-killed under ordinary
+concurrent use fails the exact goal (surviving ordinary load without
+disruption) the QoS change in the first follow-up was made for. This
+number is **not** sized to survive the sustained-load scenario indefinitely
+at 25-concurrency — see below for why that is deliberately a `GOMEMLIMIT`
+problem instead of an ever-larger static reservation.
+
+**Not implemented in this pass** — `deploy/helm/keyorix/values.yaml` still
+reads 512Mi as of this write-up; this is a recommendation for the next
+follow-up PR, stated here so the measurement and the decision aren't
+separated in time.
+
+## `GOMEMLIMIT`: recommended, ~85% of the container limit
+
+**Recommend setting `GOMEMLIMIT` to approximately 85% of
+`server.resources.limits.memory`** (e.g. `GOMEMLIMIT=650MiB` against a 768Mi
+container limit — leaving `GOGC` at its default rather than disabling it,
+per the Go team's own guidance for using `GOMEMLIMIT` as a backstop
+alongside percentage-based GC, not a replacement for it), set as an
+environment variable on the server container (no code change needed — the
+Go runtime reads it directly; `internal/config`/`server/main.go` need no
+new field).
+
+**Why:** the sustained-load finding above is exactly the failure mode
+`GOMEMLIMIT` exists for. Go's default GC (`GOGC=100`, no memory limit
+awareness at all when `GOMEMLIMIT` is unset — confirmed by `git grep -n
+"GOMEMLIMIT\|SetMemoryLimit" -- '*.go' '*.yaml' '*Dockerfile*'` returning
+zero hits anywhere in this repo, both before and after this pass) paces
+collection off heap *growth*, not proximity to any external ceiling — it has
+no way to know a hard cgroup limit exists at all, let alone that it is
+approaching one. Under the sustained scenario measured, RSS climbed for 30
+straight minutes with no sign of slowing down on its own; the only reason it
+didn't end in an OOM-kill is that the container had no cap during that
+specific run. With `GOMEMLIMIT` set, the runtime is required to run
+additional GC cycles as live heap approaches the configured limit — trading
+CPU (more frequent, harder-working collections) for staying alive, changing
+the failure mode from "hard kill, mid-request, no warning" to "degraded
+throughput/latency, visible in metrics, process stays up." This is a
+strictly better outcome for the exact scenario this pass measured, at the
+cost of GC CPU overhead under sustained pressure — not measured directly in
+this pass (would require comparing sustained-load CPU utilization with and
+without `GOMEMLIMIT` set, a follow-up measurement, not inferred here).
+
+**Not a substitute for the base container limit being large enough for
+ordinary bursts.** `GOMEMLIMIT` makes the GC work harder as the heap
+approaches it; it does not create memory the process doesn't have. A
+container limit sized for the single-burst worst case (the 768Mi
+recommendation above) still matters — `GOMEMLIMIT` is what keeps a
+*sustained* load from reaching that ceiling in the first place, not a way to
+shrink the ceiling itself.
+
+**Not implemented in this pass**, same status as the memory-limit
+recommendation above — stated here for the next follow-up PR to carry out.
