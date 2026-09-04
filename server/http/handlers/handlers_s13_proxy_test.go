@@ -520,6 +520,48 @@ func TestCreateUserWithRoleGrantsProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+// TestCreateUserWithRoleGrantsProxy_RejectsInvalidAccountState_S13 — this
+// endpoint bypasses buildUserForCreate/core.CreateUser entirely (#1642) and
+// takes account_state straight from the wire, unlike either CreateUser HTTP
+// or gRPC route (which never expose the field to the client at all, per
+// core.IsValidAccountState's doc comment) -- so it must validate the value
+// itself instead of persisting arbitrary caller-supplied garbage.
+func TestCreateUserWithRoleGrantsProxy_RejectsInvalidAccountState_S13(t *testing.T) {
+	h := freshUserHandlerForProxyS13(t)
+	body := proxyJSON(map[string]interface{}{
+		"username":      "badstate_user_s13",
+		"email":         "badstate_s13@example.com",
+		"password_hash": "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0",
+		"account_state": "not_a_real_state",
+		"grants":        []interface{}{},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body)
+	w := httptest.NewRecorder()
+	h.CreateUserWithRoleGrantsProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
+}
+
+// TestCreateUserWithRoleGrantsProxy_EmptyAccountStateNormalizesToActive_S13 —
+// an omitted account_state (the legacy shorthand) must still be accepted and
+// normalized to active, not rejected as invalid.
+func TestCreateUserWithRoleGrantsProxy_EmptyAccountStateNormalizesToActive_S13(t *testing.T) {
+	h := freshUserHandlerForProxyS13(t)
+	body := proxyJSON(map[string]interface{}{
+		"username":      "emptystate_user_s13",
+		"email":         "emptystate_s13@example.com",
+		"password_hash": "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0",
+		"grants":        []interface{}{},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body)
+	w := httptest.NewRecorder()
+	h.CreateUserWithRoleGrantsProxy(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.True(t, resp.Success)
+}
+
 // ── retention_proxy.go: decodeRetentionBeforeBody ───────────────────────────
 
 // TestDeleteExpiredRoleGrantsProxy_BadBody_S13 — bad JSON → 400.

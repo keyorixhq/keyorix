@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -346,6 +347,16 @@ func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid email: "+ferr.Error())
 		return
 	}
+	// core.IsValidAccountState's own doc comment claims no caller-controlled write
+	// path reaches account_state unvalidated (#334/#135: HTTP/gRPC CreateUser never
+	// take it from the client at all) -- but this endpoint bypasses buildUserForCreate
+	// entirely (see #1642 above) and DOES take it straight from the wire, so that
+	// invariant silently didn't hold here. Validate against the ADR-025 canonical set
+	// before persisting, same as every other field this handler re-checks.
+	if !core.IsValidAccountState(body.AccountState) {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "account_state is not a recognized value")
+		return
+	}
 	user := &models.User{
 		Username:          body.Username,
 		UsernameFolded:    foldedUsername.Folded(),
@@ -354,7 +365,7 @@ func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *ht
 		DisplayName:       body.DisplayName,
 		PasswordHash:      body.PasswordHash,
 		IsActive:          body.IsActive,
-		AccountState:      body.AccountState,
+		AccountState:      core.NormalizeAccountState(body.AccountState),
 		PasswordChangedAt: body.PasswordChangedAt,
 	}
 	created, err := h.coreService.Storage().CreateUserWithRoleGrants(r.Context(), user, grants)
