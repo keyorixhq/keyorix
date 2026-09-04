@@ -221,7 +221,7 @@ func TestRemoteStorage_CreateAccessReviewItems(t *testing.T) {
 
 func TestRemoteStorage_CreateAccessReviewItems_Empty(t *testing.T) {
 	// Empty slice is a no-op — no HTTP call is made.
-	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	err = rs.CreateAccessReviewItems(context.Background(), nil)
