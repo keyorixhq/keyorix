@@ -7,6 +7,7 @@ import { SYSTEM_ROLES } from '../../services/users';
 import type { ProjectAssignment, SetupLinkResult } from '../../services/users';
 import { useCreateGlobalInvitation } from './api';
 import { inviteErrorMessage } from './inviteErrorMessage';
+import { copyToClipboard } from '../../utils';
 
 interface GlobalInviteUserModalProps {
     isOpen: boolean;
@@ -53,9 +54,9 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
         onClose();
     }
 
-    function handleCopy() {
+    async function handleCopy() {
         if (!result?.link_for_admin) return;
-        navigator.clipboard?.writeText(result.link_for_admin);
+        await copyToClipboard(result.link_for_admin);
         setCopied(true);
     }
 

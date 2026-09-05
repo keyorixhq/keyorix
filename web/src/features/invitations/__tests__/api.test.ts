@@ -92,6 +92,27 @@ describe('useCreateGlobalInvitation', () => {
         expect(mock.createGlobal).toHaveBeenCalledWith('carol@example.com', 'system_viewer', assignments);
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: INVITATION_KEYS.all });
     });
+
+    // G28: the response carries a one-time setup-link credential. Without a short
+    // gcTime override, react-query's MutationCache would retain it for the default
+    // 5 minutes after the last observer unmounts.
+    it('does not retain the setup link in the MutationCache once the component unmounts', async () => {
+        mock.createGlobal.mockResolvedValueOnce({
+            invitation: { id: 10 },
+            setup_link: { link_for_admin: 'https://k/x/global' },
+        });
+        const { wrapper, queryClient } = createWrapper();
+        const { result, unmount } = renderHook(() => useCreateGlobalInvitation(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ email: 'carol@example.com', role: 'system_viewer', assignments: [] });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+
+        unmount();
+        await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
+    });
 });
 
 describe('useRevokeInvitation', () => {
