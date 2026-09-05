@@ -27,6 +27,9 @@ var PingCmd = &cobra.Command{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
+	fmt.Println("📊 System Status")
+	fmt.Println("================")
+
 	// Load configuration. Pass "" (not the literal "keyorix.yaml") so this
 	// resolves via config.Load's normal KEYORIX_CONFIG_PATH → ./keyorix.yaml
 	// fallback chain — the same resolution common.InitializeCoreService() below
@@ -37,15 +40,35 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// respect KEYORIX_CONFIG_PATH) was actually running against remote storage
 	// two lines later — the displayed storage type and the one actually used
 	// for the health check could silently disagree.
-	cfg, err := config.Load("")
-	if err != nil {
+	cfg, cfgErr := config.Load("")
+	if cfgErr != nil && !config.IsNotExist(cfgErr) {
 		// #1644: a Load error means EITHER "no config file yet" OR "a config file is
 		// there and failed to parse" -- reporting the latter as "no configuration
 		// found, using defaults" is actively misleading (the file exists and is
 		// broken, not absent), so surface the real error instead of guessing wrong.
-		if !config.IsNotExist(err) {
-			return fmt.Errorf("failed to load existing configuration: %w", err)
+		return fmt.Errorf("failed to load existing configuration: %w", cfgErr)
+	}
+
+	// keyorix.yaml's storage.type: remote (the server-to-server RemoteStorage
+	// relay config) already resolves and health-checks correctly below via
+	// InitializeCoreService/HealthCheck -- left untouched when present. But a
+	// remote TARGET configured via `keyorix connect` (~/.keyorix/cli.yaml) or
+	// KEYORIX_SERVER/KEYORIX_TOKEN env vars is invisible to config.Load /
+	// cfg.Storage.Type entirely -- a completely separate mechanism (see
+	// common.ResolveRemote's doc) -- so without this check that configuration
+	// would silently fall through to the "Local" branch below and read/create
+	// a stray local secrets.db despite the operator believing `status` was
+	// checking a real server (the exact defect class this review exists to
+	// close). Checked only when cfg itself does NOT already say remote, so an
+	// existing keyorix.yaml storage.type: remote deployment's behavior is
+	// completely unchanged.
+	if cfgErr != nil || cfg.Storage.Type != "remote" {
+		if rc, ok := common.NewRemoteClient(); ok {
+			return runStatusRemote(rc)
 		}
+	}
+
+	if cfgErr != nil {
 		fmt.Printf("⚠️  No configuration found, using defaults\n")
 		cfg = &config.Config{
 			Storage: config.StorageConfig{
@@ -56,9 +79,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			},
 		}
 	}
-
-	fmt.Println("📊 System Status")
-	fmt.Println("================")
 
 	// Show storage type
 	switch cfg.Storage.Type {
@@ -96,6 +116,42 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Response Time: %v\n", duration)
 	}
 
+	return nil
+}
+
+// runStatusRemote reports connectivity to the server resolved via
+// common.NewRemoteClient (the KEYORIX_SERVER/KEYORIX_TOKEN env vars or
+// `keyorix connect`'s ~/.keyorix/cli.yaml -- see runStatus's doc comment for
+// why this is checked separately from cfg.Storage.Type) by calling its
+// unauthenticated GET /health (server/http/handlers/health.go) -- never
+// through common.InitializeCoreService()'s local/embedded storage path, so
+// this command cannot silently fall back to a stray local file once this
+// kind of remote target is configured. Mirrors runStatus's own
+// print-then-return-nil contract deliberately (see status_test.go /
+// status_s2_test.go, which require runStatus to never error out just
+// because the health check itself failed): this is a read-only diagnostic
+// display, not a mutating action, so a failed health check is reported via
+// the printed "❌ Unhealthy" line, not a nonzero exit -- the concrete harm
+// this command must never cause is silently querying (or creating) LOCAL
+// storage while the operator believes it is checking a real remote server.
+func runStatusRemote(rc *common.RemoteClient) error {
+	fmt.Printf("Storage Type: 🌐 Remote\n")
+	fmt.Printf("Server URL:   %s\n", rc.Endpoint)
+
+	fmt.Printf("Connection:   ")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := rc.GetRaw(ctx, "/health")
+	duration := time.Since(start)
+
+	if err != nil {
+		fmt.Printf("❌ Unhealthy (%s)\n", err.Error())
+	} else {
+		fmt.Printf("✅ Healthy\n")
+	}
+	fmt.Printf("Response Time: %v\n", duration)
 	return nil
 }
 

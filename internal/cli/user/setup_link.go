@@ -12,6 +12,7 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +34,9 @@ var resendSetupLinkCmd = &cobra.Command{
 		if resendSetupLinkBy == "" {
 			return errors.New("acting admin email is required (use --by)")
 		}
+		if rc, ok := common.NewRemoteClient(); ok {
+			return runResendSetupLinkRemote(rc)
+		}
 		service, err := common.InitializeCoreService()
 		if err != nil {
 			return fmt.Errorf("failed to initialize service: %w", err)
@@ -53,6 +57,25 @@ var resendSetupLinkCmd = &cobra.Command{
 		common.PrintProvisionResult(prov)
 		return nil
 	},
+}
+
+// runResendSetupLinkRemote reissues and redelivers the user's setup link via
+// POST /api/v1/users/{id}/resend-setup-link against the connected server
+// (server/http/handlers/users_crud.go's ResendSetupLink), so the link is
+// issued from -- and tracked/throttled by -- the server's real setup-token
+// store instead of a stray local SQLite file.
+func runResendSetupLinkRemote(rc *common.RemoteClient) error {
+	ctx := context.Background()
+	label := remoteUserLabel(ctx, rc, resendSetupLinkUserID)
+	fmt.Printf("Reissuing setup link for %s on %s...\n", label, rc.Endpoint)
+
+	var prov core.ProvisionSetupResult
+	if err := rc.Post(ctx, fmt.Sprintf("/api/v1/users/%d/resend-setup-link", resendSetupLinkUserID), struct{}{}, &prov); err != nil {
+		return fmt.Errorf("failed to resend setup link for %s on %s: %w", label, rc.Endpoint, err)
+	}
+	fmt.Printf("Setup link reissued for %s on %s.\n", label, rc.Endpoint)
+	common.PrintProvisionResult(&prov)
+	return nil
 }
 
 func init() {
