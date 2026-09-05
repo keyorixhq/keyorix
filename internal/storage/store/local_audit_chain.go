@@ -16,6 +16,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	// nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used
+	// Used only for retry-backoff jitter (see the #nosec G404 at its call site below), never
+	// for a security-sensitive value such as a token, key, or ID.
 	mathrand "math/rand"
 	"strconv"
 	"strings"

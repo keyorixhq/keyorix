@@ -173,6 +173,11 @@ func guardAccountStateValid(db *gorm.DB) error {
 	}
 	inList := strings.Join(quoted, ",")
 	checkExpr := "account_state IN (" + inList + ")"
+	// nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
+	// constraintName is a package-level Go constant and checkExpr is built solely from the
+	// hardcoded ValidAccountStateSQLValues literals above -- neither carries any request- or
+	// row-derived data. This is also DDL (ALTER TABLE ... ADD CONSTRAINT), which Postgres
+	// cannot accept via parameterized placeholders regardless.
 	if err := db.Exec("ALTER TABLE users ADD CONSTRAINT " + constraintName +
 		" CHECK (" + checkExpr + ")").Error; err != nil {
 		// This constraint is stricter than the blank-only guard it replaces --
