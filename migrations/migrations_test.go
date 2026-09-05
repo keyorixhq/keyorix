@@ -939,3 +939,124 @@ func TestShareRecordsRecipientID_NoForeignKeyToUsers(t *testing.T) {
 		t.Fatalf("insert group share_records row with recipient_id=999 (no matching users row): %v", err)
 	}
 }
+
+// TestUsersUsernameIndex_PartialUniqueAllowsReuseAfterSoftDelete pins the
+// fix replacing users.username's inline UNIQUE column constraint (backed by
+// an un-droppable SQLite auto-index) with a named partial unique index
+// scoped to `WHERE deleted_at IS NULL`, matching the state
+// internal/storage/factory.go's ensureUserNameIndex establishes via
+// AutoMigrate. Also pins the non-regression: two LIVE rows must still
+// collide.
+func TestUsersUsernameIndex_PartialUniqueAllowsReuseAfterSoftDelete(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('alice', 'a1@example.com', 'x')`,
+	); err != nil {
+		t.Fatalf("seed first alice: %v", err)
+	}
+
+	// Non-regression: two live rows sharing a username must still collide.
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('alice', 'a2@example.com', 'x')`,
+	); err == nil {
+		t.Fatal("expected duplicate live username 'alice' to be rejected, got nil error")
+	}
+
+	if _, err := db.Exec(`UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE username = 'alice'`); err != nil {
+		t.Fatalf("soft-delete alice: %v", err)
+	}
+
+	// Regression fix: once the original row is soft-deleted, the username is
+	// free for reuse. An inline UNIQUE column constraint's auto-index could
+	// never allow this, since it can't be scoped to live rows and can't be
+	// dropped by name to replace with a partial one.
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('alice', 'a3@example.com', 'x')`,
+	); err != nil {
+		t.Fatalf("expected reused username 'alice' after soft-delete to succeed, got error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = 'alice'`).Scan(&count); err != nil {
+		t.Fatalf("count users named alice: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count of users named 'alice' = %d, want 2 (one soft-deleted, one live)", count)
+	}
+}
+
+// TestGroupsNameIndex_PartialUniqueAllowsReuseAfterSoftDelete mirrors
+// TestUsersUsernameIndex_PartialUniqueAllowsReuseAfterSoftDelete for
+// groups.name, pinning the same fix (ensureGroupNameIndex's counterpart).
+func TestGroupsNameIndex_PartialUniqueAllowsReuseAfterSoftDelete(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.Exec(`INSERT INTO groups (name, description) VALUES ('g1', 'first')`); err != nil {
+		t.Fatalf("seed first group g1: %v", err)
+	}
+
+	// Non-regression: two live groups sharing a name must still collide.
+	if _, err := db.Exec(`INSERT INTO groups (name, description) VALUES ('g1', 'second')`); err == nil {
+		t.Fatal("expected duplicate live group name 'g1' to be rejected, got nil error")
+	}
+
+	if _, err := db.Exec(`UPDATE groups SET deleted_at = CURRENT_TIMESTAMP WHERE name = 'g1'`); err != nil {
+		t.Fatalf("soft-delete group g1: %v", err)
+	}
+
+	// Regression fix: once the original row is soft-deleted, the name is
+	// free for reuse.
+	if _, err := db.Exec(`INSERT INTO groups (name, description) VALUES ('g1', 'reused')`); err != nil {
+		t.Fatalf("expected reused group name 'g1' after soft-delete to succeed, got error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM groups WHERE name = 'g1'`).Scan(&count); err != nil {
+		t.Fatalf("count groups named g1: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count of groups named 'g1' = %d, want 2 (one soft-deleted, one live)", count)
+	}
+}
+
+// TestNamespacesNameIndex_PartialUniqueAllowsReuseAfterSoftDelete mirrors the
+// same fix for namespaces.name (ensureProjectNameIndex's counterpart --
+// namespaces is renamed to `projects` by 006, but this pins the state at
+// 001_init.sql, before that rename).
+func TestNamespacesNameIndex_PartialUniqueAllowsReuseAfterSoftDelete(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.Exec(`INSERT INTO namespaces (name, description) VALUES ('proj1', 'first')`); err != nil {
+		t.Fatalf("seed first namespace proj1: %v", err)
+	}
+
+	// Non-regression: two live namespaces sharing a name must still collide.
+	if _, err := db.Exec(`INSERT INTO namespaces (name, description) VALUES ('proj1', 'second')`); err == nil {
+		t.Fatal("expected duplicate live namespace name 'proj1' to be rejected, got nil error")
+	}
+
+	if _, err := db.Exec(`UPDATE namespaces SET deleted_at = CURRENT_TIMESTAMP WHERE name = 'proj1'`); err != nil {
+		t.Fatalf("soft-delete namespace proj1: %v", err)
+	}
+
+	// Regression fix: once the original row is soft-deleted, the name is
+	// free for reuse.
+	if _, err := db.Exec(`INSERT INTO namespaces (name, description) VALUES ('proj1', 'reused')`); err != nil {
+		t.Fatalf("expected reused namespace name 'proj1' after soft-delete to succeed, got error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM namespaces WHERE name = 'proj1'`).Scan(&count); err != nil {
+		t.Fatalf("count namespaces named proj1: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count of namespaces named 'proj1' = %d, want 2 (one soft-deleted, one live)", count)
+	}
+
+	// Case-insensitivity: uniq_projects_name_active is on LOWER(name), so
+	// 'PROJ1' collides with the still-live 'proj1' reuse above too.
+	if _, err := db.Exec(`INSERT INTO namespaces (name, description) VALUES ('PROJ1', 'case-collision')`); err == nil {
+		t.Fatal("expected 'PROJ1' to collide case-insensitively with live 'proj1', got nil error")
+	}
+}
