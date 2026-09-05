@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '../../../test/test-utils';
+import { render, screen, fireEvent, act, waitFor } from '../../../test/test-utils';
 import { GlobalInviteUserModal } from '../GlobalInviteUserModal';
 
 const mutate = vi.fn();
@@ -8,6 +8,18 @@ let isPending = false;
 vi.mock('../api', () => ({
     useCreateGlobalInvitation: () => ({ mutate, isPending }),
 }));
+
+// The copy button must route through the shared copyToClipboard() util (which
+// clears the clipboard again after a timeout) rather than calling
+// navigator.clipboard.writeText() directly -- mock it so the assertion below can
+// tell the two apart. A regression back to the raw call would leave this spy
+// uncalled even though "Copied" still renders (the raw call sets copied state
+// too), which is why asserting on the label alone doesn't catch the bypass.
+const copyToClipboard = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../utils', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../utils')>();
+    return { ...actual, copyToClipboard: (...args: unknown[]) => copyToClipboard(...args) };
+});
 
 // The Headless UI Modal shell isn't the unit under test (and needs an
 // IntersectionObserver constructor the jsdom setup doesn't provide) — render its
@@ -41,6 +53,7 @@ const onClose = vi.fn();
 beforeEach(() => {
     mutate.mockReset();
     onClose.mockReset();
+    copyToClipboard.mockClear();
     isPending = false;
 });
 
@@ -164,7 +177,7 @@ describe('GlobalInviteUserModal', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 
-    it('copies the setup link and shows "Copied"', () => {
+    it('copies the setup link via the shared copyToClipboard util and shows "Copied"', async () => {
         mutate.mockImplementation((_vars, opts) =>
             opts.onSuccess({
                 invitation: { id: 12 },
@@ -176,16 +189,22 @@ describe('GlobalInviteUserModal', () => {
                 },
             })
         );
-        const writeText = vi.fn();
-        Object.assign(navigator, { clipboard: { writeText } });
 
         render(<GlobalInviteUserModal isOpen onClose={onClose} />);
         fireEvent.change(screen.getByPlaceholderText('jane@example.com'), { target: { value: 'carol@x.io' } });
         fireEvent.click(screen.getByRole('button', { name: /send invitation/i }));
         fireEvent.click(screen.getByRole('button', { name: /^copy$/i }));
 
-        expect(writeText).toHaveBeenCalledWith('https://k/x/abc');
-        expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument();
+        // The load-bearing assertion: a regression back to a raw
+        // navigator.clipboard.writeText() call would still flip the label to
+        // "Copied" (that state update doesn't depend on which copy path ran), so
+        // asserting on the label alone can't tell the two apart -- only this
+        // spy can.
+        expect(copyToClipboard).toHaveBeenCalledWith('https://k/x/abc');
+        // handleCopy now routes through the async copyToClipboard util, so the
+        // "Copied" label flip lands on a microtask after the click, not
+        // synchronously -- wait for it rather than asserting immediately.
+        await waitFor(() => expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument());
     });
 
     it('shows the email-delivery success copy (no link_for_admin) with the channel', () => {

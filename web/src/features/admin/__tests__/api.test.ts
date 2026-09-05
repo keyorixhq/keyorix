@@ -247,6 +247,24 @@ describe('useAdminCreateUser', () => {
         expect(users.create).toHaveBeenCalledWith(body);
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['admin-users'] });
     });
+
+    // G28: the response can carry a one-time setup-link/OTP credential. Without a
+    // short gcTime override, react-query's MutationCache would retain it for the
+    // default 5 minutes after the last observer unmounts.
+    it('does not retain the created-user response in the MutationCache once the component unmounts', async () => {
+        users.create.mockResolvedValueOnce({ id: 1, setup_link: { link_for_admin: 'https://k/x/abc' } });
+        const { wrapper, queryClient } = createWrapper();
+        const { result, unmount } = renderHook(() => useAdminCreateUser(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ username: 'bob', email: 'bob@x.com', display_name: 'Bob' });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+
+        unmount();
+        await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
+    });
 });
 
 describe('useAdminUpdateUser', () => {
@@ -412,6 +430,29 @@ describe('useResendSetupLink', () => {
         expect(users.resendSetupLink).toHaveBeenCalledWith(4);
         expect(result.current.data).toEqual({ email: 'a@b.com', channel: 'smtp', delivered: true });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['stale-accounts'] });
+    });
+
+    // G28: the response carries a one-time setup-link credential. Without a short
+    // gcTime override, react-query's MutationCache would retain it for the default
+    // 5 minutes after the last observer unmounts.
+    it('does not retain the resent setup link in the MutationCache once the component unmounts', async () => {
+        users.resendSetupLink.mockResolvedValueOnce({
+            email: 'a@b.com',
+            channel: 'out_of_band',
+            delivered: false,
+            link_for_admin: 'https://k/x/resend',
+        });
+        const { wrapper, queryClient } = createWrapper();
+        const { result, unmount } = renderHook(() => useResendSetupLink(), { wrapper });
+
+        act(() => {
+            result.current.mutate(4);
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+
+        unmount();
+        await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
     });
 });
 

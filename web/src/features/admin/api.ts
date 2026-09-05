@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../services/client';
 import { adminApi } from '../../services/admin';
 import { usersApi, type ProjectAssignment } from '../../services/users';
-import { queryKeys } from '../../lib/queryClient';
+import { queryKeys, SENSITIVE_GC_TIME } from '../../lib/queryClient';
 import { useAuthStore } from '../../store/authStore';
 
 // ── Admin stats / roles / audit (admin-specific endpoints) ─────────────────
@@ -91,6 +91,9 @@ export const useAdminCreateUser = () => {
             project_assignments?: ProjectAssignment[];
         }) => usersApi.create(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+        // G28: the response can carry a one-time setup-link/OTP credential -- don't
+        // let react-query's MutationCache retain it for the default 5 minutes.
+        gcTime: SENSITIVE_GC_TIME,
     });
 };
 
@@ -147,6 +150,9 @@ export const useResendSetupLink = () => {
     return useMutation({
         mutationFn: (id: number) => usersApi.resendSetupLink(id),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['stale-accounts'] }),
+        // G28: the response carries a one-time setup-link credential -- don't let
+        // react-query's MutationCache retain it for the default 5 minutes.
+        gcTime: SENSITIVE_GC_TIME,
     });
 };
 

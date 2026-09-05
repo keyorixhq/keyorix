@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { projectInvitationsApi } from '../../services/projectInvitations';
 import { PROJECT_KEYS } from '../projects/api';
+import { SENSITIVE_GC_TIME } from '../../lib/queryClient';
 
 // ADR-024 query keys, namespaced per project.
 export const INVITATION_KEYS = {
@@ -46,6 +47,9 @@ export function useCreateGlobalInvitation() {
             assignments: { project_id: number; role: string }[];
         }) => projectInvitationsApi.createGlobal(email, role, assignments),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: INVITATION_KEYS.all }),
+        // G28: the response carries a one-time setup-link credential -- don't let
+        // react-query's MutationCache retain it for the default 5 minutes.
+        gcTime: SENSITIVE_GC_TIME,
     });
 }
 
