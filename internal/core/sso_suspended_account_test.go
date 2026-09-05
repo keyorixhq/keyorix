@@ -31,7 +31,7 @@ func TestCompleteSSO_DeactivatedAccount_Rejected(t *testing.T) {
 	})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)))
+		_, _ = fmt.Fprintf(w, `{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
 	}))
 	defer ts.Close()
 	p.OAuth.Endpoint.TokenURL = ts.URL
@@ -58,7 +58,7 @@ func TestCompleteSSO_SuspendedAccount_Rejected(t *testing.T) {
 	})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)))
+		_, _ = fmt.Fprintf(w, `{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
 	}))
 	defer ts.Close()
 	p.OAuth.Endpoint.TokenURL = ts.URL
