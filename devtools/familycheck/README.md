@@ -21,13 +21,23 @@ its head) plus the PR's changed-files list and body text, it flags two modes:
 
 "In scope" is deliberately narrow (see the 2026-09-05 report's own instruction
 not to let this become noise): a family is in scope if its ID is in
-`.github/family-check-scope.json`, OR if ANY of its members' current file
-content matches a broad security-category keyword set (dial/DNS/TLS, locking,
-audit logging, validation, authz/tenant checks, context deadlines, credential
-handling). The keyword scan reads every member's file, not just the touched
-ones — a brand-new member missing a control is, by definition, likely to NOT
-contain that control's keyword, so scoping Mode B by the new file's own
-content would systematically miss exactly the cases it exists to catch.
+`.github/family-check-scope.json`'s `families` list, OR if ANY of its
+members' current file content matches a broad security-category keyword set
+(dial/DNS/TLS, locking, audit logging, validation, authz/tenant checks,
+context deadlines, credential handling). The keyword scan reads every
+member's file, not just the touched ones — a brand-new member missing a
+control is, by definition, likely to NOT contain that control's keyword, so
+scoping Mode B by the new file's own content would systematically miss
+exactly the cases it exists to catch.
+
+The scope file also carries a `last_reconciled` date (`YYYY-MM-DD`) — the last
+time a human (the quarterly asymmetry scan) confirmed the `families` list is
+current. Mode B only gates a new member of a family ALREADY in that list; a
+brand-new family the list doesn't know about is covered by nothing until the
+next scan adds it. `familycheck` logs a non-blocking warning to stderr (never
+fails the build) once `last_reconciled` is more than ~100 days old, missing,
+or unparsable — see `warnIfScopeStale` in `main.go`. That warning is the
+forcing function to re-run the scan, not a formality to silence.
 
 ## Usage
 

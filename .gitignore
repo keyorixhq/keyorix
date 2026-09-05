@@ -216,3 +216,8 @@ certs/
 # Claude Code internal state and local tooling
 /.claire/
 /tools
+
+# devtools/*/'s own `go build ./...` output -- each is a main package that
+# builds a same-named binary directly into its source directory by default.
+/devtools/asymanalyzer/asymanalyzer
+/devtools/familycheck/familycheck

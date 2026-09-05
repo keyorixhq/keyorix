@@ -1,7 +1,11 @@
-[
-  "github.com/keyorixhq/keyorix/internal/connect.Connector",
-  "github.com/keyorixhq/keyorix/internal/crypto.KMSClient",
-  "github.com/keyorixhq/keyorix/internal/dynamic.CredentialEngine",
-  "github.com/keyorixhq/keyorix/internal/rotation.Executor",
-  "github.com/keyorixhq/keyorix/internal/rotation.GeneratingExecutor"
-]
+{
+  "last_reconciled": "2026-09-05",
+  "note": "Refreshed by the quarterly implementation-asymmetry scan (see keyorix-private/adversarial-review/IMPLEMENTATION-ASYMMETRY-SCAN-*.md for the method, QUEUE.md for the current follow-up queue and the Mode A dismissal log). Mode B only gates a NEW MEMBER of a family already listed here -- a brand-new family this list doesn't know about is covered by nothing until the next scan adds it. familycheck logs a non-blocking warning once this goes stale; treat that as the forcing function to re-run the scan, not just a formality.",
+  "families": [
+    "github.com/keyorixhq/keyorix/internal/connect.Connector",
+    "github.com/keyorixhq/keyorix/internal/crypto.KMSClient",
+    "github.com/keyorixhq/keyorix/internal/dynamic.CredentialEngine",
+    "github.com/keyorixhq/keyorix/internal/rotation.Executor",
+    "github.com/keyorixhq/keyorix/internal/rotation.GeneratingExecutor"
+  ]
+}

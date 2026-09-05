@@ -20,7 +20,14 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
+
+// scopeStaleAfter is how long a scope file can go without reconciliation
+// before familycheck starts warning on every run. A quarter (the scan's own
+// stated cadence) plus a grace window, not the quarter itself -- this should
+// fire as a "you're now overdue," not on the day the next scan is merely due.
+const scopeStaleAfter = 100 * 24 * time.Hour
 
 type member struct {
 	Type          string `json:"type"`
@@ -42,6 +49,17 @@ type family struct {
 	Members    []member `json:"members"`
 }
 
+// scopeFile is .github/family-check-scope.json's shape. LastReconciled records
+// when a human (the quarterly implementation-asymmetry scan) last confirmed
+// this list is current -- Mode B only gates a new member of a family ALREADY
+// listed here, so a brand-new family is covered by nothing until a scan adds
+// it; this field makes that dependency checkable instead of assumed.
+type scopeFile struct {
+	LastReconciled string   `json:"last_reconciled"`
+	Note           string   `json:"note"`
+	Families       []string `json:"families"`
+}
+
 // securityCategoryPatterns are deliberately broad -- a false-positive here
 // only costs an extra non-blocking Mode A nudge (see -json's scope rule
 // below), so recall matters more than precision.
@@ -61,7 +79,7 @@ func main() {
 	headFamiliesPath := flag.String("head-families", "", "JSON family list at the PR's head commit")
 	changedFilesPath := flag.String("changed-files", "", "newline-separated repo-relative changed file paths")
 	prBodyPath := flag.String("pr-body", "", "PR body text, for dismissal/confirmation markers")
-	scopePath := flag.String("scope", "", "JSON array of allowlisted in-scope family IDs")
+	scopePath := flag.String("scope", "", "path to family-check-scope.json (last_reconciled + families)")
 	repoRoot := flag.String("repo-root", ".", "repo root, for reading head-checkout file contents for the keyword scope test")
 	flag.Parse()
 
@@ -84,11 +102,12 @@ func main() {
 	}
 	scope := map[string]bool{}
 	if *scopePath != "" {
-		var ids []string
-		mustLoadJSON(*scopePath, &ids)
-		for _, id := range ids {
+		var sf scopeFile
+		mustLoadJSON(*scopePath, &sf)
+		for _, id := range sf.Families {
 			scope[id] = true
 		}
+		warnIfScopeStale(*scopePath, sf.LastReconciled)
 	}
 
 	changedSet := map[string]bool{}
@@ -346,6 +365,28 @@ func wasWere(n int) string {
 		return "was"
 	}
 	return "were"
+}
+
+// warnIfScopeStale logs (never fails the build -- this is a nudge, like Mode
+// A) when the scope file's last_reconciled date is missing, unparsable, or
+// older than scopeStaleAfter. The scope file only covers families a human
+// scan has already seen; a stale one silently stops covering new families
+// added since, which is a coverage gap worth surfacing on every run, not
+// just at the next quarterly pass.
+func warnIfScopeStale(scopePath, lastReconciled string) {
+	if lastReconciled == "" {
+		fmt.Fprintf(os.Stderr, "family-check: WARNING %s has no last_reconciled date -- coverage freshness cannot be checked\n", scopePath)
+		return
+	}
+	t, err := time.Parse("2006-01-02", lastReconciled)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "family-check: WARNING %s last_reconciled %q is not a YYYY-MM-DD date\n", scopePath, lastReconciled)
+		return
+	}
+	if age := time.Since(t); age > scopeStaleAfter {
+		fmt.Fprintf(os.Stderr, "family-check: WARNING %s was last reconciled %s ago (on %s) -- overdue for the quarterly implementation-asymmetry scan; families added since then have no coverage\n",
+			scopePath, age.Round(24*time.Hour), lastReconciled)
+	}
 }
 
 func mustLoadFamilies(path string) []family {
