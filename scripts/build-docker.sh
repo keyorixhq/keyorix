@@ -98,7 +98,7 @@ elif [[ -d "web" ]]; then
     log_info "Creating web Dockerfile..."
     cat > web/Dockerfile << 'EOF'
 # Multi-stage build for web assets
-FROM node:18-alpine AS builder
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
 
 WORKDIR /app
 COPY package*.json ./
@@ -108,7 +108,7 @@ COPY . .
 RUN npm run build
 
 # Production image
-FROM nginx:alpine
+FROM nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
 
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -142,7 +142,7 @@ fi
 
 # Build CLI Docker image
 log_info "Building CLI Docker image..."
-CLI_GO_BUILDER_IMAGE="${CLI_GO_BUILDER_IMAGE:-golang:1.21-alpine}"
+CLI_GO_BUILDER_IMAGE="${CLI_GO_BUILDER_IMAGE:-golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df}"
 cat > Dockerfile.cli << EOF
 # Multi-stage build for CLI
 FROM ${CLI_GO_BUILDER_IMAGE} AS builder
@@ -155,7 +155,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/keyorix ./cmd/keyorix
 
 # Production image
-FROM alpine:3.24
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
