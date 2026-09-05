@@ -60,6 +60,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- with .Values.metricsBearerToken }}
+            # Backs -metrics-bearer-token's own os.Getenv("KEYORIX_METRICS_TOKEN")
+            # default (operator/cmd/main.go) -- only rendered when set, so an
+            # unmodified install keeps the metrics endpoint's existing (documented)
+            # unauthenticated-by-default behavior.
+            - name: KEYORIX_METRICS_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort | default 8080 }}

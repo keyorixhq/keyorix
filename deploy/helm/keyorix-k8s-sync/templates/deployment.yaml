@@ -43,6 +43,14 @@ spec:
                 secretKeyRef:
                   name: {{ required "keyorix.tokenSecret.name is required" .Values.keyorix.tokenSecret.name }}
                   key: {{ .Values.keyorix.tokenSecret.key | default "token" }}
+            {{- with .Values.metricsBearerToken }}
+            # Backs -metrics-bearer-token's own os.Getenv("KEYORIX_METRICS_TOKEN")
+            # default (cmd/keyorix-k8s-sync/main.go) -- only rendered when set, so an
+            # unmodified install keeps /metrics' existing (documented) unauthenticated-
+            # by-default behavior.
+            - name: KEYORIX_METRICS_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
           ports:
             - name: health
               containerPort: {{ .Values.healthPort | default 8080 }}

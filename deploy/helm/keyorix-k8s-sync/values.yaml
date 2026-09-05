@@ -39,8 +39,39 @@ keyorix:
     name: ""        # required: a Secret holding the Keyorix machine-identity token
     key: token      # the key within that Secret
 
-# healthPort is where the agent serves /healthz, /readyz and /status (probes).
+# healthPort is where the agent serves /healthz, /readyz, /status (probes) and
+# /metrics (Prometheus) -- all on the same port; there is no separate metrics port.
 healthPort: 8080
+
+# metricsBearerToken (OPTIONAL): when set, required on /metrics' Authorization:
+# Bearer <token> header -- wired straight to the agent's own
+# -metrics-bearer-token flag (KEYORIX_METRICS_TOKEN env var). /healthz, /readyz,
+# and /status on the same port stay unauthenticated regardless -- kubelet must
+# reach them, and they expose no secret values (only counts, a timestamp, and an
+# error count). Leave empty to rely on networkPolicy.enabled/metricsAllowFrom
+# below, or your own perimeter controls, instead; set both for defense in depth.
+metricsBearerToken: ""
+
+# ── Network policy ────────────────────────────────────────────────────────────
+# Restricts inbound traffic to healthPort (serves /metrics alongside the probe
+# endpoints -- see healthPort above, there's no separate port to isolate just
+# /metrics) to same-namespace pods plus the peers listed in
+# networkPolicy.metricsAllowFrom, instead of every pod in the cluster that can
+# route to it. Disable only if your CNI doesn't support NetworkPolicy, or you
+# have an equivalent policy managed elsewhere.
+networkPolicy:
+  enabled: true
+  # metricsAllowFrom: additional NetworkPolicyPeer entries (podSelector /
+  # namespaceSelector, in the upstream NetworkPolicy `from` syntax) permitted to
+  # reach healthPort from OUTSIDE this release's own namespace -- e.g. a
+  # cluster-wide Prometheus. Defaults to any pod, in any namespace, carrying the
+  # Prometheus community Helm chart's standard `app.kubernetes.io/name:
+  # prometheus` label -- adjust to match your cluster's actual scrape identity.
+  metricsAllowFrom:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
 
 # cleanup reaps orphaned Secrets: when a mapping is removed, the agent-owned Secret it
 # created (carrying app.kubernetes.io/managed-by=keyorix-sync) is deleted on the next

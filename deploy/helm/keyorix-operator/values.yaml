@@ -38,6 +38,35 @@ leaderElection: false
 metricsPort: 8080
 healthPort: 8081
 
+# metricsBearerToken (OPTIONAL): when set, required on the metrics endpoint's
+# Authorization: Bearer <token> header -- wired straight to the manager's own
+# -metrics-bearer-token flag (KEYORIX_METRICS_TOKEN env var; see
+# operator/cmd/main.go for the gate itself). The health probe port is never
+# gated by this -- kubelet must reach it unauthenticated, and it exposes no
+# secret values. Leave empty to rely on networkPolicy.enabled/metricsAllowFrom
+# below, or your own perimeter controls, instead; set both for defense in depth.
+metricsBearerToken: ""
+
+# ── Network policy ────────────────────────────────────────────────────────────
+# Restricts inbound traffic to the manager's Prometheus metrics port to the
+# peers listed in metricsAllowFrom -- without this, any pod in the cluster
+# that can route to the operator's pod IP can scrape /metrics for free. The
+# health probe port is deliberately left unrestricted (kubelet needs it, and
+# it carries no sensitive data). Disable only if your CNI doesn't support
+# NetworkPolicy, or you have an equivalent policy managed elsewhere.
+networkPolicy:
+  enabled: true
+  # metricsAllowFrom: a list of NetworkPolicyPeer entries (podSelector /
+  # namespaceSelector, in the upstream NetworkPolicy `from` syntax) permitted to
+  # reach the metrics port. Defaults to any pod, in any namespace, carrying the
+  # Prometheus community Helm chart's standard `app.kubernetes.io/name:
+  # prometheus` label -- adjust to match your cluster's actual scrape identity.
+  metricsAllowFrom:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+
 # watchNamespaces (OPTIONAL, ADR-076): restricts this operator instance to reconciling
 # KeyorixSecret CRs (and their target Secrets) in only the listed namespaces, instead of
 # the DEFAULT (this release's own namespace only). When set, RBAC is scoped accordingly:
