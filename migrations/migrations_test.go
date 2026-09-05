@@ -1060,3 +1060,184 @@ func TestNamespacesNameIndex_PartialUniqueAllowsReuseAfterSoftDelete(t *testing.
 		t.Fatal("expected 'PROJ1' to collide case-insensitively with live 'proj1', got nil error")
 	}
 }
+
+// TestScopeUserGroupRolesUpMigration_ProjectIDNotNullFourColumnPK pins the
+// fix to 008_scope_user_group_roles.up.sql: project_id is genuinely NOT
+// NULL (not just backfilled once), and the PRIMARY KEY is widened to
+// (subject, role, project, environment) so two rows differing only in
+// environment_id -- migration 008's entire stated purpose -- are no longer
+// rejected by the original 3-column PK carried over from 001_init.sql.
+func TestScopeUserGroupRolesUpMigration_ProjectIDNotNullFourColumnPK(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "002_rbac_enhancements.up.sql")
+	execSQLFile(t, db, "006_rename_namespace_to_project.up.sql")
+
+	if _, err := db.Exec(`INSERT INTO users (username, email, password_hash) VALUES ('alice', 'alice@example.com', 'x')`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO roles (name) VALUES ('admin')`); err != nil {
+		t.Fatalf("seed roles: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO groups (name) VALUES ('g1')`); err != nil {
+		t.Fatalf("seed groups: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO projects (name) VALUES ('proj1')`); err != nil {
+		t.Fatalf("seed projects: %v", err)
+	}
+	// A legacy NULL project scope, as could exist pre-008 (namespace_id/
+	// project_id was nullable prior to this migration).
+	if _, err := db.Exec(`INSERT INTO user_roles (user_id, role_id, project_id) VALUES (1, 1, NULL)`); err != nil {
+		t.Fatalf("seed user_roles with NULL project_id: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO group_roles (group_id, role_id, project_id) VALUES (1, 1, NULL)`); err != nil {
+		t.Fatalf("seed group_roles with NULL project_id: %v", err)
+	}
+
+	execSQLFile(t, db, "008_scope_user_group_roles.up.sql")
+
+	// Non-regression: the pre-existing NULL project scope is backfilled to
+	// the 0 sentinel and survives the table rebuild.
+	var projectID int
+	if err := db.QueryRow(`SELECT project_id FROM user_roles WHERE user_id = 1 AND role_id = 1`).Scan(&projectID); err != nil {
+		t.Fatalf("user_roles row missing after 008's up-migration: %v", err)
+	}
+	if projectID != 0 {
+		t.Fatalf("user_roles.project_id = %d, want 0 (backfilled sentinel)", projectID)
+	}
+
+	// Regression fix 1: project_id is genuinely NOT NULL now, not just
+	// backfilled once -- a fresh NULL insert must be rejected.
+	if _, err := db.Exec(
+		`INSERT INTO user_roles (user_id, role_id, project_id, environment_id) VALUES (1, 1, NULL, 1)`,
+	); err == nil {
+		t.Fatal("expected inserting NULL project_id into user_roles to be rejected after 008, got nil error")
+	}
+	if _, err := db.Exec(
+		`INSERT INTO group_roles (group_id, role_id, project_id, environment_id) VALUES (1, 1, NULL, 1)`,
+	); err == nil {
+		t.Fatal("expected inserting NULL project_id into group_roles to be rejected after 008, got nil error")
+	}
+
+	// Regression fix 2: the PRIMARY KEY is widened to 4 columns, so two rows
+	// differing only in environment_id (same subject/role/project) must both
+	// be allowed.
+	if _, err := db.Exec(
+		`INSERT INTO user_roles (user_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 1)`,
+	); err != nil {
+		t.Fatalf("insert user_roles (project=1, environment=1): %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO user_roles (user_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 2)`,
+	); err != nil {
+		t.Fatalf("insert user_roles (project=1, environment=2) alongside environment=1 for the same user/role/project: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO group_roles (group_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 1)`,
+	); err != nil {
+		t.Fatalf("insert group_roles (project=1, environment=1): %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO group_roles (group_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 2)`,
+	); err != nil {
+		t.Fatalf("insert group_roles (project=1, environment=2) alongside environment=1 for the same group/role/project: %v", err)
+	}
+
+	// Non-regression: an exact duplicate (subject, role, project,
+	// environment) must still be rejected by the PK/unique index.
+	if _, err := db.Exec(
+		`INSERT INTO user_roles (user_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 1)`,
+	); err == nil {
+		t.Fatal("expected exact duplicate (1,1,1,1) user_roles row to be rejected, got nil error")
+	}
+
+	var userRolesCount, groupRolesCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM user_roles`).Scan(&userRolesCount); err != nil {
+		t.Fatalf("count user_roles: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM group_roles`).Scan(&groupRolesCount); err != nil {
+		t.Fatalf("count group_roles: %v", err)
+	}
+	// The backfilled (project=0,environment=0) row plus (project=1,
+	// environment=1) and (project=1,environment=2) = 3 each.
+	if userRolesCount != 3 {
+		t.Fatalf("user_roles row count = %d, want 3", userRolesCount)
+	}
+	if groupRolesCount != 3 {
+		t.Fatalf("group_roles row count = %d, want 3", groupRolesCount)
+	}
+
+	// The pre-existing indexes from 002/006 (dropped implicitly when the
+	// rebuild's DROP TABLE ran) must have been recreated, not silently lost.
+	for _, idx := range []string{
+		"idx_user_roles_user_id", "idx_user_roles_role_id", "idx_user_roles_project_id",
+		"idx_group_roles_group_id", "idx_group_roles_role_id", "idx_group_roles_project_id",
+		"idx_user_roles_scope", "idx_group_roles_scope",
+	} {
+		var name string
+		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&name)
+		if err != nil {
+			t.Fatalf("index %s missing after 008's up-migration rebuild: %v", idx, err)
+		}
+	}
+}
+
+// TestScopeUserGroupRolesDownMigration_FourColumnPKDropsCleanly pins that
+// 008's down-migration still works once environment_id is part of each
+// table's PRIMARY KEY: a plain `ALTER TABLE ... DROP COLUMN environment_id`
+// is rejected by SQLite for a column used in a PRIMARY KEY, so the
+// down-migration itself had to move to the same rebuild idiom as the
+// up-migration.
+func TestScopeUserGroupRolesDownMigration_FourColumnPKDropsCleanly(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "002_rbac_enhancements.up.sql")
+	execSQLFile(t, db, "006_rename_namespace_to_project.up.sql")
+	execSQLFile(t, db, "008_scope_user_group_roles.up.sql")
+
+	if _, err := db.Exec(`INSERT INTO users (username, email, password_hash) VALUES ('alice', 'alice@example.com', 'x')`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO roles (name) VALUES ('admin')`); err != nil {
+		t.Fatalf("seed roles: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO groups (name) VALUES ('g1')`); err != nil {
+		t.Fatalf("seed groups: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO projects (name) VALUES ('proj1')`); err != nil {
+		t.Fatalf("seed projects: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO user_roles (user_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 7)`,
+	); err != nil {
+		t.Fatalf("seed user_roles: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO group_roles (group_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 7)`,
+	); err != nil {
+		t.Fatalf("seed group_roles: %v", err)
+	}
+
+	execSQLFile(t, db, "008_scope_user_group_roles.down.sql")
+
+	if columnExists(t, db, "user_roles", "environment_id") {
+		t.Fatal("user_roles.environment_id still exists after 008's down-migration; down-migration is a no-op")
+	}
+	if columnExists(t, db, "group_roles", "environment_id") {
+		t.Fatal("group_roles.environment_id still exists after 008's down-migration; down-migration is a no-op")
+	}
+
+	// The row itself must survive, narrowed back to the 3-column scope.
+	var projectID int
+	if err := db.QueryRow(`SELECT project_id FROM user_roles WHERE user_id = 1 AND role_id = 1`).Scan(&projectID); err != nil {
+		t.Fatalf("user_roles row missing after 008's down-migration: %v", err)
+	}
+	if projectID != 1 {
+		t.Fatalf("user_roles.project_id = %d, want 1 (untouched by the rebuild)", projectID)
+	}
+
+	// The now-3-column PK must allow re-adding the row without an
+	// environment_id, and must still enforce uniqueness on (user_id,
+	// role_id, project_id) alone.
+	if _, err := db.Exec(`INSERT INTO user_roles (user_id, role_id, project_id) VALUES (1, 1, 1)`); err == nil {
+		t.Fatal("expected duplicate (user_id=1, role_id=1, project_id=1) to be rejected by the narrowed 3-column PK, got nil error")
+	}
+}
