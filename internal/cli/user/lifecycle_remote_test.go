@@ -25,7 +25,7 @@ func remoteTestServer(t *testing.T, email string, extra http.HandlerFunc) *httpt
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/users/5" {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"data":{"id":5,"email":%q}}`, email)
+			_, _ = fmt.Fprintf(w, `{"data":{"id":5,"email":%q}}`, email)
 			return
 		}
 		extra(w, r)
@@ -37,7 +37,7 @@ func TestSuspendCmd_Remote_PostsToServer(t *testing.T) {
 	srv := remoteTestServer(t, "alice@example.com", func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":null}`)
+		_, _ = fmt.Fprint(w, `{"data":null}`)
 	})
 	defer srv.Close()
 
@@ -63,7 +63,7 @@ func TestReactivateCmd_Remote_PostsToServer(t *testing.T) {
 	srv := remoteTestServer(t, "bob@example.com", func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":null}`)
+		_, _ = fmt.Fprint(w, `{"data":null}`)
 	})
 	defer srv.Close()
 
@@ -87,7 +87,7 @@ func TestForcePasswordResetCmd_Remote_PostsToServer(t *testing.T) {
 	srv := remoteTestServer(t, "carol@example.com", func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":null}`)
+		_, _ = fmt.Fprint(w, `{"data":null}`)
 	})
 	defer srv.Close()
 
@@ -128,7 +128,7 @@ func TestRevokeSessionsCmd_Remote_ReturnsCount(t *testing.T) {
 	srv := remoteTestServer(t, "erin@example.com", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/users/5/revoke-sessions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"revoked":3}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"revoked":3}}`)
 	})
 	defer srv.Close()
 
@@ -149,7 +149,7 @@ func TestRevokeSessionsCmd_Remote_ReturnsCount(t *testing.T) {
 func TestRevokeSessionsCmd_Remote_ZeroRevokedIsStatedExplicitly(t *testing.T) {
 	srv := remoteTestServer(t, "frank@example.com", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"revoked":0}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"revoked":0}}`)
 	})
 	defer srv.Close()
 
@@ -224,7 +224,7 @@ func TestRunList_Remote_PrintsUsersFromServer(t *testing.T) {
 		assert.Equal(t, "1", r.URL.Query().Get("page"))
 		assert.Equal(t, "20", r.URL.Query().Get("page_size"))
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"users":[{"id":1,"username":"admin","email":"admin@example.com","active":true}],"total":1}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"users":[{"id":1,"username":"admin","email":"admin@example.com","active":true}],"total":1}}`)
 	}))
 	defer srv.Close()
 
@@ -249,7 +249,7 @@ func TestResendSetupLinkCmd_Remote_ReissuesOnServer(t *testing.T) {
 	srv := remoteTestServer(t, "ivy@example.com", func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"email":"ivy@example.com","channel":"out_of_band","delivered":false,"link_for_admin":"https://app.example.com/auth/setup/xyz"}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"email":"ivy@example.com","channel":"out_of_band","delivered":false,"link_for_admin":"https://app.example.com/auth/setup/xyz"}}`)
 	})
 	defer srv.Close()
 
