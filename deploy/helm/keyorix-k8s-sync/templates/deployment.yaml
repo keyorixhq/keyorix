@@ -38,11 +38,16 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["-config", "/etc/keyorix/k8s-sync.yaml"]
           env:
-            - name: KEYORIX_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "keyorix.tokenSecret.name is required" .Values.keyorix.tokenSecret.name }}
-                  key: {{ .Values.keyorix.tokenSecret.key | default "token" }}
+            # A mounted file, not a secretKeyRef env var: the operator's own controller
+            # reads its analogous token Secret's bytes directly off the Kubernetes
+            # object rather than via a process env var, and an env var sourced from a
+            # secretKeyRef is still returned verbatim by the Kubernetes API to anyone
+            # who can read the pod spec (e.g. `kubectl get pod -o yaml`) -- a
+            # read-only mounted volume is not. cmd/keyorix-k8s-sync/main.go's
+            # resolveToken() reads KEYORIX_TOKEN_FILE in preference to KEYORIX_TOKEN
+            # (still supported, for any hand-rolled deployment that sets it directly).
+            - name: KEYORIX_TOKEN_FILE
+              value: /var/run/secrets/keyorix-token/token
             {{- with .Values.metricsBearerToken }}
             # Backs -metrics-bearer-token's own os.Getenv("KEYORIX_METRICS_TOKEN")
             # default (cmd/keyorix-k8s-sync/main.go) -- only rendered when set, so an
@@ -70,6 +75,9 @@ spec:
             - name: config
               mountPath: /etc/keyorix
               readOnly: true
+            - name: keyorix-token
+              mountPath: /var/run/secrets/keyorix-token
+              readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -92,6 +100,12 @@ spec:
         - name: config
           configMap:
             name: {{ include "kxsync.fullname" . }}
+        - name: keyorix-token
+          secret:
+            secretName: {{ required "keyorix.tokenSecret.name is required" .Values.keyorix.tokenSecret.name }}
+            items:
+              - key: {{ .Values.keyorix.tokenSecret.key | default "token" }}
+                path: token
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
