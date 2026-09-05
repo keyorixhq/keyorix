@@ -88,7 +88,7 @@ func TestCompleteSAML_ExistingUser(t *testing.T) {
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-1").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ReturnTo: "/home", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return(&models.User{ID: 7, IsActive: true}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 7, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(7), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -293,7 +293,7 @@ func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T)
 	store.On("GetUserByUsername", mock.Anything, "victim").Return((*models.User)(nil), userNotFound())
 	var created *models.User
 	store.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool { created = u; return true })).
-		Return(&models.User{ID: 99, IsActive: true}, nil)
+		Return(&models.User{ID: 99, IsActive: true, AccountState: AccountActive}, nil)
 	store.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 3}, nil)
 	store.On("AssignRole", mock.Anything, uint(99), uint(3), mock.Anything).Return(nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 99, SessionToken: "tok"}, nil)
@@ -324,10 +324,10 @@ func TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount(t *testing.T) 
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-7").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
 	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return((*models.User)(nil), userNotFound())
-	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, IsActive: true, ExternalID: ""}, nil)
+	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, IsActive: true, AccountState: AccountActive, ExternalID: ""}, nil)
 	store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.ID == 9 && u.ExternalID == "sso:corp:corp|123"
-	})).Return(&models.User{ID: 9, IsActive: true, ExternalID: "sso:corp:corp|123"}, nil)
+	})).Return(&models.User{ID: 9, IsActive: true, AccountState: AccountActive, ExternalID: "sso:corp:corp|123"}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 9, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(9), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

@@ -55,7 +55,7 @@ func scimError(w http.ResponseWriter, status int, detail string) {
 // toSCIMUser maps a Keyorix user to a SCIM User resource. SCIM userName echoes the
 // email (what the IdP sent); the derived Keyorix username is internal.
 func toSCIMUser(u *models.User) map[string]interface{} {
-	active := u.IsActive && !core.AccountLoginBlocked(u.AccountState)
+	active := u.IsActive && !core.AccountLoginBlocked(u.ID, u.AccountState)
 	res := map[string]interface{}{
 		"schemas":     []string{scimUserSchema},
 		"id":          strconv.FormatUint(uint64(u.ID), 10),

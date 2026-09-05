@@ -292,7 +292,7 @@ func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) 
 // is blocked (suspended/deactivated) or locked out, mirroring the TOTP path in
 // VerifyMFALogin and the passwordless path below.
 func (c *KeyorixCore) checkWebAuthnAccountGates(wu *webauthnUser) error {
-	if !wu.user.IsActive || AccountLoginBlocked(wu.user.AccountState) {
+	if !wu.user.IsActive || AccountLoginBlocked(wu.user.ID, wu.user.AccountState) {
 		return fmt.Errorf("account is not active")
 	}
 	// Per-IP limiters are spoofable behind a proxy; bind assertion failures to the
@@ -496,7 +496,7 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 func (c *KeyorixCore) checkPasswordlessAccountState(ctx context.Context, user *models.User) error {
 	// IsActive is an independent gate from AccountState — an admin deactivation
 	// (is_active=false) leaves AccountState="active", so both must be checked.
-	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return fmt.Errorf("account is not active")
 	}
 	// Honor an active per-account lockout even for a valid passkey (defense in depth).

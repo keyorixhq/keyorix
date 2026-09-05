@@ -39,7 +39,7 @@ func TestStartImpersonation_Success(t *testing.T) {
 	ctx := context.Background()
 
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin"}, nil)
-	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true, AccountState: AccountActive}, nil)
 	// The target-rank guard discovers every scope the target holds a role at (it
 	// holds none here), so no per-scope admin comparison ever runs.
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
@@ -133,7 +133,7 @@ func TestStartImpersonation_AllowsSessionAuth(t *testing.T) {
 	c := newImpersonationCore(store)
 	ctx := WithSessionAuth(context.Background(), true)
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin"}, nil)
-	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true, AccountState: AccountActive}, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
 	store.On("CreateSession", ctx, mock.Anything).Return(&models.Session{ID: 1, UserID: 2, SessionToken: "tok"}, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
@@ -173,7 +173,7 @@ func TestStartImpersonation_RejectsAdminTargetForNonAdminCaller(t *testing.T) {
 	c := newImpersonationCore(store)
 	ctx := context.Background()
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "helpdesk"}, nil)
-	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "root", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "root", IsActive: true, AccountState: AccountActive}, nil)
 	// Target (id 2) holds the admin role globally; caller (id 1) holds nothing.
 	store.On("GetRoleByName", ctx, mock.Anything).Return(&models.Role{ID: 7, Name: "admin"}, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{{}}, nil)
@@ -209,7 +209,7 @@ func TestStartImpersonation_RejectsProjectScopedAdminTargetForNonAdminCaller(t *
 	ctx := context.Background()
 	projScope := Scope{ProjectID: 7}
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "helpdesk"}, nil)
-	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "proj-admin", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "proj-admin", IsActive: true, AccountState: AccountActive}, nil)
 	// Target (id 2) holds project_admin at project 7 only; caller (id 1) holds nothing.
 	store.On("GetRoleByName", ctx, mock.Anything).Return(&models.Role{ID: 8, Name: "project_admin"}, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{projScope}, nil)
@@ -237,7 +237,7 @@ func TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCalle
 	ctx := context.Background()
 	projScope := Scope{ProjectID: 7}
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "other-proj-admin"}, nil)
-	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "proj-admin", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "proj-admin", IsActive: true, AccountState: AccountActive}, nil)
 	// ADR-084: role 8 (project_admin) bypasses via the structural flag now.
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{8}).Return(true, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{projScope}, nil)
@@ -268,7 +268,7 @@ func TestStartImpersonation_RejectsCustomAdminTierRoleTargetForNonAdminCaller(t 
 	c := newImpersonationCore(store)
 	ctx := context.Background()
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "helpdesk"}, nil)
-	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "secops", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "secops", IsActive: true, AccountState: AccountActive}, nil)
 	// Target (id 2) holds a custom "secops" role (id 9) at global scope, bundling
 	// system.write — the role has no ADR-084 bypass flag set, so
 	// roleSetContainsAdmin(target) would have returned false and the old
@@ -301,7 +301,7 @@ func TestReauthorizeImpersonation_RevokedImpersonatePermission(t *testing.T) {
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
-	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true, AccountState: AccountActive}, nil)
 	// Admin (1) no longer holds users.impersonate: RoleSetHasPermission returns
 	// false for it, but the admin otherwise still outranks the target (2, no
 	// roles at all) — isolates the missing per-permission re-check from the
@@ -322,7 +322,7 @@ func TestReauthorizeImpersonation_StillAuthorized(t *testing.T) {
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
-	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true}, nil)
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true, AccountState: AccountActive}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{5}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{5}).Return(false, nil)

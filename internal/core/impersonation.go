@@ -81,7 +81,7 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	// Don't mint a session for a target who cannot log in: it would be dead on arrival
 	// (ValidateSessionToken rejects blocked/inactive accounts on every request) and would
 	// only produce a misleading impersonation.start audit event.
-	if !target.IsActive || AccountLoginBlocked(target.AccountState) {
+	if !target.IsActive || AccountLoginBlocked(target.ID, target.AccountState) {
 		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
 			fmt.Sprintf("%s attempted to impersonate %s, but the target is suspended or inactive", admin.Username, target.Username))
 		return nil, nil, fmt.Errorf("cannot impersonate a suspended or inactive user")
@@ -202,7 +202,7 @@ func (c *KeyorixCore) ReauthorizeImpersonation(ctx context.Context, adminID, tar
 	if err != nil {
 		return fmt.Errorf("impersonating account not found")
 	}
-	if !admin.IsActive || AccountLoginBlocked(admin.AccountState) {
+	if !admin.IsActive || AccountLoginBlocked(admin.ID, admin.AccountState) {
 		return fmt.Errorf("impersonating account is not active")
 	}
 	if err := c.cachedImpersonationCeiling(ctx, adminID, targetID); err != nil {

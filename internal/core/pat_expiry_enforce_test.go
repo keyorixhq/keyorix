@@ -247,7 +247,7 @@ func TestValidatePATToken_ValidNonExpiredPAT_Succeeds(t *testing.T) {
 	ms.On("GetPersonalAccessTokenByHash", ctx, hash).
 		Return(&models.PersonalAccessToken{ID: 7, UserID: 2, ExpiresAt: &future}, nil)
 	ms.On("GetUser", ctx, uint(2)).
-		Return(&models.User{ID: 2, Username: "alice", IsActive: true}, nil)
+		Return(&models.User{ID: 2, Username: "alice", IsActive: true, AccountState: AccountActive}, nil)
 	ms.On("GetUserRoles", ctx, uint(2)).
 		Return([]*models.Role{{Name: "project_viewer"}}, nil)
 

@@ -213,7 +213,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 	// Enforce per-account brute-force lockout (distinct from deactivation/suspension)
@@ -354,7 +354,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 			return nil, nil, "", err
 		}
 	}
-	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 	// Enforce per-account brute-force lockout BEFORE any IdP-driven state mutation
