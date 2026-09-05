@@ -310,14 +310,19 @@ func (h *AuthHandler) SupersedeSetupTokensProxy(w http.ResponseWriter, r *http.R
 // full trace.
 
 // ExpireSetupTokenProxy handles POST /api/v1/system/setup-tokens/{id}/expire (lazy
-// expiry on read, mirroring local_auth.go's MarkSetupTokenExpired).
+// expiry on read, mirroring local_auth.go's MarkSetupTokenExpired). Routed
+// through KeyorixCore.ExpireSetupTokenByID (#1622), not
+// h.coreService.Storage().MarkSetupTokenExpired directly -- the raw storage
+// call mutates state with no audit trail, so any system.write holder could
+// silently mass-expire tokens. ExpireSetupTokenByID performs the mutation and
+// the setup_token.expired audit write as one unit; see its own doc.
 func (h *AuthHandler) ExpireSetupTokenProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid setup token ID")
 		return
 	}
-	if err := h.coreService.Storage().MarkSetupTokenExpired(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.ExpireSetupTokenByID(r.Context(), uint(id)); err != nil {
 		log.Printf("setup-tokens proxy: expire failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

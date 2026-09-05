@@ -701,10 +701,14 @@ var rawStorageBypassAllowlist = map[string]string{
 	// mutation and rejects disabled:false outright -- the handler no longer
 	// makes a raw storage.UpdateWebAuthnCredential call at all, so this
 	// guard's own detection no longer flags it.
-	"ExpireSetupTokenProxy": "no-independent-ceiling: marking a setup token expired only REDUCES future capability " +
-		"(revokes an outstanding token early) -- there is no privilege to gain by skipping whatever ceiling " +
-		"inspectActiveSetupToken's lazy-expiry path would otherwise apply, since expiry is itself the safe " +
-		"direction.",
+	// ExpireSetupTokenProxy entry removed (#1622): the handler no longer makes
+	// a raw storage.MarkSetupTokenExpired call at all -- it now goes through
+	// KeyorixCore.ExpireSetupTokenByID, so this guard's own detection no
+	// longer flags it. The entry's original "no-independent-ceiling" rationale
+	// was true for the AUTHZ-ceiling question this guard asks, but #1622 found
+	// a separate defect the ceiling framing didn't cover: the raw call skipped
+	// the setup_token.expired AUDIT write entirely, with no per-caller rate
+	// limit -- fixed structurally, not by adding a ceiling check.
 	// VERIFIED 2026-08-27 (G80 Wave 1): both self-attribution gaps this entry
 	// depends on were already independently found and fixed by name in a
 	// PRIOR round (2026-08-25, G80 documented-exception re-verification

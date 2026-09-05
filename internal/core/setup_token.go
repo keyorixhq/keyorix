@@ -179,16 +179,59 @@ func (c *KeyorixCore) inspectActiveSetupToken(ctx context.Context, raw string) (
 	}
 
 	// Lazy expiry: an active token past its TTL is flipped to expired on read.
+	// Best-effort: a failed mutation/audit write here must not block reporting
+	// "expired" back to the reader, which is why the error is discarded — see
+	// expireSetupToken's own doc for why that's still a single unit, not two
+	// independent steps that can silently drift apart (#1622).
 	if tok.State == SetupTokenActive && c.now().After(tok.ExpiresAt) {
-		_ = c.storage.MarkSetupTokenExpired(ctx, tok.ID)
-		c.writeAuditEventFull(ctx, "setup_token.expired", tok.SubjectUserID, nil, nil, "",
-			fmt.Sprintf("setup token expired (purpose=%s, subject=%s)", tok.Purpose, tok.SubjectEmail))
+		_ = c.expireSetupToken(ctx, tok)
 		return nil, fmt.Errorf("%s: setup token expired", i18n.T("ErrorNotFound", nil))
 	}
 	if tok.State != SetupTokenActive {
 		return nil, fmt.Errorf("%s: setup token is %s", i18n.T("ErrorNotFound", nil), tok.State)
 	}
 	return tok, nil
+}
+
+// expireSetupToken performs a setup token's state mutation (active → expired)
+// and its setup_token.expired audit write as a single unit, so no exported
+// path can do one without the other (#1622). The audit event's ActorType/
+// MachineIdentityID come from ctx (set by the auth middleware for every
+// authenticated request, human or machine) via writeAuditEventFull — callers
+// do not need to thread actor identity through explicitly.
+func (c *KeyorixCore) expireSetupToken(ctx context.Context, tok *models.SetupToken) error {
+	if err := c.storage.MarkSetupTokenExpired(ctx, tok.ID); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.writeAuditEventFull(ctx, "setup_token.expired", tok.SubjectUserID, nil, nil, "",
+		fmt.Sprintf("setup token expired (purpose=%s, subject=%s)", tok.Purpose, tok.SubjectEmail))
+	return nil
+}
+
+// ExpireSetupTokenByID explicitly expires a setup token by ID, resolving it
+// first so the audit write carries the same purpose/subject detail as the
+// lazy-expiry path. This is the ONLY route into expireSetupToken for a caller
+// that has an ID rather than an already-resolved token — in particular,
+// server/http/handlers' ExpireSetupTokenProxy (backing a RemoteStorage peer's
+// own lazy-expiry-on-read, #1622), which must not call
+// storage.MarkSetupTokenExpired directly since that would mutate state
+// without the audit write.
+//
+// An unknown ID is a no-op, not an error: this mirrors the raw
+// storage.MarkSetupTokenExpired's own long-standing idempotent semantics (a
+// state-guarded UPDATE matching zero rows was never an error) that
+// ExpireSetupTokenProxy's existing tests already assert on -- closing the
+// audit gap must not also turn a previously-tolerated "already gone" ID into
+// a new 500.
+func (c *KeyorixCore) ExpireSetupTokenByID(ctx context.Context, id uint) error {
+	tok, err := c.storage.GetSetupTokenByID(ctx, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil
+		}
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return c.expireSetupToken(ctx, tok)
 }
 
 // ConsumeSetupToken validates a token for the expected purpose and atomically marks

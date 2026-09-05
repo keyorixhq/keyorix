@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -392,6 +393,25 @@ func (ls *LocalStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*
 	var t models.SetupToken
 	if err := ls.db.WithContext(ctx).Where("token_hash = ?", hash).First(&t).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	return &t, nil
+}
+
+// GetSetupTokenByID looks up a setup token by primary key -- used by
+// KeyorixCore.ExpireSetupTokenByID (#1622) to resolve purpose/subject detail
+// for the audit write before an explicit (non-lazy-read) expiry. Unlike
+// GetSetupTokenByHash, this distinguishes "no such row" from any other
+// storage failure in the wrapped error text: ExpireSetupTokenByID matches on
+// it to treat an unknown ID as a no-op (mirroring the raw
+// MarkSetupTokenExpired UPDATE's own zero-rows-is-not-an-error semantics)
+// while still surfacing a genuine DB failure as an error.
+func (ls *LocalStorage) GetSetupTokenByID(ctx context.Context, id uint) (*models.SetupToken, error) {
+	var t models.SetupToken
+	if err := ls.db.WithContext(ctx).First(&t, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return &t, nil
 }
