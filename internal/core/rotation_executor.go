@@ -16,6 +16,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/rotation"
@@ -471,12 +472,40 @@ func (c *KeyorixCore) stampRotationState(ctx context.Context, policyID uint, sta
 	}
 }
 
+// rotationLockKey identifies the (backend, ref) pair rotationBackendLocks serializes
+// on. A struct key (rather than a delimited string concatenation) avoids any ambiguity
+// between e.g. backend="a", ref="b:c" and backend="a:b", ref="c".
+type rotationLockKey struct{ backend, ref string }
+
+// rotationBackendLock returns the mutex serializing applyBackendRotation calls for the
+// given (backend, ref) pair, creating one on first use. See rotationBackendLocks' doc
+// comment (service.go) for why this is keyed per-pair rather than a single global lock,
+// and for the scope/limits of what it does and does not close. The mutex is never
+// removed — fine, since backend names and refs are operator-configured (bounded
+// cardinality), mirroring the reasoning the now-removed internal/rotation/awsiam.go
+// refLocks documented for the same tradeoff.
+func (c *KeyorixCore) rotationBackendLock(backend, ref string) *sync.Mutex {
+	v, _ := c.rotationBackendLocks.LoadOrStore(rotationLockKey{backend, ref}, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 // applyBackendRotation resolves the secret's named rotation executor and rotates the
 // upstream credential (ADR-047). It returns the VALUE to store in Keyorix: for a
 // generate-upstream backend (rotation.GeneratingExecutor, e.g. a cloud key API) that is
 // the value the upstream minted; for a password-set backend it is the candidate passed
 // in (which the executor applied). Returns an error (so the caller does NOT store
 // anything) when no manager is configured, the backend is unknown, or the apply fails.
+//
+// Serializes against any other in-flight applyBackendRotation call for this SAME
+// (backend, ref) pair, across BOTH callers of this function — the auto-rotation
+// scheduler (rotateOneSecret) and on-demand rotation (RotateSecretOnDemand) — for the
+// ENTIRE upstream call (GenerateUpstream's list/evict/create/delete sequence, or
+// Rotate's apply), released only once it returns. This is a single, generic choke
+// point: it locks BEFORE inspecting whether exec is a GeneratingExecutor, so every
+// backend registered in c.rotationManager is covered uniformly regardless of its
+// concrete type — see rotationBackendLocks' doc comment (service.go) for the full
+// rationale and its scope/limits (in-process only; does not close the orphan-on-crash
+// window, which is unrelated and out of scope here).
 func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.SecretNode, candidate string) (string, error) {
 	if c.rotationManager == nil {
 		return "", fmt.Errorf("no rotation backends configured")
@@ -488,6 +517,11 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 	if secret.RotationRef == "" {
 		return "", fmt.Errorf("rotation_ref is required for backend rotation")
 	}
+
+	mu := c.rotationBackendLock(secret.RotationBackend, secret.RotationRef)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if gen, ok := exec.(rotation.GeneratingExecutor); ok {
 		return gen.GenerateUpstream(ctx, secret.RotationRef)
 	}
