@@ -39,7 +39,7 @@ func TestUpdateSCIMUser_AdminSuspensionSurvivesReactivation(t *testing.T) {
 	updated, err := c.UpdateSCIMUser(ctx, 2, 1, nil, nil, &yes) // IdP sync
 	require.NoError(t, err)
 	assert.Equal(t, AccountSuspended, updated.AccountState, "SCIM activation must not clear an admin suspension")
-	assert.True(t, AccountLoginBlocked(updated.AccountState), "the account stays login-blocked")
+	assert.True(t, AccountLoginBlocked(updated.ID, updated.AccountState), "the account stays login-blocked")
 }
 
 // The legitimate SCIM lifecycle still works: deactivation blocks login (deprovisioned),
@@ -53,13 +53,13 @@ func TestUpdateSCIMUser_DeactivateThenReactivate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, AccountDeprovisioned, off.AccountState)
 	assert.False(t, off.IsActive)
-	assert.True(t, AccountLoginBlocked(off.AccountState), "a SCIM-deactivated account is login-blocked")
+	assert.True(t, AccountLoginBlocked(off.ID, off.AccountState), "a SCIM-deactivated account is login-blocked")
 
 	on, err := c.UpdateSCIMUser(ctx, 2, 1, nil, nil, &yes)
 	require.NoError(t, err)
 	assert.Equal(t, AccountActive, on.AccountState, "reactivation clears its own deactivation")
 	assert.True(t, on.IsActive)
-	assert.False(t, AccountLoginBlocked(on.AccountState))
+	assert.False(t, AccountLoginBlocked(on.ID, on.AccountState))
 }
 
 // An admin-forced credential reset (password_reset_required) must survive a routine

@@ -154,7 +154,7 @@ func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *in
 		return nil
 	}
 	u, err := s.core.Storage().GetUser(ctx, actor.UserID)
-	if err != nil || !u.IsActive || core.AccountLoginBlocked(u.AccountState) {
+	if err != nil || !u.IsActive || core.AccountLoginBlocked(u.ID, u.AccountState) {
 		return status.Error(codes.PermissionDenied, "account is no longer active")
 	}
 	if actor.SessionID != nil {

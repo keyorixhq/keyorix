@@ -143,7 +143,7 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	// A suspended account is refused login outright (ADR-025). Restricted states
 	// (pending_first_login / password_reset_required) still log in, but the auth
 	// middleware confines the session to the password-change allowlist.
-	if AccountLoginBlocked(user.AccountState) {
+	if AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, fmt.Errorf("account suspended")
 	}
 	return user, nil
@@ -397,7 +397,7 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	if err != nil {
 		return nil, fmt.Errorf("user not found")
 	}
-	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		_ = c.storage.DeleteSession(ctx, old.ID)
 		return nil, fmt.Errorf("account is not active")
 	}
@@ -562,7 +562,7 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	// Reject sessions whose account has since been deactivated or suspended, so an
 	// admin's suspend/deactivate takes effect on already-issued tokens rather than
 	// lingering until expiry. Mirrors the active-state check in ValidatePATToken.
-	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
 	// For an impersonation session (acting AS session.UserID on behalf of an admin),
@@ -646,7 +646,7 @@ func (c *KeyorixCore) AccountStillUsable(ctx context.Context, userID uint) (bool
 	if err != nil {
 		return false, err
 	}
-	return user.IsActive && !AccountLoginBlocked(user.AccountState), nil
+	return user.IsActive && !AccountLoginBlocked(user.ID, user.AccountState), nil
 }
 
 // RequestPasswordReset issues a password-reset link for the given email and
@@ -673,7 +673,7 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 		return nil // Don't reveal whether the email exists.
 	}
 	// Never send a reset to a login-blocked (e.g. suspended) account.
-	if AccountLoginBlocked(user.AccountState) {
+	if AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil
 	}
 	// Refuse for externally-managed identities (SSO/SCIM): issuing a local password
