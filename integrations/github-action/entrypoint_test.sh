@@ -102,11 +102,27 @@ assert_invalid "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
 assert_invalid "ACTIONS_ID_TOKEN_REQUEST_URL"
 assert_invalid "ACTIONS_RUNTIME_URL"
 assert_invalid "ACTIONS_CACHE_URL"
+# Proxy/registry-override env vars — a THIRD hazard class distinct from both
+# shell/interpreter hooks and CI credentials: these silently redirect a
+# LATER, more-privileged step's network traffic or package resolution to an
+# attacker-controlled endpoint, without executing any code as this step runs.
+assert_invalid "HTTPS_PROXY"
+assert_invalid "https_proxy"
+assert_invalid "HTTP_PROXY"
+assert_invalid "ALL_PROXY"
+assert_invalid "NO_PROXY"
+assert_invalid "PIP_INDEX_URL"
+assert_invalid "NPM_CONFIG_REGISTRY"
+assert_invalid "GOPROXY"
+assert_invalid "GOPRIVATE"
+assert_invalid "GONOSUMCHECK"
+assert_invalid "GIT_PROXY_COMMAND"
 # A denylisted name as a substring, not an exact match, must still be
 # accepted — only the exact reserved name is unsafe.
 assert_valid "PATH_TO_CONFIG"
 assert_valid "MY_BASH_ENV_VAR"
 assert_valid "GITHUB_TOKEN_BACKUP"
+assert_valid "HTTPS_PROXY_BACKUP"
 
 if [[ "$fail" -ne 0 ]]; then
   echo
