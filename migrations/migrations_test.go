@@ -877,3 +877,65 @@ func TestDropSessionReversibleEncryptionMigration(t *testing.T) {
 		t.Fatalf("restored sessions.session_token_metadata = %q, want %q", gotMeta, wantRows["session_token_metadata"])
 	}
 }
+
+// TestShareRecordsRecipientID_NoForeignKeyToUsers pins the fix removing
+// 005_secret_sharing.up.sql's `FOREIGN KEY (recipient_id) REFERENCES
+// users(id)`: recipient_id is polymorphic (a users(id) value when
+// is_group=0, a groups(id) value when is_group=1 -- see
+// internal/storage/store/local_sharing.go), so a hard FK to users(id) would
+// reject every group share whose recipient_id doesn't happen to coincide
+// with an existing users(id). This enables foreign_keys enforcement
+// explicitly (SQLite defaults it off; every real connection in this
+// codebase runs with it on) so the test would have failed loudly against
+// the original schema, not passed vacuously.
+func TestShareRecordsRecipientID_NoForeignKeyToUsers(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "005_secret_sharing.up.sql")
+
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign_keys pragma: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('owner1', 'owner1@example.com', 'x')`,
+	); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO namespaces (name) VALUES ('ns1')`); err != nil {
+		t.Fatalf("seed namespaces: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO zones (name) VALUES ('zone1')`); err != nil {
+		t.Fatalf("seed zones: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO environments (name) VALUES ('env1')`); err != nil {
+		t.Fatalf("seed environments: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO secret_nodes (namespace_id, zone_id, environment_id, name, is_secret, type, created_by, owner_id)
+		 VALUES (1, 1, 1, 's1', 1, 'secret', 'owner1', 1)`,
+	); err != nil {
+		t.Fatalf("seed secret_nodes: %v", err)
+	}
+
+	// Sanity check that foreign_keys enforcement is genuinely active: an
+	// invalid owner_id (which still has a real FK to users(id)) must be
+	// rejected, so a passing recipient_id insert below isn't just silently
+	// unenforced FK checking across the board.
+	if _, err := db.Exec(
+		`INSERT INTO share_records (secret_id, owner_id, recipient_id, is_group, permission, created_at, updated_at)
+		 VALUES (1, 999, 1, 0, 'read', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+	); err == nil {
+		t.Fatal("expected invalid owner_id=999 to be rejected by its own FK with foreign_keys=ON, got nil error")
+	}
+
+	// recipient_id=999 has no matching row in users at all -- this is what a
+	// group share's recipient_id looks like from users' point of view (it's
+	// a groups(id), and 005_secret_sharing.up.sql seeds no groups). The
+	// original FOREIGN KEY (recipient_id) REFERENCES users(id) would reject
+	// this insert; the fix must not.
+	if _, err := db.Exec(
+		`INSERT INTO share_records (secret_id, owner_id, recipient_id, is_group, permission, created_at, updated_at)
+		 VALUES (1, 1, 999, 1, 'read', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("insert group share_records row with recipient_id=999 (no matching users row): %v", err)
+	}
+}

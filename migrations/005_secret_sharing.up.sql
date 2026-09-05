@@ -13,6 +13,16 @@ CREATE TABLE share_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     secret_id INTEGER NOT NULL,
     owner_id INTEGER NOT NULL,
+    -- recipient_id is polymorphic: a users(id) value when is_group=0, a
+    -- groups(id) value when is_group=1 (see internal/storage/store/
+    -- local_sharing.go, which resolves it against models.Group or models.User
+    -- depending on the is_group flag below). A single-column FK can't
+    -- reference two different tables depending on another column's value, so
+    -- none is declared here -- matching the live GORM model
+    -- (models.ShareRecord.RecipientID carries no FK tag, for the same
+    -- reason). A hard FK to users(id) here would reject every group share
+    -- whose recipient_id is a groups(id) value that doesn't happen to also
+    -- collide with a users(id) value.
     recipient_id INTEGER NOT NULL,
     is_group BOOLEAN DEFAULT FALSE,
     permission TEXT DEFAULT 'read',
@@ -20,8 +30,7 @@ CREATE TABLE share_records (
     updated_at TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP,
     FOREIGN KEY (secret_id) REFERENCES secret_nodes(id),
-    FOREIGN KEY (owner_id) REFERENCES users(id),
-    FOREIGN KEY (recipient_id) REFERENCES users(id)
+    FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
 -- Create indexes for better query performance
