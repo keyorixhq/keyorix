@@ -46,7 +46,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		// there and failed to parse" -- reporting the latter as "no configuration
 		// found, using defaults" is actively misleading (the file exists and is
 		// broken, not absent), so surface the real error instead of guessing wrong.
-		return fmt.Errorf("failed to load existing configuration: %w", cfgErr)
+		// Exit 2 (usage/config error): we don't have a valid config to interpret,
+		// distinct from a target we resolved but couldn't reach (exit 1).
+		return common.ExitUsageError(fmt.Errorf("failed to load existing configuration: %w", cfgErr))
 	}
 
 	// keyorix.yaml's storage.type: remote (the server-to-server RemoteStorage
@@ -98,7 +100,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		fmt.Printf("❌ Failed to initialize (%s)\n", err.Error())
-		return nil
+		return common.ExitUnhealthy(fmt.Errorf("failed to initialize storage: %w", err))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -111,11 +113,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		fmt.Printf("❌ Unhealthy (%s)\n", err.Error())
 		fmt.Printf("Response Time: %v\n", duration)
-	} else {
-		fmt.Printf("✅ Healthy\n")
-		fmt.Printf("Response Time: %v\n", duration)
+		return common.ExitUnhealthy(err)
 	}
-
+	fmt.Printf("✅ Healthy\n")
+	fmt.Printf("Response Time: %v\n", duration)
 	return nil
 }
 
@@ -126,14 +127,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 // unauthenticated GET /health (server/http/handlers/health.go) -- never
 // through common.InitializeCoreService()'s local/embedded storage path, so
 // this command cannot silently fall back to a stray local file once this
-// kind of remote target is configured. Mirrors runStatus's own
-// print-then-return-nil contract deliberately (see status_test.go /
-// status_s2_test.go, which require runStatus to never error out just
-// because the health check itself failed): this is a read-only diagnostic
-// display, not a mutating action, so a failed health check is reported via
-// the printed "❌ Unhealthy" line, not a nonzero exit -- the concrete harm
-// this command must never cause is silently querying (or creating) LOCAL
-// storage while the operator believes it is checking a real remote server.
+// kind of remote target is configured.
+//
+// Exit code contract (2026-09-05, a deliberate breaking change from the prior
+// always-exit-0 behavior -- see release notes): 0 healthy, 1 unhealthy or
+// unreachable, 2 usage/config error. A failed health check is both printed
+// ("❌ Unhealthy") AND returned as a non-zero exit via common.ExitUnhealthy --
+// a caller scripting on this command's exit code must be able to detect an
+// unreachable target without parsing stdout.
 func runStatusRemote(rc *common.RemoteClient) error {
 	fmt.Printf("Storage Type: 🌐 Remote\n")
 	fmt.Printf("Server URL:   %s\n", rc.Endpoint)
@@ -148,9 +149,10 @@ func runStatusRemote(rc *common.RemoteClient) error {
 
 	if err != nil {
 		fmt.Printf("❌ Unhealthy (%s)\n", err.Error())
-	} else {
-		fmt.Printf("✅ Healthy\n")
+		fmt.Printf("Response Time: %v\n", duration)
+		return common.ExitUnhealthy(err)
 	}
+	fmt.Printf("✅ Healthy\n")
 	fmt.Printf("Response Time: %v\n", duration)
 	return nil
 }
@@ -159,15 +161,15 @@ func runPing(cmd *cobra.Command, args []string) error {
 	// Load configuration. Same KEYORIX_CONFIG_PATH-respecting fix as runStatus.
 	cfg, err := config.Load("")
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return common.ExitUsageError(fmt.Errorf("failed to load configuration: %w", err))
 	}
 
 	if cfg.Storage.Type != "remote" {
-		return fmt.Errorf("ping command only works with remote storage")
+		return common.ExitUsageError(fmt.Errorf("ping command only works with remote storage"))
 	}
 
 	if cfg.Storage.Remote == nil {
-		return fmt.Errorf("remote storage not configured")
+		return common.ExitUsageError(fmt.Errorf("remote storage not configured"))
 	}
 
 	fmt.Printf("🏓 Pinging %s...\n", cfg.Storage.Remote.BaseURL)
@@ -218,11 +220,12 @@ func runPing(cmd *cobra.Command, args []string) error {
 
 	if successCount == pingCount {
 		fmt.Printf("Status:         ✅ All pings successful\n")
-	} else if successCount > 0 {
-		fmt.Printf("Status:         ⚠️  Partial connectivity\n")
-	} else {
-		fmt.Printf("Status:         ❌ No connectivity\n")
+		return nil
 	}
-
-	return nil
+	if successCount > 0 {
+		fmt.Printf("Status:         ⚠️  Partial connectivity\n")
+		return common.ExitUnhealthy(fmt.Errorf("%d/%d pings failed", pingCount-successCount, pingCount))
+	}
+	fmt.Printf("Status:         ❌ No connectivity\n")
+	return common.ExitUnhealthy(fmt.Errorf("all %d pings failed", pingCount))
 }

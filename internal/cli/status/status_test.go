@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/stretchr/testify/assert"
@@ -115,7 +116,11 @@ func TestRunStatus_RespectsConfigPathEnvVar(t *testing.T) {
 	}))
 	t.Setenv("KEYORIX_CONFIG_PATH", cfgPath)
 
-	out := captureStdout(t, func() { require.NoError(t, runStatus(nil, nil)) })
+	var runErr error
+	out := captureStdout(t, func() { runErr = runStatus(nil, nil) })
+	var exitErr *common.ExitCodeError
+	require.ErrorAs(t, runErr, &exitErr)
+	assert.Equal(t, 1, exitErr.Code)
 	assert.Contains(t, out, "Storage Type: 🌐 Remote")
 	assert.Contains(t, out, "Server URL:   http://127.0.0.1:1")
 	assert.NotContains(t, out, "No configuration found")

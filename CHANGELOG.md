@@ -6,6 +6,16 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Changed
+- **BREAKING: `keyorix status` and `keyorix ping` now exit non-zero when the
+  configured target is unhealthy or unreachable** — previously both commands
+  always exited 0 regardless of what they found, reporting failure only via
+  printed text ("❌ Unhealthy" / "❌ Failed"), so a script checking `$?` after
+  either command could never detect an outage without parsing stdout. New exit
+  code contract: `0` healthy, `1` unhealthy/unreachable, `2` usage or
+  configuration error (e.g. no config found, or `ping` run without remote
+  storage configured). If you have automation that runs `keyorix status` or
+  `keyorix ping` and previously ignored their exit code, verify it doesn't
+  need to accommodate the new non-zero results.
 - **BREAKING (targeting v0.92.0): every Keyorix Connect connector must declare
   `scope: project` or `scope: platform` (ADR-082)** — an existing deployment with
   `connect.enabled: true` and one or more configured connectors **will fail to boot**
