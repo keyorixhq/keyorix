@@ -7,6 +7,20 @@ set -e
 
 DB_FILE="${1:-keyorix.db}"
 MIGRATIONS_DIR="migrations"
+
+# Reject path traversal and anything but a plain filename/relative path made of
+# safe characters before it gets interpolated into the migrate tool's database
+# URL -- an unvalidated $1 here could otherwise be used to point the tool at an
+# arbitrary path outside the intended working directory.
+if [[ "$DB_FILE" == *".."* ]]; then
+    echo "❌ Invalid database file path: $DB_FILE (must not contain '..')"
+    exit 1
+fi
+if [[ ! "$DB_FILE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "❌ Invalid database file path: $DB_FILE (only letters, digits, '.', '_', '-', '/' are allowed)"
+    exit 1
+fi
+
 DATABASE_URL="sqlite3://$DB_FILE"
 
 echo "🚀 Running RBAC migrations on database: $DB_FILE"
