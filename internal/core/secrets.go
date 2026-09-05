@@ -80,6 +80,9 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if err := c.secretValuePolicy.Validate(req.Value); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
+	if err := c.checkSecretSize(req.Value); err != nil {
+		return nil, err
+	}
 	if err := c.validateSecretName(req.Name); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
@@ -291,6 +294,9 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 		if err := c.secretValuePolicy.Validate(req.Value); err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 		}
+		if err := c.checkSecretSize(req.Value); err != nil {
+			return nil, err
+		}
 	}
 	secret, err := c.storage.GetSecret(ctx, req.ID)
 	if err != nil {
@@ -392,6 +398,9 @@ const EventSecretRotateNoop = "secret.rotate_noop"
 func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string) (*models.SecretNode, error) {
 	if err := c.secretValuePolicy.Validate(newValue); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+	if err := c.checkSecretSize(newValue); err != nil {
+		return nil, err
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {

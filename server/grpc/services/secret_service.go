@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -523,6 +524,18 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 
 // mapSecretError translates core errors into gRPC status codes.
 func mapSecretError(err error) error {
+	// Checked via errors.As, BEFORE the string-matching switch below: this
+	// error's own message contains the substring "exceeds" (deliberately, so
+	// it names the actual limit), which the switch's own
+	// "exceeds"-string-matching InvalidArgument branch would otherwise catch
+	// first and misreport as an unrelated invalid-rotation-configuration
+	// error instead of ResourceExhausted -- exactly the collision that
+	// branch's own comment already warns a future "exceeds"-containing error
+	// could cause.
+	var tooLarge *core.SecretValueTooLargeError
+	if errors.As(err, &tooLarge) {
+		return status.Error(codes.ResourceExhausted, tooLarge.Error()) // nosemgrep: keyorix-raw-error-to-client -- SecretValueTooLargeError.Error() is a fixed-format string carrying only the submitted size and configured limit (both already known to the caller), never secret content
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):

@@ -83,6 +83,9 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		NewValue string `json:"new_value" validate:"required"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		if h.trySendSecretSizeError(w, err) {
+			return
+		}
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
 		return
 	}
@@ -97,6 +100,9 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	// potentially compromised credential is still live untouched upstream.
 	secret, err := h.coreService.RotateSecretOnDemand(r.Context(), uint(id), []byte(reqBody.NewValue), userCtx.UserID, userCtx.Username)
 	if err != nil {
+		if h.trySendSecretSizeError(w, err) {
+			return
+		}
 		switch {
 		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)

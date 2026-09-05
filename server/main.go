@@ -494,6 +494,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			svp.MinLength, svp.RejectCommon, len(svp.ExtraDenylist))
 	}
 
+	// Apply the maximum secret VALUE size (bytes) — unlike the quality gate above,
+	// this is always applied (not gated behind an Enabled flag): cfg.Secrets.Limits.
+	// MaxSecretSize is already defaulted and ceiling-checked by cfg.Validate(), so
+	// there is always a real, valid value to set here.
+	coreService.SetMaxSecretSize(cfg.Secrets.Limits.MaxSecretSize)
+
 	// Apply the optional secret naming convention (regex / max-length on names).
 	if snp := cfg.SecretNamePolicy; snp.Enabled {
 		if err := coreService.SetSecretNamePolicy(core.SecretNamePolicy{

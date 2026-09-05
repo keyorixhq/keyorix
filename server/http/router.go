@@ -100,6 +100,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
 
+	// A tighter body-size limit for the three routes that carry a secret VALUE
+	// (create/update/rotate), scoped in addition to (not instead of) the global
+	// EffectiveMaxRequestBodyBytes limit above. Derived from
+	// secrets.limits.max_secret_size rather than left at the generous global
+	// default (10 MiB) — see DeriveMaxRequestBodySize's doc comment for why this
+	// is NOT simply max_secret_size itself (a secret value travels base64-encoded
+	// inside a JSON envelope, which inflates it well past the raw byte count).
+	secretBodyLimit := customMiddleware.MaxBodyBytes(config.DeriveMaxRequestBodySize(cfg.Secrets.Limits.MaxSecretSize))
+
 	// CORS configuration. AllowCredentials is set because MFA, WebAuthn, and SSO
 	// login paths now issue session cookies (r121); cross-origin requests from the
 	// dashboard must be allowed to send them. Credentials are only sent to origins
@@ -694,15 +703,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
 
 			// Create: authorized inside the handler (scope comes from the body).
-			r.Post("/", secretHandler.CreateSecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Put("/{id}", secretHandler.UpdateSecret)
+			r.With(secretBodyLimit).Post("/", secretHandler.CreateSecret)
+			r.With(secretBodyLimit, customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Put("/{id}", secretHandler.UpdateSecret)
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/classification", secretHandler.ClassifySecret)
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/description", secretHandler.DescribeSecret)
 			// Copy into another environment: read the source ({id}); the handler also
 			// authorizes secrets.write at the target environment's scope.
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Post("/{id}/copy", secretHandler.CopySecret)
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/rotate", secretHandler.RotateSecret)
+			r.With(secretBodyLimit, customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/rotate", secretHandler.RotateSecret)
 			// Rotation dry-run / simulation (ADR-047): validates the rotation config without
 			// making any live change. Read-only — requires only secrets.read.
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Post("/{id}/rotation/simulate", secretHandler.SimulateRotation)
