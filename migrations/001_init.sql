@@ -2,10 +2,11 @@
 
 CREATE TABLE IF NOT EXISTS namespaces (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
   description TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP
+  updated_at TIMESTAMP,
+  deleted_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS zones (
@@ -75,10 +76,11 @@ CREATE TABLE IF NOT EXISTS secret_metadata_history (
 
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL,
   email TEXT,
   password_hash TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS roles (
@@ -96,9 +98,53 @@ CREATE TABLE IF NOT EXISTS user_roles (
 
 CREATE TABLE IF NOT EXISTS groups (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
-  description TEXT
+  name TEXT NOT NULL,
+  description TEXT,
+  deleted_at TIMESTAMP
 );
+
+-- Soft-delete-aware uniqueness for username / namespaces.name / groups.name.
+--
+-- These three columns used to be enforced by an inline `UNIQUE` column
+-- constraint. SQLite backs an inline UNIQUE with an internal, unnamed
+-- auto-index that cannot later be dropped by name -- which blocks
+-- AutoMigrate's own partial-index upgrade path
+-- (internal/storage/factory.go's ensureUserNameIndex / ensureProjectNameIndex
+-- / ensureGroupNameIndex, each of which DROPs a legacy named index and
+-- replaces it with one scoped `WHERE deleted_at IS NULL`, so a soft-deleted
+-- user/project/group's name is freed for reuse while the row stays
+-- restorable) from ever reaching that same state on a database bootstrapped
+-- through this legacy file. Declaring named PARTIAL unique indexes directly
+-- here avoids creating the undroppable inline-UNIQUE auto-index in the first
+-- place.
+--
+-- users / groups: named to match `uniq_users_username_active` /
+-- `uniq_groups_name_active` -- the exact legacy (pre-#1642, raw-column)
+-- index names ensureUserNameIndex / ensureGroupNameIndex already know to DROP
+-- before creating a folded-name (NFC + case-fold) replacement index. That
+-- folded replacement needs a `username_folded` / `name_folded` column this
+-- bootstrap file doesn't have (it's backfilled in Go via
+-- backfillFoldedColumn, not raw SQL), so this index is deliberately named as
+-- the intermediate state, not the final one: naming it with the final
+-- (folded) index's name instead would let ensureUserNameIndex's own
+-- `CREATE ... IF NOT EXISTS` see a same-named index already present and skip
+-- creating the real folded index entirely, silently leaving uniqueness
+-- pinned to the raw, unfolded column forever.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_username_active ON users(username) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_groups_name_active ON groups(name) WHERE deleted_at IS NULL;
+
+-- namespaces (renamed to `projects` by 006_rename_namespace_to_project.up.sql):
+-- unlike users/groups, ensureProjectNameIndex has no folded-column step and
+-- no legacy-name DROP -- it just checks-then-creates `uniq_projects_name_active`
+-- on `LOWER(name)`, an expression computed directly from columns that already
+-- exist here (name, deleted_at), so it can be reproduced verbatim. It is
+-- pre-named with its eventual POST-rename name: a SQLite index's name is
+-- independent of the table it indexes, and 006's `ALTER TABLE namespaces
+-- RENAME TO projects` carries this index over to the renamed table unchanged
+-- (SQLite >= 3.25 updates the index's table binding along with the rename),
+-- so ensureProjectNameIndex's own `IF NOT EXISTS` later finds an identical
+-- index already in place instead of creating a redundant second one.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_projects_name_active ON namespaces(LOWER(name)) WHERE deleted_at IS NULL AND name <> '';
 
 CREATE TABLE IF NOT EXISTS user_groups (
   user_id INTEGER NOT NULL REFERENCES users(id),
