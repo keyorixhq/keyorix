@@ -1,0 +1,113 @@
+# Preventive half of the implementation-asymmetry scan (docs at
+# keyorix-private/adversarial-review/IMPLEMENTATION-ASYMMETRY-SCAN-2026-09-05.md).
+# The scan itself is detective -- this catches the same shape (a PR touches
+# some but not all members of an interface-unified family, or adds a new
+# member) before it lands, not a quarter later by accident. See
+# devtools/familycheck/README.md for the two modes and the replay evidence
+# (PR #1449, PR #740) that this would have caught both historical misses.
+name: Family Membership Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    # See ci.yml's own comment: also covers stacked-PR review chains.
+    branches: [main, 'adr082/**', 'feat/**', 'fix/**']
+    paths: ['**.go']
+
+permissions: {}
+
+concurrency:
+  group: family-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  family-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          fetch-depth: 0
+
+      - name: Checkout PR base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      # Both devtools/ tools are standalone modules (not in go.work, like
+      # operator/) so golang.org/x/tools never becomes a dependency of the
+      # shipped keyorix binary. Built from the HEAD checkout: a PR that
+      # modifies the tools themselves is checked with its own version of them.
+      - name: Build analyzer and checker
+        run: |
+          GOWORK=off go build -o /tmp/asymanalyzer ./head/devtools/asymanalyzer
+          GOWORK=off go build -o /tmp/familycheck ./head/devtools/familycheck
+
+      - name: Compute family lists (base and head)
+        run: |
+          GOWORK=off /tmp/asymanalyzer -json -root "$PWD/base" base base/operator > base-families.json
+          GOWORK=off /tmp/asymanalyzer -json -root "$PWD/head" head head/operator > head-families.json
+
+      # Matches ci.yml's own `changes` job convention: the GitHub API's PR
+      # file list, not a local `git diff`, since it correctly reflects
+      # GitHub's own PR-diff computation across force-pushes/rebases rather
+      # than depending on this checkout's local history lining up.
+      - name: Compute changed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate --jq '.[].filename' > changed-files.txt
+
+      - name: Write PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > pr-body.txt
+
+      # Mode A (partial family edit) never fails this step. Mode B (new
+      # member, unconfirmed) exits 1 -- that's the intentional hard gate,
+      # narrowly scoped per family-check-scope.json plus the security-keyword
+      # heuristic in familycheck itself (see its README for why the keyword
+      # scan reads every family member's content, not just the touched ones).
+      - name: Run family check
+        run: |
+          /tmp/familycheck \
+            -base-families base-families.json \
+            -head-families head-families.json \
+            -changed-files changed-files.txt \
+            -pr-body pr-body.txt \
+            -scope head/.github/family-check-scope.json \
+            -repo-root head \
+            > family-check-report.md
+
+      # Runs even when the check above failed (Mode B), so the author sees
+      # the sibling checklist on the PR itself, not just in CI logs. An empty
+      # report (nothing in scope was touched) posts nothing -- most Go PRs
+      # touch no tracked family at all, and a check that comments on every PR
+      # regardless of relevance is exactly the noise that gets a check
+      # disabled (see family-check-scope.json's own scoping rationale).
+      - name: Post or update PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -s family-check-report.md ]; then
+            echo "family-membership check: nothing to report, skipping comment"
+            exit 0
+          fi
+          if ! gh pr comment "${{ github.event.pull_request.number }}" --edit-last --body-file family-check-report.md 2>/dev/null; then
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file family-check-report.md
+          fi

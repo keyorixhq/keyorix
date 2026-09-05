@@ -1,0 +1,7 @@
+[
+  "github.com/keyorixhq/keyorix/internal/connect.Connector",
+  "github.com/keyorixhq/keyorix/internal/crypto.KMSClient",
+  "github.com/keyorixhq/keyorix/internal/dynamic.CredentialEngine",
+  "github.com/keyorixhq/keyorix/internal/rotation.Executor",
+  "github.com/keyorixhq/keyorix/internal/rotation.GeneratingExecutor"
+]
