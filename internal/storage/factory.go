@@ -1826,7 +1826,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if err := backfillBlankAccountState(db); err != nil {
 		return err
 	}
-	if err := guardAccountStateNotBlank(db); err != nil {
+	if err := guardAccountStateValid(db); err != nil {
 		return err
 	}
 	if err := ensureProjectNameIndex(db); err != nil {
