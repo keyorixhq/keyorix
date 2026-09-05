@@ -25,6 +25,8 @@ import (
 	"time"
 
 	mail "github.com/wneessen/go-mail"
+
+	"github.com/keyorixhq/keyorix/internal/envflag"
 )
 
 // smtpDialTimeout bounds a single send so a wedged relay cannot stall the request.
@@ -37,12 +39,10 @@ const (
 	smtpTLSNone     = "none"
 )
 
-// EnvAllowInsecureSMTP gates credential_delivery.smtp.tls=none. Cleartext SMTP sends
-// the setup-link email (and, if the relay requires auth, the relay credentials) over
-// the wire unencrypted — mirroring the explicit-opt-in convention used for other
-// insecure toggles in this codebase (e.g. insecure_skip_verify), tls=none refuses to
-// activate unless this env var is set to a truthy value.
-const EnvAllowInsecureSMTP = "KEYORIX_ALLOW_INSECURE_SMTP"
+// EnvAllowInsecureSMTP gates credential_delivery.smtp.tls=none. Shared with the
+// notification-email channel (internal/notifychan) via internal/envflag — see
+// AllowInsecureSMTP's doc comment there for why the two must stay one definition.
+const EnvAllowInsecureSMTP = envflag.AllowInsecureSMTP
 
 // SMTPDelivery sends setup links via the operator's configured SMTP relay.
 type SMTPDelivery struct {
@@ -61,7 +61,7 @@ func newSMTPDelivery(cfg SMTPSettings) (*SMTPDelivery, error) {
 	switch strings.ToLower(cfg.TLS) {
 	case "", smtpTLSStartTLS, smtpTLSImplicit:
 	case smtpTLSNone:
-		if !envFlagEnabled(EnvAllowInsecureSMTP) {
+		if !envflag.Enabled(EnvAllowInsecureSMTP) {
 			return nil, fmt.Errorf("delivery: smtp.tls=none sends mail (and any relay credentials) in cleartext; refusing unless the operator explicitly opts in by setting %s=true", EnvAllowInsecureSMTP)
 		}
 		log.Printf("delivery: WARNING smtp.tls=none is ACTIVE — setup-link email will be sent over CLEARTEXT SMTP; dev/test only, never use in production")
