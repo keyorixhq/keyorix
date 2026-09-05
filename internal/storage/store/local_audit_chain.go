@@ -16,7 +16,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	mathrand "math/rand"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -34,6 +36,29 @@ const auditAdvisoryLockKey = 0x4B455941_55444954 // "KEYAUDIT"
 
 // auditChainVerifyBatch bounds memory when re-walking the chain.
 const auditChainVerifyBatch = 1000
+
+// auditBusyRetryBaseDelay/auditBusyRetryMaxDelay bound LogAuditEvent's SQLite
+// busy-retry backoff (#1727) -- see that loop's own doc comment for why it
+// exists. Exponential from base, capped at max, jittered by up to half the
+// current delay so many goroutines released by the same lock release don't
+// all retry in lockstep.
+const (
+	auditBusyRetryBaseDelay = 20 * time.Millisecond
+	auditBusyRetryMaxDelay  = 500 * time.Millisecond
+)
+
+// isSQLiteBusyErr reports whether err looks like a SQLite writer-lock
+// contention error (SQLITE_BUSY / "database is locked"). Matches the
+// driver-native message text, the same approach isUniqueViolation already
+// uses (local_memberships.go) since this codebase doesn't set
+// gorm.Config{TranslateError: true}.
+func isSQLiteBusyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "database is locked")
+}
 
 // computeAuditEntryHash hashes an event's semantically meaningful fields plus
 // prevHash, in a fixed order, each field preceded by its own big-endian
@@ -167,31 +192,65 @@ func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 	ls.auditChainMu.Lock()
 	defer ls.auditChainMu.Unlock()
 
-	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Cross-process serialization for multi-instance Postgres; no-op on SQLite.
-		if tx.Dialector.Name() == "postgres" {
-			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
+	// #1727: retry a SQLite writer-lock timeout instead of surfacing it straight to
+	// emitAudit, which just logs and drops it. SQLite's own _busy_timeout
+	// (factory.go's sqliteBusyTimeoutMillis, 10s) already retries internally once a
+	// transaction requests the write lock, but a 30-minute sustained-load
+	// measurement (docs/adr-100-mlockall-removal-deployment-swap-control.md) still
+	// exhausted that budget 704 times out of ~27k iterations (~2.6%): SQLite's busy
+	// handler makes no fairness guarantee across competing connections, so a
+	// transaction that starts AFTER the mutation it's auditing (this one, always)
+	// can be repeatedly overtaken by new arrivals for the full 10s and never get a
+	// turn. auditChainMu above already serializes this transaction against every
+	// OTHER audit append; it does nothing against concurrent writers on unrelated
+	// tables (secret_nodes, users, ...), which is where the real contention comes
+	// from. A short, jittered, bounded-by-ctx backoff loop re-enters the queue on a
+	// transient SQLITE_BUSY instead of giving up after one exhausted busy_timeout
+	// window -- closing the gap for the dominant real-world case (transient
+	// contention, not a genuinely stuck writer) without an unbounded retry storm:
+	// ctx already carries auditWriteTimeout's 10s deadline (detached from the
+	// caller's own cancellation above), so this loop can never outlive that.
+	delay := auditBusyRetryBaseDelay
+	for {
+		txErr := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Cross-process serialization for multi-instance Postgres; no-op on SQLite.
+			if tx.Dialector.Name() == "postgres" {
+				if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
+					return err
+				}
+			}
+
+			var head struct{ EntryHash string }
+			if err := tx.Model(&models.AuditEvent{}).
+				Select("entry_hash").
+				Order("id DESC").
+				Limit(1).
+				Scan(&head).Error; err != nil {
 				return err
 			}
-		}
+			prev := head.EntryHash
+			if prev == "" {
+				prev = auditGenesisHash
+			}
 
-		var head struct{ EntryHash string }
-		if err := tx.Model(&models.AuditEvent{}).
-			Select("entry_hash").
-			Order("id DESC").
-			Limit(1).
-			Scan(&head).Error; err != nil {
-			return err
+			event.PrevHash = prev
+			event.EntryHash = computeAuditEntryHash(event, prev)
+			return tx.Create(event).Error
+		})
+		if txErr == nil || !isSQLiteBusyErr(txErr) {
+			return txErr
 		}
-		prev := head.EntryHash
-		if prev == "" {
-			prev = auditGenesisHash
+		// #nosec G404 -- jitter for retry timing, not a security-sensitive value.
+		jittered := delay/2 + time.Duration(mathrand.Int63n(int64(delay/2+1)))
+		select {
+		case <-ctx.Done():
+			return txErr
+		case <-time.After(jittered):
 		}
-
-		event.PrevHash = prev
-		event.EntryHash = computeAuditEntryHash(event, prev)
-		return tx.Create(event).Error
-	})
+		if delay *= 2; delay > auditBusyRetryMaxDelay {
+			delay = auditBusyRetryMaxDelay
+		}
+	}
 }
 
 // VerifyAuditChain re-walks the hash chain by ascending id in bounded batches.
