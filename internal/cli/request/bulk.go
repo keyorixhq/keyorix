@@ -10,6 +10,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
 
@@ -186,11 +187,16 @@ func init() {
 }
 
 func runTmplList(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runTmplListRemote(ctx, rc)
+	}
+
 	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	viewerID, err := resolveUserID(ctx, service, tmplListBy)
 	if err != nil {
@@ -214,12 +220,39 @@ func runTmplList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runTmplListRemote lists templates via GET /api/v1/rejection-reason-templates,
+// gated server-side on a GLOBAL roles.assign (see router.go; templates are not
+// project-scoped) -- the SAME authority requireTemplateAuthority enforces
+// manually in embedded mode. --by is not consulted here: the server
+// determines the caller's own authority from the bearer token itself.
+func runTmplListRemote(ctx context.Context, rc *common.RemoteClient) error {
+	var resp struct {
+		Templates []*models.RejectionReasonTemplate `json:"templates"`
+	}
+	if err := rc.Get(ctx, "/api/v1/rejection-reason-templates", &resp); err != nil {
+		return fmt.Errorf("failed to list templates: %w", err)
+	}
+	if len(resp.Templates) == 0 {
+		fmt.Println("No rejection-reason templates defined.")
+		return nil
+	}
+	for _, t := range resp.Templates {
+		fmt.Printf("  id=%-4d  name=%-30s  reason=%s\n", t.ID, t.Name, t.Reason)
+	}
+	return nil
+}
+
 func runTmplAdd(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runTmplAddRemote(ctx, rc)
+	}
+
 	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	creatorID, err := resolveUserID(ctx, service, tmplBy)
 	if err != nil {
@@ -234,6 +267,27 @@ func runTmplAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create template: %w", err)
 	}
 	fmt.Printf("Template created: id=%d name=%s\n", t.ID, t.Name)
+	return nil
+}
+
+// runTmplAddRemote creates a template via POST
+// /api/v1/rejection-reason-templates, gated server-side on the same global
+// roles.assign as runTmplListRemote above. --by is not consulted here: the
+// server attributes the creation to the caller's own bearer token, not to any
+// --by value in the request body.
+func runTmplAddRemote(ctx context.Context, rc *common.RemoteClient) error {
+	fmt.Printf("Creating rejection-reason template %q...\n", tmplName)
+	body := map[string]interface{}{"name": tmplName, "reason": tmplReason}
+	var resp struct {
+		Template *models.RejectionReasonTemplate `json:"template"`
+	}
+	if err := rc.Post(ctx, "/api/v1/rejection-reason-templates", body, &resp); err != nil {
+		return fmt.Errorf("failed to create template: %w", err)
+	}
+	if resp.Template == nil {
+		return fmt.Errorf("server did not return the created template")
+	}
+	fmt.Printf("Template created: id=%d name=%s\n", resp.Template.ID, resp.Template.Name)
 	return nil
 }
 

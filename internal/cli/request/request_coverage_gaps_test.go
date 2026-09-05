@@ -38,6 +38,14 @@ import (
 func withInvalidStorageConfig(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote before InitializeCoreService's own storage.type check
+	// is ever reached, making this "force a local storage-init failure" fixture
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 	cfgPath := filepath.Join(dir, "keyorix.yaml")
@@ -83,9 +91,15 @@ func newUsersOnlyCore(t *testing.T, email string) (*core.KeyorixCore, uint) {
 
 func TestRunAccess_InitServiceError_RealFailure(t *testing.T) {
 	withInvalidStorageConfig(t)
-	origUser := accessUser
-	defer func() { accessUser = origUser }()
+	origUser, origProject := accessUser, accessProject
+	defer func() { accessUser = origUser; accessProject = origProject }()
 	accessUser = "user@example.com"
+	// A project must be supplied so ResolveProject succeeds and control reaches
+	// InitializeCoreService -- the branch this test exercises. ResolveProject now
+	// runs before the remote/local branch decision (both paths need the resolved
+	// project name), so an unset --project would surface "no project specified"
+	// before ever reaching storage init.
+	accessProject = "irrelevant"
 
 	err := runAccess(nil, nil)
 	require.Error(t, err)
@@ -95,6 +109,10 @@ func TestRunAccess_InitServiceError_RealFailure(t *testing.T) {
 
 func TestRunList_InitServiceError_RealFailure(t *testing.T) {
 	withInvalidStorageConfig(t)
+	origProject := listProject
+	defer func() { listProject = origProject }()
+	// Same reason as TestRunAccess_InitServiceError_RealFailure above.
+	listProject = "irrelevant"
 
 	err := runList(nil, nil)
 	require.Error(t, err)
@@ -146,7 +164,15 @@ func TestRunWithdraw_InitServiceError_RealFailure(t *testing.T) {
 // branch: no --project flag, no KEYORIX_PROJECT, and no active project on
 // disk leaves nothing for runList to resolve.
 func TestRunList_ResolveProjectError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 	t.Setenv("KEYORIX_PROJECT", "")
@@ -163,7 +189,15 @@ func TestRunList_ResolveProjectError(t *testing.T) {
 // TestRunList_ResolveUserIDError exercises the resolveUserID error branch:
 // --by names an email with no matching user record.
 func TestRunList_ResolveUserIDError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -184,7 +218,15 @@ func TestRunList_ResolveUserIDError(t *testing.T) {
 // entrypoint: --by resolves to a real user who simply doesn't hold
 // roles.assign at the project.
 func TestRunList_RequireListAuthorityError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -284,7 +326,15 @@ func TestRunTmplDelete_RequireTemplateAuthorityError(t *testing.T) {
 // admin (so requireTemplateAuthority passes) deleting an ID that was never
 // created.
 func TestRunTmplDelete_DeleteTemplateNotFoundError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 

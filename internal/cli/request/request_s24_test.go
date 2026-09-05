@@ -24,7 +24,15 @@ import (
 // TestRunList_EmptyProject exercises the "No access requests found." branch
 // (len(requests) == 0). The project exists but has no access requests yet.
 func TestRunList_EmptyProject(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -50,7 +58,15 @@ func TestRunList_EmptyProject(t *testing.T) {
 // TestRunAccess_UserNotFound exercises the resolveUserID-error branch: the
 // project exists but the requested user email is unknown.
 func TestRunAccess_UserNotFound(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -79,7 +95,15 @@ func TestRunAccess_UserNotFound(t *testing.T) {
 // core service validates it against the role catalog before touching the
 // access_requests table).
 func TestRunAccess_RequestProjectAccessFails(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -114,7 +138,15 @@ func TestRunAccess_RequestProjectAccessFails(t *testing.T) {
 // TestRunWithdraw_RequestNotFound exercises the WithdrawAccessRequest-error
 // branch: the user is known but the request ID does not exist.
 func TestRunWithdraw_RequestNotFound(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -136,7 +168,15 @@ func TestRunWithdraw_RequestNotFound(t *testing.T) {
 // RequestSecretAccess-error branch by supplying a secret ID that does not
 // exist in the database.
 func TestRunSecretAccess_RequestSecretAccessFails(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -169,7 +209,15 @@ func TestRunSecretAccess_RequestSecretAccessFails(t *testing.T) {
 // RejectAccessRequest-error branch by rejecting a request that was already
 // rejected (state is no longer "pending").
 func TestRunReview_RejectFailsOnAlreadyRejected(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -217,7 +265,15 @@ func TestRunReview_RejectFailsOnAlreadyRejected(t *testing.T) {
 // ApproveAccessRequestWithExpiry-error branch by approving a request that was
 // already approved (state is no longer "pending").
 func TestRunReview_ApproveFailsOnAlreadyApproved(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -264,7 +320,15 @@ func TestRunReview_ApproveFailsOnAlreadyApproved(t *testing.T) {
 // ApproveSecretAccessRequest-error branch by approving a secret-scoped request
 // that was already approved (state is no longer "pending").
 func TestRunReview_ApproveSecretScopedFailsOnAlreadyApproved(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
