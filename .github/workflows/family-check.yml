@@ -51,10 +51,15 @@ jobs:
       # operator/) so golang.org/x/tools never becomes a dependency of the
       # shipped keyorix binary. Built from the HEAD checkout: a PR that
       # modifies the tools themselves is checked with its own version of them.
+      # `cd` into each tool's own directory before building: with GOWORK=off,
+      # `go build` resolves the main module from the CURRENT directory, not
+      # the target package path, so building `./head/devtools/x` from the
+      # workspace root (which has no go.mod of its own) fails with "go.mod
+      # file not found in current directory or any parent directory".
       - name: Build analyzer and checker
         run: |
-          GOWORK=off go build -o /tmp/asymanalyzer ./head/devtools/asymanalyzer
-          GOWORK=off go build -o /tmp/familycheck ./head/devtools/familycheck
+          (cd head/devtools/asymanalyzer && GOWORK=off go build -o /tmp/asymanalyzer .)
+          (cd head/devtools/familycheck && GOWORK=off go build -o /tmp/familycheck .)
 
       - name: Compute family lists (base and head)
         run: |
