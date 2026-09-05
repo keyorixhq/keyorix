@@ -169,6 +169,54 @@ ciphertext irreversibly. The migration backup copy is fsync'd for the same reaso
 `fsync(dir)` pattern now holds on every key-material path; the data path is
 unchanged.
 
+## Addendum (2026-09-05): encryption-context tenant binding — AWS/GCP have it, Azure cannot
+
+`storage.encryption.key_provider.kms_encryption_context` (`kms_encryption_context`
+in config) binds the wrapped KEK to an install: AWS passes it as the KMS
+`EncryptionContext`, GCP as Additional Authenticated Data, on both wrap and unwrap.
+If a different install's Keyorix server shares the same CMK/crypto-key (the same
+IAM/service-account boundary reaching one key across multiple installs — not a
+recommended topology, but not one anything else in this ADR prevents either) and
+that install's own wrapped KEK blob is somehow presented to this install's
+`Decrypt` call, the context mismatch makes decryption fail outright. An optional,
+loudly-logged `kms_allow_context_fallback` supports migrating an existing
+(pre-binding) install onto a newly configured context without lockout — see the
+`KMSEncryptionContext`/`KMSAllowContextFallback` doc comments in
+`internal/config/config.go` for the full mechanics.
+
+**This binding has no Azure Key Vault equivalent, and cannot be added:** Key Vault
+wrap/unwrap uses RSA-OAEP, which has no additional-authenticated-data input at
+all — there is no field to bind an install identity into. Setting
+`kms_encryption_context` for an `azure-kms` install is therefore a hard startup
+error (not a silent no-op), so a misconfiguration is caught immediately rather than
+producing a false sense of binding.
+
+**What Azure has instead is a different mechanism solving a different problem.**
+The key-version pinning above (2026-07-03 addendum) embeds the wrap-time key
+version in the blob and verifies it (via an HMAC over the version and the
+ciphertext/plaintext) on unwrap — this catches the blob being corrupted or rewritten
+independent of the data it travels with, and protects against silent Key Vault
+key-rotation lockout. It does **not** bind install identity: a wrapped-KEK blob
+honestly produced by a *different* install sharing the same Key Vault key carries
+its own internally-consistent version and HMAC, and unwraps cleanly for whichever
+install presents it. AWS has a direct regression test for the cross-install case
+this binding prevents; Azure has none, because there is nothing to test — the
+property doesn't exist there.
+
+**Operational consequence for Azure deployments:** the only real control against
+cross-install KEK exposure is topology — never point two Keyorix installs'
+`kms_key_id` at the same Key Vault key. This is worth stating plainly to anyone
+evaluating or operating an Azure-KMS deployment rather than leaving it to be
+discovered independently: AWS/GCP customers get a cryptographic backstop against a
+shared-key misconfiguration; Azure customers do not, and must rely on getting the
+one-key-per-install topology right in the first place.
+
+(Traced during the 2026-09-05 implementation-asymmetry scan,
+`keyorix-private/adversarial-review/IMPLEMENTATION-ASYMMETRY-SCAN-2026-09-05.md`
+finding F5 — documentation only, no code change: the RSA-OAEP limitation is a
+platform constraint the code already handles correctly (fail-closed config
+validation), not a defect to fix.)
+
 ## Deferred
 
 AWS `GenerateDataKey` as an optimisation; KMS-key rotation runbook (rotating the CMK
