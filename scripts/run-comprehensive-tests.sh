@@ -41,15 +41,18 @@ TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
 
-# Function to run test and track results
+# Function to run test and track results. Takes the test name followed by the
+# command to run as separate argv elements (an array at each call site) --
+# never a single string handed to eval, so a future caller can't turn a
+# variable-built string into arbitrary shell execution.
 run_test() {
     local test_name="$1"
-    local test_command="$2"
-    
+    shift
+
     log_info "Running: $test_name"
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    
-    if eval "$test_command" > /dev/null 2>&1; then
+
+    if "$@" > /dev/null 2>&1; then
         log_success "$test_name - PASSED"
         PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
@@ -63,9 +66,9 @@ run_test() {
 # 1. Go Unit Tests
 log_info "=== Running Go Unit Tests ==="
 if command -v go &> /dev/null; then
-    run_test "Go Unit Tests" "go test ./... -v -short"
-    run_test "Go Race Condition Tests" "go test ./... -race -short"
-    run_test "Go Coverage Test" "go test ./... -cover"
+    run_test "Go Unit Tests" go test ./... -v -short
+    run_test "Go Race Condition Tests" go test ./... -race -short
+    run_test "Go Coverage Test" go test ./... -cover
 else
     log_warning "Go not found - skipping Go tests"
 fi
@@ -87,10 +90,10 @@ if [[ -d "web" ]] && [[ -f "web/package.json" ]]; then
     
     # Run web tests
     if command -v npm &> /dev/null; then
-        run_test "Web Unit Tests" "npm test -- --watchAll=false --coverage=false"
-        run_test "Web Lint Check" "npm run lint || true"
-        run_test "Web Build Test" "npm run build"
-        run_test "Web Type Check" "npm run type-check || true"
+        run_test "Web Unit Tests" npm test -- --watchAll=false --coverage=false
+        run_test "Web Lint Check" bash -c "npm run lint || true"
+        run_test "Web Build Test" npm run build
+        run_test "Web Type Check" bash -c "npm run type-check || true"
     fi
     
     cd ..
@@ -101,7 +104,7 @@ fi
 # 3. Integration Tests
 log_info "=== Running Integration Tests ==="
 if [[ -f "scripts/run_integration_tests.sh" ]]; then
-    run_test "Integration Tests" "./scripts/run_integration_tests.sh"
+    run_test "Integration Tests" ./scripts/run_integration_tests.sh
 else
     log_warning "Integration test script not found"
 fi
@@ -117,9 +120,9 @@ if [[ -f "./bin/keyorix" ]]; then
     sleep 3
     
     # Test API endpoints
-    run_test "Health Check API" "curl -f http://localhost:8080/health"
-    run_test "OpenAPI Spec" "curl -f http://localhost:8080/openapi.yaml"
-    run_test "Swagger UI" "curl -f http://localhost:8080/swagger/"
+    run_test "Health Check API" curl -f http://localhost:8080/health
+    run_test "OpenAPI Spec" curl -f http://localhost:8080/openapi.yaml
+    run_test "Swagger UI" curl -f http://localhost:8080/swagger/
     
     # Stop server
     kill $SERVER_PID 2>/dev/null || true
@@ -131,9 +134,9 @@ fi
 # 5. CLI Tests
 log_info "=== Running CLI Tests ==="
 if [[ -f "./bin/keyorix" ]]; then
-    run_test "CLI Help Command" "./bin/keyorix --help"
-    run_test "CLI Version Command" "./bin/keyorix version || ./bin/keyorix --version || true"
-    run_test "CLI Config Validation" "./bin/keyorix config validate --config keyorix-simple.yaml || true"
+    run_test "CLI Help Command" ./bin/keyorix --help
+    run_test "CLI Version Command" bash -c "./bin/keyorix version || ./bin/keyorix --version || true"
+    run_test "CLI Config Validation" bash -c "./bin/keyorix config validate --config keyorix-simple.yaml || true"
 else
     log_warning "CLI binary not found - skipping CLI tests"
 fi
@@ -142,8 +145,8 @@ fi
 log_info "=== Running Database Tests ==="
 if command -v sqlite3 &> /dev/null; then
     # Test database operations
-    run_test "Database Schema Check" "sqlite3 keyorix.db '.schema' | grep -q 'secrets' || true"
-    run_test "Database Integrity Check" "sqlite3 keyorix.db 'PRAGMA integrity_check;' | grep -q 'ok' || true"
+    run_test "Database Schema Check" bash -c "sqlite3 keyorix.db '.schema' | grep -q 'secrets' || true"
+    run_test "Database Integrity Check" bash -c "sqlite3 keyorix.db 'PRAGMA integrity_check;' | grep -q 'ok' || true"
 else
     log_warning "sqlite3 not found - skipping database tests"
 fi
@@ -151,14 +154,14 @@ fi
 # 7. Security Tests
 log_info "=== Running Security Tests ==="
 if command -v gosec &> /dev/null; then
-    run_test "Go Security Scan" "gosec ./..."
+    run_test "Go Security Scan" gosec ./...
 else
     log_warning "gosec not found - skipping security scan"
 fi
 
 # Check for common security issues
-run_test "Hardcoded Secrets Check" "! grep -r 'password.*=' . --include='*.go' --include='*.js' --include='*.ts' | grep -v test | grep -v example"
-run_test "TODO/FIXME Check" "! grep -r 'TODO.*security\|FIXME.*security' . --include='*.go' --include='*.js' --include='*.ts'"
+run_test "Hardcoded Secrets Check" bash -c "! grep -r 'password.*=' . --include='*.go' --include='*.js' --include='*.ts' | grep -v test | grep -v example"
+run_test "TODO/FIXME Check" bash -c "! grep -r 'TODO.*security\|FIXME.*security' . --include='*.go' --include='*.js' --include='*.ts'"
 
 # 8. Performance Tests
 log_info "=== Running Performance Tests ==="
@@ -169,11 +172,11 @@ if [[ -f "./bin/keyorix" ]] && command -v time &> /dev/null; then
     sleep 3
     
     # Simple performance tests
-    run_test "Response Time Test" "time curl -f http://localhost:8080/health"
-    
+    run_test "Response Time Test" bash -c "time curl -f http://localhost:8080/health"
+
     # Load test with curl (basic)
     if command -v seq &> /dev/null; then
-        run_test "Basic Load Test" "seq 1 10 | xargs -I {} -P 5 curl -f http://localhost:8080/health"
+        run_test "Basic Load Test" bash -c "seq 1 10 | xargs -I {} -P 5 curl -f http://localhost:8080/health"
     fi
     
     # Stop server
@@ -185,37 +188,37 @@ fi
 
 # 9. Documentation Tests
 log_info "=== Running Documentation Tests ==="
-run_test "README Exists" "[[ -f README.md ]]"
-run_test "API Documentation Exists" "[[ -f server/openapi.yaml ]]"
-run_test "User Guide Exists" "[[ -f docs/SECRET_SHARING_USER_GUIDE.md ]] || [[ -f QUICK_START.md ]]"
+run_test "README Exists" test -f README.md
+run_test "API Documentation Exists" test -f server/openapi.yaml
+run_test "User Guide Exists" bash -c "[[ -f docs/SECRET_SHARING_USER_GUIDE.md ]] || [[ -f QUICK_START.md ]]"
 
 # Check for broken links in markdown files
 if command -v grep &> /dev/null; then
-    run_test "Markdown Link Check" "! find . -name '*.md' -exec grep -l 'http' {} \; | head -5 | xargs grep 'http.*404' || true"
+    run_test "Markdown Link Check" bash -c "! find . -name '*.md' -exec grep -l 'http' {} \; | head -5 | xargs grep 'http.*404' || true"
 fi
 
 # 10. Configuration Tests
 log_info "=== Running Configuration Tests ==="
-run_test "Config File Exists" "[[ -f keyorix-simple.yaml ]]"
-run_test "Docker Compose Exists" "[[ -f docker-compose.full-stack.yml ]]"
-run_test "Production Config Exists" "[[ -f server/config/production.yaml ]]"
+run_test "Config File Exists" test -f keyorix-simple.yaml
+run_test "Docker Compose Exists" test -f docker-compose.full-stack.yml
+run_test "Production Config Exists" test -f server/config/production.yaml
 
 # 11. Build Tests
 log_info "=== Running Build Tests ==="
 if command -v go &> /dev/null; then
-    run_test "Go Build Test" "go build -o test-binary ./cmd/keyorix && rm -f test-binary"
+    run_test "Go Build Test" bash -c "go build -o test-binary ./cmd/keyorix && rm -f test-binary"
 fi
 
 if [[ -d "web" ]] && command -v npm &> /dev/null; then
     cd web
-    run_test "Web Build Test" "npm run build"
+    run_test "Web Build Test" npm run build
     cd ..
 fi
 
 # 12. Deployment Tests
 log_info "=== Running Deployment Tests ==="
-run_test "Deployment Scripts Exist" "[[ -f scripts/deploy-simple.sh ]] && [[ -f scripts/deploy-production.sh ]]"
-run_test "Docker Files Exist" "[[ -f server/Dockerfile ]] || [[ -f Dockerfile ]]"
+run_test "Deployment Scripts Exist" bash -c "[[ -f scripts/deploy-simple.sh ]] && [[ -f scripts/deploy-production.sh ]]"
+run_test "Docker Files Exist" bash -c "[[ -f server/Dockerfile ]] || [[ -f Dockerfile ]]"
 
 # Generate test report
 log_info "=== Generating Test Report ==="
