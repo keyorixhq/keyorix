@@ -90,6 +90,47 @@ func openSecureOutputFile(path string) (*os.File, error) {
 func runExportMatrix(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
+	// Fetch the matrix data fully into memory FIRST, and only open/truncate
+	// --output afterward: openSecureOutputFile's O_CREATE means merely opening
+	// the destination already leaves an (empty) file behind, even if the fetch
+	// that was supposed to fill it then fails against an unreachable remote or
+	// broken embedded storage. Ordering it this way means a failed fetch never
+	// leaves a stray file in an otherwise-untouched directory.
+	var write func(io.Writer) error
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		fmt.Fprintf(os.Stderr, "Fetching permission matrix from remote server: %s\n", rc.Endpoint)
+		w, err := fetchExportMatrixRemote(ctx, rc)
+		if err != nil {
+			return err
+		}
+		write = w
+	} else {
+		fmt.Fprintln(os.Stderr, "Fetching permission matrix from local embedded storage")
+		// Embedded (direct-DB) mode.
+		st, err := common.InitializeStorage()
+		if err != nil {
+			return err
+		}
+		coreService := core.NewKeyorixCore(st)
+
+		projectID := uint(0)
+		if exportMatrixProject != "" {
+			projectID, err = common.LookupProjectIDByName(ctx, st, exportMatrixProject)
+			if err != nil {
+				return fmt.Errorf("failed to resolve project: %w", err)
+			}
+		}
+
+		rows, err := coreService.GetPermissionMatrix(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("failed to build permission matrix: %w", err)
+		}
+		write = func(out io.Writer) error {
+			return writeMatrixEmbedded(out, rows, exportMatrixFormat)
+		}
+	}
+
 	out := io.Writer(os.Stdout)
 	if exportMatrixOutput != "" {
 		f, err := openSecureOutputFile(exportMatrixOutput)
@@ -99,58 +140,56 @@ func runExportMatrix(cmd *cobra.Command, args []string) error {
 		defer func() { _ = f.Close() }()
 		out = f
 	}
+	return write(out)
+}
 
-	if rc, ok := common.NewRemoteClient(); ok {
-		return runExportMatrixRemote(ctx, rc, out)
-	}
-
-	// Embedded (direct-DB) mode.
-	st, err := common.InitializeStorage()
+// runExportMatrixRemote fetches the permission matrix over the REST API and
+// writes it directly to out. Kept as a thin wrapper around
+// fetchExportMatrixRemote (which decouples fetch from write) so existing
+// direct callers/tests that already have an io.Writer in hand don't need to
+// change; runExportMatrix itself calls fetchExportMatrixRemote directly so it
+// can defer opening --output until the fetch has already succeeded.
+func runExportMatrixRemote(ctx context.Context, rc *common.RemoteClient, out io.Writer) error {
+	write, err := fetchExportMatrixRemote(ctx, rc)
 	if err != nil {
 		return err
 	}
-	coreService := core.NewKeyorixCore(st)
-
-	projectID := uint(0)
-	if exportMatrixProject != "" {
-		projectID, err = common.LookupProjectIDByName(ctx, st, exportMatrixProject)
-		if err != nil {
-			return fmt.Errorf("failed to resolve project: %w", err)
-		}
-	}
-
-	rows, err := coreService.GetPermissionMatrix(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("failed to build permission matrix: %w", err)
-	}
-
-	return writeMatrixEmbedded(out, rows, exportMatrixFormat)
+	return write(out)
 }
 
-func runExportMatrixRemote(ctx context.Context, rc *common.RemoteClient, out io.Writer) error {
+// fetchExportMatrixRemote fetches the permission matrix data (as raw CSV
+// bytes or decoded JSON rows, depending on format/filter) and returns a
+// closure that writes it to whatever io.Writer the caller later opens --
+// deliberately not writing anything itself, so a caller can defer opening
+// --output until after this call has already succeeded.
+func fetchExportMatrixRemote(ctx context.Context, rc *common.RemoteClient) (func(io.Writer) error, error) {
 	path := "/api/v1/rbac/permission-matrix"
 	if exportMatrixProject != "" {
 		projectID, err := resolveProjectIDByName(ctx, rc, exportMatrixProject)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if exportMatrixFormat == "csv" {
 			// Request CSV directly from the server to avoid double-serialisation.
 			data, err := rc.GetRaw(ctx, fmt.Sprintf("%s?project_id=%d&format=csv", path, projectID))
 			if err != nil {
-				return fmt.Errorf("failed to fetch permission matrix (CSV): %w", err)
+				return nil, fmt.Errorf("failed to fetch permission matrix (CSV): %w", err)
 			}
-			_, err = out.Write(data)
-			return err
+			return func(out io.Writer) error {
+				_, werr := out.Write(data)
+				return werr
+			}, nil
 		}
 		path = fmt.Sprintf("%s?project_id=%d", path, projectID)
 	} else if exportMatrixFormat == "csv" {
 		data, err := rc.GetRaw(ctx, path+"?format=csv")
 		if err != nil {
-			return fmt.Errorf("failed to fetch permission matrix (CSV): %w", err)
+			return nil, fmt.Errorf("failed to fetch permission matrix (CSV): %w", err)
 		}
-		_, err = out.Write(data)
-		return err
+		return func(out io.Writer) error {
+			_, werr := out.Write(data)
+			return werr
+		}, nil
 	}
 
 	var resp struct {
@@ -158,9 +197,11 @@ func runExportMatrixRemote(ctx context.Context, rc *common.RemoteClient, out io.
 		Total int               `json:"total"`
 	}
 	if err := rc.Get(ctx, path, &resp); err != nil {
-		return fmt.Errorf("failed to fetch permission matrix: %w", err)
+		return nil, fmt.Errorf("failed to fetch permission matrix: %w", err)
 	}
-	return writeMatrixRemote(out, resp.Rows, exportMatrixFormat)
+	return func(out io.Writer) error {
+		return writeMatrixRemote(out, resp.Rows, exportMatrixFormat)
+	}, nil
 }
 
 func writeMatrixRemote(out io.Writer, rows []remoteMatrixRow, format string) error {

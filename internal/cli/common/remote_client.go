@@ -344,6 +344,33 @@ func (c *RemoteClient) classifyTransportError(err error, fallback string) error 
 	return fmt.Errorf("%s: %w", fallback, err)
 }
 
+// Ping verifies the configured remote server is actually reachable, via the
+// unauthenticated /health endpoint (unlike every other call on this client,
+// /health returns a bare JSON object with no {"data":…} envelope, so this
+// does not go through decodeEnvelope). Some commands' only real API call is
+// conditional on the input actually needing one (e.g. `secret render`
+// against a template with zero ${secret:...} references never calls
+// keyorixResolver at all) — for those, "no error occurred" does not mean
+// "the configured remote was reached." Call Ping unconditionally before
+// treating such a command as successful, so an unreachable/misconfigured
+// KEYORIX_SERVER is caught even on an input that happens not to exercise
+// the resolver.
+func (c *RemoteClient) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+"/health", nil)
+	if err != nil {
+		return fmt.Errorf("build health-check request: %w", err)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return c.classifyTransportError(err, "server health check failed")
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("server returned HTTP %d for health check", resp.StatusCode)
+	}
+	return nil
+}
+
 // Get performs a GET to path, strips the {"data":…} envelope, and decodes into out.
 func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+path, nil)

@@ -57,8 +57,19 @@ func runRender(_ *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 	}
+	fmt.Fprintf(os.Stderr, "Rendering via remote server: %s\n", rc.Endpoint)
 
-	out, err := renderWith(context.Background(), rc, string(tmpl))
+	ctx := context.Background()
+	// A template with zero ${secret:...} references never calls the resolver,
+	// so renderWith below would otherwise report success without ever making a
+	// network call — indistinguishable from a genuinely-reached server. Ping
+	// unconditionally so an unreachable/misconfigured remote is caught before
+	// anything is written, regardless of what the template actually contains.
+	if err := rc.Ping(ctx); err != nil {
+		return fmt.Errorf("remote server unreachable: %w", err)
+	}
+
+	out, err := renderWith(ctx, rc, string(tmpl))
 	if err != nil {
 		return err
 	}
