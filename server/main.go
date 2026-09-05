@@ -100,6 +100,20 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// #G-blank-storage-default: the server's own boot path is the ONE caller
+	// allowed to treat a blank storage.type as "local" -- see the matching
+	// comment in internal/storage/factory.go's CreateStorage, which (along with
+	// Config.Validate() below) now hard-errors on a blank type for every OTHER
+	// caller (CLI commands run with no usable config, test fixtures building a
+	// zero-value config.Config{}). This preserves an operator's existing
+	// "no storage: block in the config file = local SQLite" deployment shape
+	// without moving that default into the shared config.Load()/Validate()
+	// functions the CLI also uses. Must run BEFORE the Validate() call
+	// immediately below, since Validate() itself now rejects a blank type.
+	if cfg.Storage.Type == "" {
+		cfg.Storage.Type = "local"
+	}
+
 	// Schema/sanity validation (ports, TLS cert/key presence, storage DSN/path) — always
 	// enforced, independent of any security flag: a malformed config should never boot.
 	if err := cfg.Validate(); err != nil {
@@ -345,6 +359,18 @@ func loadCertPool(path string) (*x509.CertPool, error) {
 }
 
 func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.Service, error) { // NOSONAR -- cognitive complexity 159, suppress go:S3776
+	// #G-blank-storage-default: mirrors main()'s own default-application above —
+	// a test or any other caller that builds a *config.Config by hand and skips
+	// straight to this function bypassed that default too. This is the server's
+	// own boot path (the one caller allowed to treat a blank storage.type as
+	// "local"; see internal/storage/factory.go's CreateStorage), so apply the
+	// same default here, before the Validate() call immediately below rejects a
+	// blank type. This does NOT set a default for the CLI: this function lives
+	// in server/main.go's package main and is never called from CLI code.
+	if cfg.Storage.Type == "" {
+		cfg.Storage.Type = "local"
+	}
+
 	// #1475: mirrors main()'s own cfg.Validate() call above — a test or any other
 	// caller that builds a *config.Config by hand and skips straight to this
 	// function bypassed schema/sanity validation entirely, letting fixtures encode

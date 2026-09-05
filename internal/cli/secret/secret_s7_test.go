@@ -64,6 +64,12 @@ func newS7EmbeddedDir(t *testing.T) string {
 	t.Chdir(dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
+	// #G-blank-storage-default: InitializeCoreService/InitializeStorage no
+	// longer silently default storage.type to "local" with no config file
+	// present -- write an explicit minimal config so embedded-mode tests keep
+	// exercising a real file-backed SQLite DB, matching what they did
+	// implicitly before.
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 	return dir
 }
 

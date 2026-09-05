@@ -150,6 +150,11 @@ func TestRunList_ResolveProjectError(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 	t.Setenv("KEYORIX_PROJECT", "")
+	// #G-blank-storage-default: runList's InitializeCoreService call now hard-errors
+	// on a blank storage.type instead of silently defaulting to local storage — write
+	// an explicit config so the test still reaches the "no project specified" branch
+	// this test is targeting, rather than failing earlier on storage init.
+	writeLocalStorageConfig(t)
 
 	origProject := listProject
 	defer func() { listProject = origProject }()

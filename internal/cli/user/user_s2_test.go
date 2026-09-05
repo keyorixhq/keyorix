@@ -432,6 +432,19 @@ func seedUserDB(t *testing.T) (adminID uint, targetID uint) {
 	t.Helper()
 	ctx := context.Background()
 
+	// #G-blank-storage-default: InitializeCoreService no longer silently
+	// defaults storage.type to "local" when no config file is present -- write
+	// an explicit minimal config so this fixture keeps exercising a real
+	// file-backed SQLite DB, matching what it did implicitly before. Skipped
+	// if a keyorix.yaml already exists (some callers, e.g.
+	// TestResendSetupLinkCmd_RunE_Success_WithBaseURL, write their own first
+	// with additional settings like credential_delivery.base_url) -- only
+	// appending storage.type there would be more surprising than requiring
+	// callers with their own config to include storage.type themselves.
+	if _, statErr := os.Stat("keyorix.yaml"); os.IsNotExist(statErr) {
+		require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
+	}
+
 	svc, err := common.InitializeCoreService()
 	require.NoError(t, err)
 

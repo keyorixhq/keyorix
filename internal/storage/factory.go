@@ -193,8 +193,32 @@ func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Stora
 	// matching the "postgres"/"postgresql" dual-spelling precedent above --
 	// operators write the storage engine's name, not this codebase's
 	// internal term for it).
-	case "local", "sqlite", "":
+	case "local", "sqlite":
 		return f.createLocalStorage(cfg)
+	case "":
+		// #G-blank-storage-default: a blank storage.type must never silently
+		// fall through to local SQLite storage -- this is the same "blank/
+		// zero-value treated as an implicit permissive default" defect shape
+		// as the AccountState ""->Active auth-bypass bug (#1741/#1742). Before
+		// this fix, "local", "sqlite", "" were one case, so a config file with
+		// no storage: block at all (or a hand-built *config.Config{} zero
+		// value) silently created a real, on-disk local database file with no
+		// operator-visible signal -- indistinguishable from an operator who
+		// explicitly chose local storage.
+		//
+		// The ONE legitimate "no storage: block in the config = local SQLite"
+		// deployment shape (an existing on-prem single-node server) is
+		// preserved, but NOT here: server/main.go's initializeCoreService (and
+		// main() itself, before its own first cfg.Validate() call) explicitly
+		// sets cfg.Storage.Type = "local" in the server's own boot sequence,
+		// before this factory or Config.Validate() ever sees the config. That
+		// keeps the default scoped to the one caller allowed to apply it. Every
+		// OTHER caller -- CLI commands (internal/cli/common.InitializeStorage/
+		// InitializeCoreService deliberately do NOT set this default), test
+		// fixtures that build a config.Config{} zero value, and any future
+		// caller -- must now see a loud, explicit error instead of a silent
+		// local database.
+		return nil, fmt.Errorf("storage.type is not set: no storage configuration found -- specify \"local\", \"postgres\", \"postgresql\", or \"remote\" explicitly")
 	default:
 		// #463: defense in depth. Config.Validate() rejects an unrecognized
 		// storage.type at boot, but this factory can also be invoked directly

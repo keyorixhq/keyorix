@@ -161,26 +161,28 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 	// Load configuration
 	cfg, err := config.Load("")
 	if err != nil {
-		// #1644: a Load error means EITHER "no config file yet" (safe to fall back to
+		// #1644: a Load error means EITHER "no config file yet" (used to fall back to
 		// local storage) OR "a config file is there and failed to parse" (must NOT
 		// silently proceed as if unconfigured -- that would run against the wrong
 		// storage backend with no indication anything was wrong). Only the first case
-		// may fall back to a default.
+		// used to fall back to a default.
 		if !config.IsNotExist(err) {
 			return nil, fmt.Errorf("failed to load existing configuration: %w", err)
 		}
-		cfg = &config.Config{
-			Locale: config.LocaleConfig{
-				Language:         "en",
-				FallbackLanguage: "en",
-			},
-			Storage: config.StorageConfig{
-				Type: "local",
-				Database: config.DatabaseConfig{
-					Path: "./secrets.db",
-				},
-			},
-		}
+		// #G-blank-storage-default: this used to construct a cfg with
+		// Storage.Type/Database.Path hardwired to "local"/"./secrets.db" -- the
+		// CLI silently creating a real, on-disk local database file for a
+		// command run with zero usable configuration (no keyorix.yaml, no
+		// KEYORIX_CONFIG_PATH), completely bypassing whatever storage backend
+		// (e.g. a `keyorix connect`-configured remote server) the operator
+		// actually intended. The CLI must never apply this default (see the
+		// matching comment in internal/storage/factory.go's CreateStorage) --
+		// only the server's own boot path (server/main.go) may. Leaving
+		// Storage unset here means factory.CreateStorage below now returns a
+		// clear "storage.type is not set" error instead of silently writing to
+		// ./secrets.db. Locale still defaults sensibly: i18n.Initialize below
+		// already falls back to "en" for a blank Language/FallbackLanguage.
+		cfg = &config.Config{}
 	}
 
 	// Initialize i18n system

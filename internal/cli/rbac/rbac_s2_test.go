@@ -167,13 +167,12 @@ func TestCheckPermission_EmbeddedMode_ValidFormat(t *testing.T) {
 // ──────────────────────────── runAuditLogsEmbedded ───────────────────────────
 
 // TestAuditLogs_EmbeddedMode_Empty tests runAuditLogsEmbedded with an empty DB.
-// runAuditLogsEmbedded uses InitializeCoreService (has fallback config), so even
-// without keyorix.yaml it will create a SQLite at ./secrets.db and return no logs.
+// #G-blank-storage-default: runAuditLogsEmbedded uses InitializeCoreService,
+// which no longer silently falls back to local storage with no config file
+// present — write an explicit minimal keyorix.yaml via setupEmbeddedMode so
+// this still exercises a real SQLite-backed run, exactly as before.
 func TestAuditLogs_EmbeddedMode_Empty(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	t.Setenv("KEYORIX_SERVER", "")
-	t.Setenv("KEYORIX_TOKEN", "")
+	setupEmbeddedMode(t)
 
 	origL, origO := auditLimit, auditOffset
 	defer func() { auditLimit = origL; auditOffset = origO }()
@@ -188,10 +187,7 @@ func TestAuditLogs_EmbeddedMode_Empty(t *testing.T) {
 
 // TestAuditLogs_EmbeddedMode_ZeroLimit verifies the auditLimit < 1 → 50 branch.
 func TestAuditLogs_EmbeddedMode_ZeroLimit(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	t.Setenv("KEYORIX_SERVER", "")
-	t.Setenv("KEYORIX_TOKEN", "")
+	setupEmbeddedMode(t)
 
 	origL, origO := auditLimit, auditOffset
 	defer func() { auditLimit = origL; auditOffset = origO }()
@@ -204,10 +200,7 @@ func TestAuditLogs_EmbeddedMode_ZeroLimit(t *testing.T) {
 
 // TestAuditLogsEmbedded_NonZeroOffset verifies pagination calculation (page > 1).
 func TestAuditLogsEmbedded_NonZeroOffset(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	t.Setenv("KEYORIX_SERVER", "")
-	t.Setenv("KEYORIX_TOKEN", "")
+	setupEmbeddedMode(t)
 
 	origL, origO := auditLimit, auditOffset
 	defer func() { auditLimit = origL; auditOffset = origO }()

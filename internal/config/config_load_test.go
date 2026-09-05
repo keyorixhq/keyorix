@@ -145,6 +145,7 @@ func TestValidate_RejectsMalformedAllowedOrigin(t *testing.T) {
 // A well-formed explicit allowlist (the common case) must still validate cleanly.
 func TestValidate_AcceptsExplicitAllowedOrigins(t *testing.T) {
 	c := &Config{}
+	c.Storage.Type = "local"
 	c.Storage.Database.Path = "/tmp/keyorix.db"
 	c.Server.HTTP.AllowedOrigins = []string{"https://app.example.com", "http://localhost:3000"}
 	require.NoError(t, c.Validate())
@@ -249,6 +250,24 @@ func TestValidate_RejectsUnknownStorageType(t *testing.T) {
 	require.Contains(t, err.Error(), "postgres_typo")
 }
 
+// TestValidate_RejectsBlankStorageType is #G-blank-storage-default: a blank
+// storage.type used to be bucketed with "local"/"sqlite" (accepted, as long as
+// database.path was set) — silently identical to an operator who explicitly
+// chose local storage. It must now be a hard error from this shared validator,
+// the same as an unrecognized type, since Config.Validate is used by both the
+// server and (indirectly, via fixtures) tests that must not get a free local
+// default. The one legitimate "no storage: block = local SQLite" deployment
+// shape is preserved by server/main.go explicitly setting Storage.Type =
+// "local" BEFORE ever calling Validate() — not by this function.
+func TestValidate_RejectsBlankStorageType(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = ""
+	c.Storage.Database.Path = "/tmp/keyorix.db"
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "storage.type is not set")
+}
+
 // Companion to TestValidate_RejectsUnknownStorageType: every genuinely-supported
 // storage.type value must still validate cleanly — a validation change that's
 // too aggressive is as dangerous as one that's too permissive.
@@ -259,13 +278,16 @@ func TestValidate_AcceptsValidStorageTypes(t *testing.T) {
 	// TestValidate_RejectsRemoteStorageWithNoServerEnabled's comment) and now rejects
 	// "remote" unconditionally, since it's the one storage type this validator's own
 	// caller (server/main.go) can never legitimately back a server process with.
-	for _, storageType := range []string{"", "local", "sqlite", "postgres", "postgresql"} {
+	//
+	// "" is also deliberately excluded: see TestValidate_RejectsBlankStorageType
+	// (#G-blank-storage-default) -- a blank storage.type is now a hard error here.
+	for _, storageType := range []string{"local", "sqlite", "postgres", "postgresql"} {
 		c := &Config{}
 		c.Storage.Type = storageType
 		switch storageType {
 		case "postgres", "postgresql":
 			c.Storage.Database.DSN = "postgres://user:pass@localhost/db"
-		case "local", "sqlite", "":
+		case "local", "sqlite":
 			c.Storage.Database.Path = "/tmp/keyorix.db"
 		}
 		err := c.Validate()

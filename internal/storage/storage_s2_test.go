@@ -120,17 +120,20 @@ func TestOpenGormDB_InvalidType_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid storage.type")
 }
 
-// TestOpenGormDB_EmptyType_SQLite verifies that an empty storage type falls through to
-// the SQLite path in OpenGormDB (same as "local").
-func TestOpenGormDB_EmptyType_SQLite(t *testing.T) {
+// TestOpenGormDB_EmptyType_Rejected verifies that an empty storage type is now
+// a hard error (#G-blank-storage-default), not a silent fallback to the
+// SQLite path in OpenGormDB — see the matching change in
+// internal/storage/factory.go's CreateStorage.
+func TestOpenGormDB_EmptyType_Rejected(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{}
 	cfg.Storage.Type = ""
 	cfg.Storage.Database.Path = filepath.Join(dir, "opengormdb_empty.db")
 
 	db, err := OpenGormDB(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, db)
+	require.Error(t, err)
+	assert.Nil(t, db)
+	assert.Contains(t, err.Error(), "storage.type is not set")
 }
 
 // TestOpenGormDB_Postgres_FailsFast exercises the postgres branch in OpenGormDB.

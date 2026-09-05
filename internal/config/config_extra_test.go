@@ -417,6 +417,7 @@ func TestValidate_LocalStorageRequiresPath(t *testing.T) {
 // rejected.
 func TestValidate_UnsupportedLanguage(t *testing.T) {
 	c := &Config{}
+	c.Storage.Type = "local"
 	c.Storage.Database.Path = "/tmp/db"
 	c.Locale.Language = "zh"
 	err := c.Validate()
@@ -428,6 +429,7 @@ func TestValidate_UnsupportedLanguage(t *testing.T) {
 // locale.fallback_language is rejected.
 func TestValidate_UnsupportedFallbackLanguage(t *testing.T) {
 	c := &Config{}
+	c.Storage.Type = "local"
 	c.Storage.Database.Path = "/tmp/db"
 	c.Locale.Language = "en"
 	c.Locale.FallbackLanguage = "zh"
@@ -440,6 +442,7 @@ func TestValidate_UnsupportedFallbackLanguage(t *testing.T) {
 // defaults to "en" and passes validation.
 func TestValidate_DefaultLocaleIsEn(t *testing.T) {
 	c := &Config{}
+	c.Storage.Type = "local"
 	c.Storage.Database.Path = "/tmp/db"
 	// Language and FallbackLanguage left empty → should default to "en".
 	require.NoError(t, c.Validate())

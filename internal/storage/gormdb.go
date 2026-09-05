@@ -12,8 +12,9 @@ import (
 
 // OpenGormDB opens a raw *gorm.DB for the configured local backend, switching on
 // cfg.Storage.Type with the same mapping the factory uses (postgres/postgresql →
-// Postgres, local/"" → SQLite, anything else rejected — #463) and applying the
-// same connection-pool settings via applyPoolSettings.
+// Postgres, local/sqlite → SQLite, a blank type or anything else rejected — #463,
+// #G-blank-storage-default) and applying the same connection-pool settings via
+// applyPoolSettings.
 //
 // Unlike the factory's CreateStorage, it deliberately does NOT run migrations: it
 // exists for the handful of CLI admin commands that need a raw *gorm.DB the
@@ -48,7 +49,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 	// function's own doc comment already notes these CLI admin commands run
 	// without Config.Validate() first, so it must accept the alias
 	// independently, not rely on Validate() to have normalized it upstream.
-	case "local", "sqlite", "":
+	case "local", "sqlite":
 		dbPath := cfg.Storage.Database.Path
 		if dbPath == "" {
 			dbPath = "./secrets.db"
@@ -74,6 +75,16 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 			return nil, err
 		}
 		return db, nil
+	case "":
+		// #G-blank-storage-default: mirrors internal/storage/factory.go's
+		// CreateStorage -- a blank storage.type must never silently open local
+		// SQLite here either. These CLI admin commands (DEK rotation,
+		// auth-encryption stats) load their config directly via config.Load("")
+		// with no CLI-applied default (internal/cli/common.InitializeStorage/
+		// InitializeCoreService deliberately don't set one), so a blank type
+		// reaching this function means the operator's config genuinely has no
+		// storage.type set -- fail loudly instead of guessing local.
+		return nil, fmt.Errorf("storage.type is not set: no storage configuration found -- specify \"local\", \"postgres\", \"postgresql\", or \"remote\" explicitly")
 	default:
 		// #463: defense in depth, mirroring the factory's own hardening — these
 		// CLI admin commands run without going through Config.Validate() first,

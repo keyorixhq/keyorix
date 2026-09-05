@@ -287,8 +287,11 @@ func TestRunCreate_SetupLink_WithBaseURL(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	// Write a minimal config with base_url so setup link minting does not fail
-	// with ErrSetupBaseURLRequired.
-	configYAML := "credential_delivery:\n  base_url: \"https://test.example.com\"\n  mode: out_of_band\n"
+	// with ErrSetupBaseURLRequired. #G-blank-storage-default: storage.type must
+	// be explicit here too -- see seedUserDB's own doc comment in
+	// user_s2_test.go for why it no longer overwrites a pre-existing
+	// keyorix.yaml.
+	configYAML := "storage:\n  type: local\n  database:\n    path: ./secrets.db\ncredential_delivery:\n  base_url: \"https://test.example.com\"\n  mode: out_of_band\n"
 	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(configYAML), 0o600))
 
 	// Seed the DB via InitializeCoreService (will create secrets.db in dir).

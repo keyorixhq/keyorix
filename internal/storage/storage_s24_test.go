@@ -99,17 +99,20 @@ func TestOpenGormDB_S24_LocalDefaultPath(t *testing.T) {
 	assert.NotNil(t, db)
 }
 
-// TestOpenGormDB_S24_EmptyTypeDefaultsToLocal verifies that an empty storage
-// type (not set) is treated as "local", opening a SQLite database.
-func TestOpenGormDB_S24_EmptyTypeDefaultsToLocal(t *testing.T) {
+// TestOpenGormDB_S24_EmptyTypeIsRejected verifies that an empty storage type
+// (not set) is now a hard error (#G-blank-storage-default), not a silent
+// fallback to local SQLite — see the matching change in
+// internal/storage/factory.go's CreateStorage.
+func TestOpenGormDB_S24_EmptyTypeIsRejected(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{}
 	cfg.Storage.Type = ""
 	cfg.Storage.Database.Path = filepath.Join(dir, "empty-type.db")
 
 	db, err := OpenGormDB(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, db)
+	require.Error(t, err)
+	assert.Nil(t, db)
+	assert.Contains(t, err.Error(), "storage.type is not set")
 }
 
 // TestOpenGormDB_S24_PostgresNoDSN verifies that OpenGormDB returns a "requires
