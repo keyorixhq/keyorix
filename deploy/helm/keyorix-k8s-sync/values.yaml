@@ -67,7 +67,15 @@ serviceAccount:
   # name overrides the generated ServiceAccount name.
   name: ""
 
-resources: {}
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+    ephemeral-storage: 32Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+    ephemeral-storage: 128Mi
 nodeSelector: {}
 tolerations: []
 affinity: {}
