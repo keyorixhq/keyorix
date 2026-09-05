@@ -993,22 +993,18 @@ var rawStorageBypassAllowlist = map[string]string{
 	"TransitionMachineIdentityStateProxy": "FIXED: preceded by core.IsValidMachineTransition -- see the FIXED " +
 		"comment immediately above this entry for the full reasoning (kept as a map comment, not a value, since " +
 		"Go doesn't support per-key doc comments on map literals).",
-	// FIXED 2026-08-24 (G80 overnight campaign, Tier 1 Group A #2, was in
-	// knownUnfixedRawStorageBypasses): the raw call is still here, but it no longer
-	// accepts a full caller-supplied replacement row. The handler now fetches the
-	// EXISTING credential and applies only Classification from the wire body,
-	// matching core.ClassifyMachineToken's actual behavior exactly (confirmed the
-	// ONLY exported core caller of this storage primitive by grep before this fix
-	// landed -- it never touches TokenHash/Revoked/ExpiresAt). No RemoteStorage
-	// wire-protocol change was needed: the only real caller only ever sends a
-	// classification change, so narrowing what the hub acts on breaks nothing
-	// (verified in the overnight session's RemoteStorage impact check). The route
-	// carries no caller-asserted project/machine scope to re-derive
-	// ClassifyMachineToken's own machineInProject check against -- same reasoning as
-	// TransitionMachineIdentityStateProxy's cross-project guard above; that check is
-	// a caller-side concern already satisfied before the relayed call reached here.
-	"UpdateMachineIdentityCredentialProxy": "FIXED: narrowed to fetch-existing + apply-Classification-only -- see " +
-		"the FIXED comment immediately above this entry for the full reasoning.",
+	// UpdateMachineIdentityCredentialProxy entry removed (#1714): the previous
+	// FIXED entry here only closed the authz-ceiling question (narrowed to
+	// fetch-existing + apply-Classification-only, matching
+	// core.ClassifyMachineToken's own field scope). #1714 found a separate,
+	// narrower defect the ceiling framing didn't cover: the raw
+	// storage.UpdateMachineIdentityCredential call skipped the
+	// machine_identity.token_classified AUDIT write entirely. Fixed
+	// structurally, not by adding a ceiling check: the handler now goes
+	// through KeyorixCore.ClassifyMachineTokenByID, which performs the fetch,
+	// the mutation, and the audit write as one unit -- no raw storage call
+	// remains in the handler, so this guard's own detection no longer flags
+	// it.
 	// FIXED 2026-08-24 (G80 Phase 2, #1529 re-triage): CreateInvitationProxy now
 	// re-derives InviteToProject's/InviteGlobal's own requireAuthorityForRole
 	// escalation-by-proxy ceiling for every role the wire body can carry (the

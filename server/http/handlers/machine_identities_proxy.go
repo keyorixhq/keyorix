@@ -716,6 +716,13 @@ func (h *CatalogHandler) ListActiveMachineIdentityCredentialsProxy(w http.Respon
 // caller-side concern already satisfied by whichever server's core initiated
 // the relayed call) -- deliberately not re-derived here for the same reason
 // TransitionMachineIdentityStateProxy's cross-project guard isn't either.
+// #1714: routed through KeyorixCore.ClassifyMachineTokenByID, not
+// h.coreService.Storage().UpdateMachineIdentityCredential directly -- the raw
+// storage call mutates state with no audit trail, so any system.write holder
+// could silently reclassify a machine credential's data-sensitivity label with
+// no record of the change. ClassifyMachineTokenByID performs the fetch, the
+// mutation, and the machine_identity.token_classified audit write as one unit;
+// see its own doc.
 func (h *CatalogHandler) UpdateMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -732,18 +739,11 @@ func (h *CatalogHandler) UpdateMachineIdentityCredentialProxy(w http.ResponseWri
 			"classification must be one of public, internal, confidential, restricted (or empty to clear)")
 		return
 	}
-	existing, err := h.coreService.Storage().GetMachineIdentityCredentialByID(r.Context(), uint(id))
-	if err != nil {
+	if err := h.coreService.ClassifyMachineTokenByID(r.Context(), uint(id), body.Classification); err != nil {
 		if isNotFoundErr(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
 			return
 		}
-		log.Printf("machine-credentials proxy: update lookup failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	existing.Classification = body.Classification
-	if err := h.coreService.Storage().UpdateMachineIdentityCredential(r.Context(), existing); err != nil {
 		log.Printf("machine-credentials proxy: update failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
