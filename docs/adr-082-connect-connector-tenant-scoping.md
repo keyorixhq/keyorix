@@ -141,11 +141,12 @@ runtime CRUD, no numeric ID.
 `gcp-secret-manager` connector config type already has a `ProjectID` field
 (`server/main.go:570-574`) — but that is a **GCP** project ID (an
 ambient-cloud-identity scope string, #431), unrelated to Keyorix's own
-`Project` entity. An unset GCP `project_id` today produces only a
-boot-time `log.Printf` warning, not enforcement. **These two `ProjectID`
-concepts are unrelated and must not share a config field name.** Fixing the
-GCP one's boot-warning-only enforcement gap is out of scope for this ADR
-(see "Out of scope").
+`Project` entity. An unset GCP `project_id` at the time this ADR was
+written produced only a boot-time `log.Printf` warning, not enforcement.
+**These two `ProjectID` concepts are unrelated and must not share a config
+field name.** Fixing the GCP one's boot-warning-only enforcement gap was
+out of scope for this ADR (see "Out of scope") and was closed in a later
+change — see that section for the resolution.
 
 ## Decision
 
@@ -829,9 +830,14 @@ design, with (D) added.)
 
 - Enforcement semantics for `environment:` (G) — its own follow-up ADR.
 - The GCP `gcp-secret-manager` connector's own `project_id` field and its
-  current boot-warning-only (not enforced) behavior (#431) — a real,
+  then-boot-warning-only (not enforced) behavior (#431) — a real,
   separate gap at the ambient-cloud-identity layer, unrelated to Keyorix's
-  `Project` entity; not fixed by this ADR.
+  `Project` entity; not fixed by this ADR. **Closed in a later change**:
+  `project_id` is now a required field (`validateConnectGCPProjectID`,
+  `internal/config/config.go`) — a missing value fails boot, aggregated
+  across every offending connector like this ADR's own scope checks — and
+  `GCPSecretManagerConnector.GetSecret` independently refuses every read
+  when `projectID` is empty (defense in depth, not just a boot-time check).
 - The exact `connect.platform.use` permission description string and the
   exact delegation-audit decision-reason marker text — implementation
   detail, not a design axis.

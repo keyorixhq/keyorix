@@ -9,8 +9,9 @@ package connect
 // missing/invalid connector scope. server/main.go's initializeCoreService
 // still dispatches on a literal switch (each type needs a different
 // constructor call, some with type-specific side effects — e.g. the
-// gcp-secret-manager case's project_id Fatal/warn, the vault case's token TTL
-// check — that don't reduce to a uniform map[string]func lookup), but
+// gcp-secret-manager case's defensive project_id Fatal (config validation already
+// requires it), the vault case's token TTL check — that don't reduce to a uniform
+// map[string]func lookup), but
 // server/connector_type_registry_test.go asserts that switch's case set is
 // always exactly this list, so the two cannot silently drift apart.
 var KnownTypes = []string{

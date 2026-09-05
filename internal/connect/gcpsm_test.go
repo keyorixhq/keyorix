@@ -25,8 +25,14 @@ func (f *fakeGCPSM) AccessSecretVersion(_ context.Context, req *secretmanagerpb.
 }
 func (f *fakeGCPSM) Close() error { f.closed = true; return nil }
 
+// gcpConnectorWith builds a pinned connector for tests that exercise GetSecret
+// behavior unrelated to project pinning (backend errors, empty payloads, allowed_refs,
+// client lifecycle, etc.) — every ref used with connectors built by this helper
+// embeds project "p", so the (now mandatory, see TestGCPSM_RequiresProjectID)
+// project pin check passes transparently and does not interfere with what each test
+// actually means to exercise.
 func gcpConnectorWith(name string, fake *fakeGCPSM, allowed ...string) *GCPSecretManagerConnector {
-	c := NewGCPSecretManagerConnector(name, "", allowed)
+	c := NewGCPSecretManagerConnector(name, "p", allowed)
 	c.newClient = func(_ context.Context) (gcpSMAccessAPI, error) { return fake, nil }
 	return c
 }
@@ -80,10 +86,13 @@ func TestGCPSM_GetSecret_Errors(t *testing.T) {
 	})
 }
 
-// TestGCPSM_ProjectPin covers #431: an unpinned connector (projectID == "", the
-// pre-existing default) may address any project the ADC identity can reach — no
-// regression — while a pinned connector rejects a ref naming a different project and
-// still works normally for its own project's refs.
+// TestGCPSM_ProjectPin covers #431: a pinned connector rejects a ref naming a
+// different project and still works normally for its own project's refs. project_id
+// is now a required binding (validateConnectGCPProjectID enforces this at boot,
+// server/main.go's gcp-secret-manager case constructs every connector with a
+// non-empty ProjectID) — an unpinned (projectID == "") connector is no longer a
+// legacy-compatible "allow all projects" configuration, it is refused outright at
+// use-time; see TestGCPSM_RequiresProjectID.
 func TestGCPSM_ProjectPin(t *testing.T) {
 	t.Run("pinned connector rejects a ref targeting a different project", func(t *testing.T) {
 		fake := &fakeGCPSM{out: &secretmanagerpb.AccessSecretVersionResponse{Payload: &secretmanagerpb.SecretPayload{Data: []byte("x")}}}
@@ -114,14 +123,29 @@ func TestGCPSM_ProjectPin(t *testing.T) {
 		assert.Empty(t, fake.got)
 	})
 
-	t.Run("unpinned connector (legacy/default config) still reads across projects", func(t *testing.T) {
-		fake := &fakeGCPSM{out: &secretmanagerpb.AccessSecretVersionResponse{Payload: &secretmanagerpb.SecretPayload{Data: []byte("g0ph3r")}}}
-		c := gcpConnectorWith("gcp", fake) // projectID == "" — the pre-existing default
-		ref := "projects/some-other-proj/secrets/db/versions/latest"
-		val, err := c.GetSecret(context.Background(), ref)
-		require.NoError(t, err, "no regression: an unpinned connector keeps today's cross-project behavior")
-		assert.Equal(t, "g0ph3r", val)
-	})
+}
+
+// TestGCPSM_RequiresProjectID is the use-time guard test for the confused-deputy gap
+// this connector used to have: a connector with no project_id configured must
+// refuse EVERY read (fail closed), not fall back to the old "reach any project the
+// ADC identity can access" behavior. This is defense in depth on top of
+// internal/config.validateConnectGCPProjectID's boot-time requirement — it must
+// hold even if a connector somehow got constructed with an empty projectID despite
+// that boot check (a bug in wiring, a bypass, a future caller of
+// NewGCPSecretManagerConnector that skips cfg.Validate()). Before this change, this
+// exact scenario (empty projectID, a ref naming an arbitrary project) returned the
+// secret value with no error — this test is RED against that old behavior and GREEN
+// against the fail-closed fix.
+func TestGCPSM_RequiresProjectID(t *testing.T) {
+	fake := &fakeGCPSM{out: &secretmanagerpb.AccessSecretVersionResponse{Payload: &secretmanagerpb.SecretPayload{Data: []byte("g0ph3r")}}}
+	c := NewGCPSecretManagerConnector("gcp", "", nil) // projectID == "" — must never reach the backend
+	c.newClient = func(_ context.Context) (gcpSMAccessAPI, error) { return fake, nil }
+
+	ref := "projects/some-other-proj/secrets/db/versions/latest"
+	_, err := c.GetSecret(context.Background(), ref)
+	require.Error(t, err, "a connector with no project_id must refuse every read, not fall back to unrestricted cross-project access")
+	assert.Contains(t, err.Error(), "project_id")
+	assert.Empty(t, fake.got, "the backend must never be reached when project_id is unset")
 }
 
 func TestGCPRefProjectID(t *testing.T) {

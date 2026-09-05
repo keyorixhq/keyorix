@@ -160,7 +160,7 @@ func TestAzureKV_GetSecret_ClientError_S22(t *testing.T) {
 // GCPSecretManagerConnector.GetSecret where the client factory returns an
 // error (e.g., ADC credential failure).
 func TestGCPSM_GetSecret_ClientError_S22(t *testing.T) {
-	c := NewGCPSecretManagerConnector("gcp", "", nil)
+	c := NewGCPSecretManagerConnector("gcp", "p", nil)
 	c.newClient = func(_ context.Context) (gcpSMAccessAPI, error) {
 		return nil, errors.New("ADC: no credentials")
 	}
