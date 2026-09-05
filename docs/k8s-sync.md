@@ -10,7 +10,8 @@ directly.
 
 It runs **in-cluster** as a small Deployment:
 
-- authenticates to Keyorix with a **machine-identity token** (`KEYORIX_TOKEN`),
+- authenticates to Keyorix with a **machine-identity token** (`KEYORIX_TOKEN_FILE`,
+  or `KEYORIX_TOKEN`),
 - writes Secrets via the Kubernetes API using its mounted **service-account**
   credentials (no `client-go` — a thin REST client, so the image stays tiny),
 - reconciles on an interval, creating/updating a target Secret **only when its data
@@ -39,8 +40,13 @@ mappings:
     key: API_KEY
 ```
 
-The Keyorix auth token is **not** in this file — it is read from the `KEYORIX_TOKEN`
-environment variable (mount it from a Kubernetes Secret). Give that token a
+The Keyorix auth token is **not** in this file. Prefer `KEYORIX_TOKEN_FILE`
+(a path to a mounted Secret volume — this repo's own Helm chart mounts it this way
+by default) over `KEYORIX_TOKEN` (a plain env var, still supported for backward
+compatibility): a mounted, read-only file never appears in the pod spec itself,
+unlike an env var sourced from a `secretKeyRef`, which the Kubernetes API still
+returns verbatim to anyone who can read the pod (e.g. `kubectl get pod -o yaml`).
+`KEYORIX_TOKEN_FILE` takes precedence when both are set. Give that token a
 least-privilege machine identity that can read only the referenced secrets.
 
 `project_id` is required: a mapping's `ref` names only an environment and a secret
@@ -134,6 +140,14 @@ The agent serves probe endpoints on `health_port` (default `8080`):
 
 The Helm chart wires `/healthz` and `/readyz` as the Deployment's liveness and
 readiness probes.
+
+`/metrics` is unauthenticated by default, like the other three endpoints — set
+`-metrics-bearer-token` (or `KEYORIX_METRICS_TOKEN`; `metricsBearerToken` in the Helm
+chart) to require a matching `Authorization: Bearer <token>` header on `/metrics`
+specifically. `/healthz`, `/readyz`, and `/status` stay unauthenticated regardless —
+Kubernetes' own kubelet has no way to supply a token, and none of the three expose
+secret values. The chart also ships a `NetworkPolicy` (`networkPolicy.enabled`,
+default on) restricting who can reach `health_port` at all.
 
 > A Helm chart that deploys the agent with its RBAC and config ships separately
 > (`deploy/helm/keyorix-k8s-sync`).

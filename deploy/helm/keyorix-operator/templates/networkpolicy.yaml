@@ -1,0 +1,32 @@
+{{/*
+Restricts inbound reach to the manager's Prometheus metrics port. Without this, any
+pod in the cluster that can route to the operator's pod IP can scrape /metrics for
+free -- and by default (see values.yaml's metricsBearerToken) that endpoint is
+unauthenticated. This complements, not replaces, metricsBearerToken: set both for
+defense in depth, or rely on this alone if setting a token isn't practical.
+
+The health probe port (healthPort) is deliberately left out of this policy: kubelet
+must reach it unauthenticated to run liveness/readiness probes, and it exposes no
+sensitive data (see the main keyorix chart's own networkpolicy.yaml for the
+same same-purpose split between a restricted API port and an intentionally open one).
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kxop.fullname" . }}-metrics
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kxop.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.metricsAllowFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.metricsPort | default 8080 }}
+{{- end }}

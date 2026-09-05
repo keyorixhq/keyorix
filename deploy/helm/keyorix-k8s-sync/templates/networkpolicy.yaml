@@ -1,0 +1,37 @@
+{{/*
+Restricts inbound reach to healthPort. Without this, any pod in the cluster that can
+route to the agent's pod IP can scrape /metrics for free -- and by default (see
+values.yaml's metricsBearerToken) that endpoint is unauthenticated. This complements,
+not replaces, metricsBearerToken: set both for defense in depth, or rely on this
+alone if setting a token isn't practical.
+
+Unlike keyorix-operator (a separate metrics port from its health port), this agent
+serves /metrics on the SAME port as /healthz, /readyz, and /status (see healthPort in
+values.yaml) -- there is no way to restrict just /metrics at the NetworkPolicy layer
+without also affecting the probe endpoints. Same-namespace pods are left able to
+reach the port (matching deploy/helm/keyorix/templates/networkpolicy.yaml's own
+same-namespace-open convention) so this doesn't need to reason about whether
+kubelet's own probe traffic would otherwise match a from: peer; only OTHER
+namespaces are restricted to the explicit metricsAllowFrom allow-list.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kxsync.fullname" . }}
+  labels:
+    {{- include "kxsync.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kxsync.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+        {{- toYaml .Values.networkPolicy.metricsAllowFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.healthPort | default 8080 }}
+{{- end }}

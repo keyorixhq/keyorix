@@ -32,6 +32,70 @@ func TestEnvOr_ReturnsDefaultWhenUnset(t *testing.T) {
 	assert.Equal(t, "/etc/keyorix/k8s-sync.yaml", envOr("KEYORIX_K8S_SYNC_CONFIG_TEST_UNSET", "/etc/keyorix/k8s-sync.yaml"))
 }
 
+// ---- resolveToken ----
+
+func TestResolveToken_FromEnv(t *testing.T) {
+	t.Setenv("KEYORIX_TOKEN", "env-token")
+	t.Setenv("KEYORIX_TOKEN_FILE", "")
+
+	token, err := resolveToken()
+	require.NoError(t, err)
+	assert.Equal(t, "env-token", token)
+}
+
+func TestResolveToken_FromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token")
+	require.NoError(t, os.WriteFile(path, []byte("file-token\n"), 0600))
+	t.Setenv("KEYORIX_TOKEN_FILE", path)
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	token, err := resolveToken()
+	require.NoError(t, err)
+	assert.Equal(t, "file-token", token, "trailing whitespace from the mounted file must be trimmed")
+}
+
+func TestResolveToken_FileTakesPrecedenceOverEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token")
+	require.NoError(t, os.WriteFile(path, []byte("file-token"), 0600))
+	t.Setenv("KEYORIX_TOKEN_FILE", path)
+	t.Setenv("KEYORIX_TOKEN", "env-token")
+
+	token, err := resolveToken()
+	require.NoError(t, err)
+	assert.Equal(t, "file-token", token)
+}
+
+func TestResolveToken_FileMissing_ReturnsError(t *testing.T) {
+	t.Setenv("KEYORIX_TOKEN_FILE", filepath.Join(t.TempDir(), "does-not-exist"))
+	t.Setenv("KEYORIX_TOKEN", "env-token")
+
+	_, err := resolveToken()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read KEYORIX_TOKEN_FILE")
+}
+
+func TestResolveToken_FileEmpty_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token")
+	require.NoError(t, os.WriteFile(path, []byte("   \n"), 0600))
+	t.Setenv("KEYORIX_TOKEN_FILE", path)
+
+	_, err := resolveToken()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is empty")
+}
+
+func TestResolveToken_NeitherSet_ReturnsError(t *testing.T) {
+	t.Setenv("KEYORIX_TOKEN_FILE", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	_, err := resolveToken()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "KEYORIX_TOKEN is required")
+}
+
 // ---- fakes for runAgent ----
 
 // fakeFetcher serves values from a map; a ref absent from the map returns err (or a
@@ -134,7 +198,7 @@ func TestRunAgent_OnceMode_AllSucceed_ReturnsZero(t *testing.T) {
 
 	var code int
 	out := captureLog(t, func() {
-		code = runAgent(cfg, fetcher, sink, true, false, false)
+		code = runAgent(cfg, fetcher, sink, true, false, false, "")
 	})
 
 	assert.Equal(t, 0, code)
@@ -151,7 +215,7 @@ func TestRunAgent_OnceMode_FetchFailure_ReturnsOne(t *testing.T) {
 
 	var code int
 	out := captureLog(t, func() {
-		code = runAgent(cfg, fetcher, sink, true, false, false)
+		code = runAgent(cfg, fetcher, sink, true, false, false, "")
 	})
 
 	assert.Equal(t, 1, code, "a failed mapping must produce a non-zero exit code")
@@ -168,7 +232,7 @@ func TestRunAgent_DryRun_DoesNotApply(t *testing.T) {
 
 	var code int
 	out := captureLog(t, func() {
-		code = runAgent(cfg, fetcher, sink, true, true, false)
+		code = runAgent(cfg, fetcher, sink, true, true, false, "")
 	})
 
 	assert.Equal(t, 0, code)
@@ -184,7 +248,7 @@ func TestRunAgent_CleanupViaConfig_ListsOwnedSecrets(t *testing.T) {
 	fetcher := &fakeFetcher{values: map[string][]byte{"production/db-password": []byte("s3cr3t")}}
 	sink := newFakeSink()
 
-	code := runAgent(cfg, fetcher, sink, true, false, false)
+	code := runAgent(cfg, fetcher, sink, true, false, false, "")
 
 	assert.Equal(t, 0, code)
 	assert.Equal(t, 1, sink.listCallCount(), "cfg.Cleanup=true must enable orphan reaping")
@@ -195,7 +259,7 @@ func TestRunAgent_CleanupViaFlag_ListsOwnedSecrets(t *testing.T) {
 	fetcher := &fakeFetcher{values: map[string][]byte{"production/db-password": []byte("s3cr3t")}}
 	sink := newFakeSink()
 
-	code := runAgent(cfg, fetcher, sink, true, false, true)
+	code := runAgent(cfg, fetcher, sink, true, false, true, "")
 
 	assert.Equal(t, 0, code)
 	assert.Equal(t, 1, sink.listCallCount(), "-cleanup must enable orphan reaping even when the config doesn't")
@@ -218,7 +282,7 @@ func TestRunAgent_LoopMode_ShutdownOnSignal(t *testing.T) {
 	completed := make(chan struct{})
 	go func() {
 		out = captureLog(t, func() {
-			done <- runAgent(cfg, fetcher, sink, false, false, false)
+			done <- runAgent(cfg, fetcher, sink, false, false, false, "")
 		})
 		close(completed)
 	}()
@@ -264,7 +328,7 @@ func TestRunAgent_LoopMode_HealthServerBindError_LogsButContinues(t *testing.T) 
 	var out string
 	go func() {
 		out = captureLog(t, func() {
-			done <- runAgent(cfg, fetcher, sink, false, true, false)
+			done <- runAgent(cfg, fetcher, sink, false, true, false, "")
 		})
 		close(completed)
 	}()

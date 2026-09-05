@@ -61,6 +61,7 @@ template is the single source of truth; every location block that defines its
 own add_header must also include this so the headers still apply there.
 */}}
 {{- define "keyorix.web.securityHeaders" -}}
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 add_header X-Frame-Options "DENY" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header X-XSS-Protection "1; mode=block" always;

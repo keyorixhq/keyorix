@@ -28,7 +28,7 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 
 ## RBAC
 
-A `ClusterRole` grants read on `keyorixsecrets` (+ status/finalizers) and
+A `ClusterRole` grants read on `keyorixsecrets` (+ status) and
 get/list/watch/create/update/patch/delete on `secrets` (`delete` is used only to remove the
 target Secret once the upstream Keyorix reference is confirmed gone). A namespaced `Role`
 grants the lease + event access leader election needs. The operator reads secret **values**

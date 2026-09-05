@@ -49,9 +49,6 @@ rules:
   - apiGroups: ["secrets.keyorix.io"]
     resources: ["keyorixsecrets/status"]
     verbs: ["get", "update", "patch"]
-  - apiGroups: ["secrets.keyorix.io"]
-    resources: ["keyorixsecrets/finalizers"]
-    verbs: ["update"]
 ---
 {{- $scope := include "kxop.scope" . | fromYaml }}
 {{- if eq $scope.mode "cluster" }}
@@ -100,9 +97,13 @@ metadata:
   labels:
     {{- include "kxop.labels" . | nindent 4 }}
 rules:
+  # controller-runtime's leader-election resourcelock only ever does get/create/update
+  # on its Lease object; list/watch back its own informer (so a standby replica
+  # notices a lease change without polling). No caller in that resourcelock ever
+  # deletes a Lease, so delete is not granted (least privilege).
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]

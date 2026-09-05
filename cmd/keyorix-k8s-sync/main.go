@@ -32,6 +32,13 @@ func main() {
 	once := flag.Bool("once", false, "run a single reconcile pass and exit (for CI / one-shot Jobs)")
 	dryRun := flag.Bool("dry-run", false, "report what would change without writing any Secret")
 	cleanup := flag.Bool("cleanup", false, "delete orphaned Secrets the agent owns whose mapping was removed")
+	metricsBearerToken := flag.String("metrics-bearer-token", os.Getenv("KEYORIX_METRICS_TOKEN"),
+		"OPTIONAL bearer token required on /metrics' Authorization header (e.g. by a Prometheus scrape "+
+			"config's authorization.credentials). /healthz, /readyz, and /status stay unauthenticated -- "+
+			"Kubernetes' own kubelet must reach them, and they expose no secret values. When this flag is "+
+			"unset, /metrics itself is left unauthenticated too -- matching this repo's other two "+
+			"Prometheus-scraped endpoints' own defaults -- so set it, or restrict network access with a "+
+			"NetworkPolicy, for internet-reachable or multi-tenant clusters.")
 	flag.Parse()
 
 	cfg, err := k8ssync.LoadConfig(*configPath)
@@ -39,9 +46,9 @@ func main() {
 		log.Fatalf("k8s-sync: config: %v", err)
 	}
 
-	token := strings.TrimSpace(os.Getenv("KEYORIX_TOKEN"))
-	if token == "" {
-		log.Fatalf("k8s-sync: KEYORIX_TOKEN is required (the Keyorix machine-identity token)")
+	token, err := resolveToken()
+	if err != nil {
+		log.Fatalf("k8s-sync: %v", err)
 	}
 
 	sink, err := k8ssync.NewInClusterSink()
@@ -49,7 +56,44 @@ func main() {
 		log.Fatalf("k8s-sync: kubernetes: %v", err)
 	}
 	fetcher := k8ssync.NewKeyorixFetcher(cfg.KeyorixURL, token, cfg.ProjectID)
-	os.Exit(runAgent(cfg, fetcher, sink, *once, *dryRun, *cleanup))
+	os.Exit(runAgent(cfg, fetcher, sink, *once, *dryRun, *cleanup, *metricsBearerToken))
+}
+
+// resolveToken resolves the Keyorix machine-identity token: KEYORIX_TOKEN_FILE (a
+// path to a mounted Secret volume, e.g. /etc/keyorix/token) takes precedence when
+// set. A token that only ever lives on a mounted, read-only volume never appears in
+// the pod spec itself, unlike an env var sourced from a secretKeyRef -- the
+// Kubernetes API still returns that verbatim to anyone who can read the pod (e.g. via
+// `kubectl get pod -o yaml`), which a file mount does not. Falls back to KEYORIX_TOKEN
+// for backward compatibility with existing deployments that already inject it as an
+// env var; that fallback is not going away, so upgrading this agent's image alone
+// never breaks a deployment that hasn't switched to KEYORIX_TOKEN_FILE yet.
+func resolveToken() (string, error) {
+	if path := strings.TrimSpace(os.Getenv("KEYORIX_TOKEN_FILE")); path != "" {
+		// #nosec G304 G703 -- path comes from KEYORIX_TOKEN_FILE, an
+		// operator-set deployment-time env var (this chart's own
+		// values.yaml), not untrusted request input. Both IDs are needed:
+		// gosec v2.26+ added a taint-analysis path-traversal check (G703)
+		// alongside the classic heuristic (G304) it doesn't replace -- a
+		// bare "G304" comment suppresses only the old one, leaving G703
+		// unsuppressed (confirmed locally: dropping G304 flips CI to
+		// report G304 instead, dropping G703 flips it back).
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read KEYORIX_TOKEN_FILE %s: %w", path, err)
+		}
+		token := strings.TrimSpace(string(raw))
+		if token == "" {
+			return "", fmt.Errorf("KEYORIX_TOKEN_FILE %s is empty", path)
+		}
+		return token, nil
+	}
+	token := strings.TrimSpace(os.Getenv("KEYORIX_TOKEN"))
+	if token == "" {
+		return "", fmt.Errorf("KEYORIX_TOKEN is required (the Keyorix machine-identity token); " +
+			"set KEYORIX_TOKEN, or KEYORIX_TOKEN_FILE to read it from a mounted Secret volume instead")
+	}
+	return token, nil
 }
 
 // runAgent holds everything that happens once a Fetcher and Sink exist: engine
@@ -59,7 +103,7 @@ func main() {
 // files main() can't fake). Returns the process exit code instead of calling
 // os.Exit directly, so deferred cleanup (context cancel, signal.Stop, health server
 // shutdown) always runs.
-func runAgent(cfg *k8ssync.Config, fetcher k8ssync.Fetcher, sink k8ssync.Sink, once, dryRun, cleanup bool) int {
+func runAgent(cfg *k8ssync.Config, fetcher k8ssync.Fetcher, sink k8ssync.Sink, once, dryRun, cleanup bool, metricsBearerToken string) int {
 	var engineOpts []k8ssync.Option
 	if dryRun {
 		engineOpts = append(engineOpts, k8ssync.WithDryRun())
@@ -102,7 +146,7 @@ func runAgent(cfg *k8ssync.Config, fetcher k8ssync.Fetcher, sink k8ssync.Sink, o
 	status := k8ssync.NewStatus()
 	healthSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.GetHealthPort()),
-		Handler:           status.Handler(),
+		Handler:           status.HandlerWithToken(metricsBearerToken),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {

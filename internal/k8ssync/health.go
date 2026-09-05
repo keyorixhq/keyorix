@@ -1,6 +1,7 @@
 package k8ssync
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -50,14 +51,30 @@ func (s *Status) snapshot() (bool, time.Time, Result) {
 	return s.ran, s.lastRun, s.last
 }
 
-// Handler serves the agent's probe + status endpoints:
+// Handler serves the agent's probe + status endpoints with /metrics left
+// unauthenticated. See HandlerWithToken to require a bearer token on /metrics
+// specifically (e.g. for an internet-facing deployment without NetworkPolicy
+// support) while keeping the probe endpoints open for Kubernetes.
+func (s *Status) Handler() http.Handler {
+	return s.HandlerWithToken("")
+}
+
+// HandlerWithToken serves the same endpoints as Handler:
 //   - GET /healthz — liveness: always 200 while the process is responsive.
 //   - GET /readyz  — readiness: 200 once at least one reconcile pass has completed,
 //     503 before that (so traffic/rollout waits for the first sync).
 //   - GET /status  — JSON of the last pass (counts + timestamp), for observability.
+//   - GET /metrics — Prometheus text exposition of the counters above.
 //
-// No secret values are exposed — only counts, a timestamp, and an error count.
-func (s *Status) Handler() http.Handler {
+// /healthz, /readyz, and /status are deliberately never gated by token: they carry no
+// secret values (only counts, a timestamp, and an error count) and Kubernetes' own
+// kubelet must be able to reach them unauthenticated to run liveness/readiness probes.
+// When token is non-empty, /metrics additionally requires a matching
+// "Authorization: Bearer <token>" header — mirrors server/http/router.go's
+// cfg.Server.HTTP.MetricsToken gate and operator/cmd/main.go's own
+// -metrics-bearer-token gate on this repo's other two Prometheus-scraped endpoints.
+// When token is empty, /metrics is left unauthenticated, same as Handler.
+func (s *Status) HandlerWithToken(token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -90,10 +107,22 @@ func (s *Status) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(body)
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+	var metricsHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		_, _ = w.Write([]byte(s.metrics()))
 	})
+	if token != "" {
+		inner := metricsHandler
+		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth := r.Header.Get("Authorization")
+			if len(auth) < 8 || auth[:7] != "Bearer " || subtle.ConstantTimeCompare([]byte(auth[7:]), []byte(token)) != 1 {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			inner.ServeHTTP(w, r)
+		})
+	}
+	mux.Handle("/metrics", metricsHandler)
 	return mux
 }
 

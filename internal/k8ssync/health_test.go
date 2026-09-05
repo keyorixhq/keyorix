@@ -60,6 +60,57 @@ func TestHealth_MetricsBeforeFirstRun(t *testing.T) {
 	assert.Contains(t, body, "keyorix_k8s_sync_last_run_timestamp_seconds 0")
 }
 
+// ---- HandlerWithToken: /metrics bearer-token gate ----
+
+func getWithAuth(t *testing.T, h http.Handler, path, authHeader string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
+	}
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandlerWithToken_EmptyTokenLeavesMetricsUnauthenticated(t *testing.T) {
+	h := NewStatus().HandlerWithToken("")
+	assert.Equal(t, http.StatusOK, get(t, h, "/metrics").Code)
+}
+
+func TestHandlerWithToken_MetricsRejectsMissingHeader(t *testing.T) {
+	h := NewStatus().HandlerWithToken("s3cr3t")
+	assert.Equal(t, http.StatusUnauthorized, get(t, h, "/metrics").Code)
+}
+
+func TestHandlerWithToken_MetricsRejectsWrongToken(t *testing.T) {
+	h := NewStatus().HandlerWithToken("s3cr3t")
+	rec := getWithAuth(t, h, "/metrics", "Bearer wrong")
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestHandlerWithToken_MetricsAcceptsMatchingToken(t *testing.T) {
+	s := NewStatus()
+	s.Record(Result{Created: 1})
+	h := s.HandlerWithToken("s3cr3t")
+	rec := getWithAuth(t, h, "/metrics", "Bearer s3cr3t")
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "keyorix_k8s_sync_reconcile_passes_total 1")
+}
+
+// The probe endpoints must stay reachable without any Authorization header even when
+// a metrics token is configured -- kubelet has no way to supply one, and none of these
+// three expose secret values (only counts, a timestamp, and an error count).
+func TestHandlerWithToken_ProbeEndpointsStayUnauthenticated(t *testing.T) {
+	s := NewStatus()
+	s.Record(Result{Created: 1})
+	h := s.HandlerWithToken("s3cr3t")
+
+	assert.Equal(t, http.StatusOK, get(t, h, "/healthz").Code)
+	assert.Equal(t, http.StatusOK, get(t, h, "/readyz").Code)
+	assert.Equal(t, http.StatusOK, get(t, h, "/status").Code)
+}
+
 func TestHealth_StatusReportsCounts(t *testing.T) {
 	s := NewStatus()
 	h := s.Handler()
