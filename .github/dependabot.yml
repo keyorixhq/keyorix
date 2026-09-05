@@ -73,3 +73,20 @@ updates:
         update-types:
           - "minor"
           - "patch"
+  # The repo root also has its own package.json/package-lock.json
+  # (keyorix-ci-tools: cdxgen + spectral-cli, pinned for Scorecard
+  # supply-chain compliance). Dependabot's security updates already cover
+  # it regardless of this file (PR #1687 bumped fast-uri here without any
+  # entry below) -- this entry is only for routine patch/minor version
+  # updates, which this directory had none of until now.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"
