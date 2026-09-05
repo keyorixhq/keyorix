@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,14 +12,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newFakeProfileServer starts an httptest server that answers GET /auth/profile
+// the way the real server does (envelope-wrapped JSON with a username), so tests
+// can exercise runLogin's post-#B3 verifyRemoteCredentials call without a real
+// Keyorix server. Requiring this round-trip to succeed before runLogin persists
+// anything or prints "Successfully authenticated" is the fix itself (previously
+// runLogin wrote storage.type: remote and printed that message for ANY
+// server/API key with no verification at all).
+func newFakeProfileServer(t *testing.T, username string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/profile" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"username": username},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 func TestRunLogin_HappyPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+	srv := newFakeProfileServer(t, "alice")
+
 	// Set the API key via env so no interactive prompt is triggered.
 	t.Setenv("KEYORIX_API_KEY", "kx_env_secret")
 
-	require.NoError(t, loginCmd.Flags().Set("server", "https://keyorix.example.com"))
+	require.NoError(t, loginCmd.Flags().Set("server", srv.URL))
 	t.Cleanup(func() {
 		_ = loginCmd.Flags().Set("server", "")
 		loginCmd.Flags().Lookup("server").Changed = false
@@ -44,8 +72,10 @@ func TestRunLogin_ServerFromExistingConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+	srv := newFakeProfileServer(t, "bob")
+
 	// Pre-write a keyorix.yaml with a remote section so runLogin can pick up the server.
-	yaml := "storage:\n  type: remote\n  remote:\n    base_url: https://keyorix.example.com\n    tls_verify: true\n    timeout_seconds: 30\n"
+	yaml := "storage:\n  type: remote\n  remote:\n    base_url: " + srv.URL + "\n    tls_verify: true\n    timeout_seconds: 30\n"
 	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
 
 	t.Setenv("KEYORIX_API_KEY", "kx_env_key")

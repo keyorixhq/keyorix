@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -19,6 +20,15 @@ const (
 // requires an actual terminal fd and errors — rather than returning "" — on
 // a pipe or other non-terminal stdin).
 var resolveAPIKey = common.ResolveAPIKey
+
+// verifyRemoteCredentialsFn is a test seam over verifyRemoteCredentials: production
+// code always performs the real GET /auth/profile round trip, but tests exercising
+// unrelated runLogin behavior (the cleartext-endpoint warning, the --api-key flag
+// warning) can stub this out instead of standing up a live HTTP server for every one
+// of them. Tests that specifically exercise the verification step itself
+// (TestRunLogin_HappyPath et al., auth_remote_test.go) use the real implementation
+// against an httptest server, so the actual check stays covered end-to-end.
+var verifyRemoteCredentialsFn = verifyRemoteCredentials
 
 // AuthCmd represents the auth command
 var AuthCmd = &cobra.Command{
@@ -122,6 +132,21 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// since the token will be sent in cleartext on every subsequent request.
 	common.WarnIfInsecureEndpoint(server)
 
+	// Verify the API key actually authenticates against this server BEFORE persisting
+	// anything or printing "Successfully authenticated": previously this command wrote
+	// storage.type: remote plus the given URL/key unconditionally and printed that
+	// message without ever contacting the server, so a mistyped URL or a bad/revoked
+	// key silently produced a config file claiming a working remote login. GET
+	// /auth/profile is authenticated but not permission-gated (self-service "My
+	// Account" endpoint, ADR-021/ADR-027 — see server/http/router.go), so it proves
+	// "this key authenticates against this server" for ANY valid credential regardless
+	// of the caller's specific role/permission grants, which a permission-gated probe
+	// (e.g. /system/info) could not do without false-negatives for a low-privileged key.
+	username, verr := verifyRemoteCredentialsFn(server, apiKey)
+	if verr != nil {
+		return fmt.Errorf("could not verify credentials against %s: %w", server, verr)
+	}
+
 	// Persist only the fields this command sets (#1644): SaveFields edits the on-disk
 	// YAML in place, so anything else already in the file -- security.*, other storage
 	// settings, comments, key order -- round-trips untouched, instead of being silently
@@ -137,10 +162,33 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
-	fmt.Printf("✅ Successfully authenticated with %s\n", server)
+	fmt.Printf("✅ Successfully authenticated with %s as %s\n", server, username)
 	fmt.Printf("💡 CLI is now configured to use remote server\n")
 
 	return nil
+}
+
+// verifyRemoteCredentials confirms apiKey actually authenticates against server by
+// calling the self-service profile endpoint (GET /auth/profile — authenticated but
+// not permission-gated, so it works for any valid credential regardless of the
+// caller's specific role/permission grants). Returns the authenticated username on
+// success, so the operator sees a concrete, verified result rather than a bare
+// "success" claim.
+func verifyRemoteCredentials(server, apiKey string) (string, error) {
+	rc, ok := common.NewRemoteClientWithCredentials(server, apiKey)
+	if !ok {
+		return "", fmt.Errorf("invalid remote endpoint %q", server)
+	}
+	var profile struct {
+		Username string `json:"username"`
+	}
+	if err := rc.Get(context.Background(), "/auth/profile", &profile); err != nil {
+		return "", err
+	}
+	if profile.Username == "" {
+		return "", fmt.Errorf("server did not return a username for this credential")
+	}
+	return profile.Username, nil
 }
 
 func runLogout(cmd *cobra.Command, args []string) error {

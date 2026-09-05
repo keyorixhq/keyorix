@@ -46,6 +46,57 @@ var cliBehaviorAllowlist = map[string]string{
 		"exit with no local file touched -- but the refusal message differs from the " +
 		"connection-refused-shaped failure this test's dummy args are tuned for, so it's listed " +
 		"explicitly rather than relying on ExactArgs(1) coincidentally producing the same outcome.",
+
+	// The six entries below were investigated individually (2026-09-05) against the
+	// same standard as every fixed command: does this command silently perform a
+	// business/secrets operation against local storage when a remote server was
+	// configured for it? None of internal/cli/auth/auth.go, internal/cli/config/
+	// config.go, internal/cli/connect/connect.go, or internal/cli/project/current.go
+	// call common.InitializeCoreService or common.InitializeStorage ANYWHERE in the
+	// file (confirmed by grep, not assumed) -- so none of them can exhibit that bug
+	// class at all: there is no local secrets/business storage for them to fall back
+	// to. Each one's entire job is reading or writing one specific local CLI config
+	// file (~/.keyorix/cli.yaml or ./keyorix.yaml), which is the intended, designed
+	// behavior in exactly the same sense 'keyorix connect' must write cli.yaml as its
+	// entire purpose. (internal/cli/auth/auth.go's OTHER leaf command, "auth login",
+	// is NOT listed here: unlike these six, it printed "Successfully authenticated"
+	// without ever verifying the given credentials against the server, which was a
+	// real, separate bug -- fixed by adding a GET /auth/profile round-trip before
+	// persisting or claiming success, which now makes it fail closed here too.)
+	"auth status": "reads only ./keyorix.yaml (the legacy config 'auth login'/'config set-remote' write) " +
+		"and reports its storage.type honestly, including truthfully reporting \"No configuration found\" " +
+		"when that one file is absent -- it never calls InitializeCoreService/InitializeStorage, so it " +
+		"cannot silently run a business operation against local storage. Known, separate limitation (not " +
+		"the bug this guard targets): it does not consult KEYORIX_SERVER/KEYORIX_TOKEN env vars or " +
+		"~/.keyorix/cli.yaml the way common.ResolveRemote() does for newer remote-mode commands, so a " +
+		"deployment configured purely via env vars or 'keyorix connect' reports as unconfigured here even " +
+		"though other commands would correctly go remote -- 'keyorix connect status' is the command that " +
+		"reports that resolution chain. Flagged for a possible follow-up, not fixed in this pass.",
+	"config set-remote": "its entire purpose is to WRITE ./keyorix.yaml's remote settings -- the write is " +
+		"the feature, exactly like 'keyorix connect' writing ~/.keyorix/cli.yaml. It never calls " +
+		"InitializeCoreService/InitializeStorage, so it cannot silently run a business operation against " +
+		"local storage instead of remote. Its success message (\"Configuration updated successfully\") " +
+		"only claims to have written the file, which is literally true -- it does not claim the server is " +
+		"reachable or the API key is valid (unlike the 'auth login' bug this pass fixed); a separate " +
+		"'config test-connection' command exists specifically to verify reachability after the fact.",
+	"config use-local": "its entire purpose is to WRITE ./keyorix.yaml switching storage.type back to " +
+		"local -- the write is the feature; there is no remote operation to defer to, since enabling local " +
+		"mode is unconditionally a local-file change. Never calls InitializeCoreService/InitializeStorage. " +
+		"Its success message only claims the config file was updated, which is literally true.",
+	"connect disconnect": "its entire purpose is to WRITE ~/.keyorix/cli.yaml switching the CLI back to " +
+		"embedded mode -- the write is the feature, the CLIConfig analogue of 'config use-local'. Never " +
+		"calls InitializeCoreService/InitializeStorage. Its success message only claims the config file " +
+		"was updated / already in embedded mode, which is literally true.",
+	"connect status": "read-only report of ~/.keyorix/cli.yaml's persisted connection state (mode, " +
+		"endpoint, timeout) plus a best-effort reachability probe it already reports as ✅/❌ inline -- " +
+		"never calls InitializeCoreService/InitializeStorage, so it cannot silently run a business " +
+		"operation against local storage. Reports \"Embedded Mode\" truthfully when no client-mode config " +
+		"has been saved, which is the CLIConfig file's actual, true state.",
+	"project current": "reads only the local 'active project' pointer (KEYORIX_PROJECT env var, or " +
+		"ActiveProject in ~/.keyorix/cli.yaml) -- a CLI-side convenience selection with no server-side " +
+		"equivalent to defer to, the same category as 'kubectl config current-context' or 'gcloud config " +
+		"get-value project'. Never calls InitializeCoreService/InitializeStorage. Truthfully reports \"No " +
+		"active project set\" when neither source has one, regardless of remote reachability.",
 }
 
 // leafCommand is one runnable (non-group) cobra command discovered by walking
