@@ -36,6 +36,12 @@ type WebhookConfig struct {
 	// SEPARATE decision from InsecureSkipVerify (#130); see notifychan's
 	// WebhookConfig.AllowPrivateNetworkTarget for the rationale.
 	AllowPrivateNetworkTarget bool
+	// AllowInsecureTransport permits a plaintext (http://) endpoint to a
+	// non-loopback host — a SEPARATE decision from AllowPrivateNetworkTarget
+	// (see validateEndpoint's doc comment below for the conflation this used
+	// to be and why it's split now). False by default: Endpoint must be
+	// https unless it targets loopback.
+	AllowInsecureTransport bool
 }
 
 // Webhook POSTs the evidence pack JSON to an HTTP endpoint. Delivery is synchronous
@@ -62,7 +68,7 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 	// webhook, this path previously sent the bearer token + the FULL compliance evidence
 	// pack to whatever URL was configured — an http:// endpoint shipped both in cleartext
 	// on every POST, and refuseRedirect only guards bounces, not the initial request.
-	if err := validateEndpoint(cfg.Endpoint, cfg.AllowPrivateNetworkTarget); err != nil {
+	if err := validateEndpoint(cfg.Endpoint, cfg.AllowPrivateNetworkTarget, cfg.AllowInsecureTransport); err != nil {
 		return nil, err
 	}
 	transport := &http.Transport{}
@@ -95,14 +101,19 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 
 // validateEndpoint rejects a non-https evidence endpoint (which would send the bearer
 // token and the full compliance pack in cleartext), allowing http only for a loopback
-// target or the explicit allowPrivateNetwork opt-in. It also refuses a destination
+// target or the explicit allowInsecureTransport opt-in. It also refuses a destination
 // whose hostname RESOLVES to a private/link-local IP unless allowPrivateNetwork is
 // set (SSRF/exfil hardening: an evidence pack must not be POSTed to cloud metadata or
 // an internal host).
 //
-// allowPrivateNetwork is INTENTIONALLY separate from TLS-certificate verification
-// (#130) — see notifychan's identically-named parameter for the rationale.
-func validateEndpoint(raw string, allowPrivateNetwork bool) error {
+// allowPrivateNetwork and allowInsecureTransport are TWO INDEPENDENT knobs (#130,
+// plus a later fix closing a real conflation this file had until then) — see
+// notifychan's identically-named parameters for the full rationale. Before the
+// split, a single allowPrivateNetwork bool gated BOTH the private/link-local-host
+// check AND the https-required check, so opting in to reach a legitimate on-prem
+// receiver at a private address also silently unlocked cleartext HTTP to any
+// PUBLIC host. allowInsecureTransport defaults to false (deny).
+func validateEndpoint(raw string, allowPrivateNetwork, allowInsecureTransport bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("evidencesink: invalid endpoint %q: %w", raw, err)
@@ -111,8 +122,8 @@ func validateEndpoint(raw string, allowPrivateNetwork bool) error {
 	case "https":
 		// scheme OK; fall through to the destination-IP check
 	case "http":
-		if !allowPrivateNetwork && !isLoopbackHost(u.Hostname()) {
-			return fmt.Errorf("evidencesink: endpoint %q must use https (set allow_private_network_target only for a trusted internal or loopback target)", raw)
+		if !allowInsecureTransport && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("evidencesink: endpoint %q must use https (set allow_insecure_transport only for a trusted internal or loopback target)", raw)
 		}
 	default:
 		return fmt.Errorf("evidencesink: endpoint %q must use https", raw)

@@ -31,34 +31,50 @@ import (
 // ── secure_transport.go ───────────────────────────────────────────────────────
 
 func TestValidateEndpoint_RejectsNonHTTPSNonLoopback(t *testing.T) {
-	err := validateEndpoint("http://external.example.com/hook", false)
+	err := validateEndpoint("http://external.example.com/hook", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "https")
 }
 
 func TestValidateEndpoint_AllowsHTTPLoopback(t *testing.T) {
-	err := validateEndpoint("http://127.0.0.1:9000/hook", false)
+	err := validateEndpoint("http://127.0.0.1:9000/hook", false, false)
 	require.NoError(t, err)
 }
 
 func TestValidateEndpoint_AllowsHTTPLocalhostLoopback(t *testing.T) {
-	err := validateEndpoint("http://localhost:9000/hook", false)
+	err := validateEndpoint("http://localhost:9000/hook", false, false)
 	require.NoError(t, err)
 }
 
-func TestValidateEndpoint_AllowsHTTPWhenPrivateNetworkEnabled(t *testing.T) {
-	err := validateEndpoint("http://192.168.1.5/hook", true)
+// TestValidateEndpoint_PrivateNetworkAloneDoesNotAllowHTTP is the regression
+// test for the flag-conflation fix: allowPrivateNetwork alone must NOT also
+// unlock cleartext HTTP to a public (well, private, but not loopback) host —
+// that used to be true when a single bool gated both checks. Renamed from
+// TestValidateEndpoint_AllowsHTTPWhenPrivateNetworkEnabled, whose original
+// assertion (require.NoError) encoded exactly the bug this test now proves
+// fixed.
+func TestValidateEndpoint_PrivateNetworkAloneDoesNotAllowHTTP(t *testing.T) {
+	err := validateEndpoint("http://192.168.1.5/hook", true, false)
+	require.Error(t, err, "allowPrivateNetwork must not, by itself, also permit cleartext HTTP")
+	assert.Contains(t, err.Error(), "https")
+}
+
+// TestValidateEndpoint_AllowsHTTPWhenInsecureTransportEnabled is the
+// corrected replacement: reaching a private, cleartext-HTTP target now
+// requires BOTH independent opt-outs, not one bool doing double duty.
+func TestValidateEndpoint_AllowsHTTPWhenInsecureTransportEnabled(t *testing.T) {
+	err := validateEndpoint("http://192.168.1.5/hook", true, true)
 	require.NoError(t, err)
 }
 
 func TestValidateEndpoint_RejectsUnknownScheme(t *testing.T) {
-	err := validateEndpoint("ftp://example.com/hook", false)
+	err := validateEndpoint("ftp://example.com/hook", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "https")
 }
 
 func TestValidateEndpoint_RejectsInvalidURL(t *testing.T) {
-	err := validateEndpoint(":not-a-url", false)
+	err := validateEndpoint(":not-a-url", false, false)
 	require.Error(t, err)
 }
 
@@ -69,7 +85,7 @@ func TestValidateEndpoint_AllowsHTTPS(t *testing.T) {
 	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("203.0.113.1")}}, nil // TEST-NET-3 (public)
 	}
-	err := validateEndpoint("https://external.example.com/hook", false)
+	err := validateEndpoint("https://external.example.com/hook", false, false)
 	require.NoError(t, err)
 }
 
@@ -79,7 +95,7 @@ func TestValidateEndpoint_RejectsHostnameResolvingToPrivateIP(t *testing.T) {
 	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("10.0.0.1")}}, nil
 	}
-	err := validateEndpoint("https://internal.corp.example/hook", false)
+	err := validateEndpoint("https://internal.corp.example/hook", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "private/link-local")
 }

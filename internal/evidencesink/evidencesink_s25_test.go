@@ -115,23 +115,34 @@ func TestNewWebhook_InsecureSkipVerify(t *testing.T) {
 // validateEndpoint — http + AllowPrivateNetworkTarget with non-loopback host.
 // ---------------------------------------------------------------------------
 
-// TestValidateEndpoint_HTTPAllowPrivateNetworkNonLoopback covers the branch where
-// scheme=="http", allowPrivateNetwork==true but host is not loopback — previously
-// the AllowPrivateNetworkTarget test only used a non-loopback domain with http.
-// Here we verify the SSRF check is truly bypassed (no refuseDisallowedHost call).
-func TestValidateEndpoint_HTTPAllowPrivateNetworkNonLoopback(t *testing.T) {
-	// A private RFC-1918 address; without AllowPrivateNetworkTarget this would be
-	// refused — with it the check is skipped.
-	err := validateEndpoint("http://10.0.0.50/evidence", true)
-	assert.NoError(t, err, "http to private IP must be allowed when AllowPrivateNetworkTarget is true")
+// TestValidateEndpoint_HTTPAllowPrivateNetworkAloneStillRejectsHTTP is the
+// flag-conflation regression test: allowPrivateNetwork alone (allowInsecureTransport
+// false) must NOT also permit cleartext http to a non-loopback host — that
+// single-bool coupling was a real bug (previously named
+// TestValidateEndpoint_HTTPAllowPrivateNetworkNonLoopback, whose original
+// assertion of NoError encoded the bug rather than testing for it).
+func TestValidateEndpoint_HTTPAllowPrivateNetworkAloneStillRejectsHTTP(t *testing.T) {
+	err := validateEndpoint("http://10.0.0.50/evidence", true, false)
+	assert.Error(t, err, "allowPrivateNetwork alone must not also permit cleartext http")
+	assert.Contains(t, err.Error(), "https")
+}
+
+// TestValidateEndpoint_HTTPAllowPrivateNetworkAndInsecureTransportTogether
+// proves the corrected, split behaviour: reaching a private IP over cleartext
+// http now requires BOTH independent opt-ins.
+func TestValidateEndpoint_HTTPAllowPrivateNetworkAndInsecureTransportTogether(t *testing.T) {
+	err := validateEndpoint("http://10.0.0.50/evidence", true, true)
+	assert.NoError(t, err, "http to a private IP must be allowed when BOTH allowPrivateNetwork and allowInsecureTransport are true")
 }
 
 // TestValidateEndpoint_HTTPSAllowPrivateNetworkSkipsHostCheck verifies that
-// AllowPrivateNetworkTarget also skips the refuseDisallowedHost call for https.
+// AllowPrivateNetworkTarget also skips the refuseDisallowedHost call for https
+// (allowInsecureTransport is irrelevant here -- https already satisfies the
+// scheme check on its own).
 func TestValidateEndpoint_HTTPSAllowPrivateNetworkSkipsHostCheck(t *testing.T) {
 	// 169.254.169.254 is the AWS metadata link-local address that is normally
 	// refused by refuseDisallowedHost even for https.
-	err := validateEndpoint("https://169.254.169.254/latest/meta-data", true)
+	err := validateEndpoint("https://169.254.169.254/latest/meta-data", true, false)
 	assert.NoError(t, err, "AllowPrivateNetworkTarget must bypass the host check even for https")
 }
 

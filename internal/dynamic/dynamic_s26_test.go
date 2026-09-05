@@ -283,7 +283,9 @@ func startFakeMongoServerCmdErr(t *testing.T, cmdKey string, code int32, codeNam
 
 func TestMongoEngine_Issue_CreateUserFails(t *testing.T) {
 	uri := startFakeMongoServerCmdErr(t, "createUser", 13, "Unauthorized", "not authorized on admin")
-	e := &MongoEngine{}
+	// G48/2b: dials a fake MongoDB server on 127.0.0.1 -- an explicit,
+	// intentional loopback target speaking plain (non-TLS) wire protocol.
+	e := &MongoEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, uri, `{"roles": ["readWrite"]}`, time.Minute)
@@ -293,7 +295,7 @@ func TestMongoEngine_Issue_CreateUserFails(t *testing.T) {
 
 func TestMongoEngine_Revoke_DropUserFails_NotIdempotent(t *testing.T) {
 	uri := startFakeMongoServerCmdErr(t, "dropUser", 13, "Unauthorized", "not authorized on admin")
-	e := &MongoEngine{}
+	e := &MongoEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, uri, "kx_dyn_validname123")
@@ -303,7 +305,7 @@ func TestMongoEngine_Revoke_DropUserFails_NotIdempotent(t *testing.T) {
 
 func TestMongoEngine_Revoke_DropUserNotFound_IsIdempotent(t *testing.T) {
 	uri := startFakeMongoServerCmdErr(t, "dropUser", 11, "UserNotFound", "user not found")
-	e := &MongoEngine{}
+	e := &MongoEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, uri, "kx_dyn_validname123")

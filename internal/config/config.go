@@ -895,6 +895,18 @@ type SIEMConfig struct {
 	// accepts them, so a sustained outage doesn't silently lose the off-box copy.
 	// Empty = best-effort only.
 	SpoolDir string `yaml:"spool_dir"`
+	// AllowPrivateNetworkTarget opts Endpoint out of the SSRF guard -- a
+	// SEPARATE decision from InsecureSkipVerify (#130): an operator forwarding
+	// audit events to a self-signed on-prem SIEM collector should not also
+	// have to disable the private-network/SSRF check, and vice versa. False
+	// by default: Endpoint's resolved host must not be private/link-local/
+	// IMDS (loopback is exempt -- see notifychan/evidencesink's identical
+	// convention for this class of operator-configured external receiver).
+	AllowPrivateNetworkTarget bool `yaml:"allow_private_network_target"`
+	// AllowInsecureTransport permits a plaintext (http://) Endpoint. False by
+	// default: Endpoint must be https unless it targets loopback. Every use
+	// of this opt-out is logged (2d) -- see internal/netutil.Guard.RequireTLS.
+	AllowInsecureTransport bool `yaml:"allow_insecure_transport"`
 }
 
 // GetToken returns the resolved SIEM token, preferring the environment variable.
@@ -1118,6 +1130,15 @@ type EvidenceWebhookConfig struct {
 	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard — a
 	// SEPARATE decision from InsecureSkipVerify; see evidencesink.WebhookConfig.
 	AllowPrivateNetworkTarget bool `yaml:"allow_private_network_target"`
+	// AllowInsecureTransport permits a plaintext (http://) endpoint to a
+	// non-loopback host. False by default: Endpoint must be https unless it
+	// targets loopback. A SEPARATE decision from AllowPrivateNetworkTarget
+	// (previously conflated: enabling AllowPrivateNetworkTarget alone used to
+	// ALSO silently unlock cleartext HTTP to any public host, not just a
+	// private one — an operator opting in to reach a legitimate internal
+	// receiver got a second, unrelated, broader exception for free). Every
+	// use of this opt-out is logged; see evidencesink.WebhookConfig.
+	AllowInsecureTransport bool `yaml:"allow_insecure_transport"`
 }
 
 // GetToken returns the resolved webhook token, preferring the environment variable.
@@ -1254,6 +1275,14 @@ type NotificationWebhookConfig struct {
 	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard — a
 	// SEPARATE decision from InsecureSkipVerify; see notifychan.WebhookConfig.
 	AllowPrivateNetworkTarget bool `yaml:"allow_private_network_target"`
+	// AllowInsecureTransport permits a plaintext (http://) endpoint to a
+	// non-loopback host. False by default: Endpoint must be https unless it
+	// targets loopback. A SEPARATE decision from AllowPrivateNetworkTarget
+	// (previously conflated: enabling AllowPrivateNetworkTarget alone used to
+	// ALSO silently unlock cleartext HTTP to any public host, not just a
+	// private one). Every use of this opt-out is logged; see
+	// notifychan.WebhookConfig.
+	AllowInsecureTransport bool `yaml:"allow_insecure_transport"`
 	// SigningSecret HMAC-signs each payload (X-Keyorix-Signature) so the receiver can
 	// verify authenticity. Use KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET instead of the file.
 	SigningSecret string `yaml:"signing_secret"`
@@ -1748,6 +1777,15 @@ type DynamicSecretsConfig struct {
 	// 169.254.169.254). Set this only when the dynamic-secret backend legitimately
 	// lives on a private network segment that Keyorix must reach.
 	AllowPrivateNetworkTargets bool `yaml:"allow_private_network_targets"`
+	// AllowInsecureTransport, when true, disables the TLS-required-by-default
+	// guard on the mongodb/redis backends (the two backends here whose wire
+	// protocol has no bolted-on-elsewhere TLS enforcement of its own -- see
+	// internal/netutil.Guard.RequireTLS). False by default: a mongodb:// (no
+	// tls=true) or redis:// (non-rediss://) admin_dsn is rejected. Every
+	// connection actually made under this opt-out is logged (2d) -- set this
+	// only when the backend legitimately cannot use TLS (e.g. a legacy/
+	// internal deployment).
+	AllowInsecureTransport bool `yaml:"allow_insecure_transport"`
 }
 
 // GetSweepInterval returns the auto-revoke sweep cadence, parsing SweepInterval

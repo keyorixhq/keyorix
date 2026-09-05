@@ -245,13 +245,13 @@ func TestParseMongoRoles_WhitespaceOnly(t *testing.T) {
 // ──────────────────────────── connectRedis error path ─────────────────────
 
 func TestConnectRedis_InvalidURI(t *testing.T) {
-	_, err := connectRedis(context.Background(), "not-a-redis-uri://whatever")
+	_, err := connectRedis(context.Background(), "not-a-redis-uri://whatever", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis admin URI")
 }
 
 func TestConnectRedis_UnreachableHost(t *testing.T) {
-	_, err := connectRedis(context.Background(), "redis://:pass@localhost:19999/0")
+	_, err := connectRedis(context.Background(), "redis://:pass@localhost:19999/0", false, false)
 	require.Error(t, err)
 }
 
@@ -260,7 +260,7 @@ func TestConnectRedis_UnreachableHost(t *testing.T) {
 func TestConnectMongo_UnreachableHost(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := connectMongo(ctx, "mongodb://admin:pass@localhost:27099/")
+	_, err := connectMongo(ctx, "mongodb://admin:pass@localhost:27099/", false, false)
 	require.Error(t, err)
 }
 

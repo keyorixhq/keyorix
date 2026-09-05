@@ -87,16 +87,16 @@ func TestIsLoopbackHost(t *testing.T) {
 // TestValidateEndpoint_HTTPLoopback verifies that http:// to a loopback address
 // is accepted without AllowPrivateNetworkTarget.
 func TestValidateEndpoint_HTTPLoopback(t *testing.T) {
-	err := validateEndpoint("http://localhost/evidence", false)
+	err := validateEndpoint("http://localhost/evidence", false, false)
 	assert.NoError(t, err, "http to loopback must be allowed without AllowPrivateNetworkTarget")
 
-	err = validateEndpoint("http://127.0.0.1/evidence", false)
+	err = validateEndpoint("http://127.0.0.1/evidence", false, false)
 	assert.NoError(t, err, "http to 127.0.0.1 must be allowed without AllowPrivateNetworkTarget")
 }
 
 // TestValidateEndpoint_UnknownScheme covers the default (non-https/http) branch.
 func TestValidateEndpoint_UnknownScheme(t *testing.T) {
-	err := validateEndpoint("ftp://example.com/evidence", false)
+	err := validateEndpoint("ftp://example.com/evidence", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must use https")
 }
@@ -275,7 +275,7 @@ func TestMulti_AllFailing(t *testing.T) {
 // validateEndpoint (previously unreached — every existing test used a
 // syntactically valid URL, so only the well-formed path was exercised).
 func TestValidateEndpoint_MalformedURL(t *testing.T) {
-	err := validateEndpoint("http://[::1", false)
+	err := validateEndpoint("http://[::1", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid endpoint")
 }

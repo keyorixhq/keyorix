@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // MongoEngine mints short-lived MongoDB users on the target's `admin` database and
@@ -30,7 +33,18 @@ import (
 // is structurally impossible; the role spec is the operator-authored trust boundary.
 // Users are created in the `admin` auth database; their roles may target any
 // database.
-type MongoEngine struct{}
+type MongoEngine struct {
+	// allowPrivateNetwork mirrors dynamic_secrets.allow_private_network_targets
+	// (see New). When false, every connection re-validates the resolved
+	// target address (including every mongodb+srv:// SRV-discovered target)
+	// and refuses a private/link-local one (G48).
+	allowPrivateNetwork bool
+	// allowInsecureTransport mirrors dynamic_secrets.allow_insecure_transport
+	// (see New). When false, connectMongo refuses a connection that isn't
+	// using TLS, logging the exception when the operator has explicitly set
+	// this true.
+	allowInsecureTransport bool
+}
 
 func (e *MongoEngine) BackendType() string      { return "mongodb" }
 func (e *MongoEngine) IsEphemeralBackend() bool { return false }
@@ -55,7 +69,7 @@ func (e *MongoEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 	if err != nil {
 		return Credential{}, "", err
 	}
-	client, err := connectMongo(ctx, adminDSN)
+	client, err := connectMongo(ctx, adminDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
 		return Credential{}, "", err
 	}
@@ -92,7 +106,7 @@ func (e *MongoEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	client, err := connectMongo(ctx, adminDSN)
+	client, err := connectMongo(ctx, adminDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
 		return err
 	}
@@ -166,11 +180,53 @@ func parseMongoRoles(template string) ([]interface{}, error) {
 	return doc.Roles, nil
 }
 
-// connectMongo opens and verifies a connection to the target using the admin URI.
-func connectMongo(ctx context.Context, adminDSN string) (*mongo.Client, error) {
+// connectMongo opens and verifies a connection to the target using the admin
+// URI, pinning the dial to a re-validated target address unless
+// allowPrivateNetwork opts out, and requiring TLS unless allowInsecureTransport
+// opts out. Replaces a bare mongo.Connect(ctx, options.Client().ApplyURI(...)):
+// that path offers no hook to control the underlying TCP dial, and — critically
+// — the actual connection it makes would otherwise re-resolve adminDSN's host
+// independently of whatever check ran when the config was created or the DSN
+// last decrypted, letting a DNS-rebinding attacker swap in a private/link-local
+// address between the two resolutions (the same G48 gap Postgres/MySQL already
+// close).
+//
+// mongodb+srv:// is a second, separate gap a plain dial-hook wrap does not
+// cover: the driver resolves the SRV record internally, before any
+// caller-supplied Dialer is ever invoked (see Guard.ValidateSRVTargets' doc
+// comment for the verified driver-internals trail), so a caller has no
+// visibility into which hostnames that step discovers. Guard.ValidateSRVTargets
+// pre-resolves and validates them here, before the URI is ever handed to the
+// driver — defense-in-depth on top of options.SetDialer below, which still
+// re-validates the actual per-server dial regardless of discovery mode.
+func connectMongo(ctx context.Context, adminDSN string, allowPrivateNetwork, allowInsecureTransport bool) (*mongo.Client, error) {
 	connectCtx, cancel := context.WithTimeout(ctx, mongoConnectTimeout)
 	defer cancel()
-	client, err := mongo.Connect(connectCtx, options.Client().ApplyURI(adminDSN))
+
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		return nil, fmt.Errorf("invalid mongodb admin URI: %w", err)
+	}
+
+	guard := netutil.Guard{AllowInsecureTransport: allowInsecureTransport}
+	if !allowPrivateNetwork {
+		guard.Dial = netutil.Dialer{Disallow: netutil.IsPrivateOrLinkLocal, Resolve: dialResolve}
+		if u.Scheme == "mongodb+srv" {
+			if err := guard.ValidateSRVTargets(connectCtx, "mongodb", "tcp", u.Hostname()); err != nil {
+				return nil, fmt.Errorf("invalid mongodb admin URI: %w", err)
+			}
+		}
+	}
+
+	if err := guard.RequireTLS(mongoTLSEnabled(u), "mongodb admin_dsn", u.Hostname()); err != nil {
+		return nil, err
+	}
+
+	opts := options.Client().ApplyURI(adminDSN)
+	if !allowPrivateNetwork {
+		opts = opts.SetDialer(guard.Dial)
+	}
+	client, err := mongo.Connect(connectCtx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("invalid mongodb admin URI: %w", err)
 	}
@@ -179,6 +235,25 @@ func connectMongo(ctx context.Context, adminDSN string) (*mongo.Client, error) {
 		return nil, fmt.Errorf("connect to target: %w", err)
 	}
 	return client, nil
+}
+
+// mongoTLSEnabled reports whether adminURI's connection will use TLS:
+// mongodb+srv:// implies TLS by default (the MongoDB driver's own documented
+// behaviour); a plain mongodb:// URI does not unless tls=true/ssl=true is
+// present in the query string. An explicit tls=false/ssl=false always wins
+// over the mongodb+srv:// default, matching the driver's own precedence. A
+// pure function of the parsed URI (no I/O), so it's testable without a real
+// connection attempt or DNS lookup.
+func mongoTLSEnabled(u *url.URL) bool {
+	tlsEnabled := u.Scheme == "mongodb+srv"
+	q := u.Query()
+	if v := q.Get("tls"); v != "" {
+		return v == "true"
+	}
+	if v := q.Get("ssl"); v != "" {
+		return v == "true"
+	}
+	return tlsEnabled
 }
 
 // isMongoUserNotFound reports whether err is MongoDB's UserNotFound (code 11),

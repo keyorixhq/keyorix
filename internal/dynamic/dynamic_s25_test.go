@@ -657,7 +657,11 @@ func startFakeMongoServer(t *testing.T) string {
 
 func TestMongoEngine_Issue_Success(t *testing.T) {
 	uri := startFakeMongoServer(t)
-	e := &MongoEngine{}
+	// G48/2b: dials a fake MongoDB server on 127.0.0.1 (an explicit,
+	// intentional loopback target) speaking plain (non-TLS) wire protocol —
+	// mirrors PostgresEngine's own fake-server tests (e.g.
+	// TestPostgresEngine_Issue_CreateRoleFails).
+	e := &MongoEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, uri, `{"roles": ["readWrite"]}`, time.Minute)
@@ -669,7 +673,7 @@ func TestMongoEngine_Issue_Success(t *testing.T) {
 
 func TestMongoEngine_Issue_EmptyTemplate_Success(t *testing.T) {
 	uri := startFakeMongoServer(t)
-	e := &MongoEngine{}
+	e := &MongoEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// Empty template → empty roles slice, no roles.
@@ -683,7 +687,7 @@ func TestMongoEngine_Issue_EmptyTemplate_Success(t *testing.T) {
 
 func TestMongoEngine_Revoke_Success(t *testing.T) {
 	uri := startFakeMongoServer(t)
-	e := &MongoEngine{}
+	e := &MongoEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, uri, "kx_dyn_validname123")
@@ -769,6 +773,10 @@ func TestAWSSTSEngine_Issue_NoExpiration_NoExpirationField(t *testing.T) {
 func TestMongoEngine_connectMongo_InvalidURIScheme(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, err := connectMongo(ctx, "http://admin:pass@localhost:27017/admin")
+	// allowInsecureTransport: true so this reaches ApplyURI (the branch this
+	// test targets) instead of being refused earlier by the TLS guard --
+	// "http" is a non-TLS scheme, and the point of this test is the invalid
+	// *mongodb* scheme, not the TLS check.
+	_, err := connectMongo(ctx, "http://admin:pass@localhost:27017/admin", false, true)
 	require.Error(t, err)
 }

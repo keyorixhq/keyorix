@@ -631,7 +631,10 @@ func TestParseMongoRoles_Empty(t *testing.T) {
 func TestConnectMongo_InvalidURI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := connectMongo(ctx, "not-a-valid-mongodb-uri")
+	// allowInsecureTransport: true so this reaches ApplyURI/mongo.Connect (the
+	// branch this test targets) instead of being refused earlier by the TLS
+	// guard — "not-a-valid-mongodb-uri" has no scheme for that check to see.
+	_, err := connectMongo(ctx, "not-a-valid-mongodb-uri", false, true)
 	require.Error(t, err)
 	// mongo.Connect returns an "invalid URI" error when ApplyURI fails.
 	// The exact message varies by driver version but always contains "URI".
