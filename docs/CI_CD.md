@@ -53,12 +53,22 @@ are injected verbatim, so name your secrets as valid environment identifiers
 GitLab has no Keyorix action, so install the CLI and export directly. Store
 `KEYORIX_SERVER` / `KEYORIX_TOKEN` as **masked** CI/CD variables.
 
+> Fetch `install.sh` pinned to a specific commit, not the mutable `main` branch.
+> A `curl | sh` against `main` re-fetches and re-executes whatever that branch
+> currently contains on every single pipeline run — if `main` were ever
+> compromised, an attacker could rewrite `install.sh` and have it run,
+> unreviewed, inside every CI job that pulls this example, with that job's own
+> credentials. Pinning to a commit fixes exactly what code runs; bump the
+> pinned commit deliberately when you want to pick up install.sh changes. The
+> commit below is the same one the bundled GitHub Action pins for its own
+> default install path (see `integrations/github-action/entrypoint.sh`).
+
 ```yaml
 deploy:
   image: debian:stable-slim
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl ca-certificates
-    - curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh
+    - curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/b8f79619d29fa35355f6ed695e04e24929131a94/install.sh | sh
   script:
     # Export to a dotenv file, then load it into the environment.
     - keyorix secret export --project payments --env production --format dotenv > keyorix.env
@@ -76,6 +86,11 @@ deploy:
 Set `KEYORIX_SERVER` / `KEYORIX_TOKEN` as project environment variables (or a
 context). Install the CLI and export within the job.
 
+> As with the GitLab example above, fetch `install.sh` pinned to a commit
+> rather than `main` — the same reasoning applies: a mutable branch ref means
+> a future compromise of `main` can silently swap in a malicious script that
+> this pipeline would then run with its own credentials.
+
 ```yaml
 version: 2.1
 jobs:
@@ -87,7 +102,7 @@ jobs:
       - run:
           name: Load Keyorix secrets
           command: |
-            curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/b8f79619d29fa35355f6ed695e04e24929131a94/install.sh | sh
             keyorix secret export --project payments --env production --format dotenv > keyorix.env
             set -a && . ./keyorix.env && set +a
             ./deploy.sh

@@ -239,11 +239,25 @@ install_cli() {
 # overwrite the runner's real token in $GITHUB_ENV for every later step —
 # not code execution, but a direct privilege/credential-confusion path a
 # project-scoped secrets.write principal has no business reaching.
+#
+# A third group closes a THIRD gap — proxy/registry-override env vars, not
+# shell hooks or CI credentials. HTTPS_PROXY/HTTP_PROXY/ALL_PROXY/NO_PROXY are
+# honored by curl, wget, and most language runtimes for every outbound
+# connection; PIP_INDEX_URL/NPM_CONFIG_REGISTRY/GOPROXY/GOPRIVATE/GONOSUMCHECK
+# repoint a later step's package manager at an arbitrary registry instead of
+# the real one; GIT_PROXY_COMMAND makes git shell out to an attacker-chosen
+# command for every remote operation. None of these execute code as this step
+# runs, but a secret named e.g. "HTTPS_PROXY" written to $GITHUB_ENV silently
+# redirects a LATER, more-privileged step's network traffic or dependency
+# resolution to an attacker-controlled endpoint — a project-scoped
+# secrets.write principal has no more business setting these than PATH.
 DANGEROUS_ENV_NAMES=(
   PATH LD_PRELOAD LD_LIBRARY_PATH DYLD_INSERT_LIBRARIES BASH_ENV ENV IFS SHELLOPTS PS4
   NODE_OPTIONS NODE_PATH PYTHONPATH PYTHONSTARTUP PERL5LIB PERL5OPT RUBYOPT GEM_PATH GIT_SSH_COMMAND
   GITHUB_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN
   ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_RUNTIME_URL ACTIONS_CACHE_URL
+  HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY PIP_INDEX_URL NPM_CONFIG_REGISTRY
+  GOPROXY GOPRIVATE GONOSUMCHECK GIT_PROXY_COMMAND
 )
 
 validate_secret_name() {
