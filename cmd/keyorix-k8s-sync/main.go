@@ -70,7 +70,15 @@ func main() {
 // never breaks a deployment that hasn't switched to KEYORIX_TOKEN_FILE yet.
 func resolveToken() (string, error) {
 	if path := strings.TrimSpace(os.Getenv("KEYORIX_TOKEN_FILE")); path != "" {
-		raw, err := os.ReadFile(path) // #nosec G304 -- operator-provided path via env var
+		// #nosec G304 G703 -- path comes from KEYORIX_TOKEN_FILE, an
+		// operator-set deployment-time env var (this chart's own
+		// values.yaml), not untrusted request input. Both IDs are needed:
+		// gosec v2.26+ added a taint-analysis path-traversal check (G703)
+		// alongside the classic heuristic (G304) it doesn't replace -- a
+		// bare "G304" comment suppresses only the old one, leaving G703
+		// unsuppressed (confirmed locally: dropping G304 flips CI to
+		// report G304 instead, dropping G703 flips it back).
+		raw, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("read KEYORIX_TOKEN_FILE %s: %w", path, err)
 		}
