@@ -238,6 +238,44 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 	return cred, nil
 }
 
+// ClassifyMachineTokenByID sets a machine credential's data-classification label by
+// credential ID alone, with no project/machine ownership check. This is the ONLY
+// route into this mutation for a caller that has just a credential ID -- in
+// particular server/http/handlers' UpdateMachineIdentityCredentialProxy (backing a
+// RemoteStorage peer's own credential-classification path, #1714), which must not
+// call storage.UpdateMachineIdentityCredential directly since that mutates state
+// with no audit write. Unlike ClassifyMachineToken (the human-facing, project-scoped
+// API), this performs no project/machine authorization: exactly like every other
+// genuine passthrough in machine_identities_proxy.go, the CALLING server's own
+// internal/core already authorized its actor before deciding to relay this write --
+// this route makes no state-machine-legality or authorization decision, only
+// records that the classification changed (see that file's package doc).
+func (c *KeyorixCore) ClassifyMachineTokenByID(ctx context.Context, credentialID uint, level string) error {
+	if !IsValidClassification(level) {
+		return fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+	}
+	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
+	if err != nil {
+		return err
+	}
+	if cred.Classification == level {
+		return nil // no-op
+	}
+	old := cred.Classification
+	cred.Classification = level
+	if err := c.storage.UpdateMachineIdentityCredential(ctx, cred); err != nil {
+		return err
+	}
+	var pid *uint
+	if m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID); err == nil {
+		pid = &m.ProjectID
+	}
+	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
+	c.writeAuditEventDiff(ctx, "machine_identity.token_classified", nil, nil, pid, "",
+		fmt.Sprintf("machine credential %d (machine %d) classification set to %q", cred.ID, cred.MachineIdentityID, level), diff)
+	return nil
+}
+
 // ValidateMachineToken resolves a raw machine token to its identity, granted
 // role names, network restriction, and the credential's row id. It rejects
 // revoked/expired credentials and any machine not in the active state. The
