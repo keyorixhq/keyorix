@@ -1241,3 +1241,55 @@ func TestScopeUserGroupRolesDownMigration_FourColumnPKDropsCleanly(t *testing.T)
 		t.Fatal("expected duplicate (user_id=1, role_id=1, project_id=1) to be rejected by the narrowed 3-column PK, got nil error")
 	}
 }
+
+// TestRBACSeedDataDownMigration_BackupBeforeDelete pins #203's fix extended
+// to 003_rbac_seed_data.down.sql: unlike its already-hardened siblings
+// (002/004/005/007/008), this file used to delete seed
+// roles/permissions/role_permissions/environments/zones/namespaces with no
+// backup at all. It now copies every about-to-be-deleted row into a
+// same-database `*_backup` table first, following the same pattern.
+func TestRBACSeedDataDownMigration_BackupBeforeDelete(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "002_rbac_enhancements.up.sql")
+	execSQLFile(t, db, "003_rbac_seed_data.up.sql")
+
+	execSQLFile(t, db, "003_rbac_seed_data.down.sql")
+
+	// Non-regression: the down-migration must still actually remove the seed
+	// rows from every live table.
+	for _, tc := range []struct{ query, label string }{
+		{`SELECT COUNT(*) FROM roles WHERE name = 'super_admin'`, "roles.super_admin"},
+		{`SELECT COUNT(*) FROM permissions WHERE resource = 'secrets'`, "permissions with resource='secrets'"},
+		{`SELECT COUNT(*) FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE name = 'super_admin')`, "role_permissions for super_admin"},
+		{`SELECT COUNT(*) FROM environments WHERE name = 'production'`, "environments.production"},
+		{`SELECT COUNT(*) FROM zones WHERE name = 'global'`, "zones.global"},
+		{`SELECT COUNT(*) FROM namespaces WHERE name = 'default'`, "namespaces.default"},
+	} {
+		var count int
+		if err := db.QueryRow(tc.query).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", tc.label, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s still exists after 003's down-migration; down-migration is a no-op", tc.label)
+		}
+	}
+
+	// Regression fix: every deleted row must survive in its backup table.
+	for _, tc := range []struct{ table, where string }{
+		{"roles_backup", "name = 'super_admin'"},
+		{"permissions_backup", "name = 'secrets.read'"},
+		{"role_permissions_backup", "role_id IN (SELECT id FROM roles_backup WHERE name = 'super_admin')"},
+		{"environments_backup", "name = 'production'"},
+		{"zones_backup", "name = 'global'"},
+		{"namespaces_backup", "name = 'default'"},
+	} {
+		var count int
+		query := `SELECT COUNT(*) FROM ` + tc.table + ` WHERE ` + tc.where
+		if err := db.QueryRow(query).Scan(&count); err != nil {
+			t.Fatalf("query %s: %v", tc.table, err)
+		}
+		if count == 0 {
+			t.Fatalf("%s has no row matching %q; expected the deleted row to survive in the backup table", tc.table, tc.where)
+		}
+	}
+}
