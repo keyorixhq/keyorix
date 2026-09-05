@@ -39,7 +39,9 @@ func TestMachineIdentity_RoundTrip(t *testing.T) {
 	assert.Equal(t, "active", got.State)
 
 	got.State = "suspended"
-	require.NoError(t, ls.UpdateMachineIdentity(ctx, got))
+	matched, err := ls.TransitionMachineIdentityState(ctx, got, "active")
+	require.NoError(t, err)
+	require.True(t, matched)
 	reloaded, err := ls.GetMachineIdentity(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "suspended", reloaded.State)

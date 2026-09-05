@@ -156,12 +156,12 @@ func buildRiskException(now time.Time, createdBy uint, title, category string, e
 // TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential (approve, via
 // the dedicated conditional-write proxy) and
 // TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer
-// (revoke, same) below — UpdateRiskException itself is a permanent stub as of
-// the #1511/G80 deletion pass (#G79 already removed its route server-side;
-// see docs/adr-087-remote-storage-deletion-pass.md), not something this suite
-// exercises anymore.
+// (revoke, same) below — UpdateRiskException itself was deleted entirely
+// (superseded-by sweep: zero live callers anywhere, replaced by
+// ApproveRiskExceptionIfPending/RevokeRiskExceptionIfNotRevoked), not
+// something this suite exercises anymore.
 func TestRemoteStorageRiskExceptions_CreateGetList_RealServer(t *testing.T) {
-	t.Skip("#1511/G80 deletion pass fixed the original blocker (UpdateRiskException now a client-side stub, not a real 405) but un-skipping surfaced a SECOND, previously-invisible one: this harness's default credential (createNodeToken, a machine/node principal) cannot create a risk exception at all — CreateRiskExceptionProxy requires a human principal ('only a human principal may create a risk exception'). This has been true since before this pass; the original t.Skip() short-circuited before the Create call ever ran, so it was never actually observed. Out of scope for a dead-wire-call deletion pass — filed as #1584, not fixed here.")
+	t.Skip("#1511/G80 deletion pass fixed the original blocker (UpdateRiskException now deleted, not a real 405) but un-skipping surfaced a SECOND, previously-invisible one: this harness's default credential (createNodeToken, a machine/node principal) cannot create a risk exception at all — CreateRiskExceptionProxy requires a human principal ('only a human principal may create a risk exception'). This has been true since before this pass; the original t.Skip() short-circuited before the Create call ever ran, so it was never actually observed. Out of scope for a dead-wire-call deletion pass — filed as #1584, not fixed here.")
 	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -206,18 +206,6 @@ func TestRemoteStorageRiskExceptions_CreateGetList_RealServer(t *testing.T) {
 	}
 	assert.True(t, titles["MFA rollout delay"])
 	assert.True(t, titles["Dormant service account"])
-}
-
-// TestRemoteStorage_UpdateRiskException_Unsupported proves UpdateRiskException
-// fails client-side (a stub, never reaching the network) rather than hitting a
-// real 405 from the deliberately-unregistered route — the #1511/G80 deletion
-// pass's actual fix, replacing this suite's prior quarantined-Skip coverage.
-func TestRemoteStorage_UpdateRiskException_Unsupported(t *testing.T) {
-	_, downstream := newUpstreamDownstreamForRiskExceptions(t)
-	ctx := context.Background()
-
-	err := downstream.Storage().UpdateRiskException(ctx, &models.RiskException{ID: 1})
-	require.Error(t, err)
 }
 
 // TestRemoteStorageRiskExceptions_GetNotFound_RealServer proves a clean

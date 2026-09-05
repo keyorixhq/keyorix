@@ -18,8 +18,6 @@ func init() {
 			"#1511/G80 deletion pass: POST /api/v1/rbac/assign-role has no matching route. Dead via two independent barriers on the permanent RBAC stub chain (GetUserRoleIDsAt/GetUserGroupRoleIDsAt/RoleSetHasPermission, ADR-086): request/review.go's own requireReviewAuthority, AND core.ApproveAccessRequestWithExpiry's own requireAuthorityForRole, both fail closed before this method is ever reached — corrects Wave 0's original evidence, which only cited the NewRemoteClient()-guarded call sites and missed this path."},
 		"RemoveRole": {statusIntentional,
 			"#1511/G80 deletion pass: POST /api/v1/rbac/remove-role has no matching route. Same corrected evidence as AssignRole — dead via the same double barrier on the permanent RBAC stub chain, not merely a NewRemoteClient() guard."},
-		"UpdateRiskException": {statusIntentional,
-			"#1511/G80 deletion pass: PUT /api/v1/system/risk-exceptions/{id} has no matching route — UpdateRiskExceptionProxy was deliberately never registered (#G79, server/http/handlers/risk_exceptions_proxy.go: \"a repo-wide search found no caller of it anywhere, local or remote\"). This #1511 entry was already stale (the route removal already happened server-side); this pass closes it client-side too."},
 		"CreateShareRecord": {statusIntentional,
 			"#1511/G80 deletion pass: POST /api/v1/shares has no matching route (confirmed real: the /shares group has no POST). Every caller (ShareSecret/ShareSecretWithGroup) is behind share/create.go's NewRemoteClient() guard."},
 		"GetShareRecord": {statusIntentional,

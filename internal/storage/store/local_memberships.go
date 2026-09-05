@@ -53,13 +53,6 @@ func (ls *LocalStorage) GetProjectMembership(ctx context.Context, id uint) (*mod
 	return &m, nil
 }
 
-func (ls *LocalStorage) UpdateProjectMembership(ctx context.Context, m *models.ProjectMembership) error {
-	if err := ls.db.WithContext(ctx).Save(m).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return nil
-}
-
 // TransitionProjectMembershipState persists m's full row via a conditional
 // UPDATE gated on the row's CURRENT state still being fromState (#G42).
 // Mirrors TransitionMachineIdentityState's `WHERE id = ? AND state = ?` +

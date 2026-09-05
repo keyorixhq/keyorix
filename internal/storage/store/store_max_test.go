@@ -1589,14 +1589,6 @@ func TestGetRiskException_NotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-// UpdateRiskException — no-op (ID=0, GORM upsert, no panic).
-func TestUpdateRiskException_NoRow(t *testing.T) {
-	ls := newRiskExcStore(t)
-	err := ls.UpdateRiskException(context.Background(), &models.RiskException{})
-	// Zero-id save may create a row; check it doesn't panic.
-	_ = err
-}
-
 // ---------------------------------------------------------------------------
 // local_rotation_policies — uncovered paths
 // ---------------------------------------------------------------------------
@@ -1752,15 +1744,6 @@ func TestCreateMachineIdentity_Error(t *testing.T) {
 	require.NoError(t, err)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateMachineIdentity(context.Background(), &models.MachineIdentity{})
-	require.Error(t, err)
-}
-
-// UpdateMachineIdentity — error path.
-func TestUpdateMachineIdentity_Error(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	ls := NewLocalStorage(db)
-	err = ls.UpdateMachineIdentity(context.Background(), &models.MachineIdentity{})
 	require.Error(t, err)
 }
 

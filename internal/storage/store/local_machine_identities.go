@@ -47,13 +47,6 @@ func (ls *LocalStorage) LockMachineIdentityForUpdate(ctx context.Context, id uin
 	return &m, nil
 }
 
-func (ls *LocalStorage) UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error {
-	if err := ls.db.WithContext(ctx).Save(m).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return nil
-}
-
 // TransitionMachineIdentityState persists m's full row via a conditional UPDATE
 // gated on the row's CURRENT state still being fromState (#388, see the
 // interface doc in internal/core/storage/interface.go for why this exists

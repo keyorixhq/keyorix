@@ -176,17 +176,6 @@ func (rs *RemoteStorage) GetRiskException(ctx context.Context, id uint) (*models
 	return decodeRiskExceptionResponse(resp.Data)
 }
 
-// UpdateRiskException: #1511/G80 deletion pass — PUT
-// /api/v1/system/risk-exceptions/{id} has no matching route. UpdateRiskExceptionProxy
-// was deliberately never registered (#G79, server/http/handlers/risk_exceptions_proxy.go) —
-// a repo-wide search found no caller of it anywhere, local or remote. This
-// entry in #1511's list was already stale (the route removal already
-// happened server-side); this pass closes it client-side too. See
-// docs/adr-087-remote-storage-deletion-pass.md.
-func (rs *RemoteStorage) UpdateRiskException(_ context.Context, _ *models.RiskException) error {
-	return remoteUnsupported("UpdateRiskException")
-}
-
 // RevokeRiskExceptionIfNotRevoked persists e's full row via a single conditional
 // PUT to /api/v1/system/risk-exceptions/{id}/revoke — a dedicated route (NOT
 // UpdateRiskExceptionProxy) so the upstream applies the exact same conditional

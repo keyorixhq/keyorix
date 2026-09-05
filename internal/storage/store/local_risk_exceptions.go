@@ -47,13 +47,6 @@ func (ls *LocalStorage) GetRiskException(ctx context.Context, id uint) (*models.
 	return &e, nil
 }
 
-func (ls *LocalStorage) UpdateRiskException(ctx context.Context, e *models.RiskException) error {
-	if err := ls.db.WithContext(ctx).Save(e).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return nil
-}
-
 // RevokeRiskExceptionIfNotRevoked persists e's full row via a conditional UPDATE
 // gated on the row's CURRENT revoked flag still being false (a real TOCTOU race
 // found by CodeQL: RevokeRiskException/ApproveRiskException in

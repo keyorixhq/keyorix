@@ -39,7 +39,9 @@ func TestProjectMembership_RoundTrip(t *testing.T) {
 	assert.Equal(t, "invited", got.State)
 
 	got.State = "active"
-	require.NoError(t, ls.UpdateProjectMembership(ctx, got))
+	matched, err := ls.TransitionProjectMembershipState(ctx, got, "invited")
+	require.NoError(t, err)
+	require.True(t, matched)
 	reloaded, err := ls.GetProjectMembership(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "active", reloaded.State)
@@ -85,7 +87,9 @@ func TestTransitionProjectMembershipState_LostRaceReturnsFalse(t *testing.T) {
 	// A concurrent caller already moved the row to "active" before this call's
 	// stale fromState ("provisioned") is used — must refuse, not clobber.
 	created.State = "active"
-	require.NoError(t, ls.UpdateProjectMembership(ctx, created))
+	concurrentMatched, err := ls.TransitionProjectMembershipState(ctx, created, "provisioned")
+	require.NoError(t, err)
+	require.True(t, concurrentMatched)
 
 	stale := &models.ProjectMembership{ID: created.ID, State: "revoked"}
 	matched, err := ls.TransitionProjectMembershipState(ctx, stale, "provisioned")

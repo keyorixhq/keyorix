@@ -96,6 +96,13 @@ func (c *KeyorixCore) GetAnomalyConfig(ctx context.Context) (*models.AnomalyConf
 // the username of the operator making the change (stored on the row for audit
 // purposes); the caller is responsible for applying the new config to the live
 // detector via ApplyAnomalyConfig if one is running.
+//
+// This is a full-replace write (cfg goes straight into storage.SaveAnomalyConfig's
+// unconditional Save), not the unfetched-struct-into-full-row-overwrite bug class
+// fixed elsewhere (UpdateWebAuthnCredentialProxy, UpdateUserIfActiveStateMatchesProxy).
+// Confirmed during that fix's repo-wide sweep as a deliberate, accepted tradeoff:
+// anomaly config is a small operator knob set with no partial-patch use case, and a
+// PUT is expected to carry the complete config, not a diff.
 func (c *KeyorixCore) UpdateAnomalyConfig(ctx context.Context, cfg *models.AnomalyConfigRecord, updatedBy string) error {
 	if err := validateAnomalyConfig(cfg); err != nil {
 		return err

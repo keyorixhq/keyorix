@@ -508,11 +508,6 @@ func (m *MockStorage) GetRiskException(ctx context.Context, id uint) (*models.Ri
 	return args.Get(0).(*models.RiskException), args.Error(1)
 }
 
-func (m *MockStorage) UpdateRiskException(ctx context.Context, e *models.RiskException) error {
-	args := m.Called(ctx, e)
-	return args.Error(0)
-}
-
 func (m *MockStorage) RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *models.RiskException) (bool, error) {
 	args := m.Called(ctx, e)
 	return args.Bool(0), args.Error(1)
@@ -1891,11 +1886,6 @@ func (m *MockStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint)
 	return v, a.Error(1)
 }
 
-func (m *MockStorage) UpdateMachineIdentity(ctx context.Context, mi *models.MachineIdentity) error {
-	args := m.Called(ctx, mi)
-	return args.Error(0)
-}
-
 func (m *MockStorage) TransitionMachineIdentityState(ctx context.Context, mi *models.MachineIdentity, fromState string) (bool, error) {
 	args := m.Called(ctx, mi, fromState)
 	return args.Bool(0), args.Error(1)
@@ -2082,11 +2072,6 @@ func (m *MockStorage) GetProjectMembership(ctx context.Context, id uint) (*model
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.ProjectMembership), args.Error(1)
-}
-
-func (m *MockStorage) UpdateProjectMembership(ctx context.Context, pm *models.ProjectMembership) error {
-	args := m.Called(ctx, pm)
-	return args.Error(0)
 }
 
 func (m *MockStorage) TransitionProjectMembershipState(ctx context.Context, pm *models.ProjectMembership, fromState string) (bool, error) {

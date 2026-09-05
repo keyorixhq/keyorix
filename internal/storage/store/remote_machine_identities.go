@@ -288,17 +288,6 @@ func (rs *RemoteStorage) LockMachineIdentityForUpdate(ctx context.Context, id ui
 	return decodeMachineIdentityResponse(resp.Data)
 }
 
-// UpdateMachineIdentity used to persist the full row via PUT
-// /api/v1/system/machine-identities/{id} (UpdateMachineIdentityProxy),
-// deleted (#1585, docs/adr-090-stale-fork-proxy-deletion.md) — no live
-// caller: core.ClassifyMachineIdentity, this method's only historically
-// claimed caller, was fixed under G42 to call TransitionMachineIdentityState
-// instead. Returns errUnsupportedRemote like every other known-unsupported
-// RemoteStorage operation (see remote_auth.go's package doc).
-func (rs *RemoteStorage) UpdateMachineIdentity(_ context.Context, _ *models.MachineIdentity) error {
-	return remoteUnsupported("UpdateMachineIdentity")
-}
-
 // TransitionMachineIdentityState persists m's full row via a single conditional
 // PUT to /api/v1/system/machine-identities/{id}/transition (mirroring
 // UpdateProjectInvitation's #412 `WHERE id = ? AND state = 'pending'` pattern),

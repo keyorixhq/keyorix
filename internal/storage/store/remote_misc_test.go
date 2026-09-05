@@ -599,23 +599,10 @@ func TestRemoteStorage_GetRiskException(t *testing.T) {
 	assert.Equal(t, "Rotation skip", exc.Title)
 }
 
-// TestRemoteStorage_UpdateRiskException_Unsupported: #1511/G80 deletion pass
-// — no matching route (#G79 already removed it server-side, confirmed
-// UpdateRiskExceptionProxy is not registered in router.go); zero production
-// callers. See docs/adr-087-remote-storage-deletion-pass.md.
-func TestRemoteStorage_UpdateRiskException_Unsupported(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
-	require.NoError(t, err)
-
-	err = rs.UpdateRiskException(context.Background(), &models.RiskException{ID: 6})
-	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
-		"expected ErrRemoteUnsupported, got %v", err)
-}
-
 // TestRemoteStorage_RevokeRiskExceptionIfNotRevoked proves the conditional
 // revoke round-trips through the dedicated PUT
 // /api/v1/system/risk-exceptions/{id}/revoke route (StateTransitionMissingCAS.ql
-// fix), distinct from the plain UpdateRiskException route tested above.
+// fix).
 func TestRemoteStorage_RevokeRiskExceptionIfNotRevoked(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPut, r.Method)

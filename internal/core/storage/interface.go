@@ -410,11 +410,11 @@ type Storage interface {
 	// Risk exceptions (ISO 27001 A.5.8 risk treatment) — governed, time-bound
 	// acceptances of a known control gap. CreateRiskException records one;
 	// ListRiskExceptions returns all (activeOnly excludes revoked rows; expiry is
-	// computed in core); GetRiskException/UpdateRiskException support revoke.
+	// computed in core); GetRiskException/RevokeRiskExceptionIfNotRevoked support
+	// revoke.
 	CreateRiskException(ctx context.Context, e *models.RiskException) (*models.RiskException, error)
 	ListRiskExceptions(ctx context.Context, activeOnly bool) ([]*models.RiskException, error)
 	GetRiskException(ctx context.Context, id uint) (*models.RiskException, error)
-	UpdateRiskException(ctx context.Context, e *models.RiskException) error
 	// RevokeRiskExceptionIfNotRevoked persists e's full row (Revoked/RevokedBy/
 	// RevokedAt already set by the caller) via a single conditional UPDATE —
 	// "WHERE id = ? AND revoked = false" — succeeding only if the row's CURRENT
@@ -430,7 +430,7 @@ type Storage interface {
 	// window between that read and this write, which is exactly the gap this
 	// conditional UPDATE closes.
 	//
-	// This exists — rather than a plain UpdateRiskException call — for the same
+	// This exists — rather than a plain full-row overwrite — for the same
 	// reason TransitionMachineIdentityState does: RemoteStorage.WithTransaction is
 	// a no-op passthrough (remote_transaction.go), so a caller-driven
 	// read-then-conditional-write sequence run against RemoteStorage gets none of
@@ -444,7 +444,7 @@ type Storage interface {
 	// "WHERE id = ? AND revoked = false AND approved = false" — succeeding only if
 	// the row is CURRENTLY still un-revoked AND un-approved. See
 	// RevokeRiskExceptionIfNotRevoked's doc for why this exists as a dedicated
-	// conditional round trip rather than a plain UpdateRiskException call. The
+	// conditional round trip rather than a plain full-row overwrite. The
 	// bool reports whether the row matched and was updated; false means the
 	// exception was concurrently revoked, or already approved, by a prior or
 	// racing call and this write was rejected, not silently applied.
@@ -494,7 +494,6 @@ type Storage interface {
 	// mutates state (e.g. TransitionMachineIdentity's revoked-is-terminal invariant,
 	// #388) that must not lose an update under concurrency.
 	LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error)
-	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	// TransitionMachineIdentityState persists m's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND state = ?" — succeeding
 	// only if the row's CURRENT persisted state still equals fromState (the
@@ -590,7 +589,6 @@ type Storage interface {
 	// Project membership lifecycle (ADR-022). Separate from the role grant.
 	CreateProjectMembership(ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
 	GetProjectMembership(ctx context.Context, id uint) (*models.ProjectMembership, error)
-	UpdateProjectMembership(ctx context.Context, m *models.ProjectMembership) error
 	// TransitionProjectMembershipState persists m's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND state = ?" — succeeding
 	// only if the row's CURRENT persisted state still equals fromState (the
@@ -598,12 +596,12 @@ type Storage interface {
 	// before mutating m in memory), mirroring TransitionMachineIdentityState's
 	// exact shape (#G42). Unlike that helper, there's no row lock backing this
 	// read — the conditional write is the ONLY thing closing the race, so
-	// UpdateProjectMembership must never be used for a state transition: a
-	// concurrent TransitionMembership call landing between the read and the
-	// write would otherwise be silently reverted (or silently revert this
-	// call), corrupting the ADR-022 state machine. Returns whether the write
-	// actually matched a row; a false match must be treated exactly like an
-	// illegal transition, not retried or silently overwritten.
+	// there must never be a plain unconditional-write alternative for a state
+	// transition: a concurrent TransitionMembership call landing between the
+	// read and the write would otherwise be silently reverted (or silently
+	// revert this call), corrupting the ADR-022 state machine. Returns whether
+	// the write actually matched a row; a false match must be treated exactly
+	// like an illegal transition, not retried or silently overwritten.
 	TransitionProjectMembershipState(ctx context.Context, m *models.ProjectMembership, fromState string) (bool, error)
 	ListProjectMemberships(ctx context.Context, projectID uint) ([]*models.ProjectMembership, error)
 	// GetActiveProjectMembership returns the user's non-revoked membership in a

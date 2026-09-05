@@ -691,26 +691,6 @@ func TestCreateProjectMembership_Success(t *testing.T) {
 	assert.NotZero(t, got.ID)
 }
 
-func TestUpdateProjectMembership(t *testing.T) {
-	ctx := context.Background()
-	ls := newMembershipS4Store(t)
-
-	m := &models.ProjectMembership{
-		ProjectID: 2, UserID: 2, State: "active",
-		InvitedAt: time.Now(),
-	}
-	got, err := ls.CreateProjectMembership(ctx, m)
-	require.NoError(t, err)
-
-	got.State = "accepted"
-	err = ls.UpdateProjectMembership(ctx, got)
-	require.NoError(t, err)
-
-	reloaded, err := ls.GetProjectMembership(ctx, got.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "accepted", reloaded.State)
-}
-
 // ---------------------------------------------------------------------------
 // local_notifications.go — CreateNotification
 // ---------------------------------------------------------------------------
