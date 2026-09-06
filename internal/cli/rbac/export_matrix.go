@@ -8,12 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -65,26 +65,21 @@ type remoteMatrixRow struct {
 	ExpiresAt       *time.Time `json:"expires_at"`
 }
 
-// openSecureOutputFile opens path for the --output file. The permission
-// matrix is deployment-wide access-control data (usernames, emails, every
-// user/role/permission/scope tuple) — sensitive enough that it must never
-// land on disk world/group-readable, regardless of the process umask (G68).
-// O_TRUNC alone keeps a pre-existing file's mode untouched, so the perm
-// argument to OpenFile only takes effect when the file is freshly created;
-// the explicit Chmod below enforces 0600 even when --output points at an
-// already-existing (possibly world-readable) path. O_NOFOLLOW refuses to
-// write through a final-component symlink. Mirrors
-// securefiles.SecureWriteFile/SecureWriteFileSync.
+// openSecureOutputFile opens path for the --output file. The permission matrix is
+// deployment-wide access-control data (usernames, emails, every user/role/permission/
+// scope tuple) — sensitive enough that it must never land on disk world/group-readable,
+// regardless of the process umask (G68), and must never be silently written through a
+// planted symlink. Delegates to securefiles.SecureCreateFileHandle: per-path-component
+// O_NOFOLLOW (not just the final component, which this function used to check alone)
+// plus O_EXCL, which refuses to open through OR overwrite an already-existing path —
+// closing this out onto the same shared, strongest-in-repo pattern
+// internal/cli/secret/export.go's createSecureOutputFile uses, rather than keeping a
+// second, weaker, independently hand-rolled copy. This is a behavior change from the
+// previous O_TRUNC-based version: re-running export-matrix against an --output path
+// that already exists now fails instead of silently overwriting it — remove the old
+// file, or choose a fresh path, same as `secret export --output` already requires.
 func openSecureOutputFile(path string) (*os.File, error) {
-	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- operator-supplied CLI output path, not attacker input
-	if err != nil {
-		return nil, err
-	}
-	if cerr := f.Chmod(0o600); cerr != nil {
-		_ = f.Close()
-		return nil, cerr
-	}
-	return f, nil
+	return securefiles.SecureCreateFileHandle(filepath.Dir(path), filepath.Base(path), 0o600)
 }
 
 func runExportMatrix(cmd *cobra.Command, args []string) error {
@@ -94,7 +89,7 @@ func runExportMatrix(cmd *cobra.Command, args []string) error {
 	if exportMatrixOutput != "" {
 		f, err := openSecureOutputFile(exportMatrixOutput)
 		if err != nil {
-			return fmt.Errorf("failed to open output file: %w", err)
+			return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", exportMatrixOutput, err)
 		}
 		defer func() { _ = f.Close() }()
 		out = f

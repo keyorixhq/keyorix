@@ -86,16 +86,29 @@ var keygenCmd = &cobra.Command{
 		pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 
 		// Both at 0600 — the private key is a signing secret; the public key need not be
-		// world-readable here (it is published separately). SecureWriteFileSync (#265)
-		// refuses to write through a pre-planted symlink (O_NOFOLLOW) and enforces the
-		// mode even if a file already existed with a looser one — a plain os.WriteFile
-		// silently follows a symlink and never chmods an existing file, so the ROOT
-		// signing key could land world-readable or redirected to an attacker-controlled
-		// path with no error. Sync'd since this is unrecoverable key material.
-		if err := securefiles.SecureWriteFileSync(keygenDir, keyID+".private.pem", privPEM, 0o600); err != nil {
+		// world-readable here (it is published separately). SecureWriteFileSync/
+		// SecureCreateFileSync (#265) refuse to write through a pre-planted symlink
+		// (O_NOFOLLOW) and enforce the mode even if a file already existed with a looser
+		// one — a plain os.WriteFile silently follows a symlink and never chmods an
+		// existing file, so the ROOT signing key could land world-readable or redirected
+		// to an attacker-controlled path with no error. Sync'd since this is
+		// unrecoverable key material.
+		//
+		// Without --force, use SecureCreateFileSync: O_EXCL makes the create atomic and
+		// closes the TOCTOU window the os.Stat check above cannot — an attacker who drops
+		// in a replacement file in the gap between that check and this write no longer
+		// gets it silently truncated/replaced, they get the write refused (the check above
+		// remains for a fast, clear error message in the non-race case; O_EXCL is now the
+		// actual enforcement, not the check). --force intentionally allows overwrite, so it
+		// keeps using the non-exclusive SecureWriteFileSync (O_TRUNC).
+		writeKey := securefiles.SecureCreateFileSync
+		if keygenForce {
+			writeKey = securefiles.SecureWriteFileSync
+		}
+		if err := writeKey(keygenDir, keyID+".private.pem", privPEM, 0o600); err != nil {
 			return fmt.Errorf("write private key: %w", err)
 		}
-		if err := securefiles.SecureWriteFileSync(keygenDir, keyID+".public.pem", pubPEM, 0o600); err != nil {
+		if err := writeKey(keygenDir, keyID+".public.pem", pubPEM, 0o600); err != nil {
 			return fmt.Errorf("write public key: %w", err)
 		}
 
