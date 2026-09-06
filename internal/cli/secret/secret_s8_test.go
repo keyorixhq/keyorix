@@ -53,6 +53,8 @@ func newS8EmbeddedDir(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
+	// #G-blank-storage-default: see newS7EmbeddedDir in secret_s7_test.go.
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 }
 
 func newS8Client(t *testing.T, srv *httptest.Server) *common.RemoteClient {

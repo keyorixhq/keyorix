@@ -297,9 +297,19 @@ func TestRemoteClient_GetRaw_ReadBodyError(t *testing.T) {
 
 // ── InitializeCoreService: default-config fallback path ─────────────────────
 
-// TestInitializeCoreService_NoConfigFile exercises the "config.Load fails →
-// use default local storage" branch (lines 50-64) by pointing
-// KEYORIX_CONFIG_PATH at a non-existent file so config.Load returns an error.
+// TestInitializeCoreService_NoConfigFile exercises the "config.Load fails
+// with IsNotExist" branch by pointing KEYORIX_CONFIG_PATH at a non-existent
+// file so config.Load returns an error.
+//
+// #G-blank-storage-default: this used to assert InitializeCoreService silently
+// falls back to a local SQLite config (Storage.Type="local",
+// Database.Path="./secrets.db") and succeeds — a CLI command run with zero
+// usable configuration (no keyorix.yaml, no KEYORIX_CONFIG_PATH) silently
+// created a real, on-disk local database file, completely bypassing whatever
+// backend (e.g. a `keyorix connect`-configured remote server) the operator
+// actually intended. The CLI must never apply that default (see the matching
+// comment in internal/storage/factory.go's CreateStorage) — it must now fail
+// loudly instead of silently creating ./secrets.db.
 func TestInitializeCoreService_NoConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -310,9 +320,9 @@ func TestInitializeCoreService_NoConfigFile(t *testing.T) {
 	t.Setenv("KEYORIX_CONFIG_PATH", filepath.Join(dir, "does-not-exist.yaml"))
 
 	svc, err := InitializeCoreService()
-	// The function falls back to a local SQLite config — it should succeed.
-	require.NoError(t, err)
-	assert.NotNil(t, svc)
+	require.Error(t, err)
+	assert.Nil(t, svc)
+	assert.Contains(t, err.Error(), "storage.type is not set")
 }
 
 // ── InitializeCoreService: wireSecretEncryption error propagated ─────────────

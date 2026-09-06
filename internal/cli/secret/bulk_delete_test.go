@@ -348,12 +348,18 @@ func TestRunBulkDeleteEmbedded_PreviewMode(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	bulkDeleteProject = 1
 	bulkDeleteIDs = []uint{42}
 	bulkDeleteNames = nil
 	bulkDeleteConfirm = false
+
+	// #G-blank-storage-default: InitializeCoreService no longer silently
+	// defaults storage.type to "local" with no config file present — write an
+	// explicit minimal config in an isolated temp dir so this still exercises
+	// the real ./secrets.db-backed path exactly as before.
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	// InitializeCoreService creates ./secrets.db and initialises i18n with English.
 	err := runBulkDeleteEmbedded(context.Background())
@@ -370,12 +376,15 @@ func TestRunBulkDeleteEmbedded_DeleteNotFound(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	bulkDeleteProject = 1
 	bulkDeleteIDs = []uint{9999}
 	bulkDeleteNames = nil
 	bulkDeleteConfirm = true
+
+	// #G-blank-storage-default: see TestRunBulkDeleteEmbedded_PreviewMode above.
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	// BulkDeleteSecrets returns (result, nil) with 9999 in Failed (record not found).
 	err := runBulkDeleteEmbedded(context.Background())
@@ -535,12 +544,15 @@ func TestRunBulkDeleteEmbedded_NamesNotFound(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	bulkDeleteProject = 1
 	bulkDeleteIDs = nil
 	bulkDeleteNames = []string{"does-not-exist"}
 	bulkDeleteConfirm = true
+
+	// #G-blank-storage-default: see TestRunBulkDeleteEmbedded_PreviewMode above.
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	err := runBulkDeleteEmbedded(context.Background())
 	require.Error(t, err)
@@ -615,7 +627,6 @@ func TestRunBulkDeleteEmbedded_BulkDeleteError(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	// Set confirm=true and empty IDs so the call reaches BulkDeleteSecrets with
 	// an empty slice, which returns an error ("at least one secret ID is required").
@@ -623,6 +634,10 @@ func TestRunBulkDeleteEmbedded_BulkDeleteError(t *testing.T) {
 	bulkDeleteIDs = nil
 	bulkDeleteNames = nil
 	bulkDeleteConfirm = true
+
+	// #G-blank-storage-default: see TestRunBulkDeleteEmbedded_PreviewMode above.
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	err := runBulkDeleteEmbedded(context.Background())
 	require.Error(t, err)
@@ -644,12 +659,15 @@ func TestRunBulkDelete_EmbeddedPath(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 
 	// Unset the server env so NewRemoteClient returns !ok.
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
+
+	// #G-blank-storage-default: see TestRunBulkDeleteEmbedded_PreviewMode above.
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	bulkDeleteProject = 1
 	bulkDeleteIDs = []uint{42}

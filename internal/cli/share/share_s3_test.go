@@ -41,6 +41,7 @@ func writeShareTestConfig(t *testing.T, dir string) {
   language: en
   fallback_language: en
 storage:
+  type: local
   database:
     path: %q
   encryption:

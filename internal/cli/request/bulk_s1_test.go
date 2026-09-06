@@ -23,6 +23,7 @@ import (
 // returns the request ID along with the approver's user ID.
 func seedBulkApproveDB(t *testing.T) (reqID, approverID uint, svc *core.KeyorixCore) {
 	t.Helper()
+	writeLocalStorageConfig(t) // see request_s3_test.go — #G-blank-storage-default
 	var err error
 	svc, err = common.InitializeCoreService()
 	require.NoError(t, err)

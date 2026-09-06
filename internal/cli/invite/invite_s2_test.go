@@ -7,6 +7,7 @@ package invite
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -23,6 +24,14 @@ import (
 func seedInviteDB(t *testing.T) (projectID uint, invitationID uint) {
 	t.Helper()
 	ctx := context.Background()
+
+	// #G-blank-storage-default: InitializeCoreService no longer silently
+	// defaults storage.type to "local" when no config file is present (a CLI
+	// command run with zero usable config now fails loudly instead of
+	// creating a stray ./secrets.db) -- write an explicit minimal config so
+	// this fixture keeps exercising a real file-backed SQLite DB, matching
+	// what it did implicitly before.
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	// First call creates ./secrets.db and runs the full storage migration.
 	svc, err := common.InitializeCoreService()
@@ -88,6 +97,11 @@ func TestRunList_NoProjectSet(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 	t.Setenv("KEYORIX_PROJECT", "")
 	t.Setenv("XDG_CONFIG_HOME", dir) // isolate cli.yaml lookup
+	// #G-blank-storage-default: runList's InitializeCoreService call now hard-errors
+	// on a blank storage.type instead of silently defaulting to local storage — write
+	// an explicit config so the test still reaches the "no project specified" branch
+	// this test is targeting, rather than failing earlier on storage init.
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	orig := listProject
 	defer func() { listProject = orig }()
@@ -242,6 +256,8 @@ func TestRunSend_NoProject(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 	t.Setenv("KEYORIX_PROJECT", "")
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	// #G-blank-storage-default: see TestRunList_NoProjectSet above.
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
 
 	origEmail, origRole, origBy, origProject := sendEmail, sendRole, sendBy, sendProject
 	defer func() {

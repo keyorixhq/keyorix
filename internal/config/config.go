@@ -2029,10 +2029,26 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		}
 	// #1640: "sqlite" is an accepted alias for "local" -- see the matching
 	// comment in internal/storage/factory.go's CreateStorage switch.
-	case "local", "sqlite", "":
+	case "local", "sqlite":
 		if c.Storage.Database.Path == "" {
 			return fmt.Errorf("database path is not specified")
 		}
+	case "":
+		// #G-blank-storage-default: a blank storage.type used to be bucketed
+		// with "local"/"sqlite" here, so a config file with no storage: block
+		// (or one that set database.path without type) passed validation
+		// silently and then hit the storage factory's identical blank-type
+		// tolerance -- two independent layers both treating "unset" as
+		// "local", with no operator-visible signal either way. See
+		// internal/storage/factory.go's CreateStorage (#G-blank-storage-default)
+		// for the full rationale; this is that same fix's validation-layer
+		// half. The ONE legitimate "no storage: block = local SQLite" shape
+		// (an existing on-prem single-node server) is preserved by
+		// server/main.go explicitly setting cfg.Storage.Type = "local" in the
+		// server's own boot sequence BEFORE this Validate() call ever runs --
+		// not here, since this function is shared by the CLI, which must NOT
+		// get that default applied on its behalf.
+		return fmt.Errorf("storage.type is not set: no storage configuration found -- specify \"local\", \"postgres\", \"postgresql\", or \"remote\" explicitly")
 	default:
 		// #463: an unrecognized storage.type (e.g. a typo like "postgress" or
 		// "remot") used to fall through silently to the SQLite default in both
