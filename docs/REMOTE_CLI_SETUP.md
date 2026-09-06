@@ -50,11 +50,9 @@ This will prompt for your API key and store it securely.
 keyorix status
 ```
 
-Or test connectivity:
-
-```bash
-keyorix ping
-```
+`status` exits `0` when healthy, `1` when the configured target is unreachable
+or unhealthy, and `2` if nothing is configured — safe to script against
+(`keyorix status && deploy`) without parsing its printed output.
 
 ## Configuration Options
 
@@ -149,8 +147,8 @@ storage:
 
 ### Status Commands
 
-- `keyorix status` - Check system health and connection
-- `keyorix ping` - Test remote server connectivity
+- `keyorix status` - Check system health and connection (exits non-zero on
+  unhealthy/unreachable/unconfigured, so it's safe to script against)
 
 ### Audit Commands
 
@@ -431,7 +429,7 @@ keyorix auth login
 
 1. **Check network connectivity:**
    ```bash
-   keyorix ping
+   keyorix status
    ```
 
 2. **Verify server URL:**

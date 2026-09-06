@@ -131,6 +131,15 @@ All notable changes to Keyorix are documented here. This project follows
   tag when nothing enforced that. See ADR-070 for the full rationale and the
   CI/CD consolidation decisions (CodeQL, Sonar, SBOM, dependency review).
 
+### Removed
+- **`keyorix ping`** — removed as dead code: it was never registered as a
+  runnable subcommand (only `keyorix status` was wired into the root command),
+  so invoking `keyorix ping` has always produced "unknown command," regardless
+  of this change. `keyorix status` already covers the same connectivity/
+  response-time check, with a real exit-code contract (`0` healthy, `1`
+  unhealthy/unreachable, `2` not configured) `ping` never had. Documentation
+  that referenced `keyorix ping` has been updated to point to `status`.
+
 ### Added
 - **FinOps billing report** — `GET /api/v1/admin/billing/report?from=&to=[&project_id=]`
   and `keyorix billing report --from --to [--project-id] [--format table|json]`.
