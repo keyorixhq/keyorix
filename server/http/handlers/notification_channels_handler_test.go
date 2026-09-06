@@ -235,7 +235,7 @@ func TestNotifChannel_Update_Found(t *testing.T) {
 
 	body := map[string]interface{}{"url": "https://new.url", "name": "update-me", "type": "slack"}
 	b, _ := json.Marshal(body)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(b)), "id", itoa(ch.ID))
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(b))), "id", itoa(ch.ID))
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 
@@ -247,11 +247,26 @@ func TestNotifChannel_Update_NotFound(t *testing.T) {
 
 	body := map[string]interface{}{"name": "x", "type": "slack", "url": "https://x"}
 	b, _ := json.Marshal(body)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(b)), "id", "99999")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(b))), "id", "99999")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestNotifChannel_Update_Unauthorized(t *testing.T) {
+	h, db := newNotifChannelHandler(t)
+
+	ch := models.NotificationChannel{Name: "upd-noauth", Type: "webhook", URL: "https://x", Enabled: true}
+	require.NoError(t, db.Create(&ch).Error)
+
+	body := map[string]interface{}{"name": "x"}
+	b, _ := json.Marshal(body)
+	req := withChiParam(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(b)), "id", itoa(ch.ID))
+	w := httptest.NewRecorder()
+	h.Update(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestNotifChannel_Update_BadJSON(t *testing.T) {
@@ -260,8 +275,8 @@ func TestNotifChannel_Update_BadJSON(t *testing.T) {
 	ch := models.NotificationChannel{Name: "upd-bad", Type: "webhook", URL: "https://x", Enabled: true}
 	require.NoError(t, db.Create(&ch).Error)
 
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/x",
-		bytes.NewReader([]byte("not-json"))), "id", itoa(ch.ID))
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/x",
+		bytes.NewReader([]byte("not-json")))), "id", itoa(ch.ID))
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 
@@ -277,7 +292,7 @@ func TestNotifChannel_Update_ValidationError(t *testing.T) {
 	// set an invalid type → validation error (non-empty type gets applied, then fails validation)
 	body := map[string]interface{}{"type": "fax"}
 	b, _ := json.Marshal(body)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(b)), "id", itoa(ch.ID))
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(b))), "id", itoa(ch.ID))
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 
@@ -292,7 +307,7 @@ func TestNotifChannel_Delete_Found(t *testing.T) {
 	ch := models.NotificationChannel{Name: "del-me", Type: "webhook", URL: "https://example.com", Enabled: true}
 	require.NoError(t, db.Create(&ch).Error)
 
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/x", nil), "id", itoa(ch.ID))
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/x", nil)), "id", itoa(ch.ID))
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 
@@ -304,7 +319,7 @@ func TestNotifChannel_Delete_Found(t *testing.T) {
 func TestNotifChannel_Delete_NotFound(t *testing.T) {
 	h, _ := newNotifChannelHandler(t)
 
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/x", nil), "id", "99999")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/x", nil)), "id", "99999")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 
@@ -314,11 +329,24 @@ func TestNotifChannel_Delete_NotFound(t *testing.T) {
 func TestNotifChannel_Delete_BadID(t *testing.T) {
 	h, _ := newNotifChannelHandler(t)
 
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/x", nil), "id", "bad")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/x", nil)), "id", "bad")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestNotifChannel_Delete_Unauthorized(t *testing.T) {
+	h, db := newNotifChannelHandler(t)
+
+	ch := models.NotificationChannel{Name: "del-noauth", Type: "webhook", URL: "https://x", Enabled: true}
+	require.NoError(t, db.Create(&ch).Error)
+
+	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/x", nil), "id", itoa(ch.ID))
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // ── isValidationError ─────────────────────────────────────────────────────────
