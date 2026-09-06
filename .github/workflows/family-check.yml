@@ -130,6 +130,15 @@ jobs:
       # touch no tracked family at all, and a check that comments on every PR
       # regardless of relevance is exactly the noise that gets a check
       # disabled (see family-check-scope.json's own scoping rationale).
+      #
+      # --repo is required: this step's working directory is $GITHUB_WORKSPACE
+      # itself, which has no .git of its own (both checkouts above go to the
+      # head/ and base/ subdirectories) -- without an explicit --repo, gh's
+      # repo auto-detection fails outright with "fatal: not a git repository"
+      # any time the report is actually non-empty (an all-main "changes" job
+      # -only PR like the one that introduced this workflow never exercises
+      # this line at all, since its own report is empty and the early exit
+      # above skips straight past both gh calls).
       - name: Post or update PR comment
         if: always()
         env:
@@ -139,6 +148,6 @@ jobs:
             echo "family-membership check: nothing to report, skipping comment"
             exit 0
           fi
-          if ! gh pr comment "${{ github.event.pull_request.number }}" --edit-last --body-file family-check-report.md 2>/dev/null; then
-            gh pr comment "${{ github.event.pull_request.number }}" --body-file family-check-report.md
+          if ! gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --edit-last --body-file family-check-report.md 2>/dev/null; then
+            gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body-file family-check-report.md
           fi
