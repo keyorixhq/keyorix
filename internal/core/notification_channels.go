@@ -49,6 +49,7 @@ func (c *KeyorixCore) GetNotificationChannel(ctx context.Context, id uint) (*mod
 //   - Type must be one of: webhook, slack, teams, email.
 //   - URL is required for webhook/slack/teams types.
 //   - Email is required for email type.
+//
 // actorID is the acting user's numeric ID for audit attribution (0 when
 // unknown, e.g. a local CLI invocation) -- see writeConfigChangeAuditEvent.
 func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel, createdBy string, actorID uint) (*models.NotificationChannel, error) {
