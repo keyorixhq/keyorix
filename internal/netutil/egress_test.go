@@ -104,7 +104,7 @@ func TestGuard_RedisDialer_TLSHandshakeFailurePropagates(t *testing.T) {
 	// HandshakeContext returns an error rather than hanging.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		conn, aerr := ln.Accept()
 		if aerr == nil {
@@ -136,7 +136,7 @@ func TestGuard_RedisDialer_TLSHandshakeFailurePropagates(t *testing.T) {
 func TestGuard_RedisDialer_ServerNameDefaultsToOriginalHostname(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	var gotServerName string
 	serverDone := make(chan struct{})
@@ -146,7 +146,7 @@ func TestGuard_RedisDialer_ServerNameDefaultsToOriginalHostname(t *testing.T) {
 		if aerr != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		tlsConn := tls.Server(conn, &tls.Config{
 			GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 				gotServerName = hello.ServerName
@@ -183,7 +183,7 @@ func TestGuard_RedisDialer_ServerNameDefaultsToOriginalHostname(t *testing.T) {
 func TestGuard_RedisDialer_ServerNameNotOverriddenWhenAlreadySet(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	var gotServerName string
 	serverDone := make(chan struct{})
@@ -193,7 +193,7 @@ func TestGuard_RedisDialer_ServerNameNotOverriddenWhenAlreadySet(t *testing.T) {
 		if aerr != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		tlsConn := tls.Server(conn, &tls.Config{
 			GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 				gotServerName = hello.ServerName
