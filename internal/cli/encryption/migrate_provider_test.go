@@ -42,7 +42,7 @@ func TestCopyFile_RefusesSymlinkDestination(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	err := copyFile(src, dst)
+	err := copyFile(dir, filepath.Base(src), filepath.Base(dst))
 	if err == nil {
 		t.Fatalf("expected copyFile to refuse writing through a symlink destination, got nil error")
 	}
@@ -73,7 +73,7 @@ func TestCopyFile_NewDestinationRestrictiveModeRegardlessOfUmask(t *testing.T) {
 	oldUmask := syscall.Umask(0o022)
 	defer syscall.Umask(oldUmask)
 
-	if err := copyFile(src, dst); err != nil {
+	if err := copyFile(dir, filepath.Base(src), filepath.Base(dst)); err != nil {
 		t.Fatalf("copyFile: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestCopyFile_EnforcesModeOnPreexistingDestination(t *testing.T) {
 		t.Fatalf("write pre-existing dst: %v", err)
 	}
 
-	if err := copyFile(src, dst); err != nil {
+	if err := copyFile(dir, filepath.Base(src), filepath.Base(dst)); err != nil {
 		t.Fatalf("copyFile: %v", err)
 	}
 

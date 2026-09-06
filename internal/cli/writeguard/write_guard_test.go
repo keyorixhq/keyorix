@@ -1,7 +1,18 @@
-// Package writeguard is a standalone, test-only sweep over internal/cli that asserts no
-// production code calls os.Create/os.OpenFile/os.WriteFile directly for sensitive
-// output (exports, bundles, key material, evidence) outside the internal/securefiles
-// shared helpers — see keyorix-private/adversarial-review/QUEUE.md "Group 2 guard".
+// Package writeguard is a standalone, test-only sweep over internal/cli AND
+// internal/bundle that asserts no production code calls os.Create/os.OpenFile/
+// os.WriteFile directly for sensitive output (exports, bundles, key material,
+// evidence) outside the internal/securefiles shared helpers — see
+// keyorix-private/adversarial-review/QUEUE.md "Group 2 guard".
+//
+// internal/bundle was added after adversarial verification of the original internal/
+// cli-only sweep found a structurally identical, unguarded os.WriteFile in
+// internal/bundle/bundle.go's writeInstalledVersion — invisible to the sweep purely
+// because that package is a sibling of internal/cli, not a subdirectory of it. The
+// vulnerability shape ("operator-supplied path, written without symlink/overwrite
+// protection") isn't specific to the CLI layer; any package taking an operator-facing
+// path and writing to it is in scope. internal/cli and internal/bundle are the two
+// confirmed instances as of this writing — a wider, repo-root sweep (with the
+// allowlisting work that would require) is a real follow-up, not done here.
 //
 // Every call site the sweep finds must either route through securefiles
 // (SecureCreateFile/SecureCreateFileSync/SecureCreateFileHandle/SecureWriteFile/
@@ -32,36 +43,25 @@ import (
 // through internal/securefiles. Every entry was reviewed as part of the Group 2
 // safe-file-writes fix; see the justification for why each one is safe/out-of-scope as
 // it stands, not merely undiscovered.
+//
+// This allowlist is meant to generate its own rot and be caught: the four sites
+// originally deferred here (migrate_provider.go's copyFile, bundle.go's --out write,
+// and both secret/fix.go sites) were deferred specifically because O_EXCL didn't fit
+// their semantics -- conflating "which open flags" with "how much of the path gets
+// walked safely." Once internal/securefiles.SecureOpenBeneath was exported as a
+// standalone walk primitive taking caller-supplied flags (separate from the O_EXCL-only
+// SecureCreateFile family), all four were re-examined against that new axis and all four
+// turned out to fit it: none of them actually needed the streaming non-exclusive helper
+// this comment used to say bundle.go was blocked on. They were fixed directly and
+// removed from this list rather than left allowlisted -- if a FUTURE site is added here
+// citing "needs a streaming/non-exclusive write," re-check against SecureOpenBeneath
+// first; it may already fit, the same way it did for all four sites removed here.
 var allowlist = map[string]string{
-	"encryption/migrate_provider.go:447": "copyFile's dst is used BOTH ways: a fresh backup path (create) and, on restore, a " +
-		"pre-existing DEK path that must be overwritten -- O_EXCL doesn't fit either the " +
-		"restore case or a helper that only supports one or the other. Already carries " +
-		"O_NOFOLLOW plus an explicit post-open Chmod, the same protection " +
-		"securefiles.SecureWriteFile provides, just checked at the final path component " +
-		"only (not per-component). Fixed/derived path under baseDir, not an arbitrary " +
-		"operator --output flag. Queue-rated medium-low, not one of Group 2's named fix sites.",
-	"bundle/bundle.go:94": "the --out path for `bundle build`: rebuilding to the same output path is a " +
-		"legitimate, common workflow (e.g. re-running in CI), so switching to the new " +
-		"O_EXCL create-only helper would regress that overwrite. WriteBundle also needs an " +
-		"io.Writer to stream to, not an already-assembled []byte, so SecureCreateFile's " +
-		"data-based form doesn't fit either. Properly fixing this needs a new " +
-		"non-exclusive, O_NOFOLLOW-only, handle-based securefiles primitive -- deliberately " +
-		"left as a follow-up rather than folded into this PR (queue: supply-chain build " +
-		"artifact, not secret data).",
-	"secret/fix.go:117": "appends only a variable NAME (not a secret value) to .env, idempotently, across " +
-		"repeated runs (O_APPEND|O_CREATE) -- O_APPEND is fundamentally incompatible with " +
-		"the O_EXCL create-only helper's refuse-if-exists semantics. Fixed in place by " +
-		"adding O_NOFOLLOW directly, mirroring applyFix's own O_NOFOLLOW-without-" +
-		"securefiles pattern later in this same file.",
-	"secret/fix.go:209": "applyFix's in-place edit of a file findAndPlanFix already opened and read via " +
-		"this exact path -- requires the file to already exist (no O_CREATE), which doesn't " +
-		"fit a create-a-new-file helper. Already carries O_NOFOLLOW. Queue-rated medium-low, " +
-		"not one of Group 2's named fix sites.",
-	"system/init.go:172": "creates an empty (0-byte) placeholder file for the local sqlite DB path purely " +
+	"internal/cli/system/init.go:172": "creates an empty (0-byte) placeholder file for the local sqlite DB path purely " +
 		"to make first-boot vs. already-initialized unambiguous -- no data is written by " +
 		"this call. Already uses O_EXCL for an atomic, idempotent existence check " +
 		"(err == nil or IsExist are both treated as success).",
-	"system/init.go:202": "creates an empty (0-byte) placeholder file for the local log path, same " +
+	"internal/cli/system/init.go:202": "creates an empty (0-byte) placeholder file for the local log path, same " +
 		"idempotent-existence-check shape as init.go:172 -- no data is written by this call. " +
 		"Already uses O_EXCL.",
 }
@@ -81,18 +81,21 @@ type site struct {
 
 func (s site) key() string { return s.relPath + ":" + strconv.Itoa(s.line) }
 
-// cliRoot resolves the internal/cli directory relative to this test file's own
-// location (not the process cwd), so the sweep works regardless of how `go test` is
-// invoked.
-func cliRoot(t *testing.T) string {
+// repoRoot resolves the repository root relative to this test file's own location (not
+// the process cwd), so the sweep works regardless of how `go test` is invoked.
+func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok, "runtime.Caller must resolve this test file's path")
 	// this file lives at internal/cli/writeguard/write_guard_test.go
-	root, err := filepath.Abs(filepath.Join(filepath.Dir(thisFile), ".."))
+	root, err := filepath.Abs(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
 	require.NoError(t, err)
 	return root
 }
+
+// scanRoots are the package trees this sweep walks, relative to repoRoot. See the
+// package doc comment for why internal/bundle is included alongside internal/cli.
+var scanRoots = []string{"internal/cli", "internal/bundle"}
 
 // scanFile parses a single .go file and returns every os.Create/os.OpenFile/
 // os.WriteFile call site found in it (by AST inspection, not string/regex matching, so
@@ -131,49 +134,56 @@ func scanFile(fset *token.FileSet, path string) ([]site, error) {
 	return sites, nil
 }
 
-// findAllSites walks root (internal/cli) recursively, scanning every non-test .go file
-// (test fixtures are allowed to build test data with raw os calls; this sweep is about
-// production output paths) and returns every raw os.Create/os.OpenFile/os.WriteFile
-// call site found, keyed by path relative to root.
-func findAllSites(t *testing.T, root string) map[string]site {
+// findAllSites walks every directory in scanRoots recursively (relative to repo),
+// scanning every non-test .go file (test fixtures are allowed to build test data with
+// raw os calls; this sweep is about production output paths) and returns every raw
+// os.Create/os.OpenFile/os.WriteFile call site found, keyed by path relative to repo
+// (e.g. "internal/cli/system/init.go:172", "internal/bundle/bundle.go:542") so sites
+// from different scan roots can never collide.
+func findAllSites(t *testing.T, repo string) map[string]site {
 	t.Helper()
 	fset := token.NewFileSet()
 	found := map[string]site{}
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
+	for _, rel := range scanRoots {
+		root := filepath.Join(repo, rel)
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			sites, serr := scanFile(fset, path)
+			if serr != nil {
+				return serr
+			}
+			for _, s := range sites {
+				relPath, rerr := filepath.Rel(repo, s.relPath)
+				require.NoError(t, rerr)
+				s.relPath = filepath.ToSlash(relPath)
+				found[s.key()] = s
+			}
 			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		sites, serr := scanFile(fset, path)
-		if serr != nil {
-			return serr
-		}
-		for _, s := range sites {
-			rel, rerr := filepath.Rel(root, s.relPath)
-			require.NoError(t, rerr)
-			s.relPath = filepath.ToSlash(rel)
-			found[s.key()] = s
-		}
-		return nil
-	})
-	require.NoError(t, err, "walking %s must not fail", root)
+		})
+		require.NoError(t, err, "walking %s must not fail", root)
+	}
 	return found
 }
 
 // TestNoUnprotectedSensitiveFileWrites is the Group 2 guard: every raw os.Create/
-// os.OpenFile/os.WriteFile call under internal/cli must be explicitly allowlisted
+// os.OpenFile/os.WriteFile call under any scanRoots tree must be explicitly allowlisted
 // (with a written justification), i.e. everything else must go through
-// internal/securefiles. Verified RED against pre-fix code (it flagged
-// compliance/csv_export.go:51, compliance/compliance.go:228, compliance/baseline.go:49,
-// and rbac/export_matrix.go:79 before those sites were migrated); GREEN after.
+// internal/securefiles. Verified RED against pre-fix code for the original internal/cli
+// sites (compliance/csv_export.go:51, compliance/compliance.go:228,
+// compliance/baseline.go:49, rbac/export_matrix.go:79, migrate_provider.go's copyFile,
+// bundle/bundle.go:92, both secret/fix.go sites) and, separately, for
+// internal/bundle/bundle.go's writeInstalledVersion once internal/bundle was added as a
+// second scan root; GREEN after each was fixed.
 func TestNoUnprotectedSensitiveFileWrites(t *testing.T) {
-	root := cliRoot(t)
-	found := findAllSites(t, root)
+	found := findAllSites(t, repoRoot(t))
 
 	var unallowed []string
 	for key, s := range found {
@@ -196,8 +206,7 @@ func TestNoUnprotectedSensitiveFileWrites(t *testing.T) {
 // regression the moment that exact line shifts. A stale entry doesn't fail the sweep
 // above (which only checks found-but-unallowed sites), so it's checked here explicitly.
 func TestAllowlistEntriesStillExist(t *testing.T) {
-	root := cliRoot(t)
-	found := findAllSites(t, root)
+	found := findAllSites(t, repoRoot(t))
 
 	var stale []string
 	for key := range allowlist {

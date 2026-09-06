@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/keyorixhq/keyorix/internal/trust"
 )
 
@@ -575,8 +576,18 @@ func destDirHasContent(destDir string) (bool, error) {
 }
 
 // writeInstalledVersion persists version as the installed-version marker at destDir.
+// writeInstalledVersion persists version as the installed-version marker at destDir.
+// Routes through securefiles.SecureWriteFile (per-path-component O_NOFOLLOW walk),
+// not a raw os.WriteFile: destDir is an operator-supplied `--dest` path, and this marker
+// is rewritten on every successful import (an ordinary regular file already exists at
+// this exact path after the first install), so a plain os.WriteFile would silently
+// follow a symlink an attacker with write access to destDir planted at the marker's
+// path -- the same unguarded-symlink-write shape internal/cli/writeguard's sweep was
+// built to catch, just in a sibling package that sweep's internal/cli-only scan root
+// doesn't reach. Overwrite is intentional here (not O_EXCL): re-importing the same or
+// a newer version must be able to update this marker every time.
 func writeInstalledVersion(destDir, version string) error {
-	if err := os.WriteFile(filepath.Join(destDir, installedVersionMarker), []byte(version+"\n"), 0o600); err != nil {
+	if err := securefiles.SecureWriteFile(destDir, installedVersionMarker, []byte(version+"\n"), 0o600); err != nil {
 		return fmt.Errorf("bundle: write installed-version marker: %w", err)
 	}
 	return nil

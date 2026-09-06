@@ -354,7 +354,7 @@ func TestCopyFile_S27_SyncDirFails(t *testing.T) {
 	// Write once to confirm copyFile works (exercises the success path already
 	// covered by TestCopyFile_Success), then make the directory non-writable
 	// so the NEXT call's SyncDir fails.
-	err := copyFile(src, dst)
+	err := copyFile(dir, filepath.Base(src), filepath.Join("destdir", "dst.key"))
 	if err != nil {
 		// Already covered by symlink tests — skip if the first call errors.
 		t.Skipf("initial copyFile failed: %v", err)
@@ -365,7 +365,7 @@ func TestCopyFile_S27_SyncDirFails(t *testing.T) {
 	require.NoError(t, os.Chmod(dstDir, 0555)) // no write → OpenFile(O_CREATE) fails
 	t.Cleanup(func() { _ = os.Chmod(dstDir, 0755) })
 
-	err = copyFile(src, dst)
+	err = copyFile(dir, filepath.Base(src), filepath.Join("destdir", "dst.key"))
 	// Expected: OpenFile returns EACCES → copyFile returns the open error.
 	require.Error(t, err)
 }

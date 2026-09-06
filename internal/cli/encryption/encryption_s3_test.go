@@ -221,7 +221,7 @@ locale:
 
 func TestCopyFile_MissingSource(t *testing.T) {
 	dir := t.TempDir()
-	err := copyFile(filepath.Join(dir, "nonexistent.txt"), filepath.Join(dir, "dest.txt"))
+	err := copyFile(dir, "nonexistent.txt", "dest.txt")
 	require.Error(t, err)
 }
 
@@ -231,7 +231,7 @@ func TestCopyFile_Success(t *testing.T) {
 	dst := filepath.Join(dir, "dst.txt")
 	require.NoError(t, os.WriteFile(src, []byte("hello copy"), 0600))
 
-	err := copyFile(src, dst)
+	err := copyFile(dir, filepath.Base(src), filepath.Base(dst))
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(dst)
