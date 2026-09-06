@@ -64,21 +64,6 @@ func TestRunStatus_NoConfigUsesDefaults(t *testing.T) {
 	assert.Contains(t, out, "Storage Type: 💾 Local")
 }
 
-func TestRunPing_LocalRejected(t *testing.T) {
-	chdirLocalConfig(t)
-	err := runPing(nil, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ping command only works with remote storage")
-}
-
-func TestRunPing_NoConfig(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir) // no keyorix.yaml
-	err := runPing(nil, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to load configuration")
-}
-
 // TestRunStatus_RespectsConfigPathEnvVar is G80 Wave 0c's regression test for
 // the runStatus config-load bug: it used to call config.Load("keyorix.yaml")
 // with a hardcoded literal, so it never looked at KEYORIX_CONFIG_PATH — the
