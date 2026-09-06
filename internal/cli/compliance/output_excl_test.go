@@ -75,3 +75,76 @@ func TestBaselineCmd_JSON_RefusesPreexistingOutputFile(t *testing.T) {
 	require.NoError(t, rerr)
 	assert.Equal(t, "stale-baseline", string(got), "the pre-existing file must be left completely untouched")
 }
+
+// --force regression tests: a scheduled/CI evidence run reusing a fixed --output path
+// (the same legitimate repeated-write workflow internal/cli/bundle/bundle.go's `build`
+// command already has by default) must be able to opt into overwrite explicitly, since
+// the default-refuse behavior above would otherwise make these commands unusable in
+// that workflow with no escape hatch at all. --force must relax EXACTLY the overwrite
+// refusal, not the underlying symlink protection (mirrors trust-keygen's --force,
+// internal/cli/trust/trust.go) — these tests only exercise the overwrite path; the
+// symlink-refusal guarantee itself is covered by internal/securefiles' own tests, since
+// --force switches to SecureWriteFile, which still walks every path component with
+// O_NOFOLLOW, just without O_EXCL.
+
+func TestEmitCSV_ForceOverwritesPreexistingOutputFile(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("name,project\nnew,proj\n"))
+	})
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "inv.csv")
+	require.NoError(t, os.WriteFile(outPath, []byte("stale-csv-content"), 0o600))
+
+	inventoryProject = 0
+	inventoryOutput = outPath
+	inventoryForce = true
+	t.Cleanup(func() { inventoryProject, inventoryOutput, inventoryForce = 0, "", false })
+
+	err := inventoryCmd.RunE(nil, nil)
+	require.NoError(t, err, "--force must allow overwriting a pre-existing --output path")
+
+	got, rerr := os.ReadFile(outPath)
+	require.NoError(t, rerr)
+	assert.Equal(t, "name,project\nnew,proj\n", string(got), "the file must contain the new content, not the stale one")
+}
+
+func TestExportCmd_ForceOverwritesPreexistingOutputFile(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true,"data":{"posture":{"ok":true}}}`))
+	})
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "pack.json")
+	require.NoError(t, os.WriteFile(outPath, []byte("stale-evidence-pack"), 0o600))
+
+	exportOutput = outPath
+	exportForce = true
+	t.Cleanup(func() { exportOutput, exportForce = "", false })
+
+	err := exportCmd.RunE(nil, nil)
+	require.NoError(t, err, "--force must allow overwriting a pre-existing --output path")
+
+	got, rerr := os.ReadFile(outPath)
+	require.NoError(t, rerr)
+	assert.NotEqual(t, "stale-evidence-pack", string(got), "the file must contain the new content, not the stale one")
+}
+
+func TestBaselineCmd_JSON_ForceOverwritesPreexistingOutputFile(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true,"data":{"rows":[]}}`))
+	})
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "baseline.json")
+	require.NoError(t, os.WriteFile(outPath, []byte("stale-baseline"), 0o600))
+
+	t.Cleanup(func() { baselineFormat = "csv"; baselineOutput = ""; baselineForce = false })
+	baselineFormat = "json"
+	baselineOutput = outPath
+	baselineForce = true
+
+	err := baselineCmd.RunE(nil, nil)
+	require.NoError(t, err, "--force must allow overwriting a pre-existing --output path")
+
+	got, rerr := os.ReadFile(outPath)
+	require.NoError(t, rerr)
+	assert.NotEqual(t, "stale-baseline", string(got), "the file must contain the new content, not the stale one")
+}

@@ -202,7 +202,10 @@ var reportCmd = &cobra.Command{
 	},
 }
 
-var exportOutput string
+var (
+	exportOutput string
+	exportForce  bool
+)
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
@@ -210,7 +213,8 @@ var exportCmd = &cobra.Command{
 	Long: `Export a timestamped evidence pack — the posture plus the records that
 substantiate it (the audit-chain anchor, access-review campaigns, the break-glass
 register, and overdue rotations) — as JSON, for an auditor to archive. Writes to
-stdout by default, or to --output FILE.`,
+stdout by default, or to --output FILE. Refuses to overwrite an existing --output file
+unless --force is passed (a scheduled/CI evidence run reusing a fixed path needs it).`,
 	SilenceUsage: true,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		c, ok := common.NewRemoteClient()
@@ -227,8 +231,15 @@ stdout by default, or to --output FILE.`,
 		}
 		pretty.WriteByte('\n')
 		if exportOutput != "" {
-			if err := securefiles.SecureCreateFile(filepath.Dir(exportOutput), filepath.Base(exportOutput), pretty.Bytes(), 0o600); err != nil {
-				return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", exportOutput, err)
+			// See emitCSV's doc comment (csv_export.go) for why --force switches to
+			// SecureWriteFile (overwrite allowed, symlink protection unchanged) rather
+			// than dropping safety wholesale.
+			writeOut := securefiles.SecureCreateFile
+			if exportForce {
+				writeOut = securefiles.SecureWriteFile
+			}
+			if err := writeOut(filepath.Dir(exportOutput), filepath.Base(exportOutput), pretty.Bytes(), 0o600); err != nil {
+				return fmt.Errorf("cannot create output file %q (it may already exist — remove it, choose a different path, or pass --force): %w", exportOutput, err)
 			}
 			fmt.Printf("Evidence pack written to %s.\n", exportOutput)
 			return nil
@@ -298,6 +309,7 @@ func joinRefs(refs ...[]string) string {
 var (
 	controlsCSV    bool
 	controlsOutput string
+	controlsForce  bool
 )
 
 var controlsCmd = &cobra.Command{
@@ -312,7 +324,7 @@ var controlsCmd = &cobra.Command{
 		// --csv downloads the server's canonical controls.csv (the same artifact the
 		// dashboard exports); the default prints the human-readable matrix.
 		if controlsCSV {
-			return emitCSV(c, "/api/v1/compliance/controls.csv", controlsOutput, "Control matrix CSV")
+			return emitCSV(c, "/api/v1/compliance/controls.csv", controlsOutput, "Control matrix CSV", controlsForce)
 		}
 		if controlsOutput != "" {
 			return fmt.Errorf("--output is only valid together with --csv")
@@ -395,8 +407,10 @@ not been modified. Requires server-side encryption (the signing key is DEK-deriv
 
 func init() {
 	exportCmd.Flags().StringVar(&exportOutput, "output", "", "Write the evidence pack to a file instead of stdout")
+	exportCmd.Flags().BoolVar(&exportForce, "force", false, "Overwrite an existing --output file (default: refuse)")
 	controlsCmd.Flags().BoolVar(&controlsCSV, "csv", false, "Download the control matrix as CSV instead of the text report")
 	controlsCmd.Flags().StringVar(&controlsOutput, "output", "", "With --csv, write to a file instead of stdout")
+	controlsCmd.Flags().BoolVar(&controlsForce, "force", false, "With --csv, overwrite an existing --output file (default: refuse)")
 	verifyCmd.Flags().StringVar(&verifyFile, "file", "", "Path to the evidence pack JSON to verify (required)")
 	verifyCmd.Flags().StringVar(&verifySig, "sig", "", "Path to the signature file (default <file>.sig)")
 	ComplianceCmd.AddCommand(reportCmd, controlsCmd, exportCmd, verifyCmd)

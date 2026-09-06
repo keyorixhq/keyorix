@@ -366,8 +366,7 @@ func TestCopyFile_S22_MissingDestDir(t *testing.T) {
 	src := filepath.Join(dir, "src.key")
 	require.NoError(t, os.WriteFile(src, []byte("key-material"), 0600))
 
-	dst := filepath.Join(dir, "nonexistent-subdir", "dst.key")
-	err := copyFile(src, dst)
+	err := copyFile(dir, filepath.Base(src), filepath.Join("nonexistent-subdir", "dst.key"))
 	require.Error(t, err, "copyFile must fail when the destination directory does not exist")
 }
 

@@ -19,6 +19,7 @@ import (
 var (
 	baselineFormat string
 	baselineOutput string
+	baselineForce  bool
 )
 
 var baselineCmd = &cobra.Command{
@@ -27,7 +28,9 @@ var baselineCmd = &cobra.Command{
 	Long: `Download the full permission baseline — every user's effective permissions,
 expanded through direct role grants and group membership — for auditor hand-off.
 Outputs CSV by default; use --format json for the JSON form.
-Writes to stdout by default, or to --output FILE.
+Writes to stdout by default, or to --output FILE. Refuses to overwrite an existing
+--output file unless --force is passed (a scheduled/CI evidence run reusing a fixed
+path needs it).
 Requires audit.read.`,
 	SilenceUsage: true,
 	RunE: func(_ *cobra.Command, _ []string) error {
@@ -48,8 +51,15 @@ Requires audit.read.`,
 			}
 			pretty.WriteByte('\n')
 			if baselineOutput != "" {
-				if err := securefiles.SecureCreateFile(filepath.Dir(baselineOutput), filepath.Base(baselineOutput), pretty.Bytes(), 0o600); err != nil {
-					return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", baselineOutput, err)
+				// See emitCSV's doc comment (csv_export.go) for why --force switches to
+				// SecureWriteFile (overwrite allowed, symlink protection unchanged) rather
+				// than dropping safety wholesale.
+				writeOut := securefiles.SecureCreateFile
+				if baselineForce {
+					writeOut = securefiles.SecureWriteFile
+				}
+				if err := writeOut(filepath.Dir(baselineOutput), filepath.Base(baselineOutput), pretty.Bytes(), 0o600); err != nil {
+					return fmt.Errorf("cannot create output file %q (it may already exist — remove it, choose a different path, or pass --force): %w", baselineOutput, err)
 				}
 				fmt.Printf("Permission baseline JSON written to %s.\n", baselineOutput)
 				return nil
@@ -57,7 +67,7 @@ Requires audit.read.`,
 			_, _ = os.Stdout.Write(pretty.Bytes())
 			return nil
 		case "csv", "":
-			return emitCSV(c, "/api/v1/compliance/permission-baseline.csv", baselineOutput, "Permission baseline CSV")
+			return emitCSV(c, "/api/v1/compliance/permission-baseline.csv", baselineOutput, "Permission baseline CSV", baselineForce)
 		default:
 			return fmt.Errorf("unknown format %q — use csv or json", baselineFormat)
 		}
@@ -67,5 +77,6 @@ Requires audit.read.`,
 func init() {
 	baselineCmd.Flags().StringVar(&baselineFormat, "format", "csv", "Output format: csv or json")
 	baselineCmd.Flags().StringVar(&baselineOutput, "output", "", "Write the output to a file instead of stdout")
+	baselineCmd.Flags().BoolVar(&baselineForce, "force", false, "Overwrite an existing --output file (default: refuse)")
 	ComplianceCmd.AddCommand(baselineCmd)
 }

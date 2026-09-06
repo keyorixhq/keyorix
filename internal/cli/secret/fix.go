@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 var fixCmd = &cobra.Command{
@@ -108,13 +109,13 @@ func runFix(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Fixed %s:%d\n", plan.File, plan.Line)
 	}
 
-	// Append to .env file. O_NOFOLLOW refuses to write through a pre-planted symlink at
-	// envPath — an append-only open doesn't fit securefiles' O_EXCL-based create helper
-	// (the whole point here is to append to a file across repeated runs, not refuse a
-	// pre-existing one), so this is fixed in place rather than routed through it, mirroring
-	// applyFix's own O_NOFOLLOW-without-securefiles pattern later in this same file.
-	envPath := filepath.Join(absPath, fixEnvFile)
-	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0600) // #nosec G304
+	// Append to .env file via securefiles.SecureOpenBeneath: an append-only open doesn't
+	// fit the O_EXCL-based create helpers (the whole point here is to append across
+	// repeated runs, not refuse a pre-existing file), but the per-path-component
+	// O_NOFOLLOW walk applies regardless of which open flags are used — SecureOpenBeneath
+	// separates the two, so this gets the full walk (not just a final-component
+	// O_NOFOLLOW) with O_APPEND semantics preserved.
+	f, err := securefiles.SecureOpenBeneath(absPath, fixEnvFile, unix.O_APPEND|unix.O_CREAT|unix.O_WRONLY, 0600) // #nosec G304 -- absPath is operator-supplied --path, walked via SecureOpenBeneath
 	if err == nil {
 		_, _ = fmt.Fprintf(f, "\n# Added by keyorix fix\n%s=\n", envVarName) // #nosec G104
 		_ = f.Close()                                                        // #nosec G104
@@ -203,10 +204,13 @@ func applyFix(basePath string, plan fixPlan) error {
 	// #G26: os.WriteFile follows a symlink at fullPath and writes through it — a scanned
 	// directory can contain attacker-planted content, so a symlink swapped in at a
 	// discovered path (between the scan and this apply) would let `secret fix` overwrite
-	// an arbitrary file the process can write to. O_NOFOLLOW refuses that; no O_CREATE/
-	// O_EXCL since the fix always targets a file findAndPlanFix already read via this
-	// same fullPath, so it must already exist.
-	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0600) // #nosec G304 -- fullPath is basePath (operator-supplied --path) joined with a relative path from filepath.Walk rooted at that same basePath
+	// an arbitrary file the process can write to. SecureOpenBeneath's per-component walk
+	// refuses that at every path segment (not just the final one, which a bare O_NOFOLLOW
+	// on the final open would miss for a symlink planted at an intermediate directory
+	// between the scan and this apply); no O_CREATE/O_EXCL since the fix always targets a
+	// file findAndPlanFix already read via this same relative path, so it must already
+	// exist.
+	f, err := securefiles.SecureOpenBeneath(basePath, plan.File, unix.O_WRONLY|unix.O_TRUNC, 0600) // #nosec G304 -- basePath is operator-supplied --path, plan.File is relative to it, walked via SecureOpenBeneath
 	if err != nil {
 		return err
 	}

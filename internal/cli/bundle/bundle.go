@@ -9,14 +9,17 @@ package bundle
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	ibundle "github.com/keyorixhq/keyorix/internal/bundle"
 	"github.com/keyorixhq/keyorix/internal/config"
 	ilicense "github.com/keyorixhq/keyorix/internal/license"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 // BundleCmd is the `keyorix bundle` command group.
@@ -89,7 +92,15 @@ var buildCmd = &cobra.Command{
 			return err
 		}
 
-		out, err := os.Create(buildOut) // #nosec G304 -- operator-supplied output path
+		// SecureOpenBeneath, not os.Create: a bundle is rebuilt to the same --out path on
+		// every CI run by design (a repeatable release-pipeline workflow, unlike a secret
+		// export whose output is generated once), so this intentionally does NOT use
+		// O_EXCL — but it still gets the full per-path-component O_NOFOLLOW walk, which a
+		// bare os.Create never had at all (not even the final-component protection an
+		// explicit O_NOFOLLOW would add), closing a real symlink-redirect gap in a build
+		// pipeline that runs unattended.
+		out, err := securefiles.SecureOpenBeneath(filepath.Dir(buildOut), filepath.Base(buildOut),
+			unix.O_WRONLY|unix.O_CREAT|unix.O_TRUNC, 0o600) // #nosec G304 -- operator-supplied output path, walked via SecureOpenBeneath
 		if err != nil {
 			return fmt.Errorf("create bundle: %w", err)
 		}

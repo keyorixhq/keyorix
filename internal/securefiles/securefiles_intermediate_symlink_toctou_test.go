@@ -34,7 +34,7 @@ import (
 // reproduces the escape: when the writer's OpenFile call lands while "tenant" is
 // symlinked, O_NOFOLLOW only guards "secret.bin" and the open follows "tenant" straight
 // into the outside directory, creating secret.bin there. Against the fix
-// (secureOpenBeneath's per-component O_NOFOLLOW walk via openat), every attempt to
+// (SecureOpenBeneath's per-component O_NOFOLLOW walk via openat), every attempt to
 // traverse "tenant" while it is a symlink is refused outright (ELOOP), so the outside
 // directory must remain empty for the whole test.
 func TestSecureWriteFileSync_TOCTOUIntermediateComponentSymlinkNeverFollowed(t *testing.T) {

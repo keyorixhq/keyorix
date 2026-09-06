@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -25,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -392,7 +392,7 @@ func migrateProviderWithConfig(cfg *config.Config, opts migrateOpts, confirm boo
 
 	// 3. Back up the current wrapped DEK before overwriting it.
 	backupRel := fmt.Sprintf("%s.migrate-backup.%d", enc.DEKPath, time.Now().Unix())
-	if err := copyFile(filepath.Join(baseDir, enc.DEKPath), filepath.Join(baseDir, backupRel)); err != nil {
+	if err := copyFile(baseDir, enc.DEKPath, backupRel); err != nil {
 		return fmt.Errorf("failed to back up current wrapped DEK: %w", err)
 	}
 
@@ -439,12 +439,17 @@ func migrateProviderWithConfig(cfg *config.Config, opts migrateOpts, confirm boo
 // restore write would silently clobber that file instead of the intended DEK/
 // backup path. With O_NOFOLLOW the open fails (ELOOP) instead of following it —
 // the same protection securefiles.SecureWriteFile applies to its writes.
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src) // #nosec G304 -- operator-configured key path under baseDir
+// copyFile copies baseDir/srcRel to baseDir/dstRel, both resolved and opened via
+// securefiles' per-path-component O_NOFOLLOW walk (SecureOpenBeneath/SafeReadFile) rather
+// than a plain os.OpenFile with only a final-component O_NOFOLLOW — closing the gap where
+// a symlink planted at an intermediate directory component (not just the leaf) between
+// this tool starting and this copy running could redirect the read or the write.
+func copyFile(baseDir, srcRel, dstRel string) error {
+	data, err := securefiles.SafeReadFile(baseDir, srcRel)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600) // #nosec G304 -- operator-configured key path under baseDir (local CLI tool, not network input)
+	f, err := securefiles.SecureOpenBeneath(baseDir, dstRel, unix.O_WRONLY|unix.O_CREAT|unix.O_TRUNC, 0600) // #nosec G304 -- baseDir/dstRel is operator-configured, walked via SecureOpenBeneath
 	if err != nil {
 		return err
 	}
@@ -470,13 +475,13 @@ func copyFile(src, dst string) error {
 	if cerr := f.Close(); cerr != nil {
 		return cerr
 	}
-	return securefiles.SyncDir(filepath.Dir(dst))
+	return securefiles.SyncDir(filepath.Join(baseDir, filepath.Dir(dstRel)))
 }
 
 // restoreBackup copies the backup back over the active DEK path. Best-effort: logs
 // to stderr if the restore itself fails so the operator can recover manually.
 func restoreBackup(baseDir, backupRel, dekPath string) {
-	if err := copyFile(filepath.Join(baseDir, backupRel), filepath.Join(baseDir, dekPath)); err != nil {
+	if err := copyFile(baseDir, backupRel, dekPath); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ CRITICAL: failed to restore DEK backup %s → %s: %v\n  Restore it manually before restarting.\n", backupRel, dekPath, err)
 	}
 }
