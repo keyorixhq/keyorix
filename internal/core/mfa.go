@@ -458,12 +458,20 @@ func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase str
 //     BeginMFAEnrollment/BeginWebAuthnRegistration themselves would already
 //     know). Anti-replay via MarkTOTPStepUsed, same as VerifyMFACredentials.
 //  2. codeOrPassword is the correct account password AND the user separately
-//     holds an active MFA step-up grant (HasActiveMFAStepUp) — an
-//     independent, time-limited proof that they recently re-verified their
-//     second factor (VerifyMFAStepUp for TOTP/recovery codes; a WebAuthn
-//     login also mints one, see FinishWebAuthnLogin/
-//     FinishWebAuthnPasswordlessLogin — a passkey assertion has no typable
-//     "code" to hand this function directly, so login itself is the proof).
+//     holds an active MFA step-up grant with Purpose ==
+//     MFAStepUpPurposeReauth (HasActiveMFAStepUp) — an independent,
+//     time-limited proof that they recently re-verified their second factor
+//     FOR THIS SPECIFIC PURPOSE. A passkey assertion has no typable "code" to
+//     hand this function directly, so a WebAuthn-only account proves this via
+//     FinishWebAuthnReauth (a fresh, live passkey assertion performed at the
+//     time of the sensitive action — see webauthn.go), not merely by having
+//     logged in recently. An ordinary login (VerifyMFALogin/FinishWebAuthnLogin/
+//     FinishWebAuthnPasswordlessLogin) mints only a
+//     MFAStepUpPurposeRestrictedSecretRead grant, which does NOT satisfy this
+//     branch — a purpose-agnostic grant would let anyone holding a merely
+//     leaked bearer token (plus the password) ride the account owner's own
+//     earlier login to authorize an account-security-factor takeover, which is
+//     exactly the confused-deputy bug this purpose separation closes.
 //
 // With no second factor enrolled at all, the account password alone remains
 // sufficient re-auth — unchanged from before this check existed.
@@ -493,11 +501,13 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
 		if !secondFactorEnrolled {
 			ok = true
-		} else if hasGrant, gerr := c.HasActiveMFAStepUp(ctx, user.ID); gerr == nil && hasGrant {
+		} else if hasGrant, gerr := c.HasActiveMFAStepUp(ctx, user.ID, models.MFAStepUpPurposeReauth); gerr == nil && hasGrant {
 			// The password is correct AND the caller independently proved they
-			// still hold the enrolled second factor recently — password alone
-			// would not be enough on its own, but password + a fresh, genuine
-			// step-up grant is equivalent proof to supplying the code directly.
+			// still hold the enrolled second factor recently, FOR THIS PURPOSE —
+			// password alone would not be enough on its own, but password + a
+			// fresh, genuine reauth-purpose step-up grant is equivalent proof to
+			// supplying the code directly. A restricted-secret-read-purpose grant
+			// (minted ambiently by login) does not match and is rejected here.
 			ok = true
 		}
 	}

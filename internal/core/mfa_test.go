@@ -189,8 +189,11 @@ func TestMFA_FullFlow(t *testing.T) {
 	// ── Disable via password → MFA off, secret cleared ──
 	// MFA is enrolled, so password alone no longer satisfies requireReauth's
 	// second-factor requirement (#372-follow-up): the caller must also hold an
-	// active step-up grant, proving they recently re-verified the second factor.
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+	// active MFAStepUpPurposeReauth grant, proving they recently re-verified the
+	// second factor FOR THIS SPECIFIC PURPOSE (a restricted-secret-read-purpose
+	// grant, e.g. from an ordinary login, would not satisfy this gate — see
+	// TestUpdateOwnProfile_EmailChange_AmbientLoginPurposeGrantRejected).
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword))
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.False(t, user.MFAEnabled)
@@ -315,9 +318,10 @@ func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
 
 	// Regenerate with the password → a fresh distinct set; the old codes stop working.
 	// MFA is enrolled, so password alone no longer satisfies requireReauth's
-	// second-factor requirement (#372-follow-up): also seed an active step-up
-	// grant, proving the caller recently re-verified the second factor.
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+	// second-factor requirement (#372-follow-up): also seed an active
+	// MFAStepUpPurposeReauth grant, proving the caller recently re-verified the
+	// second factor FOR THIS SPECIFIC PURPOSE.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
 	require.NoError(t, err)
 	require.Len(t, fresh, 10)
@@ -578,9 +582,10 @@ func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
 
 	// A correct password succeeds and resets the accrued failures. MFA is
 	// enrolled, so password alone no longer satisfies requireReauth's
-	// second-factor requirement (#372-follow-up): also seed an active step-up
-	// grant, proving the caller recently re-verified the second factor.
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+	// second-factor requirement (#372-follow-up): also seed an active
+	// MFAStepUpPurposeReauth grant, proving the caller recently re-verified the
+	// second factor FOR THIS SPECIFIC PURPOSE.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword))
 	var after models.User
 	require.NoError(t, db.First(&after, 1).Error)
@@ -726,21 +731,53 @@ func TestUpdateOwnProfile_EmailChange_ValidTOTPCodeSucceeds(t *testing.T) {
 	assert.Equal(t, "alice-new@b.com", u.Email)
 }
 
-// Companion positive case #2: the correct password PLUS an active, independent
-// MFA step-up grant (proof the caller recently re-verified the second factor,
-// e.g. via VerifyMFAStepUp or a WebAuthn login) DOES satisfy re-auth — password
-// alone is insufficient, but password + a genuine step-up grant is equivalent
-// proof to supplying the code directly.
-func TestUpdateOwnProfile_EmailChange_PasswordPlusActiveStepUpGrantSucceeds(t *testing.T) {
+// Companion positive case #2: the correct password PLUS an active MFA step-up
+// grant minted FOR THIS SPECIFIC PURPOSE (MFAStepUpPurposeReauth — e.g. by
+// FinishWebAuthnReauth's live passkey re-assertion) DOES satisfy re-auth —
+// password alone is insufficient, but password + a genuine, correctly-purposed
+// step-up grant is equivalent proof to supplying the code directly.
+func TestUpdateOwnProfile_EmailChange_PasswordPlusReauthPurposeGrantSucceeds(t *testing.T) {
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
 
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 
 	u, err := c.UpdateOwnProfile(ctx, 1, "", "alice-new@b.com", mfaTestPassword)
-	require.NoError(t, err, "password + an active step-up grant must satisfy re-auth")
+	require.NoError(t, err, "password + an active MFAStepUpPurposeReauth grant must satisfy re-auth")
 	assert.Equal(t, "alice-new@b.com", u.Email)
+}
+
+// Confused-deputy regression (this fix): a step-up grant minted for a
+// DIFFERENT purpose — MFAStepUpPurposeRestrictedSecretRead, the kind an
+// ordinary WebAuthn login mints ambiently on every successful sign-in — must
+// NOT satisfy requireReauth's account-security-factor-change gate, even
+// though it is a genuinely active, unexpired grant for the same user. Before
+// this fix, MFAStepUpGrant carried no Purpose at all and HasActiveMFAStepUp
+// accepted ANY live grant regardless of what minted it — so anyone holding a
+// merely-leaked bearer token (plus the password) could ride the account
+// owner's own earlier WebAuthn login to authorize an account-security-factor
+// takeover (disable MFA, delete a passkey, change the recovery email) with no
+// fresh proof of second-factor possession at the time of the sensitive
+// action. This must fail RED against the pre-purpose-tagging code and GREEN
+// after it.
+func TestUpdateOwnProfile_EmailChange_AmbientLoginPurposeGrantRejected(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	activateMFAForTest(t, c, fixed)
+
+	// Exactly what FinishWebAuthnLogin/FinishWebAuthnPasswordlessLogin mint on an
+	// ordinary, successful login — NOT an explicit re-authentication at the time
+	// of this sensitive action.
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+
+	_, err := c.UpdateOwnProfile(ctx, 1, "", "alice-new@b.com", mfaTestPassword)
+	require.Error(t, err, "a restricted-secret-read-purpose grant must NOT satisfy the account-security-factor-change re-auth gate")
+	assert.Contains(t, err.Error(), "invalid code or password")
+
+	u, gerr := c.storage.GetUser(ctx, 1)
+	require.NoError(t, gerr)
+	assert.Equal(t, "a@b.com", u.Email, "a refused re-auth must not change the email")
 }
 
 // The fix closes the gap at the SHARED requireReauth helper, not just the

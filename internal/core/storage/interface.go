@@ -1493,11 +1493,17 @@ type Storage interface {
 	// gate and MFA step-up token both live on the same server node.
 	HasActiveMFAStepup(ctx context.Context, userID uint) (bool, error)
 
-	// CreateMFAStepUpGrant persists a new MFA step-up grant for userID.
+	// CreateMFAStepUpGrant persists a new MFA step-up grant for userID. The
+	// grant's Purpose field must be set by the caller (core) — it is what
+	// GetActiveMFAStepUpGrant matches on, so a grant minted for one purpose can
+	// never be misread as authorizing a different one.
 	CreateMFAStepUpGrant(ctx context.Context, grant *models.MFAStepUpGrant) error
 	// GetActiveMFAStepUpGrant returns the most recent non-expired MFA step-up
-	// grant for userID as of now, or (nil, nil) when none exists.
-	GetActiveMFAStepUpGrant(ctx context.Context, userID uint, now time.Time) (*models.MFAStepUpGrant, error)
+	// grant for userID AND purpose as of now, or (nil, nil) when none exists.
+	// purpose is a required exact match, not a filter of convenience: a grant
+	// minted for models.MFAStepUpPurposeRestrictedSecretRead must never satisfy
+	// a query for models.MFAStepUpPurposeReauth or vice versa.
+	GetActiveMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, now time.Time) (*models.MFAStepUpGrant, error)
 	// DeleteMFAStepUpGrantsFor removes all step-up grants for userID (used on
 	// session revocation or security-incident response).
 	DeleteMFAStepUpGrantsFor(ctx context.Context, userID uint) error

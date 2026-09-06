@@ -281,7 +281,7 @@ func TestRemoteStorage_GetActiveMFAStepUpGrant_DecodeError_GroupC(t *testing.T) 
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.GetActiveMFAStepUpGrant(context.Background(), 1, time.Now().UTC())
+	_, err = rs.GetActiveMFAStepUpGrant(context.Background(), 1, models.MFAStepUpPurposeRestrictedSecretRead, time.Now().UTC())
 	assert.Error(t, err)
 }
 

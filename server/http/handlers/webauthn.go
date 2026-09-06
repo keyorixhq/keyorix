@@ -146,6 +146,63 @@ func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Re
 	sendSuccess(w, map[string]interface{}{"id": id, "deleted": true}, "Passkey removed.")
 }
 
+// BeginWebAuthnReauth starts a live passkey re-assertion for the authenticated
+// caller, used to satisfy requireReauth's second-factor requirement
+// (DisableMFA/RegenerateMFARecoveryCodes/ActivateMFA/FinishWebAuthnRegistration/
+// DeleteWebAuthnCredential/account email change) when the account has no TOTP
+// factor to type a code from. Unlike BeginWebAuthnLogin, this operates on the
+// already-authenticated caller directly, not a pre-login MFA challenge.
+func (h *AuthHandler) BeginWebAuthnReauth(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	assertion, sessionToken, err := h.coreService.BeginWebAuthnReauth(r.Context(), userCtx.UserID)
+	if err != nil {
+		h.writeWebAuthnErr(w, err)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"publicKey":        assertion.Response,
+		"webauthn_session": sessionToken,
+	}, "Complete the passkey assertion to re-authenticate.")
+}
+
+// FinishWebAuthnReauth verifies the assertion begun by BeginWebAuthnReauth and,
+// on success, records a step-up grant scoped ONLY to re-authentication
+// (MFAStepUpPurposeReauth) — it does not by itself perform any account change.
+// The caller must separately call the actual mutating endpoint (e.g.
+// /auth/mfa/disable, DELETE /auth/webauthn/credentials/{id}) with the account
+// password afterward, mirroring how /auth/mfa/stepup and a restricted-secret
+// read are two separate calls.
+// Body: { webauthn_session, credential: <PublicKeyCredential> }.
+func (h *AuthHandler) FinishWebAuthnReauth(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		WebAuthnSession string          `json:"webauthn_session"`
+		Credential      json.RawMessage `json:"credential"`
+	}
+	if err := decodeJSON(r, &body); err != nil || len(body.Credential) == 0 {
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
+		return
+	}
+	parsed, err := protocol.ParseCredentialRequestResponseBytes(body.Credential)
+	if err != nil {
+		sendError(w, "BadRequest", "Invalid assertion", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.FinishWebAuthnReauth(r.Context(), userCtx.UserID, body.WebAuthnSession, parsed); err != nil {
+		h.writeWebAuthnErr(w, err)
+		return
+	}
+	sendSuccess(w, nil, "Re-authentication verified.")
+}
+
 // BeginWebAuthnLogin starts the assertion ceremony for the second login step.
 // Body: { mfa_challenge }. Public (the challenge from /auth/login is the bearer).
 func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
