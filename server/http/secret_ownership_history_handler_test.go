@@ -64,12 +64,14 @@ func doOwnershipHistoryRequest(t *testing.T, client *http.Client, baseURL, token
 	return resp, body
 }
 
-// grantViewerRoleAtProject assigns the "viewer" role to userID at project 1 so
-// they satisfy secrets.read for transfer eligibility.
-func grantViewerRoleAtProject(t *testing.T, c *core.KeyorixCore, userID uint) {
+// grantWriterRoleAtProject assigns the "editor" role to userID at project 1 so they
+// hold secrets.write — the write-tier ceiling a transfer target must already meet
+// (secrets.read alone, e.g. "viewer", is no longer sufficient — see
+// secret_ownership_test.go's exploit-closure regression tests for why).
+func grantWriterRoleAtProject(t *testing.T, c *core.KeyorixCore, userID uint) {
 	t.Helper()
 	ctx := context.Background()
-	role, err := c.Storage().GetRoleByName(ctx, "viewer")
+	role, err := c.Storage().GetRoleByName(ctx, "editor")
 	require.NoError(t, err)
 	require.NoError(t, c.Storage().AssignRole(ctx, userID, role.ID, core.Scope{ProjectID: 1}))
 }
@@ -114,20 +116,21 @@ func TestOwnershipHistory_OneTransfer(t *testing.T) {
 	ctx := context.Background()
 	secretID := seedSecretForOwnershipTest(t, client, srv.URL, token, "one-transfer-secret")
 
-	// Create a second user and give them project-scoped secrets.read so they are a
-	// valid transfer target.
+	// Create a second user and give them project-scoped secrets.write so they are a
+	// valid transfer target (the ownership ceiling requires write-tier, not merely
+	// read-tier, access).
 	user2, err := c.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "transferee", Email: "transferee@example.com", Password: "Transfer99!PassValid",
 	})
 	require.NoError(t, err)
-	grantViewerRoleAtProject(t, c, user2.ID)
+	grantWriterRoleAtProject(t, c, user2.ID)
 
 	// Resolve admin user ID.
 	admin, err := c.Storage().GetUserByUsername(ctx, "testadmin")
 	require.NoError(t, err)
 
 	// Perform a real ownership transfer via the core (seeds the audit event).
-	_, err = c.TransferSecretOwnership(ctx, secretID, user2.ID, admin.ID)
+	_, err = c.TransferSecretOwnership(ctx, secretID, user2.ID, admin.ID, core.ActorTypeUser)
 	require.NoError(t, err)
 
 	// Log in as user2 (the new owner) to view the history: CheckSecretPermission
@@ -166,28 +169,28 @@ func TestOwnershipHistory_MultipleTransfers(t *testing.T) {
 	ctx := context.Background()
 	secretID := seedSecretForOwnershipTest(t, client, srv.URL, token, "multi-transfer-secret")
 
-	// Create two additional users, both with project-scoped read access.
+	// Create two additional users, both with project-scoped write access.
 	user2, err := c.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "user2mt", Email: "user2mt@example.com", Password: "Multi99!PassValid1",
 	})
 	require.NoError(t, err)
-	grantViewerRoleAtProject(t, c, user2.ID)
+	grantWriterRoleAtProject(t, c, user2.ID)
 
 	user3, err := c.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "user3mt", Email: "user3mt@example.com", Password: "Multi99!PassValid2",
 	})
 	require.NoError(t, err)
-	grantViewerRoleAtProject(t, c, user3.ID)
+	grantWriterRoleAtProject(t, c, user3.ID)
 
 	admin, err := c.Storage().GetUserByUsername(ctx, "testadmin")
 	require.NoError(t, err)
 
 	// Transfer 1: admin → user2
-	_, err = c.TransferSecretOwnership(ctx, secretID, user2.ID, admin.ID)
+	_, err = c.TransferSecretOwnership(ctx, secretID, user2.ID, admin.ID, core.ActorTypeUser)
 	require.NoError(t, err)
 
 	// Transfer 2: user2 → user3
-	_, err = c.TransferSecretOwnership(ctx, secretID, user3.ID, user2.ID)
+	_, err = c.TransferSecretOwnership(ctx, secretID, user3.ID, user2.ID, core.ActorTypeUser)
 	require.NoError(t, err)
 
 	// Log in as user3 (the final owner) to view the history.

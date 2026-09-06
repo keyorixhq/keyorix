@@ -26,10 +26,13 @@ func TestReassignOwnedSecrets(t *testing.T) {
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
 
-	// admin (actor), leaver (departing owner), heir (new owner), bystander.
+	// admin (actor), leaver (departing owner), heir (new owner), reader-only (invalid
+	// new-owner target — the exploit's target profile).
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "a@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "leaver", Email: "l@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 3, Username: "heir", Email: "h@t.com"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 4, Username: "writeronly", Email: "w@t.com"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 5, Username: "readeronly", Email: "r@t.com"}).Error)
 
 	p1, err := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	require.NoError(t, err)
@@ -40,17 +43,32 @@ func TestReassignOwnedSecrets(t *testing.T) {
 	e2, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p2.ID})
 	require.NoError(t, err)
 
-	// The heir must have access to the secrets' scope to become their owner.
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
-	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: p1.ID}).Error)
-	// #G10: the actor (admin) must independently hold secrets.write at the project's
-	// scope — ReassignOwnedSecrets now checks this itself instead of trusting the caller.
-	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "writer"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 3, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
+
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "writer"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 2}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2, ProjectID: p1.ID}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "assigner"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 3}).Error)
+
+	// The heir must hold secrets.write (not merely secrets.read) at the secrets'
+	// scope to become their owner — the write-tier ownership ceiling.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 2, ProjectID: p1.ID}).Error)
+	// #G10 (partial fix): the actor (admin) independently holding secrets.write at the
+	// project's scope was the original G10 check. That closed the "no actor check at
+	// all" gap but NOT this bug's ceiling gap (see secret_ownership.go's doc comment):
+	// bulk reassignment is always the offboarding/recovery case, so it now requires
+	// roles.assign — the same administrative tier transferOwnership's recovery path
+	// requires per-secret.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 3, ProjectID: p1.ID}).Error)
+	// writeronly: secrets.write but NOT roles.assign — used to prove the actor-side
+	// gate is enforced independently of the (unrelated) new-owner ceiling.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 4, RoleID: 2, ProjectID: p1.ID}).Error)
+	// readeronly: secrets.read only — an invalid new-owner target.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1, ProjectID: p1.ID}).Error)
 
 	mk := func(name string, projectID, envID, ownerID uint) uint {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{
@@ -68,6 +86,45 @@ func TestReassignOwnedSecrets(t *testing.T) {
 
 	// Offboard the leaver so the owner-gone recovery path authorizes the transfer.
 	require.NoError(t, c.storage.DeleteUser(ctx, 2))
+
+	// --- Confirmed HIGH exploit regression: the sibling bulk path must route through
+	// the SAME shared transferOwnership check the single-secret path does, not a
+	// re-derived one (the "variant B" mistake this fix's history explicitly avoids
+	// repeating: G10 added actor authorization to only this bulk call site, leaving
+	// the shared primitive itself — and so this call site too — still exploitable). ---
+
+	t.Run("EXPLOIT CLOSED: a secrets.write-only actor cannot bulk-reassign without roles.assign", func(t *testing.T) {
+		// User 4 (writeronly) holds secrets.write at p1 but NOT roles.assign — exactly
+		// the actor profile the confirmed exploit used. Rejected up front, loudly, not
+		// silently no-op'd via the per-secret continue-on-error.
+		n, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 4, p1.ID, 2, 3)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not authorized")
+		assert.Equal(t, 0, n)
+
+		// Confirm nothing was silently reassigned despite the error.
+		for _, id := range []uint{a, b} {
+			s, _ := c.storage.GetSecret(ctx, id)
+			assert.Equal(t, uint(2), s.OwnerID, "leaver's secrets must be untouched when the actor lacks roles.assign")
+		}
+	})
+
+	t.Run("EXPLOIT CLOSED: a roles.assign actor cannot bulk-reassign onto a read-only heir", func(t *testing.T) {
+		// Admin (1) holds roles.assign, but the target (5, readeronly) holds only
+		// secrets.read — the same shared transferOwnership ceiling that rejects this
+		// for the single-secret path applies per-secret here too. Every per-secret
+		// transfer fails the ceiling check and is skipped, so the count is 0 — but
+		// critically, nothing is silently promoted to owner despite the actor-level
+		// check having passed.
+		n, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 1, p1.ID, 2, 5)
+		require.NoError(t, err)
+		assert.Equal(t, 0, n)
+
+		for _, id := range []uint{a, b} {
+			s, _ := c.storage.GetSecret(ctx, id)
+			assert.Equal(t, uint(2), s.OwnerID, "leaver's secrets must be untouched when the new owner is read-only")
+		}
+	})
 
 	t.Run("reassigns only the leaver's secrets in the project", func(t *testing.T) {
 		n, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 1, p1.ID, 2, 3)

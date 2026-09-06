@@ -181,8 +181,10 @@ func newOwnershipHistoryFixture(t *testing.T) (*KeyorixCore, uint) {
 	} {
 		require.NoError(t, db.Create(&u).Error)
 	}
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader"}).Error)
-	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	// User 2 needs secrets.write (not merely secrets.read) to be an eligible
+	// transfer target under the write-tier ownership ceiling.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "writer"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 	st := store.NewLocalStorage(db)
@@ -221,7 +223,7 @@ func TestGetSecretOwnershipHistory_MaliciousSecretNameCannotForgeTransferIDs(t *
 
 	// A REAL transfer now happens: user 1 (current owner) hands the secret to
 	// user 2.
-	_, err = c.TransferSecretOwnership(ctx, secretID, 2, 1)
+	_, err = c.TransferSecretOwnership(ctx, secretID, 2, 1, ActorTypeUser)
 	require.NoError(t, err)
 
 	records, err := c.GetSecretOwnershipHistory(ctx, secretID, 2)

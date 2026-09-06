@@ -32,8 +32,15 @@ func (t *transientOwnerLookup) GetUser(ctx context.Context, id uint) (*models.Us
 	return t.LocalStorage.GetUser(ctx, id)
 }
 
-// newOwnershipFixture builds an in-memory core with users 1 (owner), 2, 3 and a
-// secret owned by user 1.
+// newOwnershipFixture builds an in-memory core with a secret owned by user 1, plus:
+//   - user 2 (alice): holds secrets.write at project 1 — a valid, already-privileged
+//     transfer target and a valid recovery-path actor once ALSO granted roles.assign.
+//   - user 3 (bob): holds secrets.write AND roles.assign at project 1 — a valid
+//     recovery-path actor as well as a valid transfer target.
+//   - user 4 (carol): holds no role at all — an invalid transfer target (no access).
+//   - user 5 (dave): holds ONLY secrets.read at project 1 — the exploit's target
+//     profile (project_viewer/project_auditor's exact permission shape): must be
+//     rejected as a transfer target despite having SOME access to the scope.
 func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
@@ -51,16 +58,26 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 		{ID: 2, Username: "alice", Email: "a@test.com"},
 		{ID: 3, Username: "bob", Email: "b@test.com"},
 		{ID: 4, Username: "carol", Email: "c@test.com"}, // no role — a transfer target with no project access
+		{ID: 5, Username: "dave", Email: "d@test.com"},  // secrets.read ONLY — the exploit's target profile
 	} {
 		require.NoError(t, db.Create(&u).Error)
 	}
-	// A reader role with secrets.read, granted to users 2 and 3 in project 1 (the
-	// secret's scope) so they're eligible to become the owner; user 4 holds nothing.
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 3, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
+
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "writer"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "assigner"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 3}).Error)
+
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error) // alice: writer
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 2, ProjectID: 1}).Error) // bob: writer
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 3, ProjectID: 1}).Error) // bob: assigner
+	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1, ProjectID: 1}).Error) // dave: reader only
+
 	st := store.NewLocalStorage(db)
 	c := &KeyorixCore{storage: st, now: time.Now}
 	secret, err := st.CreateSecret(context.Background(), &models.SecretNode{
@@ -74,9 +91,9 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 func TestTransferSecretOwnership(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("owner transfers to another user", func(t *testing.T) {
+	t.Run("owner transfers to an already-privileged user", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
-		updated, err := c.TransferSecretOwnership(ctx, id, 2, 1)
+		updated, err := c.TransferSecretOwnership(ctx, id, 2, 1, ActorTypeUser)
 		require.NoError(t, err)
 		assert.EqualValues(t, 2, updated.OwnerID)
 		// The new owner now has owner permission; the old owner does not.
@@ -88,16 +105,77 @@ func TestTransferSecretOwnership(t *testing.T) {
 
 	t.Run("non-owner cannot transfer an actively-owned secret", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
-		_, err := c.TransferSecretOwnership(ctx, id, 3, 2) // actor 2 is not the owner
+		_, err := c.TransferSecretOwnership(ctx, id, 3, 2, ActorTypeUser) // actor 2 is not the owner
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only the current owner")
 	})
 
-	t.Run("recovery: a departed owner's secret can be transferred by anyone authorized", func(t *testing.T) {
+	t.Run("recovery: a departed owner's secret can be transferred by a roles.assign-holding actor", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
 		// Simulate the owner (user 1) leaving: delete the account.
 		require.NoError(t, c.storage.DeleteUser(ctx, 1))
-		updated, err := c.TransferSecretOwnership(ctx, id, 2, 3) // actor 3, owner gone
+		// Actor 3 (bob) holds roles.assign AND the new owner (2, alice) holds secrets.write.
+		updated, err := c.TransferSecretOwnership(ctx, id, 2, 3, ActorTypeUser)
+		require.NoError(t, err)
+		assert.EqualValues(t, 2, updated.OwnerID)
+	})
+
+	// --- Confirmed HIGH exploit regression: read→owner privilege escalation ---
+
+	t.Run("EXPLOIT CLOSED: rejects a new owner who holds only secrets.read", func(t *testing.T) {
+		c, id := newOwnershipFixture(t)
+		// User 5 (dave) has ONLY secrets.read — exactly the project_viewer/
+		// project_auditor permission shape the confirmed exploit targeted. The
+		// current owner (1) attempting to hand off ownership to a read-only
+		// colleague must be rejected: ownership grants full (delete/re-share)
+		// authority, which secrets.read alone must never reach.
+		_, err := c.TransferSecretOwnership(ctx, id, 5, 1, ActorTypeUser)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must already hold secrets.write")
+	})
+
+	t.Run("EXPLOIT CLOSED: a secrets.write-only actor cannot claim an orphaned secret without roles.assign", func(t *testing.T) {
+		c, id := newOwnershipFixture(t)
+		// Simulate the routine ADR-023/030 orphaned state directly (OwnerID==0),
+		// not merely a deleted account.
+		secret, err := c.storage.GetSecret(ctx, id)
+		require.NoError(t, err)
+		secret.OwnerID = 0
+		_, err = c.storage.UpdateSecret(ctx, secret)
+		require.NoError(t, err)
+
+		// Actor 2 (alice) holds secrets.write but NOT roles.assign, and targets a
+		// valid write-tier new owner (3, bob) — even so, the recovery path itself
+		// must be denied: re-homing an orphaned secret is an administrative action
+		// gated on roles.assign, not on secrets.write.
+		_, err = c.TransferSecretOwnership(ctx, id, 3, 2, ActorTypeUser)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "roles.assign")
+
+		// Confirm the concrete "names themselves as the new owner" variant is
+		// ALSO rejected (actor 2 tries to self-elevate to owner over the same
+		// orphaned secret).
+		_, err = c.TransferSecretOwnership(ctx, id, 2, 2, ActorTypeUser)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "roles.assign")
+	})
+
+	t.Run("recovery succeeds for a roles.assign-holding actor even with a read-only target rejected", func(t *testing.T) {
+		c, id := newOwnershipFixture(t)
+		secret, err := c.storage.GetSecret(ctx, id)
+		require.NoError(t, err)
+		secret.OwnerID = 0
+		_, err = c.storage.UpdateSecret(ctx, secret)
+		require.NoError(t, err)
+
+		// Actor 3 (bob) holds roles.assign, but targets user 5 (dave, read-only) —
+		// the actor-side gate passing must not waive the new-owner ceiling.
+		_, err = c.TransferSecretOwnership(ctx, id, 5, 3, ActorTypeUser)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must already hold secrets.write")
+
+		// The same actor targeting a write-tier user succeeds.
+		updated, err := c.TransferSecretOwnership(ctx, id, 2, 3, ActorTypeUser)
 		require.NoError(t, err)
 		assert.EqualValues(t, 2, updated.OwnerID)
 	})
@@ -105,21 +183,21 @@ func TestTransferSecretOwnership(t *testing.T) {
 	t.Run("rejects a new owner with no access to the secret's scope", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
 		// User 4 holds no role in project 1, so it must not be handed ownership.
-		_, err := c.TransferSecretOwnership(ctx, id, 4, 1)
+		_, err := c.TransferSecretOwnership(ctx, id, 4, 1, ActorTypeUser)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no access")
+		assert.Contains(t, err.Error(), "must already hold secrets.write")
 	})
 
 	t.Run("rejects a non-existent new owner", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
-		_, err := c.TransferSecretOwnership(ctx, id, 999, 1)
+		_, err := c.TransferSecretOwnership(ctx, id, 999, 1, ActorTypeUser)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "new owner")
 	})
 
 	t.Run("rejects transferring to the current owner", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
-		_, err := c.TransferSecretOwnership(ctx, id, 1, 1)
+		_, err := c.TransferSecretOwnership(ctx, id, 1, 1, ActorTypeUser)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already owned")
 	})
@@ -130,7 +208,7 @@ func TestTransferSecretOwnership(t *testing.T) {
 		// while other users resolve normally.
 		base := c.storage.(*store.LocalStorage)
 		c.storage = &transientOwnerLookup{LocalStorage: base, failID: 1}
-		_, err := c.TransferSecretOwnership(ctx, id, 2, 3) // non-owner actor, owner "errors"
+		_, err := c.TransferSecretOwnership(ctx, id, 2, 3, ActorTypeUser) // non-owner actor, owner "errors"
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only the current owner",
 			"a transient lookup error must be treated as owner-present (fail closed)")
@@ -145,9 +223,9 @@ func TestTransferSecretOwnership(t *testing.T) {
 
 	t.Run("validates ids", func(t *testing.T) {
 		c, id := newOwnershipFixture(t)
-		_, err := c.TransferSecretOwnership(ctx, id, 0, 1)
+		_, err := c.TransferSecretOwnership(ctx, id, 0, 1, ActorTypeUser)
 		require.Error(t, err)
-		_, err = c.TransferSecretOwnership(ctx, 0, 2, 1)
+		_, err = c.TransferSecretOwnership(ctx, 0, 2, 1, ActorTypeUser)
 		require.Error(t, err)
 	})
 }

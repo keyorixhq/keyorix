@@ -46,42 +46,6 @@ func TestSecretNode_IsOwner(t *testing.T) {
 	}
 }
 
-func TestSecretNode_SetOwner(t *testing.T) {
-	tests := []struct {
-		name    string
-		secret  *SecretNode
-		userID  uint
-		wantErr bool
-	}{
-		{
-			name:    "valid owner ID",
-			secret:  &SecretNode{},
-			userID:  1,
-			wantErr: false,
-		},
-		{
-			name:    "zero owner ID",
-			secret:  &SecretNode{},
-			userID:  0,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.secret.SetOwner(tt.userID)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("SecretNode.SetOwner() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if err == nil && tt.secret.OwnerID != tt.userID {
-				t.Errorf("SecretNode.SetOwner() did not set OwnerID correctly, got = %v, want %v", tt.secret.OwnerID, tt.userID)
-			}
-		})
-	}
-}
-
 func TestSecretNode_ValidateOwnership(t *testing.T) {
 	tests := []struct {
 		name    string

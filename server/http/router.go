@@ -555,7 +555,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/secrets/name-conformance", secretHandler.SecretNameConformance)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/suspend-all", secretHandler.SuspendProjectSecrets)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/resume-all", secretHandler.ResumeProjectSecrets)
-		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/reassign-owner", secretHandler.ReassignOwner)
+		// Bulk reassignment is always the offboarding/recovery case (re-homing a departed
+		// owner's secrets), which core.ReassignOwnedSecrets/transferOwnership now gate on
+		// roles.assign — the same blast radius as a role grant (mirroring RestoreProject's
+		// gate above) — so the router matches rather than admitting secrets.write callers
+		// core will always then reject.
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/secrets/reassign-owner", secretHandler.ReassignOwner)
 		// Bulk expiry renewal — push out the expiration of every expiring/expired secret.
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/extend-expiring", secretHandler.ExtendExpiringSecrets)
 		// Bulk rename toward naming-policy conformance — remediation for name-conformance.
