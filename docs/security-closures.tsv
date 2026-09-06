@@ -19,6 +19,7 @@ FIX-8-csv	./internal/core	TestCSVWriters_EncodeAgainstFormulaInjection	d1b93444	
 INV-1-grant-authority	./server/http	TestEveryDirectRoleGrantChecksAuthority	pre-existing	structural: every direct role grant checks authority
 GCP-CONN-PROJECTID	./internal/connect	TestGCPSM_RequiresProjectID	pending	unpinned gcp-secret-manager connector must refuse reads, not span any GCP project
 AWS-CONN-ACCOUNTID	./internal/connect	TestAWSSM_AccountPin	pending	pinned aws-secrets-manager connector must refuse an ARN naming a different AWS account
+G81-KEYPERM-REGISTRY	./internal/keyfiles	TestRegistry_IncludesWrappedKeyPathForEveryWriteCapableType	pending	TPM/cloud-KMS wrapped-KEK blob must be covered by the shared key-permission checker registry, not just DEK/salt
 
 # NOT LISTED, deliberately:
 #   FIX-1 actorID==0 fast-path (internal/core/authz.go:614). The eight-site reroute

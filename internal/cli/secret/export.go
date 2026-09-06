@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -27,17 +28,19 @@ var (
 )
 
 // createSecureOutputFile opens path for a fresh output file (export, render
-// --output, scan --report). O_EXCL refuses to write through a pre-existing
-// path — including a symlink an attacker (with write access to a shared
-// directory, e.g. /tmp) planted at the target ahead of time, which
-// os.Create's/os.WriteFile's default O_TRUNC would silently follow, writing
-// plaintext secrets to wherever the symlink points. O_NOFOLLOW is a second
-// layer against a dangling symlink placed in the instant between the check
-// and the open. 0600 keeps the output from being world/group-readable on
-// disk (#114). #G26: this pattern was originally export-only; every
-// --output/--report-style file write in this package now goes through it.
+// --output, scan --report). Delegates to securefiles.SecureCreateFileHandle, which
+// combines O_EXCL (refuses to write through OR overwrite a pre-existing path —
+// including a symlink an attacker with write access to a shared directory, e.g. /tmp,
+// planted at the target ahead of time) with a per-path-component O_NOFOLLOW walk
+// (stronger than a final-component-only check: it also refuses a symlink planted at an
+// intermediate directory component). 0600 keeps the output from being world/group-
+// readable on disk (#114). #G26: this pattern was originally export-only; every
+// --output/--report-style file write in this package now goes through it. path may be
+// an arbitrary operator-supplied absolute or relative path, so it's split into
+// (baseDir, relPath) the way securefiles expects — the same idiom already used at
+// internal/cli/license/license.go and internal/cli/config/cli_config.go.
 func createSecureOutputFile(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_EXCL|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- operator-supplied CLI output path, not attacker input
+	return securefiles.SecureCreateFileHandle(filepath.Dir(path), filepath.Base(path), 0o600)
 }
 
 var exportCmd = &cobra.Command{

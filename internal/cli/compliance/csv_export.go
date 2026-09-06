@@ -8,8 +8,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -42,14 +44,24 @@ Writes to stdout, or to --output FILE.`,
 
 // emitCSV downloads the CSV artifact at path and writes it to outputPath (0600) or, if
 // empty, to stdout. label names the artifact in the file-written confirmation line.
+//
+// The artifact is auditor-sensitive data (secret inventory, permission baseline,
+// compliance evidence) written to an operator-supplied --output path with zero
+// protection until this fix: a raw os.WriteFile silently follows a symlink planted at
+// the target and silently overwrites/truncates whatever was already there. Routes
+// through securefiles.SecureCreateFile instead, which refuses both (O_EXCL + a
+// per-path-component O_NOFOLLOW walk) — see internal/securefiles's doc comments for
+// why. outputPath is split into (baseDir, relPath) the way securefiles expects, the
+// same idiom already used at internal/cli/license/license.go and
+// internal/cli/config/cli_config.go.
 func emitCSV(rc *common.RemoteClient, path, outputPath, label string) error {
 	data, err := rc.GetRaw(context.Background(), path)
 	if err != nil {
 		return err
 	}
 	if outputPath != "" {
-		if err := os.WriteFile(outputPath, data, 0o600); err != nil {
-			return fmt.Errorf("failed to write %s: %w", outputPath, err)
+		if err := securefiles.SecureCreateFile(filepath.Dir(outputPath), filepath.Base(outputPath), data, 0o600); err != nil {
+			return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", outputPath, err)
 		}
 		fmt.Printf("%s written to %s.\n", label, outputPath)
 		return nil

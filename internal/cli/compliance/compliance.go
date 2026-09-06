@@ -12,9 +12,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -225,8 +227,8 @@ stdout by default, or to --output FILE.`,
 		}
 		pretty.WriteByte('\n')
 		if exportOutput != "" {
-			if err := os.WriteFile(exportOutput, pretty.Bytes(), 0o600); err != nil {
-				return fmt.Errorf("failed to write %s: %w", exportOutput, err)
+			if err := securefiles.SecureCreateFile(filepath.Dir(exportOutput), filepath.Base(exportOutput), pretty.Bytes(), 0o600); err != nil {
+				return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", exportOutput, err)
 			}
 			fmt.Printf("Evidence pack written to %s.\n", exportOutput)
 			return nil

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -135,6 +136,10 @@ func Execute() {
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		var exitErr *common.ExitCodeError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		os.Exit(1)
 	}
 }
