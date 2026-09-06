@@ -224,7 +224,7 @@ func TestAuthEncryption_GetAuthEncryptionStatus_Disabled(t *testing.T) {
 
 // --- KeyManager.ValidateKeyFiles and FixKeyFilePermissions ---
 
-func newInitializedKeyManager(t *testing.T) *KeyManager {
+func newInitializedKeyManager(t *testing.T) (*KeyManager, *config.EncryptionConfig) {
 	t.Helper()
 	dir := t.TempDir()
 	// Build a KeyManager via Service initialization so files are written.
@@ -235,28 +235,36 @@ func newInitializedKeyManager(t *testing.T) *KeyManager {
 	}
 	svc := NewService(cfg, dir)
 	require.NoError(t, svc.Initialize("test-passphrase-s2"))
-	return svc.keyManager
+	return svc.keyManager, cfg
 }
 
 // TestKeyManager_Initialized_Suite shares one newInitializedKeyManager call across
 // subtests to avoid redundant PBKDF2 derivations.
 func TestKeyManager_Initialized_Suite(t *testing.T) {
-	km := newInitializedKeyManager(t)
+	km, cfg := newInitializedKeyManager(t)
 
 	t.Run("ValidateKeyFiles", func(t *testing.T) {
 		// After successful init the files exist with 0600; validate must succeed.
-		require.NoError(t, km.ValidateKeyFiles())
+		require.NoError(t, km.ValidateKeyFiles(cfg))
 	})
 
 	t.Run("FixKeyFilePermissions", func(t *testing.T) {
 		// Loosen permissions so FixKeyFilePermissions has something to fix.
 		require.NoError(t, os.Chmod(filepath.Join(km.baseDir, km.dekPath), 0644))
 		require.NoError(t, os.Chmod(filepath.Join(km.baseDir, km.saltPath), 0644))
-		require.NoError(t, km.FixKeyFilePermissions())
+		require.NoError(t, km.FixKeyFilePermissions(cfg))
 		info, err := os.Stat(filepath.Join(km.baseDir, km.dekPath))
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
 	})
+}
+
+// TestKeyManager_ValidateKeyFiles_NilConfig exercises the enc==nil path (a
+// KeyManager used without ever registering an encryption config, e.g. a
+// standalone unit test) directly, alongside the missing-files case above.
+func TestKeyManager_ValidateKeyFiles_NilConfig(t *testing.T) {
+	km, _ := newInitializedKeyManager(t)
+	require.NoError(t, km.ValidateKeyFiles(nil))
 }
 
 func TestKeyManager_ValidateKeyFiles_MissingFiles(t *testing.T) {
@@ -266,7 +274,7 @@ func TestKeyManager_ValidateKeyFiles_MissingFiles(t *testing.T) {
 		dekPath:  "missing.dek",
 		saltPath: "missing.salt",
 	}
-	err := km.ValidateKeyFiles()
+	err := km.ValidateKeyFiles(nil)
 	require.Error(t, err)
 }
 

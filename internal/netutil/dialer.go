@@ -87,11 +87,43 @@ func (d Dialer) DialContext(ctx context.Context, network, addr string) (net.Conn
 		dial = (&net.Dialer{}).DialContext
 	}
 
+	chosen, err := d.resolveValidated(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dial the validated IP literal explicitly, not the hostname: this is the
+	// step that actually closes the DNS-rebinding gap, since net.Dial on a
+	// literal IP performs no further name resolution.
+	pinnedAddr := net.JoinHostPort(chosen.String(), port)
+	return dial(ctx, network, pinnedAddr)
+}
+
+// ValidateHost resolves (or, for a literal IP, parses) host and confirms
+// every candidate address passes Disallow — the same check DialContext
+// performs before dialing — WITHOUT dialing anything. For a caller that must
+// pre-validate a hostname discovered through a channel other than
+// DialContext itself: e.g. a mongodb+srv:// URI's SRV-resolved target hosts,
+// which the MongoDB Go driver resolves internally, before any caller-supplied
+// dial hook is ever invoked (see internal/netutil/egress.go's
+// Guard.ValidateSRVTargets, which uses this method).
+func (d Dialer) ValidateHost(ctx context.Context, host string) error {
+	_, err := d.resolveValidated(ctx, host)
+	return err
+}
+
+// resolveValidated implements the shared resolve-then-validate logic behind
+// both DialContext and ValidateHost: a literal IP is validated directly;
+// otherwise host is resolved and EVERY candidate address is validated before
+// any is returned — a hostname that resolves to a mix of public and private
+// addresses must not be allowed through just because one answer happened to
+// be checked first. Returns the first validated address.
+func (d Dialer) resolveValidated(ctx context.Context, host string) (net.IP, error) {
 	if ip := net.ParseIP(host); ip != nil {
 		if d.disallow(ip) {
 			return nil, fmt.Errorf("netutil: refusing to dial disallowed address %s", ip)
 		}
-		return dial(ctx, network, addr)
+		return ip, nil
 	}
 
 	resolve := d.Resolve
@@ -106,9 +138,6 @@ func (d Dialer) DialContext(ctx context.Context, network, addr string) (net.Conn
 		return nil, fmt.Errorf("netutil: host %q did not resolve to any address", host)
 	}
 
-	// Validate every resolved address before dialing any of them — a hostname
-	// that resolves to a mix of public and private addresses must not be
-	// allowed through just because one answer happened to be checked first.
 	var chosen net.IP
 	for _, a := range addrs {
 		if d.disallow(a.IP) {
@@ -118,12 +147,7 @@ func (d Dialer) DialContext(ctx context.Context, network, addr string) (net.Conn
 			chosen = a.IP
 		}
 	}
-
-	// Dial the validated IP literal explicitly, not the hostname: this is the
-	// step that actually closes the DNS-rebinding gap, since net.Dial on a
-	// literal IP performs no further name resolution.
-	pinnedAddr := net.JoinHostPort(chosen.String(), port)
-	return dial(ctx, network, pinnedAddr)
+	return chosen, nil
 }
 
 // DialContextTCP adapts DialContext to the func(ctx, addr) (net.Conn, error)

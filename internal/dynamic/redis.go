@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // RedisEngine mints short-lived Redis ACL users on the target and drops them on
@@ -28,7 +30,17 @@ import (
 // credential can never be parsed as an ACL token — injection is structurally
 // impossible. The ACL rule tokens are the operator-authored trust boundary (the
 // analogue of the SQL creation_template / Mongo role spec).
-type RedisEngine struct{}
+type RedisEngine struct {
+	// allowPrivateNetwork mirrors dynamic_secrets.allow_private_network_targets
+	// (see New). When false, every connection re-validates the resolved
+	// target address and refuses a private/link-local one (G48).
+	allowPrivateNetwork bool
+	// allowInsecureTransport mirrors dynamic_secrets.allow_insecure_transport
+	// (see New). When false, connectRedis refuses a connection that isn't
+	// using TLS (rediss://), logging the exception when the operator has
+	// explicitly set this true.
+	allowInsecureTransport bool
+}
 
 func (e *RedisEngine) BackendType() string      { return "redis" }
 func (e *RedisEngine) IsEphemeralBackend() bool { return false }
@@ -47,7 +59,7 @@ const redisOpTimeout = 10 * time.Second
 func (e *RedisEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, _ time.Duration) (Credential, string, error) {
 	rules := parseRedisACLRules(creationTemplate)
 
-	client, err := connectRedis(ctx, adminDSN)
+	client, err := connectRedis(ctx, adminDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
 		return Credential{}, "", err
 	}
@@ -88,7 +100,7 @@ func (e *RedisEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	client, err := connectRedis(ctx, adminDSN)
+	client, err := connectRedis(ctx, adminDSN, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
 		return err
 	}
@@ -118,12 +130,49 @@ func parseRedisACLRules(template string) []string {
 	return strings.Fields(template)
 }
 
-// connectRedis opens and verifies a connection to the target using the admin URI.
-func connectRedis(ctx context.Context, adminDSN string) (*redis.Client, error) {
+// connectRedis opens and verifies a connection to the target using the admin
+// URI, pinning the dial to a re-validated target address unless
+// allowPrivateNetwork opts out, and requiring TLS (rediss://) unless
+// allowInsecureTransport opts out. Replaces bare redis.NewClient(opts): that
+// path offers no hook to control the underlying TCP dial, and — critically —
+// the actual connection it makes would otherwise re-resolve adminDSN's host
+// independently of whatever check ran when the config was created or the DSN
+// last decrypted, letting a DNS-rebinding attacker swap in a private/link-local
+// address between the two resolutions (the same G48 gap Postgres/MySQL already
+// close).
+//
+// A "unix://" admin DSN is refused outright: it names a local domain-socket
+// path, not a network address, so there is no IP for the dial-time guard to
+// validate at all — a different threat model (local filesystem access) this
+// connector doesn't attempt to police. No dynamic-secret Redis config in this
+// codebase (docs, tests, or shipped examples) uses unix://; grepped repo-wide
+// before making this call.
+func connectRedis(ctx context.Context, adminDSN string, allowPrivateNetwork, allowInsecureTransport bool) (*redis.Client, error) {
 	opts, err := redis.ParseURL(adminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("invalid redis admin URI: %w", err)
 	}
+	if err := netutil.RefuseScheme(opts.Network, "unix", "redis admin_dsn"); err != nil {
+		return nil, err
+	}
+
+	guard := netutil.Guard{AllowInsecureTransport: allowInsecureTransport}
+	if !allowPrivateNetwork {
+		guard.Dial = netutil.Dialer{Disallow: netutil.IsPrivateOrLinkLocal, Resolve: dialResolve}
+	}
+	if err := guard.RequireTLS(opts.TLSConfig != nil, "redis admin_dsn", opts.Addr); err != nil {
+		return nil, err
+	}
+	if !allowPrivateNetwork {
+		// go-redis's own default dialer (used when Options.Dialer is left
+		// unset) layers TLS itself atop the raw dial; overriding Dialer here
+		// (required to get the dial-time IP re-validation) takes over that
+		// responsibility entirely, so RedisDialer replicates the same TLS
+		// layering on top of the guarded dial rather than silently dropping
+		// it for every rediss:// admin DSN. See RedisDialer's doc comment.
+		opts.Dialer = guard.RedisDialer(opts.TLSConfig)
+	}
+
 	client := redis.NewClient(opts)
 	pingCtx, cancel := context.WithTimeout(ctx, redisOpTimeout)
 	defer cancel()

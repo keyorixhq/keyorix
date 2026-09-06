@@ -283,6 +283,83 @@ func SecureWriteFileSync(baseDir, path string, data []byte, perm os.FileMode) er
 	return f.Close()
 }
 
+// SecureCreateFile writes data to a NEW file at filepath.Join(baseDir, path),
+// combining the two strongest write protections found independently elsewhere in this
+// codebase into one: secureOpenBeneath's per-path-component O_NOFOLLOW walk (this
+// package's existing SecureWriteFile/SecureWriteFileSync), plus O_EXCL (previously only
+// in internal/cli/secret/export.go's createSecureOutputFile). O_EXCL makes the create
+// atomic and refuses to write through — or truncate/overwrite — any pre-existing path,
+// including one planted in the window between an earlier existence check and this call
+// (the TOCTOU that a bare os.Stat-then-write leaves open). Unlike SecureWriteFile, this
+// intentionally does NOT silently overwrite: it returns an error (wrapping O_EXCL's
+// EEXIST) if path already exists. Callers that need overwrite-on-purpose (an explicit
+// --force) should use SecureWriteFile/SecureWriteFileSync instead. The perm argument is
+// Chmod'd explicitly after creation (in addition to being passed to the underlying
+// open) so the intended mode is enforced even under a restrictive process umask.
+func SecureCreateFile(baseDir, path string, data []byte, perm os.FileMode) error {
+	f, err := secureCreateOpenBeneath(baseDir, path, perm)
+	if err != nil {
+		return err
+	}
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	return f.Close()
+}
+
+// SecureCreateFileSync writes like SecureCreateFile but fsyncs before returning, for
+// durability-critical material created for the first time (e.g. a freshly generated
+// signing key) — mirroring SecureWriteFileSync's relationship to SecureWriteFile.
+func SecureCreateFileSync(baseDir, path string, data []byte, perm os.FileMode) error {
+	f, err := secureCreateOpenBeneath(baseDir, path, perm)
+	if err != nil {
+		return err
+	}
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	if serr := f.Sync(); serr != nil {
+		_ = f.Close()
+		return serr
+	}
+	return f.Close()
+}
+
+// SecureCreateFileHandle opens a NEW file at baseDir/path for writing and returns the
+// open *os.File, for callers that need to stream output (e.g. a CSV/JSON encoder or a
+// tar writer) rather than write a single already-assembled []byte — see SecureCreateFile
+// for the data-based variant this mirrors. The caller owns the returned file and must
+// close it. Same O_EXCL + per-component-O_NOFOLLOW guarantee as SecureCreateFile: it
+// refuses to create through a symlink at any path component and refuses to write
+// through (or replace) a pre-existing path.
+func SecureCreateFileHandle(baseDir, path string, perm os.FileMode) (*os.File, error) {
+	return secureCreateOpenBeneath(baseDir, path, perm)
+}
+
+// secureCreateOpenBeneath is the shared implementation behind SecureCreateFile,
+// SecureCreateFileSync, and SecureCreateFileHandle: resolveInside's fast lexical
+// pre-check, then secureOpenBeneath's per-component O_NOFOLLOW walk with O_EXCL added so
+// the leaf open refuses a pre-existing path (regular file OR symlink) instead of
+// silently truncating/following it. The explicit Chmod guards against a restrictive
+// umask masking the requested perm at creation time (O_CREAT's mode argument is
+// masked by umask, same reasoning SecureWriteFile documents for its own Chmod call).
+func secureCreateOpenBeneath(baseDir, path string, perm os.FileMode) (*os.File, error) {
+	if _, err := resolveInside(baseDir, path); err != nil {
+		return nil, err
+	}
+	f, err := secureOpenBeneath(baseDir, path, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL, perm) // #nosec G304 -- path validated inside baseDir by resolveInside + secureOpenBeneath's per-component O_NOFOLLOW walk; O_EXCL refuses a pre-existing path
+	if err != nil {
+		return nil, err
+	}
+	if cerr := f.Chmod(perm); cerr != nil {
+		_ = f.Close()
+		return nil, cerr
+	}
+	return f, nil
+}
+
 // SyncDir fsyncs the directory dirPath so a preceding file create or rename
 // within it is durable (the directory entry is flushed). On platforms where
 // opening a directory for sync is unsupported the error is returned to the

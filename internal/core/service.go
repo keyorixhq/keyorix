@@ -74,6 +74,10 @@ type KeyorixCore struct {
 	// config's own MaxTTLSeconds, which has no ceiling of its own. Zero = the
 	// package default (90 days) applies. Set via SetDynamicMaxLeaseTTL.
 	dynamicMaxLeaseTTL time.Duration
+	// dynamicAllowInsecureTransport mirrors config
+	// dynamic_secrets.allow_insecure_transport (see
+	// SetDynamicAllowInsecureTransport).
+	dynamicAllowInsecureTransport bool
 	// dynamicAllowPrivateTargets mirrors config
 	// dynamic_secrets.allow_private_network_targets. When false (the default), the
 	// SSRF guard in CreateDynamicSecretConfig rejects admin DSNs whose host resolves
@@ -231,6 +235,43 @@ type KeyorixCore struct {
 	// rotationManager holds the backend rotation executors (ADR-047) that apply a new
 	// credential to an upstream system during rotation. nil = no backends configured.
 	rotationManager *rotation.Manager
+	// rotationBackendLocks serializes applyBackendRotation calls against the SAME
+	// (backend, ref) pair — the single shared entry point BOTH the auto-rotation
+	// scheduler (rotateOneSecret) and on-demand rotation (RotateSecretOnDemand) go
+	// through (rotation_executor.go). Previously this protection existed only inside
+	// AWSIAMExecutor's own private refLocks (internal/rotation/awsiam.go, g05), so
+	// Azure and GCP's generate-upstream executors — whose GenerateUpstream is the same
+	// kind of unsynchronized list→evict→create→delete read-modify-write against their
+	// respective cloud APIs — had ZERO concurrency protection: two concurrent calls for
+	// the same ref (e.g. the single-replica-gated auto-rotation scheduler tick racing a
+	// manually-triggered on-demand rotation, both goroutines in the SAME process) could
+	// interleave and, in the worst case, one call's cleanup could delete the credential
+	// the other call just minted and is about to report back to its own caller as "the"
+	// live value. Moving the lock here, keyed generically by (backend, ref) rather than
+	// inside one executor's private state, gives every registered backend — present and
+	// future, regardless of concrete type — this protection for free; see
+	// rotationBackendLock and applyBackendRotation.
+	//
+	// Keyed per (backend, ref) — not one global lock — so rotations for different
+	// backends/refs still run concurrently. A plain sync.Map (rather than the fixed-shard
+	// loginFailureMu array) is fine here: backend names and refs are operator-configured
+	// (allowed_refs is itself an admin-set allowlist), not attacker-controlled cardinality
+	// — the same reasoning awsiam.go's now-removed refLocks documented.
+	//
+	// Scope: this closes the race WITHIN one Keyorix process only — the primary
+	// reachable case, since the scheduler ticker and the HTTP/gRPC on-demand handlers
+	// all run in the server's own process. It does NOT close the same race across two HA
+	// replicas (ADR-039), and it does NOT close the separate, larger orphaned-credential
+	// crash window: applyBackendRotation's lock is released the instant it returns —
+	// BEFORE the caller (rotateOneSecret/RotateSecretOnDemand) persists the new value via
+	// RotateSecret. A process crash between "upstream committed a new credential" and
+	// "Keyorix stored it" still leaves a live, valid credential with NO Keyorix record at
+	// all (an orphan), for every backend, exactly as it did before this change for AWS.
+	// Closing THAT window needs a write-intent-first / two-phase-commit-style redesign
+	// (persist "attempting to rotate (backend, ref)" durably before calling upstream,
+	// plus a reconciliation pass) — out of scope here; EventSecretRotateBackendStarted is
+	// the existing (pre-this-change) breadcrumb for manual reconciliation, not a fix.
+	rotationBackendLocks sync.Map // map[rotationLockKey]*sync.Mutex
 	// evidenceForwarder ships the scheduled compliance-evidence pack to an off-box
 	// target (webhook). nil = local-file only. Set via SetEvidenceForwarder.
 	evidenceForwarder EvidenceForwarder
@@ -758,6 +799,16 @@ func (c *KeyorixCore) SetDynamicAllowPrivateTargets(allow bool) {
 	c.dynamicAllowPrivateTargets = allow
 }
 
+// SetDynamicAllowInsecureTransport controls whether the mongodb/redis
+// backends' TLS-required-by-default guard is bypassed. When false (the
+// default), connecting to either backend without TLS is refused. Set to true
+// only when the dynamic-secret backend legitimately cannot use TLS (e.g. a
+// legacy/internal deployment) — every connection made under this opt-out is
+// logged (2d).
+func (c *KeyorixCore) SetDynamicAllowInsecureTransport(allow bool) {
+	c.dynamicAllowInsecureTransport = allow
+}
+
 // SetDynamicMaxLeaseTTL sets the install-wide dynamic-secret lease TTL ceiling
 // (config dynamic_secrets.max_lease_ttl, #97). A non-positive value is ignored — the
 // package default (90 days) applies instead of disabling the ceiling.
@@ -777,7 +828,7 @@ func (c *KeyorixCore) dynamicEngine(backendType string) (dynamic.CredentialEngin
 	if c.dynamicEngineFactory != nil {
 		return c.dynamicEngineFactory(backendType)
 	}
-	return dynamic.New(backendType, c.dynamicAllowPrivateTargets)
+	return dynamic.New(backendType, c.dynamicAllowPrivateTargets, c.dynamicAllowInsecureTransport)
 }
 
 // SetTrustRegistryFunc overrides how the update/license signing-key trust registry

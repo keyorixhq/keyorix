@@ -633,7 +633,9 @@ func handleRESP(conn net.Conn) {
 
 func TestRedisEngine_Issue_Success(t *testing.T) {
 	addr := startRESPServer(t)
-	e := &RedisEngine{}
+	// G48/2b: dials a fake Redis server on 127.0.0.1 -- an explicit,
+	// intentional loopback target speaking plain (non-TLS) RESP.
+	e := &RedisEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, "redis://"+addr+"/0", "~app:* +@read", time.Minute)
@@ -645,7 +647,7 @@ func TestRedisEngine_Issue_Success(t *testing.T) {
 
 func TestRedisEngine_Revoke_Success(t *testing.T) {
 	addr := startRESPServer(t)
-	e := &RedisEngine{}
+	e := &RedisEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, "redis://"+addr+"/0", "kx_dyn_abc123")
@@ -732,7 +734,7 @@ func handleRESPWithACLError(conn net.Conn) {
 
 func TestRedisEngine_Issue_ACLError(t *testing.T) {
 	addr := startRESPServerWithACLError(t)
-	e := &RedisEngine{}
+	e := &RedisEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, "redis://"+addr+"/0", "~app:* +@read", time.Minute)
@@ -742,7 +744,7 @@ func TestRedisEngine_Issue_ACLError(t *testing.T) {
 
 func TestRedisEngine_Revoke_ACLError(t *testing.T) {
 	addr := startRESPServerWithACLError(t)
-	e := &RedisEngine{}
+	e := &RedisEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, "redis://"+addr+"/0", "kx_dyn_abc123")

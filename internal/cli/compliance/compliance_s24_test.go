@@ -256,14 +256,14 @@ func TestInventory_ToFile(t *testing.T) {
 	assert.Contains(t, string(got), "secret,proj")
 }
 
-// TestEmitCSV_WriteError covers the os.WriteFile error branch in emitCSV when
-// the output path is not writable.
+// TestEmitCSV_WriteError covers the securefiles.SecureCreateFile error branch in
+// emitCSV when the output path is not writable.
 func TestEmitCSV_WriteError(t *testing.T) {
 	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("col\nval\n"))
 	})
 	dir := t.TempDir()
-	// Make the directory read-only so WriteFile fails.
+	// Make the directory read-only so the create fails.
 	require.NoError(t, os.Chmod(dir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
@@ -273,5 +273,8 @@ func TestEmitCSV_WriteError(t *testing.T) {
 
 	err := inventoryCmd.RunE(nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to write")
+	// The wrapper message ("cannot create output file...") is shared with the O_EXCL
+	// already-exists case, so assert on the actual OS-level denial reason instead of
+	// the wrapper text, which is what actually distinguishes this failure mode.
+	assert.Contains(t, err.Error(), "permission denied")
 }

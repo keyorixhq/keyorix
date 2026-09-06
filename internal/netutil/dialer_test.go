@@ -230,6 +230,48 @@ func TestDefaultResolver_ResolvesLoopback(t *testing.T) {
 	assert.True(t, found, "localhost must resolve to a loopback address, got %v", addrs)
 }
 
+func TestDialer_ValidateHost_LiteralIPAllowed(t *testing.T) {
+	d := Dialer{Disallow: IsPrivateOrLinkLocal}
+	require.NoError(t, d.ValidateHost(context.Background(), "93.184.216.34"))
+}
+
+func TestDialer_ValidateHost_LiteralIPRefused(t *testing.T) {
+	d := Dialer{Disallow: IsPrivateOrLinkLocal}
+	err := d.ValidateHost(context.Background(), "169.254.169.254")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disallowed address")
+}
+
+func TestDialer_ValidateHost_ResolvesAndValidatesEveryAddress(t *testing.T) {
+	d := Dialer{
+		Disallow: IsPrivateOrLinkLocal,
+		Resolve: func(_ context.Context, host string) ([]net.IPAddr, error) {
+			require.Equal(t, "srv-target.example.net", host)
+			return []net.IPAddr{
+				{IP: net.ParseIP("203.0.113.10")},
+				{IP: net.ParseIP("10.0.0.5")},
+			}, nil
+		},
+	}
+	err := d.ValidateHost(context.Background(), "srv-target.example.net")
+	require.Error(t, err, "a mix of public and private addresses must refuse the whole host")
+	assert.Contains(t, err.Error(), "disallowed address")
+}
+
+func TestDialer_ValidateHost_DoesNotDial(t *testing.T) {
+	d := Dialer{
+		Disallow: IsPrivateOrLinkLocal,
+		Resolve: func(_ context.Context, _ string) ([]net.IPAddr, error) {
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		},
+		Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
+			t.Fatalf("ValidateHost must never dial, got addr %q", addr)
+			return nil, nil
+		},
+	}
+	require.NoError(t, d.ValidateHost(context.Background(), "safe.example"))
+}
+
 func TestIsPrivateOrLinkLocal(t *testing.T) {
 	disallowed := []string{
 		"10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1",

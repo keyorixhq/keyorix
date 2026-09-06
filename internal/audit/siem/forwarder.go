@@ -22,13 +22,52 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// dialResolve resolves an Endpoint hostname to its IP addresses for the
+// dial-time SSRF re-check (see newForwarder) -- a var (like internal/dynamic's
+// identically-shaped dialResolve, and evidencesink/notifychan's lookupIPAddr)
+// so tests can substitute a fake resolver to simulate a DNS-rebinding target
+// without a real DNS query.
+var dialResolve netutil.Resolver = netutil.DefaultResolver
+
+// isLoopbackHost reports whether host names the local machine -- "localhost"
+// or a literal loopback IP. Mirrors evidencesink/notifychan's identically-
+// named helper: a SIEM collector, like a webhook/evidence receiver, is an
+// operator-configured EXTERNAL endpoint (not a backend-infrastructure admin
+// DSN like the dynamic-secrets Postgres/MySQL/Mongo/Redis connections, where
+// even loopback is refused) -- a local receiver is a legitimate dev/test
+// target for this class of destination.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// isDisallowedIP reports whether ip is a private or link-local address,
+// mirroring evidencesink/notifychan's identically-named helper (loopback
+// permitted, unlike netutil.IsPrivateOrLinkLocal's stricter backend-DSN
+// policy -- see isLoopbackHost above for why the two destination classes
+// warrant different defaults).
+func isDisallowedIP(ip net.IP) bool {
+	if ip.IsLoopback() {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+}
 
 // refuseRedirect blocks a redirect to a different host or an https->http downgrade.
 // The SIEM auth rides in custom headers (DD-API-KEY, Splunk token) that Go does NOT
@@ -70,6 +109,15 @@ type Config struct {
 	// replayed until the SIEM accepts it, so a sustained outage no longer silently
 	// loses the off-box copy. Empty = best-effort only (the prior behaviour).
 	SpoolDir string
+	// AllowPrivateNetworkTarget opts Endpoint out of the SSRF guard -- a
+	// SEPARATE decision from InsecureSkipVerify (#130). False by default:
+	// Endpoint's resolved host must not be private/link-local/IMDS (loopback
+	// exempt -- see isLoopbackHost/isDisallowedIP).
+	AllowPrivateNetworkTarget bool
+	// AllowInsecureTransport permits a plaintext (http://) Endpoint. False by
+	// default: Endpoint must be https unless it targets loopback. Every use of
+	// this opt-out is logged (2d) -- see netutil.Guard.RequireTLS.
+	AllowInsecureTransport bool
 }
 
 // queueSize bounds in-flight events; httpTimeout bounds a single delivery.
@@ -128,7 +176,31 @@ func newForwarder(cfg Config, baseBackoff time.Duration) (*Forwarder, error) {
 		return nil, fmt.Errorf("siem: unknown provider %q (want splunk|datadog|webhook)", cfg.Provider)
 	}
 
+	// 2b/2d: route every outbound SIEM connection through the shared egress
+	// guard instead of a bare http.Transport -- before this, the SIEM
+	// forwarder had NO SSRF or TLS enforcement of any kind (unlike the
+	// dynamic-secrets Postgres/MySQL admin DSNs, or notifychan/evidencesink's
+	// webhook targets), so an operator-configured Endpoint pointing at a
+	// private/internal host, or using plain http://, went through completely
+	// unchecked. A malformed Endpoint (e.g. one url.Parse itself rejects,
+	// like an embedded control character) is intentionally NOT treated as a
+	// construction-time error here: buildRequest/send already surface that
+	// failure via http.NewRequestWithContext at send time, and duplicating
+	// the check here would only change WHEN the (unavoidable) error appears,
+	// not whether the SIEM forwarder is safe.
+	guard := netutil.Guard{AllowInsecureTransport: cfg.AllowInsecureTransport}
+	if u, perr := url.Parse(cfg.Endpoint); perr == nil {
+		tlsSatisfied := u.Scheme == "https" || isLoopbackHost(u.Hostname())
+		if err := guard.RequireTLS(tlsSatisfied, "siem endpoint", cfg.Endpoint); err != nil {
+			return nil, err
+		}
+	}
+
 	transport := &http.Transport{}
+	if !cfg.AllowPrivateNetworkTarget {
+		guard.Dial = netutil.Dialer{Disallow: isDisallowedIP, Resolve: dialResolve}
+		transport.DialContext = guard.Dial.DialContext
+	}
 	if cfg.InsecureSkipVerify {
 		log.Printf("WARNING: SIEM forwarder %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- NOSONAR go:S4830 go:S5527: InsecureSkipVerify is an explicit operator opt-in, guarded by config flag and WARNING log

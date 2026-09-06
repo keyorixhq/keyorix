@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/keyorixhq/keyorix/internal/startup"
 	"github.com/spf13/cobra"
@@ -52,21 +53,20 @@ func runFixFilePermNoExit() bool {
 	// the same containment check validateFilePermissions applies before
 	// FixFilePerms, so a config-driven '..' can't chmod an unintended file.
 	var files []securefiles.FilePermSpec
-	for _, spec := range []struct{ label, path string }{
-		{"KEK salt", cfg.Storage.Encryption.SaltPath},
-		{"DEK", cfg.Storage.Encryption.DEKPath},
-		{"config file", resolvedPath},
-	} {
-		if spec.path == "" {
-			continue
-		}
-		clean, cerr := startup.SafeFilePermPath(spec.label, spec.path)
+	if resolvedPath != "" {
+		clean, cerr := startup.SafeFilePermPath("config file", resolvedPath)
 		if cerr != nil {
 			fmt.Println("Failed to fix file permissions:", cerr)
 			return true
 		}
 		files = append(files, securefiles.FilePermSpec{Path: clean, Mode: 0600})
 	}
+	specs, err := keyfiles.Registry(&cfg.Storage.Encryption, ".")
+	if err != nil {
+		fmt.Println("Failed to fix file permissions:", err)
+		return true
+	}
+	files = append(files, specs...)
 
 	// fix permissions: autofix = true
 	if err := securefiles.FixFilePerms(files, true); err != nil {

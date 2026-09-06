@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,44 +33,6 @@ type AWSIAMExecutor struct {
 	allowedRefs []string
 	// newClient builds an IAM client; nil uses the real client (ambient chain). Tests inject.
 	newClient func(ctx context.Context) (iamAPI, error)
-	// refLocks serializes GenerateUpstream calls against the SAME IAM user (g05):
-	// the list→evict→create→delete sequence below is an unsynchronized read-modify-
-	// write against AWS IAM, so two concurrent calls for one ref (e.g. the
-	// single-replica-gated auto-rotation scheduler tick — server/main.go,
-	// schedLockAutoRotate — racing a manually-triggered on-demand rotation, both of
-	// which run as goroutines in the SAME process and share this executor instance)
-	// can interleave: both may see the user below the two-key cap and both create a
-	// key (one CreateAccessKey then fails outright at AWS's hard limit), or one
-	// call's cleanup can delete a key the other call just minted and is about to
-	// hand back to its own caller as "the" live credential.
-	//
-	// Keyed per ref (not one global lock) so rotations for DIFFERENT IAM users still
-	// run concurrently. A plain sync.Map (rather than core.KeyorixCore's fixed-shard
-	// loginFailureMu array) is fine here: refs are drawn from allowedRefs, an
-	// operator-configured allowlist, not attacker-controlled cardinality.
-	//
-	// This closes the race WITHIN one Keyorix process — the primary reachable case,
-	// since the scheduler ticker and the HTTP/gRPC on-demand handlers all run in the
-	// server's own process. It does NOT close the same race across two HA replicas
-	// (ADR-039): e.g. two on-demand rotations for the same secret landing on
-	// different replicas at once, or an on-demand rotation on replica A racing the
-	// auto-rotation scheduler tick running on replica B. The scheduler tick itself
-	// is already single-replica-gated (schedLockAutoRotate via
-	// storage.WithSchedulerLock), so that residual window is narrower than the case
-	// fixed here; fully closing it needs a keyed *distributed* lock — the closest
-	// existing precedent is storage.WithAuditCheckpointLock (ADR-029), which blocks
-	// rather than skips, but is a single global lock, not keyed per identity.
-	// Extending it here would be a Storage-interface change spanning Local/Remote
-	// backends, out of scope for this fix.
-	refLocks sync.Map // map[string]*sync.Mutex
-}
-
-// lockRef returns the mutex serializing GenerateUpstream calls for ref, creating one
-// on first use. The mutex is never removed — see refLocks' doc comment for why that's
-// fine (bounded, operator-configured ref cardinality).
-func (e *AWSIAMExecutor) lockRef(ref string) *sync.Mutex {
-	v, _ := e.refLocks.LoadOrStore(ref, &sync.Mutex{})
-	return v.(*sync.Mutex)
 }
 
 // NewAWSIAMExecutor builds an AWS IAM rotation executor. region configures the client
@@ -120,14 +81,16 @@ func (e *AWSIAMExecutor) GenerateUpstream(ctx context.Context, ref string) (stri
 	if !prefixAllowed(e.allowedRefs, ref) {
 		return "", fmt.Errorf("aws-iam: user %q is not permitted by this backend's allowed_refs", ref)
 	}
-	// Serialize against any other in-flight GenerateUpstream for this SAME ref (g05)
-	// — see refLocks' doc comment. Held for the entire list/evict/create/delete
-	// sequence below, not just individual calls, so a second caller for this ref
-	// never observes (or acts on) an intermediate state left by the first.
-	mu := e.lockRef(ref)
-	mu.Lock()
-	defer mu.Unlock()
-
+	// Concurrency note (g05): this list→evict→create→delete sequence is an
+	// unsynchronized read-modify-write against AWS IAM — two concurrent calls for the
+	// SAME ref could otherwise interleave (e.g. one call's cleanup deleting a key the
+	// other just minted and is about to report as "the" live credential). This used to
+	// be guarded by a private per-ref mutex here; that protection now lives centrally
+	// in internal/core/rotation_executor.go's applyBackendRotation (rotationBackendLock),
+	// the single entry point both the auto-rotation scheduler and on-demand rotation go
+	// through — which also extends the same protection to every OTHER registered
+	// backend (Azure, GCP, …), not just AWS. See that function's doc comment for the
+	// full rationale and scope/limits.
 	cl, err := e.client(ctx)
 	if err != nil {
 		return "", err

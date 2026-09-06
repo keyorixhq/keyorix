@@ -10,18 +10,23 @@ import (
 
 // validateEndpoint rejects a non-https notification endpoint — which would send the
 // bearer token and payload in cleartext — allowing http only for a loopback target
-// (local testing) or the explicit allowPrivateNetwork opt-in. It also refuses a
+// (local testing) or the explicit allowInsecureTransport opt-in. It also refuses a
 // destination whose hostname RESOLVES to a private/link-local IP (e.g. cloud metadata
 // 169.254.169.254 or an internal host) unless allowPrivateNetwork is set —
 // SSRF/exfil hardening.
 //
-// allowPrivateNetwork is INTENTIONALLY a separate knob from TLS-certificate
-// verification (#130): "I trust this endpoint's self-signed cert" and "this
-// endpoint is allowed to live on an internal network" are different trust
-// decisions — an operator with a self-signed public webhook receiver should not
-// have to also disable the SSRF guard, and vice versa for a legitimate on-prem
-// receiver with a real cert.
-func validateEndpoint(raw string, allowPrivateNetwork bool) error {
+// allowPrivateNetwork and allowInsecureTransport are TWO INDEPENDENT knobs, not
+// one (#130, plus a later fix closing a real conflation this file had until then):
+// "I trust this endpoint's self-signed cert" (InsecureSkipVerify), "this endpoint
+// is allowed to live on an internal network" (allowPrivateNetwork), and "this
+// endpoint may be reached over plain, unencrypted HTTP" (allowInsecureTransport)
+// are three different trust decisions. Before the split, a single
+// allowPrivateNetwork bool gated BOTH the private/link-local-host check AND the
+// https-required check — an operator opting in only to reach a legitimate
+// on-prem receiver at a private address ALSO silently unlocked cleartext HTTP to
+// any PUBLIC host, an unrelated and much broader exception nobody asked for.
+// allowInsecureTransport defaults to false (deny), same as allowPrivateNetwork.
+func validateEndpoint(raw string, allowPrivateNetwork, allowInsecureTransport bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("notifychan: invalid endpoint %q: %w", raw, err)
@@ -30,8 +35,8 @@ func validateEndpoint(raw string, allowPrivateNetwork bool) error {
 	case "https":
 		// scheme OK; fall through to the destination-IP check
 	case "http":
-		if !allowPrivateNetwork && !isLoopbackHost(u.Hostname()) {
-			return fmt.Errorf("notifychan: endpoint %q must use https (set allow_private_network_target only for a trusted internal or loopback target)", raw)
+		if !allowInsecureTransport && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("notifychan: endpoint %q must use https (set allow_insecure_transport only for a trusted internal or loopback target)", raw)
 		}
 	default:
 		return fmt.Errorf("notifychan: endpoint %q must use https", raw)

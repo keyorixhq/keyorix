@@ -10,12 +10,27 @@ All notable changes to Keyorix are documented here. This project follows
   configured target is unhealthy or unreachable** — previously both commands
   always exited 0 regardless of what they found, reporting failure only via
   printed text ("❌ Unhealthy" / "❌ Failed"), so a script checking `$?` after
-  either command could never detect an outage without parsing stdout. New exit
-  code contract: `0` healthy, `1` unhealthy/unreachable, `2` usage or
-  configuration error (e.g. no config found, or `ping` run without remote
-  storage configured). If you have automation that runs `keyorix status` or
-  `keyorix ping` and previously ignored their exit code, verify it doesn't
-  need to accommodate the new non-zero results.
+  either command could never detect an outage without parsing stdout. If you
+  have automation that runs `keyorix status` or `keyorix ping` and previously
+  ignored their exit code, verify it doesn't need to accommodate the new
+  non-zero results. Full exit code contract below.
+- **BREAKING: `keyorix status`/`keyorix ping` no longer construct or create
+  anything when nothing is configured.** With no `keyorix.yaml`, no
+  `KEYORIX_CONFIG_PATH`, and no `keyorix connect`/env-var remote target,
+  `status` used to silently build an in-memory `storage.type: local` config
+  on the spot and initialize storage against it — which, for a fresh
+  `./secrets.db` path, **created the file**, then reported "Healthy" for a
+  database the command had just created a moment earlier. That was a
+  false-success pattern, not a graceful default. "Not configured" is now a
+  first-class state distinct from "unhealthy": nothing is constructed,
+  nothing is created, and the command exits 2 (usage/config error) — a
+  script chaining `keyorix status && deploy` will no longer proceed on an
+  unconfigured machine. An explicit `storage.type: local` config whose
+  database file doesn't exist yet is now also reported as unhealthy (exit 1)
+  rather than silently provisioned — `status` verifies an existing store, it
+  doesn't create one. `status`/`ping` exit codes: 0 healthy, 1
+  unhealthy/unreachable, 2 usage/config error (no config, or `ping` without
+  remote storage configured).
 - **BREAKING (targeting v0.92.0): every Keyorix Connect connector must declare
   `scope: project` or `scope: platform` (ADR-082)** — an existing deployment with
   `connect.enabled: true` and one or more configured connectors **will fail to boot**

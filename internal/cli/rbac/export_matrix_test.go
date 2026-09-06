@@ -673,7 +673,7 @@ func TestExportMatrix_EmbeddedOutputFileCreateError(t *testing.T) {
 
 	err := runExportMatrix(exportMatrixCmd, nil)
 	require.Error(t, err, "invalid output path must cause an error")
-	assert.Contains(t, err.Error(), "failed to open output file")
+	assert.Contains(t, err.Error(), "cannot create output file")
 }
 
 // TestExportMatrix_EmbeddedProjectNotFound — project filter with a missing project
@@ -771,19 +771,23 @@ func TestExportMatrix_OutputFileRestrictiveModeRegardlessOfUmask(t *testing.T) {
 // must tighten its mode to 0600 rather than leaving it as-is: O_TRUNC alone keeps a
 // pre-existing file's mode untouched, so the 0600 passed to OpenFile only takes
 // effect at creation time.
-func TestOpenSecureOutputFile_EnforcesModeOnPreexistingDestination(t *testing.T) {
+// TestOpenSecureOutputFile_RefusesPreexistingDestination pins the O_EXCL migration:
+// openSecureOutputFile used to silently overwrite (and tighten the mode of) a
+// pre-existing --output destination via O_TRUNC; it now delegates to
+// securefiles.SecureCreateFileHandle, which refuses to open through an already-existing
+// path at all (closing the TOCTOU an O_TRUNC-based check-then-write leaves open) —
+// leaving the original file, and its original content, untouched.
+func TestOpenSecureOutputFile_RefusesPreexistingDestination(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/existing.json"
 	require.NoError(t, os.WriteFile(path, []byte("stale"), 0o644))
 
-	f, err := openSecureOutputFile(path)
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
+	_, err := openSecureOutputFile(path)
+	require.Error(t, err, "a pre-existing --output destination must now be refused, not silently overwritten")
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
-		"pre-existing destination mode must be tightened to 0600")
+	got, rerr := os.ReadFile(path)
+	require.NoError(t, rerr)
+	assert.Equal(t, "stale", string(got), "the pre-existing file must be left completely untouched")
 }
 
 // TestExportMatrix_EmbeddedProjectFound — project filter resolves successfully when

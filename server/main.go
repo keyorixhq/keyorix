@@ -560,12 +560,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// when disabled, so SetAuditForwarder(nil) keeps forwarding off.
 	if sc := cfg.Audit.SIEM; sc.Enabled {
 		forwarder, ferr := siem.New(siem.Config{
-			Enabled:            sc.Enabled,
-			Provider:           siem.Provider(sc.Provider),
-			Endpoint:           sc.Endpoint,
-			Token:              sc.GetToken(),
-			InsecureSkipVerify: sc.InsecureSkipVerify,
-			SpoolDir:           sc.SpoolDir,
+			Enabled:                   sc.Enabled,
+			Provider:                  siem.Provider(sc.Provider),
+			Endpoint:                  sc.Endpoint,
+			Token:                     sc.GetToken(),
+			InsecureSkipVerify:        sc.InsecureSkipVerify,
+			SpoolDir:                  sc.SpoolDir,
+			AllowPrivateNetworkTarget: sc.AllowPrivateNetworkTarget,
+			AllowInsecureTransport:    sc.AllowInsecureTransport,
 		})
 		if ferr != nil {
 			return nil, nil, fmt.Errorf("failed to init SIEM audit forwarder: %w", ferr)
@@ -597,6 +599,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			Token:                     wc.GetToken(),
 			InsecureSkipVerify:        wc.InsecureSkipVerify,
 			AllowPrivateNetworkTarget: wc.AllowPrivateNetworkTarget,
+			AllowInsecureTransport:    wc.AllowInsecureTransport,
 			SigningSecret:             wc.GetSigningSecret(),
 		})
 		if werr != nil {
@@ -858,6 +861,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			Token:                     ew.GetToken(),
 			InsecureSkipVerify:        ew.InsecureSkipVerify,
 			AllowPrivateNetworkTarget: ew.AllowPrivateNetworkTarget,
+			AllowInsecureTransport:    ew.AllowInsecureTransport,
 		})
 		if ferr != nil {
 			return nil, nil, fmt.Errorf("failed to init evidence webhook target: %w", ferr)
@@ -915,6 +919,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// SSRF guard for admin DSNs: disabled (private targets allowed) only when the
 	// operator explicitly opts in via dynamic_secrets.allow_private_network_targets.
 	coreService.SetDynamicAllowPrivateTargets(cfg.DynamicSecrets.AllowPrivateNetworkTargets)
+	// TLS-required-by-default guard for the mongodb/redis backends: disabled
+	// (plaintext allowed) only when the operator explicitly opts in via
+	// dynamic_secrets.allow_insecure_transport.
+	coreService.SetDynamicAllowInsecureTransport(cfg.DynamicSecrets.AllowInsecureTransport)
 	// Install-wide hard ceiling on any dynamic-secret lease's TTL (#97); enforced on
 	// top of each config's own optional (default-unbounded) MaxTTLSeconds.
 	coreService.SetDynamicMaxLeaseTTL(cfg.DynamicSecrets.GetMaxLeaseTTL())

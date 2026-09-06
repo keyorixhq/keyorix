@@ -26,7 +26,7 @@ import (
 // possible) must fail loudly here rather than shipping truncated/invalid JSON to
 // the SIEM.
 func TestBuildRequest_MarshalErrorOnInvalidDiff(t *testing.T) {
-	f, err := New(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: "http://example.invalid"})
+	f, err := New(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: "http://example.invalid", AllowInsecureTransport: true})
 	require.NoError(t, err)
 	t.Cleanup(f.Close)
 
@@ -45,7 +45,7 @@ func TestBuildRequest_MarshalErrorOnInvalidDiff(t *testing.T) {
 func TestBuildRequest_MarshalErrorOnInvalidDiff_AllProviders(t *testing.T) {
 	for _, p := range []Provider{ProviderSplunk, ProviderDatadog, ProviderWebhook} {
 		t.Run(string(p), func(t *testing.T) {
-			f, err := New(Config{Enabled: true, Provider: p, Endpoint: "http://example.invalid", Token: "tok"})
+			f, err := New(Config{Enabled: true, Provider: p, Endpoint: "http://example.invalid", Token: "tok", AllowInsecureTransport: true})
 			require.NoError(t, err)
 			t.Cleanup(f.Close)
 

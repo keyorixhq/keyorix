@@ -74,21 +74,28 @@ type CredentialEngine interface {
 // New returns the engine for a backend type. allowPrivateNetwork mirrors
 // KeyorixCore.dynamicAllowPrivateTargets (dynamic_secrets.allow_private_network_targets):
 // when false (the default), an engine that dials the admin DSN itself
-// (postgres, mysql) re-validates the resolved target address on every
-// connection and refuses a private/link-local one — closing the DNS-rebinding
-// gap a validate-once-at-config-time guard alone leaves open (G48). The other
-// backends (cloud-IAM engines, Kubernetes' in-cluster/explicit api_server)
-// don't dial an admin_dsn host the same way and ignore this parameter.
-func New(backendType string, allowPrivateNetwork bool) (CredentialEngine, error) {
+// (postgres, mysql, mongodb, redis) re-validates the resolved target address
+// on every connection and refuses a private/link-local one — closing the
+// DNS-rebinding gap a validate-once-at-config-time guard alone leaves open
+// (G48). allowInsecureTransport mirrors
+// KeyorixCore.dynamicAllowInsecureTransport
+// (dynamic_secrets.allow_insecure_transport): when false (the default),
+// mongodb/redis (the two backends here whose wire protocol has no
+// bolted-on-elsewhere TLS enforcement of its own — Postgres/MySQL are
+// pre-existing, verified-correct call sites out of this change's scope)
+// refuse a connection that isn't using TLS. The cloud-IAM engines and
+// Kubernetes (in-cluster/explicit api_server) don't dial an admin_dsn host
+// the same way and ignore both parameters.
+func New(backendType string, allowPrivateNetwork, allowInsecureTransport bool) (CredentialEngine, error) {
 	switch backendType {
 	case "postgres":
 		return &PostgresEngine{allowPrivateNetwork: allowPrivateNetwork}, nil
 	case "mysql":
 		return &MySQLEngine{allowPrivateNetwork: allowPrivateNetwork}, nil
 	case "mongodb":
-		return &MongoEngine{}, nil
+		return &MongoEngine{allowPrivateNetwork: allowPrivateNetwork, allowInsecureTransport: allowInsecureTransport}, nil
 	case "redis":
-		return &RedisEngine{}, nil
+		return &RedisEngine{allowPrivateNetwork: allowPrivateNetwork, allowInsecureTransport: allowInsecureTransport}, nil
 	case "aws-sts":
 		return &AWSSTSEngine{}, nil
 	case "gcp":

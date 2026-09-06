@@ -16,6 +16,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/rotation"
@@ -59,13 +60,18 @@ const (
 // operator gets that auto-rotation is silently failing, separate from the
 // EventAutoRotationFailures audit row the caller writes for the rotation failure
 // itself (which is accurate regardless of whether this alert lands).
-func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, projectID uint, failed map[uint]string) {
+func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, projectID uint, failed map[uint]rotationFailureDetail) {
 	if len(failed) == 0 || c.notificationSink == nil {
 		return
 	}
+	// Allowlist: only the secret name reaches the external message. Deliberately
+	// NOT interpolating f.Detail here — it may carry the upstream backend name,
+	// ref, and raw error text, which must not reach a third-party webhook/chat
+	// sink (Group 1 fix). That detail stays in the audit trail and rotation-state
+	// API, both internal to Keyorix.
 	lines := make([]string, 0, len(failed))
-	for _, msg := range failed {
-		lines = append(lines, "• "+msg)
+	for _, f := range failed {
+		lines = append(lines, fmt.Sprintf("• rotation failed for secret %q", f.SecretName))
 	}
 	sort.Strings(lines) // stable, deterministic ordering
 	pid := projectID
@@ -174,6 +180,21 @@ func generateRotatedValueSpec(length int, charset string) (string, error) {
 type dueRotation struct {
 	secret *models.SecretNode
 	policy *models.RotationPolicy
+}
+
+// rotationFailureDetail records why a single secret's auto-rotation attempt
+// did not succeed this run (a genuine failure, a dependency-driven deferral,
+// or an upstream-incomplete partial rotation). SecretName alone is safe to
+// broadcast to an external channel (notifyRotationFailures uses only this
+// field for NotificationEvent.Message). Detail may additionally carry the
+// upstream RotationBackend name, its RotationRef (an IAM username/DB role/
+// service-account email), and the raw upstream error text — this is exactly
+// the kind of backend/connection detail that must stay internal (the audit
+// trail via writeAuditEventFull, and the rotation-state API), never reach a
+// third-party webhook/chat sink (Group 1 fix).
+type rotationFailureDetail struct {
+	SecretName string
+	Detail     string
 }
 
 // RunAutoRotation rotates every auto-rotate-enabled secret that is overdue under an
@@ -312,8 +333,8 @@ func (c *KeyorixCore) rotateProject(ctx context.Context, pid uint, ids []uint, d
 // rotateProjectWaves rotates secrets in dependency-ordered waves. A secret whose
 // dependency did not rotate this run is DEFERRED rather than rotated against a stale
 // dependency. Returns (failures, rotated count).
-func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, due map[uint]*dueRotation, dependsOnInRun map[uint][]uint) (failed map[uint]string, rotated int) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- waves is computed internally by the rotation scheduler from due secrets in this project, not a raw client-supplied array
-	failed = map[uint]string{}
+func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, due map[uint]*dueRotation, dependsOnInRun map[uint][]uint) (failed map[uint]rotationFailureDetail, rotated int) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- waves is computed internally by the rotation scheduler from due secrets in this project, not a raw client-supplied array
+	failed = map[uint]rotationFailureDetail{}
 	blocked := map[uint]bool{}
 	for _, wave := range waves {
 		for _, id := range wave {
@@ -328,7 +349,10 @@ func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, du
 				pid := dr.secret.ProjectID
 				c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 					fmt.Sprintf("auto-rotation DEFERRED for secret %q: it depends on %q which did not rotate this run", dr.secret.Name, depName))
-				failed[id] = fmt.Sprintf("%q: deferred — depends on %q which did not rotate this run", dr.secret.Name, depName)
+				failed[id] = rotationFailureDetail{
+					SecretName: dr.secret.Name,
+					Detail:     fmt.Sprintf("deferred — depends on %q which did not rotate this run", depName),
+				}
 				continue
 			}
 			if c.rotateOneSecret(ctx, dr.secret, dr.policy, failed) {
@@ -360,7 +384,7 @@ func lowestBlockedDep(deps []uint, blocked map[uint]bool) (uint, bool) {
 // two never drift, store the new version, and audit the outcome. Any failure is recorded
 // in failed and logged; it returns true only when the secret was rotated and stored
 // successfully. Best-effort: it never returns an error or aborts the run.
-func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.SecretNode, policy *models.RotationPolicy, failed map[uint]string) bool {
+func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.SecretNode, policy *models.RotationPolicy, failed map[uint]rotationFailureDetail) bool {
 	// #G43: SetRotationState/GetRotationState (rotation_state.go) were fully
 	// wired at the storage layer and exposed via GET /secrets/{id}/rotation-state,
 	// with a doc comment claiming "called by the rotation executor when a
@@ -372,8 +396,8 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 	val, gerr := generateRotatedValueSpec(secret.RotationLength, secret.RotationCharset)
 	if gerr != nil {
 		log.Printf("auto-rotation: generate value for secret %d: %v", secret.ID, gerr)
-		failed[secret.ID] = fmt.Sprintf("%q: generate value: %v", secret.Name, gerr)
-		c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID])
+		failed[secret.ID] = rotationFailureDetail{SecretName: secret.Name, Detail: fmt.Sprintf("generate value: %v", gerr)}
+		c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID].Detail)
 		return false
 	}
 	// Backend rotation (ADR-047): if the secret names a configured executor, rotate the
@@ -401,15 +425,18 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			// rotation incomplete below so the run records a failure and alerts an operator
 			// to remove the leftover.
 			storeVal = partial.Value
-			incompleteMsg = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
+			incompleteMsg = fmt.Sprintf("via backend %q ref %q: %v", secret.RotationBackend, secret.RotationRef, err)
 		case err != nil:
 			sid := secret.ID
 			pid := secret.ProjectID
 			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
 			log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
-			failed[secret.ID] = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
-			c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID])
+			failed[secret.ID] = rotationFailureDetail{
+				SecretName: secret.Name,
+				Detail:     fmt.Sprintf("via backend %q ref %q: %v", secret.RotationBackend, secret.RotationRef, err),
+			}
+			c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID].Detail)
 			return false
 		default:
 			storeVal = upstreamVal
@@ -417,7 +444,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 	}
 	if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), 0, "system:auto-rotation"); rerr != nil {
 		log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
-		failed[secret.ID] = fmt.Sprintf("%q: store new version: %v", secret.Name, rerr)
+		failed[secret.ID] = rotationFailureDetail{SecretName: secret.Name, Detail: fmt.Sprintf("store new version: %v", rerr)}
 		sid := secret.ID
 		pid := secret.ProjectID
 		if secret.RotationBackend != "" {
@@ -432,7 +459,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
 		}
-		c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID])
+		c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID].Detail)
 		return false
 	}
 	if incompleteMsg != "" {
@@ -440,7 +467,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 		// prior, possibly compromised credential survived upstream. Record it as a failure
 		// (NOT a clean success) so the operator is notified to remove the leftover, and
 		// audit it distinctly.
-		failed[secret.ID] = incompleteMsg
+		failed[secret.ID] = rotationFailureDetail{SecretName: secret.Name, Detail: incompleteMsg}
 		sid := secret.ID
 		pid := secret.ProjectID
 		c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
@@ -471,12 +498,40 @@ func (c *KeyorixCore) stampRotationState(ctx context.Context, policyID uint, sta
 	}
 }
 
+// rotationLockKey identifies the (backend, ref) pair rotationBackendLocks serializes
+// on. A struct key (rather than a delimited string concatenation) avoids any ambiguity
+// between e.g. backend="a", ref="b:c" and backend="a:b", ref="c".
+type rotationLockKey struct{ backend, ref string }
+
+// rotationBackendLock returns the mutex serializing applyBackendRotation calls for the
+// given (backend, ref) pair, creating one on first use. See rotationBackendLocks' doc
+// comment (service.go) for why this is keyed per-pair rather than a single global lock,
+// and for the scope/limits of what it does and does not close. The mutex is never
+// removed — fine, since backend names and refs are operator-configured (bounded
+// cardinality), mirroring the reasoning the now-removed internal/rotation/awsiam.go
+// refLocks documented for the same tradeoff.
+func (c *KeyorixCore) rotationBackendLock(backend, ref string) *sync.Mutex {
+	v, _ := c.rotationBackendLocks.LoadOrStore(rotationLockKey{backend, ref}, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 // applyBackendRotation resolves the secret's named rotation executor and rotates the
 // upstream credential (ADR-047). It returns the VALUE to store in Keyorix: for a
 // generate-upstream backend (rotation.GeneratingExecutor, e.g. a cloud key API) that is
 // the value the upstream minted; for a password-set backend it is the candidate passed
 // in (which the executor applied). Returns an error (so the caller does NOT store
 // anything) when no manager is configured, the backend is unknown, or the apply fails.
+//
+// Serializes against any other in-flight applyBackendRotation call for this SAME
+// (backend, ref) pair, across BOTH callers of this function — the auto-rotation
+// scheduler (rotateOneSecret) and on-demand rotation (RotateSecretOnDemand) — for the
+// ENTIRE upstream call (GenerateUpstream's list/evict/create/delete sequence, or
+// Rotate's apply), released only once it returns. This is a single, generic choke
+// point: it locks BEFORE inspecting whether exec is a GeneratingExecutor, so every
+// backend registered in c.rotationManager is covered uniformly regardless of its
+// concrete type — see rotationBackendLocks' doc comment (service.go) for the full
+// rationale and its scope/limits (in-process only; does not close the orphan-on-crash
+// window, which is unrelated and out of scope here).
 func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.SecretNode, candidate string) (string, error) {
 	if c.rotationManager == nil {
 		return "", fmt.Errorf("no rotation backends configured")
@@ -488,6 +543,11 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 	if secret.RotationRef == "" {
 		return "", fmt.Errorf("rotation_ref is required for backend rotation")
 	}
+
+	mu := c.rotationBackendLock(secret.RotationBackend, secret.RotationRef)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if gen, ok := exec.(rotation.GeneratingExecutor); ok {
 		return gen.GenerateUpstream(ctx, secret.RotationRef)
 	}

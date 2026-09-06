@@ -2,9 +2,9 @@ package common
 
 // ExitCodeError lets a command signal a specific process exit code, rather
 // than the generic "1" internal/cli/main.go's Execute() gives every returned
-// error today. Introduced for `status`/`ping` (#4, 2026-09-05): those commands
-// distinguish "the configured target is unreachable/unhealthy" (1) from "no
-// usable configuration exists at all" (2) -- a distinction a bare error can't
+// error today. Introduced for `status`/`ping`: those commands distinguish
+// "the configured target is unreachable/unhealthy" (1) from "no usable
+// configuration exists at all" (2) -- a distinction a bare error can't
 // carry, since Execute() only sees the error's text, not why it occurred.
 //
 // A command that returns a plain error (not wrapped in this type) still gets

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -116,20 +117,18 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 	}
 
 	if cfg.Storage.Encryption.Enabled {
-		// The KEK is passphrase-derived and never on disk (ADR-004); the salt and
-		// the wrapped DEK are the only key files to lock down.
-		saltPath, err := SafeFilePermPath("KEK salt", cfg.Storage.Encryption.SaltPath)
+		// The KEK salt and wrapped DEK (ADR-004) are always present; a TPM/cloud-KMS
+		// key_provider (ADR-038/ADR-041) adds a separate wrapped-KEK blob, and a
+		// shamir key_provider's share files are also key material -- see
+		// internal/keyfiles.Registry, the single enumeration every key-permission
+		// checker in this repo shares (this function used to hand-build a
+		// salt+DEK-only list here, which is exactly how the wrapped-KEK blob went
+		// unchecked for every TPM/KMS deployment).
+		specs, err := keyfiles.Registry(&cfg.Storage.Encryption, ".")
 		if err != nil {
 			return err
 		}
-		dekPath, err := SafeFilePermPath("DEK", cfg.Storage.Encryption.DEKPath)
-		if err != nil {
-			return err
-		}
-		files = append(files,
-			securefiles.FilePermSpec{Path: saltPath, Mode: 0600},
-			securefiles.FilePermSpec{Path: dekPath, Mode: 0600},
-		)
+		files = append(files, specs...)
 	}
 
 	// Mirror Config.Validate()'s switch on Storage.Type: only "local"/"" storage has a
