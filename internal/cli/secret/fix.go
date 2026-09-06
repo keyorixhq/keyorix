@@ -108,9 +108,13 @@ func runFix(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Fixed %s:%d\n", plan.File, plan.Line)
 	}
 
-	// Append to .env file
+	// Append to .env file. O_NOFOLLOW refuses to write through a pre-planted symlink at
+	// envPath — an append-only open doesn't fit securefiles' O_EXCL-based create helper
+	// (the whole point here is to append to a file across repeated runs, not refuse a
+	// pre-existing one), so this is fixed in place rather than routed through it, mirroring
+	// applyFix's own O_NOFOLLOW-without-securefiles pattern later in this same file.
 	envPath := filepath.Join(absPath, fixEnvFile)
-	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) // #nosec G304
+	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0600) // #nosec G304
 	if err == nil {
 		_, _ = fmt.Fprintf(f, "\n# Added by keyorix fix\n%s=\n", envVarName) // #nosec G104
 		_ = f.Close()                                                        // #nosec G104

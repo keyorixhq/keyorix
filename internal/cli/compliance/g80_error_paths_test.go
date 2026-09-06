@@ -40,8 +40,8 @@ func TestExport_ServerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "500")
 }
 
-// TestExport_WriteError covers the os.WriteFile error branch in exportCmd
-// when --output points at a non-writable directory.
+// TestExport_WriteError covers the securefiles.SecureCreateFile error branch in
+// exportCmd when --output points at a non-writable directory.
 func TestExport_WriteError(t *testing.T) {
 	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"success":true,"data":{"posture":{"ok":true}}}`))
@@ -55,7 +55,10 @@ func TestExport_WriteError(t *testing.T) {
 
 	err := exportCmd.RunE(nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to write")
+	// The wrapper message ("cannot create output file...") is shared with the O_EXCL
+	// already-exists case, so assert on the actual OS-level denial reason instead of
+	// the wrapper text, which is what actually distinguishes this failure mode.
+	assert.Contains(t, err.Error(), "permission denied")
 }
 
 func TestControls_ServerError(t *testing.T) {
@@ -150,8 +153,8 @@ func TestBaselineCmd_JSON_ServerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "500")
 }
 
-// TestBaselineCmd_JSONWriteError covers the os.WriteFile error branch of the
-// json-format path in baselineCmd, when --output points at a non-writable
+// TestBaselineCmd_JSONWriteError covers the securefiles.SecureCreateFile error branch
+// of the json-format path in baselineCmd, when --output points at a non-writable
 // directory.
 func TestBaselineCmd_JSONWriteError(t *testing.T) {
 	dir := t.TempDir()
@@ -168,5 +171,8 @@ func TestBaselineCmd_JSONWriteError(t *testing.T) {
 
 	err := baselineCmd.RunE(nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to write")
+	// The wrapper message ("cannot create output file...") is shared with the O_EXCL
+	// already-exists case, so assert on the actual OS-level denial reason instead of
+	// the wrapper text, which is what actually distinguishes this failure mode.
+	assert.Contains(t, err.Error(), "permission denied")
 }
