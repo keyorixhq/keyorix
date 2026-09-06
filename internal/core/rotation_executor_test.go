@@ -742,8 +742,14 @@ func TestRunAutoRotation_NotifiesFailures(t *testing.T) {
 	require.Len(t, sink.events, 1)
 	assert.Equal(t, "rotation.failed", sink.events[0].Type)
 	assert.Contains(t, sink.events[0].Title, "1 secret")
+	// Group 1 fix: the broadcast reaching an external webhook/chat channel is
+	// allowlist-built (secret name + a generic phrase only) — it must NOT carry
+	// the upstream backend name, ref, or raw error text. That detail stays in
+	// the audit trail (writeAuditEventFull) and rotation-state API, both
+	// internal to Keyorix.
 	assert.Contains(t, sink.events[0].Message, "upstream-cred")
-	assert.Contains(t, sink.events[0].Message, "connection refused")
+	assert.NotContains(t, sink.events[0].Message, "connection refused", "the raw upstream error must not reach an external notification channel")
+	assert.NotContains(t, sink.events[0].Message, "app_svc", "the upstream ref must not reach an external notification channel")
 }
 
 // TestRunAutoRotation_NotifiesFailures_LogsWhenNoChannelAccepts is a regression test
@@ -843,12 +849,14 @@ func TestRunAutoRotation_FailuresNotBundledAcrossProjects(t *testing.T) {
 		switch *ev.ProjectID {
 		case 1:
 			assert.Contains(t, ev.Message, "proj1-db-password")
-			assert.Contains(t, ev.Message, "connection refused")
+			// Group 1 fix: raw upstream error text/backend/ref never reach an
+			// external channel at all now, regardless of project.
+			assert.NotContains(t, ev.Message, "connection refused", "the raw upstream error must not reach an external notification channel")
 			assert.NotContains(t, ev.Message, "proj2-api-key", "project 1's broadcast must not name project 2's secret")
 			assert.NotContains(t, ev.Message, "auth denied", "project 1's broadcast must not carry project 2's failure reason")
 		case 2:
 			assert.Contains(t, ev.Message, "proj2-api-key")
-			assert.Contains(t, ev.Message, "auth denied")
+			assert.NotContains(t, ev.Message, "auth denied", "the raw upstream error must not reach an external notification channel")
 			assert.NotContains(t, ev.Message, "proj1-db-password", "project 2's broadcast must not name project 1's secret")
 			assert.NotContains(t, ev.Message, "connection refused", "project 2's broadcast must not carry project 1's failure reason")
 		default:

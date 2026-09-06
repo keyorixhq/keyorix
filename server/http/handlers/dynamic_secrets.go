@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -125,7 +126,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		msg := err.Error()
 		if !isSafeDynamicSecretError(msg) {
-			log.Printf("Error creating dynamic-secret config: %v", err)
+			log.Printf("Error creating dynamic-secret config: %s", dynamic.SanitizeErrorMessage(err))
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, http.StatusBadRequest, nil)
@@ -147,7 +148,7 @@ func (h *DynamicSecretHandler) ListConfigs(w http.ResponseWriter, r *http.Reques
 	}
 	cfgs, err := h.coreService.ListDynamicSecretConfigs(r.Context(), projectID, environmentID)
 	if err != nil {
-		log.Printf("Error listing dynamic-secret configs: %v", err)
+		log.Printf("Error listing dynamic-secret configs: %s", dynamic.SanitizeErrorMessage(err))
 		sendError(w, "InternalError", "Failed to list configs", http.StatusInternalServerError, nil)
 		return
 	}
@@ -187,7 +188,7 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		msg := err.Error()
 		if !isSafeDynamicSecretError(msg) {
-			log.Printf("Error issuing dynamic-secret lease for config %d: %v", cfg.ID, err)
+			log.Printf("Error issuing dynamic-secret lease for config %d: %s", cfg.ID, dynamic.SanitizeErrorMessage(err))
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
@@ -204,7 +205,7 @@ func (h *DynamicSecretHandler) ListLeases(w http.ResponseWriter, r *http.Request
 	}
 	leases, err := h.coreService.ListDynamicSecretLeases(r.Context(), cfg.ID)
 	if err != nil {
-		log.Printf("Error listing leases: %v", err)
+		log.Printf("Error listing leases: %s", dynamic.SanitizeErrorMessage(err))
 		sendError(w, "InternalError", "Failed to list leases", http.StatusInternalServerError, nil)
 		return
 	}
@@ -229,7 +230,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 	if err := h.coreService.RevokeLease(r.Context(), leaseID, userCtx.UserID, "manual"); err != nil {
 		msg := err.Error()
 		if !isSafeDynamicSecretError(msg) {
-			log.Printf("Error revoking dynamic-secret lease %q: %v", leaseID, err)
+			log.Printf("Error revoking dynamic-secret lease %q: %s", leaseID, dynamic.SanitizeErrorMessage(err))
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
@@ -257,7 +258,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		msg := err.Error()
 		if !isSafeDynamicSecretError(msg) {
-			log.Printf("Error renewing dynamic-secret lease %q: %v", leaseID, err)
+			log.Printf("Error renewing dynamic-secret lease %q: %s", leaseID, dynamic.SanitizeErrorMessage(err))
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
@@ -281,7 +282,7 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		msg := err.Error()
 		if !isSafeDynamicSecretError(msg) {
-			log.Printf("Error revoking all dynamic-secret leases for config %d: %v", cfg.ID, err)
+			log.Printf("Error revoking all dynamic-secret leases for config %d: %s", cfg.ID, dynamic.SanitizeErrorMessage(err))
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
@@ -314,7 +315,7 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		msg := err.Error()
 		if !isSafeDynamicSecretError(msg) {
-			log.Printf("Error classifying dynamic-secret config %d: %v", cfg.ID, err)
+			log.Printf("Error classifying dynamic-secret config %d: %s", cfg.ID, dynamic.SanitizeErrorMessage(err))
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, http.StatusBadRequest, nil)
@@ -348,7 +349,7 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 	if err != nil {
 		msg := err.Error()
 		if !isSafeDynamicSecretError(msg) {
-			log.Printf("Error setting enabled state for dynamic-secret config %d: %v", cfg.ID, err)
+			log.Printf("Error setting enabled state for dynamic-secret config %d: %s", cfg.ID, dynamic.SanitizeErrorMessage(err))
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, http.StatusBadRequest, nil)
