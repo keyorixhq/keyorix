@@ -18,37 +18,19 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	mail "github.com/wneessen/go-mail"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/envflag"
 )
 
 const (
 	emailTimeout   = 10 * time.Second
 	emailQueueSize = 256
 )
-
-// envAllowInsecureSMTP gates tls=none for the notification-email channel, mirroring
-// the same opt-in required for credential-delivery SMTP (internal/delivery) and the
-// explicit-opt-in convention used for other insecure toggles in this codebase (e.g.
-// insecure_skip_verify): cleartext SMTP is never enabled by default.
-const envAllowInsecureSMTP = "KEYORIX_ALLOW_INSECURE_SMTP"
-
-// envFlagEnabled reports whether the named environment variable is set to a truthy
-// value. Unset or unparsable = false (fail closed).
-func envFlagEnabled(name string) bool {
-	v, ok := os.LookupEnv(name)
-	if !ok {
-		return false
-	}
-	b, err := strconv.ParseBool(v)
-	return err == nil && b
-}
 
 // EmailConfig configures the SMTP notification channel.
 type EmailConfig struct {
@@ -91,8 +73,8 @@ func newEmail(cfg EmailConfig, baseBackoff time.Duration) (*EmailSink, error) {
 	switch strings.ToLower(cfg.TLS) {
 	case "", "starttls", "implicit":
 	case "none":
-		if !envFlagEnabled(envAllowInsecureSMTP) {
-			return nil, fmt.Errorf("notifychan: email smtp tls=none sends mail (and any relay credentials) in cleartext; refusing unless the operator explicitly opts in by setting %s=true", envAllowInsecureSMTP)
+		if !envflag.Enabled(envflag.AllowInsecureSMTP) {
+			return nil, fmt.Errorf("notifychan: email smtp tls=none sends mail (and any relay credentials) in cleartext; refusing unless the operator explicitly opts in by setting %s=true", envflag.AllowInsecureSMTP)
 		}
 		log.Printf("notifychan: WARNING email smtp tls=none is ACTIVE — notification email will be sent over CLEARTEXT SMTP; dev/test only, never use in production")
 	default:
