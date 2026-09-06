@@ -41,13 +41,17 @@ func (h *SecretHandler) TransferOwnership(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	secret, err := h.coreService.TransferSecretOwnership(r.Context(), uint(id), reqBody.NewOwnerID, userCtx.UserID)
+	secret, err := h.coreService.TransferSecretOwnership(r.Context(), uint(id), reqBody.NewOwnerID, userCtx.UserID, userCtx.ActorKind())
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "not found"):
 			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "only the current owner"):
 			h.sendError(w, "Forbidden", "Only the current owner can transfer this secret", http.StatusForbidden, nil)
+		case strings.Contains(err.Error(), "roles.assign"),
+			strings.Contains(err.Error(), "must already hold"),
+			strings.Contains(err.Error(), "no access to this secret's project/environment"):
+			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		case strings.Contains(err.Error(), "already owned"):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
