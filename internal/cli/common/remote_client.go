@@ -237,6 +237,21 @@ func refuseRemoteClientRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
 }
 
+// drainAndClose discards any unread response body before closing it. Go's
+// net/http Transport only returns a connection to its keep-alive pool once the
+// body has been read to EOF (or closed after being fully drained) — a branch
+// that returns early without reading the body (every non-2xx/4xx error branch
+// below used to do exactly this) forces the underlying TCP connection to be
+// torn down instead of reused, on every single such response. Every method
+// below defers this instead of a bare resp.Body.Close(). The discard is capped
+// at maxRemoteResponseBytes, matching the read cap already used for a
+// successful decode, so draining a hostile/misbehaving oversized body can't
+// itself become an unbounded read.
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxRemoteResponseBytes))
+	_ = resp.Body.Close()
+}
+
 // defaultConnectTimeout bounds only the TCP handshake (DNS + dial). A few
 // seconds is enough for any genuinely reachable server on a real network; an
 // unreachable or misconfigured KEYORIX_SERVER fails within this window
@@ -384,7 +399,7 @@ func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) er
 	if err != nil {
 		return c.classifyTransportError(err, "request failed")
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -407,7 +422,7 @@ func (c *RemoteClient) GetRaw(ctx context.Context, path string) ([]byte, error) 
 	if err != nil {
 		return nil, c.classifyTransportError(err, "request failed")
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -440,7 +455,7 @@ func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, 
 	if err != nil {
 		return c.classifyTransportError(err, "request failed")
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -483,7 +498,7 @@ func (c *RemoteClient) Put(ctx context.Context, path string, body interface{}, o
 	if err != nil {
 		return c.classifyTransportError(err, "request failed")
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -513,7 +528,7 @@ func (c *RemoteClient) Patch(ctx context.Context, path string, body interface{},
 	if err != nil {
 		return c.classifyTransportError(err, "request failed")
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -543,7 +558,7 @@ func (c *RemoteClient) DeleteWithBody(ctx context.Context, path string, body int
 	if err != nil {
 		return c.classifyTransportError(err, "request failed")
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -563,7 +578,7 @@ func (c *RemoteClient) Delete(ctx context.Context, path string) error {
 	if err != nil {
 		return c.classifyTransportError(err, "request failed")
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)

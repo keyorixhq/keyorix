@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
@@ -38,11 +39,18 @@ func TestVault_GetSecret_EmptyAddress_S22(t *testing.T) {
 
 // TestVault_GetSecret_InvalidJSON_S22 covers the json.Unmarshal failure branch
 // in GetSecret: a 200 response whose body is not valid JSON returns an error
-// containing "has no data".
+// containing "has no data". The mount-info lookup (resolveKVMountVersion) is
+// stubbed with a valid response so the test still exercises the SECRET
+// response's own unmarshal failure, not the mount-info lookup's.
 func TestVault_GetSecret_InvalidJSON_S22(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Vault-Token") != "tok" {
 			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/sys/internal/ui/mounts/") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(vaultMountInfoV1()))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -76,28 +84,33 @@ func TestVault_GetSecret_MissingDataKey_S22(t *testing.T) {
 	assert.Contains(t, err.Error(), "has no data")
 }
 
-// TestVault_GetSecret_KVv2DataWithoutMetadata_S22 covers the KV v2 detection
-// fallback: when the inner object has a "data" sub-key but no "metadata"
-// sub-key (len(kv2.Metadata) == 0), the code falls back to the KV v1 path
-// and returns the outer data map as-is.
-func TestVault_GetSecret_KVv2DataWithoutMetadata_S22(t *testing.T) {
-	// Inner object has "data" but no "metadata" — not recognised as KV v2.
+// TestVault_GetSecret_KVv1_LiteralDataFieldNotMisdetectedAsV2_S22 pins the fix
+// for one of the two concrete KV-version misdetection bugs: a genuine KV v1
+// secret whose OWN stored fields happen to be literally named "data" (a
+// plausible field name an operator might choose) must not be misdetected as
+// KV v2 just because the response happens to have that shape. The mount is
+// explicitly v1 here (via the mount-info stub), so the whole outer data map is
+// returned as-is regardless of what its field names happen to be.
+func TestVault_GetSecret_KVv1_LiteralDataFieldNotMisdetectedAsV2_S22(t *testing.T) {
 	srv := fakeVault(t, "tok", map[string]string{
-		"/v1/secret/legacy": `{"data":{"data":{"apikey":"abc"}}}`,
+		"/v1/sys/internal/ui/mounts/secret/legacy": vaultMountInfoV1(),
+		"/v1/secret/legacy":                        `{"data":{"data":{"apikey":"abc"}}}`,
 	})
 	c := NewVaultConnector("v", srv.URL, "tok", nil)
 	val, err := c.GetSecret(context.Background(), "secret/legacy")
 	require.NoError(t, err)
-	// Falls back to KV v1: the outer data map (which happens to contain a
-	// nested "data" key) is returned as raw JSON.
+	// Mount is explicitly v1: the outer data map (which happens to contain a
+	// field literally named "data") is returned as-is, not unwrapped.
 	assert.JSONEq(t, `{"data":{"apikey":"abc"}}`, val)
 }
 
-// TestVault_GetSecret_KVv2MetadataWithoutData_S22 is a symmetric case: the
-// inner object has "metadata" but no "data" — still not KV v2, falls to KV v1.
-func TestVault_GetSecret_KVv2MetadataWithoutData_S22(t *testing.T) {
+// TestVault_GetSecret_KVv1_LiteralMetadataFieldNotMisdetectedAsV2_S22 is the
+// symmetric case: a genuine v1 secret whose own field is literally named
+// "metadata". Same fix, same reasoning.
+func TestVault_GetSecret_KVv1_LiteralMetadataFieldNotMisdetectedAsV2_S22(t *testing.T) {
 	srv := fakeVault(t, "tok", map[string]string{
-		"/v1/secret/legacy": `{"data":{"metadata":{"version":1}}}`,
+		"/v1/sys/internal/ui/mounts/secret/legacy": vaultMountInfoV1(),
+		"/v1/secret/legacy":                        `{"data":{"metadata":{"version":1}}}`,
 	})
 	c := NewVaultConnector("v", srv.URL, "tok", nil)
 	val, err := c.GetSecret(context.Background(), "secret/legacy")

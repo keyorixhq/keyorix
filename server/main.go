@@ -323,17 +323,29 @@ func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*
 	if auditSink != nil {
 		svc.SetAuditSink(auditSink)
 	}
+	// Acquire the exclusive DEK lock BEFORE Initialize, not after. Initialize
+	// performs first-boot key generation (ensureSaltExists/ensureWrappedDEKExists
+	// in keymanager_lifecycle.go), which is an unlocked check-then-write: two
+	// processes racing a shared, fresh key directory (e.g. two HA replicas'
+	// simultaneous first boot) could each pass the not-exists check before
+	// either wrote, silently clobbering or interleaving each other's salt/DEK
+	// files. That failure is not even immediate — it surfaces as a delayed,
+	// confusing "wrong passphrase or corrupted key file" on a LATER restart,
+	// not a clear error at the moment of the actual race. Holding the exclusive
+	// DEK lock — the same lock this server keeps for its whole lifetime anyway,
+	// so DEK rotation (a separate CLI process) can never promote a new DEK
+	// while this server still has the old one cached in memory (#92) — across
+	// the ENTIRE first-boot sequence closes the race at its root: whichever
+	// process wins the flock proceeds, the other is refused immediately with a
+	// clear lock-contention error, before it ever touches a key file. Refuses
+	// to start if another live holder (another server instance, or an
+	// in-progress rotation) already has it.
+	if err := svc.AcquireExclusiveKeyLock(); err != nil {
+		return nil, fmt.Errorf("failed to acquire the encryption key lock: %w", err)
+	}
 	svc.CleanPendingDEK() // remove leftover .pending file from any interrupted prior rotation
 	if err := svc.Initialize(passphrase); err != nil {
 		return nil, fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
-	}
-	// Hold the exclusive DEK lock for the server's whole lifetime (released by
-	// Shutdown on graceful stop) so DEK rotation — a separate CLI process — can
-	// never promote a new DEK while this server still has the old one cached in
-	// memory (#92). Refuses to start if another live holder (another server
-	// instance, or an in-progress rotation) already has it.
-	if err := svc.AcquireExclusiveKeyLock(); err != nil {
-		return nil, fmt.Errorf("failed to acquire the encryption key lock: %w", err)
 	}
 
 	kekSource := providerType

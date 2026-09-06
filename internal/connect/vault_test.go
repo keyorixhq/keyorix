@@ -36,10 +36,22 @@ func TestVault_TypeAndName(t *testing.T) {
 	assert.Equal(t, "vault", c.Type())
 }
 
+// vaultMountInfoV2/vaultMountInfoV1 are canned sys/internal/ui/mounts/<path>
+// responses for the two KV versions, used to stub resolveKVMountVersion's
+// lookup in fakeVault-backed tests below.
+func vaultMountInfoV2() string {
+	return `{"data":{"path":"secret/","type":"kv","options":{"version":"2"}}}`
+}
+func vaultMountInfoV1() string {
+	return `{"data":{"path":"secret/","type":"kv","options":{"version":"1"}}}`
+}
+
 func TestVault_GetSecret_KVv2(t *testing.T) {
-	// KV v2 nests the secret under data.data, with a sibling data.metadata.
+	// KV v2 nests the secret under data.data, with a sibling data.metadata. The
+	// version comes from the mount-info lookup, not from sniffing this shape.
 	srv := fakeVault(t, "tok", map[string]string{
-		"/v1/secret/data/myapp": `{"data":{"data":{"password":"p@ss","user":"svc"},"metadata":{"version":3}}}`,
+		"/v1/sys/internal/ui/mounts/secret/data/myapp": vaultMountInfoV2(),
+		"/v1/secret/data/myapp":                        `{"data":{"data":{"password":"p@ss","user":"svc"},"metadata":{"version":3}}}`,
 	})
 	c := NewVaultConnector("v", srv.URL, "tok", nil)
 	val, err := c.GetSecret(context.Background(), "secret/data/myapp")
@@ -49,12 +61,61 @@ func TestVault_GetSecret_KVv2(t *testing.T) {
 
 func TestVault_GetSecret_KVv1(t *testing.T) {
 	srv := fakeVault(t, "tok", map[string]string{
-		"/v1/secret/legacy": `{"data":{"apikey":"abc123"}}`,
+		"/v1/sys/internal/ui/mounts/secret/legacy": vaultMountInfoV1(),
+		"/v1/secret/legacy":                        `{"data":{"apikey":"abc123"}}`,
 	})
 	c := NewVaultConnector("v", srv.URL, "tok", nil)
 	val, err := c.GetSecret(context.Background(), "secret/legacy")
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"apikey":"abc123"}`, val, "KV v1 data map is returned as-is")
+}
+
+// TestVault_GetSecret_KVv1_LiteralDataAndMetadataFieldsBothPresent pins the
+// fix for concrete bug (1) of the KV-version misdetection finding: a genuine
+// KV v1 secret can legitimately have its OWN fields literally named "data" and
+// "metadata" (plausible field names an operator might pick). The old
+// response-shape-sniffing code misdetected this exact shape as KV v2 —
+// confirmed empirically against the old code's exact branch logic before this
+// fix (a standalone harness reproducing vault.go's old GetSecret tail
+// byte-for-byte returned val="api-key-value", silently discarding the
+// "metadata"/"other_field" values) — because json.RawMessage captures the raw
+// bytes of ANY present JSON value, including a plain string, so
+// `len(kv2.Data) > 0 && len(kv2.Metadata) > 0` was satisfied by ordinary field
+// values, not just KV v2's nested-object envelope. With version now resolved
+// explicitly from the mount (v1 here), the full outer object — every field —
+// is returned as-is regardless of what its field names happen to be.
+func TestVault_GetSecret_KVv1_LiteralDataAndMetadataFieldsBothPresent(t *testing.T) {
+	srv := fakeVault(t, "tok", map[string]string{
+		"/v1/sys/internal/ui/mounts/secret/legacy": vaultMountInfoV1(),
+		"/v1/secret/legacy":                        `{"data":{"data":"api-key-value","metadata":"some-metadata-value","other_field":"other-value"}}`,
+	})
+	c := NewVaultConnector("v", srv.URL, "tok", nil)
+	val, err := c.GetSecret(context.Background(), "secret/legacy")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"data":"api-key-value","metadata":"some-metadata-value","other_field":"other-value"}`, val,
+		"every field of the genuine v1 secret must survive, not just the literal \"data\" field's value")
+}
+
+// TestVault_GetSecret_KVv2_SoftDeletedReturnsNotFoundError pins the fix for
+// concrete bug (2): Vault's real soft-deleted KV v2 response shape
+// (`{"data": null, "metadata": {...}}`, taken verbatim from Vault's own docs)
+// must surface as a clear "not found/deleted" error, never as a successful
+// read. Confirmed empirically against the old code's exact branch logic
+// before this fix: json.RawMessage captures the literal 4 bytes "null" for a
+// JSON null value (len=4, NOT 0), so the old `len(kv2.Data) > 0 &&
+// len(kv2.Metadata) > 0` check was satisfied and returned the bare string
+// "null" as if it were the plaintext secret — with a nil error, i.e. silent
+// success on a deleted secret.
+func TestVault_GetSecret_KVv2_SoftDeletedReturnsNotFoundError(t *testing.T) {
+	srv := fakeVault(t, "tok", map[string]string{
+		"/v1/sys/internal/ui/mounts/secret/data/deleted-secret": vaultMountInfoV2(),
+		"/v1/secret/data/deleted-secret":                        `{"data":{"data":null,"metadata":{"created_time":"2018-03-22T02:24:06.945319214Z","deletion_time":"2018-03-23T02:24:06.945319214Z","destroyed":false,"version":1}}}`,
+	})
+	c := NewVaultConnector("v", srv.URL, "tok", nil)
+	val, err := c.GetSecret(context.Background(), "secret/data/deleted-secret")
+	require.Error(t, err, "a soft-deleted KV v2 version must be reported as an error, never as a successful read")
+	assert.Empty(t, val)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestVault_GetSecret_Errors(t *testing.T) {
@@ -166,7 +227,8 @@ func TestVault_GetSecret_CrossTenantTraversalIsRejected(t *testing.T) {
 // a legitimately scoped caller read their own secret.
 func TestVault_GetSecret_LegitimateScopedRefStillWorks(t *testing.T) {
 	srv := fakeVault(t, "tok", map[string]string{
-		"/v1/secret/data/myapp/config": `{"data":{"data":{"password":"p@ss"},"metadata":{}}}`,
+		"/v1/sys/internal/ui/mounts/secret/data/myapp/config": vaultMountInfoV2(),
+		"/v1/secret/data/myapp/config":                        `{"data":{"data":{"password":"p@ss"},"metadata":{}}}`,
 	})
 	c := NewVaultConnector("v", srv.URL, "tok", []string{"secret/data/myapp/"})
 
@@ -219,6 +281,9 @@ func TestVault_GetSecret_RefusesSameHostRedirect(t *testing.T) {
 	var mux http.ServeMux
 	srv := httptest.NewServer(&mux)
 	t.Cleanup(srv.Close)
+	mux.HandleFunc("/v1/sys/internal/ui/mounts/secret/data/myapp", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(vaultMountInfoV2()))
+	})
 	mux.HandleFunc("/v1/secret/data/myapp", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, srv.URL+"/v1/secret/data/other", http.StatusMovedPermanently)
 	})

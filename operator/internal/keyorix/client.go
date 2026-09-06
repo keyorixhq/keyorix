@@ -84,6 +84,18 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
 }
 
+// drainAndClose discards any unread response body before closing it, so the
+// underlying connection can be returned to net/http's keep-alive pool instead
+// of being torn down. FetchValue used to defer a bare resp.Body.Close() and
+// return without reading the body on every one of its five error branches
+// (404/403/401/400/>=400) — this operator is a single cluster-wide singleton
+// reconciler (see the maxResponseBodyBytes doc comment above), so an
+// unnecessarily torn-down connection on every error response is not free.
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
+	_ = resp.Body.Close()
+}
+
 // validateClientBaseURL checks that the client's base URL is a well-formed https
 // destination — matching validateServer's own https requirement in the controller
 // package, which this client's baseURL is sourced from (see FetchValue). http is
@@ -144,7 +156,7 @@ func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	switch {
 	case resp.StatusCode == http.StatusNotFound:

@@ -118,7 +118,7 @@ func (s *ChatSink) send(ctx context.Context, ev core.NotificationEvent) (retryab
 	if err != nil {
 		return true, err // transport / timeout — transient
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer drainAndClose(resp)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return false, nil
 	}

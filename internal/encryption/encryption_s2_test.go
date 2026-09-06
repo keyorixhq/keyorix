@@ -653,8 +653,17 @@ func TestService_AcquireExclusiveKeyLock(t *testing.T) {
 	require.NoError(t, err2)
 }
 
-// TestService_AcquireExclusiveKeyLock_NotInitialized covers the "not initialized" error branch.
-func TestService_AcquireExclusiveKeyLock_NotInitialized(t *testing.T) {
+// TestService_AcquireExclusiveKeyLock_BeforeInitialize_Succeeds pins the
+// first-boot-race fix: AcquireExclusiveKeyLock must succeed on a freshly
+// constructed, NOT-yet-initialized Service, since the flock only needs
+// keyManager.baseDir (fixed at construction) — never Initialize's KEK/DEK
+// material. server/main.go's initializeEncryption relies on exactly this:
+// it acquires the exclusive lock BEFORE calling Initialize, so first-boot key
+// generation (ensureSaltExists/ensureWrappedDEKExists) is itself
+// race-protected, not just steady-state DEK access. This used to be
+// impossible — the lock required s.initialized, so this exact call order
+// failed with "not initialized" (see git history / PR description).
+func TestService_AcquireExclusiveKeyLock_BeforeInitialize_Succeeds(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{
 		Enabled:  true,
@@ -662,9 +671,11 @@ func TestService_AcquireExclusiveKeyLock_NotInitialized(t *testing.T) {
 		SaltPath: "salt.key",
 	}
 	svc := NewService(cfg, dir)
-	err := svc.AcquireExclusiveKeyLock()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
+	t.Cleanup(svc.Shutdown)
+
+	require.NoError(t, svc.AcquireExclusiveKeyLock())
+	// Initialize must still work normally after the lock is already held.
+	require.NoError(t, svc.Initialize("test-passphrase"))
 }
 
 // TestService_AcquireSharedKeyLock exercises the shared lock path.

@@ -353,6 +353,17 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("kubernetes: refusing to follow redirect to %q", req.URL)
 }
 
+// drainAndClose discards any unread response body before closing it, so the
+// underlying connection can be returned to net/http's keep-alive pool instead
+// of being torn down. Every realK8sMinter method below used to defer a bare
+// resp.Body.Close() and then return without reading the body on several
+// branches (the 401/403/>=400 error branches, and deleteBoundSecret's success
+// branch) — this closes the gap for all of them in one place.
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxK8sAPIResponseBytes))
+	_ = resp.Body.Close()
+}
+
 func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount string, audiences []string, expiration time.Duration, bound *boundObjectRef) (string, time.Time, error) {
 	expSeconds := int64(expiration.Seconds())
 	spec := map[string]interface{}{
@@ -396,7 +407,7 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", time.Time{}, fmt.Errorf("not authorized (HTTP %d) — the caller needs create on serviceaccounts/token for %s/%s", resp.StatusCode, namespace, serviceAccount)
 	}
@@ -457,7 +468,7 @@ func (m *realK8sMinter) createBoundSecret(ctx context.Context, namespace, name s
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", fmt.Errorf("not authorized (HTTP %d) — the caller needs create on secrets in %s (required when revocable is true)", resp.StatusCode, namespace)
 	}
@@ -495,7 +506,7 @@ func (m *realK8sMinter) deleteBoundSecret(ctx context.Context, namespace, name s
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	if resp.StatusCode == http.StatusNotFound {
 		return nil // already gone — revoke is idempotent
 	}

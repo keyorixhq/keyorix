@@ -849,15 +849,21 @@ func TestAuthEncryption_Disabled_EncryptClientSecret_Plaintext(t *testing.T) {
 	assert.Equal(t, "secret", got)
 }
 
-// ─── Service.AcquireExclusiveKeyLock: not initialized ────────────────────────
+// ─── Service.AcquireExclusiveKeyLock: works before Initialize ────────────────
 
-func TestService_AcquireExclusiveKeyLock_NotInitialized_Error(t *testing.T) {
+// TestService_AcquireExclusiveKeyLock_SucceedsBeforeInitialize_Error is the
+// s24 sibling of TestService_AcquireExclusiveKeyLock_BeforeInitialize_Succeeds
+// in encryption_s2_test.go — duplicated across coverage-wave test files, same
+// as the pre-fix "not initialized" assertion it replaces was. AcquireExclusiveKeyLock
+// no longer requires the Service to be initialized (see service_rotation.go):
+// the first-boot key-bootstrap race fix requires the exclusive lock to be
+// acquirable BEFORE Initialize runs.
+func TestService_AcquireExclusiveKeyLock_SucceedsBeforeInitialize_Error(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
 	svc := NewService(cfg, dir)
-	err := svc.AcquireExclusiveKeyLock()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
+	t.Cleanup(svc.Shutdown)
+	require.NoError(t, svc.AcquireExclusiveKeyLock())
 }
 
 // ─── Service.AcquireSharedKeyLock: not initialized ───────────────────────────

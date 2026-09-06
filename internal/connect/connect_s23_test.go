@@ -236,7 +236,8 @@ func TestVault_S23_GetSecret_NetworkError(t *testing.T) {
 // just the inner data object, not the outer envelope.
 func TestVault_S23_GetSecret_KVv2BothDataAndMetadata(t *testing.T) {
 	srv := fakeVault(t, "tok", map[string]string{
-		"/v1/secret/data/svc": `{"data":{"data":{"key":"val"},"metadata":{"version":7,"created_time":"2024-01-01T00:00:00Z"}}}`,
+		"/v1/sys/internal/ui/mounts/secret/data/svc": vaultMountInfoV2(),
+		"/v1/secret/data/svc":                        `{"data":{"data":{"key":"val"},"metadata":{"version":7,"created_time":"2024-01-01T00:00:00Z"}}}`,
 	})
 	c := NewVaultConnector("v", srv.URL, "tok", nil)
 	val, err := c.GetSecret(context.Background(), "secret/data/svc")
