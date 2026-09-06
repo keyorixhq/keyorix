@@ -54,18 +54,33 @@ func TestCLIPackagesAreHermeticToRealHOMEAndXDGConfigHome(t *testing.T) {
 
 	repoRoot := findRepoRoot(t)
 
-	baseline := runCLISuiteWithHome(t, repoRoot, t.TempDir())
+	baseline, baseOutput := runCLISuiteWithHome(t, repoRoot, t.TempDir())
 
 	poisoned := t.TempDir()
 	writePoisonedCLIConfig(t, poisoned)
-	poisonedResults := runCLISuiteWithHome(t, repoRoot, poisoned)
+	poisonedResults, poisonedOutput := runCLISuiteWithHome(t, repoRoot, poisoned)
+
+	// tail returns up to the last 20 lines of a (sub)test's captured -json
+	// "output" text, so a divergence report shows WHY a test failed (the
+	// actual error/panic line), not just THAT it failed -- the bare pass/fail
+	// comparison alone gave no way to tell a real HOME-dependence bug apart
+	// from e.g. CI-only flakiness without re-running go test by hand.
+	tail := func(output map[string][]string, name string) string {
+		lines := output[name]
+		if len(lines) > 20 {
+			lines = lines[len(lines)-20:]
+		}
+		return strings.Join(lines, "")
+	}
 
 	var diverged []string
 	for name, base := range baseline {
 		if p, ok := poisonedResults[name]; !ok {
 			diverged = append(diverged, fmt.Sprintf("%s: present with HOME=isolated (%s) but missing with HOME=poisoned", name, base))
 		} else if p != base {
-			diverged = append(diverged, fmt.Sprintf("%s: %s with HOME=isolated but %s with HOME=poisoned", name, base, p))
+			diverged = append(diverged, fmt.Sprintf("%s: %s with HOME=isolated but %s with HOME=poisoned\n"+
+				"  --- HOME=isolated output (tail) ---\n%s\n  --- HOME=poisoned output (tail) ---\n%s",
+				name, base, p, tail(baseOutput, name), tail(poisonedOutput, name)))
 		}
 	}
 	for name, p := range poisonedResults {
@@ -126,10 +141,12 @@ connections: []
 
 // runCLISuiteWithHome runs `go test ./internal/cli/...` as a subprocess with
 // HOME pointed at homeDir, and returns a map of "package/TestName[/SubTest]"
-// -> "pass"/"fail"/"skip" parsed from `-json` output. KEYORIX_SERVER/
-// KEYORIX_TOKEN are explicitly cleared, and XDG_CONFIG_HOME is explicitly
-// BLANKED (not pointed at homeDir) so only HOME differs between the two
-// calls this guard makes.
+// -> "pass"/"fail"/"skip" parsed from `-json` output, plus a second map of
+// the same keys -> that (sub)test's captured "output" lines (build output,
+// t.Log, panics, -race reports), for diagnosing WHY a divergence happened.
+// KEYORIX_SERVER/KEYORIX_TOKEN are explicitly cleared, and XDG_CONFIG_HOME is
+// explicitly BLANKED (not pointed at homeDir) so only HOME differs between
+// the two calls this guard makes.
 //
 // XDG_CONFIG_HOME is deliberately left blank rather than redirected: internal/
 // cli/config's getDefaultCLIConfigPath() checks XDG_CONFIG_HOME FIRST, and
@@ -141,7 +158,7 @@ connections: []
 // path, not $homeDir/keyorix/cli.yaml) and silently defeat this whole guard --
 // confirmed by hand: the first version of this guard did exactly that and
 // passed even with a package's TestMain isolation deliberately disabled.
-func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) map[string]string {
+func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) (results map[string]string, output map[string][]string) {
 	t.Helper()
 	cmd := exec.Command("go", "test", "-json", "-count=1", "./internal/cli/...")
 	cmd.Dir = repoRoot
@@ -173,7 +190,8 @@ func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) map[string]stri
 		}
 	}
 
-	results := map[string]string{}
+	results = map[string]string{}
+	output = map[string][]string{}
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -181,6 +199,7 @@ func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) map[string]stri
 			Action  string
 			Package string
 			Test    string
+			Output  string
 		}
 		if jerr := json.Unmarshal(scanner.Bytes(), &ev); jerr != nil {
 			continue // non-JSON build/tool-output lines interleave with -json events; skip them
@@ -188,10 +207,13 @@ func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) map[string]stri
 		if ev.Test == "" {
 			continue // package-level event, not an individual test result
 		}
+		key := ev.Package + "/" + ev.Test
 		switch ev.Action {
 		case "pass", "fail", "skip":
-			results[ev.Package+"/"+ev.Test] = ev.Action
+			results[key] = ev.Action
+		case "output":
+			output[key] = append(output[key], ev.Output)
 		}
 	}
-	return results
+	return results, output
 }
