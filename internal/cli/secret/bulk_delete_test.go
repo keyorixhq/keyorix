@@ -294,6 +294,40 @@ func TestJoinUints(t *testing.T) {
 
 // ── runBulkDeleteEmbedded ─────────────────────────────────────────────────────
 
+// isolateBulkDeleteEmbeddedStorage points common.InitializeCoreService's
+// default storage at a per-test temp DB and t.Chdir's into a per-test temp
+// dir, so a test calling runBulkDeleteEmbedded/runBulkDelete never touches
+// the package-relative "./secrets.db" InitializeCoreService otherwise falls
+// back to. That fallback path is a single, fixed, package-relative file --
+// concurrent invocations of this package's own test binary (this guard's own
+// nested subprocess re-runs it; CI's outer test-suite job runs it again
+// directly, in parallel) all resolve "./secrets.db" to the SAME physical
+// path, and race on migrating it. That surfaced as "found 5 internal/cli
+// (sub)test(s) whose pass/fail outcome depends on HOME/XDG_CONFIG_HOME" from
+// cli_hermetic_home_guard_test.go -- a false HOME-dependence signal: the
+// guard's own diagnostic output showed the actual failure is a SQLite
+// "disk I/O error" migrating rotation_policies, not a $HOME leak. See
+// TestRunBulkDeleteEmbedded_InitError/_NamesResolveAndDelete for the same
+// isolation pattern already used elsewhere in this file.
+func isolateBulkDeleteEmbeddedStorage(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`storage:
+  type: local
+  database:
+    path: "`+filepath.Join(dir, "secrets.db")+`"
+locale:
+  language: "en"
+  fallback_language: "en"
+`), 0600))
+	t.Setenv("KEYORIX_CONFIG_PATH", cfgPath)
+	t.Chdir(dir)
+}
+
 func TestRunBulkDeleteEmbedded_NoProject(t *testing.T) {
 	origProject := bulkDeleteProject
 	t.Cleanup(func() { bulkDeleteProject = origProject })
@@ -339,6 +373,8 @@ locale:
 }
 
 func TestRunBulkDeleteEmbedded_PreviewMode(t *testing.T) {
+	isolateBulkDeleteEmbeddedStorage(t)
+
 	origProject := bulkDeleteProject
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
@@ -348,19 +384,20 @@ func TestRunBulkDeleteEmbedded_PreviewMode(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	bulkDeleteProject = 1
 	bulkDeleteIDs = []uint{42}
 	bulkDeleteNames = nil
 	bulkDeleteConfirm = false
 
-	// InitializeCoreService creates ./secrets.db and initialises i18n with English.
+	// InitializeCoreService creates the isolated temp-dir DB and initialises i18n with English.
 	err := runBulkDeleteEmbedded(context.Background())
 	require.NoError(t, err)
 }
 
 func TestRunBulkDeleteEmbedded_DeleteNotFound(t *testing.T) {
+	isolateBulkDeleteEmbeddedStorage(t)
+
 	origProject := bulkDeleteProject
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
@@ -370,7 +407,6 @@ func TestRunBulkDeleteEmbedded_DeleteNotFound(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	bulkDeleteProject = 1
 	bulkDeleteIDs = []uint{9999}
@@ -526,6 +562,8 @@ func TestRunBulkDeleteEmbedded_NamesAppendedToIDs(t *testing.T) {
 // because no matching secret exists in the default DB, so resolveNamesToIDsEmbedded
 // returns a "not found" error that propagates back.
 func TestRunBulkDeleteEmbedded_NamesNotFound(t *testing.T) {
+	isolateBulkDeleteEmbeddedStorage(t)
+
 	origProject := bulkDeleteProject
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
@@ -535,7 +573,6 @@ func TestRunBulkDeleteEmbedded_NamesNotFound(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	bulkDeleteProject = 1
 	bulkDeleteIDs = nil
@@ -606,6 +643,8 @@ locale:
 // an error when called with an empty ID list, which runBulkDeleteEmbedded can
 // reach when both --ids and --names are empty but --confirm is set.
 func TestRunBulkDeleteEmbedded_BulkDeleteError(t *testing.T) {
+	isolateBulkDeleteEmbeddedStorage(t)
+
 	origProject := bulkDeleteProject
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
@@ -615,7 +654,6 @@ func TestRunBulkDeleteEmbedded_BulkDeleteError(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
 	// Set confirm=true and empty IDs so the call reaches BulkDeleteSecrets with
 	// an empty slice, which returns an error ("at least one secret ID is required").
@@ -635,6 +673,8 @@ func TestRunBulkDeleteEmbedded_BulkDeleteError(t *testing.T) {
 // (lines 66-69): when no KEYORIX_SERVER env var is set, NewRemoteClient returns
 // !ok and runBulkDelete calls runBulkDeleteEmbedded directly.
 func TestRunBulkDelete_EmbeddedPath(t *testing.T) {
+	isolateBulkDeleteEmbeddedStorage(t)
+
 	origProject := bulkDeleteProject
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
@@ -644,12 +684,7 @@ func TestRunBulkDelete_EmbeddedPath(t *testing.T) {
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
-		_ = os.Remove("secrets.db")
 	})
-
-	// Unset the server env so NewRemoteClient returns !ok.
-	t.Setenv("KEYORIX_SERVER", "")
-	t.Setenv("KEYORIX_TOKEN", "")
 
 	bulkDeleteProject = 1
 	bulkDeleteIDs = []uint{42}
