@@ -42,6 +42,26 @@ jobs:
           path: base
           fetch-depth: 1
 
+      # pull_request.base.sha is the base branch's tip as of this PR's last
+      # sync event (open/push), NOT the CURRENT tip of main -- it only moves
+      # when something happens ON THIS PR, so a long-lived branch's "base"
+      # checkout above can be arbitrarily far behind whatever has since
+      # merged to main. That's fine (even correct) for the family-list diff
+      # below, which wants the PR's actual base point, not a moving target --
+      # but it means "base" is NOT a reliable source for this workflow's OWN
+      # tooling fallback (devtools/*, the scope file): a long-lived branch
+      # opened before those existed can have neither in EITHER checkout,
+      # exactly what broke #1751 here (base.sha pinned to a point before
+      # #1750 first added devtools/). A separate, always-fresh checkout of
+      # the actual main branch (not a sha) is the only source guaranteed to
+      # have this workflow's own current tooling.
+      - name: Checkout current main (tooling fallback only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: main-head
+          fetch-depth: 1
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -52,10 +72,12 @@ jobs:
       # not a stale version, an outright missing directory/file. That's the
       # common case immediately after this check's rollout, and recurs for any
       # long-lived branch cut before a later devtools/familycheck change. Fall
-      # back to base's copy (main's, which always has it) so the check still
-      # runs using the tool version already on main, rather than failing
-      # outright on every pre-existing branch touched by `**.go`.
-      - name: Resolve family-check tooling location (head, falling back to base)
+      # back to main-head's copy (an always-fresh checkout of main, per the
+      # comment on that checkout step -- NOT "base", which can be equally
+      # stale for a long-lived branch) so the check still runs using the tool
+      # version currently on main, rather than failing outright on every
+      # pre-existing branch touched by `**.go`.
+      - name: Resolve family-check tooling location (head, falling back to current main)
         id: toolsrc
         run: |
           for pair in "asymanalyzer_dir:devtools/asymanalyzer" "familycheck_dir:devtools/familycheck"; do
@@ -63,20 +85,20 @@ jobs:
             if [ -d "head/$rel" ]; then
               echo "$out=head/$rel" >> "$GITHUB_OUTPUT"
             else
-              echo "$out=base/$rel" >> "$GITHUB_OUTPUT"
+              echo "$out=main-head/$rel" >> "$GITHUB_OUTPUT"
             fi
           done
           if [ -f head/.github/family-check-scope.json ]; then
             echo "scope_file=head/.github/family-check-scope.json" >> "$GITHUB_OUTPUT"
           else
-            echo "scope_file=base/.github/family-check-scope.json" >> "$GITHUB_OUTPUT"
+            echo "scope_file=main-head/.github/family-check-scope.json" >> "$GITHUB_OUTPUT"
           fi
 
       # Both devtools/ tools are standalone modules (not in go.work, like
       # operator/) so golang.org/x/tools never becomes a dependency of the
       # shipped keyorix binary. Built from the HEAD checkout when present: a
       # PR that modifies the tools themselves is checked with its own version
-      # of them (falls back to base per toolsrc above otherwise).
+      # of them (falls back to current main per toolsrc above otherwise).
       # `cd` into each tool's own directory before building: with GOWORK=off,
       # `go build` resolves the main module from the CURRENT directory, not
       # the target package path, so building `./head/devtools/x` from the
