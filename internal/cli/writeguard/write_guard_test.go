@@ -1,7 +1,18 @@
-// Package writeguard is a standalone, test-only sweep over internal/cli that asserts no
-// production code calls os.Create/os.OpenFile/os.WriteFile directly for sensitive
-// output (exports, bundles, key material, evidence) outside the internal/securefiles
-// shared helpers — see keyorix-private/adversarial-review/QUEUE.md "Group 2 guard".
+// Package writeguard is a standalone, test-only sweep over internal/cli AND
+// internal/bundle that asserts no production code calls os.Create/os.OpenFile/
+// os.WriteFile directly for sensitive output (exports, bundles, key material,
+// evidence) outside the internal/securefiles shared helpers — see
+// keyorix-private/adversarial-review/QUEUE.md "Group 2 guard".
+//
+// internal/bundle was added after adversarial verification of the original internal/
+// cli-only sweep found a structurally identical, unguarded os.WriteFile in
+// internal/bundle/bundle.go's writeInstalledVersion — invisible to the sweep purely
+// because that package is a sibling of internal/cli, not a subdirectory of it. The
+// vulnerability shape ("operator-supplied path, written without symlink/overwrite
+// protection") isn't specific to the CLI layer; any package taking an operator-facing
+// path and writing to it is in scope. internal/cli and internal/bundle are the two
+// confirmed instances as of this writing — a wider, repo-root sweep (with the
+// allowlisting work that would require) is a real follow-up, not done here.
 //
 // Every call site the sweep finds must either route through securefiles
 // (SecureCreateFile/SecureCreateFileSync/SecureCreateFileHandle/SecureWriteFile/
@@ -46,11 +57,11 @@ import (
 // citing "needs a streaming/non-exclusive write," re-check against SecureOpenBeneath
 // first; it may already fit, the same way it did for all four sites removed here.
 var allowlist = map[string]string{
-	"system/init.go:172": "creates an empty (0-byte) placeholder file for the local sqlite DB path purely " +
+	"internal/cli/system/init.go:172": "creates an empty (0-byte) placeholder file for the local sqlite DB path purely " +
 		"to make first-boot vs. already-initialized unambiguous -- no data is written by " +
 		"this call. Already uses O_EXCL for an atomic, idempotent existence check " +
 		"(err == nil or IsExist are both treated as success).",
-	"system/init.go:202": "creates an empty (0-byte) placeholder file for the local log path, same " +
+	"internal/cli/system/init.go:202": "creates an empty (0-byte) placeholder file for the local log path, same " +
 		"idempotent-existence-check shape as init.go:172 -- no data is written by this call. " +
 		"Already uses O_EXCL.",
 }
@@ -70,18 +81,21 @@ type site struct {
 
 func (s site) key() string { return s.relPath + ":" + strconv.Itoa(s.line) }
 
-// cliRoot resolves the internal/cli directory relative to this test file's own
-// location (not the process cwd), so the sweep works regardless of how `go test` is
-// invoked.
-func cliRoot(t *testing.T) string {
+// repoRoot resolves the repository root relative to this test file's own location (not
+// the process cwd), so the sweep works regardless of how `go test` is invoked.
+func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok, "runtime.Caller must resolve this test file's path")
 	// this file lives at internal/cli/writeguard/write_guard_test.go
-	root, err := filepath.Abs(filepath.Join(filepath.Dir(thisFile), ".."))
+	root, err := filepath.Abs(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
 	require.NoError(t, err)
 	return root
 }
+
+// scanRoots are the package trees this sweep walks, relative to repoRoot. See the
+// package doc comment for why internal/bundle is included alongside internal/cli.
+var scanRoots = []string{"internal/cli", "internal/bundle"}
 
 // scanFile parses a single .go file and returns every os.Create/os.OpenFile/
 // os.WriteFile call site found in it (by AST inspection, not string/regex matching, so
@@ -120,50 +134,56 @@ func scanFile(fset *token.FileSet, path string) ([]site, error) {
 	return sites, nil
 }
 
-// findAllSites walks root (internal/cli) recursively, scanning every non-test .go file
-// (test fixtures are allowed to build test data with raw os calls; this sweep is about
-// production output paths) and returns every raw os.Create/os.OpenFile/os.WriteFile
-// call site found, keyed by path relative to root.
-func findAllSites(t *testing.T, root string) map[string]site {
+// findAllSites walks every directory in scanRoots recursively (relative to repo),
+// scanning every non-test .go file (test fixtures are allowed to build test data with
+// raw os calls; this sweep is about production output paths) and returns every raw
+// os.Create/os.OpenFile/os.WriteFile call site found, keyed by path relative to repo
+// (e.g. "internal/cli/system/init.go:172", "internal/bundle/bundle.go:542") so sites
+// from different scan roots can never collide.
+func findAllSites(t *testing.T, repo string) map[string]site {
 	t.Helper()
 	fset := token.NewFileSet()
 	found := map[string]site{}
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
+	for _, rel := range scanRoots {
+		root := filepath.Join(repo, rel)
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			sites, serr := scanFile(fset, path)
+			if serr != nil {
+				return serr
+			}
+			for _, s := range sites {
+				relPath, rerr := filepath.Rel(repo, s.relPath)
+				require.NoError(t, rerr)
+				s.relPath = filepath.ToSlash(relPath)
+				found[s.key()] = s
+			}
 			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		sites, serr := scanFile(fset, path)
-		if serr != nil {
-			return serr
-		}
-		for _, s := range sites {
-			rel, rerr := filepath.Rel(root, s.relPath)
-			require.NoError(t, rerr)
-			s.relPath = filepath.ToSlash(rel)
-			found[s.key()] = s
-		}
-		return nil
-	})
-	require.NoError(t, err, "walking %s must not fail", root)
+		})
+		require.NoError(t, err, "walking %s must not fail", root)
+	}
 	return found
 }
 
 // TestNoUnprotectedSensitiveFileWrites is the Group 2 guard: every raw os.Create/
-// os.OpenFile/os.WriteFile call under internal/cli must be explicitly allowlisted
+// os.OpenFile/os.WriteFile call under any scanRoots tree must be explicitly allowlisted
 // (with a written justification), i.e. everything else must go through
-// internal/securefiles. Verified RED against pre-fix code (it flagged
-// compliance/csv_export.go:51, compliance/compliance.go:228, compliance/baseline.go:49,
-// rbac/export_matrix.go:79, migrate_provider.go's copyFile, bundle/bundle.go:92, and
-// both secret/fix.go sites before those were migrated); GREEN after.
+// internal/securefiles. Verified RED against pre-fix code for the original internal/cli
+// sites (compliance/csv_export.go:51, compliance/compliance.go:228,
+// compliance/baseline.go:49, rbac/export_matrix.go:79, migrate_provider.go's copyFile,
+// bundle/bundle.go:92, both secret/fix.go sites) and, separately, for
+// internal/bundle/bundle.go's writeInstalledVersion once internal/bundle was added as a
+// second scan root; GREEN after each was fixed.
 func TestNoUnprotectedSensitiveFileWrites(t *testing.T) {
-	root := cliRoot(t)
-	found := findAllSites(t, root)
+	found := findAllSites(t, repoRoot(t))
 
 	var unallowed []string
 	for key, s := range found {
@@ -186,8 +206,7 @@ func TestNoUnprotectedSensitiveFileWrites(t *testing.T) {
 // regression the moment that exact line shifts. A stale entry doesn't fail the sweep
 // above (which only checks found-but-unallowed sites), so it's checked here explicitly.
 func TestAllowlistEntriesStillExist(t *testing.T) {
-	root := cliRoot(t)
-	found := findAllSites(t, root)
+	found := findAllSites(t, repoRoot(t))
 
 	var stale []string
 	for key := range allowlist {
