@@ -1175,6 +1175,11 @@ connect:
     - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
       type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager | azure-key-vault | vault
       region: eu-west-1         # AWS region (aws-secrets-manager)
+      account_id: "111111111111" # optional: pins the connector to one AWS account (12 digits);
+                                  # a full-ARN ref naming a DIFFERENT account is rejected before
+                                  # the backend call. A bare secret-name ref is unaffected either
+                                  # way — see the note below for why this field is optional, not
+                                  # required like gcp-secret-manager's project_id.
       scope: project             # project | platform (ADR-082) — required
       project: payments          # Keyorix project name (not ID) that owns this connector;
                                   # required when scope is "project", omit when "platform"
@@ -1234,6 +1239,20 @@ connect:
   that bypasses config validation). **Breaking change**: an existing deployment
   upgrading from before this requirement landed must add `project_id` to every
   `gcp-secret-manager` connector before upgrading — see CHANGELOG.md.
+- `aws-secrets-manager`'s `account_id` is the AWS sibling of `project_id` above, but
+  **optional, not required** — the risk shape is narrower. The Secrets Manager
+  `SecretId` accepts either a bare secret name (always resolved within the ambient
+  credential's own AWS account — no confused-deputy gap is possible for that shape)
+  or a full ARN (`arn:PARTITION:secretsmanager:REGION:ACCOUNT:secret:NAME`), which
+  CAN name a different account, but only succeeds if that target account's own
+  resource policy has separately granted this connector's identity cross-account
+  access (a double opt-in, unlike GCP's single-opt-in ambient-reach gap). Setting
+  `account_id` (12 digits) pins the connector: any ARN-shaped ref naming a different
+  account is rejected before the backend call, both at config-load time (a malformed,
+  non-12-digit value fails boot) and again at read time (defense in depth). Leaving
+  it unset is a legal, still-supported configuration — `server/main.go` logs a
+  startup recommendation, not a failure — and a bare-name ref is never checked
+  against the pin either way, since it never carries a competing account segment.
 - A federated read is bounded by up to **three** controls: the backend identity's IAM
   policy (the load-bearing one — scope the connector's credentials to exactly the
   intended secrets); optionally the per-connector **`allowed_refs`** prefix allowlist

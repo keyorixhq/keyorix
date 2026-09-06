@@ -500,6 +500,50 @@ func TestInitializeCoreService_Connect_GCP_NoProjectID(t *testing.T) {
 	}
 }
 
+// ── initializeCoreService — aws (account_id is optional, unlike GCP's project_id) ──
+
+// account_id is deliberately OPTIONAL for aws-secrets-manager connectors — see
+// ConnectorConfig.AccountID's own doc comment and internal/connect/awssm.go for the
+// risk-shape reason a mandatory pin isn't warranted here the way it is for GCP. A
+// missing account_id must still boot fine (server/main.go only logs a
+// recommendation), while a MALFORMED one (set, but not 12 digits) must fail boot —
+// validateConnectAWSAccountID's format check, run from cfg.Validate() before the
+// Connect-wiring loop is ever reached.
+func TestInitializeCoreService_Connect_AWS_NoAccountID(t *testing.T) {
+	initI18n(t)
+	cfg := newMinimalCfg(t)
+	cfg.Connect = config.ConnectConfig{
+		Enabled: true,
+		Connectors: []config.ConnectorConfig{
+			{Name: "aws-noaccount", Type: "aws-secrets-manager", AccountID: "", AllowedRefs: []string{"prod/*"}, Scope: "platform"},
+		},
+	}
+
+	_, _, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService with aws-secrets-manager, no account_id (optional, must still boot): %v", err)
+	}
+}
+
+func TestInitializeCoreService_Connect_AWS_MalformedAccountID(t *testing.T) {
+	initI18n(t)
+	cfg := newMinimalCfg(t)
+	cfg.Connect = config.ConnectConfig{
+		Enabled: true,
+		Connectors: []config.ConnectorConfig{
+			{Name: "aws-badaccount", Type: "aws-secrets-manager", AccountID: "not-12-digits", AllowedRefs: []string{"prod/*"}, Scope: "platform"},
+		},
+	}
+
+	_, _, err := initializeCoreService(cfg)
+	if err == nil {
+		t.Fatal("expected initializeCoreService to refuse to boot an aws-secrets-manager connector with a malformed account_id")
+	}
+	if got := err.Error(); !contains(got, "aws-badaccount") || !contains(got, "account_id") {
+		t.Fatalf("expected error to name the connector and account_id, got: %v", err)
+	}
+}
+
 // ── initializeCoreService — azure connector ───────────────────────────────────
 
 func TestInitializeCoreService_Connect_AzureKeyVault(t *testing.T) {

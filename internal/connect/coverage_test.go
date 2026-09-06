@@ -44,7 +44,7 @@ import (
 // newClient is nil and a region is set. awsconfig.LoadDefaultConfig almost
 // never returns an error, so we expect a non-nil client back.
 func TestAWSSM_ClientRealPath_WithRegion(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("aws-real", "us-east-1", nil)
+	c := NewAWSSecretsManagerConnector("aws-real", "us-east-1", "", nil)
 	// newClient is nil — the real awsconfig.LoadDefaultConfig path runs.
 	cl, err := c.client(context.Background())
 	// LoadDefaultConfig succeeds even without credentials; we expect a valid client.
@@ -56,7 +56,7 @@ func TestAWSSM_ClientRealPath_WithRegion(t *testing.T) {
 // awssm.client(): when region is "", the opts slice stays empty and
 // awsconfig.LoadDefaultConfig is called without a region option.
 func TestAWSSM_ClientRealPath_NoRegion(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("aws-real-noregion", "", nil)
+	c := NewAWSSecretsManagerConnector("aws-real-noregion", "", "", nil)
 	// newClient is nil; region is "".
 	cl, err := c.client(context.Background())
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestAWSSM_ClientRealPath_NoRegion(t *testing.T) {
 // TestAWSSM_ClientInjectedError covers the newClient != nil path returning an
 // error, exercising the error-propagation in GetSecret when client() fails.
 func TestAWSSM_ClientInjectedError(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("aws-err", "eu-west-1", nil)
+	c := NewAWSSecretsManagerConnector("aws-err", "eu-west-1", "", nil)
 	injectedErr := errors.New("injected client error")
 	c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) {
 		return nil, injectedErr

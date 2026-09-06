@@ -166,6 +166,22 @@ All notable changes to Keyorix are documented here. This project follows
   crash notifications on fleet VMs. ([#1222])
 
 ### Security
+- **Optional `account_id` pin for `aws-secrets-manager` Keyorix Connect connectors**
+  — the AWS sibling of the `gcp-secret-manager` `project_id` pin above, but with a
+  narrower risk shape: a bare secret-name ref (the common case) is always resolved
+  within the ambient credential's own AWS account by the Secrets Manager API itself,
+  so it never carries a confused-deputy gap; only a full-ARN ref naming a DIFFERENT
+  account is at risk, and only if that target account's own resource policy has
+  separately granted cross-account access (a double opt-in, unlike GCP's
+  single-opt-in ambient-reach gap). Because of that, `account_id` is **optional, not
+  mandatory** — no existing deployment is broken by this change. When set,
+  `validateConnectAWSAccountID` (`internal/config/config.go`) fails boot if it is
+  not exactly 12 digits (the AWS account ID format), and
+  `AWSSecretsManagerConnector.GetSecret` independently refuses any ARN-shaped ref
+  naming a different account (defense in depth). When unset, `server/main.go` logs
+  a startup recommendation rather than failing boot. See
+  `docs/CONFIGURATION.md`'s Keyorix Connect section for the exact field and its
+  documented scope boundary (a bare-name ref is never checked, by construction).
 - **PAT scope enforcement, WebAuthn identity binding, template injection, K8s sync
   RBAC, TOTP anti-replay on proxy, operator Helm `clusterScoped`** — five
   security hardening items from the DAST/SAST backlog (PAT-SCOPE-002, WAUN-001,
