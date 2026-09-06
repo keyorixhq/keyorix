@@ -86,7 +86,7 @@ func runDiff(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printDiff(diff.SecretName, fromVersion, toVersion, diff.Changes, diff.ACLUserIDs)
+	printDiff(diff.SecretName, fromVersion, toVersion, diff.Changes, diff.ACLUserIDs, diff.Degraded)
 	return nil
 }
 
@@ -118,7 +118,7 @@ func runDiffRemote(rc *common.RemoteClient, name string, fromVersion, toVersion 
 			NewValue: c.NewValue,
 		})
 	}
-	printDiff(result.SecretName, result.FromVersion, result.ToVersion, changes, result.ACLUserIDs)
+	printDiff(result.SecretName, result.FromVersion, result.ToVersion, changes, result.ACLUserIDs, result.Degraded)
 	return nil
 }
 
@@ -134,6 +134,14 @@ type diffResponse struct {
 		NewValue string `json:"new_value"`
 	} `json:"changes"`
 	ACLUserIDs []uint `json:"acl_user_ids"`
+	// Degraded is true when the server's ACL lookup itself failed (#G54) --
+	// ACLUserIDs is then an unreliable, possibly-empty placeholder, not an
+	// authoritative "no ACL grants" answer. #1600: previously discarded here,
+	// so a remote-mode CLI diff under storage.type: remote (where the
+	// embedded path's ListSecretACLs is a permanent hard stub, always
+	// Degraded) silently reported "No ACL entries" indistinguishably from a
+	// genuinely empty ACL list.
+	Degraded bool `json:"degraded"`
 }
 
 // buildByNamePath constructs the /api/v1/secrets/by-name query path.
@@ -148,8 +156,12 @@ func buildByNamePath(name, project, env string) string {
 	return path
 }
 
-// printDiff renders the diff in human-readable form.
-func printDiff(secretName string, fromV, toV int, changes []core.SecretVersionChange, aclUserIDs []uint) {
+// printDiff renders the diff in human-readable form. degraded is true when the
+// server's ACL lookup itself failed (#G54) -- aclUserIDs is then an unreliable,
+// possibly-empty placeholder, not an authoritative answer (#1600: this used to
+// be silently discarded, so a remote-mode CLI diff reported "No ACL entries"
+// indistinguishably from a genuinely empty ACL list).
+func printDiff(secretName string, fromV, toV int, changes []core.SecretVersionChange, aclUserIDs []uint, degraded bool) {
 	fmt.Printf("Secret: %s  (v%d -> v%d)\n\n", secretName, fromV, toV)
 
 	if len(changes) == 0 {
@@ -161,9 +173,12 @@ func printDiff(secretName string, fromV, toV int, changes []core.SecretVersionCh
 	}
 	fmt.Println()
 
-	if len(aclUserIDs) == 0 {
+	switch {
+	case degraded:
+		fmt.Println("ACL (current): unavailable -- the ACL lookup failed, this is NOT a confirmed empty list.")
+	case len(aclUserIDs) == 0:
 		fmt.Println("No ACL entries (current).")
-	} else {
+	default:
 		ids := make([]string, len(aclUserIDs))
 		for i, id := range aclUserIDs {
 			ids[i] = strconv.Itoa(int(id))
