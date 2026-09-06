@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,8 +59,12 @@ func TestRunStatus_RemoteUnhealthy(t *testing.T) {
 
 	writePingConfig(t, dir, srv.URL, 2)
 
-	out := captureStdout(t, func() { require.NoError(t, runStatus(nil, nil)) })
+	var runErr error
+	out := captureStdout(t, func() { runErr = runStatus(nil, nil) })
 
+	var exitErr *common.ExitCodeError
+	require.ErrorAs(t, runErr, &exitErr)
+	assert.Equal(t, 1, exitErr.Code)
 	assert.Contains(t, out, "Storage Type: 🌐 Remote")
 	assert.Contains(t, out, "❌ Unhealthy (health check failed:")
 	assert.Contains(t, out, "Response Time:")
@@ -107,11 +112,14 @@ func TestRunPing_PartialConnectivity(t *testing.T) {
 	os.Stdout = w
 	defer func() { os.Stdout = orig }()
 
-	require.NoError(t, runPing(nil, nil))
+	runErr := runPing(nil, nil)
 	_ = w.Close()
 	outBytes, _ := io.ReadAll(r)
 	out := string(outBytes)
 
+	var exitErr *common.ExitCodeError
+	require.ErrorAs(t, runErr, &exitErr)
+	assert.Equal(t, 1, exitErr.Code)
 	assert.Contains(t, out, "Ping 1: ✅ Success")
 	assert.Contains(t, out, "Ping 2: ❌ Failed (health check failed:")
 	assert.Contains(t, out, "Ping 3: ❌ Failed (health check failed:")

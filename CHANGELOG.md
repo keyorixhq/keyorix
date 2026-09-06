@@ -6,6 +6,23 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Changed
+- **BREAKING: `keyorix status`/`keyorix ping` no longer construct or create
+  anything when nothing is configured.** With no `keyorix.yaml`, no
+  `KEYORIX_CONFIG_PATH`, and no `keyorix connect`/env-var remote target,
+  `status` used to silently build an in-memory `storage.type: local` config
+  on the spot and initialize storage against it — which, for a fresh
+  `./secrets.db` path, **created the file**, then reported "Healthy" for a
+  database the command had just created a moment earlier. That was a
+  false-success pattern, not a graceful default. "Not configured" is now a
+  first-class state distinct from "unhealthy": nothing is constructed,
+  nothing is created, and the command exits 2 (usage/config error) — a
+  script chaining `keyorix status && deploy` will no longer proceed on an
+  unconfigured machine. An explicit `storage.type: local` config whose
+  database file doesn't exist yet is now also reported as unhealthy (exit 1)
+  rather than silently provisioned — `status` verifies an existing store, it
+  doesn't create one. `status`/`ping` exit codes: 0 healthy, 1
+  unhealthy/unreachable, 2 usage/config error (no config, or `ping` without
+  remote storage configured).
 - **BREAKING (targeting v0.92.0): every Keyorix Connect connector must declare
   `scope: project` or `scope: platform` (ADR-082)** — an existing deployment with
   `connect.enabled: true` and one or more configured connectors **will fail to boot**
