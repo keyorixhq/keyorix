@@ -53,6 +53,59 @@ func TestRedactSensitive_KeyValueCredentials(t *testing.T) {
 	}
 }
 
+// TestRedactSensitive_ClosesAdversarialVerificationGaps regression-tests the three
+// concrete bypasses found during adversarial verification of this file's initial
+// version: a password containing an unescaped '/' left the ENTIRE userinfo segment
+// unredacted (not partially redacted -- the pattern didn't match at all), the native
+// go-sql-driver/mysql DSN shape (no "://" scheme) was never matched at all, and a bare
+// "user:pass@host" fragment in generic dial/DNS error text was likewise unmatched.
+func TestRedactSensitive_ClosesAdversarialVerificationGaps(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		secrets []string
+	}{
+		{
+			name:    "password containing a slash",
+			input:   `dial postgres://user:ab/cd@host:5432/db: connection refused`,
+			secrets: []string{"ab/cd"},
+		},
+		{
+			name:    "password containing base64-shaped slash",
+			input:   `failed: postgres://admin:base64pass/w+xyz==@10.0.0.9:5432/app`,
+			secrets: []string{"base64pass/w+xyz=="},
+		},
+		{
+			name:    "native go-sql-driver/mysql DSN, no scheme",
+			input:   `dial error: user:pass@tcp(host:3306)/db: i/o timeout`,
+			secrets: []string{"user:pass"},
+		},
+		{
+			name:    "bare user:pass@host with no scheme at all",
+			input:   `dial tcp: lookup admin:hunter2@db.internal: no such host`,
+			secrets: []string{"admin:hunter2", "hunter2"},
+		},
+		{
+			name:    "bare redis-style credential, no scheme",
+			input:   `connect failed: default:topsecret@cache.example.com:6380 refused`,
+			secrets: []string{"topsecret"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RedactSensitive(tc.input)
+			for _, secret := range tc.secrets {
+				if strings.Contains(got, secret) {
+					t.Fatalf("RedactSensitive(%q) = %q, still contains credential fragment %q", tc.input, got, secret)
+				}
+			}
+			if !strings.Contains(got, redactedPlaceholder) {
+				t.Fatalf("RedactSensitive(%q) = %q, expected redaction placeholder", tc.input, got)
+			}
+		})
+	}
+}
+
 func TestRedactSensitive_PreservesNonSensitiveText(t *testing.T) {
 	input := "connection refused: SQLSTATE 08006, no pg_hba.conf entry for host"
 	got := RedactSensitive(input)
