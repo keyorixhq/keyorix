@@ -7,6 +7,7 @@
 package bundle
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,19 +36,20 @@ at build time — trust follows a pinned chain, never a key shipped inside the b
 }
 
 var (
-	buildSrc        string
-	buildOut        string
-	buildVersion    string
-	buildKeyID      string
-	buildSignKey    string
-	buildMinFrom    string
-	buildReleased   string
-	verifyInstalled string
-	verifyForce     bool
-	importDest      string
-	importInstalled string
-	importForce     bool
-	importLicense   string
+	buildSrc         string
+	buildOut         string
+	buildVersion     string
+	buildKeyID       string
+	buildSignKey     string
+	buildMinFrom     string
+	buildReleased    string
+	verifyInstalled  string
+	verifyForce      bool
+	importDest       string
+	importInstalled  string
+	importForce      bool
+	importLicense    string
+	importResetState bool
 )
 
 // defaultRegistryFn is the function used to load the trusted key registry for
@@ -196,7 +198,15 @@ var importCmd = &cobra.Command{
 
 		// Extract verifies the signature and the no-downgrade gate BEFORE writing anything,
 		// then stages each verified component atomically. It fails closed.
-		m, err := ibundle.Extract(f, reg, importDest, importInstalled)
+		//
+		// ExtractAllowingStateReset also reconciles importDest's internal marker against
+		// the external install-state record kept outside importDest (see
+		// ibundle.ErrInstallStateReset): a destination that looks like a fresh/first
+		// install while the external record still remembers a previously-installed
+		// version is refused unless --reset-install-state explicitly acknowledges it —
+		// closing the gap where deleting the WHOLE --dest (not just its marker file)
+		// would otherwise reset the no-downgrade gate with zero signal.
+		m, err := ibundle.ExtractAllowingStateReset(f, reg, importDest, importInstalled, importResetState)
 		if err != nil {
 			return fmt.Errorf("import failed (fail-closed, nothing staged on a verify failure): %w", err)
 		}
@@ -292,13 +302,26 @@ func requireVerifyInstalledVersion() error {
 // bundle import --dest /stage <bundle>` invocation from the command's own help text staged a
 // substituted, older-but-validly-signed bundle with zero downgrade protection. This makes
 // that gap an explicit, auditable operator choice (--force) instead of a silent default.
+//
+// The marker-at---dest mechanism has its own gap, closed separately: it lives inside --dest,
+// so deleting the whole directory (not just the marker file) resets it to "first install"
+// with no signal. ibundle.PersistedInstalledVersionAllowingReset also checks an external
+// install-state record kept outside --dest; a mismatch there surfaces as
+// ibundle.ErrInstallStateReset, requiring --reset-install-state to proceed instead of being
+// silently treated as an ordinary first install.
 func requireImportInstalledVersion() error {
 	importInstalled = strings.TrimSpace(importInstalled)
 	if importInstalled != "" {
 		return nil
 	}
-	_, hasMarker, err := ibundle.PersistedInstalledVersion(importDest)
+	_, hasMarker, err := ibundle.PersistedInstalledVersionAllowingReset(importDest, importResetState)
 	if err != nil {
+		if errors.Is(err, ibundle.ErrInstallStateReset) {
+			return fmt.Errorf("import failed (fail-closed): %w. If --dest's install state was "+
+				"intentionally reset (e.g. you deliberately cleared it for a fresh start), re-run with "+
+				"--reset-install-state to proceed; otherwise treat this as a possible downgrade attempt "+
+				"and investigate before proceeding", err)
+		}
 		return fmt.Errorf("import failed (fail-closed, nothing staged on a verify failure): %w", err)
 	}
 	if hasMarker {
@@ -346,6 +369,11 @@ func init() {
 	importCmd.Flags().BoolVar(&importForce, "force", false,
 		"proceed without --installed-version on a first import into --dest (dangerous — skips the no-downgrade / anti-skip check)")
 	importCmd.Flags().StringVar(&importLicense, "license", "", "path to the installed license token (bundle import is a commercial feature)")
+	importCmd.Flags().BoolVar(&importResetState, "reset-install-state", false,
+		"acknowledge that --dest's install state was intentionally reset (e.g. --dest was deliberately "+
+			"cleared or recreated): required when the external install-state record disagrees with --dest "+
+			"itself, otherwise refused as a possible downgrade-reset attempt. Does not disable the "+
+			"no-downgrade check itself — combine with --installed-version or --force as usual")
 	_ = importCmd.MarkFlagRequired("dest")
 
 	BundleCmd.AddCommand(buildCmd)

@@ -51,6 +51,21 @@ func runUserToMachine(cmd *cobra.Command, args []string) error {
 		return errors.New("acting admin email is required (use --by)")
 	}
 
+	// Local mode only, enforced at runtime, not just documented: this command
+	// migrates a row directly in the local embedded database and has no
+	// server-side equivalent to relay to. If keyorix connect (or any other
+	// remote config source) is active, refuse loudly rather than silently
+	// operating on a stray local SQLite file the operator likely didn't intend
+	// to touch — see the opt-in-correctness design note (2026-09-05): a
+	// documented-only limitation is not enforcement.
+	if _, ok := common.NewRemoteClient(); ok {
+		return fmt.Errorf("this command operates on local embedded storage only and has no remote " +
+			"equivalent; a remote server is configured (via KEYORIX_SERVER/KEYORIX_TOKEN, " +
+			"~/.keyorix/cli.yaml, or keyorix.yaml) — run POST /api/v1/projects/{id}/machine-identities/" +
+			"migrate-from-user directly against the hub instead, authenticated with your own real " +
+			"session (e.g. via 'keyorix connect')")
+	}
+
 	ctx := context.Background()
 	svc, err := common.InitializeCoreService()
 	if err != nil {

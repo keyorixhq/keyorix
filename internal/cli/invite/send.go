@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
 
@@ -38,16 +39,31 @@ func runSend(cmd *cobra.Command, args []string) error {
 	if sendEmail == "" || sendRole == "" {
 		return errors.New("--email and --role are required")
 	}
-	service, err := common.InitializeCoreService()
-	if err != nil {
-		return fmt.Errorf("failed to initialize service: %w", err)
-	}
 	ctx := context.Background()
 
 	projectName, err := common.ResolveProject(sendProject)
 	if err != nil {
 		return err
 	}
+
+	// Remote mode: create the invitation through the real hub REST API so it
+	// lands in the server's own store (visible to the dashboard, subject to
+	// the server's own authorization for the caller's session) instead of a
+	// stray local SQLite file that keyorix connect's remote config never
+	// touched -- see internal/cli/user/create.go for the template this
+	// mirrors. --by is not used on this path: in remote mode the audit-trail
+	// actor is whoever KEYORIX_TOKEN authenticates as, not a locally-resolved
+	// email -- requireInviteAuthority below exists specifically to substitute
+	// for that when there is no real session (embedded mode).
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runSendRemote(ctx, rc, projectName)
+	}
+
+	service, err := common.InitializeCoreService()
+	if err != nil {
+		return fmt.Errorf("failed to initialize service: %w", err)
+	}
+
 	projectID, err := common.LookupProjectIDByName(ctx, service.Storage(), projectName)
 	if err != nil {
 		return err
@@ -75,6 +91,44 @@ func runSend(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Invitation sent: id=%d email=%s role=%s project=%s expires=%s\n",
 		inv.ID, inv.Email, inv.Role, projectName, fmtTime(inv.ExpiresAt))
 	common.PrintProvisionResult(prov)
+	return nil
+}
+
+// runSendRemote sends the invitation via POST /api/v1/projects/{id}/invitations,
+// matching CreateInvitation's request body ({"email","role"}) and response shape
+// ({"invitation": ..., "setup_link": ...} on full success, or {"invitation": ...,
+// "delivery_error": ...} when the invitation was created but the setup link could
+// not be delivered) exactly -- server/http/handlers/invitations.go's
+// CreateInvitation, both branches still respond 201/success:true.
+func runSendRemote(ctx context.Context, rc *common.RemoteClient, projectName string) error {
+	projectID, err := resolveProjectIDRemote(ctx, rc, projectName)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Target: %s (project %q, id=%d)\n", rc.Endpoint, projectName, projectID)
+
+	body := map[string]interface{}{"email": sendEmail, "role": sendRole}
+	var resp struct {
+		Invitation    *models.ProjectInvitation  `json:"invitation"`
+		SetupLink     *core.ProvisionSetupResult `json:"setup_link"`
+		DeliveryError string                     `json:"delivery_error"`
+	}
+	path := fmt.Sprintf("/api/v1/projects/%d/invitations", projectID)
+	if err := rc.Post(ctx, path, body, &resp); err != nil {
+		return fmt.Errorf("failed to send invitation: %w", err)
+	}
+	if resp.Invitation == nil {
+		return fmt.Errorf("server reported success but returned no invitation for %s", sendEmail)
+	}
+	inv := resp.Invitation
+	if resp.DeliveryError != "" {
+		fmt.Printf("Invitation created: id=%d email=%s role=%s project=%s expires=%s\n",
+			inv.ID, inv.Email, inv.Role, projectName, fmtTime(inv.ExpiresAt))
+		return fmt.Errorf("but the setup link could not be delivered: %s", resp.DeliveryError)
+	}
+	fmt.Printf("Invitation sent: id=%d email=%s role=%s project=%s expires=%s\n",
+		inv.ID, inv.Email, inv.Role, projectName, fmtTime(inv.ExpiresAt))
+	common.PrintProvisionResult(resp.SetupLink)
 	return nil
 }
 

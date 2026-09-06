@@ -66,7 +66,15 @@ func seedBulkApproveDB(t *testing.T) (reqID, approverID uint, svc *core.KeyorixC
 // ── runBulkApprove success path ───────────────────────────────────────────────
 
 func TestRunBulkApprove_SuccessPath(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -83,7 +91,15 @@ func TestRunBulkApprove_SuccessPath(t *testing.T) {
 // ── runBulkApprove failure path (request not found) ──────────────────────────
 
 func TestRunBulkApprove_FailurePath(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -102,7 +118,15 @@ func TestRunBulkApprove_FailurePath(t *testing.T) {
 // ── runBulkReject success path ────────────────────────────────────────────────
 
 func TestRunBulkReject_SuccessPath(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -124,7 +148,15 @@ func TestRunBulkReject_SuccessPath(t *testing.T) {
 // ── runBulkReject failure path (request not found) ───────────────────────────
 
 func TestRunBulkReject_FailurePath(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -146,7 +178,15 @@ func TestRunBulkReject_FailurePath(t *testing.T) {
 // ── runTmplList success paths ─────────────────────────────────────────────────
 
 func TestRunTmplList_EmptySuccess(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -163,7 +203,15 @@ func TestRunTmplList_EmptySuccess(t *testing.T) {
 }
 
 func TestRunTmplList_WithData(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -187,7 +235,15 @@ func TestRunTmplList_WithData(t *testing.T) {
 // ── runTmplAdd success path ───────────────────────────────────────────────────
 
 func TestRunTmplAdd_SuccessPath(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -205,7 +261,15 @@ func TestRunTmplAdd_SuccessPath(t *testing.T) {
 // ── runTmplDelete success path ────────────────────────────────────────────────
 
 func TestRunTmplDelete_SuccessPath(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
@@ -229,7 +293,15 @@ func TestRunTmplDelete_SuccessPath(t *testing.T) {
 // ── runTmplDelete not-found path ──────────────────────────────────────────────
 
 func TestRunTmplDelete_NotFoundError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 

@@ -671,7 +671,19 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		for _, cn := range cc.Connectors {
 			switch cn.Type {
 			case "aws-secrets-manager":
-				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AllowedRefs))
+				// account_id is optional (unlike gcp-secret-manager's mandatory
+				// project_id — see internal/connect/awssm.go's doc comment for why the
+				// risk shape differs: a bare secret name never crosses AWS accounts, so
+				// the confused-deputy gap only exists for ARN-shaped refs, and even then
+				// requires the target account's own resource policy to separately grant
+				// access). cfg.Validate()'s validateConnectAWSAccountID already rejected a
+				// malformed (non-12-digit) account_id before this function is ever
+				// reached; an empty account_id is a legal, if less-hardened,
+				// configuration and boots fine, with a warning recommending it be set.
+				if cn.AccountID == "" {
+					log.Printf("Keyorix Connect: aws-secrets-manager connector %q has no account_id configured — a ref supplied as a full ARN naming a DIFFERENT AWS account will still succeed if that account's own resource policy grants cross-account access; set account_id to pin the connector to one account (a bare secret-name ref is unaffected either way -- Secrets Manager always resolves those within the caller's own account)", cn.Name)
+				}
+				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AccountID, cn.AllowedRefs))
 			case "gcp-secret-manager":
 				// project_id is now a required field: unreachable via a config that
 				// passed cfg.Validate() — validateConnectGCPProjectID

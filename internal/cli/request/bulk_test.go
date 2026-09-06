@@ -26,8 +26,18 @@ var errInitService = errors.New("simulated service init failure")
 
 // withFailingInitService temporarily replaces bulkInitService with one that
 // always returns errInitService, then restores the original on cleanup.
+// Also isolates HOME/XDG_CONFIG_HOME/KEYORIX_SERVER/KEYORIX_TOKEN: runTmplList/
+// runTmplAdd check common.NewRemoteClient() BEFORE ever calling bulkInitService,
+// so without this a leftover ~/.keyorix/cli.yaml in client mode on the machine
+// running this test would make them take the remote branch instead and never
+// reach the swapped-in failing bulkInitService at all.
 func withFailingInitService(t *testing.T) {
 	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
 	orig := bulkInitService
 	bulkInitService = func() (*core.KeyorixCore, error) { return nil, errInitService }
 	t.Cleanup(func() { bulkInitService = orig })
@@ -42,6 +52,14 @@ var bulkBrokenCounter int
 // storage calls fail because those tables don't exist.
 func withUserSeededPartialService(t *testing.T, email string) {
 	t.Helper()
+	// Isolate HOME/XDG_CONFIG_HOME/KEYORIX_SERVER/KEYORIX_TOKEN for the same
+	// reason as withFailingInitService above: runTmplList/runTmplAdd check
+	// common.NewRemoteClient() before ever calling bulkInitService.
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
 	require.NoError(t, i18n.InitializeForTesting())
 	bulkBrokenCounter++
 	dsn := fmt.Sprintf("file:bulk_partial_%d?mode=memory&cache=shared", bulkBrokenCounter)

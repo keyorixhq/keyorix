@@ -196,6 +196,22 @@ type ConnectorConfig struct {
 	// project_id to every gcp-secret-manager connector first (see CHANGELOG.md).
 	// Unrelated to Project below — this is a GCP-side identifier, Project is Keyorix's.
 	ProjectID string `yaml:"project_id"`
+	// AccountID optionally pins an "aws-secrets-manager" connector to a single AWS
+	// account: an ARN-shaped ref naming a DIFFERENT account is rejected before the
+	// backend call. Unlike ProjectID above, this is NOT required: a bare secret-name
+	// ref (the common shape) is always resolved within the ambient credential's own
+	// AWS account by the Secrets Manager API itself, so it never carries a competing
+	// account to check, and a full-ARN ref naming another account additionally
+	// requires that target account's own resource policy to have separately granted
+	// cross-account access (a double opt-in, unlike GCP's single-opt-in
+	// ambient-reach gap — see internal/connect/awssm.go's doc comment). When set,
+	// validateConnectAWSAccountID (below) fails boot if it is not exactly 12 digits
+	// (the AWS account ID format); when unset, server/main.go logs a startup
+	// recommendation but boots — a deliberate phase-in, not a bug: making this
+	// mandatory would force every connector that only ever reads bare-name refs
+	// (which cannot cross accounts regardless) to configure a field with zero
+	// enforcement value for them.
+	AccountID string `yaml:"account_id"`
 	// TokenEnv names the environment variable holding the backend token for type
 	// "vault" (default "VAULT_TOKEN"). The token is read from the environment, never
 	// from this file.
@@ -2142,6 +2158,10 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return err
 	}
 
+	if err := validateConnectAWSAccountID(c.Connect); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2249,6 +2269,40 @@ func validateConnectGCPProjectID(cc ConnectConfig) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("connect: gcp-secret-manager connector(s) missing required \"project_id\" — an unset project_id lets a caller read secrets from ANY GCP project the ambient ADC identity can reach, regardless of this connector's Keyorix tenant scope (a confused-deputy gap; #431/ADR-082): %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// awsAccountIDPattern is the AWS account ID format: exactly 12 digits.
+var awsAccountIDPattern = regexp.MustCompile(`^[0-9]{12}$`)
+
+// validateConnectAWSAccountID checks the OPTIONAL account_id pin on
+// "aws-secrets-manager" connectors — the AWS sibling of
+// validateConnectGCPProjectID above, but deliberately NOT a mandatory-field check:
+// see ConnectorConfig.AccountID's own doc comment and internal/connect/awssm.go for
+// why AWS's confused-deputy risk shape is narrower than GCP's (a bare secret-name
+// ref, the common case, can never cross AWS accounts at all; a full-ARN ref naming
+// another account additionally requires that account's own resource policy to have
+// separately granted access — a double opt-in). Because the field is optional, this
+// only ever rejects a connector that DID set account_id but set it to something that
+// is not a well-formed AWS account ID (exactly 12 digits) — catching a typo at boot
+// rather than at first read. A missing account_id is not an error here; server/main.go
+// logs a startup recommendation for that case instead (mirroring the phase-in
+// idiom GCP's project_id itself used before it became mandatory). Aggregates every
+// offending connector into one error, mirroring validateConnectGCPProjectID's own
+// aggregation style.
+func validateConnectAWSAccountID(cc ConnectConfig) error {
+	var malformed []string
+	for _, connector := range cc.Connectors {
+		if connector.Type != "aws-secrets-manager" || connector.AccountID == "" {
+			continue
+		}
+		if !awsAccountIDPattern.MatchString(connector.AccountID) {
+			malformed = append(malformed, fmt.Sprintf("%s (account_id: %q)", connector.Name, connector.AccountID))
+		}
+	}
+	if len(malformed) > 0 {
+		return fmt.Errorf("connect: aws-secrets-manager connector(s) with malformed \"account_id\" (must be exactly 12 digits, the AWS account ID format): %s", strings.Join(malformed, ", "))
 	}
 	return nil
 }

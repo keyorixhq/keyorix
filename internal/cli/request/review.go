@@ -11,12 +11,13 @@ import (
 )
 
 var (
-	reviewID     uint
-	reviewAction string
-	reviewRole   string
-	reviewReason string
-	reviewBy     string
-	reviewTTL    string
+	reviewID      uint
+	reviewAction  string
+	reviewRole    string
+	reviewReason  string
+	reviewBy      string
+	reviewTTL     string
+	reviewProject string
 )
 
 var reviewCmd = &cobra.Command{
@@ -35,6 +36,7 @@ func init() {
 	reviewCmd.Flags().StringVar(&reviewReason, "reason", "", "Reason on reject")
 	reviewCmd.Flags().StringVar(&reviewTTL, "ttl", "", "Time-bound the granted role on approve (Go duration, e.g. 4h); empty = permanent")
 	reviewCmd.Flags().StringVar(&reviewBy, "by", "", "Reviewer email address (required, for audit)")
+	reviewCmd.Flags().StringVar(&reviewProject, "project", "", "Project name (required when a remote server is configured; embedded mode resolves the request's project from the row itself)")
 	_ = reviewCmd.MarkFlagRequired("id")
 	_ = reviewCmd.MarkFlagRequired("action")
 	_ = reviewCmd.MarkFlagRequired("by")
@@ -47,11 +49,16 @@ func runReview(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 	if reviewAction != "approve" && reviewAction != "reject" {
 		return fmt.Errorf("--action must be approve or reject")
 	}
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runReviewRemote(ctx, rc)
+	}
+
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	approverID, err := resolveUserID(ctx, service, reviewBy)
 	if err != nil {
@@ -117,6 +124,100 @@ func runReview(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 			return fmt.Errorf("failed to reject access request: %w", err)
 		}
 		fmt.Printf("Access request %d rejected.\n", req.ID)
+	}
+	return nil
+}
+
+// runReviewRemote resolves and approves/rejects the request via PUT
+// /api/v1/projects/{id}/access-requests/{requestId}, gated server-side on
+// roles.assign scoped to the project -- the SAME authority
+// requireReviewAuthority enforces manually in embedded mode. --by is not
+// consulted here: the server determines the approver from the caller's own
+// bearer token, not from any --by value in the request body.
+//
+// --project is required here (unlike embedded mode, which reads the request's
+// ProjectID straight off the row) because the PUT route is project-scoped in
+// its URL and there is no human-facing GET-by-ID-alone lookup this CLI can use
+// to discover it -- see fetchAccessRequest's doc comment for why this
+// deliberately does not scan every project to find it.
+func runReviewRemote(ctx context.Context, rc *common.RemoteClient) error {
+	if reviewProject == "" {
+		return fmt.Errorf("--project is required when a remote server is configured (PUT " +
+			".../projects/{id}/access-requests/{requestId} is project-scoped in its URL; embedded mode can " +
+			"resolve this from the request row directly, remote mode cannot without it)")
+	}
+	projectID, err := resolveProjectIDByName(ctx, rc, reviewProject)
+	if err != nil {
+		return err
+	}
+
+	existing, err := fetchAccessRequest(ctx, rc, projectID, reviewID)
+	if err != nil {
+		return err
+	}
+	requesterLabel := remoteUserLabel(ctx, rc, existing.UserID)
+	fmt.Printf("Resolved access request %d in project %q: requester %s, state=%s.\n",
+		reviewID, reviewProject, requesterLabel, existing.State)
+
+	// A secret-scoped request (SecretID set) grants no role at all -- approving
+	// it must go through ApproveSecretAccessRequest (classification_gate.go),
+	// which has NO HTTP handler anywhere in server/http (only the /system
+	// RemoteStorage storage-primitive proxy's doc comments mention it, and
+	// that proxy is off-limits to the CLI). Refuse loudly instead of forwarding
+	// to the generic PUT, whose ApproveAccessRequestWithExpiry path would reject
+	// it anyway (a secret-scoped request has no SuggestedRole to fall back on)
+	// with a confusing "a role to grant is required" rather than this direct
+	// explanation. Reject is unaffected: RejectAccessRequest is generic and
+	// works the same for both request shapes.
+	if reviewAction == "approve" && existing.SecretID != nil {
+		return fmt.Errorf("access request %d is secret-scoped (secret #%d); approving a secret-scoped access "+
+			"request has no remote API equivalent -- run this against the local embedded database directly, "+
+			"or reject it remotely instead", existing.ID, *existing.SecretID)
+	}
+
+	var ttl time.Duration
+	if reviewTTL != "" {
+		ttl, err = time.ParseDuration(reviewTTL)
+		if err != nil || ttl < 0 {
+			return fmt.Errorf("--ttl must be a non-negative Go duration (e.g. 4h)")
+		}
+	}
+
+	body := map[string]interface{}{
+		"action":       reviewAction,
+		"granted_role": reviewRole,
+		"reason":       reviewReason,
+		"grant_ttl":    reviewTTL,
+	}
+	path := fmt.Sprintf("/api/v1/projects/%d/access-requests/%d", projectID, reviewID)
+	if err := rc.Put(ctx, path, body, nil); err != nil {
+		return fmt.Errorf("failed to %s access request: %w", reviewAction, err)
+	}
+
+	// The PUT response carries no body (sendSuccess(w, nil, ...)), so re-fetch
+	// to report the ACTUAL resulting state truthfully instead of assuming the
+	// action fully completed -- under dual control an approve may still be
+	// pending more approvals, which this must say plainly, not report as done.
+	updated, err := fetchAccessRequest(ctx, rc, projectID, reviewID)
+	if err != nil {
+		return fmt.Errorf("access request %d was %sd, but re-fetching its state to confirm failed: %w",
+			reviewID, reviewAction, err)
+	}
+	switch reviewAction {
+	case "approve":
+		if updated.State != "approved" {
+			fmt.Printf("Approval recorded for access request %d (%d of %d) — more approvals needed before the role is granted.\n",
+				updated.ID, updated.ApprovalsReceived, updated.RequiredApprovals)
+			return nil
+		}
+		grantNote := "permanently"
+		if ttl > 0 {
+			grantNote = fmt.Sprintf("for %s (time-bound)", ttl)
+		}
+		fmt.Printf("Access request %d approved: granted role %q to %s %s.\n",
+			updated.ID, updated.GrantedRole, requesterLabel, grantNote)
+	case "reject":
+		fmt.Printf("Access request %d rejected.\n", updated.ID)
 	}
 	return nil
 }

@@ -40,6 +40,10 @@ func runVersions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("secret ID is required (use --id)")
 	}
 
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runVersionsRemote(rc)
+	}
+
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
 	st, err := common.InitializeStorage()
 	if err != nil {
@@ -168,6 +172,107 @@ func displayVersionsJSON(secret *models.SecretNode, versions []*models.SecretVer
 		out.Versions = append(out.Versions, entry)
 	}
 
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode JSON output: %v\n", err)
+	}
+}
+
+// runVersionsRemote handles `secret versions` in remote mode via
+// GET /api/v1/secrets/{id} (for the name/type header) and
+// GET /api/v1/secrets/{id}/versions. Deliberately does NOT reuse
+// displayVersionsTable/displayVersionsJSON: those read
+// EncryptedValue/EncryptionMetadata for the SIZE/ALGORITHM columns, but both
+// fields carry `json:"-"` (models.SecretVersion) and are never sent over the
+// wire — reusing them unchanged would silently print "0 B"/"Unknown" for
+// every row as if that were real data, not an artifact of the transport. A
+// dedicated, honest remote rendering omits those two columns instead of
+// faking them.
+func runVersionsRemote(rc *common.RemoteClient) error {
+	fmt.Printf("Target: secret %d on %s\n", versionsID, rc.Endpoint)
+	ctx := context.Background()
+
+	var secret models.SecretNode
+	if err := rc.Get(ctx, fmt.Sprintf("/api/v1/secrets/%d", versionsID), &secret); err != nil {
+		return fmt.Errorf("secret not found: %w", err)
+	}
+
+	var body struct {
+		Versions []*models.SecretVersion `json:"versions"`
+	}
+	if err := rc.Get(ctx, fmt.Sprintf("/api/v1/secrets/%d/versions", versionsID), &body); err != nil {
+		return fmt.Errorf("failed to get versions: %w", err)
+	}
+
+	switch versionsFormat {
+	case "json":
+		displayVersionsJSONRemote(&secret, body.Versions)
+	case "table":
+		displayVersionsTableRemote(&secret, body.Versions)
+	default:
+		return fmt.Errorf("unsupported format: %s (use 'table' or 'json')", versionsFormat)
+	}
+	return nil
+}
+
+func displayVersionsTableRemote(secret *models.SecretNode, versions []*models.SecretVersion) {
+	fmt.Printf("📚 Secret Versions\n")
+	fmt.Printf("==================\n")
+	fmt.Printf("Secret: %s (ID: %d)\n", secret.Name, secret.ID)
+	fmt.Printf("Total Versions: %d\n", len(versions))
+	fmt.Printf("(size/algorithm columns are omitted in remote mode -- not exposed by the API)\n\n")
+
+	if len(versions) == 0 {
+		fmt.Printf("No versions found.\n")
+		return
+	}
+
+	fmt.Printf("%-8s %-10s %-20s\n", "VERSION", "READS", "CREATED")
+	fmt.Printf("%-8s %-10s %-20s\n", "--------", "----------", "--------------------")
+	for _, version := range versions {
+		fmt.Printf("%-8d %-10d %-20s\n",
+			version.VersionNumber, version.ReadCount,
+			version.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+
+	latest := versions[len(versions)-1]
+	fmt.Printf("\n💡 Latest Version: %d (Created: %s)\n",
+		latest.VersionNumber, latest.CreatedAt.Format("2006-01-02 15:04:05"))
+}
+
+// remoteJSONVersionEntry is jsonVersionEntry without SizeBytes/EncryptionMetadata,
+// which are never present in a remote-mode response (see runVersionsRemote).
+type remoteJSONVersionEntry struct {
+	ID            uint   `json:"id"`
+	VersionNumber int    `json:"version_number"`
+	ReadCount     int    `json:"read_count"`
+	CreatedAt     string `json:"created_at"`
+}
+
+func displayVersionsJSONRemote(secret *models.SecretNode, versions []*models.SecretVersion) {
+	var out struct {
+		Secret struct {
+			ID   uint   `json:"id"`
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"secret"`
+		TotalVersions int                      `json:"total_versions"`
+		Versions      []remoteJSONVersionEntry `json:"versions"`
+	}
+	out.Secret.ID = secret.ID
+	out.Secret.Name = secret.Name
+	out.Secret.Type = secret.Type
+	out.TotalVersions = len(versions)
+	out.Versions = make([]remoteJSONVersionEntry, 0, len(versions))
+	for _, version := range versions {
+		out.Versions = append(out.Versions, remoteJSONVersionEntry{
+			ID:            version.ID,
+			VersionNumber: version.VersionNumber,
+			ReadCount:     version.ReadCount,
+			CreatedAt:     version.CreatedAt.Format(time.RFC3339),
+		})
+	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(out); err != nil {

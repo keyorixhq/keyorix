@@ -46,7 +46,8 @@ func TestRunLogin_SaveFails(t *testing.T) {
 
 	t.Setenv("KEYORIX_API_KEY", "kx_test_key_456")
 
-	require.NoError(t, loginCmd.Flags().Set("server", "https://keyorix.example.com"))
+	srv := newFakeProfileServer(t, "carol")
+	require.NoError(t, loginCmd.Flags().Set("server", srv.URL))
 	t.Cleanup(func() {
 		// Restore write permission before TempDir cleanup.
 		_ = os.Chmod(dir, 0700)
