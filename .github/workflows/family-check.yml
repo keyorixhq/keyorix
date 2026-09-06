@@ -47,10 +47,36 @@ jobs:
         with:
           go-version: '1.26.6'
 
+      # Any PR branched before this workflow's own tooling (devtools/*, this
+      # scope file) landed on main has neither in its head checkout at all --
+      # not a stale version, an outright missing directory/file. That's the
+      # common case immediately after this check's rollout, and recurs for any
+      # long-lived branch cut before a later devtools/familycheck change. Fall
+      # back to base's copy (main's, which always has it) so the check still
+      # runs using the tool version already on main, rather than failing
+      # outright on every pre-existing branch touched by `**.go`.
+      - name: Resolve family-check tooling location (head, falling back to base)
+        id: toolsrc
+        run: |
+          for pair in "asymanalyzer_dir:devtools/asymanalyzer" "familycheck_dir:devtools/familycheck"; do
+            out="${pair%%:*}"; rel="${pair#*:}"
+            if [ -d "head/$rel" ]; then
+              echo "$out=head/$rel" >> "$GITHUB_OUTPUT"
+            else
+              echo "$out=base/$rel" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          if [ -f head/.github/family-check-scope.json ]; then
+            echo "scope_file=head/.github/family-check-scope.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "scope_file=base/.github/family-check-scope.json" >> "$GITHUB_OUTPUT"
+          fi
+
       # Both devtools/ tools are standalone modules (not in go.work, like
       # operator/) so golang.org/x/tools never becomes a dependency of the
-      # shipped keyorix binary. Built from the HEAD checkout: a PR that
-      # modifies the tools themselves is checked with its own version of them.
+      # shipped keyorix binary. Built from the HEAD checkout when present: a
+      # PR that modifies the tools themselves is checked with its own version
+      # of them (falls back to base per toolsrc above otherwise).
       # `cd` into each tool's own directory before building: with GOWORK=off,
       # `go build` resolves the main module from the CURRENT directory, not
       # the target package path, so building `./head/devtools/x` from the
@@ -58,8 +84,8 @@ jobs:
       # file not found in current directory or any parent directory".
       - name: Build analyzer and checker
         run: |
-          (cd head/devtools/asymanalyzer && GOWORK=off go build -o /tmp/asymanalyzer .)
-          (cd head/devtools/familycheck && GOWORK=off go build -o /tmp/familycheck .)
+          (cd "${{ steps.toolsrc.outputs.asymanalyzer_dir }}" && GOWORK=off go build -o /tmp/asymanalyzer .)
+          (cd "${{ steps.toolsrc.outputs.familycheck_dir }}" && GOWORK=off go build -o /tmp/familycheck .)
 
       - name: Compute family lists (base and head)
         run: |
@@ -94,7 +120,7 @@ jobs:
             -head-families head-families.json \
             -changed-files changed-files.txt \
             -pr-body pr-body.txt \
-            -scope head/.github/family-check-scope.json \
+            -scope "${{ steps.toolsrc.outputs.scope_file }}" \
             -repo-root head \
             > family-check-report.md
 
