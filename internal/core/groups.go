@@ -239,22 +239,22 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 	if err := c.domainAllowedForGroupJoin(ctx, userID, groupID, projectID); err != nil {
 		return err
 	}
-	// #G04: validateGroupJoinRoles' set-based requireGroupJoinNoSoDViolation check
-	// and the membership write below must be treated as one step — see
-	// sodGrantMu's doc comment in service.go (AssignUserRole has the identical
-	// race).
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if actorID != 0 || actorIsMachine {
-		if err := c.validateGroupJoinRoles(ctx, actorID, userID, groupID); err != nil {
-			return err
+	// #G04/HA: validateGroupJoinRoles' set-based requireGroupJoinNoSoDViolation
+	// check and the membership write below must be treated as one step — see
+	// WithSoDGrantLock's doc comment in internal/core/storage/interface.go
+	// (AssignUserRole has the identical race).
+	return c.storage.WithSoDGrantLock(ctx, func() error {
+		if actorID != 0 || actorIsMachine {
+			if err := c.validateGroupJoinRoles(ctx, actorID, userID, groupID); err != nil {
+				return err
+			}
 		}
-	}
-	if err := c.storage.AddUserToGroup(ctx, userID, groupID, projectID); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogGroupMemberAdded(ctx, actorID, userID, groupID)
-	return nil
+		if err := c.storage.AddUserToGroup(ctx, userID, groupID, projectID); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogGroupMemberAdded(ctx, actorID, userID, groupID)
+		return nil
+	})
 }
 
 // AddUserToGroupGlobal is a convenience wrapper that adds a global membership

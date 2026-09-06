@@ -42,14 +42,15 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
-	// #G04: same unsynchronized-check-then-write race as AssignUserRole (see
-	// sodGrantMu's doc comment in service.go) — this is its time-bound sibling.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
-		return err
-	}
-	return c.assignUserRoleWithExpirySkipSoD(ctx, actorID, userID, roleID, scope, expiresAt)
+	// #G04/HA: same check-then-write race as AssignUserRole (see
+	// WithSoDGrantLock's doc comment in internal/core/storage/interface.go) —
+	// this is its time-bound sibling.
+	return c.storage.WithSoDGrantLock(ctx, func() error {
+		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+			return err
+		}
+		return c.assignUserRoleWithExpirySkipSoD(ctx, actorID, userID, roleID, scope, expiresAt)
+	})
 }
 
 // assignUserRoleWithExpirySkipSoD performs the identical time-bound grant as
@@ -88,17 +89,17 @@ func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, gr
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
 		return err
 	}
-	// #G04: see AssignUserRole's identical sodGrantMu use.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, expiresAt); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
-	return nil
+	// #G04/HA: see AssignUserRole's identical WithSoDGrantLock use.
+	return c.storage.WithSoDGrantLock(ctx, func() error {
+		if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, expiresAt); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
+		return nil
+	})
 }
 
 // EventShareExpired is audited when a time-bound secret share is swept after expiry.

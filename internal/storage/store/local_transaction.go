@@ -16,6 +16,14 @@ import (
 // the transaction still serializes correctly (ADR-029/#339).
 func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return fn(&LocalStorage{db: tx, auditChainMu: ls.auditChainMu, auditCheckpointMu: ls.auditCheckpointMu, bootstrapMu: ls.bootstrapMu})
+		return fn(&LocalStorage{
+			db:                     tx,
+			auditChainMu:           ls.auditChainMu,
+			auditCheckpointMu:      ls.auditCheckpointMu,
+			bootstrapMu:            ls.bootstrapMu,
+			sodGrantMu:             ls.sodGrantMu,
+			accessReviewDecisionMu: ls.accessReviewDecisionMu,
+			dualControlApprovalMu:  ls.dualControlApprovalMu,
+		})
 	})
 }

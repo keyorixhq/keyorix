@@ -173,17 +173,19 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
 		return err
 	}
-	// #G04: see AssignUserRole's identical sodGrantMu use.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
-	return nil
+	// #G04/HA: see AssignUserRole's identical WithSoDGrantLock use — a plain
+	// in-process mutex here would not serialize this check-then-write against a
+	// second HA replica sharing the same Postgres database.
+	return c.storage.WithSoDGrantLock(ctx, func() error {
+		if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
+		return nil
+	})
 }
 
 // RemoveRoleFromGroup verifies the group exists then removes the role at scope
@@ -335,19 +337,22 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, false); err != nil {
 		return err
 	}
-	// #G04: sodGrantMu holds across the check AND the write — see its doc
-	// comment in service.go for why a separate, unsynchronized write lets two
-	// concurrent grants each pass a stale pre-grant SoD check.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
-	return nil
+	// #G04/HA: WithSoDGrantLock holds across the check AND the write — see its
+	// doc comment in internal/core/storage/interface.go for why a separate,
+	// unsynchronized write lets two concurrent grants each pass a stale
+	// pre-grant SoD check. Replaces the former in-process-only sodGrantMu,
+	// which provided no serialization at all between two HA replicas sharing
+	// the same Postgres database (#G04-HA).
+	return c.storage.WithSoDGrantLock(ctx, func() error {
+		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
+		return nil
+	})
 }
 
 // assignUserRoleSystemGrant performs the same audited grant as AssignUserRole but
@@ -377,17 +382,17 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 // (IdP group membership can change on every login, which is at least as fast a
 // grant/revoke cycle as an explicit JIT grant).
 func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
-	// #G04: see AssignUserRole's identical sodGrantMu use.
-	c.sodGrantMu.Lock()
-	defer c.sodGrantMu.Unlock()
-	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
-	return nil
+	// #G04/HA: see AssignUserRole's identical WithSoDGrantLock use.
+	return c.storage.WithSoDGrantLock(ctx, func() error {
+		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
+		return nil
+	})
 }
 
 // RemoveUserRole removes a role from a user at the given scope and records an

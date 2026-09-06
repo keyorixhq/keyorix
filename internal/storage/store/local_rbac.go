@@ -423,7 +423,15 @@ func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context,
 // when the caller drove both calls under its own WithTransaction.
 func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID, roleID uint, adminRoleIDs []uint) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		txStorage := &LocalStorage{db: tx, auditChainMu: ls.auditChainMu, auditCheckpointMu: ls.auditCheckpointMu, bootstrapMu: ls.bootstrapMu}
+		txStorage := &LocalStorage{
+			db:                     tx,
+			auditChainMu:           ls.auditChainMu,
+			auditCheckpointMu:      ls.auditCheckpointMu,
+			bootstrapMu:            ls.bootstrapMu,
+			sodGrantMu:             ls.sodGrantMu,
+			accessReviewDecisionMu: ls.accessReviewDecisionMu,
+			dualControlApprovalMu:  ls.dualControlApprovalMu,
+		}
 		assignments, err := txStorage.ListGlobalAdminAssignmentsForUpdate(ctx, adminRoleIDs)
 		if err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

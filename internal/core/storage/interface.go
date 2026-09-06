@@ -88,6 +88,52 @@ type Storage interface {
 	// process mutex is enough.
 	WithBootstrapLock(ctx context.Context, fn func() error) error
 
+	// WithSoDGrantLock serializes the separation-of-duties preventive
+	// check-then-write sequence (#419/#G04-HA) shared by every direct/group role
+	// grant and group-join path (AssignUserRole, assignUserRoleSystemGrant,
+	// AssignUserRoleWithExpiry, AssignRoleToGroup, AssignGroupRoleWithExpiry,
+	// AddUserToGroup's validateGroupJoinRoles) across every replica of an HA
+	// deployment, mirroring WithBootstrapLock's mutex+advisory-lock design: an
+	// in-process mutex alone (the former sodGrantMu) only serializes callers
+	// within ONE server, so two different replicas each granting an
+	// individually SoD-clean role to the SAME principal can both read a
+	// pre-grant permission set that doesn't yet reflect the other's
+	// still-uncommitted grant, both pass the check, and together create the
+	// exact toxic-permission overlap the policy exists to block. Deliberately
+	// ONE shared lock across every SoD-gated path (not one per principal) —
+	// mirroring the single in-process mutex it replaces, so a group-role grant
+	// affecting a member and that same member's own direct grant still
+	// serialize against each other, not just against themselves. This BLOCKS
+	// until the lock is free, same as WithBootstrapLock: a losing replica must
+	// actually re-run its preventive check under the lock and observe the
+	// winner's now-committed grant, not silently no-op. On PostgreSQL it holds
+	// a session advisory lock (pg_advisory_lock) for the duration of fn; on
+	// SQLite (single instance, no cross-process concern) a process mutex is
+	// enough.
+	WithSoDGrantLock(ctx context.Context, fn func() error) error
+
+	// WithAccessReviewDecisionLock serializes DecideAccessReviewItem's
+	// pending-check + attest/revoke action + decision-stamp sequence
+	// (#419/#G04-HA) across every replica of an HA deployment, mirroring
+	// WithBootstrapLock's design. persistItemDecision's conditional UPDATE
+	// alone stops a second STAMP from persisting but not a second concurrent
+	// attest/revoke ACTION from executing before either write commits — two
+	// replicas racing the same pending item could otherwise both read
+	// Decision==pending and both carry out their side effect, even though only
+	// the winner's stamp survives. This BLOCKS until the lock is free, same as
+	// WithBootstrapLock.
+	WithAccessReviewDecisionLock(ctx context.Context, fn func() error) error
+
+	// WithDualControlApprovalLock serializes ApproveAccessRequestWithExpiry's
+	// read-approvals-decide-grant sequence (#419/#G04-HA) across every replica
+	// of an HA deployment, mirroring WithBootstrapLock's design: two approvers
+	// signing off at the exact K-of-N threshold boundary on different replicas
+	// could otherwise each read a below-threshold approval count before
+	// either's approval row commits, and both finalize the grant — defeating
+	// the K-distinct-approvers dual-control guarantee. This BLOCKS until the
+	// lock is free, same as WithBootstrapLock.
+	WithDualControlApprovalLock(ctx context.Context, fn func() error) error
+
 	// WithTransaction runs fn inside a single storage transaction: every mutation fn
 	// performs through the provided Storage commits together, or rolls back together if
 	// fn returns an error. The backing store decides the semantics — the local (DB)

@@ -49,6 +49,21 @@ func (m *MockStorage) WithBootstrapLock(_ context.Context, fn func() error) erro
 	return fn()
 }
 
+// WithSoDGrantLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithSoDGrantLock(_ context.Context, fn func() error) error {
+	return fn()
+}
+
+// WithAccessReviewDecisionLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithAccessReviewDecisionLock(_ context.Context, fn func() error) error {
+	return fn()
+}
+
+// WithDualControlApprovalLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithDualControlApprovalLock(_ context.Context, fn func() error) error {
+	return fn()
+}
+
 // WithTransaction runs fn directly against the mock (no real transaction in tests).
 func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
 	return fn(m)

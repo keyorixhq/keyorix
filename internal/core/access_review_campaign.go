@@ -266,56 +266,59 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if campaign.State != CampaignStateOpen {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
 	}
-	// #G04: accessReviewDecisionMu holds from the pending-decision read through
-	// the actual attest/revoke side effect and its persisted stamp — see its
-	// doc comment in service.go for why persistItemDecision's conditional
-	// UPDATE alone isn't enough (it stops a second STAMP from persisting, not
-	// a second ACTION from executing).
-	c.accessReviewDecisionMu.Lock()
-	defer c.accessReviewDecisionMu.Unlock()
-	item, err := c.storage.GetAccessReviewItem(ctx, itemID)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
-	}
-	if item.CampaignID != campaignID {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
-	}
-	// Decide once: an already-attested/revoked item must not be flipped. A revoke
-	// removes the real grant, so re-deciding it (revoke→attest) would record
-	// "attested" for access that no longer exists — false certification evidence.
-	if item.Decision != ReviewItemPending {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
-	}
-	if err := c.checkReviewerIndependence(ctx, actorID, item.PrincipalType, item.PrincipalID); err != nil {
-		return err
-	}
-	// ARC-001: a machine identity provisioned by the actor must not be self-certified
-	// by its creator. Fail closed on lookup error (can't prove independence → deny).
-	if item.PrincipalType == "machine" {
-		machine, err := c.storage.GetMachineIdentity(ctx, item.PrincipalID)
+	// #G04/HA: WithAccessReviewDecisionLock holds from the pending-decision read
+	// through the actual attest/revoke side effect and its persisted stamp —
+	// see its doc comment in internal/core/storage/interface.go for why
+	// persistItemDecision's conditional UPDATE alone isn't enough (it stops a
+	// second STAMP from persisting, not a second ACTION from executing), and
+	// why the former in-process-only accessReviewDecisionMu provided no
+	// serialization at all between two HA replicas sharing the same Postgres
+	// database (#G04-HA).
+	return c.storage.WithAccessReviewDecisionLock(ctx, func() error {
+		item, err := c.storage.GetAccessReviewItem(ctx, itemID)
 		if err != nil {
-			return fmt.Errorf("loading machine identity: %w", err)
+			return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 		}
-		if machine.CreatedBy == actorID {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
+		if item.CampaignID != campaignID {
+			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 		}
-	}
-	decision := AccessReviewDecision{
-		Source:        item.Source,
-		PrincipalType: item.PrincipalType,
-		PrincipalID:   item.PrincipalID,
-		RoleID:        item.RoleID,
-		EnvironmentID: item.EnvironmentID,
-		SecretID:      item.SecretID,
-	}
-	if err := c.applyAccessDecision(ctx, actorID, projectID, item, action, decision); err != nil {
-		return err
-	}
-	now := c.now()
-	item.Reason = reason
-	item.DecidedBy = actorID
-	item.DecidedAt = &now
-	return c.persistItemDecision(ctx, item, itemID)
+		// Decide once: an already-attested/revoked item must not be flipped. A revoke
+		// removes the real grant, so re-deciding it (revoke→attest) would record
+		// "attested" for access that no longer exists — false certification evidence.
+		if item.Decision != ReviewItemPending {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
+		}
+		if err := c.checkReviewerIndependence(ctx, actorID, item.PrincipalType, item.PrincipalID); err != nil {
+			return err
+		}
+		// ARC-001: a machine identity provisioned by the actor must not be self-certified
+		// by its creator. Fail closed on lookup error (can't prove independence → deny).
+		if item.PrincipalType == "machine" {
+			machine, err := c.storage.GetMachineIdentity(ctx, item.PrincipalID)
+			if err != nil {
+				return fmt.Errorf("loading machine identity: %w", err)
+			}
+			if machine.CreatedBy == actorID {
+				return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
+			}
+		}
+		decision := AccessReviewDecision{
+			Source:        item.Source,
+			PrincipalType: item.PrincipalType,
+			PrincipalID:   item.PrincipalID,
+			RoleID:        item.RoleID,
+			EnvironmentID: item.EnvironmentID,
+			SecretID:      item.SecretID,
+		}
+		if err := c.applyAccessDecision(ctx, actorID, projectID, item, action, decision); err != nil {
+			return err
+		}
+		now := c.now()
+		item.Reason = reason
+		item.DecidedBy = actorID
+		item.DecidedAt = &now
+		return c.persistItemDecision(ctx, item, itemID)
+	})
 }
 
 // requireHumanReviewer rejects a recertification action by a non-human / unattributable

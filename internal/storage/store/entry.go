@@ -195,11 +195,36 @@ type LocalStorage struct {
 	// same reason as auditChainMu/auditCheckpointMu — a transaction-scoped
 	// LocalStorage must share its parent's mutex.
 	bootstrapMu *sync.Mutex
+	// sodGrantMu serializes the separation-of-duties preventive check-then-write
+	// sequence (#419/#G04-HA) within this process. The PostgreSQL advisory lock in
+	// WithSoDGrantLock extends this across processes/replicas. A pointer for the
+	// same reason as the other With*Lock mutexes above.
+	sodGrantMu *sync.Mutex
+	// accessReviewDecisionMu serializes DecideAccessReviewItem's pending-check +
+	// action + stamp sequence (#419/#G04-HA) within this process. The PostgreSQL
+	// advisory lock in WithAccessReviewDecisionLock extends this across
+	// processes/replicas. A pointer for the same reason as the other With*Lock
+	// mutexes above.
+	accessReviewDecisionMu *sync.Mutex
+	// dualControlApprovalMu serializes ApproveAccessRequestWithExpiry's
+	// read-approvals-decide-grant sequence (#419/#G04-HA) within this process. The
+	// PostgreSQL advisory lock in WithDualControlApprovalLock extends this across
+	// processes/replicas. A pointer for the same reason as the other With*Lock
+	// mutexes above.
+	dualControlApprovalMu *sync.Mutex
 }
 
 // NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
-	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}, auditCheckpointMu: &sync.Mutex{}, bootstrapMu: &sync.Mutex{}}
+	return &LocalStorage{
+		db:                     db,
+		auditChainMu:           &sync.Mutex{},
+		auditCheckpointMu:      &sync.Mutex{},
+		bootstrapMu:            &sync.Mutex{},
+		sodGrantMu:             &sync.Mutex{},
+		accessReviewDecisionMu: &sync.Mutex{},
+		dualControlApprovalMu:  &sync.Mutex{},
+	}
 }
 
 // DB returns the underlying *gorm.DB. Exposed for test helpers that need direct
