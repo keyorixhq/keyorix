@@ -290,10 +290,27 @@ func Extract(r io.Reader, reg *trust.KeyRegistry, destDir, installedVersion stri
 	return process(r, reg, &extractOpts{destDir: destDir, installedVersion: installedVersion})
 }
 
+// ExtractAllowingStateReset is like Extract, but additionally accepts the operator's
+// explicit acknowledgement that destDir's install state may have been intentionally
+// reset (see ErrInstallStateReset). Without acknowledgeReset=true, a destDir that looks
+// like a fresh/first install (per readInstalledVersion) while the external install-state
+// record (see readExternalInstallState) still remembers a previously-installed version
+// is refused outright — that mismatch is exactly the signature of an actor deleting the
+// whole destDir to reset the no-downgrade gate, which a marker-only check cannot see
+// (the marker lives inside the directory being wiped). Passing acknowledgeReset=true
+// does NOT disable the no-downgrade check itself (unlike installedVersion=""+--force at
+// the CLI layer) — it only resolves which record to trust when they disagree, in favor
+// of whatever destDir/its internal marker actually shows; CheckUpgrade still runs
+// against that resolved value.
+func ExtractAllowingStateReset(r io.Reader, reg *trust.KeyRegistry, destDir, installedVersion string, acknowledgeReset bool) (*Manifest, error) {
+	return process(r, reg, &extractOpts{destDir: destDir, installedVersion: installedVersion, resetAcknowledged: acknowledgeReset})
+}
+
 // extractOpts is the staging configuration for process; nil means verify-only.
 type extractOpts struct {
-	destDir          string
-	installedVersion string
+	destDir           string
+	installedVersion  string
+	resetAcknowledged bool
 }
 
 // process is the single streaming pass shared by Verify and Extract. It reads the manifest
@@ -346,6 +363,15 @@ func process(r io.Reader, reg *trust.KeyRegistry, opts *extractOpts) (*Manifest,
 		if err := writeInstalledVersion(opts.destDir, m.Version); err != nil {
 			return nil, err
 		}
+		// Also (re)anchor the external install-state record outside destDir — see
+		// ErrInstallStateReset for why this second, independent record exists. A failed
+		// write here is surfaced rather than swallowed: components are already durably
+		// staged (same posture as a writeInstalledVersion failure just above), but letting
+		// this fail silently would leave the external record stale/absent, which the next
+		// import would then have to treat as an unexplained mismatch or missing anchor.
+		if err := writeExternalInstallState(opts.destDir, m.Version); err != nil {
+			return nil, err
+		}
 	}
 	return &m, nil
 }
@@ -385,7 +411,7 @@ func validateAndPrepareExtract(opts *extractOpts, m *Manifest) error {
 func resolveIdempotentInstall(opts *extractOpts, m *Manifest) (installed string, idempotent bool, err error) {
 	installed = strings.TrimSpace(opts.installedVersion)
 	fromMarker := false
-	if marker, ok, merr := readInstalledVersion(opts.destDir); merr != nil {
+	if marker, ok, merr := reconcileInstallState(opts.destDir, opts.resetAcknowledged); merr != nil {
 		return "", false, merr
 	} else if ok {
 		installed, fromMarker = marker, true
@@ -477,18 +503,29 @@ func checkAllComponentsSeen(pinned map[string]Component, seen map[string]bool) e
 const installedVersionMarker = ".keyorix-installed-version"
 
 // PersistedInstalledVersion returns the version recorded by a previous successful `import`
-// at destDir (see readInstalledVersion): ok is true and version is set when a marker from a
-// prior import anchors the no-downgrade / anti-skip gate for this destination; ok is false
-// when destDir is empty/nonexistent (a genuine first import, with nothing yet to anchor
-// against). A present-but-unreadable marker, or an otherwise non-empty destDir with no
-// marker, is returned as an error (fail closed — see readInstalledVersion).
+// at destDir, reconciling the internal marker (see readInstalledVersion) against the
+// external install-state record (see readExternalInstallState, ErrInstallStateReset): ok is
+// true and version is set when either record anchors the no-downgrade / anti-skip gate for
+// this destination; ok is false when destDir is empty/nonexistent AND no external record
+// exists (a genuine first import, with nothing yet to anchor against). A present-but-
+// unreadable marker, an otherwise non-empty destDir with no marker, or a destDir that looks
+// like a first install while the external record still remembers a prior one, is returned
+// as an error (fail closed).
 //
 // CLI callers use this to decide whether an operator-supplied --installed-version flag can
 // safely be treated as optional for a given import (a marker already anchors the gate) or
 // must be required (no anchor exists yet, so an omitted flag would silently disable
 // downgrade protection for that import — cli-project-001).
 func PersistedInstalledVersion(destDir string) (version string, ok bool, err error) {
-	return readInstalledVersion(destDir)
+	return reconcileInstallState(destDir, false)
+}
+
+// PersistedInstalledVersionAllowingReset is like PersistedInstalledVersion, but takes the
+// operator's explicit acknowledgement (acknowledgeReset) that destDir's install state may
+// have been intentionally reset — see ExtractAllowingStateReset / ErrInstallStateReset for
+// what that means and what it does (and does not) bypass.
+func PersistedInstalledVersionAllowingReset(destDir string, acknowledgeReset bool) (version string, ok bool, err error) {
+	return reconcileInstallState(destDir, acknowledgeReset)
 }
 
 // readInstalledVersion returns the persisted installed version at destDir. ok is false
