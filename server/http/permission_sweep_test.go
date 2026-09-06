@@ -80,7 +80,7 @@ var permissionSweepAllowlist = map[string]string{
 	"server/http/router.go:423": "GET /system/metrics returns process-level runtime metrics " +
 		"(memory/GC/goroutines) with HTTP/Database/Secrets counters explicitly zeroed (not " +
 		"instrumented at this layer per GetMetrics's own comment) -- no per-tenant data.",
-	"server/http/router.go:1062": "GET /audit/anomalies sits inside r.Route(\"/audit\", ...) " +
+	"server/http/router.go:1067": "GET /audit/anomalies sits inside r.Route(\"/audit\", ...) " +
 		"which calls r.Use(RequirePermission(permAuditRead)) as a GROUP-level middleware " +
 		"(router.go:1044). chi's With() on a route registered inside that group ADDS to, " +
 		"never replaces, the group's Use() middleware (verified against go-chi/chi/v5's " +
@@ -90,14 +90,14 @@ var permissionSweepAllowlist = map[string]string{
 		"audit.read AND system.read (AND, not OR) -- effectively gated at audit.read, the " +
 		"stronger requirement, exactly as router.go's own ANOMALY-04 comment there intends. " +
 		"Not a case of \"solely permSystemRead\" despite the literal string match.",
-	"server/http/router.go:2069": "GET /license/status returns deployment-wide license " +
+	"server/http/router.go:2074": "GET /license/status returns deployment-wide license " +
 		"metadata (plan/features/seat count/expiry) -- not scoped to any tenant/project/user, " +
 		"nothing to cross-tenant-disclose.",
-	"server/http/router.go:2165": "GET /sod/policies returns policy DEFINITIONS (name + the " +
+	"server/http/router.go:2170": "GET /sod/policies returns policy DEFINITIONS (name + the " +
 		"permission-a/permission-b pair) only -- no PII, no violator names. router.go's own " +
 		"adjacent comment is explicit that this stays baseline while /sod/violations (which " +
 		"DOES disclose violator names/emails) is separately gated on audit.read.",
-	"server/http/router.go:2212": "GET /admin/anomaly-config returns the DB-persisted anomaly " +
+	"server/http/router.go:2217": "GET /admin/anomaly-config returns the DB-persisted anomaly " +
 		"detection THRESHOLDS (config), not any user/project/alert data -- deployment-wide " +
 		"config in the same non-disclosure-sensitive family as auth-config/encryption-config " +
 		"above. Actual alert data (which does disclose SecretName/AccessedBy/IPAddress " +
@@ -421,8 +421,8 @@ var noPermissionGateAllowlist = map[string]string{
 	"server/http/router.go:240":  justPublicInfra + " /metrics is Prometheus scrape target; optionally protected by a separate static-bearer-token check (cfg.Server.HTTP.MetricsToken) when configured -- a deployment-perimeter control, not RBAC.",
 	"server/http/router.go:243":  justPublicInfra + " GET /status serves the public status dashboard (or falls back to the health check).",
 	"server/http/router.go:259":  justPublicInfra + " GET /status-es is the Spanish-language mirror of /status immediately above.",
-	"server/http/router.go:2223": justPublicInfra + " Swagger UI is gated by cfg.Server.HTTP.SwaggerEnabled (a deployment config flag, not a per-caller permission) -- see the adjacent comment; the machine-readable API surface it exposes is the same shape /openapi.yaml exposes below.",
-	"server/http/router.go:2224": justPublicInfra + " GET /openapi.yaml is the raw OpenAPI spec, gated by the same cfg.Server.HTTP.SwaggerEnabled flag as the Swagger UI immediately above (#224 fixed the two having diverging on/off behavior; they must stay paired).",
+	"server/http/router.go:2228": justPublicInfra + " Swagger UI is gated by cfg.Server.HTTP.SwaggerEnabled (a deployment config flag, not a per-caller permission) -- see the adjacent comment; the machine-readable API surface it exposes is the same shape /openapi.yaml exposes below.",
+	"server/http/router.go:2229": justPublicInfra + " GET /openapi.yaml is the raw OpenAPI spec, gated by the same cfg.Server.HTTP.SwaggerEnabled flag as the Swagger UI immediately above (#224 fixed the two having diverging on/off behavior; they must stay paired).",
 
 	"server/http/router.go:330": justSelfServiceOwnAccount + " GET/PUT /auth/profile.",
 	"server/http/router.go:331": justSelfServiceOwnAccount + " GET/PUT /auth/profile.",
@@ -466,36 +466,36 @@ var noPermissionGateAllowlist = map[string]string{
 		"so an admin acting as a user cannot mint a durable emergency role grant attributed to the " +
 		"target. See router.go's own adjacent comment.",
 
-	"server/http/router.go:610": "GET /secrets (ListSecrets) performs its own authorization INSIDE the " +
+	"server/http/router.go:615": "GET /secrets (ListSecrets) performs its own authorization INSIDE the " +
 		"handler so a project-scoped reader gets the union of their accessible scopes rather than a " +
 		"403 on an unfiltered request -- see router.go's own adjacent comment and secrets_list.go. " +
 		"An unscoped/no-permission caller still only ever sees the empty-or-narrowed result their " +
 		"own scopes permit, never another caller's secrets.",
-	"server/http/router.go:612": "GET /secrets/policy returns the deployment's ACTIVE create-time naming/" +
+	"server/http/router.go:617": "GET /secrets/policy returns the deployment's ACTIVE create-time naming/" +
 		"value policy -- deployment-wide, non-per-tenant configuration every authenticated caller " +
 		"needs visibility into before they can even attempt a create (the same policy a create " +
 		"request would be validated against). No secret values, no per-tenant data. See router.go's " +
 		"own adjacent comment (\"any authenticated caller\").",
-	"server/http/router.go:706": "POST /secrets (CreateSecret) is authorized INSIDE the handler: scope " +
+	"server/http/router.go:711": "POST /secrets (CreateSecret) is authorized INSIDE the handler: scope " +
 		"(project/environment) comes from the request body, not a URL path param a scope resolver " +
 		"middleware could resolve ahead of the handler. See router.go's own adjacent comment " +
 		"(\"Create: authorized inside the handler (scope comes from the body)\").",
-	"server/http/router.go:727": "DELETE /secrets/{id}/self-share (RemoveSelfFromShare) removes only the " +
+	"server/http/router.go:732": "DELETE /secrets/{id}/self-share (RemoveSelfFromShare) removes only the " +
 		"CALLER'S OWN direct share (core only removes a share whose RecipientID == the caller) -- " +
 		"self-service on the caller's own grant, needs just authentication. See router.go's own " +
 		"adjacent comment.",
-	"server/http/router.go:752": "POST /folders (CreateFolder) is authorized INSIDE the handler: scope " +
+	"server/http/router.go:757": "POST /folders (CreateFolder) is authorized INSIDE the handler: scope " +
 		"comes from the request body, the same in-handler-authorization pattern as CreateSecret " +
 		"above. See router.go's own adjacent comment (\"Create authorizes in-handler (scope from the " +
 		"body)\").",
-	"server/http/router.go:774": "POST /rotation-policies (Create) is authorized INSIDE the handler: scope " +
+	"server/http/router.go:779": "POST /rotation-policies (Create) is authorized INSIDE the handler: scope " +
 		"comes from the request body, the same in-handler pattern as CreateSecret/CreateFolder above. " +
 		"See router.go's own adjacent comment (\"create authorizes in-handler against the body\").",
-	"server/http/router.go:803": "POST /dynamic-secrets/configs (CreateConfig) is authorized INSIDE the " +
+	"server/http/router.go:808": "POST /dynamic-secrets/configs (CreateConfig) is authorized INSIDE the " +
 		"handler -- traced to the actual code, not just the group's header comment: " +
 		"DynamicSecretHandler.CreateConfig (server/http/handlers/dynamic_secrets.go) calls " +
 		"h.authorize(r, permSecretsWrite, scope) itself before creating the config.",
-	"server/http/router.go:804": "GET /dynamic-secrets/configs (ListConfigs) is authorized INSIDE the " +
+	"server/http/router.go:809": "GET /dynamic-secrets/configs (ListConfigs) is authorized INSIDE the " +
 		"handler -- traced to the actual code: DynamicSecretHandler.ListConfigs " +
 		"(server/http/handlers/dynamic_secrets.go) calls h.authorize(r, permSecretsRead, " +
 		"core.Scope{ProjectID: projectID, EnvironmentID: environmentID}) itself before listing.",
