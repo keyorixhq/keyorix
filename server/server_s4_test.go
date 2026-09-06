@@ -474,6 +474,13 @@ func TestInitializeCoreService_Connect_KnownTypes(t *testing.T) {
 
 // ── initializeCoreService — Connect (gcp, no project_id) ────────────────────
 
+// project_id is now a required field for gcp-secret-manager connectors — an unset
+// project_id used to only log a startup warning (an unpinned connector could reach
+// any GCP project the ambient ADC identity can access, regardless of this
+// connector's Keyorix tenant scope: a confused-deputy gap). This test's own name
+// and assertion, until this change, encoded exactly that now-obsolete "boots fine"
+// behavior. It now fails cfg.Validate() (called inside initializeCoreService)
+// before boot ever reaches the Connect-wiring loop.
 func TestInitializeCoreService_Connect_GCP_NoProjectID(t *testing.T) {
 	initI18n(t)
 	cfg := newMinimalCfg(t)
@@ -485,8 +492,11 @@ func TestInitializeCoreService_Connect_GCP_NoProjectID(t *testing.T) {
 	}
 
 	_, _, err := initializeCoreService(cfg)
-	if err != nil {
-		t.Fatalf("initializeCoreService with GCP no project_id: %v", err)
+	if err == nil {
+		t.Fatal("expected initializeCoreService to refuse to boot a gcp-secret-manager connector with no project_id")
+	}
+	if got := err.Error(); !contains(got, "gcp-noproj") || !contains(got, "project_id") {
+		t.Fatalf("expected error to name the connector and project_id, got: %v", err)
 	}
 }
 

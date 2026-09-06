@@ -7,9 +7,16 @@
 //
 // Unlike the Vault connector (pinned to one address) and the Azure connector (pinned
 // to one vaultURL), the GCP project ID lives entirely inside the caller-supplied ref
-// — so an unpinned connector can address secrets in any project the ambient identity
-// can reach. Setting projectID (#431) pins the connector to a single project and
-// rejects any ref embedding a different one.
+// — so a connector with no project_id could address secrets in any project the
+// ambient identity can reach, regardless of which Keyorix tenant it is scoped to
+// (a confused-deputy gap: ADR-082 scopes the connector to a Keyorix project, but
+// nothing tied that to which GCP project the ADC identity actually reaches). Setting
+// projectID (#431) pins the connector to a single project and rejects any ref
+// embedding a different one. projectID is now a REQUIRED binding, not an optional
+// pin: internal/config.validateConnectGCPProjectID refuses to boot a
+// "gcp-secret-manager" connector with an unset project_id, and GetSecret itself
+// independently refuses every read on an empty projectID (defense in depth — it does
+// not merely trust that boot validation ran).
 package connect
 
 import (
@@ -39,18 +46,21 @@ type GCPSecretManagerConnector struct {
 	newClient func(ctx context.Context) (gcpSMAccessAPI, error)
 }
 
-// NewGCPSecretManagerConnector builds a GCP Secret Manager connector. projectID,
-// when non-empty, pins the connector to a single GCP project — mirroring how the
-// Vault connector pins an address and the Azure connector pins a vaultURL: every ref
-// passed to GetSecret must embed this exact project ID (`projects/PROJECT/...`), or
-// the read is rejected before ever reaching the backend. Unlike Vault/Azure, a GCP
-// ref carries its own project ID, so without this pin a single configured connector
+// NewGCPSecretManagerConnector builds a GCP Secret Manager connector. projectID
+// pins the connector to a single GCP project — mirroring how the Vault connector
+// pins an address and the Azure connector pins a vaultURL: every ref passed to
+// GetSecret must embed this exact project ID (`projects/PROJECT/...`), or the read
+// is rejected before ever reaching the backend. Unlike Vault/Azure, a GCP ref
+// carries its own project ID, so without this pin a single configured connector
 // (and the ambient ADC identity it runs under) can address secrets in ANY project
-// that identity can reach, with only allowedRefs standing in the way — leave
-// projectID empty only for backward compatibility with an existing config that
-// intentionally spans multiple projects. allowedRefs, when non-empty, restricts
-// readable references to those with one of the given prefixes (a guardrail on top of
-// the workload identity's IAM scope).
+// that identity can reach. projectID is a required binding: the config-validation
+// layer (internal/config.validateConnectGCPProjectID) refuses to boot a
+// "gcp-secret-manager" connector with an unset project_id, and GetSecret itself
+// refuses every read when projectID is empty (defense in depth, in case a
+// connector is ever constructed via a path that bypasses that validation).
+// allowedRefs, when non-empty, additionally restricts readable references to
+// those with one of the given prefixes (a guardrail on top of the workload
+// identity's IAM scope).
 func NewGCPSecretManagerConnector(name, projectID string, allowedRefs []string) *GCPSecretManagerConnector {
 	return &GCPSecretManagerConnector{name: name, projectID: projectID, allowedRefs: allowedRefs}
 }
@@ -92,14 +102,20 @@ func (c *GCPSecretManagerConnector) GetSecret(ctx context.Context, ref string) (
 	if !prefixAllowed(c.allowedRefs, ref) {
 		return "", fmt.Errorf("gcp-secret-manager: ref %q is not permitted by this connector's allowed_refs", ref)
 	}
-	if c.projectID != "" {
-		refProject, ok := gcpRefProjectID(ref)
-		if !ok {
-			return "", fmt.Errorf("gcp-secret-manager: ref %q does not start with projects/PROJECT/... so it cannot be checked against the connector's pinned project %q", ref, c.projectID)
-		}
-		if refProject != c.projectID {
-			return "", fmt.Errorf("gcp-secret-manager: ref %q targets project %q, but this connector is pinned to project %q", ref, refProject, c.projectID)
-		}
+	// project_id is a required binding (validateConnectGCPProjectID enforces this at
+	// boot) — but this check does not merely trust that boot validation ran: an empty
+	// projectID here is refused outright rather than falling back to the pre-#431
+	// unrestricted-cross-project behavior, so a bug or bypass in config validation
+	// cannot silently reopen the confused-deputy gap this connector used to have.
+	if c.projectID == "" {
+		return "", fmt.Errorf("gcp-secret-manager: connector %q has no project_id configured — refusing to read (project_id is a required binding, not optional)", c.name)
+	}
+	refProject, ok := gcpRefProjectID(ref)
+	if !ok {
+		return "", fmt.Errorf("gcp-secret-manager: ref %q does not start with projects/PROJECT/... so it cannot be checked against the connector's pinned project %q", ref, c.projectID)
+	}
+	if refProject != c.projectID {
+		return "", fmt.Errorf("gcp-secret-manager: ref %q targets project %q, but this connector is pinned to project %q", ref, refProject, c.projectID)
 	}
 	cl, err := c.client(ctx)
 	if err != nil {

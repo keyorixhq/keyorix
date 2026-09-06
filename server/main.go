@@ -670,10 +670,18 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			case "aws-secrets-manager":
 				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AllowedRefs))
 			case "gcp-secret-manager":
-				if cn.ProjectID == "" && len(cn.AllowedRefs) == 0 {
-					log.Fatalf("Keyorix Connect: gcp-secret-manager connector %q has neither project_id nor allowed_refs — this grants unrestricted cross-project read access to the ambient identity; set project_id or allowed_refs before starting", cn.Name)
-				} else if cn.ProjectID == "" {
-					log.Printf("Keyorix Connect: gcp-secret-manager connector %q has no project_id configured — reads can reach any GCP project the ambient identity can access; allowed_refs is the only scope restriction; set project_id to pin the connector to one project (#431)", cn.Name)
+				// project_id is now a required field: unreachable via a config that
+				// passed cfg.Validate() — validateConnectGCPProjectID
+				// (internal/config/config.go) already refused to boot a
+				// gcp-secret-manager connector with an unset project_id, before this
+				// function is ever reached (see the cfg.Validate() call at the top of
+				// initializeCoreService). Fail loud rather than silently construct an
+				// unpinned connector if this is somehow reached anyway (e.g. a future
+				// caller of this loop that bypasses Validate()) — the old behavior let an
+				// unpinned connector boot with only a log warning, which is exactly the
+				// confused-deputy gap this field now closes.
+				if cn.ProjectID == "" {
+					log.Fatalf("Keyorix Connect: gcp-secret-manager connector %q has no project_id — this should have been caught by cfg.Validate()", cn.Name)
 				}
 				connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.ProjectID, cn.AllowedRefs))
 			case "azure-key-vault":

@@ -181,7 +181,7 @@ func TestGCPSM_ClientRealPath(t *testing.T) {
 // an error, checking GetSecret propagation.
 func TestGCPSM_ClientInjectedError(t *testing.T) {
 	injectedErr := errors.New("injected gcp client error")
-	c := NewGCPSecretManagerConnector("gcp-inject-err", "", nil)
+	c := NewGCPSecretManagerConnector("gcp-inject-err", "p", nil)
 	c.newClient = func(_ context.Context) (gcpSMAccessAPI, error) {
 		return nil, injectedErr
 	}

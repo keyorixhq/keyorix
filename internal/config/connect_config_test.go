@@ -273,6 +273,95 @@ func TestValidate_ConnectTypesWired(t *testing.T) {
 	assert.Contains(t, err.Error(), "mistyped-connector")
 }
 
+// TestValidateConnectGCPProjectID covers the confused-deputy gap closed by
+// requiring project_id on every "gcp-secret-manager" connector: unlike Vault/Azure's
+// Address (the connector's own tenant boundary), a GCP ref carries its own project
+// ID, so an unset project_id would let a caller reach any GCP project the ambient
+// ADC identity can access, regardless of the connector's Keyorix-side scope. Mirrors
+// TestValidateConnectScopes/TestValidateConnectTypes's own structure and
+// aggregation-assertion style. This test is RED against the pre-fix behavior (an
+// unset project_id only logged a startup warning in server/main.go and booted
+// fine) and GREEN once validateConnectGCPProjectID is wired into Config.Validate().
+func TestValidateConnectGCPProjectID(t *testing.T) {
+	tests := []struct {
+		name      string
+		cc        ConnectConfig
+		wantErr   bool
+		wantNames []string
+	}{
+		{
+			name: "missing project_id, single gcp connector, fails boot",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "gcp1", Type: "gcp-secret-manager", Scope: "platform"},
+			}},
+			wantErr:   true,
+			wantNames: []string{"gcp1"},
+		},
+		{
+			name: "missing project_id, multiple gcp connectors, aggregated in one error",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "gcp1", Type: "gcp-secret-manager", Scope: "platform"},
+				{Name: "gcp2", Type: "gcp-secret-manager", Scope: "platform"},
+				{Name: "gcp3", Type: "gcp-secret-manager", Scope: "platform", ProjectID: "my-proj"}, // valid — must not appear
+			}},
+			wantErr:   true,
+			wantNames: []string{"gcp1", "gcp2"},
+		},
+		{
+			name: "non-gcp connector types are never checked",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "aws", Type: "aws-secrets-manager", Scope: "platform"},
+				{Name: "azure", Type: "azure-key-vault", Scope: "platform"},
+				{Name: "vault", Type: "vault", Scope: "platform"},
+			}},
+			wantErr: false,
+		},
+		{
+			name:    "no connectors is valid",
+			cc:      ConnectConfig{},
+			wantErr: false,
+		},
+		{
+			name: "gcp connector with project_id set is valid",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "gcp", Type: "gcp-secret-manager", Scope: "platform", ProjectID: "my-proj"},
+			}},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConnectGCPProjectID(tt.cc)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			for _, name := range tt.wantNames {
+				assert.Contains(t, err.Error(), name, "error must name every offending connector")
+			}
+		})
+	}
+}
+
+// TestValidate_ConnectGCPProjectIDWired confirms Config.Validate() itself surfaces
+// a missing gcp-secret-manager project_id — not just the unexported helper in
+// isolation — so the boot path (server/main.go's cfg.Validate() call) actually
+// enforces the requirement.
+func TestValidate_ConnectGCPProjectIDWired(t *testing.T) {
+	c := &Config{
+		Storage: StorageConfig{Type: "local", Database: DatabaseConfig{Path: "/tmp/keyorix-connect-gcp-projectid-test.db"}},
+		Connect: ConnectConfig{Connectors: []ConnectorConfig{
+			{Name: "unbound-gcp", Type: "gcp-secret-manager", Scope: "platform"},
+		}},
+	}
+	err := c.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unbound-gcp")
+	assert.Contains(t, err.Error(), "project_id")
+}
+
 // TestValidate_ConnectTypesRunsBeforeScopes confirms validateConnectTypes runs
 // before validateConnectScopes in Config.Validate() (see that function's own
 // comment for why: an unrecognized type is more fundamental than a scope-shape

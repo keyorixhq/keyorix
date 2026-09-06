@@ -186,10 +186,14 @@ type ConnectorConfig struct {
 	// every ref must embed this exact project ID
 	// (projects/PROJECT/secrets/NAME/versions/VERSION), or the read is rejected before
 	// reaching the backend. Unlike Address for "vault"/"azure-key-vault", a GCP ref
-	// carries its own project ID, so leaving this unset lets a single connector (and
-	// the ambient ADC identity it runs under) address secrets in ANY project that
-	// identity can reach, relying solely on AllowedRefs to scope reach. Strongly
-	// recommended; left empty only for backward compatibility with an existing config.
+	// carries its own project ID, so leaving this unset would let a single connector
+	// (and the ambient ADC identity it runs under) address secrets in ANY project
+	// that identity can reach, regardless of this connector's Keyorix-side tenant
+	// scope (a confused-deputy gap). Required, unconditionally, for every
+	// "gcp-secret-manager" connector — validateConnectGCPProjectID (below) fails
+	// boot on an unset value, with no deployment-wide escape hatch, mirroring how
+	// Scope has none. An existing deployment upgrading past this change must add
+	// project_id to every gcp-secret-manager connector first (see CHANGELOG.md).
 	// Unrelated to Project below — this is a GCP-side identifier, Project is Keyorix's.
 	ProjectID string `yaml:"project_id"`
 	// TokenEnv names the environment variable holding the backend token for type
@@ -2096,6 +2100,10 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return err
 	}
 
+	if err := validateConnectGCPProjectID(c.Connect); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2173,6 +2181,36 @@ func validateConnectScopes(cc ConnectConfig) error {
 	}
 	if len(platformRejectsProject) > 0 {
 		return fmt.Errorf("connect: connector(s) with scope \"platform\" must not set \"project\" (a platform connector is not owned by any single project): %s", strings.Join(platformRejectsProject, ", "))
+	}
+	return nil
+}
+
+// validateConnectGCPProjectID closes a confused-deputy gap in the
+// "gcp-secret-manager" connector: unlike the Vault/Azure Address (the backend's own
+// base URL — the connector IS the tenant boundary), a GCP Secret Manager ref carries
+// its own project ID embedded in the resource name
+// (projects/PROJECT/secrets/NAME/versions/VERSION). validateConnectScopes above
+// already binds a connector to a Keyorix-side tenant (project/platform scope), but
+// that says nothing about which GCP project the ambient ADC identity actually
+// reaches — a connector scoped to Keyorix project X with no project_id set would
+// let any connect.read-holding caller in project X's scope read a secret from GCP
+// project Y (or any other project the ADC identity can reach), as long as the
+// backend IAM happens to allow it. project_id (#431) is the only thing that pins
+// the GCP-side project to match the Keyorix-side scope, so — like Scope above — it
+// is required unconditionally, with no deployment-wide escape hatch: a missing
+// project_id fails boot for every "gcp-secret-manager" connector, aggregated into
+// one error naming every offending connector by name (mirrors validateConnectScopes's
+// own aggregation style). Only connectors of type "gcp-secret-manager" are checked;
+// other types have their own binding field (Address) which is enforced separately.
+func validateConnectGCPProjectID(cc ConnectConfig) error {
+	var missing []string
+	for _, connector := range cc.Connectors {
+		if connector.Type == "gcp-secret-manager" && connector.ProjectID == "" {
+			missing = append(missing, connector.Name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("connect: gcp-secret-manager connector(s) missing required \"project_id\" — an unset project_id lets a caller read secrets from ANY GCP project the ambient ADC identity can reach, regardless of this connector's Keyorix tenant scope (a confused-deputy gap; #431/ADR-082): %s", strings.Join(missing, ", "))
 	}
 	return nil
 }
