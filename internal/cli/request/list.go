@@ -28,16 +28,21 @@ func init() {
 }
 
 func runList(cmd *cobra.Command, args []string) error {
-	service, err := common.InitializeCoreService()
-	if err != nil {
-		return fmt.Errorf("failed to initialize service: %w", err)
-	}
 	ctx := context.Background()
-
 	projectName, err := common.ResolveProject(listProject)
 	if err != nil {
 		return err
 	}
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runListRemote(ctx, rc, projectName)
+	}
+
+	service, err := common.InitializeCoreService()
+	if err != nil {
+		return fmt.Errorf("failed to initialize service: %w", err)
+	}
+
 	projectID, err := common.LookupProjectIDByName(ctx, service.Storage(), projectName)
 	if err != nil {
 		return err
@@ -68,6 +73,40 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("%-6d %-24s %-14s %-14s %-11s %-10s %s\n",
 			req.ID, userLabel(ctx, service, req.UserID), dashIfEmpty(req.SuggestedRole),
+			dashIfEmpty(req.GrantedRole), req.State, secretCol, dashIfEmpty(req.Reason))
+	}
+	return nil
+}
+
+// runListRemote lists a project's access requests via GET
+// /api/v1/projects/{id}/access-requests -- gated server-side on roles.assign
+// scoped to the project (see router.go), the SAME authority
+// requireListAuthority enforces manually in embedded mode (where there is no
+// session/middleware to do it automatically). --by is not consulted here: the
+// server determines the caller's own authority from the bearer token itself,
+// not from any --by value in the request.
+func runListRemote(ctx context.Context, rc *common.RemoteClient, projectName string) error {
+	projectID, err := resolveProjectIDByName(ctx, rc, projectName)
+	if err != nil {
+		return err
+	}
+	requests, err := fetchAccessRequests(ctx, rc, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to list access requests: %w", err)
+	}
+
+	if len(requests) == 0 {
+		fmt.Println("No access requests found.")
+		return nil
+	}
+	fmt.Printf("%-6s %-24s %-14s %-14s %-11s %-10s %s\n", "ID", "USER", "SUGGESTED", "GRANTED", "STATE", "SECRET", "REASON")
+	for _, req := range requests {
+		secretCol := "-"
+		if req.SecretID != nil {
+			secretCol = fmt.Sprintf("#%d", *req.SecretID)
+		}
+		fmt.Printf("%-6d %-24s %-14s %-14s %-11s %-10s %s\n",
+			req.ID, remoteUserLabel(ctx, rc, req.UserID), dashIfEmpty(req.SuggestedRole),
 			dashIfEmpty(req.GrantedRole), req.State, secretCol, dashIfEmpty(req.Reason))
 	}
 	return nil

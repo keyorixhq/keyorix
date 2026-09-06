@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -35,11 +36,24 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if updateGroupName == "" && updateGroupDescription == "" {
 		return errors.New("provide at least one of --name or --description")
 	}
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		fmt.Printf("Updating group %d on %s...\n", updateGroupID, rc.Endpoint)
+		path := "/api/v1/groups/" + strconv.FormatUint(uint64(updateGroupID), 10)
+		body := map[string]string{"name": updateGroupName, "description": updateGroupDescription}
+		var out groupAPIResponse
+		if err := rc.Put(ctx, path, body, &out); err != nil {
+			return fmt.Errorf("failed to update group: %w", err)
+		}
+		fmt.Printf("Group updated: id=%d name=%s\n", out.ID, out.Name)
+		return nil
+	}
+
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 	g, err := service.UpdateGroup(ctx, common.ResolveActorID(), &core.UpdateGroupRequest{
 		ID:          updateGroupID,
 		Name:        updateGroupName,

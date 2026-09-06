@@ -38,7 +38,15 @@ import (
 // to scan that column into its uint field — a real storage-layer failure, not
 // a fabricated mock error.
 func TestRunList_ListAccessRequestsFails(t *testing.T) {
-	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too: a leftover ~/.keyorix/cli.yaml in client
+	// mode on the machine running this test would otherwise still be picked up by
+	// common.ResolveRemote, making this "run in embedded/local mode" test
+	// intermittently take the remote branch instead. Mirrors
+	// cli_remote_mode_behavior_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 

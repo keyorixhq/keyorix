@@ -36,6 +36,15 @@ var suspendCmd = &cobra.Command{
 	Short: "Suspend a user (blocks login)",
 	Long:  "Suspend a user account. A suspended user is refused login entirely until reactivated.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if suspendUserID == 0 {
+			return errors.New("user id is required (use --id)")
+		}
+		if suspendBy == "" {
+			return errors.New("acting admin email is required (use --by)")
+		}
+		if rc, ok := common.NewRemoteClient(); ok {
+			return runAccountStateRemote(rc, suspendUserID, "suspend", "Suspending", "suspended")
+		}
 		return runLifecycle(suspendUserID, suspendBy, "suspended",
 			func(s *core.KeyorixCore, ctx context.Context, adminID, userID uint) error {
 				return s.SuspendUser(ctx, adminID, userID)
@@ -48,6 +57,15 @@ var reactivateCmd = &cobra.Command{
 	Short: "Reactivate a user (restores login)",
 	Long:  "Return a suspended (or otherwise non-active) user to the active state.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if reactivateUserID == 0 {
+			return errors.New("user id is required (use --id)")
+		}
+		if reactivateBy == "" {
+			return errors.New("acting admin email is required (use --by)")
+		}
+		if rc, ok := common.NewRemoteClient(); ok {
+			return runAccountStateRemote(rc, reactivateUserID, "reactivate", "Reactivating", "reactivated")
+		}
 		return runLifecycle(reactivateUserID, reactivateBy, "reactivated",
 			func(s *core.KeyorixCore, ctx context.Context, adminID, userID uint) error {
 				return s.ReactivateUser(ctx, adminID, userID)
@@ -61,6 +79,15 @@ var forcePasswordResetCmd = &cobra.Command{
 	Long: "Force a user into a restricted session until they change their password.\n" +
 		"They can authenticate but every endpoint except change-password is blocked until then.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if forcePasswordResetUserID == 0 {
+			return errors.New("user id is required (use --id)")
+		}
+		if forcePasswordResetBy == "" {
+			return errors.New("acting admin email is required (use --by)")
+		}
+		if rc, ok := common.NewRemoteClient(); ok {
+			return runAccountStateRemote(rc, forcePasswordResetUserID, "require-password-reset", "Requiring a password reset for", "required to reset their password")
+		}
 		return runLifecycle(forcePasswordResetUserID, forcePasswordResetBy, "required to reset their password",
 			func(s *core.KeyorixCore, ctx context.Context, adminID, userID uint) error {
 				return s.RequirePasswordReset(ctx, adminID, userID)
@@ -85,6 +112,9 @@ var revokeSessionsCmd = &cobra.Command{
 		}
 		if revokeSessionsBy == "" {
 			return errors.New("acting admin email is required (use --by)")
+		}
+		if rc, ok := common.NewRemoteClient(); ok {
+			return runRevokeSessionsRemote(rc, revokeSessionsUserID)
 		}
 		service, err := common.InitializeCoreService()
 		if err != nil {
@@ -158,5 +188,52 @@ func runLifecycle(userID uint, by, pastTense string, apply func(*core.KeyorixCor
 		return fmt.Errorf("failed: %w", err)
 	}
 	fmt.Printf("User %d has been %s.\n", userID, pastTense)
+	return nil
+}
+
+// runAccountStateRemote performs the suspend/reactivate/require-password-reset
+// transition against the connected server (POST /api/v1/users/{id}/<action>,
+// server/http/router.go), landing it in the SAME account-state machine
+// (setAccountState, ADR-025) the dashboard/API use, instead of a stray local
+// SQLite file. The acting admin is the session identity behind the configured
+// bearer token, not --by (which only has meaning for the local/embedded
+// audit trail -- see resolveAdminID's doc comment). verbing/pastTense fill the
+// "<verbing> <label> on <endpoint>..." / "<label> has been <pastTense> on
+// <endpoint>." messages so an operator always sees which account AND which
+// server were actually affected, never a bare "Success."
+func runAccountStateRemote(rc *common.RemoteClient, userID uint, action, verbing, pastTense string) error {
+	ctx := context.Background()
+	label := remoteUserLabel(ctx, rc, userID)
+	fmt.Printf("%s %s on %s...\n", verbing, label, rc.Endpoint)
+	if err := rc.Post(ctx, fmt.Sprintf("/api/v1/users/%d/%s", userID, action), struct{}{}, nil); err != nil {
+		return fmt.Errorf("failed to change account state for %s on %s: %w", label, rc.Endpoint, err)
+	}
+	fmt.Printf("%s has been %s on %s.\n", label, pastTense, rc.Endpoint)
+	return nil
+}
+
+// runRevokeSessionsRemote force-logs-out a user via POST
+// /api/v1/users/{id}/revoke-sessions against the connected server, so the
+// revoked sessions are the user's REAL active sessions on that server,
+// instead of whatever happened to be sitting in a stray local SQLite file. A
+// destructive/security-sensitive action, so the response echoes the exact
+// count revoked (never a bare "Success") -- including the zero case, stated
+// explicitly rather than swallowed.
+func runRevokeSessionsRemote(rc *common.RemoteClient, userID uint) error {
+	ctx := context.Background()
+	label := remoteUserLabel(ctx, rc, userID)
+	fmt.Printf("Revoking active sessions for %s on %s...\n", label, rc.Endpoint)
+
+	var resp struct {
+		Revoked int `json:"revoked"`
+	}
+	if err := rc.Post(ctx, fmt.Sprintf("/api/v1/users/%d/revoke-sessions", userID), struct{}{}, &resp); err != nil {
+		return fmt.Errorf("failed to revoke sessions for %s on %s: %w", label, rc.Endpoint, err)
+	}
+	if resp.Revoked == 0 {
+		fmt.Printf("0 sessions revoked for %s on %s -- none were active.\n", label, rc.Endpoint)
+		return nil
+	}
+	fmt.Printf("Revoked %d active session(s) for %s on %s.\n", resp.Revoked, label, rc.Endpoint)
 	return nil
 }

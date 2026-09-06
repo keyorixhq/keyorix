@@ -51,6 +51,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		active = &v
 	}
 
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runUpdateRemote(rc, active)
+	}
+
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
@@ -69,5 +73,31 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("User updated: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
+	return nil
+}
+
+// runUpdateRemote handles `user update` in remote mode via PUT /api/v1/users/{id},
+// matching UserHandler.UpdateUser's request body (server/http/handlers/users_crud.go).
+func runUpdateRemote(rc *common.RemoteClient, active *bool) error {
+	fmt.Printf("Target: user %d on %s\n", updateUserID, rc.Endpoint)
+	body := map[string]interface{}{}
+	if updateUsername != "" {
+		body["username"] = updateUsername
+	}
+	if updateEmail != "" {
+		body["email"] = updateEmail
+	}
+	if updateDisplayName != "" {
+		body["display_name"] = updateDisplayName
+	}
+	if active != nil {
+		body["active"] = *active
+	}
+
+	var resp remoteUserResponse
+	if err := rc.Put(context.Background(), fmt.Sprintf("/api/v1/users/%d", updateUserID), body, &resp); err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+	fmt.Printf("User updated: id=%d username=%s email=%s\n", resp.ID, resp.Username, resp.Email)
 	return nil
 }

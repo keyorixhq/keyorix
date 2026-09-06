@@ -6,6 +6,14 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Changed
+- **BREAKING: `keyorix status` and `keyorix ping` now exit non-zero when the
+  configured target is unhealthy or unreachable** — previously both commands
+  always exited 0 regardless of what they found, reporting failure only via
+  printed text ("❌ Unhealthy" / "❌ Failed"), so a script checking `$?` after
+  either command could never detect an outage without parsing stdout. If you
+  have automation that runs `keyorix status` or `keyorix ping` and previously
+  ignored their exit code, verify it doesn't need to accommodate the new
+  non-zero results. Full exit code contract below.
 - **BREAKING: `keyorix status`/`keyorix ping` no longer construct or create
   anything when nothing is configured.** With no `keyorix.yaml`, no
   `KEYORIX_CONFIG_PATH`, and no `keyorix connect`/env-var remote target,

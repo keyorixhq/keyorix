@@ -30,6 +30,7 @@ func captureStderr(t *testing.T, fn func()) string {
 
 func TestRunLogin_APIKeyFlagWarnsWhenExplicitlySet(t *testing.T) {
 	t.Chdir(t.TempDir()) // runLogin writes keyorix.yaml relative to cwd
+	stubVerifyRemoteCredentials(t)
 
 	require.NoError(t, loginCmd.Flags().Set("api-key", "kx_api_secret"))
 	require.NoError(t, loginCmd.Flags().Set("server", "https://keyorix.example.com"))

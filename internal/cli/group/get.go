@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
@@ -25,11 +26,22 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if getGroupID == 0 {
 		return errors.New("group id is required (use --id)")
 	}
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		path := "/api/v1/groups/" + strconv.FormatUint(uint64(getGroupID), 10)
+		var out groupAPIResponse
+		if err := rc.Get(ctx, path, &out); err != nil {
+			return fmt.Errorf("failed to get group: %w", err)
+		}
+		fmt.Printf("ID: %d\nName: %s\nDescription: %s\n", out.ID, out.Name, out.Description)
+		return nil
+	}
+
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 	g, err := service.GetGroup(ctx, getGroupID)
 	if err != nil {
 		return fmt.Errorf("failed to get group: %w", err)

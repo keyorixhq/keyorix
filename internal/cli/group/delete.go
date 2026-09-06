@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -32,11 +33,16 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	if deleteGroupID == 0 {
 		return errors.New("group id is required (use --id)")
 	}
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runDeleteRemote(ctx, rc)
+	}
+
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	// Deleting a group is irreversible, so require an explicit confirmation unless
 	// the caller opted out with --force (e.g. for scripted/CI use).
@@ -55,6 +61,36 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 	fmt.Printf("Group %d deleted.\n", deleteGroupID)
+	return nil
+}
+
+// runDeleteRemote mirrors runDelete's confirm-then-delete flow against the
+// real REST API (DELETE /api/v1/groups/{id}) instead of local storage. The
+// group's name is fetched first (best-effort -- an unreachable/erroring GET
+// just falls back to an id-only label) so the confirmation prompt and the
+// final result both name the actual target being deleted, on the actual
+// server being deleted from -- not just an opaque numeric ID.
+func runDeleteRemote(ctx context.Context, rc *common.RemoteClient) error {
+	idPath := "/api/v1/groups/" + strconv.FormatUint(uint64(deleteGroupID), 10)
+
+	label := fmt.Sprintf("group %d", deleteGroupID)
+	var g groupAPIResponse
+	if gerr := rc.Get(ctx, idPath, &g); gerr == nil {
+		label = fmt.Sprintf("group %d (%s)", g.ID, g.Name)
+	}
+
+	if !deleteForce {
+		if !confirmYesNo(fmt.Sprintf("Delete %s on %s? This cannot be undone.", label, rc.Endpoint)) {
+			fmt.Println("❌ Deletion cancelled")
+			return nil
+		}
+	}
+
+	fmt.Printf("Deleting %s on %s...\n", label, rc.Endpoint)
+	if err := rc.Delete(ctx, idPath); err != nil {
+		return fmt.Errorf("failed to delete group: %w", err)
+	}
+	fmt.Printf("Deleted %s.\n", label)
 	return nil
 }
 

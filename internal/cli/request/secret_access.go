@@ -40,6 +40,27 @@ func runSecretAccess(cmd *cobra.Command, args []string) error {
 	if secretAccessSecretID == 0 && secretAccessRef == "" {
 		return fmt.Errorf("--secret-id or --ref is required")
 	}
+
+	// Local mode only, enforced at runtime, not just documented: RequestSecretAccess
+	// (internal/core/classification_gate.go) has no HTTP handler anywhere in
+	// server/http -- only the /system RemoteStorage storage-primitive proxy's doc
+	// comments mention it (access_request_proxy.go), and that proxy is off-limits to
+	// the CLI (see internal/cli/user/create.go's package doc for why). There is no
+	// REST endpoint a secret-scoped access request can be relayed to. If keyorix
+	// connect (or any other remote config source) is active, refuse loudly rather
+	// than silently operating on a stray local SQLite file the operator likely
+	// didn't intend to touch -- see migrate/user_to_machine.go for the identical
+	// pattern applied to another genuinely-local-only command, and the
+	// opt-in-correctness design note (2026-09-05): a documented-only limitation is
+	// not enforcement.
+	if _, ok := common.NewRemoteClient(); ok {
+		return fmt.Errorf("this command operates on local embedded storage only and has no remote " +
+			"equivalent; a remote server is configured (via KEYORIX_SERVER/KEYORIX_TOKEN, " +
+			"~/.keyorix/cli.yaml, or keyorix.yaml) — there is no REST endpoint for a secret-scoped access " +
+			"request; use 'keyorix request access' for a project/role-scoped request instead, or run this " +
+			"against the local embedded database directly")
+	}
+
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
