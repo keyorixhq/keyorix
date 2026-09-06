@@ -251,7 +251,7 @@ func TestVault_S23_GetSecret_KVv2BothDataAndMetadata(t *testing.T) {
 // allowed_refs is rejected before the backend client is built.
 func TestAWSSM_S23_GetSecret_TraversalRefBlockedByAllowedRefs(t *testing.T) {
 	var buildCount int
-	c := NewAWSSecretsManagerConnector("aws", "eu-west-1", []string{"keyorix/"})
+	c := NewAWSSecretsManagerConnector("aws", "eu-west-1", "", []string{"keyorix/"})
 	c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) {
 		buildCount++
 		return &fakeSM{out: &secretsmanager.GetSecretValueOutput{SecretString: aws.String("x")}}, nil
@@ -287,7 +287,7 @@ func TestAWSSM_S23_GetSecret_BothStringAndBinaryNil(t *testing.T) {
 // empty region string still builds a client (region is optional in the AWS
 // credential chain) and returns the secret value.
 func TestAWSSM_S23_GetSecret_NoRegion(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("aws", "", nil) // region == ""
+	c := NewAWSSecretsManagerConnector("aws", "", "", nil) // region == ""
 	c.newClient = func(_ context.Context, region string) (smSecretGetter, error) {
 		assert.Equal(t, "", region, "empty region must be forwarded as-is")
 		return &fakeSM{out: &secretsmanager.GetSecretValueOutput{SecretString: aws.String("val")}}, nil
@@ -300,7 +300,7 @@ func TestAWSSM_S23_GetSecret_NoRegion(t *testing.T) {
 // TestAWSSM_S23_TypeAndName is a sanity guard that Name() and Type() are
 // forwarded from the struct fields unchanged.
 func TestAWSSM_S23_TypeAndName(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("my-connector", "us-east-1", nil)
+	c := NewAWSSecretsManagerConnector("my-connector", "us-east-1", "", nil)
 	assert.Equal(t, "my-connector", c.Name())
 	assert.Equal(t, "aws-secrets-manager", c.Type())
 }

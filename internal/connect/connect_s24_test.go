@@ -114,7 +114,7 @@ func TestVault_S24_NewConnector_TrailingSlashTrimmed(t *testing.T) {
 // credential files exist (it simply loads an empty configuration), this test
 // confirms the path returns a non-nil client without error.
 func TestAWSSM_S24_ClientWithNoRegion(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("aws", "", nil) // region == "", newClient == nil
+	c := NewAWSSecretsManagerConnector("aws", "", "", nil) // region == "", newClient == nil
 	cl, err := c.client(context.Background())
 	// LoadDefaultConfig may read credential files; if the SDK encounters a
 	// permission error on the credential file we skip — the important thing is
@@ -130,7 +130,7 @@ func TestAWSSM_S24_ClientWithNoRegion(t *testing.T) {
 // TestAWSSM_S24_ClientWithRegion exercises the branch inside client() where
 // region != "" — the opts = append(opts, awsconfig.WithRegion(region)) line.
 func TestAWSSM_S24_ClientWithRegion(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("aws", "eu-west-1", nil) // region set, newClient == nil
+	c := NewAWSSecretsManagerConnector("aws", "eu-west-1", "", nil) // region set, newClient == nil
 	cl, err := c.client(context.Background())
 	if err != nil {
 		t.Logf("client() returned error (acceptable in sandbox): %v", err)

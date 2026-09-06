@@ -130,7 +130,7 @@ func TestSanitizeVaultRef_SpaceIsEncoded_S22(t *testing.T) {
 // AWSSecretsManagerConnector.GetSecret where the client factory itself returns
 // an error (e.g., AWS config load failure).
 func TestAWSSM_GetSecret_ClientError_S22(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("aws", "us-east-1", nil)
+	c := NewAWSSecretsManagerConnector("aws", "us-east-1", "", nil)
 	c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) {
 		return nil, errors.New("no AWS credentials configured")
 	}

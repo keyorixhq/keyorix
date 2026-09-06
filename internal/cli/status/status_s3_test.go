@@ -1,16 +1,11 @@
 // status_s3_test.go — sprint-3 coverage additions for the status package.
 // Targets: runStatus's "Unhealthy" branch (service initializes but HealthCheck
-// fails) and runPing's per-iteration "Failed" branch + "Partial connectivity"
-// summary branch (some pings succeed, some fail against the same backend).
+// fails).
 package status
 
 import (
-	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -68,63 +63,4 @@ func TestRunStatus_RemoteUnhealthy(t *testing.T) {
 	assert.Contains(t, out, "Storage Type: 🌐 Remote")
 	assert.Contains(t, out, "❌ Unhealthy (health check failed:")
 	assert.Contains(t, out, "Response Time:")
-}
-
-// TestRunPing_PartialConnectivity exercises runPing's per-iteration "Failed"
-// branch (HealthCheck errors after a successful InitializeCoreService) and the
-// "Partial connectivity" summary branch (0 < successCount < pingCount) by
-// pointing at a real server that succeeds on the first health check and fails
-// on the rest.
-//
-// G80 Wave 0c: rewritten to fail via HTTP 404 instead of a fabricated
-// {"success":false,...} 200 body — see TestRunStatus_RemoteUnhealthy's comment;
-// the real /health endpoint cannot produce the latter, and 404 (not 5xx) keeps
-// this test's "N pings → N handler calls" assumption true without needing to
-// fight isRetryableError's 5xx retry behavior.
-//
-// Note: runPing sleeps 1s between iterations so this test takes ~2s.
-func TestRunPing_PartialConnectivity(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintln(w, `{"status":"healthy"}`)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	dir := t.TempDir()
-	t.Chdir(dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("KEYORIX_SERVER", "")
-	t.Setenv("KEYORIX_TOKEN", "")
-	t.Setenv("KEYORIX_REMOTE_API_KEY", "test-api-key")
-
-	writePingConfig(t, dir, srv.URL, 2)
-
-	orig := os.Stdout
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stdout = w
-	defer func() { os.Stdout = orig }()
-
-	runErr := runPing(nil, nil)
-	_ = w.Close()
-	outBytes, _ := io.ReadAll(r)
-	out := string(outBytes)
-
-	var exitErr *common.ExitCodeError
-	require.ErrorAs(t, runErr, &exitErr)
-	assert.Equal(t, 1, exitErr.Code)
-	assert.Contains(t, out, "Ping 1: ✅ Success")
-	assert.Contains(t, out, "Ping 2: ❌ Failed (health check failed:")
-	assert.Contains(t, out, "Ping 3: ❌ Failed (health check failed:")
-	assert.Contains(t, out, "Successful:     1")
-	assert.Contains(t, out, "Failed:         2")
-	assert.Contains(t, out, "Status:         ⚠️  Partial connectivity")
-	assert.Equal(t, int32(3), calls.Load())
 }

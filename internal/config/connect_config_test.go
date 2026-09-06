@@ -362,6 +362,121 @@ func TestValidate_ConnectGCPProjectIDWired(t *testing.T) {
 	assert.Contains(t, err.Error(), "project_id")
 }
 
+// TestValidateConnectAWSAccountID covers the AWS sibling of
+// TestValidateConnectGCPProjectID — but account_id is deliberately OPTIONAL, not
+// mandatory (see ConnectorConfig.AccountID's own doc comment for the risk-shape
+// reason): a missing account_id must NOT fail boot, only a malformed one (not
+// exactly 12 digits) does. Mirrors TestValidateConnectGCPProjectID's own structure
+// and aggregation-assertion style.
+func TestValidateConnectAWSAccountID(t *testing.T) {
+	tests := []struct {
+		name      string
+		cc        ConnectConfig
+		wantErr   bool
+		wantNames []string
+	}{
+		{
+			name: "missing account_id is valid -- optional, unlike GCP's project_id",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "aws1", Type: "aws-secrets-manager", Scope: "platform"},
+			}},
+			wantErr: false,
+		},
+		{
+			name: "malformed account_id (not 12 digits), single connector, fails boot",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "aws1", Type: "aws-secrets-manager", Scope: "platform", AccountID: "12345"},
+			}},
+			wantErr:   true,
+			wantNames: []string{"aws1"},
+		},
+		{
+			name: "non-numeric account_id fails boot",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "aws1", Type: "aws-secrets-manager", Scope: "platform", AccountID: "not-an-account-id"},
+			}},
+			wantErr:   true,
+			wantNames: []string{"aws1"},
+		},
+		{
+			name: "malformed account_id, multiple connectors, aggregated in one error",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "aws1", Type: "aws-secrets-manager", Scope: "platform", AccountID: "bad"},
+				{Name: "aws2", Type: "aws-secrets-manager", Scope: "platform", AccountID: "also-bad"},
+				{Name: "aws3", Type: "aws-secrets-manager", Scope: "platform", AccountID: "123456789012"}, // valid — must not appear
+			}},
+			wantErr:   true,
+			wantNames: []string{"aws1", "aws2"},
+		},
+		{
+			name: "non-aws connector types are never checked",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "gcp", Type: "gcp-secret-manager", Scope: "platform", ProjectID: "my-proj"},
+				{Name: "azure", Type: "azure-key-vault", Scope: "platform"},
+				{Name: "vault", Type: "vault", Scope: "platform"},
+			}},
+			wantErr: false,
+		},
+		{
+			name:    "no connectors is valid",
+			cc:      ConnectConfig{},
+			wantErr: false,
+		},
+		{
+			name: "aws connector with well-formed account_id is valid",
+			cc: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "aws", Type: "aws-secrets-manager", Scope: "platform", AccountID: "123456789012"},
+			}},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConnectAWSAccountID(tt.cc)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			for _, name := range tt.wantNames {
+				assert.Contains(t, err.Error(), name, "error must name every offending connector")
+			}
+		})
+	}
+}
+
+// TestValidate_ConnectAWSAccountIDWired confirms Config.Validate() itself surfaces
+// a malformed aws-secrets-manager account_id — not just the unexported helper in
+// isolation — so the boot path (server/main.go's cfg.Validate() call) actually
+// enforces the format check. Also confirms the converse: a missing account_id
+// (the common, still-supported case) does NOT fail Validate() — account_id is
+// optional, unlike gcp-secret-manager's project_id.
+func TestValidate_ConnectAWSAccountIDWired(t *testing.T) {
+	t.Run("malformed account_id fails Validate()", func(t *testing.T) {
+		c := &Config{
+			Storage: StorageConfig{Type: "local", Database: DatabaseConfig{Path: "/tmp/keyorix-connect-aws-accountid-test.db"}},
+			Connect: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "malformed-aws", Type: "aws-secrets-manager", Scope: "platform", AccountID: "not-12-digits"},
+			}},
+		}
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "malformed-aws")
+		assert.Contains(t, err.Error(), "account_id")
+	})
+
+	t.Run("missing account_id does not fail Validate()", func(t *testing.T) {
+		c := &Config{
+			Storage: StorageConfig{Type: "local", Database: DatabaseConfig{Path: "/tmp/keyorix-connect-aws-accountid-test2.db"}},
+			Connect: ConnectConfig{Connectors: []ConnectorConfig{
+				{Name: "unpinned-aws", Type: "aws-secrets-manager", Scope: "platform"},
+			}},
+		}
+		require.NoError(t, c.Validate())
+	})
+}
+
 // TestValidate_ConnectTypesRunsBeforeScopes confirms validateConnectTypes runs
 // before validateConnectScopes in Config.Validate() (see that function's own
 // comment for why: an unrecognized type is more fundamental than a scope-shape

@@ -20,22 +20,14 @@ var StatusCmd = &cobra.Command{
 	RunE:  runStatus,
 }
 
-// PingCmd represents the ping command
-var PingCmd = &cobra.Command{
-	Use:   "ping",
-	Short: "Test connectivity to remote server",
-	Long:  "Test network connectivity and response time to remote server",
-	RunE:  runPing,
-}
-
 // Exit code contract (2026-09-05, a deliberate breaking change from the prior
 // always-exit-0 behavior -- see release notes): 0 healthy, 1 unhealthy or
-// unreachable, 2 usage/config error (no config found, ping run without
-// remote storage configured, or -- see #G-status-no-implicit-local below --
-// status run with no config at all). A failed health check is both printed
-// ("❌ Unhealthy") AND returned as a non-zero exit via common.ExitUnhealthy --
-// a caller scripting on this command's exit code must be able to detect an
-// unreachable target without parsing stdout.
+// unreachable, 2 usage/config error (no config found, or -- see
+// #G-status-no-implicit-local below -- status run with no config at all).
+// A failed health check is both printed ("❌ Unhealthy") AND returned as a
+// non-zero exit via common.ExitUnhealthy -- a caller scripting on this
+// command's exit code must be able to detect an unreachable target without
+// parsing stdout.
 func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("📊 System Status")
 	fmt.Println("================")
@@ -205,77 +197,4 @@ func runStatusRemote(rc *common.RemoteClient) error {
 	fmt.Printf("✅ Healthy\n")
 	fmt.Printf("Response Time: %v\n", duration)
 	return nil
-}
-
-func runPing(cmd *cobra.Command, args []string) error {
-	// Load configuration. Same KEYORIX_CONFIG_PATH-respecting fix as runStatus.
-	cfg, err := config.Load("")
-	if err != nil {
-		return common.ExitUsageError(fmt.Errorf("failed to load configuration: %w", err))
-	}
-
-	if cfg.Storage.Type != "remote" {
-		return common.ExitUsageError(fmt.Errorf("ping command only works with remote storage"))
-	}
-
-	if cfg.Storage.Remote == nil {
-		return common.ExitUsageError(fmt.Errorf("remote storage not configured"))
-	}
-
-	fmt.Printf("🏓 Pinging %s...\n", cfg.Storage.Remote.BaseURL)
-
-	// Perform multiple pings
-	const pingCount = 3
-	var totalDuration time.Duration
-	successCount := 0
-
-	for i := 0; i < pingCount; i++ {
-		service, err := common.InitializeCoreService()
-		if err != nil {
-			fmt.Printf("Ping %d: ❌ Failed to initialize (%s)\n", i+1, err.Error())
-			continue
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		start := time.Now()
-		err = service.HealthCheck(ctx)
-		duration := time.Since(start)
-		cancel()
-
-		if err != nil {
-			fmt.Printf("Ping %d: ❌ Failed (%s) - %v\n", i+1, err.Error(), duration)
-		} else {
-			fmt.Printf("Ping %d: ✅ Success - %v\n", i+1, duration)
-			totalDuration += duration
-			successCount++
-		}
-
-		// Wait between pings (except for the last one)
-		if i < pingCount-1 {
-			time.Sleep(1 * time.Second)
-		}
-	}
-
-	// Show summary
-	fmt.Println("\n📈 Summary")
-	fmt.Println("==========")
-	fmt.Printf("Pings sent:     %d\n", pingCount)
-	fmt.Printf("Successful:     %d\n", successCount)
-	fmt.Printf("Failed:         %d\n", pingCount-successCount)
-
-	if successCount > 0 {
-		avgDuration := totalDuration / time.Duration(successCount)
-		fmt.Printf("Average time:   %v\n", avgDuration)
-	}
-
-	if successCount == pingCount {
-		fmt.Printf("Status:         ✅ All pings successful\n")
-		return nil
-	}
-	if successCount > 0 {
-		fmt.Printf("Status:         ⚠️  Partial connectivity\n")
-		return common.ExitUnhealthy(fmt.Errorf("%d/%d pings failed", pingCount-successCount, pingCount))
-	}
-	fmt.Printf("Status:         ❌ No connectivity\n")
-	return common.ExitUnhealthy(fmt.Errorf("all %d pings failed", pingCount))
 }

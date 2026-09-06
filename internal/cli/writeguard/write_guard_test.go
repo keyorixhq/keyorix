@@ -40,7 +40,7 @@ var allowlist = map[string]string{
 		"securefiles.SecureWriteFile provides, just checked at the final path component " +
 		"only (not per-component). Fixed/derived path under baseDir, not an arbitrary " +
 		"operator --output flag. Queue-rated medium-low, not one of Group 2's named fix sites.",
-	"bundle/bundle.go:92": "the --out path for `bundle build`: rebuilding to the same output path is a " +
+	"bundle/bundle.go:94": "the --out path for `bundle build`: rebuilding to the same output path is a " +
 		"legitimate, common workflow (e.g. re-running in CI), so switching to the new " +
 		"O_EXCL create-only helper would regress that overwrite. WriteBundle also needs an " +
 		"io.Writer to stream to, not an already-assembled []byte, so SecureCreateFile's " +
