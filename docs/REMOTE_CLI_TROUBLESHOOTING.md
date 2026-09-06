@@ -7,11 +7,9 @@ This guide helps you diagnose and resolve common issues when using the Keyorix C
 Run these commands to quickly diagnose issues:
 
 ```bash
-# Check overall system status
+# Check overall system status (also tests remote connectivity; exits non-zero
+# on unhealthy/unreachable/unconfigured, so it's safe to script against)
 keyorix status
-
-# Test remote connectivity
-keyorix ping
 
 # Check configuration
 keyorix config status
@@ -106,10 +104,10 @@ keyorix auth status
        timeout_seconds: 60  # Increase from default 30
    ```
 
-2. **Test with ping:**
+2. **Check response time:**
    ```bash
-   keyorix ping
-   # Check response times
+   keyorix status
+   # Prints "Response Time: <duration>" for the last health check
    ```
 
 3. **Check server performance:**
@@ -242,9 +240,9 @@ keyorix auth status
 
 **Diagnostics:**
 
-1. **Measure response times:**
+1. **Measure response time:**
    ```bash
-   keyorix ping
+   keyorix status
    ```
 
 2. **Check network latency:**
@@ -404,7 +402,7 @@ keyorix --version
 keyorix config status
 
 # Connection test
-keyorix ping
+keyorix status
 
 # Error messages (run failing command with debug)
 KEYORIX_DEBUG=true keyorix your-failing-command

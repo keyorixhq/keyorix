@@ -119,6 +119,20 @@ func resolve(baseDir, path string) string {
 //     and already self-protected at write time (copyFile always chmods to
 //     0600 even when reusing an existing destination, internal/cli/
 //     encryption/migrate_provider.go).
+//   - `trust-keygen`'s ed25519 signing keypair (internal/cli/trust/trust.go,
+//     ADR-062) -- the offline key that signs update bundles and licenses.
+//     Not config-driven: no *config.EncryptionConfig field names its path
+//     (it's a CLI `--dir`/`--key-id` argument, often on a separate, offline
+//     signing workstation this registry's baseDir has no reach into anyway),
+//     so there is no mechanical way for a config-shape-driven enumeration to
+//     include it. It IS written at 0600 via SecureWriteFileSync at creation
+//     time -- but unlike the "file" provider above, there is no ongoing
+//     self-check anywhere in this codebase: if its permissions drift later
+//     (a backup tool, a manual copy, an operator `chmod`), nothing would ever
+//     catch it. This is a real, currently-untracked residual gap, not one
+//     this registry's design can close -- worth a dedicated follow-up (a
+//     permission self-check callable at signing time, or in `trust-keygen`
+//     itself), not silently accepted as equivalent to the exclusions above.
 func Registry(enc *config.EncryptionConfig, baseDir string) ([]securefiles.FilePermSpec, error) {
 	if enc == nil {
 		return nil, nil
