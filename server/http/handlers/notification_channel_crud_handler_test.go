@@ -172,7 +172,7 @@ func TestNCUpdate_BadJSON(t *testing.T) {
 	h := NewNotificationChannelHandler(cs)
 
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/", bytes.NewReader([]byte("not-json"))),
+		withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader([]byte("not-json")))),
 		"id", "1",
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -228,7 +228,7 @@ func TestNCDelete_NotFound(t *testing.T) {
 	h := NewNotificationChannelHandler(cs)
 
 	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
+		withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)),
 		"id", "9999",
 	)
 	w := httptest.NewRecorder()
@@ -455,7 +455,7 @@ func TestNCUpdate_BadID(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"events": "anomaly.detected"})
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)),
+		withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))),
 		"id", "not-a-number",
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -486,7 +486,7 @@ func TestNCUpdate_StorageError(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"events": "anomaly.detected"})
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)),
+		withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))),
 		"id", fmt.Sprintf("%d", ch.ID),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -504,7 +504,7 @@ func TestNCUpdate_Success(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"events": "secret.rotated"})
 	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)),
+		withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))),
 		"id", fmt.Sprintf("%d", chanID),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -527,7 +527,7 @@ func TestNCDelete_BadID(t *testing.T) {
 	h := NewNotificationChannelHandler(cs)
 
 	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
+		withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)),
 		"id", "not-a-number",
 	)
 	w := httptest.NewRecorder()
@@ -555,7 +555,7 @@ func TestNCDelete_StorageError(t *testing.T) {
 	h := NewNotificationChannelHandler(cs)
 
 	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
+		withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)),
 		"id", fmt.Sprintf("%d", ch.ID),
 	)
 	w := httptest.NewRecorder()
@@ -571,7 +571,7 @@ func TestNCDelete_Success(t *testing.T) {
 	h := NewNotificationChannelHandler(cs)
 
 	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
+		withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)),
 		"id", fmt.Sprintf("%d", chanID),
 	)
 	w := httptest.NewRecorder()

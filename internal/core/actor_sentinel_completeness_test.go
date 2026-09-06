@@ -113,6 +113,14 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		class: classAuditOnly,
 		note:  "attribution-only: whether to attach a non-nil actor pointer to the notification/audit context.",
 	},
+	"config_change_audit.go:writeConfigChangeAuditEvent": {
+		class: classAuditOnly,
+		note: "attribution-only: whether to attach a non-nil actor pointer to the audit record for an admin " +
+			"config mutation (notification channel CRUD, anomaly config update). The write-permission gate " +
+			"(system.write) already authorized the call before reaching this shared writer; actorID==0 here " +
+			"just means the caller didn't have a numeric actor ID to attribute (e.g. a local CLI invocation), " +
+			"never a bypassed check.",
+	},
 	"groups.go:AddUserToGroup": {
 		class: classPerActorCeiling, status: statusEnforced,
 		note: "P1 (#1524 b): actorIsMachine parameter added; a machine actor is now denied instead of exempted alongside the trusted local-CLI case.",
