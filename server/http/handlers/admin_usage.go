@@ -1,7 +1,15 @@
 // admin_usage.go — GET /api/v1/admin/usage handler.
 //
 // Returns a per-project usage report (secret counts + read activity) for the
-// requested time window. Gated by system.read permission in the router.
+// requested time window, for every project or one named via ?project_id=, with
+// no ownership check anywhere in the call chain (core.GetUsageReport ->
+// storage.GetProjectUsageStats). Gated by audit.read in the router. Do not gate
+// this — or any new caller — on system.read: that permission is granted to
+// every user via the baseline system_viewer role (CreateUser, SSO/JIT and SCIM
+// provisioning all assign it), so it is equivalent to no gate at all for this
+// disclosure-sensitive, deployment-wide report. Gating on system.read was a
+// real, fixed vulnerability, same family as CP-001/CP-008; see
+// server/http/deployment_disclosure_family_test.go.
 package handlers
 
 import (

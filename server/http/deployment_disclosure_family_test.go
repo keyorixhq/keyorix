@@ -8,10 +8,17 @@
 // every account. This file proves, for each affected route: a baseline (system_viewer)
 // caller is denied (403) and an audit.read holder (system_auditor) succeeds (200) with
 // the expected payload shape.
+//
+// GET /admin/usage (7th+ confirmed instance of the same mistake, found in the same
+// campaign that produced server/http/permission_sweep_test.go's exhaustiveness guard) is
+// included in the table below. GET /admin/billing/report is the same bug but needs its
+// own license-gated fixture, so it gets a dedicated test,
+// TestAdminBillingReport_PermissionTiers, further down this file.
 package http
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
@@ -23,7 +30,9 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/license"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -190,7 +199,7 @@ func TestDeploymentDisclosureFamily_BaselineDeniedAuditorAllowed(t *testing.T) {
 	// the periodic scan is meant to still catch.
 	baselineToken := createLimitedToken(t, testCore) // system_viewer only (system.read)
 	auditorToken := createAuditorToken(t, testCore)  // system_auditor (audit.read, global)
-	seedFamilyFixtures(t, testCore)
+	fixtures := seedFamilyFixtures(t, testCore)
 
 	// Plant a non-conforming secret BEFORE the naming policy is enabled (naming policy
 	// is only enforced at create time — a policy tightened afterward leaves existing
@@ -329,6 +338,33 @@ func TestDeploymentDisclosureFamily_BaselineDeniedAuditorAllowed(t *testing.T) {
 				assert.NotEmpty(t, violations, "the system_auditor's own system.read+audit.read pair must show up as a violation")
 			},
 		},
+		{
+			// admin/usage: per-project secret counts + read activity, deployment-wide,
+			// with no per-project ownership check anywhere in the call chain — the
+			// confirmed HIGH bug this campaign's fix addresses (7th+ instance of the
+			// same system.read-as-sole-gate mistake). See admin_usage.go's header
+			// comment and server/http/permission_sweep_test.go's exhaustiveness guard.
+			name: "admin usage report",
+			path: "/api/v1/admin/usage",
+			check: func(t *testing.T, body []byte, _ string) {
+				m := jsonDataField(t, body)
+				projects, ok := m["projects"].([]interface{})
+				require.True(t, ok, "projects field must be a list")
+				found := false
+				for _, p := range projects {
+					proj, _ := p.(map[string]interface{})
+					if proj == nil {
+						continue
+					}
+					if id, _ := proj["project_id"].(float64); uint(id) == fixtures.projectID {
+						found = true
+						assert.GreaterOrEqual(t, proj["secret_count"], float64(1),
+							"the seeded canary secret must be counted for its project")
+					}
+				}
+				assert.True(t, found, "the seeded project must appear in the usage report for an audit.read holder")
+			},
+		},
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -456,5 +492,103 @@ func TestDashboardStats_PermissionTiers(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		m := jsonDataField(t, body)
 		assert.Contains(t, m, "items")
+	})
+}
+
+// grantBillingLicense issues and installs a short-lived, self-signed "billing"-feature
+// license on c, mirroring server/http/handlers/admin_billing_test.go's
+// licensedBillingCore — GET /admin/billing/report 403s before ever reaching the
+// audit.read check if the deployment has no billing license, so the permission-tier
+// test below needs one installed to exercise the actual authz gate rather than the
+// license gate.
+func grantBillingLicense(t *testing.T, c *core.KeyorixCore) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	reg := trust.NewRegistry()
+	require.NoError(t, reg.Add(trust.PurposeLicense, "license-2026", pub))
+	token, err := license.Issue(license.License{
+		Licensee: "family-test GmbH", Plan: "enterprise",
+		Features: []string{license.FeatureBilling},
+		IssuedAt: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour),
+		KeyID: "license-2026",
+	}, priv)
+	require.NoError(t, err)
+	c.SetLicenseGate(license.NewGate(token, reg, "", 0))
+}
+
+// TestAdminBillingReport_PermissionTiers is the admin/billing/report half of the
+// admin_usage.go fix (same disclosure-family bug, same fix shape, split out only
+// because it needs a licensed deployment to reach the authz check at all — see
+// grantBillingLicense above). Proves: a system_viewer-baseline (system.read only)
+// caller is denied (403) and an audit.read holder (system_auditor) succeeds (200) with
+// the seeded project's real billing figures, not a zeroed/redacted stand-in.
+func TestAdminBillingReport_PermissionTiers(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{}
+	testCore := newFullSchemaTestCore(t)
+	grantBillingLicense(t, testCore)
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	createTestToken(t, testCore)
+	baselineToken := createLimitedToken(t, testCore) // system_viewer only (system.read)
+	auditorToken := createAuditorToken(t, testCore)  // system_auditor (audit.read, global)
+	fixtures := seedFamilyFixtures(t, testCore)
+
+	from := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	path := "/api/v1/admin/billing/report?from=" + from + "&to=" + to
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	get := func(token string) (*http.Response, []byte) {
+		req, err := http.NewRequest(http.MethodGet, server.URL+path, nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		var body []byte
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			body = append(body, buf[:n]...)
+			if rerr != nil {
+				break
+			}
+		}
+		return resp, body
+	}
+
+	t.Run("baseline_denied", func(t *testing.T) {
+		resp, _ := get(baselineToken)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+			"a system_viewer-baseline (system.read only) caller must be denied at /admin/billing/report")
+	})
+
+	t.Run("auditor_allowed", func(t *testing.T) {
+		resp, body := get(auditorToken)
+		require.Equalf(t, http.StatusOK, resp.StatusCode,
+			"a system_auditor (audit.read) caller must succeed at /admin/billing/report (body: %s)", string(body))
+		m := jsonDataField(t, body)
+		projects, ok := m["projects"].([]interface{})
+		require.True(t, ok, "projects field must be a list")
+		found := false
+		for _, p := range projects {
+			proj, _ := p.(map[string]interface{})
+			if proj == nil {
+				continue
+			}
+			if id, _ := proj["project_id"].(float64); uint(id) == fixtures.projectID {
+				found = true
+				assert.GreaterOrEqual(t, proj["secret_count"], float64(1),
+					"the seeded canary secret must be counted for its project")
+			}
+		}
+		assert.True(t, found, "the seeded project must appear in the billing report for an audit.read holder")
 	})
 }

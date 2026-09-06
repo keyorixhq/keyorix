@@ -1,9 +1,16 @@
 // admin_billing.go — GET /api/v1/admin/billing/report handler.
 //
 // Returns a per-project FinOps billing report (secret counts, read/write
-// activity, machine vs. human breakdowns) for a configurable date range.
-// Gated by system.read permission in the router and the "billing" license
-// feature in core.GenerateBillingReport.
+// activity, machine vs. human breakdowns) for a configurable date range, for
+// every project or a caller-supplied ?project_id= list, with no ownership
+// check anywhere in the call chain. Gated by audit.read in the router (NOT
+// system.read — see admin_usage.go's header comment for why: system.read is
+// the universal system_viewer baseline every user holds, so it is equivalent
+// to no gate at all for a disclosure-sensitive, deployment-wide report; same
+// family as CP-001/CP-008) and the "billing" license feature in
+// core.GenerateBillingReport — the license check is a deployment capability
+// gate, not a per-caller authorization check, so it does not substitute for
+// the audit.read requirement.
 package handlers
 
 import (

@@ -2167,13 +2167,25 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/sod/policies/{id}", catalogHandler.DeleteSoDPolicy)
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/sod/violations", catalogHandler.ListSoDViolations)
 
-		// Usage report — per-project secret counts + read activity over a time window.
-		// Deployment-wide aggregation, gated by system.read.
-		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/admin/usage", adminUsageHandler.GetUsageReport)
+		// Usage report — per-project secret counts + read activity over a time window,
+		// with no per-project ownership check anywhere in the call chain (any project_id
+		// can be requested). Gated by audit.read, NOT system.read: system.read is the
+		// universal system_viewer baseline auto-assigned to every user at creation
+		// (CreateUser), every SSO/JIT-provisioned user, and every SCIM-provisioned user, so
+		// gating a deployment-wide, cross-project disclosure report on it alone is
+		// equivalent to no gate at all. Same disclosure family as CP-001/CP-008 (see
+		// control_framework.go's package comment) — this is the 7th+ confirmed instance of
+		// the identical mistake.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/admin/usage", adminUsageHandler.GetUsageReport)
 
-		// Billing report — per-project FinOps usage breakdown for a date range.
-		// Requires the "billing" license feature (gated in core.GenerateBillingReport).
-		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/admin/billing/report", adminBillingHandler.GetBillingReport)
+		// Billing report — per-project FinOps usage breakdown for a date range, with no
+		// per-project ownership check (project_id list is caller-supplied, unchecked
+		// against any membership). Requires the "billing" license feature (gated in
+		// core.GenerateBillingReport) as well, but a license feature flag is a deployment
+		// capability check, not a per-caller authorization check — it does not substitute
+		// for one. Gated by audit.read, NOT system.read, for the same reason as
+		// /admin/usage immediately above (same disclosure family, same fix).
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/admin/billing/report", adminBillingHandler.GetBillingReport)
 
 		// On-demand triggers for the notification/alert jobs that otherwise run only on
 		// their background schedulers — dispatch immediately after an incident or config
