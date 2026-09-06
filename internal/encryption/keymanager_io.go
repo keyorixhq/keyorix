@@ -7,6 +7,8 @@ package encryption
 import (
 	"path/filepath"
 
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -55,22 +57,64 @@ func (km *KeyManager) GetAuditCheckpointKey() (key []byte, keyID string, ok bool
 	return key, km.auditCheckpointKeyID, true
 }
 
-// ValidateKeyFiles checks that key files exist and have correct permissions (0600).
-func (km *KeyManager) ValidateKeyFiles() error {
-	files := []securefiles.FilePermSpec{
-		{Path: filepath.Join(km.baseDir, km.dekPath), Mode: 0600},
-		{Path: filepath.Join(km.baseDir, km.saltPath), Mode: 0600},
+// ValidateKeyFiles checks that key files exist and have correct permissions
+// (0600). enc is the full encryption config (used to also cover any
+// KeyProviderConfig-driven key material -- TPM/cloud-KMS wrapped-KEK blobs,
+// Shamir share files -- via internal/keyfiles.Registry, not just the DEK and
+// salt km itself was constructed with); nil checks DEK+salt only, for a
+// KeyManager built without one (e.g. directly in a test).
+func (km *KeyManager) ValidateKeyFiles(enc *config.EncryptionConfig) error {
+	files, err := km.keyFileSpecs(enc)
+	if err != nil {
+		return err
 	}
 	return securefiles.FixFilePerms(files, false)
 }
 
-// FixKeyFilePermissions corrects key file permissions to 0600.
-func (km *KeyManager) FixKeyFilePermissions() error {
-	files := []securefiles.FilePermSpec{
-		{Path: filepath.Join(km.baseDir, km.dekPath), Mode: 0600},
-		{Path: filepath.Join(km.baseDir, km.saltPath), Mode: 0600},
+// FixKeyFilePermissions corrects key file permissions to 0600. See
+// ValidateKeyFiles for what enc adds.
+func (km *KeyManager) FixKeyFilePermissions(enc *config.EncryptionConfig) error {
+	files, err := km.keyFileSpecs(enc)
+	if err != nil {
+		return err
 	}
 	return securefiles.FixFilePerms(files, true)
+}
+
+// keyFileSpecs builds the FilePermSpec list shared by ValidateKeyFiles and
+// FixKeyFilePermissions: km's own DEK/salt paths, plus (when enc is provided)
+// every other key-material path internal/keyfiles.Registry derives from the
+// full encryption config. km.dekPath/km.saltPath are used directly (rather
+// than enc.DEKPath/enc.SaltPath) so this still works for a KeyManager built
+// without a config at all.
+func (km *KeyManager) keyFileSpecs(enc *config.EncryptionConfig) ([]securefiles.FilePermSpec, error) {
+	dekFull := filepath.Join(km.baseDir, km.dekPath)
+	saltFull := filepath.Join(km.baseDir, km.saltPath)
+	files := []securefiles.FilePermSpec{
+		{Path: dekFull, Mode: 0600},
+		{Path: saltFull, Mode: 0600},
+	}
+	if enc == nil {
+		return files, nil
+	}
+	specs, err := keyfiles.Registry(enc, km.baseDir)
+	if err != nil {
+		return nil, err
+	}
+	// enc's own SaltPath/DEKPath normally resolve to the same files as
+	// km.dekPath/km.saltPath (both are set from the same config at
+	// construction, see NewService) -- deduped here rather than trusted to
+	// match, so a caller that ever passes a mismatched enc still gets km's
+	// real DEK/salt checked exactly once, not silently dropped or doubled.
+	seen := map[string]bool{dekFull: true, saltFull: true}
+	for _, s := range specs {
+		if seen[s.Path] {
+			continue
+		}
+		seen[s.Path] = true
+		files = append(files, s)
+	}
+	return files, nil
 }
 
 // Wipe securely removes the DEK, the evidence-signing key, and the
