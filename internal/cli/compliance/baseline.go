@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -46,8 +48,8 @@ Requires audit.read.`,
 			}
 			pretty.WriteByte('\n')
 			if baselineOutput != "" {
-				if err := os.WriteFile(baselineOutput, pretty.Bytes(), 0o600); err != nil {
-					return fmt.Errorf("failed to write %s: %w", baselineOutput, err)
+				if err := securefiles.SecureCreateFile(filepath.Dir(baselineOutput), filepath.Base(baselineOutput), pretty.Bytes(), 0o600); err != nil {
+					return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", baselineOutput, err)
 				}
 				fmt.Printf("Permission baseline JSON written to %s.\n", baselineOutput)
 				return nil

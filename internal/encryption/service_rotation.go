@@ -264,14 +264,18 @@ func (s *Service) RewrapDEKWithProvider(newProvider crypto.KeyProvider) error {
 	return s.keyManager.RewrapDEK(newProvider)
 }
 
-// ValidateKeyFiles validates encryption key files exist with correct permissions.
+// ValidateKeyFiles validates encryption key files exist with correct
+// permissions -- the DEK/salt (ADR-004) plus any KeyProviderConfig-driven key
+// material (TPM/cloud-KMS wrapped-KEK blob, Shamir share files) s.config
+// declares; see internal/keyfiles.Registry.
 func (s *Service) ValidateKeyFiles() error {
-	return s.keyManager.ValidateKeyFiles()
+	return s.keyManager.ValidateKeyFiles(s.config)
 }
 
-// FixKeyFilePermissions fixes key file permissions to 0600.
+// FixKeyFilePermissions fixes key file permissions to 0600, for the same set
+// ValidateKeyFiles checks.
 func (s *Service) FixKeyFilePermissions() error {
-	return s.keyManager.FixKeyFilePermissions()
+	return s.keyManager.FixKeyFilePermissions(s.config)
 }
 
 // GetKeyVersion returns the current key version string.

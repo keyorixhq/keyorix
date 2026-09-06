@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,8 +54,12 @@ func TestRunStatus_RemoteUnhealthy(t *testing.T) {
 
 	writePingConfig(t, dir, srv.URL, 2)
 
-	out := captureStdout(t, func() { require.NoError(t, runStatus(nil, nil)) })
+	var runErr error
+	out := captureStdout(t, func() { runErr = runStatus(nil, nil) })
 
+	var exitErr *common.ExitCodeError
+	require.ErrorAs(t, runErr, &exitErr)
+	assert.Equal(t, 1, exitErr.Code)
 	assert.Contains(t, out, "Storage Type: 🌐 Remote")
 	assert.Contains(t, out, "❌ Unhealthy (health check failed:")
 	assert.Contains(t, out, "Response Time:")

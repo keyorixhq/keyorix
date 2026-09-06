@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/stretchr/testify/assert"
@@ -60,13 +61,17 @@ func TestRunStatus_RemoteConnectionFailed(t *testing.T) {
 	os.Stdout = w
 	defer func() { os.Stdout = orig }()
 
-	// runStatus never returns an error even for an unhealthy connection.
+	// runStatus reports the connection failure via exit code 1 (common.ExitUnhealthy),
+	// not a nil error -- a caller scripting on exit status must be able to detect an
+	// unreachable target without parsing stdout (2026-09-05, deliberate breaking change).
 	errRun := runStatus(nil, nil)
 	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	outStr := string(out)
 
-	assert.NoError(t, errRun)
+	var exitErr *common.ExitCodeError
+	require.ErrorAs(t, errRun, &exitErr)
+	assert.Equal(t, 1, exitErr.Code)
 	assert.Contains(t, outStr, "System Status")
 	// Could be "Remote" display or fallback to default; either way no panic.
 	assert.Contains(t, outStr, "Storage Type")
