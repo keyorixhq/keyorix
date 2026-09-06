@@ -733,13 +733,36 @@ func TestGetSecretSharingStatusWithIndicators_SharesError(t *testing.T) {
 
 func TestGetSecretSharingStatusWithIndicators_OwnerNoShares(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7}, nil)
+	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7, ProjectID: 5}, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
+	ms.On("IsProjectMember", mock.Anything, uint(7), uint(5)).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	status, err := c.GetSecretSharingStatusWithIndicators(context.Background(), 1, 7)
 	require.NoError(t, err)
 	assert.True(t, status.IsOwner)
 	assert.False(t, status.IsShared)
+}
+
+// TestGetSecretSharingStatusWithIndicators_DepartedOwnerDenied is the RBAC-001
+// regression test: a departed owner (removed from the secret's project, but the
+// secret row's OwnerID tag is untouched until ClearProjectSecretOwnership runs)
+// must not see owner-only sharing indicators or the recipient list, matching
+// ListSecretSharesWithPermissionCheck (core_s24_test.go) and the sharing.go/
+// group_sharing.go mutation paths. Pre-fix, the bare secretOwnedBy check let a
+// departed owner through since OwnerID still matched, and — with no active
+// share for that user either — GetSecretSharingStatusWithIndicators would have
+// returned isOwner=true instead of the "no permission" error asserted here.
+func TestGetSecretSharingStatusWithIndicators_DepartedOwnerDenied(t *testing.T) {
+	ms := new(MockStorage)
+	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7, ProjectID: 5}, nil)
+	ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
+	// The owner still carries OwnerID 7 on the secret row, but no longer holds a
+	// live role grant in the secret's project.
+	ms.On("IsProjectMember", mock.Anything, uint(7), uint(5)).Return(false, nil)
+	c := NewKeyorixCore(ms)
+	_, err := c.GetSecretSharingStatusWithIndicators(context.Background(), 1, 7)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "permission")
 }
 
 func TestGetSecretSharingStatusWithIndicators_NonOwnerWithShare(t *testing.T) {
