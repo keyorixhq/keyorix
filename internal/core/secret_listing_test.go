@@ -308,8 +308,9 @@ func TestKeyorixCore_GetUserSecretPermission(t *testing.T) {
 			secretID: 1,
 			userID:   1,
 			secret: &models.SecretNode{
-				ID:      1,
-				OwnerID: 1,
+				ID:        1,
+				OwnerID:   1,
+				ProjectID: 5,
 			},
 			expectedPerm:   "owner",
 			expectedSource: "owner",
@@ -356,7 +357,11 @@ func TestKeyorixCore_GetUserSecretPermission(t *testing.T) {
 
 			// Mock expectations
 			mockStorage.On("GetSecret", ctx, tt.secretID).Return(tt.secret, nil)
-			if tt.secret.OwnerID != tt.userID {
+			if tt.secret.OwnerID != 0 && tt.secret.OwnerID == tt.userID {
+				// requireLiveOwnerAuthority additionally checks live project
+				// membership (RBAC-001) before granting owner permission.
+				mockStorage.On("IsProjectMember", ctx, tt.userID, tt.secret.ProjectID).Return(true, nil)
+			} else {
 				mockStorage.On("ListSharesBySecret", ctx, tt.secretID).Return(tt.shares, nil)
 			}
 
@@ -379,4 +384,31 @@ func TestKeyorixCore_GetUserSecretPermission(t *testing.T) {
 			mockStorage.AssertExpectations(t)
 		})
 	}
+}
+
+// TestKeyorixCore_GetUserSecretPermission_DepartedOwnerDenied is the RBAC-001
+// regression test: a departed owner (removed from the secret's project, but the
+// secret row's OwnerID tag is untouched until ClearProjectSecretOwnership runs)
+// must not be reported as still holding "owner" permission, matching
+// ListSecretSharesWithPermissionCheck and GetSecretSharingStatusWithIndicators.
+// Pre-fix, the bare secretOwnedBy check let a departed owner through since
+// OwnerID still matched — confirmed to fail against that old code (would return
+// Permission "owner" with no error instead of the "no permission" error asserted
+// here) before the requireLiveOwnerAuthority swap.
+func TestKeyorixCore_GetUserSecretPermission_DepartedOwnerDenied(t *testing.T) {
+	mockStorage := new(MockStorage)
+	core := &KeyorixCore{storage: mockStorage, now: time.Now}
+	ctx := context.Background()
+	secret := &models.SecretNode{ID: 1, OwnerID: 1, ProjectID: 5}
+
+	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+	// The owner still carries OwnerID 1 on the secret row, but no longer holds a
+	// live role grant in the secret's project.
+	mockStorage.On("IsProjectMember", ctx, uint(1), uint(5)).Return(false, nil)
+	mockStorage.On("ListSharesBySecret", ctx, uint(1)).Return([]*models.ShareRecord{}, nil)
+
+	perm, err := core.GetUserSecretPermission(ctx, 1, 1)
+	require.Error(t, err)
+	assert.Nil(t, perm)
+	mockStorage.AssertExpectations(t)
 }
