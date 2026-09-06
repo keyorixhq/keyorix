@@ -74,6 +74,10 @@ type KeyorixCore struct {
 	// config's own MaxTTLSeconds, which has no ceiling of its own. Zero = the
 	// package default (90 days) applies. Set via SetDynamicMaxLeaseTTL.
 	dynamicMaxLeaseTTL time.Duration
+	// dynamicAllowInsecureTransport mirrors config
+	// dynamic_secrets.allow_insecure_transport (see
+	// SetDynamicAllowInsecureTransport).
+	dynamicAllowInsecureTransport bool
 	// dynamicAllowPrivateTargets mirrors config
 	// dynamic_secrets.allow_private_network_targets. When false (the default), the
 	// SSRF guard in CreateDynamicSecretConfig rejects admin DSNs whose host resolves
@@ -758,6 +762,16 @@ func (c *KeyorixCore) SetDynamicAllowPrivateTargets(allow bool) {
 	c.dynamicAllowPrivateTargets = allow
 }
 
+// SetDynamicAllowInsecureTransport controls whether the mongodb/redis
+// backends' TLS-required-by-default guard is bypassed. When false (the
+// default), connecting to either backend without TLS is refused. Set to true
+// only when the dynamic-secret backend legitimately cannot use TLS (e.g. a
+// legacy/internal deployment) — every connection made under this opt-out is
+// logged (2d).
+func (c *KeyorixCore) SetDynamicAllowInsecureTransport(allow bool) {
+	c.dynamicAllowInsecureTransport = allow
+}
+
 // SetDynamicMaxLeaseTTL sets the install-wide dynamic-secret lease TTL ceiling
 // (config dynamic_secrets.max_lease_ttl, #97). A non-positive value is ignored — the
 // package default (90 days) applies instead of disabling the ceiling.
@@ -777,7 +791,7 @@ func (c *KeyorixCore) dynamicEngine(backendType string) (dynamic.CredentialEngin
 	if c.dynamicEngineFactory != nil {
 		return c.dynamicEngineFactory(backendType)
 	}
-	return dynamic.New(backendType, c.dynamicAllowPrivateTargets)
+	return dynamic.New(backendType, c.dynamicAllowPrivateTargets, c.dynamicAllowInsecureTransport)
 }
 
 // SetTrustRegistryFunc overrides how the update/license signing-key trust registry

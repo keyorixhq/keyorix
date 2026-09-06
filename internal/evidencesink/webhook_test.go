@@ -39,11 +39,14 @@ func TestWebhook_RejectsInsecureEndpoints(t *testing.T) {
 
 	// #130: InsecureSkipVerify (a TLS-certificate-trust decision) must NOT also
 	// bypass the https/SSRF guard — that coupling was the bug. Only the dedicated
-	// AllowPrivateNetworkTarget opt-in does.
+	// AllowInsecureTransport opt-in does (AllowPrivateNetworkTarget governs a
+	// SEPARATE decision and, since a later fix, no longer also implies this one).
 	_, err = NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", InsecureSkipVerify: true})
 	require.Error(t, err, "InsecureSkipVerify alone must not bypass the https requirement")
 	_, err = NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", AllowPrivateNetworkTarget: true})
-	require.NoError(t, err, "AllowPrivateNetworkTarget is the dedicated opt-in for a non-https/internal target")
+	require.Error(t, err, "AllowPrivateNetworkTarget alone must NOT also bypass the https requirement -- that conflation was a real bug, fixed by splitting the two decisions")
+	_, err = NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", AllowInsecureTransport: true})
+	require.NoError(t, err, "AllowInsecureTransport is the dedicated opt-in for a non-https target")
 }
 
 func TestWebhook_PostsEvidenceWithAuth(t *testing.T) {

@@ -46,6 +46,12 @@ type WebhookConfig struct {
 	// and a legitimate on-prem receiver with a real cert still needs this to reach
 	// its private address.
 	AllowPrivateNetworkTarget bool
+	// AllowInsecureTransport permits a plaintext (http://) endpoint to a
+	// non-loopback host — a SEPARATE decision from AllowPrivateNetworkTarget
+	// (see validateEndpoint's doc comment for the conflation this used to be
+	// and why it's split now). False by default: Endpoint must be https
+	// unless it targets loopback.
+	AllowInsecureTransport bool
 	// SigningSecret, when set, signs each payload with HMAC-SHA256 so the receiver can
 	// verify it came from Keyorix: header X-Keyorix-Signature: sha256=<hex(hmac(body))>.
 	SigningSecret string
@@ -70,7 +76,7 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*WebhookSink, err
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("notifychan: webhook endpoint is required")
 	}
-	if err := validateEndpoint(cfg.Endpoint, cfg.AllowPrivateNetworkTarget); err != nil {
+	if err := validateEndpoint(cfg.Endpoint, cfg.AllowPrivateNetworkTarget, cfg.AllowInsecureTransport); err != nil {
 		return nil, err
 	}
 	transport := &http.Transport{}
