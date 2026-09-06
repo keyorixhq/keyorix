@@ -317,7 +317,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// issued (password step passed) just before an admin suspended the account, and
 	// nothing rechecks the state between the two steps. Mirrors the password,
 	// session, PAT, and passwordless-WebAuthn gates.
-	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, false, fmt.Errorf("account is not active")
 	}
 	// Per-account lockout also gates the second factor. The per-IP rate limiter is

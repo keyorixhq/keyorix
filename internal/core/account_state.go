@@ -22,6 +22,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -106,21 +108,75 @@ func AccountRestricted(state string) bool {
 // funnels through here, so a deprovisioned account is refused everywhere a suspended
 // one is, with no per-path change.
 //
-// Unlike AccountRestricted, this deliberately keeps a fail-OPEN default (false, not
-// blocked) for an unrecognized state. Blocking login outright has no self-healing
-// path — a fully blocked user can never reach the password-change flow to fix
-// anything — so failing closed here would risk permanently locking out an already-
-// legitimate user over a merely malformed value (e.g. a stale data migration, or a
-// value from a since-removed state) with no recovery short of direct DB/admin
-// intervention. AccountRestricted's fail-closed default already guarantees an
-// unrecognized value can never grant full unrestricted access; that is the correct
-// place for the defense-in-depth backstop, not here.
-func AccountLoginBlocked(state string) bool {
-	switch NormalizeAccountState(state) {
+// Fails CLOSED on blank, whitespace-only, and any other unrecognized value — this is
+// a change from this function's original design, which deliberately chose fail-OPEN
+// here (see git history for the prior reasoning: blocking login outright has no
+// self-healing path, so failing closed on a merely malformed value risked permanently
+// locking out an already-legitimate user with no recovery short of direct DB/admin
+// intervention).
+//
+// That reasoning was correct in general — it is exactly why AccountRestricted (a
+// state that still authenticates but forces a password change) keeps a fail-closed
+// default while THIS function, which refuses login outright, did not. But it weighed
+// wrongful-lockout and wrongful-access as comparable costs, and at this specific
+// call site they are not. For a secrets-management platform: a lockout is
+// admin-recoverable in minutes and loudly visible (ReactivateUser, an audited action,
+// with the operator informed exactly why via the log line and metric below); an
+// authentication bypass through this exact gate is how a suspended/deprovisioned
+// account got fully reactivated for login in a real, confirmed incident (a full-row
+// storage overwrite silently blanked account_state, which this function's old
+// fail-open default then read as "not blocked") — unrecoverable once exploited, and
+// may never be detected. At an authentication boundary specifically, the integrity
+// argument wins. This does NOT generalize to the rest of the codebase; it is a
+// property of this one call site, which is why AccountRestricted's own default is
+// untouched.
+//
+// Four things make failing closed here safe rather than a new blast radius:
+//  1. internal/storage/account_state_backfill.go's guardAccountStateValid adds a
+//     Postgres CHECK constraint restricting account_state to exactly the ADR-025
+//     canonical set — no other value can be newly WRITTEN, on that backend. (This
+//     function is still the one enforcement this constraint doesn't reach: it's a
+//     pure function over a string, not a query result. A User struct can carry an
+//     arbitrary value from a session-cache entry, an API request body deserialized
+//     before any write, a test fixture, or a non-Postgres backend the constraint was
+//     never applied to at all — SQLite has no equivalent, by design; see that
+//     function's doc. The constraint is defense-in-depth for one backend, not a
+//     substitute for the check below.)
+//  2. TestAccountLoginBlocked_ExhaustsStateRegistry (account_state_exhaustiveness_
+//     guard_test.go) statically asserts every AccountXxx constant declared in this
+//     file is explicitly listed in this switch's case clauses — adding a new account
+//     state without handling it here fails CI, which is what makes "a future state
+//     not yet in this switch" (the original comment's main scenario) impossible to
+//     ship silently.
+//  3. Every existing blank row was backfilled to an explicit "active" before this
+//     change shipped (internal/storage/account_state_backfill.go's
+//     backfillBlankAccountState, proven idempotent and correct for every blank shape
+//     — empty, NULL, whitespace-only — by its own test suite), so this flip does not
+//     retroactively lock out any account that was blank for a benign reason.
+//  4. The failure is LOUD, never silent: every fail-closed hit below logs the exact
+//     value and the affected user ID at security level and increments
+//     accountStateUnrecognizedTotal (account_state_metrics.go), so a lockout this
+//     causes is immediately diagnosable from a single log line and alertable via the
+//     metric — never a mysterious, undiagnosable "why can't I log in".
+//
+// Release ordering: the backfill (item 3) is backward-compatible — old code reads
+// the explicit "active" value exactly the same as it read blank — so it can ship in
+// a release ahead of this fail-closed change without any coordination requirement
+// beyond "the backfill's release is deployed first". See ADR-025 for the account of
+// why a live-database confirmation gate was replaced with these four self-certifiable
+// preconditions.
+func AccountLoginBlocked(userID uint, state string) bool {
+	switch strings.TrimSpace(state) {
+	case AccountActive, AccountPendingFirstLogin, AccountPasswordResetRequired:
+		return false
 	case AccountSuspended, AccountDeprovisioned:
 		return true
 	default:
-		return false
+		accountStateUnrecognizedTotal.Inc()
+		log.Printf("SECURITY: user %d has a blank or unrecognized account_state %q -- failing closed "+
+			"(login blocked). Recovery: an administrator must explicitly reactivate this account "+
+			"(ReactivateUser) to set it to a valid state.", userID, state)
+		return true
 	}
 }
 
@@ -230,7 +286,7 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 		// accounts as a slow-path backstop, but the cache fast path bypasses it — so
 		// evict here too. Revoked PAT hashes are folded into sessionHashes so they're
 		// evicted from the auth cache alongside the session hashes after commit.
-		if AccountLoginBlocked(state) {
+		if AccountLoginBlocked(userID, state) {
 			_ = tx.DeleteSessionsForUserExcept(ctx, userID, 0)
 			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, userID); herr == nil {
 				sessionHashes = append(sessionHashes, hashes...)

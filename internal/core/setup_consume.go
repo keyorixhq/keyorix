@@ -95,7 +95,7 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
 	// A suspended account cannot be activated via a setup link.
-	if AccountLoginBlocked(user.AccountState) {
+	if AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, fmt.Errorf("account suspended")
 	}
 	// Externally-managed identities (SSO/SCIM) must not get a local password: it would

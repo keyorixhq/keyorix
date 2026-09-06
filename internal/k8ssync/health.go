@@ -109,6 +109,10 @@ func (s *Status) HandlerWithToken(token string) http.Handler {
 	})
 	var metricsHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
+		// s.metrics() is a hand-built Prometheus text-exposition body assembled from this
+		// process's own internal counters -- no request- or user-derived data reaches it, and
+		// the response is served as text/plain, not HTML, so there is no XSS sink here.
 		_, _ = w.Write([]byte(s.metrics()))
 	})
 	if token != "" {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -21,8 +22,8 @@ func TestAccountStateHelpers(t *testing.T) {
 	assert.False(t, AccountRestricted(AccountActive))
 	assert.False(t, AccountRestricted("")) // legacy → active
 
-	assert.True(t, AccountLoginBlocked(AccountSuspended))
-	assert.False(t, AccountLoginBlocked(AccountActive))
+	assert.True(t, AccountLoginBlocked(1, AccountSuspended))
+	assert.False(t, AccountLoginBlocked(1, AccountActive))
 
 	// A restricted state clears to active on password change; others unchanged.
 	assert.Equal(t, AccountActive, clearRestrictionOnPasswordChange(AccountPasswordResetRequired))
@@ -43,34 +44,78 @@ func TestIsValidAccountState(t *testing.T) {
 }
 
 // TestAccountState_UnrecognizedValueFailsClosed proves #334's defense-in-depth
-// backstop: an unrecognized account_state value (e.g. one persisted before the
-// write-path validation shipped) is treated as restricted — never as fully
-// active/unrestricted — while still not being an outright login block, since a
-// restricted session can self-heal via a password change.
+// backstop (AccountRestricted) AND AccountLoginBlocked's own fail-closed
+// posture (see that function's doc for the asymmetry reasoning): an
+// unrecognized account_state value is treated as restricted by
+// AccountRestricted (never as fully active/unrestricted), AND refused
+// outright by AccountLoginBlocked — both fail closed, just to different
+// degrees of severity, matching what each function protects.
 func TestAccountState_UnrecognizedValueFailsClosed(t *testing.T) {
 	garbage := "not-a-real-state"
 
 	assert.True(t, AccountRestricted(garbage), "unrecognized state must fail closed to restricted")
-	assert.False(t, AccountLoginBlocked(garbage), "unrecognized state must not hard-lock out login (no self-heal path)")
+	assert.True(t, AccountLoginBlocked(1, garbage), "unrecognized state must also fail closed to login-blocked")
 
 	// An unrecognized-but-restricted state still self-heals to active on the
 	// next password change, exactly like the canonical restricted states.
+	// (Moot in practice for login itself, since AccountLoginBlocked now refuses
+	// it before a session is ever minted -- but clearRestrictionOnPasswordChange
+	// is also called from paths that already hold an authenticated session, e.g.
+	// an admin-initiated password change, so this must still self-heal.)
 	assert.Equal(t, AccountActive, clearRestrictionOnPasswordChange(garbage))
 
-	// The canonical, previously-tested behaviors are unchanged by the new default.
+	// The canonical, previously-tested behaviors are unchanged.
 	assert.True(t, AccountRestricted(AccountPendingFirstLogin))
 	assert.True(t, AccountRestricted(AccountPasswordResetRequired))
 	assert.False(t, AccountRestricted(AccountActive))
 	assert.False(t, AccountRestricted(AccountSuspended))
 	assert.False(t, AccountRestricted(AccountDeprovisioned))
+	// AccountRestricted's behavior for blank is genuinely unchanged by this fix:
+	// NormalizeAccountState still maps "" to AccountActive (write-time-defaulting
+	// semantics used elsewhere, e.g. CreateUser's "no state specified" path --
+	// see AccountLoginBlocked's own doc for why that function deliberately does
+	// NOT route through NormalizeAccountState instead), so AccountRestricted("")
+	// still resolves to AccountActive's case (not restricted) exactly as before.
+	// This is moot in practice: AccountLoginBlocked now refuses a blank state
+	// outright, so restriction-checking is never reached for it at all.
 	assert.False(t, AccountRestricted(""))
 
-	assert.True(t, AccountLoginBlocked(AccountSuspended))
-	assert.True(t, AccountLoginBlocked(AccountDeprovisioned))
-	assert.False(t, AccountLoginBlocked(AccountActive))
-	assert.False(t, AccountLoginBlocked(AccountPendingFirstLogin))
-	assert.False(t, AccountLoginBlocked(AccountPasswordResetRequired))
-	assert.False(t, AccountLoginBlocked(""))
+	assert.True(t, AccountLoginBlocked(1, AccountSuspended))
+	assert.True(t, AccountLoginBlocked(1, AccountDeprovisioned))
+	assert.False(t, AccountLoginBlocked(1, AccountActive))
+	assert.False(t, AccountLoginBlocked(1, AccountPendingFirstLogin))
+	assert.False(t, AccountLoginBlocked(1, AccountPasswordResetRequired))
+}
+
+// TestAccountLoginBlocked_FailsClosedOnBlankAndWhitespace is the regression
+// test for the actual vulnerability this fix closes: a blank or whitespace-
+// only account_state (the shape a full-row storage overwrite silently
+// produced in a real, confirmed incident) must be refused, not read as "not
+// blocked" the way this function's original fail-open default did.
+func TestAccountLoginBlocked_FailsClosedOnBlankAndWhitespace(t *testing.T) {
+	for _, s := range []string{"", " ", "\t", "   "} {
+		assert.True(t, AccountLoginBlocked(1, s), "blank/whitespace state %q must block login", s)
+	}
+}
+
+// TestAccountLoginBlocked_MetricAndLogOnFailClosed proves P3's "loud, never
+// silent" requirement: hitting the fail-closed default increments the
+// unrecognized-state counter (the routine Suspended/Deprovisioned path must
+// NOT increment it -- that's expected, not anomalous).
+func TestAccountLoginBlocked_MetricAndLogOnFailClosed(t *testing.T) {
+	before := testutil.ToFloat64(accountStateUnrecognizedTotal)
+
+	assert.True(t, AccountLoginBlocked(1, AccountSuspended))
+	assert.True(t, AccountLoginBlocked(1, AccountDeprovisioned))
+	assert.False(t, AccountLoginBlocked(1, AccountActive))
+	assert.Equal(t, before, testutil.ToFloat64(accountStateUnrecognizedTotal),
+		"routine suspended/deprovisioned/active checks must not touch the anomalous-state counter")
+
+	assert.True(t, AccountLoginBlocked(1, ""))
+	assert.Equal(t, before+1, testutil.ToFloat64(accountStateUnrecognizedTotal))
+
+	assert.True(t, AccountLoginBlocked(1, "some-garbage-value"))
+	assert.Equal(t, before+2, testutil.ToFloat64(accountStateUnrecognizedTotal))
 }
 
 func newAccountCore(store *MockStorage) *KeyorixCore {
@@ -105,7 +150,7 @@ func TestAdminAccountTransitions(t *testing.T) {
 			// (#r125-H2: password_reset_required previously skipped PAT eviction).
 			store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
 			// A login-blocking transition (suspend) must purge the user's sessions AND PATs.
-			if AccountLoginBlocked(tc.wantState) {
+			if AccountLoginBlocked(1, tc.wantState) {
 				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)
 				store.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(2)).Return([]string{}, nil)
 			}
@@ -119,7 +164,7 @@ func TestAdminAccountTransitions(t *testing.T) {
 
 			require.NoError(t, tc.call(c, ctx))
 			store.AssertExpectations(t)
-			if !AccountLoginBlocked(tc.wantState) {
+			if !AccountLoginBlocked(1, tc.wantState) {
 				store.AssertNotCalled(t, "DeleteSessionsForUserExcept", mock.Anything, mock.Anything, mock.Anything)
 			}
 		})

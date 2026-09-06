@@ -46,9 +46,16 @@ func TestCreateStorage_LocalStorage(t *testing.T) {
 	assert.NotNil(t, st)
 }
 
-// TestCreateStorage_EmptyTypeIsLocal validates that an empty storage.type is
-// treated as "local" (backward-compat).
-func TestCreateStorage_EmptyTypeIsLocal(t *testing.T) {
+// TestCreateStorage_EmptyTypeIsRejected validates that an empty storage.type is
+// now a hard error (#G-blank-storage-default), not a silent fallback to local
+// SQLite. Before this fix, "local", "sqlite", "" were one case, so this same
+// config (blank type, an explicit database path) silently created a real,
+// on-disk local database file — see the removed TestCreateStorage_EmptyTypeIsLocal,
+// which asserted exactly that as "backward-compat". The one legitimate
+// "no storage: block = local SQLite" deployment shape is now preserved solely by
+// server/main.go's own boot sequence explicitly setting Storage.Type = "local"
+// before ever reaching this factory — not by the factory itself.
+func TestCreateStorage_EmptyTypeIsRejected(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	defer i18n.ResetForTesting()
 
@@ -58,8 +65,9 @@ func TestCreateStorage_EmptyTypeIsLocal(t *testing.T) {
 	cfg.Storage.Database.Path = filepath.Join(dir, "empty-type.db")
 
 	st, err := NewStorageFactory().CreateStorage(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, st)
+	require.Error(t, err)
+	assert.Nil(t, st)
+	assert.Contains(t, err.Error(), "storage.type is not set")
 }
 
 // TestCreateStorage_SqliteAliasIsLocal validates that "sqlite" -- the value
@@ -133,6 +141,24 @@ func TestOpenGormDB_InvalidTypeRejected(t *testing.T) {
 	_, err := OpenGormDB(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "badtype")
+}
+
+// TestOpenGormDB_EmptyTypeIsRejected validates that OpenGormDB, like the
+// factory's CreateStorage, now hard-errors on a blank storage.type instead of
+// silently opening local SQLite (#G-blank-storage-default). These CLI admin
+// commands (DEK rotation, auth-encryption stats) load config directly with no
+// CLI-applied default, so a blank type reaching here means the operator's own
+// config genuinely never set storage.type.
+func TestOpenGormDB_EmptyTypeIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{}
+	cfg.Storage.Type = "" // explicitly empty
+	cfg.Storage.Database.Path = filepath.Join(dir, "empty-type-gormdb.db")
+
+	db, err := OpenGormDB(cfg)
+	require.Error(t, err)
+	assert.Nil(t, db)
+	assert.Contains(t, err.Error(), "storage.type is not set")
 }
 
 // TestOpenGormDB_LocalSQLite validates that OpenGormDB can open a local SQLite

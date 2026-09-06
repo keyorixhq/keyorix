@@ -513,15 +513,15 @@ func TestNormalizeAccountState_Known(t *testing.T) {
 // ── AccountLoginBlocked ───────────────────────────────────────────────────────
 
 func TestAccountLoginBlocked_Active(t *testing.T) {
-	assert.False(t, AccountLoginBlocked("active"))
+	assert.False(t, AccountLoginBlocked(1, "active"))
 }
 
 func TestAccountLoginBlocked_Deprovisioned(t *testing.T) {
-	assert.True(t, AccountLoginBlocked(AccountDeprovisioned))
+	assert.True(t, AccountLoginBlocked(1, AccountDeprovisioned))
 }
 
 func TestAccountLoginBlocked_Suspended(t *testing.T) {
-	assert.True(t, AccountLoginBlocked(AccountSuspended))
+	assert.True(t, AccountLoginBlocked(1, AccountSuspended))
 }
 
 // ── versions.go — getSecretValueForUser branches ─────────────────────────────

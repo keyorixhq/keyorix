@@ -69,6 +69,45 @@ func TestInitializeCoreService_Baseline(t *testing.T) {
 	}
 }
 
+// TestInitializeCoreService_BlankStorageTypeDefaultsToLocal is
+// #G-blank-storage-default's core regression guard: a config with NO
+// storage.type set at all (the "no storage: block in keyorix.yaml" shape, or
+// a bare zero-value config.Config{} reached with no config file present)
+// must still boot into local SQLite storage exactly as it did before
+// internal/storage/factory.go's CreateStorage started hard-erroring on a
+// blank storage.type for every OTHER caller. The server's own boot path
+// (initializeCoreService, mirroring main()'s identical default-application)
+// is the one place allowed to supply that default -- this test constructs
+// the config the way an operator's minimal deployment would (only
+// database.path set, storage.type entirely omitted) and asserts
+// initializeCoreService still succeeds, proving the default is actually
+// wired up rather than merely intended.
+func TestInitializeCoreService_BlankStorageTypeDefaultsToLocal(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			// Type deliberately left blank -- see doc comment above.
+			Database: config.DatabaseConfig{Path: "test.db"},
+		},
+	}
+
+	svc, enc, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService with blank storage.type: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("expected non-nil core service")
+	}
+	if enc != nil {
+		t.Fatal("expected nil encSvc when encryption is disabled")
+	}
+	if cfg.Storage.Type != "local" {
+		t.Errorf("expected initializeCoreService to default cfg.Storage.Type to %q, got %q", "local", cfg.Storage.Type)
+	}
+}
+
 // ── initializeCoreService — password policy ───────────────────────────────────
 
 func TestInitializeCoreService_PasswordPolicy(t *testing.T) {
@@ -435,6 +474,13 @@ func TestInitializeCoreService_Connect_KnownTypes(t *testing.T) {
 
 // ── initializeCoreService — Connect (gcp, no project_id) ────────────────────
 
+// project_id is now a required field for gcp-secret-manager connectors — an unset
+// project_id used to only log a startup warning (an unpinned connector could reach
+// any GCP project the ambient ADC identity can access, regardless of this
+// connector's Keyorix tenant scope: a confused-deputy gap). This test's own name
+// and assertion, until this change, encoded exactly that now-obsolete "boots fine"
+// behavior. It now fails cfg.Validate() (called inside initializeCoreService)
+// before boot ever reaches the Connect-wiring loop.
 func TestInitializeCoreService_Connect_GCP_NoProjectID(t *testing.T) {
 	initI18n(t)
 	cfg := newMinimalCfg(t)
@@ -446,8 +492,11 @@ func TestInitializeCoreService_Connect_GCP_NoProjectID(t *testing.T) {
 	}
 
 	_, _, err := initializeCoreService(cfg)
-	if err != nil {
-		t.Fatalf("initializeCoreService with GCP no project_id: %v", err)
+	if err == nil {
+		t.Fatal("expected initializeCoreService to refuse to boot a gcp-secret-manager connector with no project_id")
+	}
+	if got := err.Error(); !contains(got, "gcp-noproj") || !contains(got, "project_id") {
+		t.Fatalf("expected error to name the connector and project_id, got: %v", err)
 	}
 }
 

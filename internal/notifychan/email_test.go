@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/envflag"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,11 +57,11 @@ func TestNewEmail_Validation(t *testing.T) {
 }
 
 func TestNewEmail_TLSNoneRequiresExplicitOptIn(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "")
+	t.Setenv(envflag.AllowInsecureSMTP, "")
 	_, err := NewEmail(EmailConfig{Host: "smtp.x.io", From: "ops@x.io", TLS: "none"})
 	require.Error(t, err, "cleartext SMTP must fail closed by default")
 
-	t.Setenv(envAllowInsecureSMTP, "true")
+	t.Setenv(envflag.AllowInsecureSMTP, "true")
 	s, err := NewEmail(EmailConfig{Host: "smtp.x.io", From: "ops@x.io", TLS: "none"})
 	require.NoError(t, err, "tls=none must succeed once the operator opts in")
 	s.Close()
@@ -75,7 +76,7 @@ func TestNewEmail_TLSNoneRequiresExplicitOptIn(t *testing.T) {
 // NOT attempted, and it produces a "dropped" delivery outcome an operator can alert
 // on, instead of leaving zero trace anywhere.
 func TestEmailSink_BroadcastWithNoDestinationConfiguredIsDroppedAndCounted(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "true")
+	t.Setenv(envflag.AllowInsecureSMTP, "true")
 	before := emailOutcomeTotal(t)
 	sink, err := NewEmail(EmailConfig{Host: "smtp.invalid", From: "ops@x.io", TLS: "none"})
 	require.NoError(t, err)
@@ -242,7 +243,7 @@ func fakeSMTPServer(t *testing.T) (host string, port int) {
 // test in this file leaves uncovered because they all point send() at a
 // refusing/closed port to exercise the failure path.
 func TestEmailSink_Send_DeliversAgainstFakeSMTPServer(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "true")
+	t.Setenv(envflag.AllowInsecureSMTP, "true")
 	host, port := fakeSMTPServer(t)
 
 	delivBefore := testutil.ToFloat64(notifyDeliveries.WithLabelValues("email", outcomeDelivered))
@@ -258,7 +259,7 @@ func TestEmailSink_Send_DeliversAgainstFakeSMTPServer(t *testing.T) {
 }
 
 func TestEmailSink_BroadcastRoutesToConfiguredDestination(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "true")
+	t.Setenv(envflag.AllowInsecureSMTP, "true")
 	before := emailOutcomeTotal(t)
 	sink, err := NewEmail(EmailConfig{Host: "127.0.0.1", Port: 1, From: "ops@x.io", TLS: "none", BroadcastTo: "admin@x.io"})
 	require.NoError(t, err)

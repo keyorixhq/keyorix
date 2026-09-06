@@ -8,35 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// envFlagEnabled — unparsable value path (set but not a valid bool)
-// ---------------------------------------------------------------------------
-
-// TestEnvFlagEnabled_UnparsableValue confirms that a set-but-invalid value
-// (e.g. "yes" or "maybe") returns false (fail closed).
-func TestEnvFlagEnabled_UnparsableValue(t *testing.T) {
-	t.Setenv("TEST_FLAG_ENABLED_S17", "yes") // not accepted by strconv.ParseBool
-	assert.False(t, envFlagEnabled("TEST_FLAG_ENABLED_S17"))
-}
-
-func TestEnvFlagEnabled_FalseValue(t *testing.T) {
-	t.Setenv("TEST_FLAG_ENABLED_S17", "false")
-	assert.False(t, envFlagEnabled("TEST_FLAG_ENABLED_S17"))
-}
-
-func TestEnvFlagEnabled_TrueValue(t *testing.T) {
-	t.Setenv("TEST_FLAG_ENABLED_S17", "1")
-	assert.True(t, envFlagEnabled("TEST_FLAG_ENABLED_S17"))
-}
-
-func TestEnvFlagEnabled_Unset(t *testing.T) {
-	// Make sure the variable is not set.
-	t.Setenv("TEST_FLAG_UNSET_S17", "")
-	// LookupEnv returns ok=true for empty string — only "not set" returns false.
-	// For "not set", we need to ensure we're testing the !ok branch.
-	// Use a key that definitely isn't set.
-	assert.False(t, envFlagEnabled("KEYORIX_FLAG_DEFINITELY_NOT_SET_S17_UNIQUE_XYZ"))
-}
+// envFlagEnabled's generic behavior (unset/empty/false/true/unparsable) is now
+// tested once at its source of truth, internal/envflag/envflag_test.go — this
+// package's own coverage is the integration-level checks below (does SMTP's
+// tls=none actually refuse/allow per that shared helper).
 
 // ---------------------------------------------------------------------------
 // LogDelivery — Name() and empty link error path

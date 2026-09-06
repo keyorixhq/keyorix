@@ -159,7 +159,7 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	// without this an admin's suspend would cut off session access yet leave the user's
 	// personal access tokens fully working. Mirror ValidateSessionToken's account-state
 	// gate so suspension is immediately effective on every credential type.
-	if AccountLoginBlocked(user.AccountState) {
+	if AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, nil, nil, 0, fmt.Errorf("account is not active")
 	}
 

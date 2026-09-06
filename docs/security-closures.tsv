@@ -17,6 +17,7 @@ FIX-6-sod-oracle	./internal/core	TestDeleteSoDPolicy_NonAdmin_NonExistentAndNonO
 FIX-7-breakglass	./internal/storage/store	TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable	d1b93444	purge must not hard-delete a row mid-reconciliation
 FIX-8-csv	./internal/core	TestCSVWriters_EncodeAgainstFormulaInjection	d1b93444	structural: every CSV writer applies an encoder
 INV-1-grant-authority	./server/http	TestEveryDirectRoleGrantChecksAuthority	pre-existing	structural: every direct role grant checks authority
+GCP-CONN-PROJECTID	./internal/connect	TestGCPSM_RequiresProjectID	pending	unpinned gcp-secret-manager connector must refuse reads, not span any GCP project
 
 # NOT LISTED, deliberately:
 #   FIX-1 actorID==0 fast-path (internal/core/authz.go:614). The eight-site reroute

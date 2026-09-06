@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -363,40 +362,10 @@ func TestNewEmail_DefaultTLS(t *testing.T) {
 	s.Close()
 }
 
-// TestEnvFlagEnabled_NotSetAtAllReturnsFalse covers the !ok branch
-// (the environment variable is entirely absent from the environment).
-func TestEnvFlagEnabled_NotSetAtAllReturnsFalse(t *testing.T) {
-	// Use a name that is guaranteed not to be in the environment.
-	const notExist = "KEYORIX_TEST_ENV_FLAG_NOT_EXIST_S17"
-	// Make sure this var is absent (not just empty).
-	os.Unsetenv(notExist) //nolint:errcheck
-	assert.False(t, envFlagEnabled(notExist))
-}
-
-// TestEnvFlagEnabled_UnsetReturnsFalse covers the "set but empty" branch.
-func TestEnvFlagEnabled_UnsetReturnsFalse(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "")
-	// An empty value is set but empty string; ParseBool("") fails → false.
-	assert.False(t, envFlagEnabled(envAllowInsecureSMTP))
-}
-
-// TestEnvFlagEnabled_FalseValueReturnsFalse covers the ParseBool=false branch.
-func TestEnvFlagEnabled_FalseValueReturnsFalse(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "false")
-	assert.False(t, envFlagEnabled(envAllowInsecureSMTP))
-}
-
-// TestEnvFlagEnabled_TrueValueReturnsTrue covers the ParseBool=true branch.
-func TestEnvFlagEnabled_TrueValueReturnsTrue(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "true")
-	assert.True(t, envFlagEnabled(envAllowInsecureSMTP))
-}
-
-// TestEnvFlagEnabled_InvalidValueReturnsFalse covers the ParseBool error branch.
-func TestEnvFlagEnabled_InvalidValueReturnsFalse(t *testing.T) {
-	t.Setenv(envAllowInsecureSMTP, "not-a-bool")
-	assert.False(t, envFlagEnabled(envAllowInsecureSMTP))
-}
+// envFlagEnabled's generic behavior (unset/empty/false/true/unparsable) is now
+// tested once at its source of truth, internal/envflag/envflag_test.go — this
+// package's own coverage is TestNewEmail_TLSNoneRequiresExplicitOptIn below
+// (does email's tls=none actually refuse/allow per that shared helper).
 
 // ── chat.go ──────────────────────────────────────────────────────────────────
 

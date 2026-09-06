@@ -73,7 +73,7 @@ func TestValidatePATToken(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1}, nil)
-		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: acctTestUser, IsActive: true}, nil)
+		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: acctTestUser, IsActive: true, AccountState: AccountActive}, nil)
 		role := "system_viewer"
 		ms.On("GetUserRoles", ctx, uint(1)).Return([]*models.Role{{Name: role}}, nil)
 
@@ -91,7 +91,7 @@ func TestValidatePATToken(t *testing.T) {
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{
 			ID: 9, UserID: 1, Scopes: `["secrets.read"]`, ProjectScope: 4,
 		}, nil)
-		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: acctTestUser, IsActive: true}, nil)
+		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: acctTestUser, IsActive: true, AccountState: AccountActive}, nil)
 		ms.On("GetUserRoles", ctx, uint(1)).Return([]*models.Role{{Name: "system_viewer"}}, nil)
 
 		_, _, restriction, _, err := c.ValidatePATToken(ctx, raw)

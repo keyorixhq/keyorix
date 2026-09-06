@@ -14,8 +14,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"strconv"
+
+	"github.com/keyorixhq/keyorix/internal/envflag"
 )
 
 // EnvAllowInsecureLogDelivery gates credential_delivery.mode=log (ADR-028). Writing a
@@ -26,18 +26,6 @@ import (
 // opt-in rather than defaulting on — mode=log refuses to activate unless this env var is
 // set to a truthy value.
 const EnvAllowInsecureLogDelivery = "KEYORIX_ALLOW_INSECURE_LOG_DELIVERY"
-
-// envFlagEnabled reports whether the named environment variable is set to a truthy
-// value (accepts anything strconv.ParseBool accepts: "1", "t", "true", etc., case
-// sensitive per ParseBool). Unset or unparsable = false (fail closed).
-func envFlagEnabled(name string) bool {
-	v, ok := os.LookupEnv(name)
-	if !ok {
-		return false
-	}
-	b, err := strconv.ParseBool(v)
-	return err == nil && b
-}
 
 // Delivery modes (credential_delivery.mode).
 const (
@@ -129,7 +117,7 @@ func New(cfg Config) (CredentialDelivery, error) {
 	case ModeOutOfBand:
 		return &OutOfBandDelivery{}, nil
 	case ModeLog:
-		if !envFlagEnabled(EnvAllowInsecureLogDelivery) {
+		if !envflag.Enabled(EnvAllowInsecureLogDelivery) {
 			return nil, fmt.Errorf("delivery: credential_delivery.mode=log writes a live, usable setup link to the log; refusing unless the operator explicitly opts in by setting %s=true", EnvAllowInsecureLogDelivery)
 		}
 		log.Printf("delivery: WARNING credential_delivery.mode=log is ACTIVE — setup links (live, usable credentials) will be written to the application log; dev/test only, never use in production")

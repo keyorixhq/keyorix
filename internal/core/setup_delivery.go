@@ -242,7 +242,7 @@ func (c *KeyorixCore) ResendAccountSetupLink(ctx context.Context, userID, create
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
-	if AccountLoginBlocked(user.AccountState) {
+	if AccountLoginBlocked(user.ID, user.AccountState) {
 		return nil, fmt.Errorf("account suspended")
 	}
 	return c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{

@@ -390,7 +390,9 @@ func TestRunBulkDeleteEmbedded_PreviewMode(t *testing.T) {
 	bulkDeleteNames = nil
 	bulkDeleteConfirm = false
 
-	// InitializeCoreService creates the isolated temp-dir DB and initialises i18n with English.
+	// InitializeCoreService creates the isolated temp-dir DB (already an explicit
+	// storage.type: local config -- satisfies #G-blank-storage-default too) and
+	// initialises i18n with English.
 	err := runBulkDeleteEmbedded(context.Background())
 	require.NoError(t, err)
 }
@@ -686,6 +688,9 @@ func TestRunBulkDelete_EmbeddedPath(t *testing.T) {
 		bulkDeleteConfirm = origConfirm
 	})
 
+	// isolateBulkDeleteEmbeddedStorage above already unsets KEYORIX_SERVER/TOKEN
+	// (so NewRemoteClient returns !ok) and writes an explicit storage.type:
+	// local config (satisfies #G-blank-storage-default too).
 	bulkDeleteProject = 1
 	bulkDeleteIDs = []uint{42}
 	bulkDeleteNames = nil

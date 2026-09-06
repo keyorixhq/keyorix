@@ -1182,7 +1182,7 @@ connect:
         - keyorix/              # (defense-in-depth on top of the backend's IAM scope)
     - name: prod-gcp
       type: gcp-secret-manager  # ref is the version resource name (creds from ADC)
-      project_id: my-proj       # recommended: pins the connector to one GCP project (#431);
+      project_id: my-proj       # REQUIRED: pins the connector to one GCP project (#431);
                                  # a ref naming a different project is rejected before the backend call
                                  # (a GCP project ID — unrelated to Keyorix's own project: below)
       scope: project
@@ -1223,13 +1223,17 @@ connect:
   instance-profile / IRSA; GCP: ADC; Azure: `DefaultAzureCredential`; Vault:
   `token_env`), never from this config. A backend failure surfaces as `502 Bad Gateway`.
 - Unlike Vault (pinned to one `address`) and Azure Key Vault (pinned to one `address`
-  vault URL), a GCP Secret Manager ref carries **its own project ID**, so a
-  `gcp-secret-manager` connector with no **`project_id`** can address secrets in
-  **any** GCP project the ambient ADC identity can reach — `allowed_refs` is then the
-  only guardrail. Setting `project_id` (#431) pins the connector to one project: any
-  ref naming a different project is rejected before the backend call. It is optional
-  (existing configs keep today's cross-project behavior for compatibility) but
-  strongly recommended; an unset `project_id` logs a startup warning.
+  vault URL), a GCP Secret Manager ref carries **its own project ID**. `project_id`
+  is therefore **required** for every `gcp-secret-manager` connector — a missing
+  `project_id` **fails server boot** (there is no escape hatch): without it, a
+  connector could address secrets in **any** GCP project the ambient ADC identity
+  can reach, regardless of which Keyorix tenant it is scoped to (a confused-deputy
+  gap). `project_id` pins the connector to one project: any ref naming a different
+  project is rejected before the backend call, both at config-load time and again at
+  read time (defense in depth, in case a connector is ever constructed through a path
+  that bypasses config validation). **Breaking change**: an existing deployment
+  upgrading from before this requirement landed must add `project_id` to every
+  `gcp-secret-manager` connector before upgrading — see CHANGELOG.md.
 - A federated read is bounded by up to **three** controls: the backend identity's IAM
   policy (the load-bearing one — scope the connector's credentials to exactly the
   intended secrets); optionally the per-connector **`allowed_refs`** prefix allowlist

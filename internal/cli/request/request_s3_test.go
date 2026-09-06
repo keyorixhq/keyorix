@@ -13,6 +13,7 @@ package request
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -21,10 +22,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// writeLocalStorageConfig writes a minimal keyorix.yaml (storage.type: local)
+// into the current working directory (must already be a temp dir via
+// t.Chdir). #G-blank-storage-default: common.InitializeCoreService no longer
+// silently defaults storage.type to "local" when no config file is present
+// (a CLI command run with zero usable config now fails loudly instead of
+// creating a stray ./secrets.db) — every embedded-mode test in this package
+// that used to rely on that implicit fallback must now write this explicit
+// config first, to keep exercising a real file-backed SQLite DB exactly as
+// before.
+func writeLocalStorageConfig(t *testing.T) {
+	t.Helper()
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte("storage:\n  type: local\n  database:\n    path: ./secrets.db\n"), 0o600))
+}
+
 // seedRequestDB seeds the minimal graph the request commands need.
 // It returns the admin's user ID and the project ID.
 func seedRequestDB(t *testing.T) (adminID, projectID uint, svc *core.KeyorixCore) {
 	t.Helper()
+	writeLocalStorageConfig(t)
 	var err error
 	svc, err = common.InitializeCoreService()
 	require.NoError(t, err)

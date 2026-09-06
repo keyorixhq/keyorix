@@ -24,7 +24,7 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	if err != nil {
 		return fmt.Errorf("user not found")
 	}
-	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 		return fmt.Errorf("account is not active")
 	}
 	if c.loginLocked(user) {

@@ -28,6 +28,25 @@ All notable changes to Keyorix are documented here. This project follows
   as of this same change: a caller must be a member of the connector's owning
   project (or hold a matching `ConnectRefGrant`) to read through it — see
   `docs/adr-082-connect-connector-tenant-scoping.md`.
+- **BREAKING (targeting v0.92.0): every `gcp-secret-manager` Keyorix Connect
+  connector must set `project_id` (#431)** — an existing deployment with
+  `connect.enabled: true` and one or more `gcp-secret-manager` connectors **will
+  fail to boot** after upgrading unless every such connector gains an explicit
+  `project_id`. Previously, an unset `project_id` only logged a startup warning and
+  let the connector boot unpinned — since a GCP Secret Manager ref embeds its own
+  project ID (unlike Vault's `address` or Azure Key Vault's `address` vault URL,
+  which each already pin the connector to one backend), an unpinned connector could
+  read a secret from **any** GCP project the ambient ADC identity can reach,
+  regardless of which Keyorix project/scope (ADR-082) the connector itself is bound
+  to — a confused-deputy gap. **There is no escape hatch**: add `project_id: <your
+  GCP project>` to every `gcp-secret-manager` connector before upgrading (see
+  `docs/CONFIGURATION.md`'s Keyorix Connect section for the exact field). The
+  project-pin is now enforced twice — once at config-load time
+  (`validateConnectGCPProjectID`) and again at read time inside
+  `GCPSecretManagerConnector.GetSecret` (defense in depth; a ref naming a different
+  project, or a connector somehow left unpinned despite the boot check, is refused
+  before ever reaching the backend) — see `docs/adr-082-connect-connector-tenant-scoping.md`'s
+  "Out of scope" section for how this closes a gap that ADR explicitly deferred.
 - **BREAKING (targeting v0.92.0): a Keyorix Connect connector with an unrecognized
   `type` now fails boot instead of booting with that connector silently skipped
   (#1476)** — previously, `server/main.go`'s Connect-wiring loop logged a warning
