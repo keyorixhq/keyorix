@@ -40,6 +40,19 @@ const (
 // maxResponseBodyBytes (keyorix_fetcher.go) caps how much of a single Kubernetes
 // API response this sink will buffer during json.Decode.
 
+// drainAndClose discards any unread response body before closing it, so the
+// underlying connection can be returned to net/http's keep-alive pool instead
+// of being torn down. Every RESTSink method below (and KeyorixFetcher.getJSON
+// in keyorix_fetcher.go, same package) used to defer a bare
+// resp.Body.Close() and return without reading the body on several
+// branches (every >=400/404/409 error branch, and createSecret/
+// applyOwnedSecret/Delete's success branches, which never decode a body at
+// all).
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
+	_ = resp.Body.Close()
+}
+
 // NewInClusterSink builds a RESTSink from the standard in-cluster environment: the
 // API host/port from KUBERNETES_SERVICE_HOST/PORT and the projected service-account
 // token + CA bundle. Returns an error when not running inside a cluster.
@@ -86,7 +99,7 @@ func (s *RESTSink) Get(ctx context.Context, namespace, name string) (map[string]
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
@@ -206,7 +219,7 @@ func (s *RESTSink) createSecret(ctx context.Context, namespace, name string, pay
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("create secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
 	}
@@ -237,7 +250,7 @@ func (s *RESTSink) applyOwnedSecret(ctx context.Context, namespace, name string,
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("apply secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
 	}
@@ -259,7 +272,7 @@ func (s *RESTSink) List(ctx context.Context, namespace string) ([]string, error)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("list secrets in %s: HTTP %d", namespace, resp.StatusCode)
 	}
@@ -311,7 +324,7 @@ func (s *RESTSink) Delete(ctx context.Context, namespace, name string) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	switch {
 	case resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusConflict:
 		// 404: already gone. 409: the object changed since our owner-check (precondition
@@ -336,7 +349,7 @@ func (s *RESTSink) getOwnedMeta(ctx context.Context, namespace, name string) (ui
 	if err != nil {
 		return "", "", false, false, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 	if resp.StatusCode == http.StatusNotFound {
 		return "", "", false, false, nil
 	}

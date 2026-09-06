@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,6 +30,14 @@ type VaultConnector struct {
 	token       string
 	allowedRefs []string
 	client      *http.Client
+
+	// mountVersionsMu guards mountVersions: a per-connector cache of KV mount
+	// version (1 or 2), keyed by the mount's own path as Vault reports it (e.g.
+	// "secret/"). Populated by resolveKVMountVersion so a connector serving many
+	// reads under the same mount(s) queries sys/internal/ui/mounts at most once
+	// per distinct mount, not once per GetSecret call.
+	mountVersionsMu sync.Mutex
+	mountVersions   map[string]int
 }
 
 // NewVaultConnector builds a Vault connector. address is the Vault base URL; token
@@ -136,6 +145,87 @@ func validateConnectorURL(address string) error {
 	return nil
 }
 
+// resolveKVMountVersion determines whether the KV mount serving safeRef is v1 or
+// v2 by querying Vault's sys/internal/ui/mounts/<path> API directly (the
+// endpoint Vault's own CLI/UI use for this exact purpose), instead of
+// inferring it from the shape of a secret-read response. Response-shape
+// sniffing has two concrete failure modes it replaces: (1) a genuine KV v1
+// secret whose own stored fields happen to be literally named "data" and
+// "metadata" is misdetected as v2, silently discarding every other field; (2)
+// a soft-deleted KV v2 secret (`{"data": null, "metadata": {...}}`) fails a
+// naive non-empty check on "data" and falls through to returning Vault's
+// entire internal envelope as if it were the plaintext secret. Querying the
+// mount directly has neither failure mode: the version is a property of the
+// MOUNT, never the stored data.
+//
+// Results are cached per mount path (as Vault itself reports it, e.g.
+// "secret/") for this connector's lifetime — the KV version of a live mount
+// essentially never changes, and a connector is typically used repeatedly
+// across many reads under the same mount(s), so this keeps the common case to
+// one extra round-trip per distinct mount rather than one per read.
+func (c *VaultConnector) resolveKVMountVersion(ctx context.Context, safeRef string) (int, error) {
+	c.mountVersionsMu.Lock()
+	for mountPath, version := range c.mountVersions {
+		if strings.HasPrefix(safeRef, mountPath) {
+			c.mountVersionsMu.Unlock()
+			return version, nil
+		}
+	}
+	c.mountVersionsMu.Unlock()
+
+	reqURL := c.address + "/v1/sys/internal/ui/mounts/" + safeRef
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("vault: new mount-info request: %w", err)
+	}
+	req.Header.Set("X-Vault-Token", c.token)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("vault: mount-info lookup failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, vaultMaxResponseBytes))
+		return 0, fmt.Errorf("vault: mount-info lookup for %q returned HTTP %d", safeRef, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
+	if err != nil {
+		return 0, fmt.Errorf("vault: read response: %w", err)
+	}
+
+	var mountResp struct {
+		Data struct {
+			Path    string `json:"path"`
+			Options struct {
+				Version string `json:"version"`
+			} `json:"options"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &mountResp); err != nil {
+		return 0, fmt.Errorf("vault: parse mount-info response: %w", err)
+	}
+
+	version := 1
+	if mountResp.Data.Options.Version == "2" {
+		version = 2
+	}
+	mountPath := mountResp.Data.Path
+	if mountPath == "" {
+		// Should not normally happen for a real Vault response, but fall back to
+		// caching under the exact ref rather than caching nothing, so a repeat
+		// lookup of the identical ref is still free.
+		mountPath = safeRef
+	}
+	c.mountVersionsMu.Lock()
+	if c.mountVersions == nil {
+		c.mountVersions = make(map[string]int)
+	}
+	c.mountVersions[mountPath] = version
+	c.mountVersionsMu.Unlock()
+	return version, nil
+}
+
 func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("vault: secret reference (path) is required, e.g. secret/data/myapp")
@@ -164,6 +254,15 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 	if err != nil {
 		return "", err
 	}
+
+	// Determine KV v1 vs v2 explicitly, via Vault's own mount-info API, before
+	// ever looking at the secret response's shape (see resolveKVMountVersion's
+	// doc comment for the two concrete bugs this replaces).
+	kvVersion, err := c.resolveKVMountVersion(ctx, safeRef)
+	if err != nil {
+		return "", fmt.Errorf("vault: could not determine KV mount version for %q: %w", ref, err)
+	}
+
 	reqURL := c.address + "/v1/" + safeRef
 	// The query traces this sink's taint back to server/http/handlers/connect.go's
 	// r.URL.Query().Get("ref") (an incoming-request field that happens to match
@@ -191,6 +290,7 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, vaultMaxResponseBytes))
 		return "", fmt.Errorf("vault: %s returned HTTP %d for %q", c.address, resp.StatusCode, ref)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
@@ -200,18 +300,34 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 
 	// Vault wraps the secret under "data". KV v2 nests it again under data.data
 	// (alongside data.metadata); KV v1 puts the secret map directly under data.
+	// Which shape to expect is now decided by kvVersion (resolved above via
+	// Vault's own mount-info API), never by sniffing which fields happen to be
+	// present in the response — see resolveKVMountVersion's doc comment for why
+	// shape-sniffing is unsafe.
 	var env struct {
 		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil || len(env.Data) == 0 {
 		return "", fmt.Errorf("vault: secret %q has no data", ref)
 	}
+	if kvVersion == 1 {
+		return string(env.Data), nil // KV v1: the data map itself, whatever fields it contains
+	}
+
+	// KV v2: unwrap data.data. A soft-deleted (but not yet destroyed) version
+	// reads back as `{"data": null, "metadata": {...}}` — a 200 OK, not a 404 —
+	// so it must be handled explicitly here as "not found," not returned as if
+	// the null were the plaintext secret value or, worse, the whole envelope
+	// (including Vault's internal version/deletion-time metadata) mistaken for
+	// the secret.
 	var kv2 struct {
-		Data     json.RawMessage `json:"data"`
-		Metadata json.RawMessage `json:"metadata"`
+		Data json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(env.Data, &kv2); err == nil && len(kv2.Data) > 0 && len(kv2.Metadata) > 0 {
-		return string(kv2.Data), nil // KV v2: return the inner data map
+	if err := json.Unmarshal(env.Data, &kv2); err != nil {
+		return "", fmt.Errorf("vault: parse KV v2 envelope for %q: %w", ref, err)
 	}
-	return string(env.Data), nil // KV v1: the data map itself
+	if len(kv2.Data) == 0 || string(kv2.Data) == "null" {
+		return "", fmt.Errorf("vault: secret %q not found (KV v2 version has no data — likely deleted or destroyed)", ref)
+	}
+	return string(kv2.Data), nil
 }

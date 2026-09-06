@@ -293,16 +293,22 @@ func (s *Service) CleanPendingDEK() {
 // AcquireExclusiveKeyLock takes an exclusive, non-blocking OS advisory lock on
 // the key directory, so no OTHER process using the same DEK — another server
 // instance, or a concurrent rotation — can hold it at the same time (#92). The
-// server calls this once at startup (held for its whole lifetime); rotation
-// calls it at the start of RotateDEKWithSweep (held only for the sweep). Either
-// way it is released by Shutdown. Idempotent: a second call while already held
-// by this Service is a no-op.
+// server calls this BEFORE Initialize (not after — see server/main.go's
+// initializeEncryption), so first-boot key generation itself
+// (ensureSaltExists/ensureWrappedDEKExists in keymanager_lifecycle.go, an
+// unlocked check-then-write) is race-protected too, not just steady-state DEK
+// access; the lock is then held for the server's whole lifetime. Rotation
+// calls it at the start of RotateDEKWithSweep, after its own Initialize has
+// already run (held only for the sweep). Either way it is released by
+// Shutdown. Deliberately does NOT require the Service to be initialized: the
+// lock only needs keyManager.baseDir, which is fixed at construction
+// (NewService/NewKeyManager), so it can be taken before any key material
+// exists on disk — unlike AcquireSharedKeyLock, which is only ever used after
+// Initialize by read-only CLI commands. Idempotent: a second call while
+// already held by this Service is a no-op.
 func (s *Service) AcquireExclusiveKeyLock() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.initialized {
-		return fmt.Errorf("encryption service not initialized")
-	}
 	if s.serverLock != nil {
 		return nil
 	}

@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -32,7 +33,25 @@ import (
 const (
 	webhookTimeout   = 10 * time.Second
 	webhookQueueSize = 256
+	// notifyDrainMaxBytes caps how much of a notification-receiver's response
+	// body drainAndClose will discard. These sinks never care about the
+	// response body's content (only the status code), so any small body is
+	// just read-and-thrown-away to let the connection be reused — this cap
+	// guards that against a hostile/misbehaving receiver returning an
+	// effectively unbounded body.
+	notifyDrainMaxBytes = 1 << 20 // 1 MiB
 )
+
+// drainAndClose discards any unread response body before closing it, so the
+// underlying connection can be returned to net/http's keep-alive pool instead
+// of torn down. Shared by WebhookSink.send and ChatSink.send (chat.go) — both
+// used to defer a bare resp.Body.Close() and never read the body on EITHER
+// the success or the error path, since neither cares about the response
+// content, only the status code.
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, notifyDrainMaxBytes))
+	_ = resp.Body.Close()
+}
 
 // WebhookConfig configures the webhook notification channel.
 type WebhookConfig struct {
@@ -154,7 +173,7 @@ func (s *WebhookSink) send(ctx context.Context, ev core.NotificationEvent) (retr
 	if err != nil {
 		return true, err // transport / timeout — transient
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer drainAndClose(resp)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return false, nil
 	}

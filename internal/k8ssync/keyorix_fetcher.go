@@ -275,7 +275,7 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer drainAndClose(resp)
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("not authorized (HTTP %d) — check the agent's token and its permissions: %w", resp.StatusCode, ErrUpstreamGone)
