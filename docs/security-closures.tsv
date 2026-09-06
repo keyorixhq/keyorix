@@ -18,6 +18,7 @@ FIX-7-breakglass	./internal/storage/store	TestDeleteExpiredBreakGlassBefore_Reco
 FIX-8-csv	./internal/core	TestCSVWriters_EncodeAgainstFormulaInjection	d1b93444	structural: every CSV writer applies an encoder
 INV-1-grant-authority	./server/http	TestEveryDirectRoleGrantChecksAuthority	pre-existing	structural: every direct role grant checks authority
 GCP-CONN-PROJECTID	./internal/connect	TestGCPSM_RequiresProjectID	pending	unpinned gcp-secret-manager connector must refuse reads, not span any GCP project
+AWS-CONN-ACCOUNTID	./internal/connect	TestAWSSM_AccountPin	pending	pinned aws-secrets-manager connector must refuse an ARN naming a different AWS account
 
 # NOT LISTED, deliberately:
 #   FIX-1 actorID==0 fast-path (internal/core/authz.go:614). The eight-site reroute
