@@ -19,10 +19,10 @@ func (ls *LocalStorage) CreateMFAStepUpGrant(ctx context.Context, grant *models.
 	return ls.db.WithContext(ctx).Create(grant).Error
 }
 
-func (ls *LocalStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, now time.Time) (*models.MFAStepUpGrant, error) {
+func (ls *LocalStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, now time.Time) (*models.MFAStepUpGrant, error) {
 	var g models.MFAStepUpGrant
 	err := ls.db.WithContext(ctx).
-		Where("user_id = ? AND expires_at > ?", userID, now.UTC()).
+		Where("user_id = ? AND purpose = ? AND expires_at > ?", userID, purpose, now.UTC()).
 		Order("expires_at DESC").
 		First(&g).Error
 	if err != nil {

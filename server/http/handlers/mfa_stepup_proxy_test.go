@@ -39,6 +39,7 @@ func freshCoreWithStepUpGrant(t *testing.T, expiry time.Time) (*AuthHandler, *go
 	))
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{
 		UserID:    1,
+		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
 		ExpiresAt: expiry,
 	}).Error)
 
@@ -74,6 +75,7 @@ func TestGetActiveMFAStepUpGrantProxy_StorageError(t *testing.T) {
 	h := freshClosedCoreS21(t)
 	body, _ := json.Marshal(map[string]interface{}{
 		"user_id": 1,
+		"purpose": models.MFAStepUpPurposeRestrictedSecretRead,
 		"now":     time.Now().UTC(),
 	})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/stepup-grants/active",
@@ -88,6 +90,7 @@ func TestGetActiveMFAStepUpGrantProxy_NoActiveGrant(t *testing.T) {
 	// Ask for user 99 — no grant exists.
 	body, _ := json.Marshal(map[string]interface{}{
 		"user_id": 99,
+		"purpose": models.MFAStepUpPurposeRestrictedSecretRead,
 		"now":     time.Now().UTC(),
 	})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/stepup-grants/active",
@@ -110,6 +113,7 @@ func TestGetActiveMFAStepUpGrantProxy_ActiveGrant(t *testing.T) {
 	h, _ := freshCoreWithStepUpGrant(t, future)
 	body, _ := json.Marshal(map[string]interface{}{
 		"user_id": 1,
+		"purpose": models.MFAStepUpPurposeRestrictedSecretRead,
 		"now":     time.Now().UTC(),
 	})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/mfa/stepup-grants/active",

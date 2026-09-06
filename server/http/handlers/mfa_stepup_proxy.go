@@ -20,6 +20,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // mfaStepUpGrantActiveProxyBody is the wire body for
@@ -31,7 +33,8 @@ import (
 // step-up grant is still active, defeating the step-up TTL. This server now
 // always uses its own clock for that comparison.
 type mfaStepUpGrantActiveProxyBody struct {
-	UserID uint `json:"user_id"`
+	UserID  uint                    `json:"user_id"`
+	Purpose models.MFAStepUpPurpose `json:"purpose"`
 }
 
 // GetActiveMFAStepUpGrantProxy handles POST
@@ -48,12 +51,16 @@ func (h *AuthHandler) GetActiveMFAStepUpGrantProxy(w http.ResponseWriter, r *htt
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
 		return
 	}
+	if body.Purpose == "" {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "purpose is required")
+		return
+	}
 	// This server's own clock, never a caller-supplied value — see
 	// mfaStepUpGrantActiveProxyBody's doc comment. LocalStorage's
 	// GetActiveMFAStepUpGrant already normalizes this to .UTC() itself
 	// (local_mfa_stepup_grant.go), matching models.MFAStepUpGrant's
 	// BeforeSave UTC-normalization hook, so a plain time.Now() here is fine.
-	grant, err := h.coreService.Storage().GetActiveMFAStepUpGrant(r.Context(), body.UserID, time.Now())
+	grant, err := h.coreService.Storage().GetActiveMFAStepUpGrant(r.Context(), body.UserID, body.Purpose, time.Now())
 	if err != nil {
 		log.Printf("mfa stepup proxy: get active grant failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

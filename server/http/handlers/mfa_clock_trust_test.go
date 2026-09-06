@@ -188,11 +188,11 @@ func TestAuthHandler_GetActiveMFAStepUpGrantProxy_ExpiredStaysExpiredDespiteClie
 	// models.MFAStepUpGrant.BeforeSave normalizes ExpiresAt to UTC; write it
 	// pre-normalized here for clarity.
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{
-		UserID: 1, ExpiresAt: realNow.Add(-1 * time.Hour), CreatedAt: realNow.Add(-2 * time.Hour),
+		UserID: 1, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: realNow.Add(-1 * time.Hour), CreatedAt: realNow.Add(-2 * time.Hour),
 	}).Error)
 
 	spoofedNow := realNow.Add(-2 * time.Hour)
-	body, err := json.Marshal(map[string]any{"user_id": 1, "now": spoofedNow})
+	body, err := json.Marshal(map[string]any{"user_id": 1, "purpose": models.MFAStepUpPurposeRestrictedSecretRead, "now": spoofedNow})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
@@ -213,11 +213,11 @@ func TestAuthHandler_GetActiveMFAStepUpGrantProxy_ActiveStaysActiveDespiteFarFut
 	_, ah, db := setupMFAClockTrustTest(t)
 	realNow := time.Now().UTC()
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{
-		UserID: 1, ExpiresAt: realNow.Add(5 * time.Minute), CreatedAt: realNow,
+		UserID: 1, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: realNow.Add(5 * time.Minute), CreatedAt: realNow,
 	}).Error)
 
 	spoofedNow := realNow.Add(365 * 24 * time.Hour)
-	body, err := json.Marshal(map[string]any{"user_id": 1, "now": spoofedNow})
+	body, err := json.Marshal(map[string]any{"user_id": 1, "purpose": models.MFAStepUpPurposeRestrictedSecretRead, "now": spoofedNow})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))

@@ -252,6 +252,114 @@ func (c *KeyorixCore) DeleteWebAuthnCredential(ctx context.Context, userID, id u
 	return nil
 }
 
+// webauthnReauthSessionPurpose is the WebAuthnSession.Purpose value for the
+// step-up re-authentication ceremony below — distinct from "register",
+// "login", and "passwordless".
+const webauthnReauthSessionPurpose = "reauth"
+
+// BeginWebAuthnReauth starts a live passkey re-assertion for an already
+// authenticated caller who holds no TOTP factor (WebAuthn-only account) and
+// needs to satisfy requireReauth for an account-security-factor change
+// (DisableMFA/RegenerateMFARecoveryCodes/ActivateMFA/FinishWebAuthnRegistration/
+// DeleteWebAuthnCredential/account email change). Unlike BeginWebAuthnLogin,
+// this operates directly on an authenticated userID — there is no pre-login
+// MFA challenge to resolve the user from, since the caller is already logged
+// in and merely proving they still hold the second factor right now.
+func (c *KeyorixCore) BeginWebAuthnReauth(ctx context.Context, userID uint) (*protocol.CredentialAssertion, string, error) {
+	if c.webauthnRP == nil {
+		return nil, "", ErrWebAuthnDisabled
+	}
+	wu, err := c.loadWebAuthnUser(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(wu.creds) == 0 {
+		return nil, "", fmt.Errorf("no passkeys registered")
+	}
+	if err := c.checkWebAuthnAccountGates(wu); err != nil {
+		return nil, "", err
+	}
+	// WAUN-001: require user-verification, matching BeginWebAuthnLogin — a
+	// stolen/found hardware key must not satisfy re-authentication without the
+	// user's own PIN/biometric.
+	assertion, sd, err := c.webauthnRP.BeginLogin(wu,
+		webauthn.WithUserVerification(protocol.VerificationRequired),
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to begin reauth: %w", err)
+	}
+	token, err := c.storeWebAuthnSession(ctx, userID, webauthnReauthSessionPurpose, sd)
+	if err != nil {
+		return nil, "", err
+	}
+	return assertion, token, nil
+}
+
+// FinishWebAuthnReauth verifies the assertion begun by BeginWebAuthnReauth and,
+// on success, mints an MFAStepUpGrant with Purpose == MFAStepUpPurposeReauth —
+// the ONLY way a WebAuthn-only account can satisfy requireReauth's
+// second-factor branch (HasActiveMFAStepUp), since an ambient login-time grant
+// is deliberately scoped to MFAStepUpPurposeRestrictedSecretRead and does not
+// match. The caller must separately call e.g. DisableMFA/DeleteWebAuthnCredential
+// afterward (with the account password) to actually perform the
+// account-security-factor change; this function only proves the second factor,
+// mirroring how VerifyMFAStepUp+checkRestrictedMFAGate are two separate calls
+// for the restricted-secret-read flow.
+func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, sessionToken string, parsed *protocol.ParsedCredentialAssertionData) error {
+	if c.webauthnRP == nil {
+		return ErrWebAuthnDisabled
+	}
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+	if c.loginLocked(user) {
+		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
+	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(sessionToken), c.now())
+	if err != nil {
+		return fmt.Errorf("invalid or expired webauthn session")
+	}
+	if sess.Purpose != webauthnReauthSessionPurpose || sess.UserID != userID {
+		return fmt.Errorf("webauthn session mismatch")
+	}
+	var sd webauthn.SessionData
+	if err := json.Unmarshal(sess.Data, &sd); err != nil {
+		return err
+	}
+	wu, err := c.loadWebAuthnUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	cred, err := c.webauthnRP.ValidateLogin(wu, sd, parsed)
+	if err != nil {
+		c.auditWebAuthnFailed(ctx, userID, "reauth")
+		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout, mirroring requireReauth
+		return fmt.Errorf("assertion verification failed: %w", err)
+	}
+	// Clone-detection (#212), same as FinishWebAuthnLogin: refuse before treating
+	// this as a successful re-auth in any way.
+	if err := c.rejectIfCloned(ctx, userID, cred, ""); err != nil {
+		return err
+	}
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+		return err
+	}
+	c.persistUpdatedCredential(ctx, userID, cred)
+	grant := &models.MFAStepUpGrant{
+		UserID:    userID,
+		Purpose:   models.MFAStepUpPurposeReauth,
+		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	}
+	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
+		return fmt.Errorf("failed to record MFA reauth step-up: %w", err)
+	}
+	uid := userID
+	c.writeAuditEventFull(ctx, "mfa.reauth_verified", &uid, nil, nil, "",
+		fmt.Sprintf("user %s completed WebAuthn re-authentication", user.Username))
+	return nil
+}
+
 // BeginWebAuthnLogin starts the assertion ceremony for the second login step. It
 // resolves the user from the (still-unconsumed) MFA challenge minted by the
 // password step, and returns the CredentialAssertion options plus an opaque
@@ -369,22 +477,27 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 		return nil, nil, err
 	}
 	// Record the MFA step-up window when the classification gate requires it,
-	// matching the existing TOTP path in VerifyMFALogin. WebAuthn (possession +
-	// user-verification) is at least as strong as TOTP, so it must satisfy the
-	// same restricted_requires_mfa_stepup gate. Best-effort: a write failure
-	// does not block the login.
+	// matching the existing TOTP path in VerifyMFALogin.
 	if c.classificationRestrictedRequiresMFAStepUp {
 		_ = c.storage.UpsertMFAStepupToken(ctx, ch.UserID, c.now().Add(c.mfaStepUpWindow()))
 	}
 	// Also mint a genuine MFAStepUpGrant, unconditionally (not gated behind
-	// classificationRestrictedRequiresMFAStepUp): a WebAuthn login is itself proof
-	// of possessing the second factor, but — unlike TOTP, which requireReauth can
-	// verify directly against a freshly-typed code — a passkey assertion has no
-	// typable "code" to hand a later self-service re-auth call. Without this,
-	// requireReauth's second-factor requirement (#372-follow-up) would have no
-	// path at all for a WebAuthn-only account. Best-effort: a write failure does
-	// not block the login.
-	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ch.UserID, ExpiresAt: c.now().Add(c.mfaStepUpWindow())})
+	// classificationRestrictedRequiresMFAStepUp, matching the pre-existing
+	// behavior this fix does not change): a WebAuthn login is itself proof of
+	// possessing the second factor, sufficient for reading a restricted secret
+	// without a separate re-prompt. Best-effort. Scoped to Purpose ==
+	// MFAStepUpPurposeRestrictedSecretRead ONLY — this grant must never be read
+	// by requireReauth's account-security-factor-change gate, which requires
+	// the distinct MFAStepUpPurposeReauth purpose (see FinishWebAuthnReauth
+	// below); an ambient login-time grant is not equivalent to actively
+	// proving possession of the second factor at the moment of a
+	// takeover-grade change. THIS purpose separation — not gating the write —
+	// is the fix for the confused-deputy bug this grant used to enable.
+	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+		UserID:    ch.UserID,
+		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
+		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	})
 	uid := ch.UserID
 	c.writeAuditEventFull(ctx, "webauthn.login_verified", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s passed WebAuthn", wu.user.Username))
@@ -473,17 +586,20 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 		return nil, nil, err
 	}
 	// Record the MFA step-up window when the classification gate requires it,
-	// matching both VerifyMFALogin and FinishWebAuthnLogin. A passkey satisfies
-	// user-verification and is at minimum as strong as TOTP. Best-effort.
+	// matching both VerifyMFALogin and FinishWebAuthnLogin.
 	if c.classificationRestrictedRequiresMFAStepUp {
 		_ = c.storage.UpsertMFAStepupToken(ctx, resolved.ID, c.now().Add(c.mfaStepUpWindow()))
 	}
-	// Also mint a genuine MFAStepUpGrant, unconditionally — see the identical
-	// comment in FinishWebAuthnLogin: this is the only way a WebAuthn-only
-	// account can ever satisfy requireReauth's second-factor requirement, since a
-	// passkey assertion has no typable "code" equivalent to a TOTP code.
-	// Best-effort: a write failure does not block the login.
-	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: resolved.ID, ExpiresAt: c.now().Add(c.mfaStepUpWindow())})
+	// Also mint a genuine MFAStepUpGrant, unconditionally (matching the
+	// pre-existing behavior this fix does not change) — see the identical
+	// comment in FinishWebAuthnLogin for why this purpose does NOT satisfy
+	// requireReauth (that requires MFAStepUpPurposeReauth, minted only by
+	// FinishWebAuthnReauth's live re-assertion). Best-effort.
+	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+		UserID:    resolved.ID,
+		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
+		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	})
 	uid := resolved.ID
 	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s logged in passwordlessly via WebAuthn", resolved.Username))

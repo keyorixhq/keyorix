@@ -55,15 +55,33 @@ func seedCredential(t *testing.T, c *KeyorixCore, db *gorm.DB, userID uint, cred
 	require.NoError(t, c.storage.SetUserWebAuthnEnabled(context.Background(), userID, true))
 }
 
-// seedStepUpGrant inserts an active MFAStepUpGrant for userID, mirroring what a
-// recent VerifyMFAStepUp call (TOTP) or WebAuthn login (FinishWebAuthnLogin/
-// FinishWebAuthnPasswordlessLogin) would produce. Since a WebAuthn-only account
-// has no typable "code" to hand requireReauth directly, this is the only way
-// such an account can satisfy requireReauth's password-plus-second-factor-proof
-// requirement in a unit test that doesn't drive a full login ceremony.
+// seedStepUpGrant inserts an active MFAStepUpGrant with Purpose ==
+// MFAStepUpPurposeReauth for userID, mirroring what FinishWebAuthnReauth's live
+// passkey re-assertion (or a fresh TOTP code, for MFA-enabled accounts) would
+// produce. Since a WebAuthn-only account has no typable "code" to hand
+// requireReauth directly, this is the only way such an account can satisfy
+// requireReauth's password-plus-second-factor-proof requirement in a unit test
+// that doesn't drive a full FinishWebAuthnReauth ceremony. Deliberately
+// distinct from seedAmbientLoginGrant below, which mints the OTHER purpose
+// (MFAStepUpPurposeRestrictedSecretRead) that an ordinary login produces —
+// this purpose separation is the fix; see TestWebAuthn_DeleteRequiresReauth's
+// and TestWebAuthn_FinishRegistrationRequiresReauth's "ambient login grant is
+// rejected" cases.
 func seedStepUpGrant(t *testing.T, db *gorm.DB, userID uint, now time.Time) {
 	t.Helper()
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: userID, ExpiresAt: now.Add(15 * time.Minute)}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: userID, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: now.Add(15 * time.Minute)}).Error)
+}
+
+// seedAmbientLoginGrant inserts an active MFAStepUpGrant with Purpose ==
+// MFAStepUpPurposeRestrictedSecretRead for userID — exactly what
+// FinishWebAuthnLogin/FinishWebAuthnPasswordlessLogin mint on every ordinary,
+// successful login (ambiently, with no explicit re-authentication intent).
+// Used to prove this purpose does NOT satisfy requireReauth's
+// account-security-factor-change gate (the confused-deputy bug this purpose
+// separation closes).
+func seedAmbientLoginGrant(t *testing.T, db *gorm.DB, userID uint, now time.Time) {
+	t.Helper()
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: userID, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: now.Add(15 * time.Minute)}).Error)
 }
 
 func TestWebAuthn_LoginGateRequiresSecondFactor(t *testing.T) {
@@ -227,6 +245,40 @@ func TestWebAuthn_DeleteRequiresReauth(t *testing.T) {
 	// they still hold the second factor) → succeeds.
 	seedStepUpGrant(t, db, 1, c.now())
 	require.NoError(t, c.DeleteWebAuthnCredential(ctx, 1, cred.ID, webauthnTestPassword))
+}
+
+// Confused-deputy regression (this fix): TestWebAuthn_DeleteRequiresReauth's
+// final positive case used to be satisfied by ANY live MFAStepUpGrant,
+// including one minted ambiently by an ordinary WebAuthn login
+// (FinishWebAuthnLogin/FinishWebAuthnPasswordlessLogin), not one that proves
+// the caller actively re-authenticated at the time of THIS sensitive action.
+// That let anyone holding a merely-leaked bearer token (plus the password)
+// ride the account owner's own earlier login to delete every passkey (and,
+// once the last one is gone, silently disable WebAuthn account-wide) with no
+// fresh proof of second-factor possession. Must fail RED against the
+// pre-purpose-tagging code (where any grant satisfied HasActiveMFAStepUp) and
+// GREEN after it (only a MFAStepUpPurposeReauth grant satisfies it).
+func TestWebAuthn_DeleteRequiresReauth_AmbientLoginGrantRejected(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	var cred models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ?", 1).First(&cred).Error)
+
+	// Exactly what a recent, successful WebAuthn login mints — NOT an explicit
+	// re-authentication performed at the time of this delete.
+	seedAmbientLoginGrant(t, db, 1, c.now())
+	err := c.DeleteWebAuthnCredential(ctx, 1, cred.ID, webauthnTestPassword)
+	require.Error(t, err, "a restricted-secret-read-purpose grant (from an ordinary login) must NOT satisfy DeleteWebAuthnCredential's re-auth gate")
+	assert.Contains(t, err.Error(), "invalid code or password")
+
+	var stillThere models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ? AND id = ?", 1, cred.ID).First(&stillThere).Error,
+		"a refused re-auth must not remove the credential")
+	var user models.User
+	require.NoError(t, db.First(&user, 1).Error)
+	assert.True(t, user.WebAuthnEnabled, "a refused re-auth must not touch the WebAuthnEnabled flag")
 }
 
 // #372: FinishWebAuthnRegistration must reject completion of the ceremony without

@@ -131,7 +131,7 @@ func TestDisableMFA_DBErrorSanitized(t *testing.T) {
 	// step-up grant (the same proof VerifyMFAStepUp/a WebAuthn login would
 	// produce) so password re-auth succeeds and the failure below genuinely
 	// comes from DeleteMFAForUser, not re-auth.
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: time.Now().Add(15 * time.Minute)}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: time.Now().Add(15 * time.Minute)}).Error)
 
 	logBuf := captureLogBuf(t)
 
@@ -164,7 +164,7 @@ func TestRegenerateRecoveryCodes_DBErrorSanitized(t *testing.T) {
 	// second-factor requirement (#372-follow-up). Seed an active step-up grant so
 	// password re-auth succeeds and the failure below genuinely comes from
 	// DeleteMFARecoveryCodes, not re-auth.
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: time.Now().Add(15 * time.Minute)}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: time.Now().Add(15 * time.Minute)}).Error)
 
 	logBuf := captureLogBuf(t)
 
