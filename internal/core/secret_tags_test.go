@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -137,4 +139,66 @@ func TestCreateSecret_AppliesTags(t *testing.T) {
 		_, getErr := c.storage.GetSecretByName(ctx, "BAD_TAG_SECRET", p.ID, e.ID)
 		require.Error(t, getErr, "the secret must not have been created when its tag list is invalid")
 	})
+}
+
+// failingSetTagsStorage wraps a real storage.Storage and forces SetSecretTags to
+// fail unconditionally, standing in for either a transient storage error or a
+// permanent hard stub (RemoteStorage.SetSecretTags under storage.type: remote --
+// see remote_reachability_registry_test.go's SetSecretTags entry) without needing
+// a live RemoteStorage/HTTP setup.
+type failingSetTagsStorage struct {
+	coreStorage.Storage
+	err error
+}
+
+func (f *failingSetTagsStorage) SetSecretTags(_ context.Context, _ uint, _ []string) error {
+	return f.err
+}
+
+// TestCreateSecret_TagFailureDoesNotDeleteSecret is the #1600 regression: CreateSecret
+// used to respond to ANY SetSecretTags failure by deleting the secret it had just
+// created in the very same call — turning a best-effort tagging step into a
+// destructive one. Under storage.type: remote, where SetSecretTags is a permanent
+// hard stub, this meant every create-with-tags call was guaranteed to create the
+// secret and then immediately destroy it. The fix: log the failure loudly and leave
+// the secret (untagged) in place, matching this codebase's established best-effort
+// convention for post-primary-action enhancements (e.g. project_members.go's
+// best-effort cleanup, dashboard.go's best-effort sub-rollups).
+func TestCreateSecret_TagFailureDoesNotDeleteSecret(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{},
+		&models.Environment{}, &models.AuditEvent{}, &models.Tag{}, &models.SecretTag{}))
+
+	real := store.NewLocalStorage(db)
+	failing := &failingSetTagsStorage{Storage: real, err: fmt.Errorf("simulated tag-write failure")}
+	c := &KeyorixCore{storage: failing, now: time.Now}
+	ctx := context.Background()
+
+	p, err := real.CreateProject(ctx, &models.Project{Name: "p1"})
+	require.NoError(t, err)
+	e, err := real.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
+	require.NoError(t, err)
+
+	created, err := c.CreateSecret(ctx, &CreateSecretRequest{
+		Name: "DB_PASSWORD", Value: []byte("supersecret1"), ProjectID: p.ID, EnvironmentID: e.ID,
+		Type: "password", CreatedBy: "owner", OwnerID: 1, Tags: []string{"prod"},
+	})
+	// CreateSecret must still report success — tagging is best-effort, not a
+	// prerequisite for the creation it's layered on top of.
+	require.NoError(t, err)
+	require.NotNil(t, created)
+
+	// The secret must still exist afterward — NOT deleted because its tag write failed.
+	still, getErr := real.GetSecretByName(ctx, "DB_PASSWORD", p.ID, e.ID)
+	require.NoError(t, getErr, "the secret must survive a SetSecretTags failure, not be deleted")
+	assert.Equal(t, created.ID, still.ID)
+
+	// It legitimately has no tags — the failed write never persisted them.
+	tags, err := real.GetSecretTags(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Empty(t, tags)
 }

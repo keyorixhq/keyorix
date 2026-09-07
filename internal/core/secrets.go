@@ -203,12 +203,20 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// secrets.write on this scope to reach CreateSecret at all) and would require
 	// resolving an actor ID that CreateSecretRequest doesn't carry uniformly across
 	// every caller (HTTP/gRPC/CLI). Tags were already normalized/validated up front.
+	// #1600: tagging is a best-effort enhancement layered on an already-successful
+	// creation, not a prerequisite for it -- same convention as this codebase's
+	// other best-effort post-create/post-action steps (e.g. project_members.go's
+	// best-effort cleanup, dashboard.go's best-effort sub-rollups: log loudly,
+	// never fail or unwind the primary operation). Previously a SetSecretTags
+	// failure here deleted the secret THIS SAME CALL had just created -- a
+	// transient storage error on the tag write destroyed data that had nothing
+	// wrong with it, and under storage.type: remote (where SetSecretTags is a
+	// permanent hard stub) this was not transient at all: every tagged create
+	// was guaranteed to create-then-immediately-destroy its own secret. Leave the
+	// secret in place, untagged, and surface the failure loudly instead.
 	if len(normalizedTags) > 0 {
 		if err := c.storage.SetSecretTags(ctx, createdSecret.ID, normalizedTags); err != nil {
-			if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
-				log.Printf("warning: failed to cleanup orphaned secret %d after failed tag creation: %v", createdSecret.ID, delErr)
-			}
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			log.Printf("warning: secret %d (%s) created successfully but tags could not be set: %v", createdSecret.ID, createdSecret.Name, err)
 		}
 	}
 

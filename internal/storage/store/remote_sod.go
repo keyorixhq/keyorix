@@ -39,6 +39,17 @@
 // marshaled/unmarshaled directly, same as remote_rotation_policies.go's
 // pre-existing (non-system-proxy) precedent.
 //
+// #1600: confirmed reachable via the embedded CLI path --
+// internal/cli/rbac/assign_role.go's embedded fallback -> core.AssignUserRole
+// -> requireNoSoDViolation -> ListSoDPolicies (and its group/machine/grant-set
+// siblings, #419) -- all real, working, non-stub code. Deliberately NOT listed
+// in remote_reachability_registry_test.go's remoteReachabilityRegistry: that
+// registry only tracks structurally-stub methods (ones that never reach
+// rs.client), and every method here does reach rs.client directly, so none of
+// them are ever in actualRemoteUnsupportedStubs to begin with. See that file's
+// own #1600 scope note for why adding entries here would break its
+// exhaustiveness guard rather than fix a gap.
+//
 // For the local (GORM) equivalent of everything here see local_sod.go.
 package store
 

@@ -336,3 +336,90 @@ func TestBulkDeleteSecrets_RefusesProjectIDZero(t *testing.T) {
 // refusal) not aborting the whole batch is already covered by
 // TestBulkDeleteSecrets_PartialFailure and TestBulkDeleteSecrets_AlreadyDeleted —
 // both exercise a per-ID failure appearing in Failed without a top-level error.
+
+// slowAuditLogStorage wraps a real storage.Storage and makes CreateSecretAccessLog
+// take a measurable, deliberate amount of time before returning. Used to prove
+// BulkDeleteSecrets' per-secret audit-log write is awaited synchronously rather
+// than fired into a detached, un-awaited goroutine (the #1600 regression: a
+// detached goroutine would let BulkDeleteSecrets return almost immediately
+// regardless of how long CreateSecretAccessLog takes, since nothing waits on it).
+type slowAuditLogStorage struct {
+	coreStorage.Storage
+	delay time.Duration
+	calls atomic.Int32
+}
+
+func (s *slowAuditLogStorage) CreateSecretAccessLog(ctx context.Context, entry *models.SecretAccessLog) error {
+	time.Sleep(s.delay)
+	s.calls.Add(1)
+	return s.Storage.CreateSecretAccessLog(ctx, entry)
+}
+
+// TestBulkDeleteSecrets_AuditLogWriteIsSynchronous is the #1600 regression.
+// BulkDeleteSecrets used to fire its per-secret audit-log write
+// (LogSecretDeletedWithProject -> writeAccessLog -> CreateSecretAccessLog) in a
+// detached goroutine it never waited on. That's safe in a long-lived HTTP server
+// process, but the SAME core method is also called directly by the CLI's
+// short-lived embedded-mode `secret bulk-delete` (runBulkDeleteEmbedded,
+// internal/cli/secret/bulk_delete.go) — a goroutine spawned there can be silently
+// killed by the process exiting before it ever runs, losing the audit trail (and
+// its loud "SECURITY: failed to persist secret access log" fallback log line, see
+// audit.go) with no trace, independent of storage backend. This test proves the
+// write now happens synchronously: with an artificially slow CreateSecretAccessLog,
+// BulkDeleteSecrets' wall-clock time must scale with the number of deletions
+// (each one's audit write is awaited before the loop continues), and the call
+// count must already be complete the instant BulkDeleteSecrets returns — a
+// detached goroutine would let both of those go to zero instead.
+func TestBulkDeleteSecrets_AuditLogWriteIsSynchronous(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	dsn := fmt.Sprintf("file:bulkdelete_sync_%d?mode=memory&cache=shared&_busy_timeout=5000", bulkDeleteDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
+		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.SecretACL{},
+		&models.SecretAccessSchedule{}, &models.User{}, &models.Role{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+	))
+
+	real := store.NewLocalStorage(db)
+	const delay = 40 * time.Millisecond
+	slow := &slowAuditLogStorage{Storage: real, delay: delay}
+	c := &KeyorixCore{storage: slow, now: time.Now}
+	ctx := context.Background()
+
+	p, err := real.CreateProject(ctx, &models.Project{Name: "proj-sync"})
+	require.NoError(t, err)
+	env, err := real.CreateEnvironment(ctx, &models.Environment{Name: "test", ProjectID: p.ID})
+	require.NoError(t, err)
+
+	const n = 3
+	ids := make([]uint, 0, n)
+	for i := 0; i < n; i++ {
+		s, err := real.CreateSecret(ctx, &models.SecretNode{
+			Name: fmt.Sprintf("sync-secret-%d", i), ProjectID: p.ID, EnvironmentID: env.ID,
+			Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		})
+		require.NoError(t, err)
+		ids = append(ids, s.ID)
+	}
+
+	start := time.Now()
+	req := BulkDeleteRequest{SecretIDs: ids}
+	result, err := c.BulkDeleteSecrets(ctx, req, p.ID, "tester", 0, "", "")
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.Len(t, result.Deleted, n)
+
+	// If the audit write were still detached/async, BulkDeleteSecrets would return
+	// almost immediately (the delay lives entirely in a goroutine nothing waits
+	// on) and slow.calls would very likely still read less than n right after
+	// return. Synchronous per-item writes force elapsed to scale with n*delay and
+	// guarantee every call has already landed.
+	assert.GreaterOrEqual(t, elapsed, time.Duration(n)*delay,
+		"BulkDeleteSecrets must block on each per-secret audit-log write, not detach it into an unawaited goroutine")
+	assert.EqualValues(t, n, slow.calls.Load(),
+		"every audit-log write must have completed by the time BulkDeleteSecrets returns")
+}

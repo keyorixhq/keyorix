@@ -128,10 +128,25 @@ func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteReque
 		}
 
 		// Audit: same event shape as the single-delete handler's post-delete log.
+		// #1600: this used to fire in a detached, un-awaited goroutine
+		// (`go func(...) { ... }(...)`)  — safe in server/HTTP callers (a
+		// long-lived process, so DetachedAuditContext's whole point — surviving
+		// the REQUEST's context cancellation — still lets the goroutine finish
+		// naturally) but not in the CLI's embedded-mode caller
+		// (runBulkDeleteEmbedded, internal/cli/secret/bulk_delete.go): a CLI
+		// invocation is a short-lived PROCESS, and Go does not wait for orphaned
+		// goroutines when main() returns — BulkDeleteSecrets could return, the
+		// command print its results, and the process exit before this goroutine
+		// ever ran, silently dropping the secret_access_logs write (and,
+		// separately, the loud "SECURITY: failed to persist secret access log"
+		// line writeAccessLog emits on failure — see audit.go) with no trace at
+		// all, under ANY storage backend, not just storage.type: remote. Calling
+		// synchronously (still via DetachedAuditContext, so a caller-context
+		// cancellation mid-batch can't truncate later items' audit writes)
+		// guarantees the write is attempted, and any failure logged, before this
+		// function can return.
 		auditCtx := DetachedAuditContext(ctx)
-		go func(sID, projID, aID uint, name, actor, remoteIP, userAgent string) {
-			c.LogSecretDeletedWithProject(auditCtx, aID, sID, projID, actor, name, remoteIP, userAgent)
-		}(id, secretProjectID, actorID, secretName, deletedBy, ip, ua)
+		c.LogSecretDeletedWithProject(auditCtx, actorID, id, secretProjectID, deletedBy, secretName, ip, ua)
 
 		result.Deleted = append(result.Deleted, id)
 	}

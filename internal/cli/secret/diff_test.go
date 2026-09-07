@@ -155,6 +155,42 @@ func TestSecretDiff_Remote_Changes(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// ── TestSecretDiff_Remote_Degraded ───────────────────────────────────────────
+
+// TestSecretDiff_Remote_Degraded is the #1600 regression: previously, the CLI
+// discarded SecretVersionDiff.Degraded entirely, so an ACL lookup failure
+// (e.g. RemoteStorage.ListSecretACLs' permanent hard stub under
+// storage.type: remote, reached via the embedded CLI path) rendered
+// identically to a genuinely empty ACL list ("No ACL entries (current).") —
+// silently wrong, not just unavailable. It must now render a distinct,
+// explicit "unavailable" message instead.
+func TestSecretDiff_Remote_Degraded(t *testing.T) {
+	const (
+		sid  = uint(9)
+		from = 1
+		to   = 2
+	)
+	body := `{"data":{` +
+		`"secret_id":9,` +
+		`"secret_name":"degraded-secret",` +
+		`"from_version":1,` +
+		`"to_version":2,` +
+		`"changes":[],` +
+		`"acl_user_ids":null,` +
+		`"degraded":true}}`
+
+	rc, done := diffStub(t, sid, from, to, body, http.StatusOK)
+	defer done()
+
+	stdout, _ := captureScoreOutput(t, func() {
+		err := runDiffRemote(rc, "degraded-secret", from, to)
+		assert.NoError(t, err)
+	})
+
+	assert.Contains(t, stdout, "unavailable", "a degraded ACL lookup must be reported as unavailable, not as an empty list")
+	assert.NotContains(t, stdout, "No ACL entries", "must not render the degraded case identically to a genuinely empty ACL list")
+}
+
 // ── TestSecretDiff_Remote_NoChanges ──────────────────────────────────────────
 
 func TestSecretDiff_Remote_NoChanges(t *testing.T) {
