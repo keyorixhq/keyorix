@@ -452,7 +452,10 @@ func applySCIMActiveState(user *models.User, active *bool, deactivated *bool) {
 // the same change) -- filed as an explicit follow-up, not silently carried
 // forward as already covered.
 func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
-	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
+	// targetHasGlobalAdminRole, not IsGlobalAdmin: this asks whether targetID
+	// is an admin, not whether the acting caller is — see targetHasGlobalAdminRole's
+	// doc comment (internal/core/authz.go) for the confused-deputy this avoids.
+	isAdmin, err := c.targetHasGlobalAdminRole(ctx, targetID)
 	if err != nil {
 		// #337: "can't tell" is NOT the same as "confirmed not an admin". The previous
 		// code treated an IsGlobalAdmin lookup error identically to a confirmed non-admin

@@ -75,8 +75,13 @@ func (c *KeyorixCore) SuspendInactiveUsers(ctx context.Context, cfg InactivitySu
 			continue
 		}
 
-		// Skip global admins.
-		isAdmin, err := c.IsGlobalAdmin(ctx, u.ID)
+		// Skip global admins. targetHasGlobalAdminRole, not IsGlobalAdmin: this
+		// asks whether u (the loop's current target) is an admin, not whether
+		// the caller triggering this sweep is — see targetHasGlobalAdminRole's
+		// doc comment (internal/core/authz.go). This sweep is reachable via a
+		// live HTTP endpoint (AdminJobsHandler.SuspendInactiveUsers) carrying
+		// the triggering admin's own ctx, including any PAT restriction on it.
+		isAdmin, err := c.targetHasGlobalAdminRole(ctx, u.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check admin status for user %d: %w", u.ID, err)
 		}
