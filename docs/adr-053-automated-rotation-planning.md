@@ -67,8 +67,25 @@ deferred follow-up, not part of this ADR.
 
 ## Deferred follow-ups
 
-- An **LLM advisor** that narrates / window-batches / risk-weights the plan.
-- Wiring the plan into the **auto-rotation executor** (ADR-046) so a project rotates
-  wave-by-wave, dependency-first, automatically.
-- A deployment-wide plan (all projects) and an environment-scoped variant.
-- gRPC + CLI surfaces and a web/ plan view (API-only first vertical).
+**Corrected 2026-09-07** (2026-09-07 ADR review, task 5): this list was stale — most
+of it shipped within two weeks of acceptance and was never removed. Verified
+directly against code, not assumed from the original text:
+
+- ~~A deployment-wide plan (all projects)~~ **Shipped.**
+  `GenerateDeploymentRotationPlan`/`DeploymentRotationPlan`
+  (`internal/core/rotation_planner.go`), `GET /rotation-plan`
+  (`GetDeploymentRotationPlan`, `server/http/router.go`).
+- ~~gRPC + CLI surfaces and a web/ plan view~~ **All shipped.** gRPC:
+  `server/grpc/services/rotation_plan_service_test.go` +
+  `project_service.go`/`conversions.go`. CLI: `internal/cli/rotation/plan.go`. Web:
+  `web/src/pages/projects/SecretsRotationPlanPanel.tsx`.
+- **Still genuinely deferred, confirmed by direct search:**
+  - An **environment-scoped variant** of the plan (only the project- and
+    deployment-wide forms exist).
+  - An **LLM advisor** that narrates / window-batches / risk-weights the plan.
+  - Wiring the plan into the **auto-rotation executor** (ADR-046) so a project
+    rotates wave-by-wave, dependency-first, automatically (no references to
+    `GenerateRotationPlan`/`RotationPlan` found anywhere under `internal/rotation/`).
+
+This is a documentation-accuracy correction, not a security finding — none of the
+shipped items were flagged as under-scoped or under-tested during this review.

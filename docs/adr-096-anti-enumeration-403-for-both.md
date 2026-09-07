@@ -214,6 +214,49 @@ is the gRPC equivalent, backing `authorizeSecretScoped`
 (`secret_service.go`) and `loadConfigScoped`/`loadLeaseScoped`
 (`dynamic_secret_service.go`).
 
+## Out of scope: Connect (third convention, not a migration target)
+
+**Added 2026-09-07**, before the Guard below was ever built — a 2026-09-07 ADR
+review (Finding 1, `keyorix-private/adversarial-review/ADR-CORPUS-REVIEW-2026-
+09-07.md`) found a **third** existence-collapse convention in production this
+ADR's Summary never accounted for, on routes this ADR's own scope language
+("a scoped-resource endpoint... a secret, project, user, role, dynamic-secret
+config") is broad enough to cover. ADR-082 §E (Connect connector tenant
+scoping, predates this ADR) has Connect's own convention: a read denied by
+ownership returns the **exact same shape as an unknown connector**
+(`ErrConnectUnknownConnector` — `502`/HTTP, `codes.FailedPrecondition`/gRPC,
+identical message text) — always-collapse, with **no privilege-based
+exception at all**, on a different status-code family than either Convention
+A (403) or Convention B (404).
+
+**Deliberately excluded from this ADR's migration, recorded here so the Guard
+below enumerates three buckets, not two:**
+
+- Connect's collapse is at least as conservative as this ADR's own
+  403-for-both — it has no real-404-exception oracle to close, since it
+  never grants a privileged caller a distinguishable "genuinely not found"
+  response at all (unlike Convention A's narrow global-permission exception,
+  see "The convention, precisely" §1 above). Migrating it to 403-for-both
+  would be a status-code change with no security improvement.
+- Convention A's exception logic (§1) does not apply to Connect's ownership
+  model unchanged — Connect's wildcard/ownership resolution (ADR-082 §E) is
+  its own mechanism, not `handleScopeResolutionError`, and forcing it through
+  that function would need its own translation layer for no proven benefit.
+- This is a **naming and enumeration gap in this ADR's Guard, not a live
+  vulnerability** — ADR-082 §E's own text is explicit that the collapse is
+  "a deliberate choice, not an oversight," made for the identical
+  existence-hiding reason this ADR exists for.
+
+**Consequence for the Guard below**: a route-enumeration guard built against
+only two known conventions (403-via-shared-resolver, or an explicit
+exception) would either misfire on every Connect route, or need a silent
+third bucket discovered ad hoc — exactly the "enumeration is only as
+complete as the idioms it knows about" failure mode this codebase's own
+engineering notes name as a recurring defect class. Any future implementation
+of the Guard below must enumerate Connect's `ErrConnectUnknownConnector`
+collapse as its own named, explicit bucket from the start, not add it after
+the guard already misfires once.
+
 ## Guard
 
 An assertion that every handler touching a scoped resource returns denial
@@ -222,10 +265,13 @@ once the migration lands — otherwise this drifts back to two conventions the
 same way it happened the first time. `handleScopeResolutionError`/
 `RequireScopedPermission` is the thing to grep for; a guard test enumerating
 every route registered against a `{id}`-shaped scoped-resource path and
-confirming it's wired through one of the shared resolvers (or is on an
-explicit, individually-justified exception list, mirroring
-`raw_storage_bypass_guard_test.go`'s own allowlist pattern) is the cheapest
-way to enforce this going forward.
+confirming it's wired through one of **three** buckets — a shared resolver
+(Convention A), an explicit individually-justified exception (mirroring
+`raw_storage_bypass_guard_test.go`'s own allowlist pattern), or Connect's own
+`ErrConnectUnknownConnector` collapse (see "Out of scope: Connect" above) —
+is the cheapest way to enforce this going forward. **This guard is not built
+yet** (as of 2026-09-07) — the enumeration above is a precondition for
+building it correctly the first time, not a description of an existing test.
 
 ## Explicitly deferred: timing side-channel
 

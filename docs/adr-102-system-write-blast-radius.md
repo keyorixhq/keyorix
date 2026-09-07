@@ -148,13 +148,34 @@ is the right model determines whether the fix for this class of finding is
 alerting on the pattern or narrowing the grant that makes the pattern
 possible.
 
-This specific chain is already closed on the reactivation-mechanics side: the
-route now fetches the existing row before writing, so a request that doesn't
-carry `PasswordHash`/`AccountState` no longer zeroes them. Closing
-`AccountLoginBlocked`'s fail-open itself — the account-state gate's deny-list
-shape — is a separate, still-in-progress migration. It is recorded here as
-evidence of what the flat capability already demonstrated once fixed, not as
-an open, exploitable path.
+This specific chain is now closed on **both** halves, not just one — corrected
+here on 2026-09-07 (Tier 2 review of this ADR found this section stale: it was
+written earlier in the day on 2026-09-05, hours before the second half landed
+the same day, and nobody updated it after). The reactivation-mechanics side
+closed first: the route now fetches the existing row before writing, so a
+request that doesn't carry `PasswordHash`/`AccountState` no longer zeroes
+them. `AccountLoginBlocked`'s fail-open itself — the account-state gate's
+deny-list shape this section originally called "a separate, still-in-progress
+migration" — shipped the same day, PR #1742 ("G4"): `AccountLoginBlocked`
+(`internal/core/account_state.go`) now fails **closed** on any blank or
+unrecognized `account_state`, sequenced behind (1) a one-time backfill of
+every existing blank row to an explicit `"active"`
+(`internal/storage/account_state_backfill.go`'s `backfillBlankAccountState`,
+idempotent, runs first) and (2) a Postgres `CHECK` constraint
+(`guardAccountStateValid`) that refuses any future non-canonical value at the
+schema level and **aborts server startup** (`log.Fatalf`) if existing rows
+would violate it — a genuine startup guard, not just a code-level check. A
+static exhaustiveness test
+(`TestAccountLoginBlocked_ExhaustsStateRegistry`) fails CI if a new
+`AccountXxx` state constant is ever added without being handled in the
+switch. Both fixes are on `main` as of 2026-09-05T18:42:19Z, well before this
+review.
+
+This is recorded here as evidence of what the flat capability already
+demonstrated once fixed, not as an open, exploitable path — **there is no
+longer an open item from this specific chain**. The one thing this ADR still
+leaves genuinely undecided is the broader (a)/(b) blast-radius question
+below, not this chain.
 
 ## The two candidate positions
 
@@ -220,6 +241,14 @@ declines to make unilaterally.
 
 ## Consequences
 
+- **Enforced, not just written down**: `TestADR102_SystemWriteBlastRadiusStillOpen`
+  (`internal/core/adr_open_decisions_tripwire_test.go`) fails CI once this
+  decision has sat open past its threshold age, mirroring the mechanism
+  ADR-101 already uses for its own deferred decision
+  (`TestCurrentSchemaEpoch_StillOne_SeeADR101`). Contrast with the state
+  before 2026-09-07: this ADR had no enforcing test at all, unlike ADR-101 —
+  see that test's own doc comment for the general "open decision" registry
+  this belongs to (also covers ADR-084).
 - Until this is decided, every future `/system` route addition should be
   read as adding to an already-root-equivalent surface, not a narrow one —
   reviewers should weigh new routes accordingly regardless of which position
