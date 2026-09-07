@@ -1,0 +1,35 @@
+# ADR conformance ledger — every row is a security property an ADR claims,
+# with the test that proves it stays true. Verified by
+# scripts/check-adr-conformance.sh (a thin wrapper around the existing
+# scripts/check-closures.sh mechanism — same verification discipline: a named
+# test must produce a literal `--- PASS:` line, not just a nonzero go-test
+# exit code, or the claim doesn't count).
+#
+# This is the generated half of the 2026-09-07 ADR conformance pass
+# (keyorix-private/adversarial-review/ADR-CONFORMANCE-MATRIX-2026-09-07.md,
+# 260 ENFORCED rows found across the full corpus). This ledger starts with
+# the rows this session personally executed and confirmed passing — NOT a
+# transcription of all 260, which would require re-running each one to avoid
+# recording a stale or renamed test as if it were still verified. Populating
+# the rest is tracked as its own follow-up (see QUEUE.md) so this file grows
+# incrementally, the same way docs/security-closures.tsv does, rather than
+# being hand-maintained as a point-in-time snapshot that immediately starts
+# rotting.
+#
+# When you close a PR that lands or changes a test enforcing an ADR-claimed
+# security property, add a row here — same discipline as
+# docs/security-closures.tsv's "Closing a security fix" convention
+# (CLAUDE.md), extended to ADR conformance claims generally, not just
+# incident closures.
+#
+# claim_id	package	proving_test	landed_commit	description
+ADR-034-MFA-VERIFY-RATELIMIT	./server/http/handlers	TestVerifyMFA_RateLimited_S13B	pre-existing	/auth/mfa/verify shares the cluster-wide DB-backed login rate limiter (ADR-040), not unlimited
+ADR-042-LASTADMIN-NOT-PAT-CONFUSED	./internal/core	TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction	pending	guardLastAdminDeactivation asks about the TARGET's admin status, not the acting caller's PAT restriction
+ADR-042-INACTIVITY-SWEEP-NOT-PAT-CONFUSED	./internal/core	TestSuspendInactiveUsers_NotFooledByCallersPATRestriction	pending	SuspendInactiveUsers' admin-skip check is immune to the triggering caller's own PAT restriction
+ADR-102-BLASTRADIUS-TRIPWIRE-LIVE	./internal/core	TestADR102_SystemWriteBlastRadiusStillOpen	pending	the system.write (a)/(b) blast-radius decision has a live age-based tripwire, not just prose
+ADR-040-RATELIMIT-BUDGET-WINDOW	./internal/core	TestRateLimit_BlocksAtBudgetAndExpiresWithWindow	pre-existing	login rate limiting blocks at LoginMaxAttempts within LoginWindow and expires correctly
+ADR-040-RATELIMIT-REMOTESTORAGE	./internal/core	TestRateLimit_RemoteStorageGenuinelyThrottles	pre-existing	the cluster-wide login rate limit genuinely throttles across a real RemoteStorage hop, not just locally
+ADR-097-SCHEMA-EPOCH-REFUSES-DOWNGRADE	./internal/storage	TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart	pre-existing	an older binary refuses to start against a database migrated by a newer schema epoch
+ADR-101-SCHEMA-EPOCH-STILL-ONE	./internal/storage	TestCurrentSchemaEpoch_StillOne_SeeADR101	pre-existing	currentSchemaEpoch has not silently bumped without the accompanying compatibility-floor work landing
+ADR-091-MACHINE-NEVER-GLOBAL-SCOPE	./internal/core	TestAssignMachineRole_GlobalScopeRejected	pre-existing	a machine identity can never be granted a role at global scope
+ADR-100-MLOCKALL-STAYS-REMOVED	./internal/hardening	TestMlockallRemovalGuard_NoMlockallSyscallReachableFromStartup	pre-existing	no tracked source reintroduces the removed mlockall syscall from server startup
