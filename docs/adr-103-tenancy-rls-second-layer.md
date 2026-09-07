@@ -2,19 +2,29 @@
 
 ## Status
 
-**Proposed.** Not implemented. This ADR authorizes design only, including a
-measured correction to the original §1c injection point (the original
-`WithTransaction`-only mechanism left 99.4% of read traffic unprotected —
-see §1c for the measurement and the corrected mechanism), the mandatory
-`WITH CHECK` on every policy (§1b/§1f Test 4), explicit trigger security
-context (§1d), and the required latency measurement and context-propagation
-guard (Consequences, §1f). §1b's two product/security decisions
-(`audit_events` NULL-scope visibility, `notifications` global-scope
-visibility) are resolved (2026-09-07) — both platform-scoped, never
-blanket-visible to every tenant — and tracked in `QUEUE.md`. This ADR does
-**not** authorize migrations, policies, or code: see "Verification design"
-for what must exist and pass, red-then-green, before any of this ships or
-before Status can move to Accepted.
+**Accepted (2026-09-07).** Ratified by human review in the conversation that
+owns this document. Distinct from `096092d6`'s earlier self-assigned
+"Accepted" status — an autonomous session's own claim, with no human
+review — which a later commit on this same document correctly reset back to
+Proposed pending real ratification; this Status line is that ratification,
+not a repeat of the earlier claim.
+
+Authorizes the design in full: the §1c injection-point correction (the
+original `WithTransaction`-only mechanism would have left 99.4% of read
+traffic unprotected — see §1c for the measurement and the corrected
+mechanism), the mandatory `WITH CHECK` on every policy (§1b/§1f Test 4),
+explicit trigger security context (§1d), and the required latency
+measurement and context-propagation guard (Consequences, §1f). §1b's two
+product/security decisions (`audit_events` NULL-scope visibility,
+`notifications` global-scope visibility) are resolved (2026-09-07) — both
+platform-scoped, never blanket-visible to every tenant — and tracked in
+`QUEUE.md`.
+
+Accepted authorizes the design; it does not by itself authorize shipping
+migrations, policies, or code. Per "Verification design" and Consequences
+below, the §1f verification design (four tests plus the context-propagation
+guard, red-then-green) must exist and pass, and the required latency
+measurement must run, before an implementation PR ships.
 
 ## Context
 
@@ -675,10 +685,12 @@ work versus no-op.
   call sites go through this path today, and the decision to wrap
   unconditionally (§1c) means every write and every "deliberately global"
   table lookup pays it too. Before implementation ships, produce an actual
-  before/after comparison using `scripts/memory-measurement/` (does not exist
-  in this repo yet — create it as part of implementation, scoped to this
-  comparison, not built as a general-purpose benchmarking framework), run
-  against realistic data volumes and concurrency, not a synthetic
+  before/after comparison using `scripts/memory-measurement/` (recovered from
+  a stranded branch and landed via PR #1782 — it exists in this repo now, built
+  for ADR-100's memory sizing rather than Postgres round-trip latency, so it
+  needs extending, or a sibling scenario, for this comparison rather than
+  building from scratch), run against realistic data volumes and concurrency,
+  not a synthetic
   single-connection loop. These sizing numbers are also a go-to-market asset —
   "what does the second tenancy layer cost" is a conversation this product
   will have with customers evaluating Postgres/HA, so the measurement needs to
