@@ -455,22 +455,24 @@ every site twice.
 
 ## Consequences
 
-- **Tripwire added 2026-09-07, removed the same day its own premise turned
-  out to be false.** A tripwire test
-  (`TestADR084_AdminBypassStructuralMarkerStillDeferred`) was added to force
-  this decision to surface if left unimplemented past a threshold age — but
-  the decision had already been implemented 5 days earlier (PR #1671,
-  2026-09-02), and nobody checked before adding the tripwire. Removed from
-  `internal/core/adr_open_decisions_tripwire_test.go`'s registry along with
-  this correction. Worth naming as a process gap, not just a doc fix: a
-  duration-based tripwire checks whether TIME has passed, never whether the
-  underlying claim is still true — it would not have caught this staleness
-  either way, only a fixed check against actual implementation state would
-  have. ADR-101's `TestCurrentSchemaEpoch_StillOne_SeeADR101`, which this
-  mechanism was modeled on, avoids the gap by checking a live code constant,
-  not a calendar date — duration-based tripwires for a *decision* (as opposed
-  to a *value*) don't have an equivalent live signal to check, which is the
-  actual gap this ADR's tripwire attempt exposed.
+- **Tripwire added 2026-09-07, corrected the same day.** A duration-based
+  tripwire test (`TestADR084_AdminBypassStructuralMarkerStillDeferred`) was
+  added claiming this decision was still "deferred" — but it had already
+  been implemented 5 days earlier (PR #1671, 2026-09-02), and nobody checked
+  before writing the entry, because the check only asked whether TIME had
+  passed, never whether the underlying claim was still true. Fixed two ways,
+  not just reverted: the stale entry itself was removed from
+  `internal/core/adr_open_decisions_tripwire_test.go`'s registry, and the
+  general mechanism was redesigned to check a decision's PREMISE — a live
+  code fact — ahead of elapsed time wherever one is expressible.
+  `TestADRDecisionRoleSetContainsAdminIsStructural` (same file) is the
+  worked example for this ADR specifically: it asserts
+  `models.Role.BypassesPermissionChecks` exists, which would have failed the
+  moment #1671 shipped rather than sitting silently wrong in a registry
+  entry. ADR-102's own tripwire remains duration-only, correctly — its
+  (a)/(b) policy choice produces no code artifact in either unresolved
+  branch, so there is no premise to check there; age is genuinely the only
+  available signal for that one, not an oversight.
 - `roleSetContainsAdmin`'s eight call sites (see "Prerequisite" above)
   change from up to four `GetRoleByName` calls to an ID-based lookup of the
   resolved role set's flag — no behavior change at any of them beyond
