@@ -23,6 +23,16 @@ var validChannelTypes = map[string]struct{}{
 	"email":   {},
 }
 
+// Notification channel audit event types -- see config_change_audit.go for the
+// shared writer. An admin repointing/disabling where alerts are delivered is
+// the same threat shape as disabling anomaly detection (anomaly_config.go):
+// silently remove the alarm, then act.
+const (
+	EventNotificationChannelCreated = "notification_channel.created"
+	EventNotificationChannelUpdated = "notification_channel.updated"
+	EventNotificationChannelDeleted = "notification_channel.deleted"
+)
+
 // ListNotificationChannels returns all configured notification channels.
 func (c *KeyorixCore) ListNotificationChannels(ctx context.Context) ([]*models.NotificationChannel, error) {
 	return c.storage.ListNotificationChannels(ctx)
@@ -39,7 +49,10 @@ func (c *KeyorixCore) GetNotificationChannel(ctx context.Context, id uint) (*mod
 //   - Type must be one of: webhook, slack, teams, email.
 //   - URL is required for webhook/slack/teams types.
 //   - Email is required for email type.
-func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel, createdBy string) (*models.NotificationChannel, error) {
+//
+// actorID is the acting user's numeric ID for audit attribution (0 when
+// unknown, e.g. a local CLI invocation) -- see writeConfigChangeAuditEvent.
+func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel, createdBy string, actorID uint) (*models.NotificationChannel, error) {
 	if err := c.validateNotificationChannel(ch); err != nil {
 		return nil, err
 	}
@@ -49,16 +62,23 @@ func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.
 	if err := c.storage.CreateNotificationChannel(ctx, ch); err != nil {
 		return nil, err
 	}
+	after := *ch
+	c.writeConfigChangeAuditEvent(ctx, EventNotificationChannelCreated, actorID,
+		fmt.Sprintf("notification channel %d (%q, type=%s) created by %s", ch.ID, ch.Name, ch.Type, createdBy),
+		nil, after)
 	return ch, nil
 }
 
 // UpdateNotificationChannel applies the given map of field updates to the channel
 // identified by id and returns the updated channel.
-func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, updates map[string]any) (*models.NotificationChannel, error) {
+// actorID is the acting user's numeric ID for audit attribution (0 when
+// unknown, e.g. a local CLI invocation) -- see writeConfigChangeAuditEvent.
+func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, updates map[string]any, actorID uint) (*models.NotificationChannel, error) {
 	ch, err := c.storage.GetNotificationChannel(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	before := *ch
 	if v, ok := updates["name"].(string); ok && v != "" {
 		ch.Name = v
 	}
@@ -84,12 +104,29 @@ func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, up
 	if err := c.storage.UpdateNotificationChannel(ctx, ch); err != nil {
 		return nil, err
 	}
+	after := *ch
+	c.writeConfigChangeAuditEvent(ctx, EventNotificationChannelUpdated, actorID,
+		fmt.Sprintf("notification channel %d (%q) updated", id, ch.Name),
+		before, after)
 	return ch, nil
 }
 
 // DeleteNotificationChannel permanently removes the channel with the given id.
-func (c *KeyorixCore) DeleteNotificationChannel(ctx context.Context, id uint) error {
-	return c.storage.DeleteNotificationChannel(ctx, id)
+// actorID is the acting user's numeric ID for audit attribution (0 when
+// unknown, e.g. a local CLI invocation) -- see writeConfigChangeAuditEvent.
+func (c *KeyorixCore) DeleteNotificationChannel(ctx context.Context, id uint, actorID uint) error {
+	ch, err := c.storage.GetNotificationChannel(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := c.storage.DeleteNotificationChannel(ctx, id); err != nil {
+		return err
+	}
+	before := *ch
+	c.writeConfigChangeAuditEvent(ctx, EventNotificationChannelDeleted, actorID,
+		fmt.Sprintf("notification channel %d (%q, type=%s) deleted", id, ch.Name, ch.Type),
+		before, nil)
+	return nil
 }
 
 // validateNotificationChannel enforces invariants for create and update paths.

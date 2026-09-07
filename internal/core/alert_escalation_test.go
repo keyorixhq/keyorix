@@ -266,9 +266,10 @@ func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
 	store.On("CreateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	created, err := c.CreateNotificationChannel(context.Background(), &models.NotificationChannel{
 		Name: "rebind-channel", Type: "webhook", URL: "https://" + rebindHost + "/hook", Enabled: true,
-	}, "tester")
+	}, "tester", 1)
 	require.NoError(t, err, "channel creation sees a public address and must succeed")
 	require.GreaterOrEqual(t, callCount, 1)
 

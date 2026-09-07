@@ -47,14 +47,25 @@ func TestUpdateAnomalyConfig_SetsUpdatedByAndDelegatesToStorage(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &models.AnomalyConfigRecord{LookbackDays: 30}
+	store.On("GetAnomalyConfig", ctx).Return(&models.AnomalyConfigRecord{LookbackDays: 7}, nil)
 	store.On("SaveAnomalyConfig", ctx, mock.MatchedBy(func(r *models.AnomalyConfigRecord) bool {
 		return r.UpdatedBy == "admin" && r.LookbackDays == 30
 	})).Return(nil)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
+		Return(nil)
 
-	err := c.UpdateAnomalyConfig(ctx, cfg, "admin")
+	err := c.UpdateAnomalyConfig(ctx, cfg, "admin", 7)
 	require.NoError(t, err)
 	assert.Equal(t, "admin", cfg.UpdatedBy)
 	assert.False(t, cfg.UpdatedAt.IsZero())
+	require.NotNil(t, captured, "updating the anomaly config must write an audit event")
+	assert.Equal(t, EventAnomalyConfigUpdated, captured.EventType)
+	require.NotNil(t, captured.UserID)
+	assert.Equal(t, uint(7), *captured.UserID)
+	assert.Contains(t, captured.Diff, `"lookback_days":30`)
+	assert.Contains(t, captured.Diff, `"lookback_days":7`, "the diff must carry the PRIOR config too, not just the new one")
 }
 
 func TestUpdateAnomalyConfig_PropagatesStorageError(t *testing.T) {
@@ -63,11 +74,13 @@ func TestUpdateAnomalyConfig_PropagatesStorageError(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &models.AnomalyConfigRecord{}
+	store.On("GetAnomalyConfig", ctx).Return(&models.AnomalyConfigRecord{}, nil)
 	store.On("SaveAnomalyConfig", ctx, mock.AnythingOfType("*models.AnomalyConfigRecord")).
 		Return(errors.New("write failed"))
 
-	err := c.UpdateAnomalyConfig(ctx, cfg, "user")
+	err := c.UpdateAnomalyConfig(ctx, cfg, "user", 1)
 	require.Error(t, err)
+	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 }
 
 func TestApplyAnomalyConfig_SetsLookback(t *testing.T) {

@@ -48,11 +48,13 @@ func UpdateAnomalyConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var updatedBy string
+	var actorID uint
 	if u := middleware.GetUserFromContext(r.Context()); u != nil {
 		updatedBy = u.Username
+		actorID = u.UserID
 	}
 
-	if err := coreService.UpdateAnomalyConfig(r.Context(), &cfg, updatedBy); err != nil {
+	if err := coreService.UpdateAnomalyConfig(r.Context(), &cfg, updatedBy, actorID); err != nil {
 		// core.UpdateAnomalyConfig returns a plain (unwrapped) validation error
 		// from validateAnomalyConfig when a knob exceeds its ceiling (#G44) --
 		// e.g. "lookback_days exceeds the maximum of 365" -- before ever

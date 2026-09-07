@@ -20,6 +20,15 @@ const (
 	maxAnomalyMLSampleSize  = 100000
 )
 
+// EventAnomalyConfigUpdated is the audit event type emitted when the
+// persisted anomaly detection config is replaced -- see config_change_audit.go
+// for the shared writer. Distinct from EventAnomalyBusinessHoursConfigured
+// (anomaly.go), which audits only the off-hours band as actually applied to
+// the live detector (change-deduped across scheduler ticks); this event
+// audits the raw admin PUT itself, including knobs (ML enable, lookback,
+// quarantine) that ApplyAnomalyConfig's dedup never covers.
+const EventAnomalyConfigUpdated = "anomaly_config.updated" // #nosec G101 -- audit event type, not a credential
+
 // validateAnomalyConfig bounds the knobs that drive per-scan detector cost.
 func validateAnomalyConfig(cfg *models.AnomalyConfigRecord) error {
 	if cfg.LookbackDays > maxAnomalyLookbackDays {
@@ -94,8 +103,10 @@ func (c *KeyorixCore) GetAnomalyConfig(ctx context.Context) (*models.AnomalyConf
 
 // UpdateAnomalyConfig persists a new anomaly detection config.  updatedBy is
 // the username of the operator making the change (stored on the row for audit
-// purposes); the caller is responsible for applying the new config to the live
-// detector via ApplyAnomalyConfig if one is running.
+// purposes); actorID is their numeric ID for audit-event attribution (0 when
+// unknown, e.g. a local CLI invocation); the caller is responsible for
+// applying the new config to the live detector via ApplyAnomalyConfig if one
+// is running.
 //
 // This is a full-replace write (cfg goes straight into storage.SaveAnomalyConfig's
 // unconditional Save), not the unfetched-struct-into-full-row-overwrite bug class
@@ -103,11 +114,30 @@ func (c *KeyorixCore) GetAnomalyConfig(ctx context.Context) (*models.AnomalyConf
 // Confirmed during that fix's repo-wide sweep as a deliberate, accepted tradeoff:
 // anomaly config is a small operator knob set with no partial-patch use case, and a
 // PUT is expected to carry the complete config, not a diff.
-func (c *KeyorixCore) UpdateAnomalyConfig(ctx context.Context, cfg *models.AnomalyConfigRecord, updatedBy string) error {
+//
+// Every write is audited (EventAnomalyConfigUpdated) with the before/after config
+// as the diff -- an admin who disables ML/off-hours detection deployment-wide,
+// acts, then restores the defaults must leave a permanent record of the
+// intervening window, not just the final restored row (#G-audit-notif-anomaly).
+// The before-state fetch is best-effort: a failure to read the PRIOR config must
+// not block persisting and auditing the new one (the write itself, and its audit
+// record, are the security-relevant guarantee here; a missing "before" snapshot
+// degrades the diff's usefulness but must never suppress the write's own record).
+func (c *KeyorixCore) UpdateAnomalyConfig(ctx context.Context, cfg *models.AnomalyConfigRecord, updatedBy string, actorID uint) error {
 	if err := validateAnomalyConfig(cfg); err != nil {
 		return err
 	}
+	var before any
+	if prior, err := c.storage.GetAnomalyConfig(ctx); err == nil {
+		before = prior
+	}
 	cfg.UpdatedBy = updatedBy
 	cfg.UpdatedAt = time.Now()
-	return c.storage.SaveAnomalyConfig(ctx, cfg)
+	if err := c.storage.SaveAnomalyConfig(ctx, cfg); err != nil {
+		return err
+	}
+	c.writeConfigChangeAuditEvent(ctx, EventAnomalyConfigUpdated, actorID,
+		fmt.Sprintf("anomaly detection config updated by %s (ml_enabled=%t off_hours_enabled=%t)", updatedBy, cfg.MLEnabled, cfg.OffHoursEnabled),
+		before, cfg)
+	return nil
 }

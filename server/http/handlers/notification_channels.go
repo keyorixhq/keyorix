@@ -91,7 +91,7 @@ func (h *NotificationChannelHandler) Create(w http.ResponseWriter, r *http.Reque
 	} else {
 		ch.Enabled = true
 	}
-	created, err := h.coreService.CreateNotificationChannel(r.Context(), ch, u.Username)
+	created, err := h.coreService.CreateNotificationChannel(r.Context(), ch, u.Username, u.UserID)
 	if err != nil {
 		if isValidationError(err) {
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
@@ -125,6 +125,11 @@ func (h *NotificationChannelHandler) Get(w http.ResponseWriter, r *http.Request)
 
 // Update handles PUT /api/v1/notification-channels/{id}.
 func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Request) {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -134,7 +139,7 @@ func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Reque
 		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
-	updated, err := h.coreService.UpdateNotificationChannel(r.Context(), id, body)
+	updated, err := h.coreService.UpdateNotificationChannel(r.Context(), id, body, u.UserID)
 	if err != nil {
 		if strings.Contains(err.Error(), channelNotFound) {
 			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
@@ -153,11 +158,16 @@ func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Reque
 
 // Delete handles DELETE /api/v1/notification-channels/{id}.
 func (h *NotificationChannelHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
 	}
-	if err := h.coreService.DeleteNotificationChannel(r.Context(), id); err != nil {
+	if err := h.coreService.DeleteNotificationChannel(r.Context(), id, u.UserID); err != nil {
 		if strings.Contains(err.Error(), channelNotFound) {
 			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return

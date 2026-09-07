@@ -19,14 +19,14 @@ func TestCreateNotificationChannel_Validation(t *testing.T) {
 
 	t.Run("invalid type returns error", func(t *testing.T) {
 		ch := &models.NotificationChannel{Name: "bad-type", Type: "sms", URL: "https://example.com"}
-		_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+		_, err := c.CreateNotificationChannel(ctx, ch, "admin", 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid notification channel type")
 	})
 
 	t.Run("empty name returns error", func(t *testing.T) {
 		ch := &models.NotificationChannel{Name: "", Type: "webhook", URL: "https://example.com"}
-		_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+		_, err := c.CreateNotificationChannel(ctx, ch, "admin", 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "name is required")
 	})
@@ -39,21 +39,21 @@ func TestCreateNotificationChannel_WebhookRequiresURL(t *testing.T) {
 
 	t.Run("webhook without URL returns error", func(t *testing.T) {
 		ch := &models.NotificationChannel{Name: "my-hook", Type: "webhook", URL: ""}
-		_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+		_, err := c.CreateNotificationChannel(ctx, ch, "admin", 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "URL is required")
 	})
 
 	t.Run("email type without email returns error", func(t *testing.T) {
 		ch := &models.NotificationChannel{Name: "my-email", Type: "email", Email: ""}
-		_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+		_, err := c.CreateNotificationChannel(ctx, ch, "admin", 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "email is required")
 	})
 
 	t.Run("slack without URL returns error", func(t *testing.T) {
 		ch := &models.NotificationChannel{Name: "my-slack", Type: "slack", URL: ""}
-		_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+		_, err := c.CreateNotificationChannel(ctx, ch, "admin", 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "URL is required")
 	})
@@ -84,16 +84,25 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 		ch := args.Get(1).(*models.NotificationChannel)
 		ch.ID = 1
 	})
+	var auditEvents []*models.AuditEvent
+	store.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { auditEvents = append(auditEvents, args.Get(1).(*models.AuditEvent)) }).
+		Return(nil)
 
 	result, err := c.CreateNotificationChannel(ctx, &models.NotificationChannel{
 		Name:   "webhook-siem",
 		Type:   "webhook",
 		URL:    "https://siem.example.com/hook",
 		Events: "anomaly.detected,secret.expiring",
-	}, "admin")
+	}, "admin", 42)
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), result.ID)
 	assert.Equal(t, "admin", result.CreatedBy)
+	require.Len(t, auditEvents, 1, "create must write one audit event")
+	assert.Equal(t, EventNotificationChannelCreated, auditEvents[0].EventType)
+	require.NotNil(t, auditEvents[0].UserID)
+	assert.Equal(t, uint(42), *auditEvents[0].UserID)
+	assert.Contains(t, auditEvents[0].Diff, "webhook-siem")
 
 	// List
 	store.On("ListNotificationChannels", ctx).Return([]*models.NotificationChannel{created}, nil)
@@ -114,14 +123,18 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 	updated, err := c.UpdateNotificationChannel(ctx, 1, map[string]interface{}{
 		"events":  "secret.rotated",
 		"enabled": false,
-	})
+	}, 42)
 	require.NoError(t, err)
 	assert.Equal(t, "secret.rotated", updated.Events)
 	assert.False(t, updated.Enabled)
+	require.Len(t, auditEvents, 2, "update must write one more audit event")
+	assert.Equal(t, EventNotificationChannelUpdated, auditEvents[1].EventType)
 
 	// Delete
 	store.On("DeleteNotificationChannel", ctx, uint(1)).Return(nil)
-	require.NoError(t, c.DeleteNotificationChannel(ctx, 1))
+	require.NoError(t, c.DeleteNotificationChannel(ctx, 1, 42))
+	require.Len(t, auditEvents, 3, "delete must write one more audit event")
+	assert.Equal(t, EventNotificationChannelDeleted, auditEvents[2].EventType)
 
 	store.AssertExpectations(t)
 }
@@ -138,7 +151,7 @@ func TestCreateNotificationChannel_StorageError(t *testing.T) {
 		Return(fmt.Errorf("db: connection refused"))
 
 	ch := &models.NotificationChannel{Name: "hook", Type: "webhook", URL: "https://hook.example.com"}
-	_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+	_, err := c.CreateNotificationChannel(ctx, ch, "admin", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "connection refused")
 	st.AssertExpectations(t)
@@ -154,7 +167,7 @@ func TestUpdateNotificationChannel_GetError(t *testing.T) {
 	st.On("GetNotificationChannel", ctx, uint(99)).
 		Return(nil, fmt.Errorf("record not found"))
 
-	_, err := c.UpdateNotificationChannel(ctx, 99, map[string]interface{}{"events": "secret.rotated"})
+	_, err := c.UpdateNotificationChannel(ctx, 99, map[string]interface{}{"events": "secret.rotated"}, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 	st.AssertExpectations(t)
@@ -178,7 +191,7 @@ func TestUpdateNotificationChannel_UpdateStorageError(t *testing.T) {
 	st.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).
 		Return(fmt.Errorf("db: disk full"))
 
-	_, err := c.UpdateNotificationChannel(ctx, 2, map[string]interface{}{"events": "secret.rotated"})
+	_, err := c.UpdateNotificationChannel(ctx, 2, map[string]interface{}{"events": "secret.rotated"}, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disk full")
 	st.AssertExpectations(t)
@@ -192,7 +205,7 @@ func TestValidateNotificationChannel_TeamsRequiresURL(t *testing.T) {
 	ctx := context.Background()
 
 	ch := &models.NotificationChannel{Name: "teams-ch", Type: "teams", URL: ""}
-	_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+	_, err := c.CreateNotificationChannel(ctx, ch, "admin", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "URL is required")
 	assert.Contains(t, err.Error(), "teams")
@@ -215,6 +228,7 @@ func TestUpdateNotificationChannel_AllFieldUpdates(t *testing.T) {
 	}
 	st.On("GetNotificationChannel", ctx, uint(3)).Return(existing, nil)
 	st.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
+	st.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 
 	updated, err := c.UpdateNotificationChannel(ctx, 3, map[string]interface{}{
 		"name":    "new-name",
@@ -223,7 +237,7 @@ func TestUpdateNotificationChannel_AllFieldUpdates(t *testing.T) {
 		"email":   "ops@example.com",
 		"events":  "secret.expiring",
 		"enabled": true,
-	})
+	}, 1)
 	require.NoError(t, err)
 	assert.Equal(t, "new-name", updated.Name)
 	assert.Equal(t, "https://new.example.com", updated.URL)
@@ -251,7 +265,7 @@ func TestUpdateNotificationChannel_ValidationFails(t *testing.T) {
 	// Clearing the URL of a webhook should fail validation.
 	_, err := c.UpdateNotificationChannel(ctx, 4, map[string]interface{}{
 		"url": "",
-	})
+	}, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "URL is required")
 	st.AssertExpectations(t)
