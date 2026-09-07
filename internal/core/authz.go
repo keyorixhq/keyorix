@@ -316,8 +316,10 @@ func (c *KeyorixCore) AuthorizeSecretPrincipal(ctx context.Context, actorType st
 	return c.AuthorizePrincipal(ctx, actorType, principalID, permission, scope)
 }
 
-// IsGlobalAdmin reports whether userID holds an admin role assigned globally
-// (project 0, environment 0). Used to short-circuit scope-filtered listing.
+// IsGlobalAdmin answers a SELF-CHECK: "should userID — always the ctx's own
+// acting principal — be treated as an unrestricted global admin for this
+// request." It must never be called with a userID other than the ctx's own
+// actor; see targetHasGlobalAdminRole for that different question.
 //
 // A request carrying a PAT least-privilege restriction (ADR-042) is never treated
 // as an unrestricted global admin: the token was deliberately scoped below its
@@ -329,7 +331,28 @@ func (c *KeyorixCore) IsGlobalAdmin(ctx context.Context, userID uint) (bool, err
 	if patRestrictionFromContext(ctx) != nil {
 		return false, nil
 	}
-	roleIDs, err := c.scopedRoleIDs(ctx, userID, Scope{})
+	return c.targetHasGlobalAdminRole(ctx, userID)
+}
+
+// targetHasGlobalAdminRole answers a THIRD-PARTY QUESTION: "does targetID
+// currently hold a global admin-tier role" — a fact about targetID, never
+// about whoever is asking. Deliberately does NOT consult
+// patRestrictionFromContext(ctx): that check exists solely to stop the
+// CALLER's own scoped PAT from being treated as unrestricted-admin authority
+// (see IsGlobalAdmin) and is meaningless here, since the question isn't about
+// the caller at all.
+//
+// Found 2026-09-07 (ADR conformance review, HIGH): guardLastAdminDeactivation
+// and SuspendInactiveUsers both reused IsGlobalAdmin to ask this third-party
+// question, so an admin acting through their own ordinary scoped PAT made
+// IsGlobalAdmin's short-circuit fire on the ACTOR's restriction rather than
+// the TARGET's actual role — silently reporting every target as "not an
+// admin" regardless of truth, which let the last-global-admin lockout guard
+// (and the inactivity-suspend admin-skip check) both no-op. Use this function
+// for any "is THIS OTHER PRINCIPAL an admin" query; use IsGlobalAdmin only
+// for "should THE CALLER be treated as one."
+func (c *KeyorixCore) targetHasGlobalAdminRole(ctx context.Context, targetID uint) (bool, error) {
+	roleIDs, err := c.scopedRoleIDs(ctx, targetID, Scope{})
 	if err != nil {
 		return false, err
 	}
