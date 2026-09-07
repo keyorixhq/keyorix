@@ -73,10 +73,14 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   refreshed by `SessionStart` and by every HEAD-moving git subcommand
   (`commit`/`checkout`/`switch`/`rebase`/`merge`/`reset`/`cherry-pick`/
   `revert`/`pull`/`worktree add`/`worktree remove`), timestamp-stale after
-  20 minutes rather than requiring PID liveness (no persistent PID exists
-  to check from inside a short-lived hook). Read-only git commands
-  (`status`/`log`/`diff`/`show`/etc.) are never gated — only the commands
-  that actually move HEAD or shared branch/worktree state are.
+  3 hours (widened from an initial 20 minutes after confirming the lock only
+  refreshes on a gated command, not on a timer or ordinary work, and agents
+  here routinely run 40-80 minutes between them) rather than requiring PID
+  liveness (no persistent PID exists to check from inside a short-lived
+  hook). Read-only git commands (`status`/`log`/`diff`/`show`/etc.) are
+  never gated; `git reset --`/`git checkout --` pathspec forms are exempt
+  even though the bare subcommand is guarded, since they never move HEAD.
+  Respects `-C <path>` in the command being gated.
 
 ## Engineering practices
 
