@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // AssignUserRoleWithExpiry assigns a time-bound role to a user at scope (the grant
@@ -90,15 +91,30 @@ func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, gr
 		return err
 	}
 	// #1646: see AssignUserRole's identical WithNamedLock use.
+	// #1780: the group key alone does not serialize against a concurrent DIRECT
+	// grant to one of this group's members — see withGroupMemberSoDLocks
+	// (rbac_management.go).
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("group", groupID), func(ctx context.Context) error {
-		if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
+		write := func(ctx context.Context) error {
+			if err := c.storage.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, expiresAt); err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+			c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
+			return nil
+		}
+		policies, adding, needed, err := c.groupGrantSoDContext(ctx, roleID)
+		if err != nil {
 			return err
 		}
-		if err := c.storage.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, expiresAt); err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		if !needed {
+			return write(ctx)
 		}
-		c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
-		return nil
+		return c.withGroupMemberSoDLocks(ctx, groupID, func(ctx context.Context, members []*models.User) error {
+			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
+				return err
+			}
+			return write(ctx)
+		})
 	})
 }
 

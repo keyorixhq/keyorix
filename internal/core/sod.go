@@ -617,6 +617,43 @@ func (c *KeyorixCore) requireNoSoDViolation(ctx context.Context, userID, roleID 
 	return nil
 }
 
+// groupGrantSoDContext resolves everything requireGroupGrantNoSoDViolation
+// needs to know BEFORE the caller decides whether it's even worth listing
+// group membership and acquiring a lock per member (withGroupMemberSoDLocks,
+// rbac_management.go — issue #1780): the policy set and roleID's own
+// permission set, plus needed=false for every early-out
+// requireGroupGrantNoSoDViolation used to apply internally (no policies
+// configured at all, roleID is itself admin-bypass, or roleID grants no
+// permissions) — cases where no member's held-permission set could possibly
+// matter. Splitting this out means a deployment with no SoD policies (the
+// common case) never pays for a ListGroupMembers call or a single member
+// lock on every group-role grant; the member-lock dance only runs when a
+// policy could genuinely be affected.
+func (c *KeyorixCore) groupGrantSoDContext(ctx context.Context, roleID uint) (policies []*models.SoDPolicy, adding map[string]bool, needed bool, err error) {
+	policies, err = c.storage.ListSoDPolicies(ctx)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(policies) == 0 {
+		return nil, nil, false, nil
+	}
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if isAdminRoleName(role.Name) {
+		return nil, nil, false, nil
+	}
+	adding, err = c.rolePermissionNameSet(ctx, roleID)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(adding) == 0 {
+		return nil, nil, false, nil
+	}
+	return policies, adding, true, nil
+}
+
 // requireGroupGrantNoSoDViolation is requireNoSoDViolation's GROUP-grant
 // counterpart: a role assigned to a group is inherited by every member, so it
 // can complete a policy for a member exactly as a direct grant would. Checks
@@ -625,32 +662,22 @@ func (c *KeyorixCore) requireNoSoDViolation(ctx context.Context, userID, roleID 
 // stays cheap even run synchronously on every group-role assignment). A member
 // who already holds admin-bypass is skipped, not treated as a block (see
 // package doc above).
-func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, groupID, roleID uint) error {
-	policies, err := c.storage.ListSoDPolicies(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
-	}
-	if len(policies) == 0 {
-		return nil
-	}
-	role, err := c.storage.GetRole(ctx, roleID)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
-	}
-	if isAdminRoleName(role.Name) {
-		return nil
-	}
-	adding, err := c.rolePermissionNameSet(ctx, roleID)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
-	}
-	if len(adding) == 0 {
-		return nil
-	}
-	members, err := c.storage.ListGroupMembers(ctx, groupID)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
-	}
+//
+// members is the caller's ALREADY-FETCHED membership snapshot (see
+// withGroupMemberSoDLocks, rbac_management.go), not re-listed here —
+// issue #1780: this function used to list membership itself, but the caller
+// needs that exact same list to know which members' sodGrantLockKey("user", ...)
+// locks to hold for the duration of the check-then-write (otherwise a
+// concurrent direct grant to a member reads this function's pre-grant state
+// as clean and commits before this function's own caller writes the group
+// grant — the two operations never serialize against each other at all,
+// since they use different lock keys). Passing the same snapshot through
+// guarantees the locks taken and the members checked are identical.
+//
+// policies/adding come from groupGrantSoDContext, called by the caller BEFORE
+// it decides whether to acquire member locks at all — this function no
+// longer re-derives them (or re-applies their early-outs) itself.
+func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, members []*models.User, policies []*models.SoDPolicy, adding map[string]bool) error {
 	for _, m := range members {
 		if !m.IsActive || c.isGlobalAdminRoleName(ctx, m.ID) != "" {
 			continue
