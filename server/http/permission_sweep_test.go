@@ -54,35 +54,35 @@ import (
 // implementation) to confirm it returns no cross-tenant/cross-user disclosure that
 // system.read's universal grant would expose.
 var permissionSweepAllowlist = map[string]string{
-	"server/http/router.go:381": "GET /notification-channels/{id}/retry-policy returns only " +
+	"server/http/router.go:388": "GET /notification-channels/{id}/retry-policy returns only " +
 		"max_retries/retry_backoff_ms for one channel ID -- numeric tuning knobs, no secret " +
 		"values, no PII, no cross-tenant project/user enumeration. Weaker than the parent " +
 		"resource's own read (system.write), a pre-existing minor inconsistency, but not the " +
 		"cross-tenant-disclosure bug shape this sweep guards against.",
-	"server/http/router.go:404": "GET /dashboard/stats is the caller's OWN home dashboard. " +
+	"server/http/router.go:411": "GET /dashboard/stats is the caller's OWN home dashboard. " +
 		"core.GetDashboardStats (internal/core/dashboard.go) separately scopes the " +
 		"deployment-wide aggregate fields (active users, audit-event counts, failed-auth " +
 		"counts) to audit.read INSIDE the handler -- a baseline caller gets their own numbers " +
 		"with the org-wide aggregates zeroed, not the real deployment-wide figures. See " +
 		"TestDashboardStats_PermissionTiers in deployment_disclosure_family_test.go.",
-	"server/http/router.go:414": "GET /system/auth-config returns a deliberately redacted, " +
+	"server/http/router.go:421": "GET /system/auth-config returns a deliberately redacted, " +
 		"non-per-tenant summary of server-wide auth config (session TTLs, password policy " +
 		"shape, SSO provider names/types). No secrets (client secrets/SAML metadata/OIDC " +
 		"details excluded by MakeAuthConfigHandler's own doc comment), no per-user or " +
 		"per-project data to disclose cross-tenant.",
-	"server/http/router.go:415": "GET /system/encryption-config returns a deliberately " +
+	"server/http/router.go:422": "GET /system/encryption-config returns a deliberately " +
 		"redacted, non-per-tenant summary (encryption enabled + KEK provider TYPE only). Key " +
 		"material locations (file paths, exec commands, env var names, KMS key IDs) are " +
 		"explicitly excluded by MakeEncryptionConfigHandler's own doc comment.",
-	"server/http/router.go:422": "GET /system/info returns server version/build/runtime info " +
+	"server/http/router.go:429": "GET /system/info returns server version/build/runtime info " +
 		"(no per-tenant data) -- the same deployment-wide, non-disclosure-sensitive shape as " +
 		"auth-config/encryption-config above.",
-	"server/http/router.go:423": "GET /system/metrics returns process-level runtime metrics " +
+	"server/http/router.go:430": "GET /system/metrics returns process-level runtime metrics " +
 		"(memory/GC/goroutines) with HTTP/Database/Secrets counters explicitly zeroed (not " +
 		"instrumented at this layer per GetMetrics's own comment) -- no per-tenant data.",
-	"server/http/router.go:1067": "GET /audit/anomalies sits inside r.Route(\"/audit\", ...) " +
+	"server/http/router.go:1074": "GET /audit/anomalies sits inside r.Route(\"/audit\", ...) " +
 		"which calls r.Use(RequirePermission(permAuditRead)) as a GROUP-level middleware " +
-		"(router.go:1044). chi's With() on a route registered inside that group ADDS to, " +
+		"(router.go:1056). chi's With() on a route registered inside that group ADDS to, " +
 		"never replaces, the group's Use() middleware (verified against go-chi/chi/v5's " +
 		"Mux.With/Route/handle: the group's non-inline Mux builds its own handler chain via " +
 		"updateRouteHandler, and every route registered inside it -- inline or not -- is " +
@@ -90,18 +90,18 @@ var permissionSweepAllowlist = map[string]string{
 		"audit.read AND system.read (AND, not OR) -- effectively gated at audit.read, the " +
 		"stronger requirement, exactly as router.go's own ANOMALY-04 comment there intends. " +
 		"Not a case of \"solely permSystemRead\" despite the literal string match.",
-	"server/http/router.go:2074": "GET /license/status returns deployment-wide license " +
+	"server/http/router.go:2081": "GET /license/status returns deployment-wide license " +
 		"metadata (plan/features/seat count/expiry) -- not scoped to any tenant/project/user, " +
 		"nothing to cross-tenant-disclose.",
-	"server/http/router.go:2170": "GET /sod/policies returns policy DEFINITIONS (name + the " +
+	"server/http/router.go:2177": "GET /sod/policies returns policy DEFINITIONS (name + the " +
 		"permission-a/permission-b pair) only -- no PII, no violator names. router.go's own " +
 		"adjacent comment is explicit that this stays baseline while /sod/violations (which " +
 		"DOES disclose violator names/emails) is separately gated on audit.read.",
-	"server/http/router.go:2217": "GET /admin/anomaly-config returns the DB-persisted anomaly " +
+	"server/http/router.go:2224": "GET /admin/anomaly-config returns the DB-persisted anomaly " +
 		"detection THRESHOLDS (config), not any user/project/alert data -- deployment-wide " +
 		"config in the same non-disclosure-sensitive family as auth-config/encryption-config " +
 		"above. Actual alert data (which does disclose SecretName/AccessedBy/IPAddress " +
-		"deployment-wide) is the separate /audit/anomalies route (line 1062 above), already " +
+		"deployment-wide) is the separate /audit/anomalies route (line 1074 above), already " +
 		"gated at effective audit.read.",
 }
 
@@ -421,8 +421,8 @@ var noPermissionGateAllowlist = map[string]string{
 	"server/http/router.go:240":  justPublicInfra + " /metrics is Prometheus scrape target; optionally protected by a separate static-bearer-token check (cfg.Server.HTTP.MetricsToken) when configured -- a deployment-perimeter control, not RBAC.",
 	"server/http/router.go:243":  justPublicInfra + " GET /status serves the public status dashboard (or falls back to the health check).",
 	"server/http/router.go:259":  justPublicInfra + " GET /status-es is the Spanish-language mirror of /status immediately above.",
-	"server/http/router.go:2228": justPublicInfra + " Swagger UI is gated by cfg.Server.HTTP.SwaggerEnabled (a deployment config flag, not a per-caller permission) -- see the adjacent comment; the machine-readable API surface it exposes is the same shape /openapi.yaml exposes below.",
-	"server/http/router.go:2229": justPublicInfra + " GET /openapi.yaml is the raw OpenAPI spec, gated by the same cfg.Server.HTTP.SwaggerEnabled flag as the Swagger UI immediately above (#224 fixed the two having diverging on/off behavior; they must stay paired).",
+	"server/http/router.go:2235": justPublicInfra + " Swagger UI is gated by cfg.Server.HTTP.SwaggerEnabled (a deployment config flag, not a per-caller permission) -- see the adjacent comment; the machine-readable API surface it exposes is the same shape /openapi.yaml exposes below.",
+	"server/http/router.go:2236": justPublicInfra + " GET /openapi.yaml is the raw OpenAPI spec, gated by the same cfg.Server.HTTP.SwaggerEnabled flag as the Swagger UI immediately above (#224 fixed the two having diverging on/off behavior; they must stay paired).",
 
 	"server/http/router.go:330": justSelfServiceOwnAccount + " GET/PUT /auth/profile.",
 	"server/http/router.go:331": justSelfServiceOwnAccount + " GET/PUT /auth/profile.",
@@ -437,28 +437,30 @@ var noPermissionGateAllowlist = map[string]string{
 	"server/http/router.go:349": justSelfServiceOwnAccount + " POST webauthn/register/finish completes the same ceremony as register/begin above.",
 	"server/http/router.go:350": justSelfServiceOwnAccount + " GET webauthn/credentials lists only the caller's OWN passkeys.",
 	"server/http/router.go:355": justSelfServiceOwnAccount + " DELETE webauthn/credentials/{id} deletes only the caller's OWN passkey (there is no admin API to remove another user's passkey); same impersonation block, since deleting the last passkey is the same durable MFA-downgrade /auth/mfa/disable is blocked from doing.",
-	"server/http/router.go:356": justSelfServiceOwnAccount + " GET /auth/sessions lists only the caller's OWN sessions.",
-	"server/http/router.go:357": justSelfServiceOwnAccount + " DELETE /auth/sessions/{id} revokes only one of the caller's OWN sessions.",
-	"server/http/router.go:358": justSelfServiceOwnAccount + " GET /auth/tokens lists only the caller's OWN PATs.",
-	"server/http/router.go:361": justSelfServiceOwnAccount + " POST /auth/tokens mints a PAT for the caller's OWN account; blocked under impersonation so an admin acting as a user cannot plant a durable token.",
-	"server/http/router.go:362": justSelfServiceOwnAccount + " DELETE /auth/tokens/{id} revokes only one of the caller's OWN PATs.",
-	"server/http/router.go:364": justSelfServiceOwnAccount + " GET tokens/expired lists only the caller's OWN expired PATs.",
-	"server/http/router.go:365": justSelfServiceOwnAccount + " DELETE tokens/expired bulk-revokes only the caller's OWN expired PATs.",
-	"server/http/router.go:367": justSelfServiceOwnAccount + " POST /auth/end-impersonation ends only the CALLER'S OWN impersonation session.",
-	"server/http/router.go:370": justSelfServiceOwnAccount + " GET /notifications lists only the caller's OWN in-app notifications (ADR-024).",
-	"server/http/router.go:371": justSelfServiceOwnAccount + " POST notifications/read-all marks only the caller's OWN notifications read.",
-	"server/http/router.go:372": justSelfServiceOwnAccount + " POST notifications/{id}/read marks one of the caller's OWN notifications read.",
+	"server/http/router.go:361": justSelfServiceOwnAccount + " POST /auth/webauthn/reauth/begin starts a live passkey re-assertion for the caller's OWN account (the WebAuthn-only path to satisfy requireReauth); same impersonation block as the other WebAuthn/MFA self-service routes.",
+	"server/http/router.go:362": justSelfServiceOwnAccount + " POST /auth/webauthn/reauth/finish completes the same ceremony as reauth/begin immediately above.",
+	"server/http/router.go:363": justSelfServiceOwnAccount + " GET /auth/sessions lists only the caller's OWN sessions.",
+	"server/http/router.go:364": justSelfServiceOwnAccount + " DELETE /auth/sessions/{id} revokes only one of the caller's OWN sessions.",
+	"server/http/router.go:365": justSelfServiceOwnAccount + " GET /auth/tokens lists only the caller's OWN PATs.",
+	"server/http/router.go:368": justSelfServiceOwnAccount + " POST /auth/tokens mints a PAT for the caller's OWN account; blocked under impersonation so an admin acting as a user cannot plant a durable token.",
+	"server/http/router.go:369": justSelfServiceOwnAccount + " DELETE /auth/tokens/{id} revokes only one of the caller's OWN PATs.",
+	"server/http/router.go:371": justSelfServiceOwnAccount + " GET tokens/expired lists only the caller's OWN expired PATs.",
+	"server/http/router.go:372": justSelfServiceOwnAccount + " DELETE tokens/expired bulk-revokes only the caller's OWN expired PATs.",
+	"server/http/router.go:374": justSelfServiceOwnAccount + " POST /auth/end-impersonation ends only the CALLER'S OWN impersonation session.",
+	"server/http/router.go:377": justSelfServiceOwnAccount + " GET /notifications lists only the caller's OWN in-app notifications (ADR-024).",
+	"server/http/router.go:378": justSelfServiceOwnAccount + " POST notifications/read-all marks only the caller's OWN notifications read.",
+	"server/http/router.go:379": justSelfServiceOwnAccount + " POST notifications/{id}/read marks one of the caller's OWN notifications read.",
 
-	"server/http/router.go:499": "Self-service (ADR-024): POST /projects/{id}/access-requests lets an " +
+	"server/http/router.go:506": "Self-service (ADR-024): POST /projects/{id}/access-requests lets an " +
 		"authenticated user request access to a project THEY DO NOT YET HAVE -- by definition they " +
 		"cannot hold a project-scoped permission on it yet, so no permission check can gate the " +
 		"request itself (core.RequestProjectAccess scopes the created row to the caller's own " +
 		"user ID). See router.go's own adjacent comment (\"requesting + withdrawing are self-" +
 		"service\") and handlers/invitations.go's CreateAccessRequest.",
-	"server/http/router.go:501": "Self-service (ADR-024): POST access-requests/{requestId}/withdraw withdraws " +
+	"server/http/router.go:508": "Self-service (ADR-024): POST access-requests/{requestId}/withdraw withdraws " +
 		"only the CALLER'S OWN pending request (core.WithdrawAccessRequest scopes to the requester). " +
 		"Same reasoning as CreateAccessRequest immediately above.",
-	"server/http/router.go:517": "Self-service by design: POST /projects/{id}/break-glass activates " +
+	"server/http/router.go:524": "Self-service by design: POST /projects/{id}/break-glass activates " +
 		"emergency access the caller currently LACKS -- the entire point of break-glass is bypassing " +
 		"the normal grant path, so gating it on a permission would defeat its purpose. Controlled " +
 		"instead by deployment config + a mandatory justification + full audit trail + automatic " +
@@ -466,36 +468,36 @@ var noPermissionGateAllowlist = map[string]string{
 		"so an admin acting as a user cannot mint a durable emergency role grant attributed to the " +
 		"target. See router.go's own adjacent comment.",
 
-	"server/http/router.go:615": "GET /secrets (ListSecrets) performs its own authorization INSIDE the " +
+	"server/http/router.go:622": "GET /secrets (ListSecrets) performs its own authorization INSIDE the " +
 		"handler so a project-scoped reader gets the union of their accessible scopes rather than a " +
 		"403 on an unfiltered request -- see router.go's own adjacent comment and secrets_list.go. " +
 		"An unscoped/no-permission caller still only ever sees the empty-or-narrowed result their " +
 		"own scopes permit, never another caller's secrets.",
-	"server/http/router.go:617": "GET /secrets/policy returns the deployment's ACTIVE create-time naming/" +
+	"server/http/router.go:624": "GET /secrets/policy returns the deployment's ACTIVE create-time naming/" +
 		"value policy -- deployment-wide, non-per-tenant configuration every authenticated caller " +
 		"needs visibility into before they can even attempt a create (the same policy a create " +
 		"request would be validated against). No secret values, no per-tenant data. See router.go's " +
 		"own adjacent comment (\"any authenticated caller\").",
-	"server/http/router.go:711": "POST /secrets (CreateSecret) is authorized INSIDE the handler: scope " +
+	"server/http/router.go:718": "POST /secrets (CreateSecret) is authorized INSIDE the handler: scope " +
 		"(project/environment) comes from the request body, not a URL path param a scope resolver " +
 		"middleware could resolve ahead of the handler. See router.go's own adjacent comment " +
 		"(\"Create: authorized inside the handler (scope comes from the body)\").",
-	"server/http/router.go:732": "DELETE /secrets/{id}/self-share (RemoveSelfFromShare) removes only the " +
+	"server/http/router.go:739": "DELETE /secrets/{id}/self-share (RemoveSelfFromShare) removes only the " +
 		"CALLER'S OWN direct share (core only removes a share whose RecipientID == the caller) -- " +
 		"self-service on the caller's own grant, needs just authentication. See router.go's own " +
 		"adjacent comment.",
-	"server/http/router.go:757": "POST /folders (CreateFolder) is authorized INSIDE the handler: scope " +
+	"server/http/router.go:764": "POST /folders (CreateFolder) is authorized INSIDE the handler: scope " +
 		"comes from the request body, the same in-handler-authorization pattern as CreateSecret " +
 		"above. See router.go's own adjacent comment (\"Create authorizes in-handler (scope from the " +
 		"body)\").",
-	"server/http/router.go:779": "POST /rotation-policies (Create) is authorized INSIDE the handler: scope " +
+	"server/http/router.go:786": "POST /rotation-policies (Create) is authorized INSIDE the handler: scope " +
 		"comes from the request body, the same in-handler pattern as CreateSecret/CreateFolder above. " +
 		"See router.go's own adjacent comment (\"create authorizes in-handler against the body\").",
-	"server/http/router.go:808": "POST /dynamic-secrets/configs (CreateConfig) is authorized INSIDE the " +
+	"server/http/router.go:815": "POST /dynamic-secrets/configs (CreateConfig) is authorized INSIDE the " +
 		"handler -- traced to the actual code, not just the group's header comment: " +
 		"DynamicSecretHandler.CreateConfig (server/http/handlers/dynamic_secrets.go) calls " +
 		"h.authorize(r, permSecretsWrite, scope) itself before creating the config.",
-	"server/http/router.go:809": "GET /dynamic-secrets/configs (ListConfigs) is authorized INSIDE the " +
+	"server/http/router.go:816": "GET /dynamic-secrets/configs (ListConfigs) is authorized INSIDE the " +
 		"handler -- traced to the actual code: DynamicSecretHandler.ListConfigs " +
 		"(server/http/handlers/dynamic_secrets.go) calls h.authorize(r, permSecretsRead, " +
 		"core.Scope{ProjectID: projectID, EnvironmentID: environmentID}) itself before listing.",
