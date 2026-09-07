@@ -1,0 +1,37 @@
+# Memory-measurement scenario matrix. Consumed by matrix_runner.py -- edit
+# this file to add/change scenarios, not the runner's Python logic. Columns:
+#
+#   id            unique, used as the row label in generated output
+#   kind          create_burst | bulk_endpoint | oom_check | sustained
+#   secret_count  secrets to create (create_burst, oom_check) or already
+#                 present before hitting the endpoint (bulk_endpoint)
+#   secret_size   bytes per secret value (create_burst, oom_check)
+#   concurrency   simultaneous HTTP clients
+#   duration_s    wall-clock duration, sustained only (0 for everything else)
+#   endpoint      HTTP path, bulk_endpoint only (empty otherwise)
+#   memory_cap    docker --memory value, oom_check only (empty otherwise --
+#                 create_burst/bulk_endpoint/sustained run uncapped, matching
+#                 how the ADR-100 measurements characterize true peak/growth
+#                 rather than a specific limit's survival)
+#   description
+#
+# Every row has exactly 9 tab-separated fields, empty fields included --
+# generated with a script, not hand-typed, after a hand-typed version
+# silently dropped a column on several rows (missing tab = fields shift
+# left = wrong data read into the wrong column, no error). Verify with:
+#   awk -F'\t' '!/^#/ && NF && NF!=9 {print NR": "NF" fields: "$0}' scenarios.tsv
+rest	create_burst	0	0	1	0			fresh-boot baseline, no secrets created
+count-50	create_burst	50	500000	1	0			count axis: 50 secrets, one client
+count-1000	create_burst	950	200	1	0			count axis: +950 small secrets (cumulative, reaches 1,000)
+count-10000	create_burst	9000	200	1	0			count axis: +9,000 small secrets (cumulative, reaches 10,000)
+bulk-list	bulk_endpoint	0	0	1	0	/api/v1/secrets?project_id=1&environment_id=1&page_size=100		paginated list at the 10,000-secret tier
+bulk-inventory	bulk_endpoint	0	0	1	0	/api/v1/secrets/inventory.csv		unbounded deployment-wide CSV export at the 10,000-secret tier
+bulk-audit-export	bulk_endpoint	0	0	1	0	/api/v1/audit/export.csv?limit=10000		capped audit-log CSV export at its row-count ceiling
+conc-1-100k	create_burst	100	100000	1	0			concurrency axis: 100 secrets @ 100KB, 1 client
+conc-25-100k	create_burst	100	100000	25	0			concurrency axis: 100 secrets @ 100KB, 25 clients
+conc-100-100k	create_burst	100	100000	100	0			concurrency axis: 100 secrets @ 100KB, 100 clients
+conc-100-500k	create_burst	100	500000	100	0			concurrency + payload: 100 secrets @ 500KB, 100 clients
+conc-100-2m	create_burst	100	2000000	100	0			concurrency + payload worst case: 100 secrets @ 2MB, 100 clients
+oom-100-2m-512m	oom_check	100	2000000	100	0		512Mi	replay the worst-case burst against a container capped at the shipped Helm limit
+oom-200-2m-512m	oom_check	200	2000000	200	0		512Mi	escalated burst against the same 512Mi cap -- expected to OOM-kill on today's default
+sustained-25	sustained	0	300	25	1800			30-minute sustained pass, moderate concurrency, mixed create/list/read
