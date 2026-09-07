@@ -299,6 +299,12 @@ jobs:
       - name: Verify every security closure claim names a passing test
         run: ./scripts/check-closures.sh
 
+      - name: Self-test the ADR conformance guard (must be able to go red)
+        run: ./scripts/check-adr-conformance.sh --self-test
+
+      - name: Verify every ADR conformance claim names a passing test
+        run: ./scripts/check-adr-conformance.sh
+
   # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
   # not a replacement for it. That hook is the PRIMARY guard: it runs on the
   # contributor's own machine before a broken workflow file is ever pushed,

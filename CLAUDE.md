@@ -290,3 +290,20 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
   rather than adding a one-off.
 - Reasoning and the failures behind these:
   `keyorix-private/adversarial-review/LESSONS-LEARNED.md` and `SECURITY-INVARIANTS.md`.
+
+## Closing/confirming an ADR-claimed security property (not an incident)
+
+Same discipline as above, separate ledger: `docs/adr-conformance-enforced.tsv`
+(`scripts/check-adr-conformance.sh`, a thin wrapper reusing
+`check-closures.sh`'s exact verification logic). Use this one for an ongoing
+architectural property an ADR asserts (e.g. "PBKDF2 uses 600k iterations",
+"a machine identity can never hold a role at global scope") — properties that
+were never an incident, just a design claim that needs to stay true. Add a row
+whenever you land or touch a test that enforces one. Started 2026-09-07 from
+the full-corpus ADR conformance pass
+(`keyorix-private/adversarial-review/ADR-CONFORMANCE-MATRIX-2026-09-07.md`,
+260 ENFORCED properties found, ~10 seeded here so far — see that file's own
+tranche detail for the rest, and QUEUE.md for the incremental-population
+follow-up). Don't transcribe a row from that matrix without re-running its
+test first — a property verified during that pass is not the same claim as
+"this test exists and passes right now."
