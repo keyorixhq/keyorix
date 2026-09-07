@@ -51,6 +51,12 @@ func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*m
 // UpdateSharePermission/RevokeShare. Without this, any caller with secrets.read
 // could enumerate who has access to any secret. Authenticated request surfaces
 // (HTTP/gRPC) use this; the local CLI uses ListSecretShares directly.
+//
+// Owner authority is gated on live project membership (requireLiveOwnerAuthority),
+// matching the sharing.go/group_sharing.go mutation paths (RBAC-001): a user removed
+// from the secret's project keeps their OwnerID tag until ClearProjectSecretOwnership
+// runs, so a bare ownership check alone would let a departed owner keep reading the
+// secret's recipient list forever.
 func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]*models.ShareRecord, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
@@ -59,7 +65,9 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 	if err != nil {
 		return nil, err
 	}
-	if !secretOwnedBy(secret.OwnerID, userID) {
+	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, userID); err != nil {
+		return nil, err
+	} else if !isLiveOwner {
 		return nil, fmt.Errorf("not authorized to view shares for this secret")
 	}
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID)

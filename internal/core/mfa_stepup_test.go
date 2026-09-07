@@ -127,7 +127,7 @@ func TestHasActiveMFAStepUp_NoGrant(t *testing.T) {
 	c, _, _ := newMFATestCore(t)
 	ctx := context.Background()
 
-	active, err := c.HasActiveMFAStepUp(ctx, 1)
+	active, err := c.HasActiveMFAStepUp(ctx, 1, models.MFAStepUpPurposeRestrictedSecretRead)
 	require.NoError(t, err)
 	assert.False(t, active, "no grant — HasActiveMFAStepUp must return false")
 }
@@ -141,9 +141,9 @@ func TestHasActiveMFAStepUp_ExpiredGrant(t *testing.T) {
 	// past), so use a time even further in the past to ensure it's expired
 	// relative to the fixed clock.
 	expiredAt := fixed.Add(-1 * time.Minute)
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: expiredAt}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: expiredAt}).Error)
 
-	active, err := c.HasActiveMFAStepUp(ctx, 1)
+	active, err := c.HasActiveMFAStepUp(ctx, 1, models.MFAStepUpPurposeRestrictedSecretRead)
 	require.NoError(t, err)
 	assert.False(t, active, "expired grant must not be treated as active")
 }
@@ -155,9 +155,9 @@ func TestHasActiveMFAStepUp_ActiveGrant(t *testing.T) {
 
 	// Insert a future-expiring grant relative to the fixed clock.
 	future := fixed.Add(15 * time.Minute)
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: future}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: future}).Error)
 
-	active, err := c.HasActiveMFAStepUp(ctx, 1)
+	active, err := c.HasActiveMFAStepUp(ctx, 1, models.MFAStepUpPurposeRestrictedSecretRead)
 	require.NoError(t, err)
 	assert.True(t, active, "active (non-expired) grant must return true")
 }

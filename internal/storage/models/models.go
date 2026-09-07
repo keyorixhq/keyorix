@@ -556,17 +556,48 @@ func (t *MFAStepupToken) BeforeSave(_ *gorm.DB) error {
 	return nil
 }
 
-// MFAStepUpGrant records that a user explicitly re-verified their second factor
-// (via VerifyMFAStepUp) to gain a time-limited window for reading
-// restricted-classified secrets. Unlike MFAStepupToken (which is upserted on
-// every MFA login), grants are created per-verification and queried by
-// the classification gate. One active grant per user at any time is enough;
-// expired rows are left in place for audit purposes.
+// MFAStepUpPurpose discriminates WHAT an MFAStepUpGrant proves the holder
+// verified for — a grant is a capability token, and a purpose-agnostic
+// capability token is a confused-deputy vulnerability by construction (a
+// grant minted for one purpose must never silently authorize a different,
+// higher-stakes one). Every consumption site must require an exact match, not
+// merely "any live grant for this user."
+type MFAStepUpPurpose string
+
+const (
+	// MFAStepUpPurposeRestrictedSecretRead is minted by an explicit
+	// VerifyMFAStepUp (TOTP/recovery code) call, or ambiently by a WebAuthn
+	// login (FinishWebAuthnLogin/FinishWebAuthnPasswordlessLogin) — a passkey
+	// login is itself strong proof of second-factor possession, sufficient to
+	// let the classification gate permit reading a "restricted" secret for the
+	// configured window without a separate re-prompt. Consumed exclusively by
+	// checkRestrictedMFAGate.
+	MFAStepUpPurposeRestrictedSecretRead MFAStepUpPurpose = "restricted_secret_read"
+	// MFAStepUpPurposeReauth is minted only by an action that proves the caller
+	// holds the second factor AT THE TIME of an account-security-factor change
+	// (DisableMFA, RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential
+	// register/delete, account email change) — an ambient grant from a login
+	// that happened up to mfaStepUpWindow() ago is deliberately NOT proof
+	// enough here, since that would let anyone holding a merely-leaked bearer
+	// token (plus the password) ride the account owner's own earlier login to
+	// authorize a takeover-grade change. Consumed exclusively by requireReauth.
+	MFAStepUpPurposeReauth MFAStepUpPurpose = "account_reauth"
+)
+
+// MFAStepUpGrant records that a user verified their second factor for a
+// specific Purpose (VerifyMFAStepUp for restricted-secret reads, a WebAuthn
+// login for restricted-secret reads, or FinishWebAuthnReauth/a fresh TOTP code
+// for requireReauth) to gain a time-limited window for that purpose alone.
+// Unlike MFAStepupToken (which is upserted on every MFA login), grants are
+// created per-verification and queried by purpose-specific consumers. One
+// active grant per (user, purpose) at any time is enough; expired rows are
+// left in place for audit purposes.
 type MFAStepUpGrant struct {
-	ID        uint      `gorm:"primarykey" json:"id"`
-	UserID    uint      `gorm:"not null;index" json:"user_id"`
-	ExpiresAt time.Time `gorm:"not null" json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uint             `gorm:"primarykey" json:"id"`
+	UserID    uint             `gorm:"not null;index" json:"user_id"`
+	Purpose   MFAStepUpPurpose `gorm:"not null;default:'';index" json:"purpose"`
+	ExpiresAt time.Time        `gorm:"not null" json:"expires_at"`
+	CreatedAt time.Time        `json:"created_at"`
 }
 
 // BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are

@@ -2,8 +2,9 @@
 // owner is the only principal that can manage/share it (CheckSecretPermission grants
 // PermissionOwner only to the owner), so when an owner leaves the org their secrets
 // are effectively orphaned. Transfer hands ownership to another user — either by the
-// current owner, or (for recovery) by any authorized writer when the current owner is
-// gone (ownerless or a deleted account).
+// current owner, or (for recovery, gated on roles.assign) when the current owner is
+// gone (ownerless or a deleted account). The new owner must already hold write-tier
+// access. See transferOwnership's doc comment for the full authorization model.
 package core
 
 import (
@@ -35,11 +36,14 @@ type ownershipTransferDetail struct {
 
 // TransferSecretOwnership sets secretID's owner to newOwnerID. The caller (transport)
 // must have enforced scoped secrets.write. Authorization here: the actor must be the
-// current owner, OR the current owner must be gone (ownerless, or an account that no
-// longer exists) — so an active owner's secret can't be taken from under them, while a
-// departed owner's secrets can be recovered. newOwnerID must be an existing user.
-func (c *KeyorixCore) TransferSecretOwnership(ctx context.Context, secretID, newOwnerID, actorID uint) (*models.SecretNode, error) {
-	updated, err := c.transferOwnership(ctx, secretID, newOwnerID, actorID)
+// current owner, OR (with roles.assign at this scope) the current owner may be gone
+// (ownerless, or an account that no longer exists) — so an active owner's secret can't
+// be taken from under them, while a departed owner's secrets can still be recovered,
+// but only by someone with authority to grant authority. The new owner must already
+// hold write-tier access. See transferOwnership's doc comment for why (G-secret-
+// ownership-ceiling). newOwnerID must be an existing user.
+func (c *KeyorixCore) TransferSecretOwnership(ctx context.Context, secretID, newOwnerID, actorID uint, actorKind string) (*models.SecretNode, error) {
+	updated, err := c.transferOwnership(ctx, secretID, newOwnerID, actorID, actorKind)
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +54,39 @@ func (c *KeyorixCore) TransferSecretOwnership(ctx context.Context, secretID, new
 }
 
 // transferOwnership performs the validated, audited ownership change without the
-// new-owner notification — the shared primitive for single and bulk transfer.
-func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerID, actorID uint) (*models.SecretNode, error) {
+// new-owner notification — the ONE shared, authorization-checked primitive for both
+// the single-secret path (TransferSecretOwnership) and the bulk path
+// (ReassignOwnedSecrets, secret_reassign_owner.go). Every caller of either of those
+// two routes through this function; do not add a third function that mutates
+// SecretNode.OwnerID directly — secret_ownership_guard_test.go's AST sweep fails the
+// build if one appears.
+//
+// Ownership is an AUTHORITY GRANT, not a data write: CheckSecretPermission's owner
+// branch (permissions.go) gives the owner every permission on the secret, and
+// permissionLevelToRBACPerm documents PermissionOwner as secrets.delete-equivalent —
+// "the most restrictive mutation the RBAC model expresses." Two checks follow from
+// that, matching how this codebase gates every other authority grant (roles.assign,
+// e.g. router.go's RestoreProject comment: "same blast radius as a role grant... gate
+// on roles.assign, not secrets.write") and stacked router+core double-gating
+// elsewhere:
+//
+//  1. New-owner ceiling: the new owner must already hold secrets.write (or
+//     secrets.manage) at the secret's scope, not merely secrets.read. Without this, a
+//     secrets.write-tier actor could hand full owner/delete/re-share authority to any
+//     project_viewer/project_auditor (seeded with secrets.read alone) — bypassing the
+//     roles.assign gate every other privilege grant in this codebase goes through.
+//  2. Actor ceiling on the RECOVERY path: when the current owner is gone (ownerless —
+//     the ROUTINE state for machine-created secrets per ADR-023/030, not a rare edge
+//     case — or a deleted account), re-homing the secret on their behalf is an
+//     administrative action, not a routine self-service handoff, so the actor must
+//     hold roles.assign at this scope. Without this, ANY secrets.write-tier actor
+//     could claim (or hand off) ownership of every orphaned secret in a project with
+//     no admin-tier check at all — the concrete exploit this closes. A LIVE owner
+//     handing off their own secret does not need roles.assign: they already hold
+//     owner-tier authority over this one secret, so handing it to another
+//     already-write-tier principal (check 1) is not an escalation of what they could
+//     already do with it.
+func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerID, actorID uint, actorKind string) (*models.SecretNode, error) {
 	if secretID == 0 || newOwnerID == 0 || actorID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID, new owner ID and actor ID are required")
 	}
@@ -67,21 +102,39 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 		return nil, fmt.Errorf("%s: new owner %d not found", i18n.T("ErrorValidation", nil), newOwnerID)
 	}
 
-	// Authorize: the current owner may hand it off; otherwise it must be ownerless or
-	// owned by an account that no longer exists (recovery).
-	if !secretOwnedBy(secret.OwnerID, actorID) && !c.currentOwnerGone(ctx, secret.OwnerID) {
-		return nil, fmt.Errorf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
+	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+
+	// Authorize the ACTOR. The live current owner may hand it off; otherwise this is
+	// the recovery path, gated on roles.assign (see doc comment above).
+	if !secretOwnedBy(secret.OwnerID, actorID) {
+		if !c.currentOwnerGone(ctx, secret.OwnerID) {
+			return nil, fmt.Errorf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
+		}
+		if ok, aerr := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, scope); aerr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)
+		} else if !ok {
+			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+				"recovering an orphaned or departed-owner secret requires roles.assign at this scope")
+		}
 	}
 
-	// The NEW owner must already have access to the secret's scope. Ownership grants
-	// full control (incl. re-share), so without this an authorized writer could hand a
-	// secret to a user with no role in its project — granting access out of band.
-	// Evaluate the new owner's OWN roles, not gated by the actor's PAT restriction.
-	if ok, perr := c.principalHasScopedPermission(ctx, newOwnerID, "secrets.read",
-		Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}); perr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), perr)
-	} else if !ok {
-		return nil, fmt.Errorf("%s: the new owner has no access to this secret's project/environment", i18n.T("ErrorPermissionDenied", nil))
+	// The NEW owner must already hold write-tier (or manage-tier) access to the
+	// secret's scope — see doc comment above (new-owner ceiling). Evaluate the new
+	// owner's OWN roles, not gated by the actor's PAT restriction.
+	hasWrite, werr := c.principalHasScopedPermission(ctx, newOwnerID, permSecretsWrite, scope)
+	if werr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), werr)
+	}
+	if !hasWrite {
+		hasManage, merr := c.principalHasScopedPermission(ctx, newOwnerID, permSecretsManage, scope)
+		if merr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), merr)
+		}
+		hasWrite = hasManage
+	}
+	if !hasWrite {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"the new owner must already hold secrets.write (or secrets.manage) access to this secret's project/environment")
 	}
 
 	oldOwner := secret.OwnerID

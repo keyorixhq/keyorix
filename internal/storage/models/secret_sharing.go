@@ -24,15 +24,6 @@ func (s *SecretNode) CanWrite(userID uint) bool {
 	return s.CanAccess(userID)
 }
 
-// SetOwner sets the owner of the secret
-func (s *SecretNode) SetOwner(userID uint) error {
-	if userID == 0 {
-		return errors.New("owner ID cannot be zero")
-	}
-	s.OwnerID = userID
-	return nil
-}
-
 // ValidateOwnership ensures the secret has a valid owner
 func (s *SecretNode) ValidateOwnership() error {
 	if s.OwnerID == 0 {
