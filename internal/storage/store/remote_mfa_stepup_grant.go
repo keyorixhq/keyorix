@@ -15,16 +15,18 @@ import (
 
 // mfaStepUpGrantWire mirrors models.MFAStepUpGrant on the wire.
 type mfaStepUpGrantWire struct {
-	ID        uint      `json:"id"`
-	UserID    uint      `json:"user_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uint                    `json:"id"`
+	UserID    uint                    `json:"user_id"`
+	Purpose   models.MFAStepUpPurpose `json:"purpose"`
+	ExpiresAt time.Time               `json:"expires_at"`
+	CreatedAt time.Time               `json:"created_at"`
 }
 
 func (w mfaStepUpGrantWire) toModel() *models.MFAStepUpGrant {
 	return &models.MFAStepUpGrant{
 		ID:        w.ID,
 		UserID:    w.UserID,
+		Purpose:   w.Purpose,
 		ExpiresAt: w.ExpiresAt,
 		CreatedAt: w.CreatedAt,
 	}
@@ -44,7 +46,8 @@ func decodeMFAStepUpGrantResponse(data []byte) (*models.MFAStepUpGrant, error) {
 // its own clock for the expiry comparison instead of trusting a
 // caller-supplied value.
 type mfaStepUpGrantActiveWire struct {
-	UserID uint `json:"user_id"`
+	UserID  uint                    `json:"user_id"`
+	Purpose models.MFAStepUpPurpose `json:"purpose"`
 }
 
 // CreateMFAStepUpGrant used to proxy onto POST /api/v1/system/mfa/stepup-grants
@@ -57,14 +60,16 @@ func (rs *RemoteStorage) CreateMFAStepUpGrant(_ context.Context, _ *models.MFASt
 }
 
 // GetActiveMFAStepUpGrant returns the most recent non-expired MFA step-up
-// grant for userID via POST /api/v1/system/mfa/stepup-grants/active.
-// Returns (nil, nil) when the server returns null data (no active grant).
-// now is accepted only for interface parity with LocalStorage — the
-// upstream server ignores any caller-supplied "current time" and always
-// uses its own clock (see mfaStepUpGrantActiveWire's doc comment).
-func (rs *RemoteStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, _ time.Time) (*models.MFAStepUpGrant, error) {
+// grant for userID AND purpose via POST
+// /api/v1/system/mfa/stepup-grants/active. Returns (nil, nil) when the server
+// returns null data (no active grant for that exact purpose). now is accepted
+// only for interface parity with LocalStorage — the upstream server ignores
+// any caller-supplied "current time" and always uses its own clock (see
+// mfaStepUpGrantActiveWire's doc comment).
+func (rs *RemoteStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, _ time.Time) (*models.MFAStepUpGrant, error) {
 	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/stepup-grants/active", mfaStepUpGrantActiveWire{
-		UserID: userID,
+		UserID:  userID,
+		Purpose: purpose,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active MFA step-up grant: %w", err)

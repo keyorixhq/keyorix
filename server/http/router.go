@@ -353,6 +353,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// impersonation. There is no admin API to remove another user's passkey, so without
 		// this guard impersonation would be the one path to weaken a user's second factor.
 		r.With(customMiddleware.BlockWhenImpersonating).Delete("/auth/webauthn/credentials/{id}", authHandler.DeleteWebAuthnCredential)
+		// WebAuthn step-up re-authentication: a live passkey re-assertion for a
+		// WebAuthn-only account (no TOTP factor) to satisfy requireReauth's
+		// account-security-factor-change gate -- mints an MFAStepUpGrant scoped
+		// to MFAStepUpPurposeReauth only, distinct from the ambient login-time
+		// grant. Blocked under impersonation, same reasoning as the step-up above.
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/reauth/begin", authHandler.BeginWebAuthnReauth)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/reauth/finish", authHandler.FinishWebAuthnReauth)
 		r.Get("/auth/sessions", authHandler.ListSessions)
 		r.Delete("/auth/sessions/{id}", authHandler.RevokeSession)
 		r.Get("/auth/tokens", patHandler.ListPATs)

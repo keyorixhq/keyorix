@@ -46,6 +46,7 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 
 	grant := &models.MFAStepUpGrant{
 		UserID:    userID,
+		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
 		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
 	}
 	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
@@ -72,9 +73,12 @@ func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code
 }
 
 // HasActiveMFAStepUp reports whether userID holds a current, unexpired step-up
-// grant. Returns (false, nil) — not an error — when no grant exists.
-func (c *KeyorixCore) HasActiveMFAStepUp(ctx context.Context, userID uint) (bool, error) {
-	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, c.authEffectiveNow())
+// grant for the exact purpose given. Returns (false, nil) — not an error —
+// when no matching grant exists. purpose is not optional: a grant minted for
+// one purpose (e.g. restricted-secret reads) must never be read as
+// authorizing a different one (e.g. an account-security-factor change).
+func (c *KeyorixCore) HasActiveMFAStepUp(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose) (bool, error) {
+	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, purpose, c.authEffectiveNow())
 	if err != nil {
 		return false, err
 	}

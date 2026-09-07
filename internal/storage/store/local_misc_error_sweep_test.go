@@ -75,7 +75,7 @@ func TestConsumeMFAChallenge_LoadFails(t *testing.T) {
 func TestGetActiveMFAStepUpGrant_DBError(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.GetActiveMFAStepUpGrant(context.Background(), 1, time.Now())
+	_, err := ls.GetActiveMFAStepUpGrant(context.Background(), 1, models.MFAStepUpPurposeRestrictedSecretRead, time.Now())
 	require.Error(t, err)
 }
 

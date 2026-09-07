@@ -19,7 +19,7 @@ func (m *MockStorage) CreateMFAStepUpGrant(_ context.Context, _ *models.MFAStepU
 	return nil
 }
 
-func (m *MockStorage) GetActiveMFAStepUpGrant(_ context.Context, _ uint, _ time.Time) (*models.MFAStepUpGrant, error) {
+func (m *MockStorage) GetActiveMFAStepUpGrant(_ context.Context, _ uint, _ models.MFAStepUpPurpose, _ time.Time) (*models.MFAStepUpGrant, error) {
 	return nil, nil
 }
 

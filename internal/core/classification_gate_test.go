@@ -400,7 +400,7 @@ func TestClassificationMFAStepUp_On_ActiveToken_Allowed(t *testing.T) {
 
 	// Directly seed the step-up grant (as VerifyMFAStepUp would).
 	expiresAt := c.now().Add(15 * time.Minute)
-	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, ExpiresAt: expiresAt}))
+	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: expiresAt}))
 
 	val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
 	require.NoError(t, err, "active MFA step-up grant must allow the read")
@@ -416,7 +416,7 @@ func TestClassificationMFAStepUp_On_ExpiredToken_Denied(t *testing.T) {
 
 	// Seed an already-expired grant.
 	expiredAt := c.now().Add(-1 * time.Minute)
-	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, ExpiresAt: expiredAt}))
+	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: expiredAt}))
 
 	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
 	require.Error(t, err, "expired step-up grant must not grant access")
@@ -450,7 +450,7 @@ func TestClassificationMFAStepUp_Combined_BothRequired(t *testing.T) {
 	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
 
 	// Give the owner an active step-up grant.
-	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, ExpiresAt: c.now().Add(15 * time.Minute)}))
+	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: c.now().Add(15 * time.Minute)}))
 
 	// No approved access request yet → denied.
 	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)

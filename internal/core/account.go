@@ -38,13 +38,19 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 		}
 		if email != user.Email {
-			// For MFA-enabled accounts, require a TOTP code or password via requireReauth
-			// (the same bar as DisableMFA / DeleteWebAuthnCredential). The email is the
-			// password-reset anchor and SSO linking key: redirecting it to an
-			// attacker-controlled address with only a stolen session suffices for full
-			// account takeover. Password-only re-auth is too weak when a second factor is
-			// enrolled. For non-MFA accounts, fall back to the bcrypt password check.
-			if user.MFAEnabled {
+			// For accounts with ANY second factor enrolled (TOTP or WebAuthn/passkey),
+			// require a TOTP code or password via requireReauth (the same bar as
+			// DisableMFA / DeleteWebAuthnCredential). The email is the password-reset
+			// anchor and SSO linking key: redirecting it to an attacker-controlled
+			// address with only a stolen session suffices for full account takeover.
+			// Password-only re-auth is too weak when a second factor is enrolled.
+			// Checking user.MFAEnabled alone (as this used to) let a WebAuthn-only
+			// account (MFAEnabled=false, WebAuthnEnabled=true) fall through to the
+			// bare bcrypt branch below, bypassing the second-factor requirement
+			// requireReauth's own doc comment says is mandatory once any second
+			// factor is enrolled. For accounts with no second factor at all, fall
+			// back to the bcrypt password check.
+			if user.MFAEnabled || user.WebAuthnEnabled {
 				if err := c.requireReauth(ctx, user, currentPassword, "email_change"); err != nil {
 					return nil, err
 				}
