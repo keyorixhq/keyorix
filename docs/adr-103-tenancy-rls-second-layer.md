@@ -2,18 +2,27 @@
 
 ## Status
 
-**Accepted (2026-09-07), design only — implementation not started.** This ADR
-authorizes the design in full, including the §1c injection-point revision
-(the original design left 99.4% of read traffic unprotected — see §1c for the
-measurement and the corrected mechanism), the mandatory `WITH CHECK` on every
-policy (§1b/§1f Test 4), explicit trigger security context (§1d), and the
-required latency measurement and context-propagation guard (Consequences,
-§1f). It does **not** authorize migrations, policies, or code yet: §1b's two
-open product/security sign-offs (`audit_events` NULL-scope visibility, global
-`notifications` visibility) block implementation and must be resolved before
-an implementation PR starts, not inside one — tracked in `QUEUE.md`. See
-"Verification design" for what must exist and pass, red-then-green, before
-any of this ships.
+**Proposed.** Not implemented; not ratified. `096092d6` marked this ADR
+"Accepted" without human review — an autonomous background session (the
+`e6aa08b0` adversarial-review daemon, working the same shared checkout)
+extended the design and self-assigned Accepted status. The content is
+retained as-is (it includes a real, measured correction to this ADR's
+original §1c design — the original `WithTransaction`-only injection point
+left 99.4% of read traffic unprotected) but Accepted is a human decision that
+has not happened yet in the conversation that owns this document. Resetting
+to Proposed pending actual ratification.
+
+This ADR authorizes design only, including the §1c injection-point revision
+(§1c for the measurement and the corrected mechanism), the mandatory `WITH
+CHECK` on every policy (§1b/§1f Test 4), explicit trigger security context
+(§1d), and the required latency measurement and context-propagation guard
+(Consequences, §1f). It does **not** authorize migrations, policies, or code:
+§1b's two open product/security sign-offs (`audit_events` NULL-scope
+visibility, global `notifications` visibility) block implementation and must
+be resolved before an implementation PR starts, not inside one — tracked in
+`QUEUE.md`. See "Verification design" for what must exist and pass,
+red-then-green, before any of this ships or before Status can move to
+Accepted.
 
 ## Context
 
