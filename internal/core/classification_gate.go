@@ -102,8 +102,13 @@ func (c *KeyorixCore) mfaStepUpWindow() time.Duration {
 //     lookup, no per-secret DB query.
 //  2. restricted_requires_approval: the user must have an approved, secret-scoped
 //     access request. Checked second.
-//  3. restricted_requires_mfa_stepup: the user must have completed MFA within the
-//     configured step-up window (default 15 min), recorded by VerifyMFALogin.
+//  3. restricted_requires_mfa_stepup: the user must hold an active
+//     MFAStepUpGrant with Purpose == MFAStepUpPurposeRestrictedSecretRead,
+//     minted either by an explicit VerifyMFAStepUp call or ambiently by a
+//     WebAuthn login (FinishWebAuthnLogin/FinishWebAuthnPasswordlessLogin),
+//     within the configured step-up window (default 15 min). This purpose is
+//     distinct from MFAStepUpPurposeReauth (requireReauth's account-security-
+//     change gate) — the two never satisfy each other.
 //
 // userID identifies the acting human principal, if any. 0 means the read has no
 // identifiable user behind it — a machine/service-account credential, the
@@ -169,7 +174,7 @@ func (c *KeyorixCore) checkRestrictedApprovalGate(ctx context.Context, secret *m
 }
 
 func (c *KeyorixCore) checkRestrictedMFAGate(ctx context.Context, secret *models.SecretNode, userID uint) error {
-	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, c.now())
+	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, models.MFAStepUpPurposeRestrictedSecretRead, c.now())
 	if err != nil {
 		return fmt.Errorf("secret %q is restricted: could not verify MFA step-up: %w", secret.Name, err)
 	}

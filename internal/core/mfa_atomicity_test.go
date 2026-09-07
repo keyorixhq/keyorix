@@ -116,7 +116,7 @@ func TestDisableMFA_AtomicOnDeleteFailure(t *testing.T) {
 	// second-factor requirement (#372-follow-up); seed an active step-up grant so
 	// re-auth succeeds and the test actually reaches (and exercises) the injected
 	// storage failure below, rather than failing earlier at re-auth.
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 
 	c.storage = &failingStorage{Storage: c.storage, failMethod: "DeleteMFAForUser"}
 	err := c.DisableMFA(ctx, 1, mfaTestPassword)
@@ -146,7 +146,7 @@ func TestRegenerateMFARecoveryCodes_AtomicOnCreateFailure(t *testing.T) {
 	// second-factor requirement (#372-follow-up); seed an active step-up grant so
 	// re-auth succeeds and the test actually reaches (and exercises) the injected
 	// storage failure below, rather than failing earlier at re-auth.
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 
 	c.storage = &failingStorage{Storage: c.storage, failMethod: "CreateMFARecoveryCodes"}
 	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)

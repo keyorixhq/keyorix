@@ -642,12 +642,35 @@ func TestListSecretSharesWithPermissionCheck_NotOwner(t *testing.T) {
 
 func TestListSecretSharesWithPermissionCheck_OwnerSuccess(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7}, nil)
+	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7, ProjectID: 5}, nil)
+	ms.On("IsProjectMember", mock.Anything, uint(7), uint(5)).Return(true, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{{ID: 3, SecretID: 1}}, nil)
 	c := NewKeyorixCore(ms)
 	got, err := c.ListSecretSharesWithPermissionCheck(context.Background(), 1, 7)
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
+}
+
+// TestListSecretSharesWithPermissionCheck_DepartedOwnerDenied is the RBAC-001
+// regression test: a departed owner (removed from the secret's project, but the
+// secret row's OwnerID tag is untouched until ClearProjectSecretOwnership runs)
+// must not be able to enumerate the secret's share/recipient list, matching
+// ShareSecret/UpdateSharePermission/RevokeShare (sharing_test.go) and
+// ShareSecretWithGroup (group_sharing_test.go). Pre-fix, the bare secretOwnedBy
+// check let a departed owner through since OwnerID still matched — this test
+// fails against that old code (confirmed red before the requireLiveOwnerAuthority
+// swap) and passes now that IsProjectMember is consulted.
+func TestListSecretSharesWithPermissionCheck_DepartedOwnerDenied(t *testing.T) {
+	ms := new(MockStorage)
+	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7, ProjectID: 5}, nil)
+	// The owner still carries OwnerID 7 on the secret row, but no longer holds a
+	// live role grant in the secret's project.
+	ms.On("IsProjectMember", mock.Anything, uint(7), uint(5)).Return(false, nil)
+	c := NewKeyorixCore(ms)
+	_, err := c.ListSecretSharesWithPermissionCheck(context.Background(), 1, 7)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not authorized")
+	ms.AssertNotCalled(t, "ListSharesBySecret", mock.Anything, mock.Anything)
 }
 
 // ── sharing_query.go — CheckSharePermission ───────────────────────────────────

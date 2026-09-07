@@ -85,7 +85,22 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 	// status must not count or display them — keep it consistent with enforcement.
 	shares = activeShares(shares, c.shareEffectiveNow())
 
-	isOwner := secretOwnedBy(secret.OwnerID, userID)
+	// Owner authority requires live project membership (requireLiveOwnerAuthority),
+	// matching this file's GetUserSecretPermission and sharing_query.go's
+	// ListSecretSharesWithPermissionCheck (RBAC-001): a departed owner keeps their
+	// OwnerID tag until ClearProjectSecretOwnership runs, so a bare secretOwnedBy
+	// check alone would report them as still holding owner-only sharing indicators
+	// (and the full recipient list below) forever.
+	// Owner authority requires live project membership (requireLiveOwnerAuthority),
+	// matching this file's GetUserSecretPermission and sharing_query.go's
+	// ListSecretSharesWithPermissionCheck (RBAC-001): a departed owner keeps their
+	// OwnerID tag until ClearProjectSecretOwnership runs, so a bare secretOwnedBy
+	// check alone would report them as still holding owner-only sharing indicators
+	// (and the full recipient list below) forever.
+	isOwner, err := c.requireLiveOwnerAuthority(ctx, secret, userID)
+	if err != nil {
+		return nil, err
+	}
 	userPermission := ""
 	if !isOwner {
 		for _, share := range shares {
@@ -145,7 +160,21 @@ func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, use
 		return nil, err
 	}
 
-	if secretOwnedBy(secret.OwnerID, userID) {
+	// Owner authority requires live project membership (requireLiveOwnerAuthority),
+	// matching this file's GetSecretSharingStatusWithIndicators and
+	// sharing_query.go's ListSecretSharesWithPermissionCheck (RBAC-001): a departed
+	// owner keeps their OwnerID tag until ClearProjectSecretOwnership runs, so a bare
+	// secretOwnedBy check alone would report them as still holding "owner" permission.
+	// Owner authority requires live project membership (requireLiveOwnerAuthority),
+	// matching this file's GetSecretSharingStatusWithIndicators and
+	// sharing_query.go's ListSecretSharesWithPermissionCheck (RBAC-001): a departed
+	// owner keeps their OwnerID tag until ClearProjectSecretOwnership runs, so a bare
+	// secretOwnedBy check alone would report them as still holding "owner" permission.
+	isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, userID)
+	if err != nil {
+		return nil, err
+	}
+	if isLiveOwner {
 		return &models.UserSecretPermission{
 			SecretID:   secretID,
 			UserID:     userID,

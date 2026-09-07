@@ -38,12 +38,14 @@ func TestStartSchedulers_MFAStepUpGrantPrune_RemovesExpiredRow(t *testing.T) {
 	now := time.Now().UTC()
 	if err := coreService.Storage().CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
 		UserID:    1,
+		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
 		ExpiresAt: now.Add(-400 * 24 * time.Hour), // long expired, past any sane retention
 	}); err != nil {
 		t.Fatalf("seed long-expired grant: %v", err)
 	}
 	if err := coreService.Storage().CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
 		UserID:    2,
+		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
 		ExpiresAt: now.Add(time.Hour), // not expired at all
 	}); err != nil {
 		t.Fatalf("seed unexpired grant: %v", err)
@@ -77,7 +79,7 @@ func TestStartSchedulers_MFAStepUpGrantPrune_RemovesExpiredRow(t *testing.T) {
 	}
 
 	// The unexpired grant must never have been touched.
-	active, err := coreService.HasActiveMFAStepUp(ctx, 2)
+	active, err := coreService.HasActiveMFAStepUp(ctx, 2, models.MFAStepUpPurposeRestrictedSecretRead)
 	if err != nil {
 		t.Fatalf("HasActiveMFAStepUp: %v", err)
 	}

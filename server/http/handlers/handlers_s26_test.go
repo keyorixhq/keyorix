@@ -2139,6 +2139,14 @@ func TestListSecretShares_HappyPath_S26(t *testing.T) {
 	}
 	require.NoError(t, db.Create(secret).Error)
 
+	// Owner authority requires live project membership (RBAC-001,
+	// requireLiveOwnerAuthority) — the fixture's admin role grant is global
+	// (ProjectID 0), which IsProjectMember deliberately does not count as
+	// project membership, so seed a project-scoped role too.
+	var adminRole models.Role
+	require.NoError(t, db.Where("name = ?", "system_admin").First(&adminRole).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID, ProjectID: proj.ID}).Error)
+
 	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodGet,
 			fmt.Sprintf("/api/v1/secrets/%d/shares", secret.ID), nil),
@@ -2197,6 +2205,14 @@ func TestGetSharingStatusWithIndicators_HappyPath_S26(t *testing.T) {
 		OwnerID:   1, // matches withUserCtx UserID
 	}
 	require.NoError(t, db.Create(secret).Error)
+
+	// Owner authority requires live project membership (RBAC-001,
+	// requireLiveOwnerAuthority) — the fixture's admin role grant is global
+	// (ProjectID 0), which IsProjectMember deliberately does not count as
+	// project membership, so seed a project-scoped role too.
+	var adminRole models.Role
+	require.NoError(t, db.Where("name = ?", "system_admin").First(&adminRole).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID, ProjectID: proj.ID}).Error)
 
 	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodGet,

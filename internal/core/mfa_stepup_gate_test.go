@@ -45,7 +45,7 @@ func TestStepUpGate_On_ActiveGrant_Allowed(t *testing.T) {
 
 	// Seed an active step-up grant relative to the fixed clock.
 	future := fixed.Add(15 * time.Minute)
-	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: future}).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: future}).Error)
 
 	secret := &models.SecretNode{Name: "db-pass", Classification: ClassificationRestricted}
 	err := c.checkRestrictedSecretReadApproval(ctx, secret, 1)
