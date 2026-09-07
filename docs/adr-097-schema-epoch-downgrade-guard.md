@@ -37,6 +37,22 @@ binary always produced; an empty audit `entry_hash` appearing after the
 chain has started is already caught by `verifyBatchEvents`'s "missing entry
 hash on a chained event" check, not silently tolerated).
 
+**Reclassified 2026-09-07**: the paragraph above is a **one-time historical
+audit finding**, not an ongoing conformance claim — it describes what was
+true of the specific columns that existed in `migrateDatabase` at the time
+this ADR was written, verified by hand, once. It cannot be mechanically
+re-verified against current code the way this ADR's actual structural guard
+(the schema-epoch check below) can, because there is no live invariant here
+to test — only a historical record of a manual trace. The 2026-09-07
+conformance pass correctly left this UNDETERMINABLE rather than guessing;
+recorded here so a future reader (or a future conformance matrix) doesn't
+mistake "unverifiable" for "unverified" and re-attempt a trace that can only
+ever reproduce the same historical snapshot. **The requirement this finding
+argues FOR — that every future migration author must independently make the
+same safe-default judgment call, forever — is exactly what "The mechanism"
+section below closes with the epoch guard**, which *is* a live, re-testable
+invariant (see `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`).
+
 That is a real, verified-safe result — but it holds only because every
 migration author so far independently made the correct default-direction
 choice. Nothing enforces that this stays true for the next one. A future
