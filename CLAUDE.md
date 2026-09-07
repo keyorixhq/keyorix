@@ -43,6 +43,40 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   PR outright if its base is not `main`, unless explicitly labeled
   `stacked-pr`. Prefer fixing this class of mistake at merge time, not by
   writing down one more sentence to remember to check.
+- **An agent's last act before finishing is to commit and push its branch** —
+  alongside "start in a worktree" and "run tests in the foreground." Found
+  2026-09-07: a worktree with real, uncommitted single-use-grant follow-up
+  work sat unpushed and un-flagged until a `git worktree remove` attempt
+  happened to fail on it; a separate worktree's own commit landed on an
+  `worktree-agent-*` branch, not the shared branch it was meant to reconcile
+  onto, and was only confirmed safe by tracing it to an already-merged PR
+  after the fact. Removal is only safe to make routine (see
+  `scripts/worktree-branch-health.sh`, run at session start for uncommitted/
+  unpushed work and on demand for the full stranded/duplicate-branch sweep)
+  once every agent's own last step already got its work to a remote ref —
+  don't rely on detection to catch what creation should have prevented.
+- **One session with write access per repository at a time. Others read, or
+  work in a separate `git clone` — not a worktree off the shared tree.**
+  Found 2026-09-07: two sessions in this exact repo raced each other's
+  branch checkouts in the shared main checkout (`git branch --show-current`
+  returned a different branch across two consecutive commands, seconds
+  apart), one session's own accidental test commit landed on whatever branch
+  a *different* session happened to have checked out at that instant, and a
+  background daemon session committed directly over another session's
+  in-progress ADR draft, self-assigning "Accepted" status that was never
+  actually ratified. Worktrees do **not** isolate against this — they share
+  one `.git`, and this incident was specifically about HEAD moving inside
+  that shared state, not about worktree-vs-worktree collisions. Enforced by
+  `scripts/git-write-guard.sh`: a lock file at `$(git rev-parse
+  --git-common-dir)/write-lock.json` (shared by a main checkout and all its
+  worktrees; distinct for a separate clone by construction), claimed/
+  refreshed by `SessionStart` and by every HEAD-moving git subcommand
+  (`commit`/`checkout`/`switch`/`rebase`/`merge`/`reset`/`cherry-pick`/
+  `revert`/`pull`/`worktree add`/`worktree remove`), timestamp-stale after
+  20 minutes rather than requiring PID liveness (no persistent PID exists
+  to check from inside a short-lived hook). Read-only git commands
+  (`status`/`log`/`diff`/`show`/etc.) are never gated — only the commands
+  that actually move HEAD or shared branch/worktree state are.
 
 ## Engineering practices
 

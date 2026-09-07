@@ -1,0 +1,50 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git worktree add *)",
+      "Bash(git worktree remove *)",
+      "Bash(git worktree list *)",
+      "Bash(git -C * log *)",
+      "Bash(git -C * status *)",
+      "Bash(git -C * status)",
+      "Bash(git -C * diff *)",
+      "Bash(git -C * branch *)",
+      "Bash(git -C * rev-parse *)",
+      "Bash(git -C * show *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "out=$(bash scripts/worktree-branch-health.sh --worktrees-only 2>&1); jq -n --arg ctx \"$out\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:$ctx}}'",
+            "timeout": 30,
+            "statusMessage": "Checking worktree health..."
+          },
+          {
+            "type": "command",
+            "command": "bash scripts/git-write-guard.sh session-start",
+            "timeout": 15,
+            "statusMessage": "Checking repo write-lock..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git *)",
+            "command": "bash scripts/git-write-guard.sh gate",
+            "timeout": 15,
+            "statusMessage": "Checking one-writer-per-repo lock..."
+          }
+        ]
+      }
+    ]
+  }
+}
