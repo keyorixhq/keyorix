@@ -51,19 +51,23 @@ func TestAssignMachineRole_GlobalScopeRejected(t *testing.T) {
 	ms.AssertNotCalled(t, "AssignMachineRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
-// TestAssignMachineRole_GlobalScopeRejected_EvenIfMachineLookupSomehowReturnedGlobal
-// covers the theoretical case where GetMachineIdentity itself returned a row
-// with ProjectID 0 (should never happen in practice — every creation path
-// requires a nonzero project — but machineInProject's own comparison is what
-// this test pins, not the creation invariant, since a storage-layer bug
-// producing such a row is a different failure mode this check should still
-// catch defensively... except it wouldn't: matching ProjectIDs of 0 and 0
-// legitimately passes machineInProject. This is intentional and documented
-// here rather than silently assumed: the SOLE thing preventing a global-scope
-// machine grant is that no real MachineIdentity row ever has ProjectID 0, not
-// a second independent check. See TestCreateMachineIdentity_RejectsZeroProject
-// for the creation-side half of this invariant.
-func TestAssignMachineRole_GlobalScopeRejected_EvenIfMachineLookupSomehowReturnedGlobal(t *testing.T) {
+// TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal documents
+// a gap, not an invariant — renamed 2026-09-07 (was
+// ..._GlobalScopeRejected_EvenIfMachineLookupSomehowReturnedGlobal, which
+// claimed the opposite of what this test actually asserts). It covers the
+// theoretical case where GetMachineIdentity itself returned a row with
+// ProjectID 0 (should never happen in practice — every creation path requires
+// a nonzero project — but machineInProject's own comparison is what this test
+// pins, not the creation invariant, since a storage-layer bug producing such a
+// row is a different failure mode this check should still catch
+// defensively... except it wouldn't: matching ProjectIDs of 0 and 0
+// legitimately passes machineInProject, so the grant SUCCEEDS here, not gets
+// rejected. This is intentional and documented here rather than silently
+// assumed: the SOLE thing preventing a global-scope machine grant is that no
+// real MachineIdentity row ever has ProjectID 0, not a second independent
+// check. See TestCreateMachineIdentity_RejectsZeroProject for the
+// creation-side half of this invariant.
+func TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal(t *testing.T) {
 	ms := new(MockStorage)
 	machine := &models.MachineIdentity{ID: 1, ProjectID: 0, Name: "corrupted-fixture", State: MachineActive}
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)

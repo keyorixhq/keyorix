@@ -426,6 +426,12 @@ frontend SBOM, keeping the two targets in the parity they already have.**
    verification must recompute the frontend SBOM's SHA-256 and assert it
    matches the hash embedded in all four server SBOMs — not merely that the
    `hashes` field is populated, which would pass a build-order bug silently.
+   **Status (corrected 2026-09-07): not implemented.** Build order is
+   correct by construction today (the Makefile generates the frontend SBOM
+   first), but no automated recompute-and-assert step exists — a future
+   build-order regression would go undetected. Filed as issue #1792. This
+   decision asserts a control that does not exist yet; treat this bullet as
+   a requirement, not a description of current behavior, until #1792 closes.
 6. The CLI SBOMs are unchanged in content, deliberately, because they're
    already accurate — only their count changes (1 → 4, matching the 4 CLI
    binaries), not what they describe.

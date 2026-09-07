@@ -34,6 +34,14 @@ const (
 	// clean — an auditor relying on this matrix needs to see "unknown", not a false
 	// "pass".
 	ControlStatusUnknown ControlStatus = "unknown"
+	// ControlStatusPartiallyEvaluated marks a control whose population is a mix of
+	// evaluated and not-yet-evaluated members — distinct from Pass (everything
+	// evaluated, nothing failing) and from NotConfigured (nothing evaluated at
+	// all). Added 2026-09-07: certificateHygieneStatus previously had no way to
+	// express this state, so a certificate-typed secret nobody has scanned yet
+	// silently fell through to Pass alongside the ones that genuinely passed —
+	// false assurance on a compliance surface an auditor reads at face value.
+	ControlStatusPartiallyEvaluated ControlStatus = "partially_evaluated"
 )
 
 // FrameworkRefs maps a control to clauses across the regimes Keyorix targets.
@@ -67,6 +75,10 @@ type ControlsSummary struct {
 	// Unknown counts controls whose signal could not be collected this run (#136) —
 	// a non-zero value here means the matrix is incomplete, not fully passing.
 	Unknown int `json:"unknown"`
+	// PartiallyEvaluated counts controls whose population is a mix of evaluated and
+	// not-yet-evaluated members (added 2026-09-07) — distinct from Pass and from
+	// NotConfigured; see ControlStatusPartiallyEvaluated.
+	PartiallyEvaluated int `json:"partially_evaluated"`
 }
 
 // ComplianceControls is the evaluated control matrix at a point in time.
@@ -95,6 +107,8 @@ func (c *KeyorixCore) GetComplianceControls(ctx context.Context) (*ComplianceCon
 			out.Summary.NotConfigured++
 		case ControlStatusUnknown:
 			out.Summary.Unknown++
+		case ControlStatusPartiallyEvaluated:
+			out.Summary.PartiallyEvaluated++
 		}
 	}
 	return out, nil
@@ -272,6 +286,12 @@ func supplyChainDetail(p *CompliancePosture) string {
 // a false "pass" even though not a single certificate was ever checked (#397). Mirror the
 // supply-chain-integrity escape hatch above: "never enabled" is not-configured, distinct
 // from "enabled but this run's collection failed", which is Unknown (#136).
+//
+// Corrected 2026-09-07: a MIX of evaluated and not-yet-evaluated certificates previously
+// fell through to Pass whenever none of the evaluated ones were expired — the unevaluated
+// ones were silently invisible to the status, only surfacing in the free-text Detail line.
+// A partially-scanned population and a fully-clean one are not the same claim; the former
+// is now ControlStatusPartiallyEvaluated, never Pass.
 func certificateHygieneStatus(p *CompliancePosture) ControlStatus {
 	if p.DegradedArea("certificates") {
 		return ControlStatusUnknown
@@ -280,7 +300,16 @@ func certificateHygieneStatus(p *CompliancePosture) ControlStatus {
 	if c.NotEvaluated == c.TotalCertificates {
 		return ControlStatusNotConfigured
 	}
-	return gapIf(c.Expired > 0)
+	if c.Expired > 0 {
+		// A confirmed expired certificate is a Gap regardless of how much of the
+		// rest of the population remains unevaluated — this must never be masked
+		// by, or downgraded to, the partial-coverage state below.
+		return ControlStatusGap
+	}
+	if c.NotEvaluated > 0 {
+		return ControlStatusPartiallyEvaluated
+	}
+	return ControlStatusPass
 }
 
 func certificateHygieneDetail(p *CompliancePosture) string {

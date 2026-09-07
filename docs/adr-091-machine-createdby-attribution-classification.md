@@ -86,7 +86,10 @@ machine, nonzero `ProjectID`, can never be granted a role at
 the creation-side half that makes the write-side check meaningful (no
 production path can ever produce the `ProjectID == 0` `MachineIdentity` row
 that would otherwise defeat it);
-`TestAssignMachineRole_GlobalScopeRejected_EvenIfMachineLookupSomehowReturnedGlobal`
+`TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal`
+(**renamed 2026-09-07** — was `..._GlobalScopeRejected_EvenIfMachineLookupSomehowReturnedGlobal`,
+which claimed the opposite of what the test actually asserts: it proves the
+grant SUCCEEDS given a corrupted row, not that it's rejected)
 documents — rather than silently assumes — that `machineInProject`'s
 comparison alone would NOT catch a corrupted `ProjectID == 0` row; the
 creation-side guard is the sole thing preventing that. Verified red by

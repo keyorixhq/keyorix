@@ -440,7 +440,9 @@ func buildCompliancePostureSnapshot(p *CompliancePosture, snapshotDate time.Time
 			passed++
 		case ControlStatusGap:
 			failed++
-		case ControlStatusUnknown:
+		case ControlStatusUnknown, ControlStatusPartiallyEvaluated:
+			// Partial coverage is genuine uncertainty, not a clean pass -- same
+			// bucket as Unknown, not Pass, so it doesn't inflate the passed count.
 			degraded++
 		}
 	}

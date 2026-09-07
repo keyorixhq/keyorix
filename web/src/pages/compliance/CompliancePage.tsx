@@ -477,6 +477,9 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string }> 
     pass: { label: 'Pass', color: 'var(--success)', bg: 'var(--success-subtle)' },
     gap: { label: 'Gap', color: 'var(--error)', bg: 'var(--error-subtle)' },
     not_configured: NA_META,
+    // Added 2026-09-07 alongside the backend's ControlStatusPartiallyEvaluated:
+    // a mix of evaluated/not-yet-evaluated members, distinct from a clean Pass.
+    partially_evaluated: { label: 'Partial', color: 'var(--warning)', bg: 'var(--warning-subtle)' },
 };
 
 type FrameworkKey = 'all' | 'iso27001' | 'soc2' | 'nis2' | 'dora' | 'ens';
