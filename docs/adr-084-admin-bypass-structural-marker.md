@@ -2,11 +2,29 @@
 
 ## Status
 
-**Accepted.** This ADR records the decision on *what mechanism* should
-replace name-based admin-role recognition. It makes **no code changes** —
-implementation is deferred to its own follow-up work now that this is
-accepted, and depends on one prerequisite that has already landed. Two
-verifications (immutability of the proposed column; fail-closed behavior
+**Accepted and implemented (PR #1671, merged 2026-09-02).** This ADR's core
+decision — `bypasses_permission_checks` as a structural, non-name column on
+`models.Role`, resolved by ID, no runtime mutation path — has shipped.
+`roleSetContainsAdmin` (`internal/core/authz.go`) now resolves the flag via
+`storage.RoleSetBypassesPermissionChecks`, not `GetRoleByName`; `CreateRole`/
+`UpdateRole` still never accept the field from a request DTO, exactly as
+decided in "Verification" §1. **Corrected 2026-09-07**: this Status section
+previously read "makes no code changes... implementation is deferred," which
+was already stale by 5 days at the time of that correction — the fix landed
+before this document was updated to say so, the opposite direction from a
+premature claim. The 2026-09-07 tripwire this staleness triggered
+(`TestADR084_AdminBypassStructuralMarkerStillDeferred`) is removed below,
+since the decision it existed to force is no longer open.
+
+**Not yet done**: `installAdminRoleIDSet` (`internal/core/rbac_management.go:608`)
+is still the second, separately-maintained name list this ADR's Consequences
+section proposed simplifying into a scope-aware flag query — verified still
+name-based as of this correction, `GetRoleByName` calls unchanged. This is a
+real residual item, not a blocker to calling the ADR's core decision
+implemented; tracked here so it isn't silently assumed done by a future
+reader of "Implemented" above.
+
+Two verifications (immutability of the proposed column; fail-closed behavior
 at all call sites) were run before acceptance — see "Verification" below.
 The fail-closed verification surfaced a genuine defect
 (`roleSetContainsAdmin` silently swallowed real storage errors, not just
@@ -437,16 +455,22 @@ every site twice.
 
 ## Consequences
 
-- **Enforced, not just written down (added 2026-09-07)**: this ADR was
-  accepted 2026-08-19 with implementation deferred and no target date, owner,
-  or tripwire — 19 days of no enforcement mechanism forcing the deferred work
-  to surface, the same "accepted decision, nothing forcing resolution" shape
-  ADR-102 was found in. `TestADR084_AdminBypassStructuralMarkerStillDeferred`
-  (`internal/core/adr_open_decisions_tripwire_test.go`) now fails CI once this
-  has sat unimplemented past its threshold age, using the same general
-  "open decision" registry ADR-102's tripwire uses — see that test's doc
-  comment for the mechanism, modeled on ADR-101's
-  `TestCurrentSchemaEpoch_StillOne_SeeADR101`.
+- **Tripwire added 2026-09-07, removed the same day its own premise turned
+  out to be false.** A tripwire test
+  (`TestADR084_AdminBypassStructuralMarkerStillDeferred`) was added to force
+  this decision to surface if left unimplemented past a threshold age — but
+  the decision had already been implemented 5 days earlier (PR #1671,
+  2026-09-02), and nobody checked before adding the tripwire. Removed from
+  `internal/core/adr_open_decisions_tripwire_test.go`'s registry along with
+  this correction. Worth naming as a process gap, not just a doc fix: a
+  duration-based tripwire checks whether TIME has passed, never whether the
+  underlying claim is still true — it would not have caught this staleness
+  either way, only a fixed check against actual implementation state would
+  have. ADR-101's `TestCurrentSchemaEpoch_StillOne_SeeADR101`, which this
+  mechanism was modeled on, avoids the gap by checking a live code constant,
+  not a calendar date — duration-based tripwires for a *decision* (as opposed
+  to a *value*) don't have an equivalent live signal to check, which is the
+  actual gap this ADR's tripwire attempt exposed.
 - `roleSetContainsAdmin`'s eight call sites (see "Prerequisite" above)
   change from up to four `GetRoleByName` calls to an ID-based lookup of the
   resolved role set's flag — no behavior change at any of them beyond

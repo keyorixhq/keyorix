@@ -10,6 +10,17 @@
 // undated) and ADR-084 (admin-bypass structural marker, Accepted but
 // deferred, no target date/owner/tripwire).
 //
+// ADR-084's entry was removed the same day it was added (2026-09-07,
+// corrected): its decision had already been implemented 5 days earlier
+// (PR #1671, 2026-09-02), a fact nobody checked before writing "deferred,
+// no target date" into the registry. This is the actual gap a duration-based
+// tripwire has: it checks whether TIME has passed, never whether the
+// underlying claim is still true, so it would not have caught this
+// staleness either way, only a check against live implementation state
+// would have. Kept as a documented lesson, not silently dropped from this
+// comment: before adding an entry here, confirm the decision is still open
+// against current code, not just against the ADR's own text.
+//
 // Each registry entry names: the ADR, a one-line statement of what remains
 // undecided, the date the decision was opened (from `git log --follow
 // --diff-filter=A`, not a guess), and a threshold duration chosen per-entry
@@ -60,31 +71,12 @@ var adrOpenDecisionRegistry = []adrOpenDecision{
 			"own Context section) doesn't quietly age from '2 days old, worth catching now' " +
 			"(the 2026-09-07 review's own words) into 'forgotten.'",
 	},
-	{
-		adr:        "ADR-084",
-		decision:   "roleSetContainsAdmin stays name-based (rename drops the bypass silently, a colliding customer role name gains it silently) until the accepted bypasses_permission_checks structural-flag decision is actually implemented. docs/adr-084-admin-bypass-structural-marker.md makes no code changes and sets no target date.",
-		openedDate: "2026-08-19",
-		threshold:  45 * 24 * time.Hour,
-		reasoning: "45 days from acceptance: this ADR already names its own prerequisite " +
-			"(the fix-1494-role-set-contains-admin-error-swallow branch) as landed and ready " +
-			"to build on, so nothing external blocks starting; medium severity (requires an " +
-			"unlikely operator action to trigger, per the 2026-09-07 review's Finding 4) " +
-			"argues for a longer window than ADR-102's high-severity one, not an indefinitely " +
-			"open one.",
-	},
 }
 
 // TestADR102_SystemWriteBlastRadiusStillOpen is the enforcing test named in
 // docs/adr-102-system-write-blast-radius.md's own Consequences section.
 func TestADR102_SystemWriteBlastRadiusStillOpen(t *testing.T) {
 	checkADROpenDecisionNotStale(t, "ADR-102")
-}
-
-// TestADR084_AdminBypassStructuralMarkerStillDeferred is the enforcing test
-// named in docs/adr-084-admin-bypass-structural-marker.md's own Consequences
-// section.
-func TestADR084_AdminBypassStructuralMarkerStillDeferred(t *testing.T) {
-	checkADROpenDecisionNotStale(t, "ADR-084")
 }
 
 func checkADROpenDecisionNotStale(t *testing.T, adr string) {
