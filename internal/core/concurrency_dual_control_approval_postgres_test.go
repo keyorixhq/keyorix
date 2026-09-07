@@ -24,11 +24,11 @@ var dualControlModels = []interface{}{
 // TestConcurrency_ApproveAccessRequestWithExpiry_CrossReplicaPostgres_ThresholdRace
 // is #1646's dual-control residual, reproduced (not just inspected) before deciding
 // whether to fix it -- per this campaign's own rule that a race which doesn't exist
-// costs a database constraint for nothing. dualControlApprovalMu (service.go) is a
-// KeyorixCore-level sync.Mutex, so it only serializes callers within ONE
-// process/replica. This test gives two independent, distinct approvers their OWN
-// *gorm.DB connection (own LocalStorage, own KeyorixCore, own dualControlApprovalMu)
-// into the SAME real Postgres schema, then races them both submitting the
+// costs a database constraint for nothing. At the time, dualControlApprovalMu
+// (service.go) was a KeyorixCore-level sync.Mutex, so it only serialized callers
+// within ONE process/replica. This test gives two independent, distinct approvers
+// their OWN *gorm.DB connection (own LocalStorage, own KeyorixCore) into the SAME
+// real Postgres schema, then races them both submitting the
 // THRESHOLD-CROSSING (2nd of a 2-of-N) approval on the identical request at the same
 // instant.
 //
@@ -40,9 +40,21 @@ var dualControlModels = []interface{}{
 // target the identical tuple). The losing racer's AssignUserRole INSERT fails
 // OUTRIGHT with a primary-key violation, before finalizeAccessRequestApproval ever
 // reaches CreateAccessRequestApproval -- so neither approval-row inflation nor a live
-// double-grant is possible, independent of dualControlApprovalMu. No DB constraint
+// double-grant is possible, independent of any in-process mutex. No DB constraint
 // was added for this residual; this test is kept as the permanent record of that
 // conclusion, asserting the invariant it confirms rather than a defect it found.
+//
+// #G04-HA CORRECTION TO SCOPE: that conclusion is sound but does NOT generalize to
+// dual control as a whole, and reading it as "the dual-control threshold needs no
+// cross-replica serialization" is the mistake this note exists to prevent. It
+// holds only for racers that BOTH cross the threshold — which is true here solely
+// because the fixture below seeds one approval first. Racers that STRADDLE the
+// K-th approval instead both take recordPartialApproval, grant no role (so
+// UserRole's primary key is never consulted) and are distinct approvers (so
+// ux_access_request_approver is never consulted), leaving a request stranded
+// pending while holding K valid approvals. That variant is a real defect, is
+// covered by concurrency_dual_control_subthreshold_postgres_test.go, and is why
+// ApproveAccessRequestWithExpiry now runs under a per-request WithNamedLock.
 //
 // What that guard does NOT prevent is checked here anyway, as a durable regression
 // check: (1) whether BOTH racers' CreateAccessRequestApproval calls land (recording
@@ -106,10 +118,10 @@ func TestConcurrency_ApproveAccessRequestWithExpiry_CrossReplicaPostgres_Thresho
 	_, err = setupCore.ApproveAccessRequestWithExpiry(ctx, projectID, req.ID, approverC.ID, 0, "", 0)
 	require.NoError(t, err)
 
-	// Two independent replicas, own connections into the SAME schema -- own
-	// dualControlApprovalMu, unable to serialize against each other. Each must also
-	// set the SAME dual-control policy (an in-memory KeyorixCore field, not
-	// persisted) so both agree K=2.
+	// Two independent replicas, own connections into the SAME schema -- sharing no
+	// in-process state, so nothing but a DB-level guard can serialize them. Each
+	// must also set the SAME dual-control policy (an in-memory KeyorixCore field,
+	// not persisted) so both agree K=2.
 	dbA := pgOpen(t, dsn)
 	coreA := NewKeyorixCore(localstore.NewLocalStorage(dbA))
 	coreA.SetDualControlPolicy(2)

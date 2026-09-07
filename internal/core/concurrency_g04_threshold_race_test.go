@@ -196,10 +196,16 @@ func newDualControlFixture(t *testing.T, dbFile string) (c *core.KeyorixCore, db
 // regression for invitations.go's ApproveAccessRequestWithExpiry: with one
 // approval already recorded and a threshold of 2, two DIFFERENT new approvers
 // racing to cast the second, threshold-crossing sign-off must not both
-// finalize. Without dualControlApprovalMu, both can read the same
-// below-threshold approval count before either's row commits and both
-// finalize — granting the role and recording the approval twice, defeating
-// the "K distinct approvers" guarantee.
+// finalize. Unserialized, both can read the same below-threshold approval count
+// before either's row commits and both finalize — granting the role and
+// recording the approval twice, defeating the "K distinct approvers" guarantee.
+//
+// #G04-HA: the serializing guard is now storage.WithNamedLock keyed per request,
+// not the KeyorixCore-level dualControlApprovalMu this test was written against
+// (that field is gone — it never serialized anything across replicas). Both
+// callers here share one KeyorixCore and one SQLite store, where WithNamedLock
+// is a process mutex, so this in-process assertion is unchanged; the
+// cross-replica half lives in the Postgres tests alongside it.
 func TestConcurrency_ApproveAccessRequestWithExpiry_ThresholdRace(t *testing.T) {
 	const trials = 30
 	for trial := 0; trial < trials; trial++ {
@@ -220,7 +226,7 @@ func TestConcurrency_ApproveAccessRequestWithExpiry_ThresholdRace(t *testing.T) 
 				case err == nil:
 					finalized.Add(1)
 				case strings.Contains(err.Error(), "only a pending request can be approved"):
-					// expected loser outcome: dualControlApprovalMu made this caller
+					// expected loser outcome: the per-request named lock made this caller
 					// re-read the request AFTER the winner's finalize committed, so it
 					// sees the request is no longer pending and gets a clean rejection —
 					// never touching the grant/approval-count logic at all.

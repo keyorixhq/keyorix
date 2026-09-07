@@ -641,12 +641,64 @@ func (c *KeyorixCore) requiredApprovals() int {
 // threshold the request stays pending and the returned request carries the M-of-K
 // progress. When K is 1 (the default) the first approval grants immediately.
 func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
-	// #G04: dualControlApprovalMu holds for the whole read-approvals-decide-
-	// grant sequence below — see its doc comment in service.go for why two
-	// approvers racing at the exact threshold boundary can otherwise both
-	// read a below-threshold count and both finalize the grant.
-	c.dualControlApprovalMu.Lock()
-	defer c.dualControlApprovalMu.Unlock()
+	// #G04-HA: the read-approvals-decide-record sequence must be serialized per
+	// REQUEST across every replica, not merely within this process. What #1646
+	// established still holds and is not re-litigated here: two racing
+	// THRESHOLD-CROSSING approvals cannot double-grant (UserRole's composite
+	// primary key makes the loser's AssignUserRole INSERT fail outright, and the
+	// grant deliberately precedes CreateAccessRequestApproval), and one approver
+	// cannot inflate the count by racing themselves (models.AccessRequestApproval's
+	// ux_access_request_approver unique index). Neither constraint covers a pair of
+	// DISTINCT approvers that straddles the K-th approval: both read the same
+	// below-threshold count, both take recordPartialApproval, and — being distinct
+	// approvers granting no role — collide with neither constraint. The request is
+	// then left pending holding K valid approvals, needing a (K+1)-th approver that
+	// policy never asked for, and nothing ever reconciles it: the only sweep over
+	// pending requests expires them at their TTL. A 2-of-N request approved by
+	// exactly two people at the same instant lapses instead of granting.
+	//
+	// It fails CLOSED, never open — approval rows are unique per approver and the
+	// finalizing caller is by construction not already among them, so the distinct
+	// approver count at finalize is always len(approvals)+1 >= K. The cost is
+	// availability (a legitimately-approved break-glass grant that never lands) and
+	// audit fidelity (both racers emit the same "approval M of K" ordinal, and the
+	// K-th is never recorded) — the latter directly undercutting the ISO 27001
+	// A.5.3 / SOX evidence this threshold exists to produce.
+	//
+	// WithNamedLock is #1646's own general-purpose primitive rather than a bespoke
+	// one: a Postgres advisory lock keyed per request, and a process mutex on
+	// SQLite where there is no cross-replica concern. Keying on the request (not a
+	// single global mutex, as dualControlApprovalMu was) also lets approvals of
+	// DIFFERENT requests proceed concurrently, which the mutex it replaces did not.
+	var approved *models.AccessRequest
+	if err := c.storage.WithNamedLock(ctx, dualControlLockKey(requestID), func(ctx context.Context) error {
+		// fn receives the lock-marked ctx and MUST thread it onward: the grant path
+		// below reaches AssignUserRole, which takes its own WithNamedLock on
+		// sodGrantLockKey. Passing a closed-over ctx instead would drop the
+		// reentrancy marker (see store.namedLockHeldCtxKey).
+		res, err := c.approveAccessRequestWithExpiryLocked(ctx, projectID, requestID, approverID, approverMachineID, grantedRole, grantTTL)
+		if err != nil {
+			return err
+		}
+		approved = res
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return approved, nil
+}
+
+// dualControlLockKey names the per-request lock serializing an access request's
+// M-of-K approval sequence across replicas. Mirrors sodGrantLockKey's convention
+// (rbac_management.go): a stable, collision-free string per protected subject.
+func dualControlLockKey(requestID uint) string {
+	return fmt.Sprintf("dual-control-approval:request:%d", requestID)
+}
+
+// approveAccessRequestWithExpiryLocked is ApproveAccessRequestWithExpiry's body,
+// running under the per-request named lock its caller holds. ctx is the
+// lock-marked context and must be used for every downstream call.
+func (c *KeyorixCore) approveAccessRequestWithExpiryLocked(ctx context.Context, projectID, requestID, approverID, approverMachineID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("access request not found")
