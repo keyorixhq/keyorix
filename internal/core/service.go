@@ -168,18 +168,14 @@ type KeyorixCore struct {
 	// race across independent replicas was live-reproduced with it as the sole
 	// guard. See access_review_campaign.go.
 	accessReviewDecisionMu sync.Mutex
-	// dualControlApprovalMu serializes ApproveAccessRequestWithExpiry's
-	// read-approvals-decide-grant sequence in-process (#G04). #1646: reproduced
-	// live across independent replicas (concurrency_dual_control_approval_
-	// postgres_test.go) before deciding whether this needed a DB-level fix like
-	// sodGrantMu's replacement got — it did not: UserRole's composite primary key
-	// (UserID, RoleID, ProjectID, EnvironmentID) already makes the threshold race
-	// structurally impossible (dual control always targets one locked-in role for
-	// the same principal, so two racing finalizers always collide on that exact
-	// key; the loser's grant INSERT fails outright, before it ever records an
-	// extra approval or leaves a live double-grant). This mutex is kept as-is,
-	// unmodified. Zero value is ready to use. See invitations.go.
-	dualControlApprovalMu sync.Mutex
+	// (#G04-HA) dualControlApprovalMu used to serialize
+	// ApproveAccessRequestWithExpiry's read-approvals-decide-grant sequence
+	// in-process. It is gone: a KeyorixCore-level mutex never serialized anything
+	// across replicas, and the sub-threshold straddle it failed to prevent is a
+	// real defect (see ApproveAccessRequestWithExpiry's doc comment). That sequence
+	// now runs under storage.WithNamedLock keyed per request — strictly stronger
+	// cross-replica, and strictly more concurrent in-process, since distinct
+	// requests no longer serialize against one another. Nothing replaces the field.
 	// rateLimitUnsupportedWarnOnce guards the #452 operator warning logged the
 	// first time IsLoginRateLimited/IsPasswordResetRateLimited observe that the
 	// active storage backend can never satisfy CountRecentLoginAttempts (as
