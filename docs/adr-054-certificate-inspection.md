@@ -41,12 +41,17 @@ The deliberate constraints:
   issuer + expiry), so the access is on the trail like any value-adjacent read.
 - **Authorization** is scoped `secrets.read` (environment-granular), enforced at the
   transport layer — the same gate as the other *value-derived* read endpoints
-  (`/{id}/risk`, `/{id}/impact`). This is deliberately the route-scope gate and **not**
-  the stricter per-user owner/share check the full-value reveal applies: a project
-  auditor or reader should be able to see certificate hygiene (what expires when)
-  without being a share-recipient of every secret. The exposed fields are the public
-  part of the certificate that any TLS client already sees, so this is not a new
-  exposure of secret material.
+  (`/{id}/risk`, `/{id}/impact`). **Corrected 2026-09-07**: this section previously
+  said the stricter per-user owner/share check was deliberately NOT applied here.
+  It is: `InspectCertificate` also calls `EnforceSecretReadPermission` (the same
+  owner/share walk the full-value reveal uses), confirmed by
+  `TestInspectCertificateEnforcesPerSecretPermission` (bug #239). The UX goal
+  described below (an auditor seeing hygiene without being a share-recipient) is
+  therefore not what actually ships — this is stricter than documented, not a
+  security gap, but the stated rationale for the design no longer matches the
+  code. The exposed fields are the public part of the certificate that any TLS
+  client already sees, so even the actual (stricter) behavior is not required by
+  a confidentiality concern about those fields specifically.
 
 ## Alternatives considered
 

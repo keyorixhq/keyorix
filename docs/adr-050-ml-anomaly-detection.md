@@ -50,9 +50,14 @@ existing detector — it complements the rules, it does not replace them.
   `AnomalyAlert` carrying its score, accessor and IP. Severity is `high` at score ≥
   0.75, else `medium`. These flow through the same storage, list/filter, acknowledge,
   alerting and retention paths as every other alert — no new surface.
-- **Determinism.** The model RNG is seeded (`math/rand`, config `seed`, default 1), so
-  scoring is reproducible across restarts and testable. This RNG drives model sampling
-  only; no security decision rides on it (it is not `crypto/rand`, by design).
+- **Determinism.** The model RNG is seeded (`math/rand`, config `seed`) when an
+  operator sets one explicitly, for reproducible/testable scoring.
+  **Corrected 2026-09-07**: this previously said the default seed is `1`. An
+  unset seed is instead drawn from `crypto/rand` (`randomSeed()`, a
+  hardening fix so the forest structure isn't precomputable from a fixed
+  default) — `TestMLConfigWithDefaults` asserts two unset-seed configs don't
+  collide. This RNG drives model sampling only; no security decision rides
+  on it (it is not `crypto/rand` for the model itself, by design).
 - **Config-gated, default off.** `anomaly_alerts.ml` (`enabled`, `threshold`,
   `num_trees`, `sample_size`, `seed`). `ml.enabled` is independent of
   `anomaly_alerts.enabled`: the former gates whether the scan additionally runs the ML

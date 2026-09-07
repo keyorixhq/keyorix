@@ -640,7 +640,8 @@ type LoginAttempt struct {
 	// AttemptedAt carries two indexes: the composite (ip, attempted_at) serves the
 	// per-IP windowed count, and a standalone index serves the prune's
 	// `WHERE attempted_at < ?` (the composite's leading ip column can't), keeping the
-	// hourly cleanup an index range delete rather than a full-table scan.
+	// periodic cleanup (server/main.go's login_attempt_prune scheduler) an index
+	// range delete rather than a full-table scan.
 	AttemptedAt time.Time `gorm:"index:idx_login_attempt_ip_time,priority:2;index:idx_login_attempt_time"`
 }
 

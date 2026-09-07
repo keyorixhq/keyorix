@@ -37,8 +37,13 @@ Add **Keyorix Connect**: a **read-through** federation layer.
 ### API
 
 - `GET /api/v1/connect/connectors` — list configured connector names.
-- `GET /api/v1/connect/{name}/secret?ref=<id>` — read-through a secret. `ref` is
-  connector-specific (for AWS Secrets Manager: the secret name or ARN).
+- `POST /api/v1/connect/{name}/secret:read` — read-through a secret, `ref` in the
+  JSON body. `ref` is connector-specific (for AWS Secrets Manager: the secret name
+  or ARN). **Corrected 2026-09-07**: this route was originally documented as
+  `GET .../secret?ref=<id>`; it was later changed to `POST .../secret:read` with
+  `ref` moved into the body specifically to stop `ref` values (which can be
+  sensitive, e.g. an ARN or secret name) from being logged in infrastructure
+  access logs the way a query parameter would be.
 
 Both are gated by the dedicated `connect.read` permission (ADR-044) and audited.
 

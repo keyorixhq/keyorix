@@ -5,9 +5,11 @@
 // hand-rolled. This package owns provider construction, SP metadata, the SP-initiated
 // AuthnRequest, and mapping a validated assertion to (subject, email, name, groups).
 //
-// It has no callers yet; the HTTP routes and the SSO-provider wiring that turn a parsed
-// assertion into a Keyorix session are a separate step (Phase 1b), so adding this package
-// is no behaviour change.
+// Phase 1b (the HTTP routes and SSO-provider wiring that turn a parsed assertion into a
+// Keyorix session) has since shipped: server/http/router.go wires
+// /auth/saml/{provider}/{metadata,login,acs}, and BeginSAML/CompleteSAML
+// (server/http/handlers/sso.go) are live callers. Corrected 2026-09-07 -- this comment
+// previously said "no callers yet," which was true only at this package's original writing.
 package saml
 
 import (

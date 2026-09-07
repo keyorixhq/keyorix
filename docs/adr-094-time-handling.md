@@ -9,6 +9,20 @@ this pass except one filed issue (Task 3's systemic finding) — the
 normalization-boundary migration this ADR recommends touches every
 persisted model and is a separate decision, not a task.
 
+**Corrected 2026-09-07 — the two most severe sites Task 3 names below are
+fixed, not open.** `#1632`'s scope has since resolved via `#1635`
+(`versions.go`'s secret-value disclosure guard: `checkSecretExpiryClockNotRegressed`
+now maintains an in-memory monotonic watermark and refuses a read if `now`
+looks earlier than previously observed — `TestGetSecretValue_ClockSteppedBackwardPastExpiry_StillRefused`)
+and `#1651` (the `local_rbac.go` RBAC-resolution cluster: every site now
+binds `ls.rbacEffectiveNow(time.Now().UTC())`, clamped the same way —
+`internal/storage/store/rbac_clock_regression_test.go`). Issue `#1632` is
+closed; its thread opened `#1653` to track the remaining, narrower,
+out-of-scope absolute-ceiling sites. The tables below describe the state
+this ADR found at the time, not current code — read them as the historical
+record Task 1/2/3 produced, cross-check `#1653` for what (if anything)
+remains open today.
+
 ## Task 1 — what the code does today (machine-derived)
 
 ### Table 1: every persisted time column

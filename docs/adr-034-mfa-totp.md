@@ -31,9 +31,13 @@ Add **TOTP** (RFC 6238, `github.com/pquerna/otp`) as an opt-in second factor.
   needed to compute the expected code), so it is stored **reversibly encrypted**
   via the server's initialised `encryption.Service` (KEK from
   `KEYORIX_MASTER_PASSWORD`), wired onto the core at startup
-  (`SetAuthEncryptor`); passthrough when encryption is disabled, consistent with
-  the rest of the product. Recovery and challenge tokens are SHA-256 hashed,
-  single-use.
+  (`SetAuthEncryptor`). **Corrected 2026-09-07**: this previously said
+  "passthrough when encryption is disabled" — the actual behavior is a hard
+  refusal, not a passthrough: `internal/core/mfa.go` refuses to begin TOTP
+  enrollment at all when the encryptor is unavailable, proven by
+  `TestBeginMFAEnrollment_RefusesWhenEncryptorDisabled`
+  (`internal/core/mfa_test.go`). A TOTP secret is never written unencrypted.
+  Recovery and challenge tokens are SHA-256 hashed, single-use.
 - **Auditable.** `mfa.enrolled/activated/disabled/login_verified/recovery_used/
   failed` flow through the existing audit pipeline.
 - **±1 time-step skew** for clock drift; the `/auth/mfa/verify` endpoint is rate

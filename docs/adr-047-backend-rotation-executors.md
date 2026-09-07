@@ -8,9 +8,14 @@ wired into the auto-rotation flow: a secret
 with `rotation_backend` + `rotation_ref` set has its new value applied upstream (the
 executor) before being stored in Keyorix, so the two never drift — and the value is NOT
 stored if the upstream apply fails. Manageable over HTTP/gRPC/CLI (scoped
-`secrets.write`). MySQL is the second backend (`ALTER USER … IDENTIFIED BY`, with
-account names/passwords emitted as doubled-quote/backslash literals — injection-safe
-under both default and NO_BACKSLASH_ESCAPES sql_modes). Cloud-key APIs (KMS/IAM)
+`secrets.write`). MySQL is the second backend (`ALTER USER … IDENTIFIED BY`).
+**Corrected 2026-09-07**: this previously described both the account name and
+the new password as emitted-literal, doubled-quote/backslash-escaped. Only
+the account name is a quoted literal (`quoteMySQLString`, DDL can't
+parameterize identifiers); the new password is passed as a `?` bind
+parameter (`c.Exec(ctx, q, newValue)`), never interpolated into the
+statement string at all — arguably a stronger guarantee than literal-escaping,
+just not the mechanism described here. Cloud-key APIs (KMS/IAM)
 would need a different contract (the cloud *generates* the new key rather than accepting
 one). That contract now exists as `rotation.GeneratingExecutor` (`GenerateUpstream(ref)
 → value`): the rotation flow prefers it over `Rotate`, storing the value the upstream

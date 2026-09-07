@@ -50,11 +50,19 @@ A set of older CLI subcommands do not. They open the database directly with
 switches on `cfg.Storage.Type` and handles Postgres, but it still imports the SQLite
 driver directly and re-implements the factory's connection/pool logic.)
 
-This is a **latent correctness bug**. Against our production-default Postgres backend,
-every one of these subcommands silently opens (or *creates*) a local `secrets.db` SQLite
-file and operates on an empty, wrong database instead of talking to Postgres. The command
-appears to succeed — it just touched the wrong store. For an air-gapped operator who
-typo's `storage.type`, the failure mode is equally quiet.
+This is a **latent correctness bug**. **Corrected 2026-09-07**: this section
+originally called Postgres "our production-default backend" — SQLite is
+actually the factory's default (`storage.type` unset or `local`), and
+ADR-103 later established that no client runs Postgres in production today
+at all. The severity framing below overstated how many deployments this
+bug's Postgres branch would affect; the bug and its fix are unaffected
+either way, since the fix (route every CLI command through the factory) is
+backend-agnostic. Against a Postgres-configured backend specifically, every
+one of these subcommands silently opens (or *creates*) a local `secrets.db`
+SQLite file and operates on an empty, wrong database instead of talking to
+Postgres. The command appears to succeed — it just touched the wrong store.
+For an air-gapped operator who typo's `storage.type`, the failure mode is
+equally quiet.
 
 The config-resolution path is *not* the problem: `config.LoadConfig()` is literally
 `Load("")`, the same call `InitializeCoreService` uses, and both honor

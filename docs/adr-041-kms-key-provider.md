@@ -125,6 +125,15 @@ still decrypts via the old "current"/configured-version resolution — a config
 already pinned to an explicit version, or freshly re-wrapped data, is unaffected
 either way.
 
+**Verified by regression test, not left as an untested claim** (corrected
+2026-09-07 — this addendum previously had no test citation at all):
+`TestAzureKMS_EncryptPinsVersionAndSurvivesRotation`, with a positive control,
+`TestAzureKMS_WithoutPinningWouldFailAfterRotation`, proving the pre-fix
+behavior genuinely breaks (`internal/crypto/azurekms/azurekms_test.go`). The
+"nothing to test" line below refers to a different property — cross-install
+identity binding, which AWS has and Azure genuinely does not — not to this
+key-version-pinning mechanism, which is covered.
+
 ## Addendum (2026-06-12): KEK-provider migration tool
 
 Switching providers used to be a manual DEK re-encryption (see Consequences). It is

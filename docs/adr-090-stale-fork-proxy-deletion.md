@@ -184,15 +184,21 @@ candidates plus the two known-safe exceptions:
    containing "conditional"/"atomically"/"CAS", paired against its
    plain-write sibling by name.
 
-Both derivations agree on the eleven pairs in `unsafeSiblingPairs`
-(`server/http/unsafe_sibling_write_guard_test.go`). Cross-referencing
+Both derivations agree on the pairs in `unsafeSiblingPairs`
+(`server/http/unsafe_sibling_write_guard_test.go`) — read that file for the
+current count and composition, not a number restated here. Cross-referencing
 every `/system` route's handler body (AST-based, reusing
 `extractAllRouterRoutes`/`handlerStorageCalls` from
-`raw_storage_bypass_guard_test.go`) against those eleven keys found
-exactly two allowlisted, reasoned exceptions
-(`UpdateWebAuthnCredentialProxy`, `DeleteProjectProxy` — see the guard
-file's comments for why each is safe despite matching) and the three
-now-deleted instances. No other call site of this shape exists anywhere
+`raw_storage_bypass_guard_test.go`) against those keys found a small set of
+allowlisted, reasoned exceptions (`DeleteProjectProxy` — see the guard
+file's comments for why it's safe despite matching) and the three
+now-deleted instances. **Corrected 2026-09-07**: this section originally
+counted "exactly two" allowlisted exceptions, naming
+`UpdateWebAuthnCredentialProxy` as one of them; that exception was removed
+by a later fix (#1714), leaving fewer than originally recorded here — a
+count in prose goes stale the moment the allowlist changes, so check
+`unsafeSiblingPairs`'s own allowlist directly rather than trusting a number
+in this document. No other call site of this shape exists anywhere
 in `server/http/handlers`.
 
 **Stated residual gap**: a conditional-write method with neither a
@@ -221,7 +227,10 @@ exist.
 **Left untouched, deliberately**: `machineIdentityProxyWire`/its `toModel()`
 helper, `membershipProxyWire`, and `secretDependencyProxyWire` — all still
 used by other, live handlers in the same files. `TransitionMachineIdentityStateProxy`,
-`TransitionProjectMembershipStateProxy`, and
+`TransitionMembershipProxy` (**corrected 2026-09-07** — this section
+previously named it `TransitionProjectMembershipStateProxy`, which does not
+exist under that name; the real handler is `TransitionMembershipProxy`,
+`server/http/handlers/project_memberships_proxy.go:235`), and
 `CreateSecretDependencyExclusiveProxy` — the safe siblings these three
 were stale forks of — are all real, live, and unaffected.
 

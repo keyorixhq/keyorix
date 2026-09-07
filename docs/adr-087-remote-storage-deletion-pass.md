@@ -14,10 +14,33 @@ its conclusions):
   had never been examined for reachability at all — stated explicitly below,
   not hidden.
 - **Part 2** (this update) closes that gap: all 158 classified LIVE / DEAD /
-  UNRESOLVED, 4 LIVE-and-stubbed findings filed (#1589, not fixed), 154
-  confirmed-DEAD methods deleted, and a permanent guard
+  UNRESOLVED, 4 LIVE-and-stubbed findings filed (#1589, not fixed at the
+  time), 154 confirmed-DEAD methods deleted, and a permanent guard
   (`TestEveryStructuralStubHasReachabilityVerdict`) added so a new stub-shaped
   method can no longer join the registry without a verdict. See "Part 2" below.
+
+**Corrected 2026-09-07 — three counts below are now stale, all in the safe
+direction (the surface got smaller/safer, not larger/riskier); described
+here rather than renumbered throughout, since the body is a specific-date
+investigation record and the registry is designed to keep changing after
+it:**
+
+- **`CreateNotification`, the most serious of the 4 "LIVE-and-stubbed"
+  findings, is fixed** (commit `63730c0f`, live route wired in
+  `router.go`) — the silent-notification-loss gap #1589 filed is closed for
+  this method. The registry still classifies it `reachabilityLive`, which
+  is conservative (a stale-but-safe label), not wrong in the dangerous
+  direction.
+- **The "7 UNRESOLVED" set is not unchanged.** 5 of the 7 have since been
+  reclassified `reachabilityDead` — a stronger classification, not a
+  weaker one.
+- **The registry's total entry count has grown past the ~183 recorded
+  here** — later ADRs (089, 090) added their own deletions/classifications
+  into the same shared registry. Don't rely on any number in this document
+  for the registry's current size or composition — read
+  `internal/storage/store/remote_reachability_registry_test.go` directly,
+  or run `TestEveryStructuralStubHasReachabilityVerdict`, which enforces
+  that every entry in it is accounted for regardless of how many there are.
 
 **The surface is now fully classified.** Of the 183 currently-registered
 `RemoteStorage` stub methods: 7 LIVE (kept, 3 per ADR-086 + 4 from Part 2, all

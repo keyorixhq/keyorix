@@ -4,6 +4,30 @@
 **Author:** Andrei Beshkov
 **Replaces:** The undocumented behaviour of `RotateDEK()` which was key proliferation, not rotation.
 
+**Corrected 2026-09-07 — three claims below drifted from this document's own
+plan as implementation evolved past it; described here rather than as
+rewritten body text, since the body is the historical record of the original
+design:**
+
+- **Sessions are no longer part of the sweep.** The body below (and its
+  worked example in "Sweep output") lists `sessions`/`encrypted_session_token`
+  as a swept table. Session tokens are hashed, not encrypted (#1641) — the
+  live write path never populated that column, and `sweepSessions` was
+  deleted outright rather than kept for legacy data. See
+  `internal/encryption/sweep_auth.go`'s own doc comment for the current,
+  authoritative account of which auth tables the sweep covers and why.
+- **`RotateDEK` is not deprecated-but-kept; it no longer exists.** The body's
+  "Alternative C" and Decision sections describe keeping the old function
+  deprecated as a transition step. It has been fully removed — nothing in
+  the codebase calls it. Describing the removed function's shape here is
+  historical context for why `RotateDEKWithSweep` looks the way it does, not
+  a claim that `RotateDEK` is still present.
+- **KEK rotation (passphrase change) has shipped.** The body describes it as
+  a "follow-on item" / "future" command. It exists today as
+  `internal/cli/encryption/rotate_kek.go` / `Service.RotateKEKPassphrase`,
+  with its own test coverage. The body's framing describes the state at
+  this ADR's original writing, not the current codebase.
+
 ---
 
 ## Context
