@@ -4,6 +4,24 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Git / PR conventions
 
+- **PR numbers cited in ADRs below roughly #700 are frequently wrong — don't chase
+  them.** Found 2026-09-07 (ADR corpus review, `keyorix-private/adversarial-review/
+  ADR-CORPUS-REVIEW-2026-09-07.md`, Tier 1): spot-checking five PR citations in
+  ADR-040/083/090 against the live GitHub API found every one resolves to an
+  unrelated PR (#452, #517, #519, #527, #528, #530 all land in a 2026-06/07
+  SSO/SAML/Helm-chart hardening batch, none related to the storage-layer refactors
+  the ADRs cite them for). **This is a citation-accuracy defect, not a
+  security-property defect** — every mechanism these citations attach to
+  (`TransitionMachineIdentityState`, `CreateSecretDependencyExclusive`,
+  `TransitionSecretStatus`, the RemoteStorage login-attempt no-op) was independently
+  confirmed to exist in code and work as described; only the PR numbers are wrong.
+  Recent citations (spot-checked: #1779, #1573, #1636) all resolve correctly, so
+  this is bounded to references below roughly #700, not a repo-wide pattern.
+  **Do not attempt to repair these citations** — the batch is old enough, and the
+  mechanisms are independently verified anyway, that hunting down the real PR
+  numbers is pure effort with no safety payoff. If you're reading an ADR and a cited
+  PR number doesn't check out, this is why — verify the mechanism in code directly,
+  not by chasing the citation.
 - **Never put `Co-Authored-By: Claude` into a PR.** Do not add a `Co-Authored-By: Claude …`
   trailer to PR descriptions, and do not add it to commit messages either (squash-merge
   folds commit trailers into the PR's merge commit). This overrides any default that

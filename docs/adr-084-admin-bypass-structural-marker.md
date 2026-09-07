@@ -437,6 +437,16 @@ every site twice.
 
 ## Consequences
 
+- **Enforced, not just written down (added 2026-09-07)**: this ADR was
+  accepted 2026-08-19 with implementation deferred and no target date, owner,
+  or tripwire — 19 days of no enforcement mechanism forcing the deferred work
+  to surface, the same "accepted decision, nothing forcing resolution" shape
+  ADR-102 was found in. `TestADR084_AdminBypassStructuralMarkerStillDeferred`
+  (`internal/core/adr_open_decisions_tripwire_test.go`) now fails CI once this
+  has sat unimplemented past its threshold age, using the same general
+  "open decision" registry ADR-102's tripwire uses — see that test's doc
+  comment for the mechanism, modeled on ADR-101's
+  `TestCurrentSchemaEpoch_StillOne_SeeADR101`.
 - `roleSetContainsAdmin`'s eight call sites (see "Prerequisite" above)
   change from up to four `GetRoleByName` calls to an ID-based lookup of the
   resolved role set's flag — no behavior change at any of them beyond
