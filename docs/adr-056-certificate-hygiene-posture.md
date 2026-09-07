@@ -35,8 +35,15 @@ Add a **Certificate expiry hygiene** control and a `CertificatePosture` figure, 
   column read, no decryption. It is wired into `GetCompliancePosture`.
 - **Control.** A `certificate-hygiene` control in the matrix: a **gap** when any
   certificate is expired, with a detail line that also surfaces expiring-soon and
-  not-yet-evaluated counts. Mapped to ISO 27001 A.5.15/A.8.24, SOC 2 CC6.1, NIS2
-  Art.21(2)(h), ENS `op.exp.11`.
+  not-yet-evaluated counts. **Fixed 2026-09-07**: a population with some
+  certificates evaluated and some not previously read as a clean Pass whenever
+  none of the evaluated ones were expired — the unevaluated ones were only
+  visible in the free-text detail line, invisible to the status itself. A new
+  status, `ControlStatusPartiallyEvaluated`, is now returned for exactly this
+  case (a confirmed expired certificate still wins as Gap regardless of how
+  much of the population remains unscanned) — see
+  `TestCertificateHygieneControl_MixedEvaluationIsNotPass`. Mapped to ISO
+  27001 A.5.15/A.8.24, SOC 2 CC6.1, NIS2 Art.21(2)(h), ENS `op.exp.11`.
 - **Coverage.** A certificate that has never been inspected or scanned has a nil cache
   and is reported as **not yet evaluated** (honestly, not silently "healthy"). Full
   coverage comes from enabling the ADR-055 certificate-expiry scan, which refreshes the

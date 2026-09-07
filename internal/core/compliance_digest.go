@@ -40,7 +40,7 @@ func formatComplianceDigest(p *CompliancePosture, controls []ControlState) (titl
 		case ControlStatusGap:
 			gap++
 			gaps = append(gaps, ctrl.Name)
-		case ControlStatusUnknown:
+		case ControlStatusUnknown, ControlStatusPartiallyEvaluated:
 			unknown++
 			unknowns = append(unknowns, ctrl.Name)
 		}

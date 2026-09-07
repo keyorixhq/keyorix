@@ -133,7 +133,7 @@ func TestGetComplianceControls_SummaryTallies(t *testing.T) {
 	got, err := c.GetComplianceControls(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, len(got.Controls), got.Summary.Total)
-	assert.Equal(t, got.Summary.Total, got.Summary.Pass+got.Summary.Gap+got.Summary.NotConfigured+got.Summary.Unknown)
+	assert.Equal(t, got.Summary.Total, got.Summary.Pass+got.Summary.Gap+got.Summary.NotConfigured+got.Summary.Unknown+got.Summary.PartiallyEvaluated)
 	assert.False(t, got.GeneratedAt.IsZero())
 }
 
@@ -257,12 +257,17 @@ func TestEvaluateControls_CertificateHygiene_ScanningEnabled(t *testing.T) {
 	ce := findControl(t, expired, "certificate-hygiene")
 	assert.Equal(t, ControlStatusGap, ce.Status)
 
-	// Partially scanned (some evaluated, some not) still uses real data rather than
-	// falling back to not-configured, since the scan clearly IS enabled here.
+	// Partially scanned (some evaluated, some not) uses real data rather than
+	// falling back to not-configured, since the scan clearly IS enabled here --
+	// but it is NOT Pass (corrected 2026-09-07): this test previously asserted
+	// Pass for this exact case, which was the bug this fix closes -- an
+	// unevaluated certificate is a genuine unknown, not an implicit pass. See
+	// TestCertificateHygieneControl_MixedEvaluationIsNotPass for the dedicated
+	// regression.
 	partial := EvaluateControls(&CompliancePosture{
 		Certificates: CertificatePosture{TotalCertificates: 3, Expired: 0, NotEvaluated: 1},
 	})
 	cp := findControl(t, partial, "certificate-hygiene")
-	assert.Equal(t, ControlStatusPass, cp.Status)
+	assert.Equal(t, ControlStatusPartiallyEvaluated, cp.Status)
 	assert.Contains(t, cp.Detail, "1 not yet evaluated")
 }

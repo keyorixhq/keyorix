@@ -150,6 +150,27 @@ func TestCertificateHygieneControl(t *testing.T) {
 	assert.Equal(t, ControlStatusPass, ok.Status, "expiring-soon is a warning in the detail, not a hard gap")
 }
 
+// TestCertificateHygieneControl_MixedEvaluationIsNotPass is the regression for the
+// 2026-09-07 fix: a population with SOME unevaluated certificates must never read as
+// a clean Pass just because none of the EVALUATED ones happen to be expired -- the
+// unevaluated ones are an unknown, not an implicit pass, and previously fell through
+// silently to Pass alongside a genuinely fully-scanned-and-clean population.
+func TestCertificateHygieneControl_MixedEvaluationIsNotPass(t *testing.T) {
+	partial := findControl(t, EvaluateControls(&CompliancePosture{
+		Certificates: CertificatePosture{TotalCertificates: 3, NotEvaluated: 1},
+	}), "certificate-hygiene")
+	assert.Equal(t, ControlStatusPartiallyEvaluated, partial.Status)
+	assert.Contains(t, partial.Detail, "not yet evaluated")
+
+	// A confirmed expired certificate must still win over partial coverage -- Gap,
+	// never downgraded to PartiallyEvaluated just because part of the population
+	// hasn't been scanned yet.
+	gapWithPartial := findControl(t, EvaluateControls(&CompliancePosture{
+		Certificates: CertificatePosture{TotalCertificates: 3, NotEvaluated: 1, Expired: 1},
+	}), "certificate-hygiene")
+	assert.Equal(t, ControlStatusGap, gapWithPartial.Status)
+}
+
 func TestCertificateExpiryMessage(t *testing.T) {
 	assert.Contains(t, certificateExpiryMessage("p", 2, 3), "2 certificate(s) expired and 3 expiring soon")
 	assert.Contains(t, certificateExpiryMessage("p", 2, 0), "2 certificate(s) have expired")
