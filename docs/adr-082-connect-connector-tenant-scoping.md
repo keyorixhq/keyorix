@@ -357,22 +357,23 @@ IDs at the `{0,0}` scope and checking them against the same four
 admin-named strings the permission-check bypass uses). Verified before
 finalizing, this ADR does not use that shape:
 
-**`roleSetContainsAdmin` (`authz.go:346-364`) is name-based, not
-structural — a real, pre-existing fragility, not introduced by this ADR.**
-It resolves each of the four `adminRoleNames` strings to a role ID via
-`storage.GetRoleByName`, then checks membership in the caller's resolved
-role-ID set — a pure name lookup. `Role` (`models.go:517-521`) carries no
-`IsSystem`/`IsGlobal`/immutable flag at all; the only thing distinguishing
-a seeded admin role from any other is its `Name` column, which is mutable
-and only unique, not otherwise protected. A customer role literally named
-`admin` — reachable today if an operator frees that name by renaming the
-seeded role, or in a deployment with a customized RBAC catalog — would
-receive the same permission-check bypass the seeded `admin` role gets;
-renaming the seeded `admin` role away from that string silently drops its
-bypass on the next check. **This ADR does not fix `roleSetContainsAdmin`
-itself** — that is a separate, standalone issue with its own blast radius
-(it affects the ordinary permission-check bypass everywhere, not only
-Connect) and needs its own fix on its own branch, not a rider here (see
+**`roleSetContainsAdmin` (`authz.go:346-364`) was name-based, not
+structural, at the time this ADR was written — a real, pre-existing
+fragility, not introduced by this ADR.** It resolved each of the four
+`adminRoleNames` strings to a role ID via `storage.GetRoleByName`, then
+checked membership in the caller's resolved role-ID set — a pure name
+lookup. **Corrected 2026-09-07: this has since been fixed, on its own
+branch, exactly as this section anticipated.** ADR-084 added a structural
+`bypasses_permission_checks` column to `models.Role`
+(PR #1671, 2026-09-02); `roleSetContainsAdmin` now resolves that flag by
+ID, not by name — renaming a role no longer moves the bypass, and a
+customer role can no longer acquire it by colliding with a reserved name.
+The historical analysis below is kept as the record of why the fix was
+needed, not a description of current behavior. **This ADR did not fix
+`roleSetContainsAdmin` itself** — that was a separate, standalone issue
+with its own blast radius (it affects the ordinary permission-check bypass
+everywhere, not only Connect) and needed its own fix on its own branch, not
+a rider here (see
 "Out of scope"). What this ADR does is avoid inheriting that shape for the
 ownership wildcard.
 

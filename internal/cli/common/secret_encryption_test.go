@@ -137,11 +137,19 @@ func TestWireSecretEncryption_PassphraseFileSourceIsWhatActuallyDerivesTheKEK(t 
 	require.NoError(t, wireSecretEncryption(third, encEnabledCfg("local")), "the file source's correct passphrase must still unwrap the same DEK")
 }
 
-// TestWireSecretEncryption_PassphraseFDSource proves --passphrase-fd (ADR-099)
-// reaches wireSecretEncryption end to end via a real file descriptor, precedence
-// over both --passphrase-file and KEYORIX_MASTER_PASSWORD, and trailing-newline
-// trimming.
-func TestWireSecretEncryption_PassphraseFDSource(t *testing.T) {
+// TestWireSecretEncryption_PassphraseFDSource_ActuallyDerivesTheDEK proves
+// --passphrase-fd (ADR-099) reaches wireSecretEncryption end to end via a real
+// file descriptor and that its value — not --passphrase-file's or
+// KEYORIX_MASTER_PASSWORD's — is what actually derives the DEK. Corrected
+// 2026-09-07: the original version of this test only asserted no error on
+// FIRST-time DEK creation, which succeeds under any passphrase (there's
+// nothing yet to unwrap against) and so could not distinguish "the FD value
+// was used" from "some other configured value was used" — its name claimed
+// "precedence," which it never actually exercised. This version reopens with
+// only the wrong file source afterward and asserts that attempt fails,
+// which only holds if the DEK was genuinely wrapped under the FD-sourced
+// passphrase.
+func TestWireSecretEncryption_PassphraseFDSource_ActuallyDerivesTheDEK(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
 	t.Chdir(t.TempDir())
@@ -165,6 +173,16 @@ func TestWireSecretEncryption_PassphraseFDSource(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessSchedule{}))
 
 	svc := core.NewKeyorixCore(store.NewLocalStorage(db))
-	require.NoError(t, wireSecretEncryption(svc, encEnabledCfg("local")))
+	require.NoError(t, wireSecretEncryption(svc, encEnabledCfg("local")), "the FD source must succeed and create the DEK/salt")
 	require.True(t, svc.SecretValueEncryptionActive())
+
+	// Reopen with only the WRONG file source (no FD available this time) --
+	// this must fail, proving the DEK was genuinely wrapped under the
+	// FD-sourced passphrase above, not silently under wrongFile or the env
+	// var (both of which were configured and available during the first call
+	// too, so success alone there couldn't distinguish which one was used).
+	PassphraseSource = crypto.PassphraseSource{FilePath: wrongFile}
+	second := core.NewKeyorixCore(store.NewLocalStorage(db))
+	err = wireSecretEncryption(second, encEnabledCfg("local"))
+	require.Error(t, err, "the wrong file source must fail to unwrap the DEK the FD-sourced passphrase created -- proving the FD source, not the file or env var, is what was actually used above")
 }

@@ -21,10 +21,15 @@ Add a **Certificate expiry hygiene** control and a `CertificatePosture` figure, 
 **cached** certificate expiry maintained off the read path.
 
 - **Cache.** `SecretNode.CertNotAfter` (additive, nullable column) caches the parsed
-  leaf-certificate `notAfter`. It is populated **as a side-effect** of the two paths
+  leaf-certificate `notAfter`. It is populated **as a side-effect** of the paths
   that already decrypt and parse a certificate — `InspectCertificate` (ADR-054) and the
-  certificate-expiry scan (ADR-055) — via a targeted single-column update. Nothing else
-  writes it; the create/rotate path is untouched.
+  certificate-expiry scan (ADR-055) — via a targeted single-column update.
+  **Corrected 2026-09-07**: this previously said "the create/rotate path is
+  untouched." `RotateSecret` now also refreshes the cache
+  (`refreshCertNotAfterCache`), proven by
+  `TestRotateSecret_RefreshesCertNotAfterCache` — this closes the "Deferred
+  follow-ups" item below about invalidating on rotation, which was still
+  listed as undone after it shipped.
 - **Posture.** `certificatePosture` counts certificate-typed secrets by their *cached*
   `CertNotAfter` (expired / expiring-soon / total / **not-yet-evaluated**) — a plain
   column read, no decryption. It is wired into `GetCompliancePosture`.
@@ -51,6 +56,7 @@ Add a **Certificate expiry hygiene** control and a `CertificatePosture` figure, 
 
 ## Deferred follow-ups
 
-- Invalidate/refresh the cache on rotation immediately (rather than on the next scan).
+- ~~Invalidate/refresh the cache on rotation immediately (rather than on the next scan).~~
+  **Shipped** — see the corrected Decision bullet above.
 - Surface the not-yet-evaluated count in the dashboard with a prompt to enable the scan.
 - Per-environment certificate posture; full-chain (intermediate) expiry.

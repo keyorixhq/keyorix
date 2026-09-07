@@ -34,7 +34,13 @@ that point and is detectable by re-walking it.
 
 ### Canonical encoding
 
-`entry_hash` is computed over a **fixed-order, null-separated** encoding of the
+**Corrected 2026-09-07**: this section originally described the encoding as
+null-separated. It is now length-prefixed (TLV), a later fix closing a field-
+boundary injectivity gap a pure separator can't close (two different field
+splits could otherwise hash identically) — see
+`TestComputeAuditEntryHash_FieldBoundaryCollisionRejected`
+(`internal/storage/store/local_audit_chain_test.go`). `entry_hash` is
+computed over a **fixed-order** encoding of the
 semantically meaningful fields: `prev_hash`, `event_type`, `user_id`,
 `secret_node_id`, `project_id`, `ip_address`, `description`, `success`,
 `event_time`, `diff`, `impersonated_by`, `acting_as`, `impersonation`,

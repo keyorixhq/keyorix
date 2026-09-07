@@ -344,9 +344,14 @@ someone mid-edit six months from now.
 
 ## Tooling pin
 
-`@cyclonedx/cdxgen` pinned to **v12.8.2** (the version tested throughout this
-ADR's verification), following the exact pattern already established for
-`cyclonedx-gomod@v1.10.0` in `release.yml`, NOSONAR comment style included.
+`@cyclonedx/cdxgen` is exact-pinned (not a range) in `web/package.json`,
+following the exact pattern already established for `cyclonedx-gomod@v1.10.0`
+in `release.yml`, NOSONAR comment style included. **Corrected 2026-09-07**:
+this section previously named a specific version number (the one tested
+during this ADR's original verification pass); the pin has moved since. Check
+`web/package.json`/`web/package-lock.json` for the current pinned version
+rather than trusting a number written here — the property that matters is
+"exact-pinned," not which version.
 
 ## The CLI SBOM is deliberately unchanged
 

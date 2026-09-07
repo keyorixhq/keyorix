@@ -28,10 +28,15 @@ scoped resources, even when the deployment-wide policy is off.
   iff the caller is an **interactive session** (`SessionAuth`) **without** a second
   factor **and** the resolved scope's project requires MFA. It is applied:
   - in `RequireScopedPermission` (covers all secret read/write/version/list and
-    other project-scoped middleware routes), and
-  - in the handful of endpoints that authorize in-handler rather than via that
-    middleware — dynamic-secrets issue/list/revoke (ADR-035) and rotation-policy
-    create — so the policy is uniform across every project-scoped path.
+    other project-scoped middleware routes). **Corrected 2026-09-07**: this
+    previously described dynamic-secrets issue/list/revoke (ADR-035) and
+    rotation-policy create as authorizing in-handler, as a second bullet
+    alongside the middleware. Post-#1645, those dynamic-secrets routes moved
+    onto `RequireScopedPermission` too (`server/http/router.go`) — only
+    rotation-policy `Create` still applies the gate in-handler
+    (`rotation_policies_handler.go`). The security outcome is unchanged
+    either way (the gate still fires on every project-scoped path); this is
+    a routing-detail correction, not a coverage gap.
 - **Exemptions mirror the deployment-wide policy:** non-interactive credentials
   (PAT / machine token / OIDC) are **exempt** — they cannot carry a second factor
   and blocking them would break automation. A session whose user already has TOTP

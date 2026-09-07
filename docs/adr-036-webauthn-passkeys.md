@@ -43,7 +43,12 @@ parallels the existing TOTP two-step login.
 - **Credentials** are stored as the library's canonical JSON `Credential` blob
   (public key, attestation, signature counter, transports) plus an indexed raw
   `CredentialID`. The blob is rewritten on each login to track the signature
-  counter; a non-advancing counter raises a `webauthn.clone_warning` audit event.
+  counter. **Corrected 2026-09-07**: a non-advancing counter does more than
+  raise an audit event — the real event is `EventWebAuthnCloneDetected`
+  (not `webauthn.clone_warning`), and the login is rejected and the
+  credential disabled outright, not just logged, per
+  `TestWebAuthn_RejectIfCloned_DisablesCredentialAndRejects`
+  (`internal/core/webauthn_test.go`).
 - **Relying party** (`RPID`, `RPOrigins`, display name) comes from a new
   `webauthn` config block; absent/disabled, the passkey endpoints return 501 and
   login behaves exactly as before.

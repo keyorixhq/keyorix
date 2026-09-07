@@ -41,12 +41,18 @@ precedence, before falling back to `KEYORIX_MASTER_PASSWORD`:
    documented as the weakest option (see below).
 
 Implemented once in `internal/crypto.ResolvePassphrase`
-(`internal/crypto/passphrase.go`) and consumed from three call sites:
-`server/main.go`'s `initializeEncryption`, `internal/cli/common.wireSecretEncryption`,
-and `internal/cli/encryption.masterPassphrase` — the last one is the single
-chokepoint all 13+ commands in that package (`rotate-kek`, `migrate-provider`,
-`validate`, `status`, `enable`, `shamir-split`, ...) already routed through,
-so fixing it there covers every one of them with no per-command change.
+(`internal/crypto/passphrase.go`). **Corrected 2026-09-07**: this section
+previously named exactly three call sites, framing `internal/cli/encryption.
+masterPassphrase` as *the* single chokepoint every command in that package
+routes through. That undercounted even at the time — `migrate-provider` and
+`rotate-kek` both call `ResolvePassphrase` directly, bypassing
+`masterPassphrase`. All confirmed call sites wipe the resolved bytes
+correctly regardless of which path they take, so this was a framing
+inaccuracy, not a security gap — but a fixed count in prose goes stale the
+next time a command is added. Don't re-derive a number here: run `grep -rn
+"ResolvePassphrase(" internal/` for the current, authoritative call-site
+list before relying on any claim about how many there are or which package
+function is "the" chokepoint.
 
 ## Why the environment variable is the weakest option
 
@@ -150,9 +156,13 @@ Checked directly, not assumed:
   `KEYORIX_MASTER_PASSWORD` holding a *different* value fails to unwrap that
   same DEK when the file source is absent — if the env var had been what
   was actually used the first time, that second call would have succeeded
-  instead of failing. `TestWireSecretEncryption_PassphraseFDSource` and
-  `TestMasterPassphrase_FDSourceTakesPrecedenceOverEnv` cover the fd source
-  the same way via a real `os.Pipe()`. `TestMasterPassphrase_FileSource`
+  instead of failing. `TestWireSecretEncryption_PassphraseFDSource_ActuallyDerivesTheDEK`
+  (corrected 2026-09-07 — previously named `..._PassphraseFDSource` and only
+  asserted no error on first-time DEK creation, which succeeds under any
+  passphrase and so didn't actually prove precedence; now reopens with the
+  wrong file source afterward and asserts failure, the same shape as the
+  file-source test above) and `TestMasterPassphrase_FDSourceTakesPrecedenceOverEnv`
+  cover the fd source via a real `os.Pipe()`. `TestMasterPassphrase_FileSource`
   covers `internal/cli/encryption`'s chokepoint directly.
 - `go build ./...`, `go vet ./...`, `gofmt -l` clean on every touched file.
 - Full `internal/crypto`, `internal/cli/common`, `internal/cli/encryption`,

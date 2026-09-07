@@ -57,9 +57,16 @@ Kubernetes **TokenRequest** API (`POST …/serviceaccounts/{sa}/token`).
 
 - **Fail-closed TLS.** An explicitly-configured `api_server` requires a `ca_cert`; the
   engine never skips verification (an unverified API server could return any token).
-- **Path-segment guard.** The namespace and service-account name are validated (DNS-label
-  charset) before being placed into the request path, rejecting traversal/injection
-  rather than escaping.
+- **Path-segment guard.** The namespace and service-account name are validated before
+  being placed into the request path, rejecting traversal/injection rather than
+  escaping. **Corrected 2026-09-07**: this previously said the check enforces DNS-label
+  charset. `pathSegment` (`internal/dynamic/kubernetes.go`) is actually a metacharacter
+  blocklist (rejects `""`, `.`, `..`, and any of `/?#%.`) plus `url.PathEscape` on the
+  remainder, not a DNS-label allowlist — uppercase/underscore/non-ASCII characters pass
+  through unrejected. Traversal and path-injection are still blocked by this mechanism
+  (the specific characters that matter for those attacks are on the blocklist, and
+  `PathEscape` percent-encodes the rest), just via a narrower guarantee than a full
+  charset allowlist would give.
 
 ### Cross-backend revocation survey (#97 residual)
 

@@ -60,10 +60,15 @@ everything its owner can do** — surfaced in the create response and the UI. Re
 scoping is deferred to a later ADR.
 
 ### Revocation latency
-Revoking a PAT marks `Revoked = true`. The auth cache keys on `SHA-256(token)` with a
-30s positive TTL and we do not retain the plaintext, so a revoked PAT may remain valid
-for up to ~30s until its cache entry expires — identical to the existing session-logout
-window. Acceptable and consistent with the session model.
+**Corrected 2026-09-07 — superseded by G18, not just stale wording.** This
+section originally described revocation as bounded by the auth cache's
+positive TTL (a cache-hit would keep serving the old, valid verdict until
+expiry). That is no longer the behavior: `serveAuthCacheHit` re-checks
+`CurrentPATRestriction` on every cache hit, so a revoked PAT is denied on the
+very next request regardless of the cache's TTL — proven by
+`TestAuthentication_PATRevokedAfterCache_DeniedOnCacheHit`
+(`server/middleware/g18_cache_hit_revocation_test.go`). Revoking a PAT still
+marks `Revoked = true`; only the latency claim below it needs updating.
 
 ### `last_used_at` write throttling
 `last_used_at` is **not** written on every request (that would turn each authenticated

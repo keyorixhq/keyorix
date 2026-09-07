@@ -31,7 +31,10 @@ Move the limiter into the database so the count is shared across replicas.
   auth gate itself; a transient DB hiccup must not lock every user out. Recording
   is best-effort for the same reason.
 - **Bounded growth.** An always-on, single-replica-gated (ADR-039) maintenance
-  goroutine prunes rows past the window hourly, independent of the opt-in retention
+  goroutine prunes rows past the window on a fixed interval shorter than an hour
+  (**corrected 2026-09-07** — this previously said "hourly"; the actual registration
+  is `runScheduler(ctx, "login_attempt_prune", 15*time.Minute, ...)`,
+  `server/main.go`), independent of the opt-in retention
   purge scheduler — the limiter table must stay bounded even when purge is off.
 
 ## Why the write volume is acceptable
