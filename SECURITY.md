@@ -38,28 +38,36 @@ reporting regime for actively exploited vulnerabilities.
 
 ## Remediation Timelines
 
-Once a report is acknowledged and assessed (see above), this is how fast a
-fix reaches an installable release, by severity:
+Once a report is acknowledged and assessed (see above), here's what to
+expect through to a fix:
 
-| Severity | Commitment |
+| Commitment | Detail |
 |---|---|
-| CRITICAL | Mitigation or workaround guidance within 7 days; fixed release within 14 days |
-| HIGH | Fixed release within 30 days |
-| MEDIUM / LOW | Next scheduled release |
+| Fix, all severities | Within **90 days** of a validated report |
+| High / Critical severity | **1 week advance notice** before the security release ships |
+| Advisory | A **GitHub Security Advisory with a requested CVE**, published the **same day** as the fix |
+| Supported versions | Latest release only (see Supported Versions above) |
+
+The 90-day figure is a ceiling, not a target — most fixes ship well inside
+it. We publish one commitment across all severities rather than a
+severity-tiered deadline: a severity call made under public time pressure
+is exactly the kind of promise a one-person team without redundancy
+shouldn't be making a clock out of. We do not publish a release cadence —
+releases ship as fixes are ready, not on a calendar.
 
 **This is a current operating commitment, not a CRA-declared support
 period.** It says how fast we fix things once a version is receiving fixes
 at all; it does not change which versions that is, or for how long — that
 is governed separately by the Supported Versions table above and
 [SUPPORT.md](SUPPORT.md), and remains undeclared pre-1.0 regardless of
-these timelines.
+this commitment.
 
-We do not publish a release cadence. Releases ship as fixes are ready, not
-on a calendar — see [ADR-104](docs/adr-104-security-remediation-sla.md) for
-why, and for the CRITICAL/HIGH boundary definition with worked examples.
-This table is the authoritative, current source for the published
-commitment above; ADR-104 also states it for the record, but if the two
-ever disagree, this page is current and ADR-104's copy is stale.
+See [ADR-104](docs/adr-104-security-remediation-sla.md) for the reasoning,
+the competitor research behind these numbers, and the internal CRITICAL/HIGH
+definition used for prioritization. This table is the authoritative,
+current source for the published commitment above; ADR-104 also states it
+for the record, but if the two ever disagree, this page is current and
+ADR-104's copy is stale.
 
 ## Threat Model (summary)
 
