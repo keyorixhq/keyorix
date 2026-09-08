@@ -282,6 +282,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # issues: read is for the informational report step only (gh issue list)
+      # -- nothing else in this job touches issues, and that step never fails
+      # the job (see its own step and script header for why).
+      issues: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -296,6 +300,11 @@ jobs:
       - name: Self-test the closure guard (must be able to go red)
         run: ./scripts/check-closures.sh --self-test
 
+      # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
+      # docs/security-closures.tsv gate-skips here by design -- that is
+      # expected, not a failure (see the ledger's own header). The test-suite
+      # job's `core` leg below runs this SAME script again, WITH the DSN, and
+      # is what actually proves those rows.
       - name: Verify every security closure claim names a passing test
         run: ./scripts/check-closures.sh
 
@@ -304,6 +313,18 @@ jobs:
 
       - name: Verify every ADR conformance claim names a passing test
         run: ./scripts/check-adr-conformance.sh
+
+      # Informational only -- never fails this job (the script itself always
+      # exits 0, and continue-on-error is set as a second, belt-and-suspenders
+      # layer in case a future edit ever changes that). See the script's own
+      # header for why an issue missing from this report is not proof nothing
+      # is owed, and docs/security-closures.tsv's header for the same caveat
+      # on its `issue` column.
+      - name: Report closed security-labeled issues the ledger doesn't cite (informational)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/report-unlisted-security-issues.sh
 
   # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
   # not a replacement for it. That hook is the PRIMARY guard: it runs on the
@@ -636,6 +657,19 @@ jobs:
           # the trade being proposed, whether or not the proposal names it.
           # shellcheck disable=SC2086
           go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+
+      # This job is the ONLY one with a Postgres service container (see this
+      # job's own KEYORIX_TEST_PG_DSN comment above), so it is the only place
+      # a pg-gated docs/security-closures.tsv row can ever be genuinely
+      # proven rather than gate-skipped. Restricted to the `core` leg: every
+      # pg-gated row today lives in ./internal/core, and running the full
+      # ledger sweep once per leg would just repeat the same ~17-row check 15
+      # times for no new coverage. adr-numbers already runs this same script
+      # without a DSN (every pg-gated row gate-skips there, by design) --
+      # this is the run that actually counts as evidence for those rows.
+      - name: Verify pg-gated security closures with a real Postgres DSN available (core leg only)
+        if: matrix.leg == 'core'
+        run: ./scripts/check-closures.sh
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
