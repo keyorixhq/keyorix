@@ -74,9 +74,19 @@
 //
 // Classes 1, 3, 4, 5, 6, and 7 are behavioral, not structural — they need a
 // differential conformance harness (RemoteStorage.M(x) vs LocalStorage.M(x)
-// through a real server) to see, not a smarter static check. See issue
-// #1808 for that harness, using this same seven-class list as its test
-// plan. Do NOT add static checks for classes 1, 3, 4, 5, or 6 here: a
+// through a real server) to see, not a smarter static check. That harness now
+// exists: server/http/remote_storage_conformance_test.go (issue #1808), built on
+// this same seven-class list — phase 1 covers one method per class (the actual
+// historical-defect method where the class brief names one), with a companion
+// mutation-validation file (remote_storage_conformance_mutation_test.go) that
+// faithfully reintroduces the historical bug shape for classes 1, 3, 4, and 6 and
+// demonstrates the harness's assertions actually go red against them — see that
+// file's package doc for why (Layer 1 here shipped after mutation-testing itself
+// and still caught 0 of 9 real defects; validating the differential harness the
+// same shallow way would repeat that mistake). It cannot yet see classes 2, 5,
+// or 7 for every RemoteStorage method — only the seven seed methods so far; the
+// remaining ~187 real-proxy methods are left to follow-up tranches (see that
+// file's own coverage-cost report). Do NOT add static checks for classes 1, 3, 4, 5, or 6 here: a
 // static check that appears to cover a behavioral class is worse than no
 // check, because it looks like coverage without being coverage — exactly
 // the framing mistake this file's own history (issue #1786) was filed
