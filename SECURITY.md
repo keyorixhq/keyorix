@@ -36,6 +36,31 @@ credit you in the advisory unless you prefer otherwise, and publish a fix and
 advisory together. As an EU vendor we operate under the EU Cyber Resilience Act
 reporting regime for actively exploited vulnerabilities.
 
+## Remediation Timelines
+
+Once a report is acknowledged and assessed (see above), this is how fast a
+fix reaches an installable release, by severity:
+
+| Severity | Commitment |
+|---|---|
+| CRITICAL | Mitigation or workaround guidance within 7 days; fixed release within 14 days |
+| HIGH | Fixed release within 30 days |
+| MEDIUM / LOW | Next scheduled release |
+
+**This is a current operating commitment, not a CRA-declared support
+period.** It says how fast we fix things once a version is receiving fixes
+at all; it does not change which versions that is, or for how long — that
+is governed separately by the Supported Versions table above and
+[SUPPORT.md](SUPPORT.md), and remains undeclared pre-1.0 regardless of
+these timelines.
+
+We do not publish a release cadence. Releases ship as fixes are ready, not
+on a calendar — see [ADR-104](docs/adr-104-security-remediation-sla.md) for
+why, and for the CRITICAL/HIGH boundary definition with worked examples.
+This table is the authoritative, current source for the published
+commitment above; ADR-104 also states it for the record, but if the two
+ever disagree, this page is current and ADR-104's copy is stale.
+
 ## Threat Model (summary)
 
 Keyorix server runs **entirely within your perimeter**:
