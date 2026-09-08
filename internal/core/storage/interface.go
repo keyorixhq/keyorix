@@ -1504,6 +1504,20 @@ type Storage interface {
 	// minted for models.MFAStepUpPurposeRestrictedSecretRead must never satisfy
 	// a query for models.MFAStepUpPurposeReauth or vice versa.
 	GetActiveMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, now time.Time) (*models.MFAStepUpGrant, error)
+	// ConsumeMFAStepUpGrant atomically marks every live (unconsumed, unexpired)
+	// grant for (userID, purpose) as consumed and reports whether any were
+	// found — the single-use variant of GetActiveMFAStepUpGrant, mirroring
+	// ConsumeMFARecoveryCode/ConsumeWebAuthnSession's conditional-UPDATE shape
+	// (no read-then-write race: two near-simultaneous callers racing the same
+	// live grant can never both observe consumed=true). requireReauth is the
+	// sole intended caller, and only for models.MFAStepUpPurposeReauth — that
+	// purpose must be single-use-per-action (one re-auth proof must not
+	// authorize disabling MFA, deleting a WebAuthn credential, regenerating
+	// recovery codes, AND changing the account email all from the same proof).
+	// models.MFAStepUpPurposeRestrictedSecretRead grants are deliberately never
+	// passed here; they stay multi-use for the window's duration via the
+	// non-consuming GetActiveMFAStepUpGrant/HasActiveMFAStepUp.
+	ConsumeMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, now time.Time) (bool, error)
 	// DeleteMFAStepUpGrantsFor removes all step-up grants for userID (used on
 	// session revocation or security-incident response).
 	DeleteMFAStepUpGrantsFor(ctx context.Context, userID uint) error

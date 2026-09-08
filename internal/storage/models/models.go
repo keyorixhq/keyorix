@@ -592,12 +592,25 @@ const (
 // created per-verification and queried by purpose-specific consumers. One
 // active grant per (user, purpose) at any time is enough; expired rows are
 // left in place for audit purposes.
+//
+// ConsumedAt (nil until first consumption) makes MFAStepUpPurposeReauth grants
+// single-use: requireReauth's grant branch atomically consumes the grant it
+// accepts (ConsumeMFAStepUpGrant), so the SAME live grant cannot satisfy a
+// second, different sensitive action within its ~15-minute window — one
+// passkey touch must not open the door to disabling MFA, deleting every
+// WebAuthn credential, regenerating recovery codes, AND changing the account
+// email, all from a single proof. MFAStepUpPurposeRestrictedSecretRead grants
+// are deliberately left multi-use (read via the non-consuming
+// GetActiveMFAStepUpGrant/HasActiveMFAStepUp) — that purpose gates repeated
+// reads of the same secret for the whole window by design, unlike reauth's
+// one-grant-per-action model.
 type MFAStepUpGrant struct {
-	ID        uint             `gorm:"primarykey" json:"id"`
-	UserID    uint             `gorm:"not null;index" json:"user_id"`
-	Purpose   MFAStepUpPurpose `gorm:"not null;default:'';index" json:"purpose"`
-	ExpiresAt time.Time        `gorm:"not null" json:"expires_at"`
-	CreatedAt time.Time        `json:"created_at"`
+	ID         uint             `gorm:"primarykey" json:"id"`
+	UserID     uint             `gorm:"not null;index" json:"user_id"`
+	Purpose    MFAStepUpPurpose `gorm:"not null;default:'';index" json:"purpose"`
+	ExpiresAt  time.Time        `gorm:"not null" json:"expires_at"`
+	ConsumedAt *time.Time       `json:"consumed_at,omitempty"`
+	CreatedAt  time.Time        `json:"created_at"`
 }
 
 // BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are

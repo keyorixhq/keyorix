@@ -23,6 +23,10 @@ func (m *MockStorage) GetActiveMFAStepUpGrant(_ context.Context, _ uint, _ model
 	return nil, nil
 }
 
+func (m *MockStorage) ConsumeMFAStepUpGrant(_ context.Context, _ uint, _ models.MFAStepUpPurpose, _ time.Time) (bool, error) {
+	return false, nil
+}
+
 func (m *MockStorage) DeleteMFAStepUpGrantsFor(_ context.Context, _ uint) error {
 	return nil
 }
