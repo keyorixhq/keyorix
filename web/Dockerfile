@@ -24,7 +24,26 @@ RUN pnpm build
 
 # Production stage — nginx serves the static bundle and reverse-proxies the API
 # (/api/ and /auth/) to the backend service. See nginx.conf.
-FROM nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752 AS production
+#
+# 2026-09-08: bumped from sha256:4a73073b... (nginx 1.31.5-alpine, built
+# 2026-08-2x) to the current nginx:alpine digest below (same 1.31.5-alpine,
+# rebuilt 2026-09-02) to pick up the Alpine 3.24 openssl security update
+# (libcrypto3/libssl3 3.5.7-r0 -> 3.5.8-r0, CVE-2026-14456) baked into the
+# upstream image. That rebuild did NOT also pick up util-linux's fix
+# (libuuid stays 2.42.1-r0 in both digests) -- nginx's official image is a
+# point-in-time snapshot of whatever Alpine 3.24's main repo had at BUILD
+# time, and Alpine's own 3.24 branch had already shipped libuuid 2.42.3-r1
+# (verified directly against https://dl-cdn.alpinelinux.org/alpine/v3.24/
+# main/aarch64/APKINDEX.tar.gz) before upstream nginx's last rebuild picked
+# it up. Waiting on nginx's next rebuild has no defined timeline, so the
+# line below pulls the already-published fix from the SAME Alpine 3.24 repo
+# this base image already trusts, pinned to an exact version for the same
+# reproducibility reason the pnpm version above is pinned exactly rather
+# than left to float. Closes CVE-2026-53612/53613/53614/76642/78408/78409/
+# 78410 (util-linux, all in the libuuid sub-package this minimal image
+# actually installs -- nothing else from util-linux is present here).
+FROM nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS production
+RUN apk update && apk add --no-cache --upgrade libuuid=2.42.3-r1
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
