@@ -99,8 +99,41 @@ func receiverMethods(t *testing.T, receiver string) map[string]methodInfo {
 	return out
 }
 
-func remoteStorageMethods(t *testing.T) map[string]methodInfo { return receiverMethods(t, "*RemoteStorage") }
-func localStorageMethods(t *testing.T) map[string]methodInfo  { return receiverMethods(t, "*LocalStorage") }
+func remoteStorageMethods(t *testing.T) map[string]methodInfo {
+	return receiverMethods(t, "*RemoteStorage")
+}
+func localStorageMethods(t *testing.T) map[string]methodInfo {
+	return receiverMethods(t, "*LocalStorage")
+}
+
+// TestPopulationMatchesStubScannerFileList is the soundness check
+// receiverMethods' own doc comment promises: actualRemoteUnsupportedStubs
+// only ever looks inside remoteStorageStubSourceFiles' file list
+// (remote_unsupported_completeness_test.go's own doc comment names this its
+// "one acknowledged residual blind spot"). If a file OUTSIDE that list ever
+// gained a real *RemoteStorage method, actualRemoteUnsupportedStubs would
+// silently never see it — realProxyMethods would then wrongly classify a
+// true stub as a real proxy (or vice versa) with no test catching it. This
+// fails loudly instead, the moment a new file needs adding to that list.
+func TestPopulationMatchesStubScannerFileList(t *testing.T) {
+	allowed := map[string]bool{}
+	for _, f := range remoteStorageStubSourceFiles(t) {
+		allowed[f] = true
+	}
+	var outside []string
+	for _, info := range remoteStorageMethods(t) {
+		if !allowed[info.File] {
+			outside = append(outside, info.File+":"+info.Name)
+		}
+	}
+	sort.Strings(outside)
+	if len(outside) > 0 {
+		t.Errorf("%d *RemoteStorage method(s) declared outside remoteStorageStubSourceFiles' file list — "+
+			"actualRemoteUnsupportedStubs cannot see these files at all, so it can neither confirm nor deny "+
+			"they're stubs: %v. Add the file to remoteStorageStubSourceFiles "+
+			"(remote_unsupported_completeness_test.go).", len(outside), outside)
+	}
+}
 
 // exported reports whether a Go identifier is exported (starts with an
 // uppercase letter) — used to separate interface-facing proxy methods from
@@ -171,7 +204,7 @@ func TestReportRemoteStorageProxyPopulation(t *testing.T) {
 	t.Logf("  unexported same-package helpers (not independently-callable proxy methods): %d -> %v", len(unexportedHelpers), sortedKeys(unexportedHelpers))
 	t.Logf("  real-proxy set (exported, not structurally stub) — THIS TRANCHE'S POPULATION: %d", len(proxies))
 	t.Logf("  undetermined (resisted classification — see selection criterion above): %d -> %v", len(undetermined), undetermined)
-	t.Logf("selection criterion: exported == name[0] is uppercase; stub == actualRemoteUnsupportedStubs' structural reachesClient()==false; "+
+	t.Logf("selection criterion: exported == name[0] is uppercase; stub == actualRemoteUnsupportedStubs' structural reachesClient()==false; " +
 		"a method must land in exactly one of {stub, unexported-helper, real-proxy} or it is reported as undetermined, never silently bucketed")
 	t.Logf("total *LocalStorage methods: %d", len(locals))
 	t.Logf("methods on RemoteStorage but not LocalStorage (%d): %v", len(onlyOnRemote), onlyOnRemote)
