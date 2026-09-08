@@ -168,6 +168,13 @@ _sbom-generate:
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	@echo "→ Verifying frontend SBOM hash matches all four server SBOM links (ADR-073 decision #5)"
+	node scripts/verify-sbom-links.mjs \
+		dist/$(BINARY_SERVER)_frontend_sbom.cdx.json \
+		dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json \
+		dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json \
+		dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json \
+		dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json
 
 clean:
 	rm -rf $(BUILD_DIR) dist/
