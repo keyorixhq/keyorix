@@ -161,7 +161,7 @@ func newConformanceHarness(t *testing.T) *conformanceHarness {
 func fieldDiffs(want, got interface{}, exclude map[string]bool) []string {
 	wv := reflect.ValueOf(want)
 	gv := reflect.ValueOf(got)
-	if wv.Kind() == reflect.Ptr {
+	if wv.Kind() == reflect.Pointer {
 		if wv.IsNil() || gv.IsNil() {
 			if wv.IsNil() != gv.IsNil() {
 				return []string{"<nil-ness>"}

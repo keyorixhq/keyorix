@@ -196,6 +196,13 @@ func TestConformance_CreateSecret(t *testing.T) {
 	require.NoError(t, err)
 
 	maxReads := 7
+	// Description and Expiration were themselves found silently dropped from
+	// this exact wire path while this test was being designed (neither
+	// secretCreateWireRequest nor the handler's reqBody had a slot for
+	// either) -- fixed alongside this harness, not left as a documented gap.
+	// Exercising both here is what proves the fix, not just the ParentID
+	// class-3/5 replay this test already covered.
+	expiration := time.Now().Add(72 * time.Hour).UTC().Truncate(time.Second)
 	newSecret := func(name string) *models.SecretNode {
 		return &models.SecretNode{
 			Name:           name,
@@ -205,6 +212,8 @@ func TestConformance_CreateSecret(t *testing.T) {
 			MaxReads:       &maxReads,
 			ParentID:       &parent.ID,
 			Classification: "internal",
+			Description:    "conformance test secret",
+			Expiration:     &expiration,
 		}
 	}
 

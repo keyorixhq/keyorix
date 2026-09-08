@@ -41,6 +41,14 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		// ParentID optionally places the secret inside a folder node.
 		// The parent must exist and be a folder (IsSecret=false).
 		ParentID *uint `json:"parent_id,omitempty"`
+		// Description and Expiration (found by the #1808 differential
+		// conformance harness): this struct never had a slot for either, so
+		// no caller of this route -- direct API client or RemoteStorage
+		// proxy alike -- could ever set them; core.CreateSecretRequest and
+		// core.CreateSecret already fully support both (length-validate
+		// Description, persist Expiration), they just never reached here.
+		Description string     `json:"description,omitempty"`
+		Expiration  *time.Time `json:"expiration,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -81,6 +89,8 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		Tags:           reqBody.Tags,
 		Classification: reqBody.Classification,
 		ParentID:       reqBody.ParentID,
+		Description:    reqBody.Description,
+		Expiration:     reqBody.Expiration,
 		CreatedBy:      userCtx.Username,
 		OwnerID:        userCtx.UserID,
 	}
