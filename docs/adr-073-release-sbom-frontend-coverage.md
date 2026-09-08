@@ -431,12 +431,16 @@ frontend SBOM, keeping the two targets in the parity they already have.**
    verification must recompute the frontend SBOM's SHA-256 and assert it
    matches the hash embedded in all four server SBOMs — not merely that the
    `hashes` field is populated, which would pass a build-order bug silently.
-   **Status (corrected 2026-09-07): not implemented.** Build order is
-   correct by construction today (the Makefile generates the frontend SBOM
-   first), but no automated recompute-and-assert step exists — a future
-   build-order regression would go undetected. Filed as issue #1792. This
-   decision asserts a control that does not exist yet; treat this bullet as
-   a requirement, not a description of current behavior, until #1792 closes.
+   **Status (implemented 2026-09-08, closes #1792):**
+   `scripts/verify-sbom-links.mjs` recomputes the frontend SBOM's SHA-256
+   from the bytes on disk and asserts it matches the hash embedded in each
+   of the four server SBOMs, wired as the last step of `_sbom-generate`
+   (shared by `make sbom` and `make release`). Verified against a full,
+   real `make sbom` run, not synthetic fixtures: passes clean; fails and
+   names the file when the frontend SBOM is modified after linking
+   (embedded-vs-actual hash mismatch); fails and names the file when a
+   server SBOM's `bom`-type reference is stripped entirely (a distinct code
+   path from the mismatch case).
 6. The CLI SBOMs are unchanged in content, deliberately, because they're
    already accurate — only their count changes (1 → 4, matching the 4 CLI
    binaries), not what they describe.
