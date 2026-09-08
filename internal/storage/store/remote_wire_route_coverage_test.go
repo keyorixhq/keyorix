@@ -961,7 +961,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// literal/Sprintf/local-var and never reached this category.
 	"remote_audit.go:57":    helperReturnEntry("buildAuditFilterPath(filter)"),
 	"remote_audit.go:99":    helperReturnEntry("buildRBACAuditFilterPath(filter)"),
-	"remote_secrets.go:422": helperReturnEntry("buildSecretFilterPath(filter)"),
+	"remote_secrets.go:436": helperReturnEntry("buildSecretFilterPath(filter)"),
 	"remote_users.go:514":   helperReturnEntry("buildUserFilterPath(filter)"),
 
 	// Category: the path is a bare reference to a package-level `const`
@@ -978,7 +978,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// give extractWireCalls a constants.go-scoped constPaths map, the same
 	// shape extractRouterRoutes already has for router.go.
 	"remote_audit.go:32":    constRefEntry("apiAuditIngestPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
-	"remote_secrets.go:148": constRefEntry("apiSecretsPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
+	"remote_secrets.go:162": constRefEntry("apiSecretsPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
 	"remote_users.go:225":   constRefEntry("apiUsersPath (internal/storage/store/constants.go), a package const declared outside this call's function body"),
 }
 

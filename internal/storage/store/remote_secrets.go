@@ -66,6 +66,18 @@ type secretCreateWireRequest struct {
 	ParentID       *uint       `json:"parent_id,omitempty"`
 	Metadata       models.JSON `json:"metadata,omitempty"`
 	Classification string      `json:"classification,omitempty"`
+	// Description and Expiration (found by the #1808 differential conformance
+	// harness while designing its CreateSecret seed test, not by any historical
+	// incident): this struct omitted both entirely, so a caller-supplied
+	// description or expiration was silently dropped on every RemoteStorage
+	// create, landing at its zero value server-side regardless of what the
+	// caller intended -- the same "struct-typed parameter referenced in full,
+	// but only some of its fields copied to the wire type" shape as the
+	// AllowedCIDRs/ParentID defects. Fixing this side alone is not sufficient;
+	// see server/http/handlers/secrets_crud.go's reqBody, which independently
+	// omitted the matching fields on the decode side.
+	Description string     `json:"description,omitempty"`
+	Expiration  *time.Time `json:"expiration,omitempty"`
 }
 
 func newSecretCreateWireRequest(secret *models.SecretNode, plaintextValue string) secretCreateWireRequest {
@@ -79,6 +91,8 @@ func newSecretCreateWireRequest(secret *models.SecretNode, plaintextValue string
 		ParentID:       secret.ParentID,
 		Metadata:       secret.Metadata,
 		Classification: secret.Classification,
+		Description:    secret.Description,
+		Expiration:     secret.Expiration,
 	}
 }
 
