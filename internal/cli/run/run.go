@@ -343,28 +343,83 @@ func setEnvKey(result map[string]string, envKeySources map[string]string, name, 
 	return nil
 }
 
-// dangerousEnvVarNames names environment variables that affect dynamic-linker,
-// interpreter, or shell behavior for the CHILD PROCESS `keyorix run` launches — not
-// Keyorix's own credentials (see sensitiveEnvSuffixes below, a separate concern).
-// #G39: toEnvKey derives the child's env var keys directly from a project secret's
-// NAME (uppercased, non-alphanumeric → '_'), with no filtering at all — a secret
-// named "path" or "ld_preload" becomes an env key that collides with (and, since
-// buildChildEnv appends the injected secrets LAST, overrides) one of these,
-// letting a project-level secret WRITER hijack or control code execution in
-// whatever `keyorix run` launches, without ever needing direct system access
-// themselves. Matches the detection_idea's own required-coverage list exactly.
-var dangerousEnvVarNames = map[string]bool{
-	"LD_PRELOAD":      true,
-	"BASH_ENV":        true,
-	"NODE_OPTIONS":    true,
-	"PATH":            true,
-	"PERL5OPT":        true,
-	"RUBYOPT":         true,
-	"GIT_SSH_COMMAND": true,
+// dangerousEnvPrefixes and dangerousEnvExact together replace what used to be a
+// single exact-name map (dangerousEnvVarNames). That map was itself the #G39 fix
+// for toEnvKey deriving child env keys straight from an untrusted secret NAME with
+// no filtering at all — but an exact-name list in a code-execution path is the
+// same defect shape one layer down: it fails open on every name it doesn't happen
+// to enumerate. Verification against a real dylib-injection PoC (2026-09-09,
+// CLI-RUN-001 release-gate re-check) confirmed this: DYLD_INSERT_LIBRARIES —
+// macOS's LD_PRELOAD equivalent, named in the ORIGINAL finding's own exploit
+// scenario — was never in the list, and a secret literally named
+// "dyld_insert_libraries" reached the child process and ran an attacker
+// constructor. The fix is not "add DYLD_INSERT_LIBRARIES" (that just reproduces
+// the same gap for the next sibling — LD_LIBRARY_PATH, GCONV_PATH, ... — one CVE
+// at a time); it's covering the FAMILY each dangerous name belongs to.
+//
+// dangerousEnvPrefixes: any env key starting with one of these is dropped.
+//   - LD_      the ELF/Mach-O dynamic linker's whole tunable surface (LD_PRELOAD,
+//              LD_LIBRARY_PATH, LD_AUDIT, ...) — linker behavior, not app config.
+//   - DYLD_    macOS dyld's equivalent of LD_ (DYLD_INSERT_LIBRARIES,
+//              DYLD_LIBRARY_PATH, ...) — the exact family the live PoC used.
+//   - NODE_    Node.js process-wide behavior flags (NODE_OPTIONS, NODE_PATH, ...).
+//              Deliberate tradeoff: this also blocks the legitimate NODE_ENV: a
+//              project secret writer controlling arbitrary NODE_OPTIONS content
+//              outweighs a launched Node app not getting NODE_ENV from a secret
+//              (operators can still set NODE_ENV as an ordinary shell/CI env var —
+//              `keyorix run` inherits the parent environment unchanged; only
+//              secret-derived keys are filtered here).
+//   - PYTHON   CPython interpreter startup/path control (PYTHONPATH,
+//              PYTHONSTARTUP, PYTHONHOME, ...). No trailing '_': some real names
+//              (PYTHONDONTWRITEBYTECODE) don't have one after PYTHON.
+//   - PERL5    Perl 5's interpreter option/library-path family (PERL5OPT,
+//              PERL5LIB). No trailing '_', matching Perl's own naming.
+//   - BASH_    bash's own startup-file control (BASH_ENV and siblings).
+//   - GCONV_   glibc's character-conversion module loader (GCONV_PATH) — a
+//              second, less-known arbitrary-code-loading primitive alongside
+//              LD_PRELOAD.
+//   - MALLOC_  glibc/macOS malloc tunables (MALLOC_CHECK_, MALLOC_CONF, ...),
+//              usable for heap-exploitation primitives.
+var dangerousEnvPrefixes = []string{
+	"LD_", "DYLD_", "NODE_", "PYTHON", "PERL5", "BASH_", "GCONV_", "MALLOC_",
+}
+
+// dangerousEnvExact names variables that control shell/process behavior directly
+// but don't belong to any linker/interpreter prefix family above:
+//   - IFS    shell field-splitting; corrupting it can turn plain arguments into
+//            separate words/code.
+//   - ENV    sh's (non-bash) startup-file equivalent of BASH_ENV.
+//   - HOME   many tools (git, ssh, npm, ...) resolve config/credentials relative
+//            to HOME; redirecting it can hijack that resolution.
+//   - SHELL  some tools shell out via `$SHELL -c ...` rather than a fixed
+//            interpreter.
+//   - PATH   executable resolution order for the whole child process tree.
+//
+// RUBYOPT and GIT_SSH_COMMAND (in the old exact list) are still covered: neither
+// has siblings that would justify a prefix family of their own, so they stay
+// exact entries rather than being dropped.
+var dangerousEnvExact = map[string]bool{
+	"IFS": true, "ENV": true, "HOME": true, "SHELL": true, "PATH": true,
+	"RUBYOPT": true, "GIT_SSH_COMMAND": true,
+}
+
+// isDangerousEnvKey reports whether key is a reserved dynamic-linker/
+// interpreter/shell control variable — see dangerousEnvPrefixes and
+// dangerousEnvExact above for the two ways a key can match.
+func isDangerousEnvKey(key string) bool {
+	if dangerousEnvExact[key] {
+		return true
+	}
+	for _, prefix := range dangerousEnvPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // dropDangerousEnvKeys removes any entry keyed on a dynamic-linker/interpreter/
-// shell control variable name (dangerousEnvVarNames) — envVars is already keyed by
+// shell control variable name (isDangerousEnvKey) — envVars is already keyed by
 // the DERIVED env var key (toEnvKey(secret.Name)), not the raw secret name; see
 // fetchSecretsEmbedded/fetchSecretsRemote. Warns on stderr for each one dropped so
 // the operator can see why a secret they expected didn't reach the child process
@@ -373,7 +428,7 @@ var dangerousEnvVarNames = map[string]bool{
 func dropDangerousEnvKeys(envVars map[string]string) map[string]string {
 	out := make(map[string]string, len(envVars))
 	for key, value := range envVars {
-		if dangerousEnvVarNames[key] {
+		if isDangerousEnvKey(key) {
 			fmt.Fprintf(os.Stderr, "⚠️  a secret maps to the reserved environment variable %q — refusing to inject it (would override %s in the launched process)\n", key, key)
 			continue
 		}
