@@ -677,7 +677,7 @@ func (c *KeyorixCore) groupGrantSoDContext(ctx context.Context, roleID uint) (po
 // policies/adding come from groupGrantSoDContext, called by the caller BEFORE
 // it decides whether to acquire member locks at all — this function no
 // longer re-derives them (or re-applies their early-outs) itself.
-func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, members []*models.User, policies []*models.SoDPolicy, adding map[string]bool) error {
+func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, members []*models.User, policies []*models.SoDPolicy, adding map[string]bool) error { // nosemgrep: keyorix-unbounded-bulk-slice-param -- members is withGroupMemberSoDLocks's own ListGroupMembers(ctx, groupID) result (that group's actual membership), not a raw client-supplied array in one request
 	for _, m := range members {
 		if !m.IsActive || c.isGlobalAdminRoleName(ctx, m.ID) != "" {
 			continue
