@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -207,15 +208,29 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 		return err
 	}
 	// #1646: see AssignUserRole's identical WithNamedLock use.
+	// #1780: the group key alone does not serialize against a concurrent DIRECT
+	// grant to one of this group's members — see withGroupMemberSoDLocks.
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("group", groupID), func(ctx context.Context) error {
-		if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
+		write := func(ctx context.Context) error {
+			if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+			c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
+			return nil
+		}
+		policies, adding, needed, err := c.groupGrantSoDContext(ctx, roleID)
+		if err != nil {
 			return err
 		}
-		if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		if !needed {
+			return write(ctx)
 		}
-		c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
-		return nil
+		return c.withGroupMemberSoDLocks(ctx, groupID, func(ctx context.Context, members []*models.User) error {
+			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
+				return err
+			}
+			return write(ctx)
+		})
 	})
 }
 
@@ -375,6 +390,67 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 // unrelated principals' grants contending on the same lock.
 func sodGrantLockKey(principalType string, principalID uint) string {
 	return fmt.Sprintf("sod-grant:%s:%d", principalType, principalID)
+}
+
+// withGroupMemberSoDLocks lists groupID's current members, then acquires each
+// active member's sodGrantLockKey("user", ...) lock — sorted ascending by
+// ID — before invoking fn with that exact membership snapshot.
+//
+// #1780: AssignRoleToGroup/AssignGroupRoleWithExpiry already hold
+// sodGrantLockKey("group", groupID), which serializes two concurrent grants
+// to the SAME group against each other — but requireGroupGrantNoSoDViolation
+// evaluates each MEMBER's held-permission set, a different resource the group
+// key does not cover. A concurrent DIRECT grant to one of those members
+// (AssignUserRole, locked on sodGrantLockKey("user", memberID)) can read that
+// member's pre-grant state as clean and commit while this call's own
+// check-then-write is still in flight, reproducing the exact cross-replica
+// SoD bypass #1646 closed for two direct grants. Taking each member's lock
+// for the duration of this call closes it the same way, without widening the
+// lock to unrelated principals the way a single coarse SoD-wide key would.
+//
+// fn MUST use the membership snapshot passed to it for its own SoD check
+// (requireGroupGrantNoSoDViolation takes it as a parameter for exactly this
+// reason) rather than re-listing membership — a second listing could observe
+// a member added after this snapshot was taken and lock set acquired, which
+// would then be checked without its own lock held.
+//
+// Sorting ascending is the deadlock-avoidance discipline: any two call chains
+// that need to lock an overlapping set of member/user keys — two
+// group-role grants to different groups sharing a member, in particular —
+// always acquire them in the same relative order this way, so one chain can
+// only ever block waiting for the other to finish, never form a cycle.
+func (c *KeyorixCore) withGroupMemberSoDLocks(ctx context.Context, groupID uint, fn func(ctx context.Context, members []*models.User) error) error {
+	members, err := c.storage.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to list group members: %w", err)
+	}
+	ids := make([]uint, 0, len(members))
+	for _, m := range members {
+		if m.IsActive {
+			ids = append(ids, m.ID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return c.withOrderedUserSoDLocks(ctx, ids, func(ctx context.Context) error {
+		return fn(ctx, members)
+	})
+}
+
+// withOrderedUserSoDLocks acquires sodGrantLockKey("user", id) for each id in
+// ids IN ORDER, nesting WithNamedLock calls one per key. ids MUST already be
+// sorted ascending (see withGroupMemberSoDLocks) — this function does not sort
+// them itself, since a caller locking a single already-known ID (none exist
+// today, but a future one might) has no list to sort. WithNamedLock's own
+// per-call-chain connection reuse (internal/storage/store/local_named_lock.go)
+// means nesting N distinct keys this way costs exactly one pooled connection,
+// not one per key, on the Postgres path.
+func (c *KeyorixCore) withOrderedUserSoDLocks(ctx context.Context, ids []uint, fn func(ctx context.Context) error) error {
+	if len(ids) == 0 {
+		return fn(ctx)
+	}
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("user", ids[0]), func(ctx context.Context) error {
+		return c.withOrderedUserSoDLocks(ctx, ids[1:], fn)
+	})
 }
 
 // AssignUserRole assigns a role to a user at the given scope and records an RBAC
