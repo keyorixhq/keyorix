@@ -456,10 +456,20 @@ func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase str
 //     user.MFAEnabled — never against an in-flight, not-yet-activated
 //     enrolment secret, which an attacker who just called
 //     BeginMFAEnrollment/BeginWebAuthnRegistration themselves would already
-//     know). Anti-replay via MarkTOTPStepUsed, same as VerifyMFACredentials.
+//     know). Anti-replay via MarkTOTPStepUsed, same as VerifyMFACredentials —
+//     this branch never persists a grant at all, so it is inherently
+//     single-use per call: MarkTOTPStepUsed marks the matched time-step used
+//     immediately, and a second requireReauth call presenting the identical
+//     code fails this branch outright (falls through toward the password
+//     branch below, empty-handed). A TOTP-enrolled account therefore already
+//     needs a FRESH code for every subsequent sensitive action — there is no
+//     separate TOTP "step-up grant" mechanism that mints a reusable
+//     MFAStepUpPurposeReauth token; VerifyMFAStepUp exists but mints the
+//     distinct MFAStepUpPurposeRestrictedSecretRead purpose for the
+//     classification gate only, and is never consulted here.
 //  2. codeOrPassword is the correct account password AND the user separately
 //     holds an active MFA step-up grant with Purpose ==
-//     MFAStepUpPurposeReauth (HasActiveMFAStepUp) — an independent,
+//     MFAStepUpPurposeReauth (ConsumeMFAStepUpGrant) — an independent,
 //     time-limited proof that they recently re-verified their second factor
 //     FOR THIS SPECIFIC PURPOSE. A passkey assertion has no typable "code" to
 //     hand this function directly, so a WebAuthn-only account proves this via
@@ -472,6 +482,14 @@ func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase str
 //     leaked bearer token (plus the password) ride the account owner's own
 //     earlier login to authorize an account-security-factor takeover, which is
 //     exactly the confused-deputy bug this purpose separation closes.
+//     ConsumeMFAStepUpGrant atomically consumes the grant it accepts (unlike
+//     the read-only HasActiveMFAStepUp used by the restricted-secret-read
+//     gate), so this is also single-use: the SAME live grant satisfies at
+//     most ONE sensitive action, never a second, different one within its
+//     window — closing the blast radius a purely-additive Purpose field left
+//     open (one passkey touch must not open a 15-minute window good for
+//     disabling MFA, deleting every WebAuthn credential, regenerating
+//     recovery codes, AND changing the account email, all chained together).
 //
 // With no second factor enrolled at all, the account password alone remains
 // sufficient re-auth — unchanged from before this check existed.
@@ -501,13 +519,24 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
 		if !secondFactorEnrolled {
 			ok = true
-		} else if hasGrant, gerr := c.HasActiveMFAStepUp(ctx, user.ID, models.MFAStepUpPurposeReauth); gerr == nil && hasGrant {
+		} else if consumed, gerr := c.storage.ConsumeMFAStepUpGrant(ctx, user.ID, models.MFAStepUpPurposeReauth, c.authEffectiveNow()); gerr == nil && consumed {
 			// The password is correct AND the caller independently proved they
 			// still hold the enrolled second factor recently, FOR THIS PURPOSE —
 			// password alone would not be enough on its own, but password + a
 			// fresh, genuine reauth-purpose step-up grant is equivalent proof to
 			// supplying the code directly. A restricted-secret-read-purpose grant
 			// (minted ambiently by login) does not match and is rejected here.
+			//
+			// ConsumeMFAStepUpGrant (not the non-consuming HasActiveMFAStepUp) is
+			// deliberate: accepting the grant here also atomically marks it
+			// consumed (a conditional UPDATE ... WHERE consumed_at IS NULL,
+			// mirroring ConsumeMFARecoveryCode/ConsumeWebAuthnSession), so the
+			// SAME live grant from one passkey touch or TOTP-adjacent reauth
+			// cannot go on to satisfy a SECOND, different sensitive action within
+			// its ~15-minute window. Without this, one proof would open a single
+			// window good for disabling MFA, deleting every WebAuthn credential,
+			// regenerating recovery codes, AND changing the account email, all
+			// chained off the same grant.
 			ok = true
 		}
 	}

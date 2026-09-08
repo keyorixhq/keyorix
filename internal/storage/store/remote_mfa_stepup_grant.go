@@ -84,6 +84,21 @@ func (rs *RemoteStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uin
 	return decodeMFAStepUpGrantResponse(resp.Data)
 }
 
+// ConsumeMFAStepUpGrant is not supported in remote storage, mirroring
+// CreateMFAStepUpGrant above: FinishWebAuthnReauth (the ONLY minting site for
+// models.MFAStepUpPurposeReauth grants, the only purpose this method is ever
+// called for) already returns errUnsupportedRemote via CreateMFAStepUpGrant,
+// so no Reauth-purpose grant can ever exist to consume on a storage.type:
+// remote spoke in the first place — requireReauth (this method's sole
+// intended caller) is itself only reachable from server/http/handlers, which
+// per validateRemoteStorageNotServer (internal/config/config.go) can never be
+// wired to RemoteStorage in any deployment. Returns errUnsupportedRemote like
+// every other known-unsupported RemoteStorage operation (see remote_auth.go's
+// package doc).
+func (rs *RemoteStorage) ConsumeMFAStepUpGrant(_ context.Context, _ uint, _ models.MFAStepUpPurpose, _ time.Time) (bool, error) {
+	return false, remoteUnsupported("ConsumeMFAStepUpGrant")
+}
+
 // DeleteMFAStepUpGrantsFor is not supported in remote storage (#1480). No
 // internal/core caller ever existed for it — server/main.go's own scheduled
 // pruning comment names this directly: "DeleteMFAStepUpGrantsFor exists but

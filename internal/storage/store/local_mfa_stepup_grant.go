@@ -22,7 +22,7 @@ func (ls *LocalStorage) CreateMFAStepUpGrant(ctx context.Context, grant *models.
 func (ls *LocalStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, now time.Time) (*models.MFAStepUpGrant, error) {
 	var g models.MFAStepUpGrant
 	err := ls.db.WithContext(ctx).
-		Where("user_id = ? AND purpose = ? AND expires_at > ?", userID, purpose, now.UTC()).
+		Where("user_id = ? AND purpose = ? AND consumed_at IS NULL AND expires_at > ?", userID, purpose, now.UTC()).
 		Order("expires_at DESC").
 		First(&g).Error
 	if err != nil {
@@ -32,6 +32,28 @@ func (ls *LocalStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint
 		return nil, err
 	}
 	return &g, nil
+}
+
+// ConsumeMFAStepUpGrant atomically marks every live (unconsumed, unexpired)
+// grant for (userID, purpose) as consumed via a single conditional UPDATE —
+// the same no-read-then-write-race shape as ConsumeMFARecoveryCode/
+// ConsumeWebAuthnSession, so two near-simultaneous callers racing the same
+// live grant can never both see RowsAffected > 0. Reports whether any grant
+// was found (and thus consumed).
+//
+// Marking ALL matching rows (not just the newest) rather than selecting one
+// specific row is deliberate: there should only ever be one live
+// MFAStepUpPurposeReauth grant per user in practice (each FinishWebAuthnReauth
+// mints a fresh one), but if more than one somehow coexists, single-use means
+// none of them may go on to authorize a second action either.
+func (ls *LocalStorage) ConsumeMFAStepUpGrant(ctx context.Context, userID uint, purpose models.MFAStepUpPurpose, now time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.MFAStepUpGrant{}).
+		Where("user_id = ? AND purpose = ? AND consumed_at IS NULL AND expires_at > ?", userID, purpose, now.UTC()).
+		Update("consumed_at", now.UTC())
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 func (ls *LocalStorage) DeleteMFAStepUpGrantsFor(ctx context.Context, userID uint) error {

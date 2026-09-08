@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,4 +84,127 @@ func TestMFAStepUpGrant_GetActiveNoneReturnsNilNil(t *testing.T) {
 func TestMFAStepUpGrant_DeleteForNoneIsNoop(t *testing.T) {
 	ls := newMFAStepUpGrantStore(t)
 	require.NoError(t, ls.DeleteMFAStepUpGrantsFor(context.Background(), 404))
+}
+
+// TestConsumeMFAStepUpGrant_FirstCallSucceeds_SecondCallFails is the single-use
+// regression at the storage layer (follow-up to #1775): the atomic conditional
+// UPDATE ... WHERE consumed_at IS NULL must consume the grant on its first call
+// and refuse every subsequent one, mirroring ConsumeMFARecoveryCode/
+// ConsumeWebAuthnSession/ConsumeSSOLoginState's single-use shape.
+func TestConsumeMFAStepUpGrant_FirstCallSucceeds_SecondCallFails(t *testing.T) {
+	ls := newMFAStepUpGrantStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	require.NoError(t, ls.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+		UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: now.Add(15 * time.Minute),
+	}))
+
+	consumed, err := ls.ConsumeMFAStepUpGrant(ctx, 1, models.MFAStepUpPurposeReauth, now)
+	require.NoError(t, err)
+	assert.True(t, consumed, "a live, unconsumed grant must be consumed on first call")
+
+	// The grant is no longer reported active, whether read via the consuming or
+	// the non-consuming lookup.
+	consumed2, err := ls.ConsumeMFAStepUpGrant(ctx, 1, models.MFAStepUpPurposeReauth, now)
+	require.NoError(t, err)
+	assert.False(t, consumed2, "a second consume of the SAME already-consumed grant must fail -- this is exactly the single-use fix")
+
+	g, err := ls.GetActiveMFAStepUpGrant(ctx, 1, models.MFAStepUpPurposeReauth, now)
+	require.NoError(t, err)
+	assert.Nil(t, g, "a consumed grant must not be reported active by the non-consuming lookup either")
+}
+
+// TestConsumeMFAStepUpGrant_ExpiredGrantNotConsumed confirms the atomic UPDATE's
+// expiry predicate is honored: an expired grant is never consumable, even though
+// its row still exists (kept for audit purposes, per PruneMFAStepUpGrants).
+func TestConsumeMFAStepUpGrant_ExpiredGrantNotConsumed(t *testing.T) {
+	ls := newMFAStepUpGrantStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	require.NoError(t, ls.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+		UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: now.Add(-time.Minute),
+	}))
+
+	consumed, err := ls.ConsumeMFAStepUpGrant(ctx, 1, models.MFAStepUpPurposeReauth, now)
+	require.NoError(t, err)
+	assert.False(t, consumed, "an expired grant must never be consumable")
+}
+
+// TestConsumeMFAStepUpGrant_WrongPurposeNotConsumed confirms purpose is an exact
+// match, not a filter of convenience -- consuming for Reauth must never touch (or
+// report success against) a RestrictedSecretRead-purpose grant, and vice versa.
+func TestConsumeMFAStepUpGrant_WrongPurposeNotConsumed(t *testing.T) {
+	ls := newMFAStepUpGrantStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	require.NoError(t, ls.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+		UserID: 1, Purpose: models.MFAStepUpPurposeRestrictedSecretRead, ExpiresAt: now.Add(15 * time.Minute),
+	}))
+
+	consumed, err := ls.ConsumeMFAStepUpGrant(ctx, 1, models.MFAStepUpPurposeReauth, now)
+	require.NoError(t, err)
+	assert.False(t, consumed, "a RestrictedSecretRead-purpose grant must not satisfy a Reauth-purpose consume")
+
+	// The RestrictedSecretRead grant itself must remain untouched (still active,
+	// still unconsumed) -- confirms the UPDATE's WHERE clause never matched it.
+	g, err := ls.GetActiveMFAStepUpGrant(ctx, 1, models.MFAStepUpPurposeRestrictedSecretRead, now)
+	require.NoError(t, err)
+	require.NotNil(t, g, "the wrong-purpose grant must remain active -- untouched by the mismatched consume attempt")
+}
+
+// TestConsumeMFAStepUpGrant_NoneReturnsFalseNil mirrors
+// TestMFAStepUpGrant_GetActiveNoneReturnsNilNil: no matching row is a normal,
+// non-error outcome.
+func TestConsumeMFAStepUpGrant_NoneReturnsFalseNil(t *testing.T) {
+	ls := newMFAStepUpGrantStore(t)
+	consumed, err := ls.ConsumeMFAStepUpGrant(context.Background(), 99, models.MFAStepUpPurposeReauth, time.Now())
+	require.NoError(t, err)
+	assert.False(t, consumed)
+}
+
+// TestConcurrency_ConsumeMFAStepUpGrant_OnlyOneWins is ConsumeSSOLoginState's
+// #321 regression, repeated for MFAStepUpGrant: two near-simultaneous
+// requireReauth calls (e.g. two browser tabs racing to disable MFA and to
+// regenerate recovery codes off the SAME live grant) must not both observe the
+// grant as live. A naive read-then-write ("is there an active grant?" followed
+// by a separate "mark it consumed") would let both racers pass the read before
+// either write lands. ConsumeMFAStepUpGrant's single conditional UPDATE (WHERE
+// consumed_at IS NULL) closes that window -- only the racer whose UPDATE
+// actually affects a row may proceed. Uses concurrentDB (file-backed SQLite,
+// genuine multi-connection contention), not a shared :memory: connection, which
+// would serialize every statement and mask the race entirely.
+func TestConcurrency_ConsumeMFAStepUpGrant_OnlyOneWins(t *testing.T) {
+	db := concurrentDB(t)
+	require.NoError(t, db.AutoMigrate(&models.MFAStepUpGrant{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	require.NoError(t, ls.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+		UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: now.Add(15 * time.Minute),
+	}))
+
+	const racers = 32
+	var succeeded atomic.Int64
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			consumed, err := ls.ConsumeMFAStepUpGrant(context.Background(), 1, models.MFAStepUpPurposeReauth, now)
+			require.NoError(t, err)
+			if consumed {
+				succeeded.Add(1)
+			}
+		}()
+	}
+	close(start) // release every racer at once
+	wg.Wait()
+
+	assert.Equal(t, int64(1), succeeded.Load(), "exactly one concurrent consume may win -- never zero, never more than one")
 }

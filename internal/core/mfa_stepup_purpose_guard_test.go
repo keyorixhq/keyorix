@@ -9,12 +9,12 @@
 // bug arose.
 //
 // This is an AST sweep (go/parser, not string/regex matching) over every
-// non-test *.go file in the repository for a call to HasActiveMFAStepUp or
-// GetActiveMFAStepUpGrant -- the two functions that turn a stored grant row
-// into an authorization decision (see internal/core/mfa_stepup.go and
-// internal/core/storage/interface.go). Both share the same argument shape
-// (ctx, userID, purpose, ...), so the purpose argument is always the third
-// (index 2).
+// non-test *.go file in the repository for a call to HasActiveMFAStepUp,
+// GetActiveMFAStepUpGrant, or ConsumeMFAStepUpGrant -- the functions that turn
+// a stored grant row into an authorization decision (see
+// internal/core/mfa_stepup.go and internal/core/storage/interface.go). All
+// three share the same argument shape (ctx, userID, purpose, ...), so the
+// purpose argument is always the third (index 2).
 //
 // Every call site found must be in mfaStepUpPurposeAllowlist below with a
 // written justification, matching the house convention (see
@@ -56,11 +56,17 @@ import (
 )
 
 // mfaStepUpGuardedFuncs is the set of functions this sweep treats as turning
-// a stored MFAStepUpGrant into an authorization decision. Both take
+// a stored MFAStepUpGrant into an authorization decision. All three take
 // (ctx, userID, purpose, ...) -- the purpose argument is always at index 2.
+// ConsumeMFAStepUpGrant (added alongside requireReauth's single-use fix, a
+// follow-up to #1775) is the atomic-consume sibling of GetActiveMFAStepUpGrant
+// / HasActiveMFAStepUp -- it makes exactly the same purpose-confusion mistake
+// possible if a future call site passed the wrong purpose constant, so it must
+// be swept identically.
 var mfaStepUpGuardedFuncs = map[string]bool{
 	"HasActiveMFAStepUp":      true,
 	"GetActiveMFAStepUpGrant": true,
+	"ConsumeMFAStepUpGrant":   true,
 }
 
 // mfaPurposeArgIndex is the zero-based index of the purpose argument shared
@@ -83,14 +89,17 @@ type mfaStepUpAllowEntry struct {
 // TestMFAStepUpConsumersUseExpectedPurpose -- exactly the shape a future
 // "accept any live grant" regression would take.
 var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
-	"internal/core/mfa.go:504": {
+	"internal/core/mfa.go:522": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
 		reason: "requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
 			"Must reject the ambient MFAStepUpPurposeRestrictedSecretRead grant a plain login mints -- " +
 			"accepting it here is the exact confused-deputy shape this fix closed (a leaked bearer token " +
 			"plus the password would otherwise ride the account owner's own earlier login into an " +
-			"account takeover).",
+			"account takeover). Now calls the atomic-consume ConsumeMFAStepUpGrant instead of the " +
+			"read-only HasActiveMFAStepUp (single-use reauth grant fix, follow-up to #1775) -- accepting " +
+			"the grant here also invalidates it, so it cannot go on to authorize a second, different " +
+			"sensitive action within the same window.",
 	},
 	"internal/core/classification_gate.go:177": {
 		expectedPurpose: "MFAStepUpPurposeRestrictedSecretRead",
