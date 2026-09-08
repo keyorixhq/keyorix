@@ -1,6 +1,8 @@
 // remote_proxy_correctness_checks_test.go — red-then-green validation for
-// each of the 4 static checks in remote_proxy_correctness_audit_test.go
-// (issue #1786 part 2, step 3).
+// each of the 5 static checks in remote_proxy_correctness_audit_test.go
+// (checks 1-4: issue #1786 part 2, step 3; check 5: issue #1786 part 3,
+// added directly from a confirmed historical defect — see blankParams' own
+// doc comment).
 //
 // Every check below is exercised against a small in-memory source snippet —
 // never a real file — so validating the checker never risks leaving planted
@@ -243,5 +245,43 @@ func TestCheck4_SilentZeroReturn_SilentOnCorrect(t *testing.T) {
 	findings := checksFor(t, src)
 	if hasCheck(findings, "silent-zero-return") {
 		t.Fatalf("expected no silent-zero-return finding — both guards return a real error, got: %+v", findings)
+	}
+}
+
+// --- Check 5: blank-identifier parameters (issue #1786 part 3) ---
+
+func TestCheck5_BlankIdentifierParam_FiresOnViolation(t *testing.T) {
+	src := checkSnippetPreamble + `func (rs *RemoteStorage) BlankIdentifierParamRed(ctx context.Context, id uint, _ string) (string, error) {
+	resp, err := rs.client.Get(ctx, fmt.Sprintf("/api/v1/thing/%d", id))
+	if err != nil {
+		return "", fmt.Errorf("failed: %w", err)
+	}
+	if !resp.Success {
+		return "", fmt.Errorf("failed")
+	}
+	return "", nil
+}
+`
+	findings := checksFor(t, src)
+	if !hasCheck(findings, "blank-identifier-param") {
+		t.Fatalf("expected a blank-identifier-param finding — the third parameter is declared _, got: %+v", findings)
+	}
+}
+
+func TestCheck5_BlankIdentifierParam_SilentOnCorrect(t *testing.T) {
+	src := checkSnippetPreamble + `func (rs *RemoteStorage) BlankIdentifierParamGreen(ctx context.Context, id uint, filter string) (string, error) {
+	resp, err := rs.client.Get(ctx, fmt.Sprintf("/api/v1/thing/%d?filter=%s", id, filter))
+	if err != nil {
+		return "", fmt.Errorf("failed: %w", err)
+	}
+	if !resp.Success {
+		return "", fmt.Errorf("failed")
+	}
+	return "", nil
+}
+`
+	findings := checksFor(t, src)
+	if hasCheck(findings, "blank-identifier-param") {
+		t.Fatalf("expected no blank-identifier-param finding — every parameter is named, got: %+v", findings)
 	}
 }

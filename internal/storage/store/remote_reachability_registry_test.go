@@ -11,7 +11,7 @@
 // without re-review; this codebase has a concrete instance of exactly that
 // (RequireNodeCredentialOrPermission's node arm, ADR-085). This registry
 // closes the gap: every currently-registered RemoteStorage stub method has an
-// entry here, and TestEveryStructuralStubHasReachabilityVerdict below fails
+// entry here, and TestRemoteUnsupportedStubsHaveReachabilityVerdicts below fails
 // the build the moment a NEW stub-shaped method is added without one — same
 // discipline as remote_unsupported_completeness_test.go's own guard, and the
 // same "no third state, no silent additions" shape as scripts/ci-test-legs.sh's
@@ -34,7 +34,7 @@
 // population, remote_unsupported_completeness_test.go) never includes them in
 // the first place -- they are not stub-shaped by the structural definition
 // this whole registry exists to track. Adding a map entry for a genuinely
-// non-stub method breaks TestEveryStructuralStubHasReachabilityVerdict's own
+// non-stub method breaks TestRemoteUnsupportedStubsHaveReachabilityVerdicts's own
 // staleness check below (verified empirically: a probe entry for
 // CreateSoDPolicy fails with "no longer correspond[s] to a structural stub").
 // Every other correctly-implemented remote_*.go proxy file (remote_invitations.go,
@@ -298,15 +298,45 @@ var remoteReachabilityRegistry = map[string]reachabilityEntry{
 	"WithTransaction":                           {reachabilityLive, "G80 158-method classification pass: Reached from the same `user update --active=false` path. No real cross-call atomicity (each sub-call is its own HTTP round trip) but verified safe for this one confirmed live use — internal/core/users.go's own doc comment already reasons through exactly this remote-mode scenario. Standing architectural limitation, not a fix target. #1589."},
 }
 
-// TestEveryStructuralStubHasReachabilityVerdict is Task 4's guard: every
+// TestRemoteUnsupportedStubsHaveReachabilityVerdicts is Task 4's guard: every
 // method actualRemoteUnsupportedStubs finds (the same structural-stub
 // population remoteUnsupportedAllowlist's own completeness guard uses) must
 // have an entry in remoteReachabilityRegistry, and every registry entry must
 // still correspond to a real structural stub — no third state, no silent
 // additions, same shape as that guard and as scripts/ci-test-legs.sh's C5
 // ratchet.
-func TestEveryStructuralStubHasReachabilityVerdict(t *testing.T) {
+//
+// Named (and renamed from TestEveryStructuralStubHasReachabilityVerdict,
+// issue #1786) to put the population in the SUBJECT position rather than
+// behind "Every": "RemoteUnsupportedStubs" is this file's population, full
+// stop — a name built as "Every X Has Y" reads, to anyone skimming past it
+// without the header, as a claim about coverage of X in general, with the
+// qualifier easy to skate past. The population is genuinely narrow — see the
+// denominator this test logs below — and real (non-stub) RemoteStorage
+// proxies, the ones actually doing work, get NO reachability verdict from
+// this file at all; that is correct scope, not a gap, but a name shaped like
+// "every method" invites exactly the wrong inference. Mirrors
+// TestRemoteUnsupportedStubsAreAllowlisted's own naming shape
+// (remote_unsupported_completeness_test.go) for the identical reason: same
+// population, same "subject first" convention.
+func TestRemoteUnsupportedStubsHaveReachabilityVerdicts(t *testing.T) {
+	total := remoteStorageMethods(t)
 	actual := actualRemoteUnsupportedStubs(t)
+	proxies := realProxyMethods(t)
+
+	// Denominator computed at runtime, not hand-copied into this comment —
+	// reused from remote_proxy_correctness_audit_test.go's own population
+	// derivation (remoteStorageMethods/realProxyMethods) rather than
+	// re-derived here: two independent counts of the same population would
+	// drift, exactly the failure mode issue #1786 itself was filed over (its
+	// own "158 stubs, ~209 real proxies, 418 total" were already wrong when
+	// filed — see TestReportRemoteStorageProxyPopulation for the corrected,
+	// live figures).
+	t.Logf("=== denominator: this guard covers ONLY structurally-stub RemoteStorage methods ===")
+	t.Logf("total RemoteStorage methods: %d", len(total))
+	t.Logf("  structurally-stub (this guard's population — every one gets a reachability verdict below): %d", len(actual))
+	t.Logf("  real proxies (NOT this guard's population — NO reachability verdict exists here for these; "+
+		"see remote_proxy_correctness_audit_test.go for real-proxy correctness checks): %d", len(proxies))
 
 	var missing []string
 	for name := range actual {
