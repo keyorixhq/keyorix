@@ -26,6 +26,63 @@
 // is the same lesson remote_unsupported_widened_registry_test.go already
 // paid for once (five distinct stub-signaling shapes, found by cross-checking
 // two independent scans).
+//
+// # KNOWN NON-COVERAGE (read before trusting a green result)
+//
+// A historical-positive validation (run after this file's checks first
+// merged, PR #1800) searched this repository's own git history for real,
+// already-fixed defects in this exact proxy population. It found 9
+// candidates and replayed the checks below against the pre-fix tree for
+// each: 1 was directly executed and missed; the other 8 were established by
+// code inspection but were not replayable (the checks depend on scanner
+// helpers introduced later than those commits — see the validation report
+// for the full methodology). The checks below caught ZERO of the 9.
+//
+// Seven defect classes came out of that search, none of which the checks in
+// this file can see:
+//
+//  1. wrong response-envelope assumption — Health checked resp.Success on
+//     /health, a route with no {success,data} envelope at all. No check
+//     here inspects response semantics.
+//  2. blank-identifier parameter drop — RemoveRoleFromGroup's scope
+//     parameter was declared `_`. NOW COVERED — see check 5 below, added
+//     directly from this evidence (issue #1786 part 3).
+//  3. wire-struct field omission — AllowedCIDRs, ParentID: a struct-typed
+//     parameter is referenced in full (so check 1 sees it as "used"), but
+//     only some of its fields are copied into the wire type. Field-level
+//     completeness is not identifier-level presence.
+//  4. wrong endpoint string — LogAuditEvent, GetAuditLogs,
+//     GetRBACAuditLogs, GetSecretByName all 404'd against routes that were
+//     never registered server-side. No check here inspects a URL/path
+//     literal's validity.
+//  5. whole-struct JSON-tag mismatch — CreateUser/CreateSecret/UpdateSecret
+//     marshaled a raw, untagged Go struct; encoding/json silently dropped
+//     every underscore-named field. The struct IS referenced, in full —
+//     invisible to any identifier-presence check by construction.
+//  6. cache staleness against a compare-and-swap need — LockUserForUpdate
+//     delegated to GetUser, inheriting its 5-minute response cache and
+//     defeating the anti-TOCTOU recheck the method exists for. A runtime
+//     behavior, not a source shape.
+//  7. context lifetime, not identity — LogAuditEvent forwarded the
+//     triggering request's own cancellable context into an audit write
+//     instead of detaching. Check 3 does not merely miss this class: check
+//     3's condition for "correct" is that ctx IS forwarded verbatim, so on
+//     an audit-emitting endpoint where forwarding is exactly the bug,
+//     check 3 CERTIFIES the defect as correct. A green check-3 result on an
+//     audit-emitting path is not neutral silence about context lifetime —
+//     it is an affirmative, and here wrong, verdict.
+//
+// Classes 1, 3, 4, 5, 6, and 7 are behavioral, not structural — they need a
+// differential conformance harness (RemoteStorage.M(x) vs LocalStorage.M(x)
+// through a real server) to see, not a smarter static check. See issue
+// #1808 for that harness, using this same seven-class list as its test
+// plan. Do NOT add static checks for classes 1, 3, 4, 5, or 6 here: a
+// static check that appears to cover a behavioral class is worse than no
+// check, because it looks like coverage without being coverage — exactly
+// the framing mistake this file's own history (issue #1786) was filed
+// over. A green TestLayer1StaticFindingsAreAllowlisted result means exactly
+// one thing: no unexplained hit on five narrow, syntactic properties.
+// Nothing more — it is not evidence these proxies are correct.
 package store
 
 import (
@@ -442,10 +499,11 @@ func TestRealProxiesAreThinPassthroughs(t *testing.T) {
 }
 
 // ============================================================================
-// Layer 1 static checks (issue #1786 part 2, step 2).
+// Layer 1 static checks (issue #1786 parts 2 and 3).
 //
-// Four checks, each scoped to what it can decide SOUNDLY from source text
-// alone, over one proxyCallSite at a time:
+// Five checks, each scoped to what it can decide SOUNDLY from source text
+// alone, over one proxyCallSite at a time (checks 1-4 from part 2; check 5
+// from part 3, see the KNOWN NON-COVERAGE section above for why it exists):
 //
 //   1. dropped input   — a method parameter never referenced anywhere in the
 //      body cannot possibly be part of the request; this is a hard fact, not
@@ -459,6 +517,10 @@ func TestRealProxiesAreThinPassthroughs(t *testing.T) {
 //   4. silent zero return — a failure guard's return statement returns a
 //      literal `nil` in the error position, contradicting the guard's own
 //      condition.
+//   5. blank-identifier parameter — a parameter declared `_` in a real
+//      proxy method's own signature. Derived from a confirmed historical
+//      defect (RemoveRoleFromGroup, #1394), not from imagination — see
+//      blankParams' own doc comment.
 //
 // Each is validated red-then-green in remote_proxy_correctness_checks_test.go
 // against small in-memory source snippets (not real files) before this file's
@@ -537,6 +599,32 @@ func droppedInputs(fn *ast.FuncDecl) []string {
 		}
 	}
 	return dropped
+}
+
+// blankParams is check 5 (issue #1786 part 3): every parameter declared with
+// the blank identifier `_` in a real proxy method's signature — added
+// directly from a confirmed historical defect, not from imagination:
+// RemoteStorage.RemoveRoleFromGroup (#1394) declared its scope parameter
+// `_ storage.Scope`, so it satisfied storage.Storage's interface, compiled
+// clean, and never sent the value anywhere. Check 1 (droppedInputs) cannot
+// see this BY CONSTRUCTION: methodParams skips blank names before
+// droppedInputs ever runs (there is no identifier for identUsed to search
+// for) — this check looks at the declaration itself instead of at usage,
+// which is the only way to see a value the language itself lets a method
+// discard without comment.
+func blankParams(fn *ast.FuncDecl) []string {
+	if fn.Type.Params == nil {
+		return nil
+	}
+	var blanks []string
+	for _, field := range fn.Type.Params.List {
+		for _, n := range field.Names {
+			if n.Name == "_" {
+				blanks = append(blanks, exprString(field.Type))
+			}
+		}
+	}
+	return blanks
 }
 
 // contextSubstituted is check 3: reports a description of site's first
@@ -768,11 +856,11 @@ type proxyFinding struct {
 	Method string
 	File   string
 	Line   int
-	Check  string // "dropped-input" | "swallowed-error" | "context-substitution" | "silent-zero-return"
+	Check  string // "dropped-input" | "swallowed-error" | "context-substitution" | "silent-zero-return" | "blank-identifier-param"
 	Detail string
 }
 
-// checkCallSite runs all 4 checks against one proxy method + its one call
+// checkCallSite runs all 5 checks against one proxy method + its one call
 // site, returning every finding. Called once per proxyCallSite — for the two
 // fan-out-loop methods this still means once (each has exactly one call
 // site, per TestRealProxiesAreThinPassthroughs), evaluated with the
@@ -788,6 +876,12 @@ func checkCallSite(info methodInfo, site proxyCallSite) []proxyFinding {
 	// Check 1: dropped inputs.
 	for _, p := range droppedInputs(fn) {
 		add("dropped-input", "parameter "+p+" is never referenced anywhere in the method body")
+	}
+
+	// Check 5: blank-identifier parameters (issue #1786 part 3).
+	for _, typ := range blankParams(fn) {
+		add("blank-identifier-param", "a parameter of type "+typ+" is declared with the blank identifier _ — "+
+			"guaranteed unused by construction, and invisible to the dropped-input check above")
 	}
 
 	// Check 3: context substitution.
@@ -880,7 +974,7 @@ func runProxyCorrectnessAudit(t *testing.T) []proxyFinding {
 
 // TestRemoteProxyStaticAuditReport runs the Layer 1 static audit and reports
 // every finding, unconditionally passing. Kept alongside the real gate below
-// (TestRemoteProxyStaticAuditIsClean) purely so `go test -v -run
+// (TestLayer1StaticFindingsAreAllowlisted) purely so `go test -v -run
 // TestRemoteProxyStaticAuditReport` gives a human a full findings dump
 // without needing to fail a test to see it.
 func TestRemoteProxyStaticAuditReport(t *testing.T) {
@@ -894,7 +988,7 @@ func TestRemoteProxyStaticAuditReport(t *testing.T) {
 // proxyCorrectnessAllowlist is the exhaustive, reasoned inventory of every
 // Layer 1 static-check finding reviewed and confirmed NOT a bug — mirroring
 // remoteUnsupportedAllowlist's own shape (same file, same completeness-guard
-// idiom): a finding not listed here fails TestRemoteProxyStaticAuditIsClean
+// idiom): a finding not listed here fails TestLayer1StaticFindingsAreAllowlisted
 // immediately; an entry that stops firing (fixed, or the checker regressed)
 // also fails it, so this can't accumulate stale "known issue" entries that no
 // longer reflect reality. Keyed by "Method:Check".
@@ -904,17 +998,63 @@ var proxyCorrectnessAllowlist = map[string]string{
 		"The one caller (the rotation planner's risk-scoring batch, #409) already treats an ID missing from " +
 		"the result the same conservative way a single GetSecret error is treated for that ID — never a " +
 		"silent zero-risk score — so skipping here loses no safety margin. Reviewed, not a bug.",
+
+	// The 8 entries below are check 5's first real run (issue #1786 part 3) —
+	// found live, not hypothesized, and every one is the OPPOSITE shape from
+	// the RemoveRoleFromGroup defect the check was built to catch: there, a
+	// value the SERVER needed was silently blanked and never sent. Here, the
+	// blanked value is one the server must NOT trust from the client at all
+	// (a caller-supplied clock, or a caller-supplied identity the server
+	// already derives authoritatively from the request's own auth context) —
+	// blanking it is the correct, secure choice, kept only for interface
+	// parity with LocalStorage's signature. Each already had a doc comment
+	// saying so before this check existed.
+	"ConsumeMFAChallenge:blank-identifier-param": "the blanked time.Time is \"now\": remote_mfa.go's own doc " +
+		"comment says the upstream server ignores any caller-supplied current time and always uses its own " +
+		"clock (mfaChallengeLookupWire) — accepting a client clock here would let a compromised/skewed client " +
+		"manipulate expiry checks. Kept only for interface parity with LocalStorage. Reviewed, not a bug.",
+	"GetActiveMFAChallenge:blank-identifier-param": "same reasoning and doc comment as ConsumeMFAChallenge " +
+		"above (remote_mfa.go) — the blanked time.Time is a caller-supplied \"now\" the server must not trust. " +
+		"Reviewed, not a bug.",
+	"GetActiveMFAStepUpGrant:blank-identifier-param": "remote_mfa_stepup_grant.go's own doc comment: \"now is " +
+		"accepted only for interface parity with LocalStorage — the upstream server ignores any caller-" +
+		"supplied current time and always uses its own clock.\" Reviewed, not a bug.",
+	"ConsumeWebAuthnSession:blank-identifier-param": "remote_webauthn.go's own doc comment: same \"now ignored, " +
+		"server uses its own clock\" reasoning as the MFA challenge methods above (webAuthnSessionConsumeWire). " +
+		"Reviewed, not a bug.",
+	"ListNotifications:blank-identifier-param": "remote_notifications.go's own doc comment: GET /notifications " +
+		"is self-scoped by the caller's authenticated session — \"userID is implicit in the endpoint\" " +
+		"(fetchNotifications). A caller-supplied userID here would be a confused-deputy risk if the server " +
+		"trusted it instead; blanking it is correct. Kept only for interface parity with LocalStorage. " +
+		"Reviewed, not a bug.",
+	"CountUnreadNotifications:blank-identifier-param": "same self-scoped-by-session reasoning as " +
+		"ListNotifications above (remote_notifications.go, fetchNotifications). Reviewed, not a bug.",
+	"MarkNotificationRead:blank-identifier-param": "remote_notifications.go's own doc comment: \"the server " +
+		"scopes the mark to the authenticated user ... so userID is implicit in the endpoint.\" Same reasoning " +
+		"as ListNotifications above. Reviewed, not a bug.",
+	"MarkAllNotificationsRead:blank-identifier-param": "same self-scoped-by-session reasoning as " +
+		"MarkNotificationRead above (remote_notifications.go). Reviewed, not a bug.",
 }
 
-// TestRemoteProxyStaticAuditIsClean is the CI gate (issue #1786 part 2, step
-// 5): every Layer 1 finding across the 214-method real-proxy population must
-// be explained by proxyCorrectnessAllowlist above, or this fails and forces
-// the same real investigation this tranche did — trace the method, read its
-// doc comment and callers, decide whether it's a genuine gap — before it can
-// be merged. No new CI workflow wiring is needed for this: it runs as part
-// of the existing `go test ./...` leg for this package, the same way every
-// other completeness guard in this file already does.
-func TestRemoteProxyStaticAuditIsClean(t *testing.T) {
+// TestLayer1StaticFindingsAreAllowlisted is the CI gate (issue #1786 parts 2
+// and 3): every Layer 1 finding across the 214-method real-proxy population
+// must be explained by proxyCorrectnessAllowlist above, or this fails and
+// forces the same real investigation this tranche did — trace the method,
+// read its doc comment and callers, decide whether it's a genuine gap —
+// before it can be merged. No new CI workflow wiring is needed for this: it
+// runs as part of the existing `go test ./...` leg for this package, the
+// same way every other completeness guard in this file already does.
+//
+// Renamed from TestRemoteProxyStaticAuditIsClean (issue #1786 part 2): that
+// name's own word "Audit" and "IsClean" read as "the proxies were audited
+// and found correct." They were not — see this file's own KNOWN NON-COVERAGE
+// section above. What this test actually verifies is narrower and stated
+// directly in the new name: every finding the five checks above produce is
+// EXPLAINED (allowlisted, with a reason), nothing more. A green result here
+// says "no unexplained hit on five narrow syntactic properties" — it does
+// not say "these proxies are correct," and a name implying otherwise is
+// exactly the framing mistake issue #1786 was filed to fix.
+func TestLayer1StaticFindingsAreAllowlisted(t *testing.T) {
 	findings := runProxyCorrectnessAudit(t)
 
 	seen := map[string]bool{}
