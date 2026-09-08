@@ -51,6 +51,21 @@ jobs:
         # shouldn't fail the build. Deliberately excludes .semgrep/keyorix-nudges.yml --
         # those rules match every occurrence of a pattern by design (old and new) and
         # must never be uploaded as SARIF/code-scanning alerts, see that file's header.
+        #
+        # KNOWN ENGINE QUIRK (found investigating alerts #816-818, 2026-09-08): at
+        # this repo's full scale (--config=auto pulls ~650 rules across ~1600
+        # tracked files), Semgrep 1.172-1.175 sometimes drops an inline `# nosemgrep`
+        # / `// nosemgrep: <rule-id>` suppression that DOES work on a smaller/
+        # single-file scan of the exact same rule+line -- reproduced with
+        # --config=auto ALONE (no custom ruleset involved at all), so it is not
+        # this repo's config combining two sources, it is auto's rule count. Before
+        # treating a surfaced alert here as a real regression: rerun
+        # `semgrep scan --config=<same config> <that one file>` -- if that finds
+        # nothing and the line already carries a correctly-formatted, reasoned
+        # nosemgrep comment, it's this quirk, not a new finding; dismiss the alert
+        # as a false positive citing this comment rather than re-suppressing (the
+        # comment already exists and already works everywhere except this
+        # specific full-scale advisory run).
         if: always()
         run: semgrep scan --config=auto --config=.semgrep/keyorix-rules.yml --sarif --output=semgrep.sarif . || true
 

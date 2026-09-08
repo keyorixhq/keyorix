@@ -30,7 +30,9 @@ class Client:
             headers["Authorization"] = f"Bearer {token}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # base_url is this same script's own f"http://localhost:{PORT}" (matrix_runner.py), path is
+        # always a literal endpoint string at every call site below; no external input reaches this URL.
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return resp.read()
 
     def login(self, username: str, password: str) -> str:

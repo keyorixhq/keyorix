@@ -112,7 +112,9 @@ def wait_healthy(base_url: str, container: str = None, timeout_s: int = 60):
     last_err = None
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(base_url + "/health", timeout=2)
+            # base_url is always this script's own f"http://localhost:{PORT}" (matrix_runner.py, the
+            # container this same process just started) -- no external input reaches this URL.
+            urllib.request.urlopen(base_url + "/health", timeout=2)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return
         except Exception as e:
             last_err = e
