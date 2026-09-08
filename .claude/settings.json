@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "out=$(bash scripts/worktree-branch-health.sh --worktrees-only 2>&1); jq -n --arg ctx \"$out\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:$ctx}}'",
+            "command": "if out=$(bash scripts/worktree-branch-health.sh --worktrees-only 2>&1); then jq -n --arg ctx \"$out\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:$ctx}}'; else st=$?; jq -n --arg ctx \"$out\" --arg st \"$st\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",systemMessage:(\"worktree-branch-health.sh FAILED (exit \" + $st + \") -- session state is unverified, this is NOT a health report\"),additionalContext:(\"worktree-branch-health.sh FAILED (exit \" + $st + \"); the text below is captured output, NOT a health report: \" + $ctx)}}'; echo \"worktree-branch-health.sh FAILED (exit $st): $out\" >&2; exit 2; fi",
             "timeout": 30,
             "statusMessage": "Checking worktree health..."
           },
