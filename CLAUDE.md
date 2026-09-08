@@ -333,3 +333,36 @@ tranche detail for the rest, and QUEUE.md for the incremental-population
 follow-up). Don't transcribe a row from that matrix without re-running its
 test first — a property verified during that pass is not the same claim as
 "this test exists and passes right now."
+
+## Code-scanning alerts
+
+A confirmed false positive is **dismissed**, never silenced by editing the
+file. Alerts are anchored to a file and line: editing near one marks the
+original "fixed", respawns it under a new number at the new line, and leaves
+an audit trail that looks like the problem keeps recurring — this happened
+for real (#816/#817 → #819/#820, both `dynamic-urllib-use-detected` in
+`scripts/memory-measurement/*.py`; the nosemgrep comment added to fix them
+shifted the flagged lines by two, closing the originals and opening new
+alerts at the new lines instead of actually closing the finding).
+
+Before dismissing, run `scripts/triage-code-scanning-alert.sh <alert-number>`
+— it reruns the single file with the advisory scan's own config
+(`--config=auto --config=.semgrep/keyorix-rules.yml`) and checks that the
+flagged line carries a `nosemgrep` matching the alert's rule id exactly (not
+a prefix, not a bare `nosemgrep`). It dismisses only when both hold; "it
+looks like a false positive" is a claim, the rerun is the evidence. The
+script's own red/green paths were verified against real, live alerts before
+being trusted: pointed at a still-firing finding and at a bare-`nosemgrep`
+line (Semgrep's own engine silenced, but not naming the alert's exact rule),
+it refused both and dismissed nothing; pointed at a genuine false positive,
+it dismissed it via the real API, independently confirmed with a follow-up
+`GET`.
+
+`dismissed_reason` is the literal string `false positive` — a space, not an
+underscore; `false_positive` is rejected by the API. `dismissed_comment` is
+capped at 280 characters (a 422 above that); the script constructs the
+comment within the cap, pointer-to-workflow-note first so it survives
+truncation, and never fails on it.
+
+A real finding is fixed in code. This procedure is only for a finding the
+verification proves absent.
