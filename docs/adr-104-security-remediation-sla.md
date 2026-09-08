@@ -2,26 +2,26 @@
 
 ## Status
 
-Accepted.
+Accepted. Supersedes this ADR's own first version (a severity-tiered 14-day
+CRITICAL / 30-day HIGH published commitment) after further research found
+that shape doesn't match what any comparable project actually publishes —
+see Context.
 
 Policy layer alongside [ADR-067](adr-067-release-lifecycle-support-policy.md).
 ADR-067 decided *which versions* get a fix and *for how long* (the support
-period). This ADR decides *how fast a fix ships once a severity is
-confirmed* — a different commitment class, orthogonal to support-period
+period). This ADR decides *how fast a fix ships once a report is
+validated* — a different commitment class, orthogonal to support-period
 length. Public expression of the published half of this policy lives in
 [`SECURITY.md`](../SECURITY.md) § Remediation Timelines.
 
 **Authority is split by section, deliberately, not held by one document:**
-`SECURITY.md` is authoritative for the **published** table — it's the
-customer-facing document, read by the audience the commitment is for, and
-if the two ever disagree on a published figure, `SECURITY.md` is current
-and this ADR's copy is stale. This ADR is authoritative for the
-**internal-target** table and the **CRITICAL definition** — neither is
+`SECURITY.md` is authoritative for the **published** commitments — it's the
+customer-facing document, read by the audience they're for, and if the two
+ever disagree, `SECURITY.md` is current and this ADR's copy is stale. This
+ADR is authoritative for the **internal-target** table, the **CRITICAL
+definition**, and the **backport roadmap note** — none of those are
 published anywhere else, so there is nothing for them to drift out of sync
-with. Neither document restates the other's own section from scratch;
-`SECURITY.md` does not carry internal targets at all, and this ADR's
-published-table copy exists only "for the record" per the note above, not
-as a second live source.
+with. Neither document restates the other's own section from scratch.
 
 ## Context
 
@@ -29,49 +29,85 @@ Keyorix is maintained by one person, with no on-call rotation and no funded
 team. `SECURITY.md` already publishes two commitments — acknowledge a
 report within 48 hours, initial assessment within 7 days — and those are
 correct and unchanged by this ADR. What's missing is the next commitment
-class entirely: once a report is confirmed and triaged to a severity, how
-long until a fix actually reaches an installable release. That gap was
-visible in practice before this ADR: PR #1789 (last-admin lockout via a PAT
-confused deputy) sat merged and correct on `main`, unreachable by any
-operator, for days, with nothing published that says how long that's
-supposed to take.
+class: once a report is validated, how long until a fix reaches an
+installable release. That gap was visible in practice before this ADR: PR
+#1789 (last-admin lockout via a PAT confused deputy) sat merged and
+correct on `main`, unreachable by any operator, for days, with nothing
+published that says how long that's supposed to take.
 
-A published SLA is a promise from an organisation with redundancy — the
-reader assumes there's a team, a backup, a rotation. There isn't. A miss is
-observable in a public repository (an open PR referencing a CVE, a stale
-advisory, a customer asking in public), and a missed *published* commitment
-does more damage than a modest one that's always beaten. Two consequences
-follow directly:
+### Why this ADR's first version is wrong, and being replaced rather than patched
 
-1. **The published numbers must be sized for the worst realistic month**
-   (illness, a family emergency, a week at a conference), not the best one.
-   A number that only works when nothing else goes wrong is not a
-   commitment, it's a hope with a deadline attached.
-2. **Anything tighter that's merely aspirational must be kept out of the
-   published surface entirely** — not softened, not hedged, kept out — so
-   that hitting it is a bonus and missing it is not a broken promise.
+This ADR originally published a severity-tiered fix deadline — 14 days for
+CRITICAL, 30 for HIGH. That number was calibrated against an assumed
+industry norm. The norm doesn't exist. Researched 2026-09-08, with sources:
 
-That's the reasoning behind the split in this ADR. It's stated here in one
-place specifically so a future editor doesn't "helpfully" merge the two
-tables — the split is the point, not an oversight to tidy up.
+| Vendor | Ack / triage | Fix SLA | Support window |
+|---|---|---|---|
+| HashiCorp Vault | none | none | "approx 1 year" published, ~4 months observed; LTS is Enterprise-only |
+| CyberArk / Conjur | none | none — only scope of fix per severity | ~6 months of code fixes per version |
+| Doppler | 2d response, 5d triage (HackerOne) | none | not published |
+| Infisical | 3 business days ack, 7 business days assessment | none | latest only, no backports |
+| Bitwarden | none | none | current + previous 2 majors |
+| 1Password | none — explicitly disclaimed | none | not published |
+| **OpenBao** (5 maintainers) | 7 days to validate | **≤90 days, all severities**; 1 week advance notice for High/Critical | latest only, best effort |
+
+Sources: [HashiCorp](https://www.hashicorp.com/en/trust/security/vulnerability-management) ·
+[CyberArk policy](https://www.cyberark.com/cyberark-security-vulnerability-policy.pdf) ·
+[CyberArk EOL](https://docs.cyberark.com/end-of-life-policy/latest/en/content/eol-self-hosted-products.htm) ·
+[Doppler](https://hackerone.com/doppler/policy_versions) ·
+[Infisical](https://infisical.com/vulnerability-disclosure) ·
+[Bitwarden](https://raw.githubusercontent.com/bitwarden/server/main/SECURITY.md) ·
+[1Password](https://support.1password.com/security-assessments/) ·
+[OpenBao CVE policy](https://openbao.org/community/policies/cve/) ·
+[OpenBao support policy](https://openbao.org/community/policies/support/)
+
+Almost nobody publishes a remediation SLA at all. Every vendor with more
+funding and headcount than Keyorix either publishes nothing, or (Conjur)
+publishes fix *scope* per severity with no *time* commitment. **OpenBao is
+the only one, and it is the right model** — comparable team size (five
+maintainers, no funded on-call), and the community Keyorix actually
+recruits from, not the vendors with an incident-response rotation. Its shape
+is deliberate, and every choice in it removes an expensive promise:
+
+- **One global ceiling (90 days, all severities) instead of a severity
+  matrix.** A matrix asks a solo maintainer to make a fast, public,
+  legally-flavoured severity call under time pressure, then hit a different
+  clock depending on the answer. A single ceiling removes that decision
+  from the critical path entirely — severity still matters for
+  prioritization, just not for which published clock is ticking.
+- **A cheap triage promise (7 days) rather than a fix promise.** Triage is
+  bounded, cheap effort; a fix is not. Promising the bounded thing and
+  leaving the unbounded thing to a generous ceiling is the survivable
+  split.
+- **A communication commitment (1-week advance notice for High/Critical)
+  instead of a faster fix.** Advance notice costs an email. A faster fix
+  costs engineering time nobody is funded to guarantee.
+- **Latest-release-only, no backports.** This is what keeps the *fix*
+  commitment affordable — no maintenance-line multiplication, no
+  cherry-pick queue, no divergent CI matrix per line.
+
+This ADR now adopts that shape rather than inventing a new one. The
+comparison also sharpens the advisory commitment (§ Decision below): Vault
+publishes advisories 1–54 days after the patch ships, Conjur shipped a
+High-severity RCE with no CVE assigned at all, and Bitwarden/1Password/
+Infisical have empty or absent advisory feeds. A same-day GHSA with a
+requested CVE is cheap for one person and is a genuine, checkable
+differentiator none of these actually deliver.
 
 ### Two other timelines that use similar-looking numbers and are not this one
 
-To avoid the exact confusion this note exists to prevent:
-
 - **`SECURITY.md`'s existing 7-day *initial assessment*** is about
   triage — confirming a report is real and roughly how bad it is. It is not
-  a remediation commitment and this ADR does not change it.
+  a remediation commitment and this ADR does not change it. (It also now
+  happens to match OpenBao's own "7 days to validate" — coincidence of two
+  independently-reasonable numbers, not a copy.)
 - **ADR-067's own follow-up list** (§ Follow-ups) names a future "24h/72h/
-  14-day ENISA reporting chain" — that is a *regulatory notification*
-  timeline to authorities for actively-exploited vulnerabilities under the
-  CRA, not yet documented or implemented anywhere. It is a different
-  commitment, to a different audience (a regulator, not a customer), and
-  its "14 days" is a coincidence of both numbers being drawn from the same
-  general problem space, not a shared figure. When that runbook is written,
-  it should cross-reference this ADR to make the distinction explicit
-  rather than risk the same collision landing in prose instead of just in
-  two ADRs' section headers.
+  14-day ENISA reporting chain" — a *regulatory notification* timeline to
+  authorities for actively-exploited vulnerabilities under the CRA, not yet
+  documented or implemented anywhere. Different commitment, different
+  audience (a regulator, not a customer). When that runbook is written, it
+  should cross-reference this ADR so its own day-counts are never read as
+  the same commitment as anything here.
 
 ### Reconciling with the pre-1.0 posture
 
@@ -80,11 +116,11 @@ period under the CRA — that sentence is about *which versions remain
 patchable at all and for how long* (ADR-067's subject). The remediation
 timelines below are a *different, narrower* commitment: given that a
 version IS the one receiving fixes (today, unconditionally, the latest
-release — see `SECURITY.md`'s Supported Versions table), how fast does a
-confirmed fix reach it. A project can have zero declared support period and
-still commit to a remediation speed once it's actively fixing something;
-the two are independent axes, and pre-1.0 status affects the first, not the
-second. The published section below is written as **a current operating
+release only — matching OpenBao's own scoping), how fast does a validated
+fix reach it. A project can have zero declared support period and still
+commit to a remediation ceiling once it's actively fixing something; the
+two are independent axes, and pre-1.0 status affects the first, not the
+second. The published section is written as **a current operating
 commitment, not a CRA-declared support period** — that phrase is used
 verbatim in `SECURITY.md` so a non-lawyer reader doesn't have to infer the
 distinction.
@@ -100,33 +136,45 @@ customer may rely on.
 |---|---|
 | Acknowledge a report | 48 hours *(already published, unchanged)* |
 | Initial assessment | 7 days *(already published, unchanged)* |
-| CRITICAL | Mitigation or workaround guidance within 7 days; fixed release within 14 days |
-| HIGH | Fixed release within 30 days |
-| MEDIUM / LOW | Next scheduled release |
+| Fix, all severities | **≤90 days** from a validated report |
+| High / Critical | **1 week advance notice** before the security release ships |
+| Advisory | **GHSA with a requested CVE**, published the **same day** as the fix |
+| Supported versions | **Latest release only** |
 | Release cadence | **Not published** — see "Cadence is deliberately not published yet" below |
+
+The 90-day ceiling is the standard coordinated-disclosure clock — defensible
+to any reviewer, and it is a *ceiling*, not a target: most fixes will and
+should ship far inside it (see internal targets below). It applies
+uniformly across severity so there is no public clock that depends on a
+fast, contestable severity call. The advance-notice and same-day-advisory
+items are the genuinely differentiating pieces, and they cost communication
+effort, not engineering time.
 
 ### Internal targets (not published, not promised to anyone)
 
-Tighter, aspirational, tracked for our own use. A miss here has no external
-consequence and should be treated as ordinary triage information, not an
-incident.
+Tighter, not promised. A miss here has no external consequence and should
+be treated as ordinary triage information, not an incident. These are
+last cycle's near-published numbers, kept as the internal aim once
+research showed they shouldn't be the public commitment — the reasoning
+that made them too risky to publish (no demonstrated track record, no
+redundancy) doesn't make them unreasonable to *aim* for.
 
 | Class | Internal aim |
 |---|---|
-| CRITICAL | 24 hours to workaround guidance; fixed release within 5 business days |
-| HIGH | Fixed release within 10 business days |
+| CRITICAL | Workaround guidance within 24 hours; fixed release within 14 days |
+| HIGH | Fixed release within 30 days |
 | MEDIUM / LOW | Next scheduled release (same as published — no internal/external gap for this tier) |
 
 If these internal numbers are ever consistently beaten by a wide, durable
-margin, that is the trigger to *revise the published numbers* in
+margin, that is the trigger to *revise the published ceiling* in
 `SECURITY.md` deliberately — not to publish the internal table as-is. Any
 tightening of the published commitment goes through the same review this
 ADR itself got, not a quiet edit.
 
 ### Cadence is deliberately not published yet
 
-The draft this ADR revises proposed a published monthly-minor cadence. It
-is not adopted. The repository went four weeks with zero tags pushed
+An earlier draft of this policy proposed a published monthly-minor
+cadence. Not adopted. The repository went four weeks with zero tags pushed
 immediately before that draft was written — a cadence claim written the
 same month it wasn't met is not evidence, it's a hope. Per this ADR:
 **release cadence remains an internal working agreement, not a published
@@ -136,7 +184,16 @@ noticed, not that the underlying capacity exists. Once three consecutive
 months hit the internal aim, publishing a cadence becomes a decision to
 revisit — this ADR does not pre-approve it; it only names the bar.
 
-### CRITICAL, defined narrowly enough that a 14-day commitment is safe
+### CRITICAL, defined narrowly — for prioritization and the advance-notice trigger, not a separate published deadline
+
+The published commitment above does not give CRITICAL its own clock —
+High and Critical share the identical published treatment (90-day ceiling,
+1-week advance notice, same-day advisory). A CRITICAL definition is still
+needed for two things this ADR *does* rely on: which findings get the
+tightest **internal** aim (above), and confirming that the most severe
+findings correctly fall inside the High/Critical bucket that triggers
+advance notice, rather than being argued down to MEDIUM where none of the
+publish-facing commitments apply at all.
 
 **CRITICAL: remote, unauthenticated compromise of stored secret values, or
 of the authentication boundary itself, requiring no valid credential of any
@@ -166,9 +223,11 @@ accepting something it should reject.
 
 Everything that clears CRITICAL's bar but still represents a genuine
 authenticated bypass, escalation, or control-integrity failure is HIGH —
-that tier is intentionally the larger bucket. Narrow CRITICAL, wide HIGH is
-the design, not an accident: it's what makes 14 days survivable for one
-person.
+that tier is intentionally the larger bucket, and both tiers now get the
+same published treatment regardless, which lowers the stakes of the
+boundary considerably compared to this ADR's first version (where the
+boundary alone decided 14 days vs. 30). It still matters for internal
+triage order and for keeping the tightest internal aim genuinely rare.
 
 #### Worked examples, both from this repository's own history
 
@@ -182,7 +241,9 @@ already exist in a specific prior state (suspended/deprovisioned) *and*
 requires whoever logs back in to hold that account's own already-known
 credentials — there is no path from zero credentials to a working session
 through this bug alone. It fails the "no prior account state" clause
-outright. **HIGH.**
+outright. **HIGH** — inside the High/Critical bucket either way, so it
+still gets advance notice and same-day advisory; the internal 24-hour aim
+does not apply to it.
 
 **#1789 — last-admin lockout via PAT confused deputy → HIGH, not CRITICAL.**
 An actor holding a restricted PAT — deliberately scoped away from admin
@@ -199,15 +260,44 @@ authentication-boundary bypass — it doesn't clear either half of the
 not one. **HIGH.**
 
 **Illustrative CRITICAL example (hypothetical, not a real finding — included
-because the published tier needs at least one concrete positive case to be
-legible, and none of this pass's real findings happen to clear the bar):**
-an unauthenticated caller presenting no credential at all is able to submit
-a request to the OIDC/JWKS verification path that Keyorix accepts as a
-validly-signed session token — no password, no PAT, no prior account,
-nothing. That clears both halves: no credential of any kind, and a direct
-authentication-boundary bypass. **This is the shape CRITICAL exists for.**
-The fact that neither #1742 nor #1789 — both genuinely severe — clears it
-is the definition working as intended, not a sign it's drawn wrong.
+because the definition needs at least one concrete positive case to be
+legible, and none of this repository's real findings to date happen to
+clear the bar):** an unauthenticated caller presenting no credential at all
+is able to submit a request to the OIDC/JWKS verification path that Keyorix
+accepts as a validly-signed session token — no password, no PAT, no prior
+account, nothing. That clears both halves: no credential of any kind, and a
+direct authentication-boundary bypass. **This is the shape CRITICAL exists
+for.** The fact that neither #1742 nor #1789 — both genuinely severe —
+clears it is the definition working as intended, not a sign it's drawn
+wrong.
+
+### Backported fixes: the open competitive space, not a promise
+
+Recorded here, internal-only, deliberately not published, per this ADR's
+own split rationale:
+
+Every comparable vendor leaves the same gap. Conjur backports for roughly
+six months per version — the closest any of them get. Vault Community gets
+no backports at all; LTS is an Enterprise-only, paid tier. Infisical ships
+3–4 releases a week with no stable branch to backport onto in the first
+place. **None of them serve an operator who upgrades annually at best** —
+exactly the air-gapped, change-approval-bound profile ADR-067 identifies as
+Keyorix's target segment. Latest-release-only (this ADR's own published
+scoping, above) is the same gap, adopted deliberately because it's what
+keeps the *published* fix commitment affordable for one person.
+
+Backporting a security fix to at least one prior minor is the differentiator
+to aim at — it directly serves the customer segment this product is built
+for, and no competitor at comparable team size currently offers it. It is
+**not promised here or anywhere else.** It costs real, ongoing maintenance
+effort (a second line to patch, a second CI matrix, cherry-pick conflicts
+as lines age — the same costs ADR-067 § Consequences already names for the
+LTS lines that don't exist yet either) that does not exist without a
+funded team. Promising it now, to win the sales conversation, then missing
+it, is exactly the failure mode this whole ADR is written to avoid. Treat
+it as a roadmap target to revisit at the same trigger ADR-067 names for
+extended support generally: when remediation capacity is funded beyond one
+person.
 
 ### Who decides
 
@@ -215,35 +305,38 @@ Severity classification against the CRITICAL definition above is made once,
 at merge time, by whoever fixed the issue together with the maintainer —
 not re-litigated later at release-cut time. It is recorded as a row in
 `docs/security-closures.tsv` (the existing closure-ledger convention),
-which is also how a reader can check whether a given published timeline was
-actually met, rather than taking that on trust. Publishing a release
-(cutting the tag) remains the maintainer's call, always, regardless of
-which SLA tier a fix falls under — this ADR sets the target, it does not
-remove the human gate on when a tag actually goes out.
+which is also how a reader can check whether a given published commitment
+was actually met, rather than taking that on trust. Publishing a release
+(cutting the tag) remains the maintainer's call, always — this ADR sets
+the target, it does not remove the human gate on when a tag actually goes
+out.
 
 ## Consequences
 
-**Positive.** The published table is a number a solo maintainer can
-actually hit in a bad month, which is what makes it trustworthy rather than
-aspirational marketing copy. The internal/published split means tightening
-practice over time doesn't require walking back a public commitment — it
-only ever moves the published number down, never up, and only after a
-demonstrated track record (the three-consecutive-months rule for cadence
-is the template for how future tightening should be justified generally).
-A narrow CRITICAL definition means the rare 14-day commitment stays
-credible precisely because it almost never fires — both real severe
-findings checked against it land in the wider HIGH tier, which has running
-room built in (30 days, one person, one release cycle).
+**Positive.** A single 90-day ceiling removes a fast, public, legally-
+flavoured severity call from the critical path — the maintainer classifies
+for prioritization and advance-notice purposes, on no deadline, rather than
+racing a clock to decide which clock applies. The commitments that remain
+(advance notice, same-day advisory with a requested CVE) are the ones a
+solo maintainer can reliably deliver and that meaningfully beat every
+funded competitor researched here, none of whom publish a fix SLA at all
+and several of whom have empty advisory feeds. The internal/published
+split means tightening practice over time doesn't require walking back a
+public commitment — only tightening it, and only after a demonstrated
+track record (the three-consecutive-months cadence rule is the template
+for how any future tightening should be justified generally).
 
-**Negative.** A narrow CRITICAL tier means some findings a reader might
-intuitively call "critical" in conversation are formally HIGH with a
-30-day published commitment instead of 14 — #1789 (an installation-wide
-admin lockout) is the sharpest case of this, and the definition's own
-worked example says so plainly rather than quietly. That is a deliberate
-trade for keeping the 14-day tier credible, not an oversight; it should be
-revisited only if a future CRITICAL-shaped finding is found to slip through
-HIGH's wider net in practice, not on the basis of this one example feeling
-under-classified in hindsight.
+**Negative.** A 90-day published ceiling is a materially weaker headline
+number than this ADR's first version's 14-day CRITICAL figure, and reads
+less impressive in a sales conversation than a severity matrix would. That
+is accepted deliberately: a matrix this team cannot reliably hit is worth
+less than a ceiling it can, and the previous draft's 14-day number was
+compared against no actual competitor data when it was written. A reader
+skimming only the published table, without the Context section's
+competitor comparison, may not immediately see why 90 days is generous
+rather than slow — the same-day-advisory and advance-notice commitments
+exist partly to give that reader something concretely better to point at
+in the meantime.
 
 ## Follow-ups
 
@@ -251,9 +344,11 @@ under-classified in hindsight.
   the internal target (see "Cadence is deliberately not published yet").
 - The ENISA 24h/72h/14-day regulatory reporting chain (ADR-067 §
   Follow-ups) should, when written, explicitly cross-reference this ADR to
-  keep its own "14 days" from being read as the same commitment.
-- If remediation capacity is ever funded beyond one person (a hire, a
-  contractor), this ADR's "who decides" and internal-target numbers are the
-  first section to revisit — the published numbers should not move until
-  the internal ones have proven durable under the new capacity, same rule
-  as the cadence bar above.
+  keep its own day-counts from being read as the same commitment.
+- Revisit the backported-fixes roadmap item (above) once remediation
+  capacity is funded beyond one person — do not promise it before then.
+- If remediation capacity is ever funded beyond one person, this ADR's
+  "who decides" and internal-target numbers are the first section to
+  revisit — the published numbers should not move until the internal ones
+  have proven durable under the new capacity, same rule as the cadence bar
+  above.
