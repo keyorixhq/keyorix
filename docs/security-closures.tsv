@@ -1,26 +1,74 @@
-# Security closure ledger. Verified by scripts/check-closures.sh, which fails the
-# build if a named test does not exist, skips, or fails.
+# Security closure ledger. Verified by scripts/check-closures.sh, which fails
+# the build if a named test does not exist, or does not produce a literal
+# `--- PASS: <name>` line in the environment its own verification column
+# claims.
 #
-# claim_id	package	proving_test	landed_commit	note
+# claim_id	package	proving_test	verification	landed_commit	issue	note
+#
+# verification is one of:
+#   default-ci   the proving test runs and passes in every invocation of this
+#                script, no special environment required. A SKIP here is
+#                ALWAYS a closure-verification failure.
+#   pg-gated     the proving test is gated behind KEYORIX_TEST_PG_DSN (a race
+#                that can only be demonstrated against a real multi-connection
+#                Postgres, not SQLite/mocks — see
+#                internal/core/postgres_contention_helpers_test.go). When this
+#                script runs WITHOUT the DSN set (its default invocation, in
+#                the adr-numbers job), a SKIP here is expected and does NOT
+#                fail the check — there is nothing else that invocation could
+#                show. When it runs WITH the DSN set (.github/workflows/ci.yml
+#                test-suite job, `core` leg — the one job with a Postgres
+#                service container — runs this same script a second time, see
+#                that job for why), a SKIP or failure here IS real and DOES
+#                fail the check: the DSN is available, so "gated" stops being
+#                an excuse. The test's plain EXISTENCE (a real compiled test
+#                symbol, not a typo'd/renamed/deleted name) is checked
+#                unconditionally either way — a SKIP line only ever appears
+#                for a test that exists and ran; "no tests to run" is the
+#                separate, always-fatal non-existence case.
+#   manual       no automated regression test exists or can exist for this
+#                claim; closure rests on a cited artefact instead. `note` MUST
+#                cite the artefact precisely enough that a skeptical reader
+#                could go look (a file path + line, a PR review comment URL, a
+#                dated manual test log — not "verified manually" on its own).
+#                This is an ESCAPE HATCH, not a shortcut: "self-reported
+#                verification is a claim, not evidence" applies in full here —
+#                CI accepts the row because it is honestly labeled unverified,
+#                not because anything was proven. Prefer default-ci or
+#                pg-gated whenever a real test is possible.
+#
+# issue is the GitHub issue number this closes (bare, no '#'), or `-` when the
+# claim is an internal structural invariant with no single corresponding issue
+# (e.g. G01, INV-1) or the note already cites more than one ambiguously
+# (FIX-4-sentinel). This column is best-effort cross-referenced by
+# scripts/report-unlisted-security-issues.sh against closed issues carrying
+# the `security` label — read that script's own header before trusting its
+# silence: the label it keys off is empirically under-applied (verified
+# 2026-09-08 — #1646, #1780, #1551, and #1572 all carry ZERO labels, including
+# the two rows already correctly in this ledger before this column existed),
+# so a `-` here or an issue missing from that report's output is not proof
+# nothing is owed.
 #
 # landed_commit is INFORMATIONAL. This repo squash-merges, so ancestry checks
 # return false for every correctly landed PR. Closure is verified by test.
 
-G01	./internal/core	TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects	e6f018a0	project-scoped group membership must not grant cross-project secret read
-FIX-2-primitive	./internal/core	TestRemoveUserRole_RefusesLastProjectAdminAtThePrimitive	6b512b90	last-admin refused at the primitive, not only at entry points
-FIX-2-sso	./internal/core	TestReconcileSSOGroups_RefusesStrandingLastProjectAdmin	6b512b90	the SSO path must not bypass the group guards
-FIX-3-1551	./server/http	TestRemoteStorageMachineIdentities_RevokeCredential_UnauthorizedCallerRejected_RealServer	6b512b90	#1551 cross-tenant credential revoke must be refused
-FIX-3-1572	./server/http/handlers	TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentialsEvenWithoutUsersWrite_RealServer	6b512b90	#1572 deactivation must not leave tokens live
-FIX-4-sentinel	./server/grpc/services	TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed	6b512b90	#1668/#1669 sentinel must survive adjacent commits
-FIX-5-namedlock	./internal/storage/store	TestWithNamedLock_NestedDifferentKey_StillSerializesAgainstOtherHolder	fca6d401	reentrancy guard keys on lockKey, not "any lock held"
-FIX-6-sod-oracle	./internal/core	TestDeleteSoDPolicy_NonAdmin_NonExistentAndNonOwned_IdenticalDenial	6b512b90	403/404 split must not be an existence oracle
-FIX-7-breakglass	./internal/storage/store	TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable	d1b93444	purge must not hard-delete a row mid-reconciliation
-FIX-8-csv	./internal/core	TestCSVWriters_EncodeAgainstFormulaInjection	d1b93444	structural: every CSV writer applies an encoder
-INV-1-grant-authority	./server/http	TestEveryDirectRoleGrantChecksAuthority	pre-existing	structural: every direct role grant checks authority
-GCP-CONN-PROJECTID	./internal/connect	TestGCPSM_RequiresProjectID	pending	unpinned gcp-secret-manager connector must refuse reads, not span any GCP project
-AWS-CONN-ACCOUNTID	./internal/connect	TestAWSSM_AccountPin	pending	pinned aws-secrets-manager connector must refuse an ARN naming a different AWS account
-G81-KEYPERM-REGISTRY	./internal/keyfiles	TestRegistry_IncludesWrappedKeyPathForEveryWriteCapableType	pending	TPM/cloud-KMS wrapped-KEK blob must be covered by the shared key-permission checker registry, not just DEK/salt
-LASTADMIN-PAT-CONFUSED-DEPUTY	./internal/core	TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction	pending	IsGlobalAdmin's PAT short-circuit answered a third-party question it wasn't built for; guardLastAdminDeactivation and SuspendInactiveUsers now use targetHasGlobalAdminRole instead
+G01	./internal/core	TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects	default-ci	e6f018a0	-	project-scoped group membership must not grant cross-project secret read
+FIX-2-primitive	./internal/core	TestRemoveUserRole_RefusesLastProjectAdminAtThePrimitive	default-ci	6b512b90	-	last-admin refused at the primitive, not only at entry points
+FIX-2-sso	./internal/core	TestReconcileSSOGroups_RefusesStrandingLastProjectAdmin	default-ci	6b512b90	-	the SSO path must not bypass the group guards
+FIX-3-1551	./server/http	TestRemoteStorageMachineIdentities_RevokeCredential_UnauthorizedCallerRejected_RealServer	default-ci	6b512b90	1551	cross-tenant credential revoke must be refused
+FIX-3-1572	./server/http/handlers	TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentialsEvenWithoutUsersWrite_RealServer	default-ci	6b512b90	1572	deactivation must not leave tokens live
+FIX-4-sentinel	./server/grpc/services	TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed	default-ci	6b512b90	-	#1668/#1669 sentinel must survive adjacent commits
+FIX-5-namedlock	./internal/storage/store	TestWithNamedLock_NestedDifferentKey_StillSerializesAgainstOtherHolder	default-ci	fca6d401	-	reentrancy guard keys on lockKey, not "any lock held"
+FIX-6-sod-oracle	./internal/core	TestDeleteSoDPolicy_NonAdmin_NonExistentAndNonOwned_IdenticalDenial	default-ci	6b512b90	-	403/404 split must not be an existence oracle
+FIX-7-breakglass	./internal/storage/store	TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable	default-ci	d1b93444	-	purge must not hard-delete a row mid-reconciliation
+FIX-8-csv	./internal/core	TestCSVWriters_EncodeAgainstFormulaInjection	default-ci	d1b93444	-	structural: every CSV writer applies an encoder
+INV-1-grant-authority	./server/http	TestEveryDirectRoleGrantChecksAuthority	default-ci	pre-existing	-	structural: every direct role grant checks authority
+GCP-CONN-PROJECTID	./internal/connect	TestGCPSM_RequiresProjectID	default-ci	pending	-	unpinned gcp-secret-manager connector must refuse reads, not span any GCP project
+AWS-CONN-ACCOUNTID	./internal/connect	TestAWSSM_AccountPin	default-ci	pending	-	pinned aws-secrets-manager connector must refuse an ARN naming a different AWS account
+G81-KEYPERM-REGISTRY	./internal/keyfiles	TestRegistry_IncludesWrappedKeyPathForEveryWriteCapableType	default-ci	pending	-	TPM/cloud-KMS wrapped-KEK blob must be covered by the shared key-permission checker registry, not just DEK/salt
+LASTADMIN-PAT-CONFUSED-DEPUTY	./internal/core	TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction	default-ci	pending	-	IsGlobalAdmin's PAT short-circuit answered a third-party question it wasn't built for; guardLastAdminDeactivation and SuspendInactiveUsers now use targetHasGlobalAdminRole instead
+G04-HA-1646	./internal/core	TestConcurrency_AssignUserRole_CrossReplicaPostgres_SoDBypass	pg-gated	37911f8a	1646	SoD direct-grant race across independent Postgres connections: two replicas each pass a stale pre-grant check and both write, live-reproduced; closed by WithNamedLock keyed per target principal
+G04-HA-1780	./internal/core	TestConcurrency_GroupRoleGrant_CrossReplicaPostgres_SoDBypass	pg-gated	f306ed7a	1780	SoD group-grant race: a group-role grant and a direct grant to one of its members took different lock keys and never serialized against each other; closed by taking each active member's own lock, ordered, before the group grant's check-then-write
 
 # NOT LISTED, deliberately:
 #   FIX-1 actorID==0 fast-path (internal/core/authz.go:614). The eight-site reroute

@@ -281,9 +281,35 @@ Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
 
 ## Closing a security fix
 
-- Add a row to `docs/security-closures.tsv`: claim id, package, proving test, commit.
-  `scripts/check-closures.sh` fails the build if the named test does not exist,
-  skips, or fails. Verify by test, never by commit — this repo squash-merges.
+- Add a row to `docs/security-closures.tsv`: claim id, package, proving test,
+  **verification**, commit, **issue**. `scripts/check-closures.sh` fails the
+  build if the named test does not exist, or does not produce a `--- PASS`
+  line in the environment its `verification` column claims. Verify by test,
+  never by commit — this repo squash-merges.
+- `verification` is `default-ci` (runs and passes with no special environment
+  — a skip is always a failure), `pg-gated` (needs `KEYORIX_TEST_PG_DSN`, e.g.
+  a cross-replica race only real Postgres can demonstrate — a skip is
+  expected and NOT a failure when the checker itself has no DSN, but IS one
+  the moment it does; `.github/workflows/ci.yml`'s `test-suite` job, `core`
+  leg, is the one job that actually proves these), or `manual` (no automated
+  test can exist — `note` must cite a specific artefact; this is an escape
+  hatch, not a shortcut, and CI cannot verify it). Added 2026-09-08 after
+  #1646 and #1780 — both real, both Postgres-race closures — sat with no row
+  for the same reason each time: their proving test could only skip in a
+  DSN-less run, and the checker treated a skip as a failure unconditionally,
+  so a row could not be added without either breaking CI or weakening the
+  check for every other claim. See `scripts/check-closures.sh`'s own header
+  for the full reasoning, and its `--self-test` for the calibration cases
+  (red AND green) that prove this doesn't silently accept an unproven claim.
+- `issue` is the GitHub issue number this closes, or `-` when there isn't a
+  single corresponding one. `scripts/report-unlisted-security-issues.sh`
+  cross-references closed issues carrying the `security` label against this
+  column, as an informational CI step — it never fails the build and never
+  should: the label is empirically unreliable (confirmed 2026-09-08: #1646,
+  #1780, #1551, and #1572 all carry zero labels), so its silence is not
+  completeness. Read that script's own header before trusting either its
+  output or a bare `-` in this column as proof nothing is owed — no known
+  reliable way exists in this repo today to derive that automatically.
 - If the root cause has sibling call sites, the fix is an invariant test, not a
   site patch. Extend an existing registry test
   (`TestEveryDirectRoleGrantChecksAuthority`, `remote_reachability_registry_test.go`)
