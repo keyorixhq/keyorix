@@ -110,7 +110,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return errors.New(`'keyorix run' no longer injects secrets by default. Choose explicitly:
   --var NAME=secret-ref   (recommended) inject one secret, YOU name the env var
   --derive-names          (deprecated) restore the old auto-derived behavior
-See https://github.com/keyorixhq/keyorix/issues/1816 for why.`)
+See https://github.com/keyorixhq/keyorix/issues/1816 for why`)
 	}
 
 	// context.Background() with NO deadline attached: matches the other 100+

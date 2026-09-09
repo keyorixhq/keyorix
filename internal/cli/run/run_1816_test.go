@@ -222,10 +222,10 @@ func TestBuildChildEnv_Derived_InheritedWinsOnCollision_RedThenGreen(t *testing.
 
 	// RED: reproduce the pre-#1816 shape directly (old buildChildEnv always
 	// appended extraEnv last, unconditionally overriding inherited values).
-	oldShapeEnv := append([]string{}, filterSensitiveEnv(nil)...)
-	// (filterSensitiveEnv(nil) is empty; build the old-shape child env by hand
-	// to avoid depending on a since-deleted function signature.)
-	oldShapeEnv = []string{"MY_APP_VAR=inherited-value"}
+	// Built by hand rather than calling the old function (its signature no
+	// longer exists) -- starts from just the one inherited var this test cares
+	// about, since filterSensitiveEnv(nil) contributes nothing on its own.
+	oldShapeEnv := []string{"MY_APP_VAR=inherited-value"}
 	for k, v := range derived {
 		oldShapeEnv = append(oldShapeEnv, k+"="+v) // old behavior: always appended last
 	}
