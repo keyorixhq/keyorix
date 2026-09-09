@@ -39,9 +39,15 @@ import (
 
 // KeyManager handles key lifecycle and storage.
 type KeyManager struct {
-	dekPath    string
-	saltPath   string
-	baseDir    string
+	dekPath  string
+	saltPath string
+	baseDir  string
+	// configErr records a key-path configuration that cannot be honoured,
+	// detected at construction. NewKeyManager cannot return an error (it is
+	// called from NewService, which cannot either, from seven call sites), so
+	// the error is held here and returned by Initialize -- the first method
+	// that touches a key file, and the one whose failure stops a boot.
+	configErr  error
 	currentDEK []byte
 	// dekSnapshot is the raw wrapped-DEK bytes read from disk at the moment
 	// currentDEK was last set (Initialize/RotateDEKWithSweep). It
@@ -189,12 +195,104 @@ type KeyInfo struct {
 
 // NewKeyManager creates a new KeyManager.
 func NewKeyManager(baseDir, dekPath, saltPath string) *KeyManager {
+	base, dek, salt, err := normalizeKeyPaths(baseDir, dekPath, saltPath)
 	return &KeyManager{
-		dekPath:    dekPath,
-		saltPath:   saltPath,
-		baseDir:    baseDir,
+		dekPath:    dek,
+		saltPath:   salt,
+		baseDir:    base,
 		keyVersion: "v1",
+		configErr:  err,
 	}
+}
+
+// normalizeKeyPaths reconciles a configured (baseDir, dekPath, saltPath) with
+// what internal/securefiles actually accepts: a base directory plus a path
+// RELATIVE to it. securefiles.safeRelComponents rejects any absolute path
+// outright ("must be relative"), and isPathInsideBase resolves an empty base
+// via filepath.Abs("") -- the process working directory -- so an absolute key
+// path was refused as "outside" it.
+//
+// That made an absolute dek_path/salt_path impossible to boot with: server/
+// main.go set baseDir="" for absolute paths intending "self-contained, no
+// base-dir restriction", but no securefiles primitive implements that
+// convention. First-boot key generation failed with
+//
+//	failed to write wrapped DEK: access denied: file %q is outside of ""
+//
+// on every start. (Found via the DAST workflow, which configures
+// /tmp/keyorix-dast.dek and had failed on every run for ~19 hours.)
+//
+// The convention applied here -- absolute wins, relative resolves under
+// baseDir -- is the one this codebase already uses in two other places:
+// internal/keyfiles/registry.go's resolve() and internal/startup's
+// resolveKeyPath(). internal/encryption is the component that never got it.
+//
+// Three rules, and the reasoning for each:
+//
+//   - Both paths relative: returned UNCHANGED. This is deliberate and load
+//     bearing. Splitting a relative path into Dir/Base would turn a rejection
+//     into an escape: dek_path "../../etc/x" is refused today because
+//     safeRelComponents rejects the ".." component, but as
+//     (base="../../etc", name="x") both checks would pass. Only absolute
+//     paths are rewritten.
+//
+//   - Both absolute and sharing a directory: reduced to that directory plus
+//     the two base names. baseDir is the join root for more than these two
+//     files -- the DEK lock (keymanager_filelock.go), the ".pending" siblings
+//     (keymanager_kek_rotation.go, keymanager_rewrap.go, keymanager_rotation.go)
+//     and the server lock (exclusive_lock.go) all hang off it -- so keeping a
+//     single base directory leaves every one of those join sites working
+//     unchanged, with locks and pending files landing beside the keys where an
+//     operator expects them.
+//
+//   - Anything else (one absolute and one relative, or two absolute paths in
+//     different directories): refused with a clear error rather than guessed
+//     at. Supporting split directories would mean inventing a placement rule
+//     for the lock and .pending files that no caller has asked for; a loud
+//     refusal is the honest answer until one does.
+//
+// Containment is not weakened by the rewrite. The property that actually
+// defends key material is SecureOpenBeneath's per-component O_NOFOLLOW walk,
+// which still refuses a symlink planted anywhere in the key directory. The
+// base-directory check only ever guarded against traversal inside a RELATIVE
+// configured value, and that path is untouched. An operator who writes an
+// absolute dek_path has chosen that directory explicitly.
+//
+// An empty path is left alone: it means "not configured", and
+// keyfiles.Registry already skips empty entries.
+func normalizeKeyPaths(baseDir, dekPath, saltPath string) (string, string, string, error) {
+	dekAbs := filepath.IsAbs(dekPath)
+	saltAbs := filepath.IsAbs(saltPath)
+
+	if dekPath == "" || saltPath == "" || (!dekAbs && !saltAbs) {
+		return baseDir, dekPath, saltPath, nil
+	}
+
+	if dekAbs != saltAbs {
+		return baseDir, dekPath, saltPath, fmt.Errorf(
+			"encryption key paths must both be absolute or both be relative: "+
+				"dek_path %q is %s but salt_path %q is %s",
+			dekPath, absOrRel(dekAbs), saltPath, absOrRel(saltAbs))
+	}
+
+	dekDir := filepath.Dir(filepath.Clean(dekPath))
+	saltDir := filepath.Dir(filepath.Clean(saltPath))
+	if dekDir != saltDir {
+		return baseDir, dekPath, saltPath, fmt.Errorf(
+			"absolute encryption key paths must live in the same directory "+
+				"(the DEK lock, the server lock and the .pending rotation files are all "+
+				"placed alongside them): dek_path is in %q but salt_path is in %q",
+			dekDir, saltDir)
+	}
+
+	return dekDir, filepath.Base(dekPath), filepath.Base(saltPath), nil
+}
+
+func absOrRel(abs bool) string {
+	if abs {
+		return "absolute"
+	}
+	return "relative"
 }
 
 // Initialize sets up the key manager.
@@ -203,6 +301,13 @@ func NewKeyManager(baseDir, dekPath, saltPath string) *KeyManager {
 func (km *KeyManager) Initialize(passphrase string) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
+
+	// A key-path configuration NewKeyManager could not honour. Reported here
+	// because this is the first method to touch a key file, so a bad config
+	// stops the boot rather than surfacing later as a confusing I/O error.
+	if km.configErr != nil {
+		return km.configErr
+	}
 
 	kek, err := km.deriveKEK(passphrase)
 	if err != nil {

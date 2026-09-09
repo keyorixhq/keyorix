@@ -315,10 +315,19 @@ func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*
 		passphrase = string(passphraseBytes)
 	}
 
-	baseDir := ""
-	if !filepath.IsAbs(cfg.Storage.Encryption.DEKPath) {
-		baseDir = "."
-	}
+	// Always ".". An absolute dek_path/salt_path is reconciled by
+	// NewKeyManager (normalizeKeyPaths), which is where every other
+	// encryption.NewService caller benefits from it too -- the six CLI call
+	// sites included, so `keyorix encryption ...` can operate on the same key
+	// files this server just created.
+	//
+	// This previously set baseDir="" for an absolute DEKPath, meaning "the
+	// path is self-contained, no base-dir restriction". No securefiles
+	// primitive implements that convention: isPathInsideBase resolves "" to
+	// the working directory and rejected the key file as outside it, so a
+	// deployment configuring an absolute key path could never complete
+	// first-boot key generation.
+	baseDir := "."
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 	if auditSink != nil {
 		svc.SetAuditSink(auditSink)
