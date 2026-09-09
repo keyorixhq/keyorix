@@ -28,13 +28,13 @@ import (
 
 func newClockRegressionCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
-	// Defensive, not relying solely on this package's TestMain: at least two
-	// other tests (secret_update_expiration_test.go, secret_value_crypto_test.go)
-	// call i18n.ResetForTesting() in their own cleanup, which de-initializes
-	// the package-level i18n singleton for whichever test runs next in the
-	// same binary -- a pre-existing test-isolation gap, not introduced here,
-	// that this test tripped over by being the first to reach an i18n.T()
-	// call path without its own defensive re-init.
+	// Defensive re-init, kept as belt-and-braces. The gap this guarded
+	// against is now closed: secret_update_expiration_test.go and
+	// secret_value_crypto_test.go used to call i18n.ResetForTesting() in
+	// their own cleanup, de-initializing the package-level singleton for
+	// whichever test ran next in the same binary. Both were removed once
+	// sharding internal/core across two legs made the latent ordering
+	// dependency deterministic instead of lucky.
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
