@@ -53,8 +53,8 @@ func TestFetchSecretsRemote_SkipsFailedSecretValue(t *testing.T) {
 
 	got, err := fetchSecretsRemote(context.Background(), srv.URL, "tok", "web", "dev")
 	require.NoError(t, err)
-	assert.Equal(t, "ok-value", got["GOOD"])
-	assert.NotContains(t, got, "BAD", "failed secret value must be skipped, not included")
+	assert.Equal(t, "ok-value", got["good"])
+	assert.NotContains(t, got, "bad", "failed secret value must be skipped, not included")
 }
 
 // TestFetchSecretsRemote_MultiPage tests that multi-page secret listings are fully
@@ -88,7 +88,7 @@ func TestFetchSecretsRemote_MultiPage(t *testing.T) {
 
 	got, err := fetchSecretsRemote(context.Background(), srv.URL, "tok", "web", "dev")
 	require.NoError(t, err)
-	assert.Equal(t, "v1", got["S1"])
+	assert.Equal(t, "v1", got["s1"])
 }
 
 // NOTE: apiClient (and its tests TestApiClientGet_HTTP400 / TestApiClientGet_InvalidJSON)

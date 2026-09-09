@@ -78,7 +78,7 @@ func TestIsSensitiveKeyorixEnv(t *testing.T) {
 func TestBuildChildEnv_Default_InheritsFullParentEnv(t *testing.T) {
 	t.Setenv("KEYORIX_RUN_TEST_UNRELATED", "leftover-from-shell")
 
-	got := buildChildEnv(map[string]string{"DB_PASSWORD": "s3cr3t"}, false)
+	got := buildChildEnv(nil, map[string]string{"DB_PASSWORD": "s3cr3t"}, false)
 
 	if !containsEnv(got, "KEYORIX_RUN_TEST_UNRELATED", "leftover-from-shell") {
 		t.Fatalf("default (no --clean-env) must still inherit unrelated parent vars, got: %v", got)
@@ -94,7 +94,7 @@ func TestBuildChildEnv_Default_InheritsFullParentEnv(t *testing.T) {
 func TestBuildChildEnv_Default_StillFiltersSensitiveKeyorixVars(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "should-not-leak-by-default-either")
 
-	got := buildChildEnv(nil, false)
+	got := buildChildEnv(nil, nil, false)
 
 	if containsEnv(got, "KEYORIX_TOKEN", "should-not-leak-by-default-either") {
 		t.Fatalf("default (no --clean-env) must still filter Keyorix's own credential vars, got: %v", got)
@@ -108,7 +108,7 @@ func TestBuildChildEnv_CleanEnv_OnlyInjectedSecretsAndBaseline(t *testing.T) {
 	t.Setenv("KEYORIX_RUN_TEST_UNRELATED", "leftover-from-shell")
 	t.Setenv("KEYORIX_TOKEN", "should-not-leak-into-clean-child")
 
-	got := buildChildEnv(map[string]string{"DB_PASSWORD": "s3cr3t"}, true)
+	got := buildChildEnv(nil, map[string]string{"DB_PASSWORD": "s3cr3t"}, true)
 
 	if containsEnv(got, "KEYORIX_RUN_TEST_UNRELATED", "leftover-from-shell") {
 		t.Fatalf("--clean-env must NOT inherit unrelated parent vars, got: %v", got)
@@ -137,7 +137,7 @@ func TestBuildChildEnv_CleanEnv_BaselineMatchesParent(t *testing.T) {
 	if !ok {
 		t.Skip("PATH not set in test environment")
 	}
-	got := buildChildEnv(nil, true)
+	got := buildChildEnv(nil, nil, true)
 	if !containsEnv(got, "PATH", wantPath) {
 		t.Fatalf("--clean-env must carry over the parent PATH baseline, got: %v", got)
 	}

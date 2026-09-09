@@ -68,7 +68,7 @@ func printScanReport(report *ScanReport) { // NOSONAR -- cognitive complexity 16
 	fmt.Println("Next steps:")
 	fmt.Println("  keyorix secret scan . --import    Import all into Keyorix")
 	fmt.Println("  keyorix secret scan . --report scan.json    Save full report")
-	fmt.Println("  keyorix run --env production -- <your-app>  Inject secrets at runtime")
+	fmt.Println("  keyorix run --env production --var NAME=secret-ref -- <your-app>  Inject secrets at runtime")
 }
 
 func sanitizeName(s string) string {

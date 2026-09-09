@@ -129,8 +129,8 @@ func TestFetchSecretsEmbedded_SkipsExpiredSecret(t *testing.T) {
 
 	got, err := fetchSecretsEmbedded(ctx, "web", "dev")
 	require.NoError(t, err, "an expired secret must be skipped, not fail the whole fetch")
-	assert.Equal(t, "should-be-injected", got["LIVE_SECRET"])
-	assert.NotContains(t, got, "EXPIRED_SECRET", "an expired secret's value must never be injected into the child process")
+	assert.Equal(t, "should-be-injected", got["live-secret"])
+	assert.NotContains(t, got, "expired-secret", "an expired secret's value must never be injected into the child process")
 }
 
 // TestFetchSecretsRemote_InvalidEndpoint verifies that an endpoint which fails
@@ -200,7 +200,7 @@ func TestHelperProcess_G80_ExecChild(t *testing.T) {
 	// The child command itself exits 7; execChild must translate that into an
 	// *exec.ExitError, hit the errors.As branch, and os.Exit(7) — never
 	// reaching this test's own return/pass/fail machinery.
-	err := execChild([]string{"sh", "-c", "exit 7"}, nil, false)
+	err := execChild([]string{"sh", "-c", "exit 7"}, nil, nil, false)
 	// Only reachable if execChild did NOT os.Exit, which is itself a bug this
 	// subprocess is designed to catch.
 	fmt.Fprintf(os.Stderr, "execChild returned instead of os.Exit-ing: %v\n", err)

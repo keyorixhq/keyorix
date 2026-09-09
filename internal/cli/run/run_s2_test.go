@@ -27,13 +27,18 @@ func TestRunRun_FetchRemoteError(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "test-tok")
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
+	// #1816: runRun now requires an explicit --var or --derive-names; these tests
+	// exercise fetch/token/clean-env paths unrelated to that choice, so opt into
+	// the old (deprecated) full-environment-derivation path to keep exercising them.
+	runDeriveNames = true
 	runEnv = "dev"
 	runProject = ""
 	runToken = ""
@@ -53,13 +58,18 @@ func TestRunRun_FetchLocalError(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
+	// #1816: runRun now requires an explicit --var or --derive-names; these tests
+	// exercise fetch/token/clean-env paths unrelated to that choice, so opt into
+	// the old (deprecated) full-environment-derivation path to keep exercising them.
+	runDeriveNames = true
 	runEnv = "dev"
 	runProject = "nonexistent"
 	runToken = ""
@@ -87,13 +97,18 @@ func TestRunRun_TokenFlagWarning(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
+	// #1816: runRun now requires an explicit --var or --derive-names; these tests
+	// exercise fetch/token/clean-env paths unrelated to that choice, so opt into
+	// the old (deprecated) full-environment-derivation path to keep exercising them.
+	runDeriveNames = true
 	runEnv = "dev"
 	runProject = "ghost"
 	runToken = "explicit-token"
@@ -110,7 +125,7 @@ func TestRunRun_TokenFlagWarning(t *testing.T) {
 // (echo) returns nil.
 func TestExecChild_SuccessfulCommand(t *testing.T) {
 	// Use `true` which is guaranteed to succeed on Unix-like systems.
-	err := execChild([]string{"true"}, nil, false)
+	err := execChild([]string{"true"}, nil, nil, false)
 	assert.NoError(t, err)
 }
 
@@ -118,7 +133,7 @@ func TestExecChild_SuccessfulCommand(t *testing.T) {
 // the binary doesn't exist (not the os.Exit path, but the "command not found"
 // path which surfaces as exec: not found in PATH).
 func TestExecChild_CommandNotFound(t *testing.T) {
-	err := execChild([]string{"__no_such_binary_9xyzkeyorix__"}, nil, false)
+	err := execChild([]string{"__no_such_binary_9xyzkeyorix__"}, nil, nil, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "command failed")
 }
@@ -127,14 +142,14 @@ func TestExecChild_CommandNotFound(t *testing.T) {
 // plus injected secrets to the child.
 func TestExecChild_CleanEnv(t *testing.T) {
 	// Use `true` with clean-env; child env should only have PATH/HOME + injected.
-	err := execChild([]string{"true"}, map[string]string{"MY_SECRET": "val"}, true)
+	err := execChild([]string{"true"}, nil, map[string]string{"MY_SECRET": "val"}, true)
 	assert.NoError(t, err)
 }
 
 // TestBuildChildEnv_CleanEnv_NoExtraVars proves that clean-env with no
 // injected secrets only carries PATH and HOME from the parent.
 func TestBuildChildEnv_CleanEnv_NoExtraVars(t *testing.T) {
-	got := buildChildEnv(nil, true)
+	got := buildChildEnv(nil, nil, true)
 	for _, kv := range got {
 		key := strings.SplitN(kv, "=", 2)[0]
 		assert.True(t, key == "PATH" || key == "HOME",
@@ -153,13 +168,18 @@ func TestRunRun_RemoteProjectNotFound(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "tok")
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
+	// #1816: runRun now requires an explicit --var or --derive-names; these tests
+	// exercise fetch/token/clean-env paths unrelated to that choice, so opt into
+	// the old (deprecated) full-environment-derivation path to keep exercising them.
+	runDeriveNames = true
 	runEnv = "dev"
 	runProject = "missing"
 	runToken = ""
@@ -210,13 +230,18 @@ func TestRunRun_FullRemoteSuccess(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "tok")
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
+	// #1816: runRun now requires an explicit --var or --derive-names; these tests
+	// exercise fetch/token/clean-env paths unrelated to that choice, so opt into
+	// the old (deprecated) full-environment-derivation path to keep exercising them.
+	runDeriveNames = true
 	runEnv = "dev"
 	runProject = "web"
 	runToken = ""
@@ -246,13 +271,18 @@ func TestRunRun_CleanEnvWithCommand(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "tok")
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
+	// #1816: runRun now requires an explicit --var or --derive-names; these tests
+	// exercise fetch/token/clean-env paths unrelated to that choice, so opt into
+	// the old (deprecated) full-environment-derivation path to keep exercising them.
+	runDeriveNames = true
 	runEnv = "dev"
 	runProject = "web"
 	runToken = ""
@@ -279,11 +309,11 @@ func TestFetchSecretsEmbedded_EnvNotFound(t *testing.T) {
 func TestExecChild_InheritsEnv(t *testing.T) {
 	t.Setenv("KEYORIX_RUN_S2_INHERIT_TEST", "should-be-present")
 	// Use `true` — we only care that no error is returned.
-	err := execChild([]string{"true"}, nil, false)
+	err := execChild([]string{"true"}, nil, nil, false)
 	assert.NoError(t, err)
 
 	// Verify the variable would have appeared in the built env.
-	env := buildChildEnv(nil, false)
+	env := buildChildEnv(nil, nil, false)
 	found := false
 	for _, kv := range env {
 		if kv == "KEYORIX_RUN_S2_INHERIT_TEST=should-be-present" {
@@ -325,13 +355,18 @@ func TestRunRun_StderrNotCaptured_TokenWarningPath(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
+	// #1816: runRun now requires an explicit --var or --derive-names; these tests
+	// exercise fetch/token/clean-env paths unrelated to that choice, so opt into
+	// the old (deprecated) full-environment-derivation path to keep exercising them.
+	runDeriveNames = true
 	runEnv = "dev"
 	runProject = "web"
 	runToken = "explicit-insecure-tok"

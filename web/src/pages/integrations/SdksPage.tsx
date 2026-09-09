@@ -105,7 +105,7 @@ export const SdksPage: React.FC = () => (
                 </p>
                 <CodeBlock
                     code={
-                        'keyorix secret create --name db-password --value supersecret\nkeyorix run --env production -- node app.js'
+                        'keyorix secret create --name db-password --value supersecret\nkeyorix run --env production --var DATABASE_URL=db-password -- node app.js'
                     }
                 />
             </div>

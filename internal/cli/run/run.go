@@ -15,10 +15,12 @@ import (
 )
 
 var (
-	runEnv      string
-	runProject  string
-	runToken    string
-	runCleanEnv bool
+	runEnv         string
+	runProject     string
+	runToken       string
+	runCleanEnv    bool
+	runVarMappings []string
+	runDeriveNames bool
 )
 
 // RunCmd is the top-level 'run' command.
@@ -28,23 +30,32 @@ var RunCmd = &cobra.Command{
 	Long: `Fetch secrets for a project + environment, expose them as environment
 variables, then execute the supplied command.
 
-  keyorix run --env production -- node app.js
-  keyorix run --env development -- flask run
-  keyorix run --env staging -- npm start
+'keyorix run' does not inject anything by default — pick exactly one:
+
+  --var NAME=secret-ref   (recommended) YOU choose the env var name.
+    keyorix run --env production --var DATABASE_URL=db-password -- node app.js
+    keyorix run --env production --var API_KEY=stripe-key --var DB=db-password -- ./myapp
+    Repeatable. Only the named secrets are injected, under the names you gave
+    them — a secret's own NAME never determines what env var it lands under.
+
+  --derive-names   (deprecated) restore the old behavior: every secret in the
+    project + environment is injected, with the env var key AUTO-DERIVED from
+    the secret's own name (uppercase, non-alphanumeric → '_' — e.g. db-password
+    becomes DB_PASSWORD). Deprecated because whoever can NAME a secret then
+    controls which env var it becomes — including reserved ones like
+    LD_PRELOAD or DYLD_INSERT_LIBRARIES — not just its value. Kept for
+    backward compatibility; --var has no such gap because YOU supply the name.
+    See https://github.com/keyorixhq/keyorix/issues/1816 for why this changed.
 
 Project is resolved via: --project flag → KEYORIX_PROJECT env → active project
 (set with 'keyorix project use') → "default" fallback.
 
-Each secret name is uppercased and non-alphanumeric characters are
-replaced with underscores before becoming an env var key:
-
-  db-password  →  DB_PASSWORD
-  api.endpoint →  API_ENDPOINT
-
-If two different secret names collide onto the same env var key after this
-conversion (e.g. "my-secret" and "my_secret" both becoming MY_SECRET), the
-command aborts with an error instead of silently letting one overwrite the
-other — rename one of the secrets to resolve the collision.
+Under --derive-names, if two different secret names collide onto the same env
+var key after derivation (e.g. "my-secret" and "my_secret" both becoming
+MY_SECRET), the command aborts with an error instead of silently letting one
+overwrite the other — rename one of the secrets to resolve the collision.
+Under --var, assigning the same NAME to two different secret-refs is the same
+kind of error; assigning it twice to the SAME secret-ref is fine.
 
 Authentication:
   • Session tokens written by 'keyorix auth login' are used automatically
@@ -66,7 +77,17 @@ Environment isolation:
     user's process environment (e.g. another local process, or an operator
     with shell access to the host) can read the injected values — the same
     limitation every environment-variable-based secret injector shares, not
-    something Keyorix can close.`,
+    something Keyorix can close.
+
+Collision with the inherited environment:
+  • --var: your explicit choice always wins. You named it, so overriding an
+    inherited value IS the intent.
+  • --derive-names: the INHERITED value wins instead — an auto-derived secret
+    name never overrides something already set in the environment (a second,
+    independent guard alongside the reserved-name filter: the filter stops a
+    brand-new dangerous name like DYLD_INSERT_LIBRARIES from being introduced;
+    this stops an already-set name from being silently overridden). If you
+    need a derived secret to take precedence, use --var instead.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runRun,
 }
@@ -76,9 +97,22 @@ func init() {
 	RunCmd.Flags().StringVar(&runProject, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	RunCmd.Flags().StringVar(&runToken, "token", "", "Service or session token (overrides KEYORIX_TOKEN env var)")
 	RunCmd.Flags().BoolVar(&runCleanEnv, "clean-env", false, "Start the child process with ONLY the injected secrets (plus a minimal PATH/HOME baseline) instead of the full inherited parent environment")
+	RunCmd.Flags().StringArrayVar(&runVarMappings, "var", nil, "Inject one secret under an explicit env var name: --var NAME=secret-ref (repeatable, recommended)")
+	RunCmd.Flags().BoolVar(&runDeriveNames, "derive-names", false, "Deprecated: inject every secret in the project+environment, deriving the env var name from the secret's own name")
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
+	// #1816: provenance fix. There is no implicit default anymore -- pick one
+	// explicitly, loudly, rather than either silently doing nothing or silently
+	// keeping the old (attacker-nameable) behavior. See the Long help text above
+	// for the full reasoning.
+	if len(runVarMappings) == 0 && !runDeriveNames {
+		return errors.New(`'keyorix run' no longer injects secrets by default. Choose explicitly:
+  --var NAME=secret-ref   (recommended) inject one secret, YOU name the env var
+  --derive-names          (deprecated) restore the old auto-derived behavior
+See https://github.com/keyorixhq/keyorix/issues/1816 for why.`)
+	}
+
 	// context.Background() with NO deadline attached: matches the other 100+
 	// common.RemoteClient call sites across this CLI (secret/rbac/machine/rotation/
 	// project/dynamic, etc — see NewRemoteClient's own comment). The hang protection
@@ -100,8 +134,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	var (
-		envVars  map[string]string
-		fetchErr error
+		secretsByName map[string]string
+		fetchErr      error
 	)
 
 	// --token flag overrides the token resolved by ResolveRemote. Passing it literally is
@@ -114,17 +148,20 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	if remoteOK {
-		envVars, fetchErr = fetchSecretsRemote(ctx, endpoint, tok, projectName, runEnv)
+		secretsByName, fetchErr = fetchSecretsRemote(ctx, endpoint, tok, projectName, runEnv)
 	} else {
-		envVars, fetchErr = fetchSecretsEmbedded(ctx, projectName, runEnv)
+		secretsByName, fetchErr = fetchSecretsEmbedded(ctx, projectName, runEnv)
 	}
 	if fetchErr != nil {
 		return fetchErr
 	}
 
-	envVars = dropDangerousEnvKeys(envVars)
+	derived, varMapped, err := resolveChildEnvVars(secretsByName, runVarMappings, runDeriveNames, projectName, runEnv)
+	if err != nil {
+		return err
+	}
 
-	return execChild(args, envVars, runCleanEnv)
+	return execChild(args, derived, varMapped, runCleanEnv)
 }
 
 // ── Embedded mode ─────────────────────────────────────────────────────────────
@@ -168,12 +205,14 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 		return nil, fmt.Errorf("environment %q not found", env)
 	}
 
-	// Inject EVERY secret in the project + environment — page through all of them
-	// so a project with more than one page doesn't start the subprocess with
-	// silently missing environment variables.
+	// List EVERY secret in the project + environment, keyed by its own raw NAME —
+	// page through all of them so a project with more than one page doesn't leave
+	// silently-missing secrets for --var to reference or --derive-names to inject.
+	// Env-var-key derivation (toEnvKey/setEnvKey) happens later, in
+	// resolveChildEnvVars, only for the --derive-names path; --var looks secrets
+	// up by this same raw name directly, with no derivation involved.
 	const pageSize = 500
 	result := make(map[string]string)
-	envKeySources := make(map[string]string)
 	for page := 1; ; page++ {
 		secrets, _, err := svc.ListSecrets(ctx, &coreStorage.SecretFilter{
 			ProjectID:     &projectID,
@@ -190,9 +229,7 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 				fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
 				continue
 			}
-			if err := setEnvKey(result, envKeySources, s.Name, string(val)); err != nil {
-				return nil, err
-			}
+			result[s.Name] = string(val)
 		}
 		if len(secrets) < pageSize {
 			break
@@ -269,7 +306,6 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 	// process, silently truncating or failing the launch instead of a clear error.
 	const maxRunInjectedSecrets = 2000
 	result := make(map[string]string)
-	envKeySources := make(map[string]string)
 	for page := 1; ; page++ {
 		listPath := fmt.Sprintf(
 			"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=%d&page=%d",
@@ -296,9 +332,7 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 				fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
 				continue
 			}
-			if err := setEnvKey(result, envKeySources, s.Name, secretBody.Value); err != nil {
-				return nil, err
-			}
+			result[s.Name] = secretBody.Value
 		}
 		if len(secretsBody.Secrets) < pageSize {
 			break
@@ -359,27 +393,27 @@ func setEnvKey(result map[string]string, envKeySources map[string]string, name, 
 //
 // dangerousEnvPrefixes: any env key starting with one of these is dropped.
 //   - LD_      the ELF/Mach-O dynamic linker's whole tunable surface (LD_PRELOAD,
-//              LD_LIBRARY_PATH, LD_AUDIT, ...) — linker behavior, not app config.
+//     LD_LIBRARY_PATH, LD_AUDIT, ...) — linker behavior, not app config.
 //   - DYLD_    macOS dyld's equivalent of LD_ (DYLD_INSERT_LIBRARIES,
-//              DYLD_LIBRARY_PATH, ...) — the exact family the live PoC used.
+//     DYLD_LIBRARY_PATH, ...) — the exact family the live PoC used.
 //   - NODE_    Node.js process-wide behavior flags (NODE_OPTIONS, NODE_PATH, ...).
-//              Deliberate tradeoff: this also blocks the legitimate NODE_ENV: a
-//              project secret writer controlling arbitrary NODE_OPTIONS content
-//              outweighs a launched Node app not getting NODE_ENV from a secret
-//              (operators can still set NODE_ENV as an ordinary shell/CI env var —
-//              `keyorix run` inherits the parent environment unchanged; only
-//              secret-derived keys are filtered here).
+//     Deliberate tradeoff: this also blocks the legitimate NODE_ENV: a
+//     project secret writer controlling arbitrary NODE_OPTIONS content
+//     outweighs a launched Node app not getting NODE_ENV from a secret
+//     (operators can still set NODE_ENV as an ordinary shell/CI env var —
+//     `keyorix run` inherits the parent environment unchanged; only
+//     secret-derived keys are filtered here).
 //   - PYTHON   CPython interpreter startup/path control (PYTHONPATH,
-//              PYTHONSTARTUP, PYTHONHOME, ...). No trailing '_': some real names
-//              (PYTHONDONTWRITEBYTECODE) don't have one after PYTHON.
+//     PYTHONSTARTUP, PYTHONHOME, ...). No trailing '_': some real names
+//     (PYTHONDONTWRITEBYTECODE) don't have one after PYTHON.
 //   - PERL5    Perl 5's interpreter option/library-path family (PERL5OPT,
-//              PERL5LIB). No trailing '_', matching Perl's own naming.
+//     PERL5LIB). No trailing '_', matching Perl's own naming.
 //   - BASH_    bash's own startup-file control (BASH_ENV and siblings).
 //   - GCONV_   glibc's character-conversion module loader (GCONV_PATH) — a
-//              second, less-known arbitrary-code-loading primitive alongside
-//              LD_PRELOAD.
+//     second, less-known arbitrary-code-loading primitive alongside
+//     LD_PRELOAD.
 //   - MALLOC_  glibc/macOS malloc tunables (MALLOC_CHECK_, MALLOC_CONF, ...),
-//              usable for heap-exploitation primitives.
+//     usable for heap-exploitation primitives.
 var dangerousEnvPrefixes = []string{
 	"LD_", "DYLD_", "NODE_", "PYTHON", "PERL5", "BASH_", "GCONV_", "MALLOC_",
 }
@@ -387,12 +421,12 @@ var dangerousEnvPrefixes = []string{
 // dangerousEnvExact names variables that control shell/process behavior directly
 // but don't belong to any linker/interpreter prefix family above:
 //   - IFS    shell field-splitting; corrupting it can turn plain arguments into
-//            separate words/code.
+//     separate words/code.
 //   - ENV    sh's (non-bash) startup-file equivalent of BASH_ENV.
 //   - HOME   many tools (git, ssh, npm, ...) resolve config/credentials relative
-//            to HOME; redirecting it can hijack that resolution.
+//     to HOME; redirecting it can hijack that resolution.
 //   - SHELL  some tools shell out via `$SHELL -c ...` rather than a fixed
-//            interpreter.
+//     interpreter.
 //   - PATH   executable resolution order for the whole child process tree.
 //
 // RUBYOPT and GIT_SSH_COMMAND (in the old exact list) are still covered: neither
@@ -435,6 +469,89 @@ func dropDangerousEnvKeys(envVars map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// isValidEnvVarName reports whether name is a syntactically valid POSIX
+// environment variable name ([A-Za-z_][A-Za-z0-9_]*) — required for --var's
+// operator-supplied NAME, since unlike a derived key (always produced by
+// toEnvKey, which can only emit this shape) an operator can type anything.
+func isValidEnvVarName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// resolveChildEnvVars implements #1816's two independent levers:
+//
+//   - Provenance: --var (varMappings) lets the OPERATOR choose each env var
+//     name explicitly, looking up each named secret directly in
+//     secretsByName. --derive-names (deriveNames) keeps the old behavior —
+//     inject every secret, deriving the env var name from the secret's own
+//     name via toEnvKey/setEnvKey — behind an explicit, deprecated opt-in.
+//   - Precedence: the two paths return SEPARATELY (derived, varMapped) rather
+//     than a single merged map, because they get different treatment against
+//     the INHERITED environment in buildChildEnv: derived entries no longer
+//     override an inherited value (a second, independent guard alongside the
+//     reserved-name filter below); varMapped entries still do, because an
+//     explicit operator-chosen name IS the intent to override.
+//
+// The reserved-name filter (dropDangerousEnvKeys) applies ONLY to the derived
+// path — an attacker only controls a name there. --var's NAME came from the
+// operator, not from a secret's name, so no filter applies; isDangerousEnvKey
+// is instead used to print a non-blocking heads-up, since typing --var
+// LD_PRELOAD=... is far more likely to be deliberate than accidental and the
+// operator's own intent should not be silently overridden by this command.
+func resolveChildEnvVars(secretsByName map[string]string, varMappings []string, deriveNames bool, project, env string) (derived, varMapped map[string]string, err error) {
+	if deriveNames {
+		fmt.Fprintln(os.Stderr, "⚠️  --derive-names is deprecated: the env var name comes from each secret's own NAME, so whoever can name a project secret chooses (and can collide with) the env var it becomes. Prefer --var NAME=secret-ref, where you choose the name. See https://github.com/keyorixhq/keyorix/issues/1816.")
+		d := make(map[string]string, len(secretsByName))
+		envKeySources := make(map[string]string, len(secretsByName))
+		for name, value := range secretsByName {
+			if err := setEnvKey(d, envKeySources, name, value); err != nil {
+				return nil, nil, err
+			}
+		}
+		derived = dropDangerousEnvKeys(d)
+	}
+
+	if len(varMappings) > 0 {
+		vm := make(map[string]string, len(varMappings))
+		varSources := make(map[string]string, len(varMappings)) // envName -> secretRef
+		for _, mapping := range varMappings {
+			envName, secretRef, ok := strings.Cut(mapping, "=")
+			if !ok || envName == "" || secretRef == "" {
+				return nil, nil, fmt.Errorf("invalid --var %q: expected NAME=secret-ref", mapping)
+			}
+			if !isValidEnvVarName(envName) {
+				return nil, nil, fmt.Errorf("invalid --var %q: %q is not a valid environment variable name", mapping, envName)
+			}
+			if existingRef, ok := varSources[envName]; ok && existingRef != secretRef {
+				return nil, nil, fmt.Errorf("--var %s is assigned to two different secrets (%q and %q) — 'keyorix run' refuses to continue since one mapping would silently be dropped; use --var only once per name", envName, existingRef, secretRef)
+			}
+			value, ok := secretsByName[secretRef]
+			if !ok {
+				return nil, nil, fmt.Errorf("--var %s=%s: secret %q not found in project %q / environment %q", envName, secretRef, secretRef, project, env)
+			}
+			if isDangerousEnvKey(envName) {
+				fmt.Fprintf(os.Stderr, "⚠️  --var maps secret %q onto %q, a reserved environment variable — proceeding because you asked for it explicitly; double-check this is intentional\n", secretRef, envName)
+			}
+			varSources[envName] = secretRef
+			vm[envName] = value
+		}
+		varMapped = vm
+	}
+
+	return derived, varMapped, nil
 }
 
 // sensitiveEnvSuffixes mark a KEYORIX_-prefixed env var as this CLI invocation's own
@@ -485,8 +602,8 @@ func isSensitiveKeyorixEnv(key string) bool {
 // inherited. This is opt-in hardening for #164 — broader than #103's Keyorix-specific
 // filtering, for callers who don't want the child to see the invoking shell's environment
 // at all.
-func execChild(args []string, extraEnv map[string]string, cleanEnv bool) error {
-	childEnv := buildChildEnv(extraEnv, cleanEnv)
+func execChild(args []string, derived, varMapped map[string]string, cleanEnv bool) error {
+	childEnv := buildChildEnv(derived, varMapped, cleanEnv)
 
 	c := exec.Command(args[0], args[1:]...) // #nosec G204
 	c.Stdin = os.Stdin
@@ -509,19 +626,53 @@ func execChild(args []string, extraEnv map[string]string, cleanEnv bool) error {
 // credential vars (filterSensitiveEnv, #103) — the long-standing, backward-compatible
 // behavior. With cleanEnv true it starts from ONLY a minimal PATH/HOME baseline (so the
 // child can still locate binaries and its home directory), NOT the rest of the parent
-// environment. In both cases extraEnv (the injected secrets) is appended last.
-func buildChildEnv(extraEnv map[string]string, cleanEnv bool) []string {
-	var childEnv []string
+// environment.
+//
+// #1816: the two injected-secret sources get different collision precedence against
+// that base, matching the reasoning in resolveChildEnvVars's doc comment:
+//   - derived (--derive-names, attacker-nameable): does NOT override an inherited
+//     value — a name already present wins. This is independent of, not a substitute
+//     for, dropDangerousEnvKeys's filter: the filter stops a brand-new dangerous
+//     name (e.g. DYLD_INSERT_LIBRARIES, not normally set) from being introduced at
+//     all; this stops an already-set name from being silently overridden, including
+//     one the filter doesn't yet enumerate. Neither closes the whole class alone.
+//   - varMapped (--var, operator-chosen): DOES override an inherited value — the
+//     operator named it explicitly, so overriding is the intent, not an accident.
+func buildChildEnv(derived, varMapped map[string]string, cleanEnv bool) []string {
+	// A single map, not incremental slice appends: exec.Cmd.Env technically defines
+	// "last duplicate key wins" for a slice with repeats, but relying on that
+	// implicitly here would make the derived-path's explicit skip-on-collision
+	// (below) and the varMapped-path's override-on-collision inconsistent in HOW
+	// each achieves its precedence — one by never adding a second entry, the other
+	// by silently trusting slice order. A map makes both paths equally explicit and
+	// guarantees the final []string has no duplicate keys at all.
+	env := make(map[string]string)
 	if cleanEnv {
 		for _, k := range []string{"PATH", "HOME"} {
 			if v, ok := os.LookupEnv(k); ok {
-				childEnv = append(childEnv, k+"="+v) // NOSONAR -- intentional minimal PATH/HOME baseline for clean-env subprocess
+				env[k] = v // NOSONAR -- intentional minimal PATH/HOME baseline for clean-env subprocess
 			}
 		}
 	} else {
-		childEnv = filterSensitiveEnv(os.Environ())
+		for _, kv := range filterSensitiveEnv(os.Environ()) {
+			k, v, _ := strings.Cut(kv, "=")
+			env[k] = v
+		}
 	}
-	for k, v := range extraEnv {
+
+	for k, v := range derived {
+		if _, alreadyInherited := env[k]; alreadyInherited {
+			fmt.Fprintf(os.Stderr, "⚠️  a --derive-names secret maps to %q, which is already set in the inherited environment — keeping the inherited value (derived names no longer override on collision; use --var if this secret should take precedence)\n", k)
+			continue
+		}
+		env[k] = v
+	}
+	for k, v := range varMapped {
+		env[k] = v // explicit operator intent always wins, replacing any inherited or derived value
+	}
+
+	childEnv := make([]string, 0, len(env))
+	for k, v := range env {
 		childEnv = append(childEnv, k+"="+v)
 	}
 	return childEnv

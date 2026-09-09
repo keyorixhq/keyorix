@@ -76,7 +76,7 @@ func TestBuildChildEnv_MultipleInjectedSecrets(t *testing.T) {
 		"SECRET_B": "val_b",
 		"SECRET_C": "val_c",
 	}
-	got := buildChildEnv(extra, false)
+	got := buildChildEnv(nil, extra, false)
 
 	for k, v := range extra {
 		assert.True(t, containsEnv(got, k, v), "expected %s=%s in child env", k, v)
@@ -90,7 +90,7 @@ func TestBuildChildEnv_CleanEnv_MultipleInjectedSecrets(t *testing.T) {
 		"DB_PASSWORD": "s3cr3t",
 		"API_KEY":     "xyzzy",
 	}
-	got := buildChildEnv(extra, true)
+	got := buildChildEnv(nil, extra, true)
 
 	for k, v := range extra {
 		assert.True(t, containsEnv(got, k, v), "expected %s=%s in clean-env child", k, v)
@@ -157,17 +157,19 @@ func TestRunRun_TokenFlagWithoutEndpoint(t *testing.T) {
 		_ = r.Close()
 	}()
 
-	origEnv, origProject, origToken, origClean := runEnv, runProject, runToken, runCleanEnv
+	origEnv, origProject, origToken, origClean, origDerive := runEnv, runProject, runToken, runCleanEnv, runDeriveNames
 	defer func() {
 		runEnv = origEnv
 		runProject = origProject
 		runToken = origToken
 		runCleanEnv = origClean
+		runDeriveNames = origDerive
 	}()
 	runEnv = "dev"
 	runProject = "ghost"
 	runToken = "flag-tok-no-endpoint"
 	runCleanEnv = false
+	runDeriveNames = true // #1816: opt into the deprecated path to exercise this unrelated behavior
 
 	// Without an endpoint, remoteOK is false so it falls through to embedded.
 	// The embedded path will fail because there's no seeded project.
@@ -246,7 +248,7 @@ func TestFetchSecretsEmbedded_SecretsSkippedOnValueError(t *testing.T) {
 
 	got, err := fetchSecretsEmbedded(ctx, "myproj2", "dev")
 	require.NoError(t, err)
-	assert.Equal(t, "top-secret", got["API_KEY"])
+	assert.Equal(t, "top-secret", got["api-key"])
 }
 
 // TestToEnvKey_DigitsAndUnderscores exercises digit-leading and underscore-
