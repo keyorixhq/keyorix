@@ -81,10 +81,83 @@ jobs:
         with:
           go-version: '1.26.6'
 
+      # On main this is the whole-project baseline and runs ./... unchanged.
+      #
+      # On a pull request it runs ONLY the packages whose files the PR
+      # touches. This is not an approximation: `go test -coverprofile` with no
+      # -coverpkg records coverage for each package from that package's OWN
+      # tests only, so for any given package the profile produced by
+      # `go test ./that/package` is byte-for-byte what `go test ./...` would
+      # have produced for it. Restricting the set therefore cannot change the
+      # coverage number SonarCloud computes for any changed package -- and a
+      # package with no changed files contributes no new code, so it cannot
+      # move "Coverage on New Code" either. Overall project coverage continues
+      # to come from the main-branch analysis, which is where SonarCloud takes
+      # it from regardless.
+      #
+      # What this buys: the ./... form re-ran the entire Go suite, unsharded,
+      # on every PR push -- 19 minutes on run 34329184317, recomputing
+      # coverage the ci.yml test-suite matrix had already computed and merged
+      # in the same run, and holding one of the Free plan's 20 concurrent job
+      # slots for the length of the critical path. A typical PR touches a
+      # handful of packages and now takes seconds.
+      #
+      # continue-on-error is kept (a failing test is ci.yml's job to gate, not
+      # this workflow's) but is no longer silent: the guard below fails loudly
+      # if the run produced no usable profile, so a coverage figure on the
+      # SonarCloud dashboard is never quietly sourced from a run that died.
       - name: Generate coverage report
         if: needs.changes.outputs.skip_go != 'true'
-        run: go test -timeout 600s -coverprofile=coverage.out -covermode=set ./...
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            go test -timeout 600s -coverprofile=coverage.out -covermode=set ./...
+            exit $?
+          fi
+          changed=$(gh api \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate --jq '.[].filename' | grep '\.go$' || true)
+          if [ -z "$changed" ]; then
+            echo "No .go files changed; skipping Go coverage (no new Go code to measure)."
+            exit 0
+          fi
+          # Deleted files leave a directory that no longer exists, and a path
+          # under a directory with no buildable package makes `go test` fail
+          # the whole invocation -- filter both out rather than letting one
+          # deleted file cost the entire report.
+          pkgs=""
+          while IFS= read -r d; do
+            [ -d "$d" ] || continue
+            go list "./$d" >/dev/null 2>&1 || continue
+            pkgs="$pkgs ./$d"
+          done < <(echo "$changed" | xargs -n1 dirname | sort -u)
+          if [ -z "$pkgs" ]; then
+            echo "No buildable Go packages among the changed files; skipping."
+            exit 0
+          fi
+          echo "Changed Go packages:$pkgs"
+          # shellcheck disable=SC2086
+          go test -timeout 600s -coverprofile=coverage.out -covermode=set $pkgs
+
+      # The step above is continue-on-error, which is how a broken coverage run
+      # previously reached SonarCloud as a silently truncated (or absent)
+      # profile. Distinguish "legitimately nothing to measure" from "the run
+      # failed and the number you are about to publish is wrong".
+      - name: Verify coverage profile is usable
+        if: needs.changes.outputs.skip_go != 'true'
+        run: |
+          if [ ! -f coverage.out ]; then
+            echo "::notice::No Go coverage profile produced (no Go packages changed). Not publishing Go coverage for this analysis."
+            exit 0
+          fi
+          if [ "$(wc -l < coverage.out)" -lt 2 ]; then
+            echo "::error::coverage.out exists but contains no coverage data -- the test run above failed. Refusing to publish an empty Go coverage figure to SonarCloud."
+            exit 1
+          fi
+          echo "Go coverage profile: $(( $(wc -l < coverage.out) - 1 )) blocks."
 
       # web/ (ADR-070) coverage, feeding sonar.javascript.lcov.reportPaths in
       # sonar-project.properties — folded in here rather than kept as a
