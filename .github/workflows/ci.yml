@@ -482,18 +482,24 @@ jobs:
           # itself worth revisiting -- tracked separately (#1523), not folded
           # into this CI-scheduling fix.
           #
-          # Split into two test-name shards 2026-09-09: at 13 min on run
-          # 34329184317 a single core leg was above the rebalanced matrix
-          # maximum on its own. internal/core is also the one heavy package
-          # with zero t.Parallel() (2856 tests, fully serial on a 4-core
-          # runner) -- sharding is the scheduling half of that; the
-          # t.Parallel() half is tracked separately.
-          - leg: core-1
+          # Briefly split into two test-name shards (2026-09-09, #1819) and
+          # reverted the same day once run 34345617638 measured the split:
+          # the max core leg moved 13.0 -> 12.6 min, 0.4 minutes, while the
+          # group's total compute went 13.0 -> 23.0 min. That +10.0 min is a
+          # direct measurement of this leg's fixed per-leg cost (checkout,
+          # setup-go, Postgres startup, race+cover compile of 372 test files)
+          # being paid twice for the same tests. It bought a runner slot's
+          # worth of contention and ~10 min of compute for nothing: at 13 min
+          # a single core leg sits well under http's 16.8 min maximum, so it
+          # is not on the critical path either way.
+          #
+          # The real lever for this leg is not more shards -- it is not
+          # paying that fixed cost per shard at all (compile once, upload the
+          # test binary, run it with -test.run per shard) and t.Parallel()
+          # for the 2856 currently-serial tests. Both tracked separately.
+          - leg: core
             timeout: 1800
-            coverage-file: coverage_core1.out
-          - leg: core-2
-            timeout: 1800
-            coverage-file: coverage_core2.out
+            coverage-file: coverage_core.out
           # storage-store (internal/storage/store, re-pinned out of root-4's
           # catch-all 2026-09-04) -- same trigger as core's own split above: a
           # real CI run (main, commit b971ed36) found root-4's `go test` step
@@ -670,11 +676,6 @@ jobs:
               shard=${leg#http-}
               run_filter=$(run_filter_for_shard "$pkgs" "$shard" 8)
               pkgs=./server/http
-              ;;
-            core-1|core-2)
-              shard=${leg#core-}
-              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 2)
-              pkgs=./internal/core
               ;;
             storage-store-1|storage-store-2)
               shard=${leg#storage-store-}
@@ -877,7 +878,7 @@ jobs:
           source scripts/ci-test-legs.sh
           grep_args=()
           while IFS= read -r pattern; do grep_args+=(-e "$pattern"); done < <(coverage_floor_grep_patterns)
-          # coverage_core1.out/coverage_core2.out are deliberately NOT in this list -- a pre-existing
+          # coverage_core.out is deliberately NOT in this list -- a pre-existing
           # gap this PR found but did not fix (out of scope for a CI-sharding
           # change; internal/core's coverage silently isn't counted toward the
           # floor). The coverage_storage_store*.out files below are included: they are THIS
