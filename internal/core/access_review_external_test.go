@@ -17,6 +17,7 @@ func uptr(u uint) *uint { return &u }
 // confers a secrets.* permission (users and groups), with the highest action, and
 // excludes roles that grant no secret access.
 func TestGenerateProjectAccessReview(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 
@@ -54,6 +55,7 @@ func TestGenerateProjectAccessReview(t *testing.T) {
 // enumerated — a privileged CI/k8s principal passed through a "completed"
 // recertification campaign entirely un-attested.
 func TestGenerateProjectAccessReview_IncludesMachineIdentities(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 
@@ -85,6 +87,7 @@ func TestGenerateProjectAccessReview_IncludesMachineIdentities(t *testing.T) {
 // TestRevokeAccessReviewGrant_MachineRole pins the revoke side of #91: a reviewer
 // must be able to close the loop on a machine-identity finding, not just view it.
 func TestRevokeAccessReviewGrant_MachineRole(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -110,6 +113,7 @@ func TestRevokeAccessReviewGrant_MachineRole(t *testing.T) {
 
 // The review also reports per-secret grants: ownership and direct/group shares.
 func TestGenerateProjectAccessReview_SharesAndOwnership(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}))
@@ -140,6 +144,7 @@ func TestGenerateProjectAccessReview_SharesAndOwnership(t *testing.T) {
 }
 
 func TestGenerateProjectAccessReview_RequiresProject(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	_, err := h.CoreService.GenerateProjectAccessReview(context.Background(), 0)
@@ -149,6 +154,7 @@ func TestGenerateProjectAccessReview_RequiresProject(t *testing.T) {
 // Revoking a role grant removes the underlying role assignment, so it no longer
 // appears in a subsequent review.
 func TestRevokeAccessReviewGrant_Role(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 
@@ -179,6 +185,7 @@ func TestRevokeAccessReviewGrant_Role(t *testing.T) {
 // project_members.go standalone HTTP handlers) could self-certify their own
 // access.
 func TestRevokeAccessReviewGrant_RejectsSelfCertification(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 
@@ -197,6 +204,7 @@ func TestRevokeAccessReviewGrant_RejectsSelfCertification(t *testing.T) {
 // (a machine-identity credential, which authorizes via PrincipalID not
 // UserID) must not be able to act as a reviewer via the standalone endpoint.
 func TestRevokeAccessReviewGrant_RejectsNonHumanReviewer(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 
@@ -217,6 +225,7 @@ func TestRevokeAccessReviewGrant_RejectsNonHumanReviewer(t *testing.T) {
 // ever populated for "role" sources, so this exercises
 // principalTypeForDecision's "direct_share is always a user" inference.
 func TestAttestAccessReviewGrant_RejectsSelfCertification_Share(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}, &models.AuditEvent{}))
@@ -239,6 +248,7 @@ func TestAttestAccessReviewGrant_RejectsSelfCertification_Share(t *testing.T) {
 
 // Revoking a group share removes that ShareRecord; revoking ownership is refused.
 func TestRevokeAccessReviewGrant_ShareAndOwner(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}))
@@ -284,6 +294,7 @@ func TestRevokeAccessReviewGrant_ShareAndOwner(t *testing.T) {
 // looked up the share purely by SecretID with no check that the secret actually
 // belongs to the caller's project (IDOR).
 func TestRevokeAccessReviewGrant_CrossProjectShareRevokeRefused(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}))
@@ -313,6 +324,7 @@ func TestRevokeAccessReviewGrant_CrossProjectShareRevokeRefused(t *testing.T) {
 // Attesting a grant changes no access but records an access_review.attested audit
 // event as the evidence of recertification.
 func TestAttestAccessReviewGrant_AuditsDecision(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -339,6 +351,7 @@ func TestAttestAccessReviewGrant_AuditsDecision(t *testing.T) {
 }
 
 func TestRevokeAccessReviewGrant_RequiresProject(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 1, 0, core.AccessReviewDecision{Source: "role"})
@@ -350,6 +363,7 @@ func TestRevokeAccessReviewGrant_RequiresProject(t *testing.T) {
 // certifies "I reviewed and confirmed this access is still needed," which would be a
 // false statement for a grant that's already gone.
 func TestAttestAccessReviewGrant_RefusesRevokedRoleGrant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -381,6 +395,7 @@ func TestAttestAccessReviewGrant_RefusesRevokedRoleGrant(t *testing.T) {
 // principal) must be refused the same way — the campaign item's cached fields alone
 // are not sufficient evidence a grant exists.
 func TestAttestAccessReviewGrant_RefusesFabricatedRoleGrant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -403,6 +418,7 @@ func TestAttestAccessReviewGrant_RefusesFabricatedRoleGrant(t *testing.T) {
 // A live share attestation still succeeds, and a stale/revoked share attestation is
 // refused the same way as a role grant.
 func TestAttestAccessReviewGrant_Share(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}, &models.AuditEvent{}))
@@ -442,6 +458,7 @@ func TestAttestAccessReviewGrant_Share(t *testing.T) {
 // attestation spuriously failed "no longer exists" for a grant that was very
 // much live.
 func TestAttestAccessReviewGrant_MachineRole(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -471,6 +488,7 @@ func TestAttestAccessReviewGrant_MachineRole(t *testing.T) {
 // by passing that secret's ID alongside a recipient who happens to hold SOME
 // share on it. Mirrors revokeReviewShare's identical guard (#99).
 func TestAttestAccessReviewGrant_RefusesCrossProjectShare(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}, &models.AuditEvent{}))
@@ -502,6 +520,7 @@ func TestAttestAccessReviewGrant_RefusesCrossProjectShare(t *testing.T) {
 // TestAttestAccessReviewGrant_RefusesCrossProjectOwnership is the "owner"
 // source analogue of the share IDOR above.
 func TestAttestAccessReviewGrant_RefusesCrossProjectOwnership(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.AuditEvent{}))

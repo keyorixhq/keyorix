@@ -23,6 +23,7 @@ import (
 // ── scim.go — FindSCIMUser ────────────────────────────────────────────────
 
 func TestFindSCIMUser_ByExternalID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	u := &models.User{ID: 1, ExternalID: "ext-123"}
 	ms.On("GetUserByExternalID", mock.Anything, "ext-123").Return(u, nil)
@@ -33,6 +34,7 @@ func TestFindSCIMUser_ByExternalID(t *testing.T) {
 }
 
 func TestFindSCIMUser_ByEmail(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "").Return(nil, storage.ErrUserNotFound)
 	ms.On("GetUserByEmail", mock.Anything, "alice@x.com").Return(&models.User{ID: 2}, nil)
@@ -43,6 +45,7 @@ func TestFindSCIMUser_ByEmail(t *testing.T) {
 }
 
 func TestFindSCIMUser_NotFound_s30(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "ext-999").Return(nil, storage.ErrUserNotFound)
 	ms.On("GetUserByEmail", mock.Anything, "nobody@x.com").Return(nil, storage.ErrUserNotFound)
@@ -53,6 +56,7 @@ func TestFindSCIMUser_NotFound_s30(t *testing.T) {
 }
 
 func TestFindSCIMUser_ExternalIDLookupError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "ext-1").Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -61,6 +65,7 @@ func TestFindSCIMUser_ExternalIDLookupError(t *testing.T) {
 }
 
 func TestFindSCIMUser_EmailLookupError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// externalID empty → skip that check. Email check fails.
 	ms.On("GetUserByEmail", mock.Anything, "err@x.com").Return(nil, errors.New("db error"))
@@ -72,6 +77,7 @@ func TestFindSCIMUser_EmailLookupError(t *testing.T) {
 // ── scim.go — ProvisionSCIMUser success path ─────────────────────────────
 
 func TestProvisionSCIMUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// FindSCIMUser → GetUserByExternalID not found, GetUserByEmail not found.
 	ms.On("GetUserByExternalID", mock.Anything, "ext-new").Return(nil, storage.ErrUserNotFound)
@@ -96,6 +102,7 @@ func TestProvisionSCIMUser_Success(t *testing.T) {
 // unapproved domain (e.g. a misconfigured/multi-tenant IdP) could still
 // silently mint an account. Verify it's now enforced here too.
 func TestProvisionSCIMUser_RejectsDisallowedDomain(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetMembershipDomainAllowlist([]string{"allowed.com"})
@@ -107,6 +114,7 @@ func TestProvisionSCIMUser_RejectsDisallowedDomain(t *testing.T) {
 }
 
 func TestProvisionSCIMUser_EmailFallback(t *testing.T) {
+	t.Parallel()
 	// When email is empty, it defaults to userName.
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "ext-2").Return(nil, storage.ErrUserNotFound)
@@ -123,6 +131,7 @@ func TestProvisionSCIMUser_EmailFallback(t *testing.T) {
 }
 
 func TestProvisionSCIMUser_Inactive(t *testing.T) {
+	t.Parallel()
 	// active=false → AccountDeprovisioned state.
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "ext-3").Return(nil, storage.ErrUserNotFound)
@@ -139,6 +148,7 @@ func TestProvisionSCIMUser_Inactive(t *testing.T) {
 }
 
 func TestProvisionSCIMUser_CreateUserDuplicateEmail(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "ext-4").Return(nil, storage.ErrUserNotFound)
 	ms.On("GetUserByEmail", mock.Anything, "dup@x.com").Return(nil, storage.ErrUserNotFound)
@@ -151,6 +161,7 @@ func TestProvisionSCIMUser_CreateUserDuplicateEmail(t *testing.T) {
 }
 
 func TestProvisionSCIMUser_CreateUserError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "ext-5").Return(nil, storage.ErrUserNotFound)
 	ms.On("GetUserByEmail", mock.Anything, "err2@x.com").Return(nil, storage.ErrUserNotFound)
@@ -164,6 +175,7 @@ func TestProvisionSCIMUser_CreateUserError(t *testing.T) {
 // ── machine_token.go — AssignMachineRole ─────────────────────────────────
 
 func TestAssignMachineRole_MachineNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -172,6 +184,7 @@ func TestAssignMachineRole_MachineNotFound(t *testing.T) {
 }
 
 func TestAssignMachineRole_RoleNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	machine := &models.MachineIdentity{ID: 1, ProjectID: 5}
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
@@ -182,6 +195,7 @@ func TestAssignMachineRole_RoleNotFound(t *testing.T) {
 }
 
 func TestAssignMachineRole_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	machine := &models.MachineIdentity{ID: 1, ProjectID: 5, Name: "ci-runner", State: MachineActive}
 	role := &models.Role{ID: 2, Name: "viewer"} // non-admin role → requireAuthorityForRole returns nil
@@ -200,6 +214,7 @@ func TestAssignMachineRole_Success(t *testing.T) {
 // ── invitations.go — WithdrawAccessRequest ───────────────────────────────
 
 func TestWithdrawAccessRequest_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetAccessRequest", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -209,6 +224,7 @@ func TestWithdrawAccessRequest_NotFound(t *testing.T) {
 }
 
 func TestWithdrawAccessRequest_WrongUser(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	req := &models.AccessRequest{ID: 1, UserID: 5, State: AccessRequestPending}
 	ms.On("GetAccessRequest", mock.Anything, uint(1)).Return(req, nil)
@@ -222,6 +238,7 @@ func TestWithdrawAccessRequest_WrongUser(t *testing.T) {
 }
 
 func TestWithdrawAccessRequest_NotPending(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	req := &models.AccessRequest{ID: 1, UserID: 5, State: AccessRequestApproved}
 	ms.On("GetAccessRequest", mock.Anything, uint(1)).Return(req, nil)
@@ -232,6 +249,7 @@ func TestWithdrawAccessRequest_NotPending(t *testing.T) {
 }
 
 func TestWithdrawAccessRequest_UpdateError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	req := &models.AccessRequest{ID: 1, UserID: 5, State: AccessRequestPending, ProjectID: 3}
 	ms.On("GetAccessRequest", mock.Anything, uint(1)).Return(req, nil)
@@ -242,6 +260,7 @@ func TestWithdrawAccessRequest_UpdateError(t *testing.T) {
 }
 
 func TestWithdrawAccessRequest_ConcurrentApproval(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	req := &models.AccessRequest{ID: 1, UserID: 5, State: AccessRequestPending, ProjectID: 3}
 	ms.On("GetAccessRequest", mock.Anything, uint(1)).Return(req, nil)
@@ -254,6 +273,7 @@ func TestWithdrawAccessRequest_ConcurrentApproval(t *testing.T) {
 }
 
 func TestWithdrawAccessRequest_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	req := &models.AccessRequest{ID: 1, UserID: 5, State: AccessRequestPending, ProjectID: 3}
 	ms.On("GetAccessRequest", mock.Anything, uint(1)).Return(req, nil)
@@ -267,6 +287,7 @@ func TestWithdrawAccessRequest_Success(t *testing.T) {
 // ── sod.go — requireMachineGrantNoSoDViolation ───────────────────────────
 
 func TestRequireMachineGrantNoSoDViolation_ListPoliciesError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSoDPolicies", mock.Anything).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -275,6 +296,7 @@ func TestRequireMachineGrantNoSoDViolation_ListPoliciesError(t *testing.T) {
 }
 
 func TestRequireMachineGrantNoSoDViolation_NoPolicies(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{}, nil)
 	c := NewKeyorixCore(ms)
@@ -283,6 +305,7 @@ func TestRequireMachineGrantNoSoDViolation_NoPolicies(t *testing.T) {
 }
 
 func TestRequireMachineGrantNoSoDViolation_RoleError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)
@@ -293,6 +316,7 @@ func TestRequireMachineGrantNoSoDViolation_RoleError(t *testing.T) {
 }
 
 func TestRequireMachineGrantNoSoDViolation_AdminRoleSkipsSoD(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)
@@ -306,6 +330,7 @@ func TestRequireMachineGrantNoSoDViolation_AdminRoleSkipsSoD(t *testing.T) {
 // ── auth.go — Login MFA required path ────────────────────────────────────
 
 func TestLogin_MFARequired(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// MFA-enabled user: create a bcrypt hash so VerifyPasswordCredentials succeeds.
 	hash, err := bcrypt.GenerateFromPassword([]byte("Password#Str0ng!"), bcrypt.MinCost)
@@ -330,6 +355,7 @@ func TestLogin_MFARequired(t *testing.T) {
 // ── access_review_campaign.go — OpenAccessReviewCampaign ─────────────────
 
 func TestOpenAccessReviewCampaign_ZeroProjectID_s30(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	// actorID=1, projectID=0 → returns "project ID is required" immediately.
 	_, err := c.OpenAccessReviewCampaign(context.Background(), 1, 0, 0, "Campaign")
@@ -340,6 +366,7 @@ func TestOpenAccessReviewCampaign_ZeroProjectID_s30(t *testing.T) {
 // ── access_review_campaign.go — CloseAccessReviewCampaign ────────────────
 
 func TestCloseAccessReviewCampaign_CampaignNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetAccessReviewCampaign", mock.Anything, uint(5)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -348,6 +375,7 @@ func TestCloseAccessReviewCampaign_CampaignNotFound(t *testing.T) {
 }
 
 func TestCloseAccessReviewCampaign_WrongProject(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	campaign := &models.AccessReviewCampaign{ID: 5, ProjectID: 99, State: CampaignStateOpen}
 	ms.On("GetAccessReviewCampaign", mock.Anything, uint(5)).Return(campaign, nil)
@@ -360,6 +388,7 @@ func TestCloseAccessReviewCampaign_WrongProject(t *testing.T) {
 // ── access_review_campaign.go — userInGroup ──────────────────────────────
 
 func TestUserInGroup_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// userInGroup calls GetUserGroups(ctx, userID=5) — on error, returns true (fail open).
 	ms.On("GetUserGroups", mock.Anything, uint(5)).Return(nil, errors.New("db error"))
@@ -370,6 +399,7 @@ func TestUserInGroup_StorageError(t *testing.T) {
 }
 
 func TestUserInGroup_Found(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	groups := []*models.Group{{ID: 1, Name: "admins"}}
 	ms.On("GetUserGroups", mock.Anything, uint(5)).Return(groups, nil)
@@ -379,6 +409,7 @@ func TestUserInGroup_Found(t *testing.T) {
 }
 
 func TestUserInGroup_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	groups := []*models.Group{{ID: 99, Name: "others"}}
 	ms.On("GetUserGroups", mock.Anything, uint(5)).Return(groups, nil)

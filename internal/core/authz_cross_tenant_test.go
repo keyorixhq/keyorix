@@ -22,6 +22,7 @@ import (
 // (roleEditor/roleViewer/ptr are defined in authz_scoped_test.go, same package.)
 
 func TestCrossTenant_GroupRoleDoesNotLeakToOtherProject(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "groupie", 200)
@@ -40,6 +41,7 @@ func TestCrossTenant_GroupRoleDoesNotLeakToOtherProject(t *testing.T) {
 }
 
 func TestCrossTenant_SoftDeletedGroupRevokesInheritedRole(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "exmember", 201)
@@ -60,6 +62,7 @@ func TestCrossTenant_SoftDeletedGroupRevokesInheritedRole(t *testing.T) {
 }
 
 func TestCrossTenant_ExpiredGrantExcludedAlongsidePermanent(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "mixedgrants", 202)
@@ -81,6 +84,7 @@ func TestCrossTenant_ExpiredGrantExcludedAlongsidePermanent(t *testing.T) {
 }
 
 func TestCrossTenant_MachineIdentityDeniedOtherProject(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityRole{}))

@@ -32,6 +32,7 @@ func billingLicensedGate(t *testing.T) *license.Gate {
 }
 
 func TestGenerateBillingReport_Unlicensed_ReturnsError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms) // no gate set → nil gate → community baseline, no features
@@ -47,6 +48,7 @@ func TestGenerateBillingReport_Unlicensed_ReturnsError(t *testing.T) {
 }
 
 func TestGenerateBillingReport_FromEqualsTo_ReturnsError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -62,6 +64,7 @@ func TestGenerateBillingReport_FromEqualsTo_ReturnsError(t *testing.T) {
 }
 
 func TestGenerateBillingReport_FromAfterTo_ReturnsError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -78,6 +81,7 @@ func TestGenerateBillingReport_FromAfterTo_ReturnsError(t *testing.T) {
 }
 
 func TestGenerateBillingReport_WindowExceedsMax_ReturnsError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -94,6 +98,7 @@ func TestGenerateBillingReport_WindowExceedsMax_ReturnsError(t *testing.T) {
 }
 
 func TestGenerateBillingReport_WindowExactly366Days_Allowed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -112,6 +117,7 @@ func TestGenerateBillingReport_WindowExactly366Days_Allowed(t *testing.T) {
 }
 
 func TestGenerateBillingReport_Delegates_HappyPath(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -144,6 +150,7 @@ func TestGenerateBillingReport_Delegates_HappyPath(t *testing.T) {
 }
 
 func TestGenerateBillingReport_PropagatesStorageError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)

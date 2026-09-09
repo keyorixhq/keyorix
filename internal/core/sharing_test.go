@@ -31,6 +31,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestKeyorixCore_ShareSecret(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -85,6 +86,7 @@ func TestKeyorixCore_ShareSecret(t *testing.T) {
 }
 
 func TestKeyorixCore_ShareSecret_ValidationError(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -169,6 +171,7 @@ func TestKeyorixCore_ShareSecret_ValidationError(t *testing.T) {
 }
 
 func TestKeyorixCore_ShareSecret_StorageError(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -199,6 +202,7 @@ func TestKeyorixCore_ShareSecret_StorageError(t *testing.T) {
 // storage layer must never be reached — while still allowing an ordinary share to
 // a different user to proceed normally.
 func TestKeyorixCore_ShareSecret_RejectsSelfShare(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{storage: mockStorage}
 	ctx := context.Background()
@@ -261,6 +265,7 @@ func TestKeyorixCore_ShareSecret_RejectsSelfShare(t *testing.T) {
 }
 
 func TestKeyorixCore_UpdateSharePermission(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -318,6 +323,7 @@ func TestKeyorixCore_UpdateSharePermission(t *testing.T) {
 }
 
 func TestKeyorixCore_RevokeShare(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -367,6 +373,7 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 // caller and must NOT have already written a "share_revoked" audit event — a
 // phantom revoke record while the share stays live is worse than no record.
 func TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
@@ -403,6 +410,7 @@ func TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
 }
 
 func TestKeyorixCore_ListSharedSecrets(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -429,6 +437,7 @@ func TestKeyorixCore_ListSharedSecrets(t *testing.T) {
 }
 
 func TestKeyorixCore_ListSecretShares(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -464,6 +473,7 @@ func TestKeyorixCore_ListSecretShares(t *testing.T) {
 // ListSecretShares must drop expired time-bound shares so the list matches what
 // actually authorizes (the enforcement paths filter the same way).
 func TestKeyorixCore_ListSecretShares_FiltersExpired(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	past := now.Add(-1 * time.Hour)
 	future := now.Add(1 * time.Hour)
@@ -488,6 +498,7 @@ func TestKeyorixCore_ListSecretShares_FiltersExpired(t *testing.T) {
 }
 
 func TestKeyorixCore_ListSharesByUser(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -521,6 +532,7 @@ func TestKeyorixCore_ListSharesByUser(t *testing.T) {
 // share it — mirrors CheckSecretPermission's owner branch. A still-live owner must
 // be unaffected.
 func TestKeyorixCore_ShareSecret_DepartedOwnerDenied(t *testing.T) {
+	t.Parallel()
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
 	secret := &models.SecretNode{ID: 1, Name: "test-secret", OwnerID: 1, ProjectID: 5}
 	req := &ShareSecretRequest{SecretID: 1, RecipientID: 2, Permission: "read", SharedBy: 1}
@@ -561,6 +573,7 @@ func TestKeyorixCore_ShareSecret_DepartedOwnerDenied(t *testing.T) {
 // regression test for UpdateSharePermission — see
 // TestKeyorixCore_ShareSecret_DepartedOwnerDenied.
 func TestKeyorixCore_UpdateSharePermission_DepartedOwnerDenied(t *testing.T) {
+	t.Parallel()
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
 	secret := &models.SecretNode{ID: 1, Name: "test-secret", OwnerID: 1, ProjectID: 5}
 	shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}
@@ -600,6 +613,7 @@ func TestKeyorixCore_UpdateSharePermission_DepartedOwnerDenied(t *testing.T) {
 // TestKeyorixCore_RevokeShare_DepartedOwnerDenied is the RBAC-001 regression test
 // for RevokeShare — see TestKeyorixCore_ShareSecret_DepartedOwnerDenied.
 func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
+	t.Parallel()
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
 	secret := &models.SecretNode{ID: 1, Name: "test-secret", OwnerID: 1, ProjectID: 5}
 	shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}
@@ -635,6 +649,7 @@ func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
 }
 
 func TestKeyorixCore_CheckSharePermission(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{

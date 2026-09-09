@@ -15,6 +15,7 @@ func swi(name, classification string) *models.SecretWithSharingInfo {
 }
 
 func TestApplySecretFilters_Classification(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	in := []*models.SecretWithSharingInfo{
 		swi("r1", "restricted"), swi("c1", "confidential"), swi("u1", ""),

@@ -19,6 +19,7 @@ import (
 // attacker's machine identity. Creating a binding must require GLOBAL admin
 // authority, not merely membership/admin rights within the machine's project.
 func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	machine := &models.MachineIdentity{ID: 5, ProjectID: 1, State: MachineActive}
 

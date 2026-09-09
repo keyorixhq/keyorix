@@ -42,6 +42,7 @@ func newPolicyEnforceFixture(t *testing.T) (*KeyorixCore, uint, uint) {
 }
 
 func TestSecretValuePolicy_EnforcedOnAllWritePaths(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("CreateSecret rejects a weak value", func(t *testing.T) {

@@ -50,6 +50,7 @@ func logEvents(t *testing.T, c *KeyorixCore, n int) {
 }
 
 func TestAuditCheckpoint_HappyPath(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -74,6 +75,7 @@ func TestAuditCheckpoint_HappyPath(t *testing.T) {
 // simulates the restart case: the in-memory watermark is cleared, so detection must
 // come from the persistent-mark/checkpoint cross-check, not the in-memory floor.
 func TestAuditCheckpoint_MissingHighWaterWithCheckpointIsTamper(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("deleted mark", func(t *testing.T) {
@@ -118,6 +120,7 @@ func TestAuditCheckpoint_MissingHighWaterWithCheckpointIsTamper(t *testing.T) {
 // SeedAuditWatermark restores the in-memory watermark from the persisted mark, so a
 // restart followed by a truncation (with the mark intact at seed time) is still caught.
 func TestSeedAuditWatermark_RestoresFloorAfterRestart(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -163,6 +166,7 @@ func (f *fakeNotary) Anchor(_ context.Context, msg []byte) (*notary.Receipt, err
 func (f *fakeNotary) Provider() string { return "fake" }
 
 func TestAuditCheckpoint_AnchorsWhenNotarySet(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 3)
@@ -189,6 +193,7 @@ func TestAuditCheckpoint_AnchorsWhenNotarySet(t *testing.T) {
 }
 
 func TestAuditCheckpoint_AnchorIsBestEffort(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 2)
@@ -213,6 +218,7 @@ func TestAuditCheckpoint_AnchorIsBestEffort(t *testing.T) {
 // recorded-but-unverifiable anchor apart from one this server actually checked
 // against a root of trust (#baseline/notary-findings.json#1).
 func TestAuditCheckpoint_AnchorTrustRootConfigured_NoRoots(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	logEvents(t, c, 3)
@@ -238,6 +244,7 @@ func TestAuditCheckpoint_AnchorTrustRootConfigured_NoRoots(t *testing.T) {
 // (SetCheckpointAnchorRoots), independent of whether the specific stored token
 // actually verifies against it (checked separately by the tamper-detection path).
 func TestAuditCheckpoint_AnchorTrustRootConfigured_WithRoots(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	logEvents(t, c, 3)
@@ -258,6 +265,7 @@ func TestAuditCheckpoint_AnchorTrustRootConfigured_WithRoots(t *testing.T) {
 }
 
 func TestVerifyCheckpointAnchor_NoAnchor(t *testing.T) {
+	t.Parallel()
 	c, _ := newCheckpointCore(t)
 	at, ok, err := c.VerifyCheckpointAnchor(&models.AuditCheckpoint{ID: 1})
 	require.NoError(t, err)
@@ -266,6 +274,7 @@ func TestVerifyCheckpointAnchor_NoAnchor(t *testing.T) {
 }
 
 func TestVerifyCheckpointAnchor_NoTrustAnchorFailsClosed(t *testing.T) {
+	t.Parallel()
 	c, _ := newCheckpointCore(t)
 	// A checkpoint carries an anchor token, but no trust anchor is configured:
 	// verification must fail closed (ok=true, error) rather than assert a proof.
@@ -277,6 +286,7 @@ func TestVerifyCheckpointAnchor_NoTrustAnchorFailsClosed(t *testing.T) {
 }
 
 func TestAuditCheckpoint_DetectsTailTruncation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -299,6 +309,7 @@ func TestAuditCheckpoint_DetectsTailTruncation(t *testing.T) {
 }
 
 func TestAuditCheckpoint_DetectsForgedCheckpoint(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -319,6 +330,7 @@ func TestAuditCheckpoint_DetectsForgedCheckpoint(t *testing.T) {
 // unauthenticated key_version column — the HMAC binds key_version, so the edit
 // fails the signature check (regression guard for the pre-merge security finding).
 func TestAuditCheckpoint_TamperedKeyVersionDetected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -343,6 +355,7 @@ func TestAuditCheckpoint_TamperedKeyVersionDetected(t *testing.T) {
 // until the next checkpoint write re-baselines under the new key — and that write
 // must succeed (no deadlock).
 func TestAuditCheckpoint_RotationRebaselines(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -373,6 +386,7 @@ func TestAuditCheckpoint_RotationRebaselines(t *testing.T) {
 }
 
 func TestAuditCheckpoint_NoKeyIsNoOp(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	c.SetAuditCheckpointKey(nil, "") // simulate encryption disabled
@@ -392,6 +406,7 @@ func TestAuditCheckpoint_NoKeyIsNoOp(t *testing.T) {
 // A checkpoint written over an empty chain (HeadID=0) must not later false-alarm
 // once events accumulate — there is no head row 0 to "go missing".
 func TestAuditCheckpoint_GenesisCheckpointNoFalsePositive(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 
@@ -410,6 +425,7 @@ func TestAuditCheckpoint_GenesisCheckpointNoFalsePositive(t *testing.T) {
 }
 
 func TestAuditCheckpoint_RefusesBrokenChain(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -424,6 +440,7 @@ func TestAuditCheckpoint_RefusesBrokenChain(t *testing.T) {
 }
 
 func TestAuditCheckpoint_NoRebaselineOverTruncation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -449,6 +466,7 @@ func TestAuditCheckpoint_NoRebaselineOverTruncation(t *testing.T) {
 // still matches the current signing key, so it is tampering (not a DEK rotation) and
 // WriteAuditCheckpoint must refuse to re-baseline over the shortened chain.
 func TestAuditCheckpoint_NoRebaselineOverCorruptedSignature(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 5)
@@ -483,6 +501,7 @@ func TestAuditCheckpoint_NoRebaselineOverCorruptedSignature(t *testing.T) {
 // longer length, so verification must flag the rollback. A FRESH core (no in-memory
 // watermark — i.e. a server restart) must catch it purely from the persistent mark.
 func TestAuditCheckpoint_DetectsRollbackToOlderCheckpoint(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 
@@ -518,6 +537,7 @@ func TestAuditCheckpoint_DetectsRollbackToOlderCheckpoint(t *testing.T) {
 // Deleting the high-water row mid-run does not help an online attacker: the in-memory
 // watermark remembers the max length certified this session.
 func TestAuditCheckpoint_InMemoryWatermarkSurvivesHighWaterDeletion(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 8)
@@ -539,6 +559,7 @@ func TestAuditCheckpoint_InMemoryWatermarkSurvivesHighWaterDeletion(t *testing.T
 // Editing the persistent high-water row under the current key is detected (the HMAC
 // won't recompute) and is reported as tampering, not silently trusted.
 func TestAuditCheckpoint_TamperedHighWaterDetected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 	logEvents(t, c, 6)
@@ -568,6 +589,7 @@ func TestAuditCheckpoint_TamperedHighWaterDetected(t *testing.T) {
 // trail. The read path must not trust an unauthenticated key_version claim on a
 // signature that fails to verify.
 func TestAuditCheckpoint_ForgedKeyVersionHighWaterDetected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
 
@@ -607,6 +629,7 @@ func TestAuditCheckpoint_ForgedKeyVersionHighWaterDetected(t *testing.T) {
 // anchor is re-verified on the read path: a token that doesn't verify against the
 // configured root is flagged (previously the anchor was written but never checked).
 func TestAuditCheckpoint_VerifiesAnchorWhenRootsConfigured(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	logEvents(t, c, 3)
@@ -632,6 +655,7 @@ func TestAuditCheckpoint_VerifiesAnchorWhenRootsConfigured(t *testing.T) {
 // it and verify it independently, out-of-band, without trusting this server's own
 // verification of it.
 func TestVerifyAuditChain_SurfacesRawAnchorToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	logEvents(t, c, 3)
@@ -655,6 +679,7 @@ func TestVerifyAuditChain_SurfacesRawAnchorToken(t *testing.T) {
 // A checkpoint with no anchor (no notary configured) must not fabricate one on the
 // verify result.
 func TestVerifyAuditChain_NoAnchorTokenWhenUnanchored(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
 	logEvents(t, c, 3)
@@ -669,6 +694,7 @@ func TestVerifyAuditChain_NoAnchorTokenWhenUnanchored(t *testing.T) {
 }
 
 func TestAuditCheckpoint_SignDeterministicAndBinding(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x1}, 32), "v1")
 	cp := &models.AuditCheckpoint{ChainedEvents: 5, HeadID: 5, HeadHash: "abc", KeyVersion: "v1"}

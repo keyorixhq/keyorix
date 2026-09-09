@@ -12,6 +12,7 @@ import (
 )
 
 func TestMigrateAuditChainEncoding_Core_AppliesAndVerifiesAfterward(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, fixed := newReanchorTestCore(t)
 
@@ -53,6 +54,7 @@ func TestMigrateAuditChainEncoding_Core_AppliesAndVerifiesAfterward(t *testing.T
 }
 
 func TestMigrateAuditChainEncoding_Core_DryRunPersistsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, fixed := newReanchorTestCore(t)
 
@@ -84,6 +86,7 @@ func TestMigrateAuditChainEncoding_Core_DryRunPersistsNothing(t *testing.T) {
 // VerifyAuditChain (which authenticates the anchor against the signing key)
 // keeps accepting it after the migration.
 func TestMigrateAuditChainEncoding_Core_ReSignsAnchorAfterPurge(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, fixed := newReanchorTestCore(t)
 

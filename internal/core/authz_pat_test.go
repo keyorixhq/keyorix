@@ -13,6 +13,7 @@ import (
 // TestPATRestriction_Allows covers the pure least-privilege filter (ADR-042):
 // what a personal-access-token restriction permits, independent of any RBAC.
 func TestPATRestriction_Allows(t *testing.T) {
+	t.Parallel()
 	proj5 := Scope{ProjectID: 5}
 	global := Scope{} // project 0 — system-wide actions
 
@@ -55,6 +56,7 @@ func TestPATRestriction_Allows(t *testing.T) {
 // (so even a global admin's token is bounded), and an allowed permission still
 // flows through to the owner's normal RBAC.
 func TestAuthorize_PATRestriction(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("disallowed permission denied without touching storage — even for an admin owner", func(t *testing.T) {
@@ -118,6 +120,7 @@ func TestAuthorize_PATRestriction(t *testing.T) {
 // admin (ADR-042) — it is an un-funnelled authz path, so the restriction is
 // enforced here directly (fail-closed) rather than via Authorize.
 func TestIsGlobalAdmin_PATRestrictionDeniesShortCircuit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("a scoped token is never a global admin — without touching storage", func(t *testing.T) {

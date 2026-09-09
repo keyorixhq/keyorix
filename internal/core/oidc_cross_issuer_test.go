@@ -33,6 +33,7 @@ func (r issuerKeyResolver) Key(_ context.Context, issuer, _ string) (interface{}
 // Verify() pins the signing key to the token's configured issuer, and the binding lookup is
 // scoped by issuer, so a (issuer-B, subject) token resolves no (issuer-A, subject) binding.
 func TestValidateOIDCToken_CrossIssuerBindingIsolation(t *testing.T) {
+	t.Parallel()
 	keyA, _ := rsa.GenerateKey(rand.Reader, 2048)
 	keyB, _ := rsa.GenerateKey(rand.Reader, 2048)
 	const issA = "https://cluster-a.local"

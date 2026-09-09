@@ -194,6 +194,7 @@ func newRemoteMembershipStorage(t *testing.T, mockBase *MockStorage) *remoteMemb
 // ErrRemoteUnsupported. Before this fix, this exact call always failed with
 // "operation not supported in remote (client) mode".
 func TestApplyInvitationGrants_ProjectScopedInvite_RemoteMembershipStorage(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	rms := newRemoteMembershipStorage(t, ms)
 
@@ -238,6 +239,7 @@ func TestApplyInvitationGrants_ProjectScopedInvite_RemoteMembershipStorage(t *te
 // storage.ErrDuplicateActiveMembership sentinel translation, #511) survives the
 // HTTP hop end to end through the real caller, not just the storage primitive.
 func TestApplyInvitationGrants_ProjectScopedInvite_DuplicateMembership(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	rms := newRemoteMembershipStorage(t, ms)
 

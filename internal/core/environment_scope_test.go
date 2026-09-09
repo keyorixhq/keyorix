@@ -46,6 +46,7 @@ func newEnvScopeTestCore(t *testing.T) *KeyorixCore {
 // project-scoped lookup must refuse it rather than silently returning A's
 // environment as if it belonged to B.
 func TestGetEnvironmentInProject_CrossProjectReferenceRefused(t *testing.T) {
+	t.Parallel()
 	c := newEnvScopeTestCore(t)
 	ctx := context.Background()
 
@@ -77,6 +78,7 @@ func TestGetEnvironmentInProject_CrossProjectReferenceRefused(t *testing.T) {
 // helper still behaves like a normal not-found lookup when the id simply
 // doesn't exist at all (not just when it exists under a different project).
 func TestGetEnvironmentInProject_NonexistentEnvironmentRefused(t *testing.T) {
+	t.Parallel()
 	c := newEnvScopeTestCore(t)
 	ctx := context.Background()
 
@@ -94,6 +96,7 @@ func TestGetEnvironmentInProject_NonexistentEnvironmentRefused(t *testing.T) {
 // independently refuse a mismatch rather than relying on that coupling to
 // always hold.
 func TestRequireLiveProjectAndEnvironment_CrossProjectMismatchRefused(t *testing.T) {
+	t.Parallel()
 	c := newEnvScopeTestCore(t)
 	ctx := context.Background()
 

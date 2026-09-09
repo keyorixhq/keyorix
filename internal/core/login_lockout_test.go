@@ -51,6 +51,7 @@ func reloadUser(t *testing.T, db *gorm.DB) *models.User {
 }
 
 func TestLoginLockout_LocksAfterMaxAttempts(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newLockoutTestCore(t, true)
 
 	// 3 wrong-password attempts → still "invalid credentials", then locked.
@@ -66,6 +67,7 @@ func TestLoginLockout_LocksAfterMaxAttempts(t *testing.T) {
 }
 
 func TestLoginLockout_ExpiryThenExponentialBackoff(t *testing.T) {
+	t.Parallel()
 	c, db, clock := newLockoutTestCore(t, true)
 
 	for i := 0; i < 3; i++ {
@@ -85,6 +87,7 @@ func TestLoginLockout_ExpiryThenExponentialBackoff(t *testing.T) {
 }
 
 func TestLoginLockout_BackoffGrowsAcrossLockouts(t *testing.T) {
+	t.Parallel()
 	c, db, clock := newLockoutTestCore(t, true)
 	// Don't let a successful login reset the counter between lockouts: lock, wait out
 	// the cooldown, then lock again — the 2nd cooldown should be 2× the first.
@@ -103,6 +106,7 @@ func TestLoginLockout_BackoffGrowsAcrossLockouts(t *testing.T) {
 }
 
 func TestLoginLockout_WindowResetsStaleFailures(t *testing.T) {
+	t.Parallel()
 	c, db, clock := newLockoutTestCore(t, true)
 	_ = login(c, "wrong")
 	_ = login(c, "wrong") // 2 failures, under the threshold
@@ -115,6 +119,7 @@ func TestLoginLockout_WindowResetsStaleFailures(t *testing.T) {
 }
 
 func TestLoginLockout_SuccessResetsCounter(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newLockoutTestCore(t, true)
 	_ = login(c, "wrong")
 	_ = login(c, "wrong")
@@ -123,6 +128,7 @@ func TestLoginLockout_SuccessResetsCounter(t *testing.T) {
 }
 
 func TestLoginLockout_UnlockUserClearsState(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newLockoutTestCore(t, true)
 	for i := 0; i < 3; i++ {
 		_ = login(c, "wrong")
@@ -137,6 +143,7 @@ func TestLoginLockout_UnlockUserClearsState(t *testing.T) {
 }
 
 func TestLoginLockout_DisabledNeverLocks(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newLockoutTestCore(t, false)
 	for i := 0; i < 10; i++ {
 		_ = login(c, "wrong")

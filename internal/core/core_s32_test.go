@@ -23,11 +23,13 @@ import (
 // ── membership_lifecycle.go — wrapCreateMembershipError ──────────────────
 
 func TestWrapCreateMembershipError_Duplicate(t *testing.T) {
+	t.Parallel()
 	err := wrapCreateMembershipError(storage.ErrDuplicateActiveMembership)
 	assert.Contains(t, err.Error(), "already has a membership")
 }
 
 func TestWrapCreateMembershipError_Other(t *testing.T) {
+	t.Parallel()
 	other := errors.New("generic error")
 	err := wrapCreateMembershipError(other)
 	assert.Contains(t, err.Error(), "failed to create membership")
@@ -36,12 +38,14 @@ func TestWrapCreateMembershipError_Other(t *testing.T) {
 // ── pat.go — ListOwnPATs ──────────────────────────────────────────────────
 
 func TestListOwnPATs_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	_, err := c.ListOwnPATs(context.Background(), 0)
 	require.Error(t, err)
 }
 
 func TestListOwnPATs_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	tokens := []*models.PersonalAccessToken{{ID: 1, UserID: 5, Name: "mytoken"}}
 	ms.On("ListPersonalAccessTokensByUser", mock.Anything, uint(5)).Return(tokens, nil)
@@ -52,6 +56,7 @@ func TestListOwnPATs_Success(t *testing.T) {
 }
 
 func TestListOwnPATs_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListPersonalAccessTokensByUser", mock.Anything, uint(5)).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -62,6 +67,7 @@ func TestListOwnPATs_StorageError(t *testing.T) {
 // ── rbac_management.go — RemovePermissionFromRole ─────────────────────────
 
 func TestRemovePermissionFromRole_Success_s32(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	role := &models.Role{ID: 1, Name: "myrole"}
 	ms.On("GetRole", mock.Anything, uint(1)).Return(role, nil)
@@ -73,6 +79,7 @@ func TestRemovePermissionFromRole_Success_s32(t *testing.T) {
 }
 
 func TestRemovePermissionFromRole_RoleNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -84,6 +91,7 @@ func TestRemovePermissionFromRole_RoleNotFound(t *testing.T) {
 // ── scim_groups.go — applyGroupMembershipChanges ──────────────────────────
 
 func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// guardLastGlobalAdminMembership (#G02) precheck for user 1's removal — no
 	// admin roles seeded in this fixture, so it's a no-op.
@@ -111,6 +119,7 @@ func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
 // Signature: (ctx, actorID, projectID, userID uint, roleName string)
 
 func TestSetProjectMemberRole_RoleNotFound_s32(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "nonexistent").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -122,6 +131,7 @@ func TestSetProjectMemberRole_RoleNotFound_s32(t *testing.T) {
 // ── rotation_policies.go — CreateRotationPolicy ───────────────────────────
 
 func TestCreateRotationPolicy_MissingEnvID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	req := &CreateRotationPolicyRequest{
 		Name:          "my-policy",
@@ -135,6 +145,7 @@ func TestCreateRotationPolicy_MissingEnvID(t *testing.T) {
 }
 
 func TestCreateRotationPolicy_AlertDaysGEInterval(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	projID := uint(1)
 	req := &CreateRotationPolicyRequest{
@@ -151,6 +162,7 @@ func TestCreateRotationPolicy_AlertDaysGEInterval(t *testing.T) {
 // ── rbac_management.go — assignUserRoleSystemGrant ───────────────────────
 
 func TestAssignUserRoleSystemGrant_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// requireNoSoDViolation: ListSoDPolicies is a smart stub returning nil policies → OK.
 	// AssignRole must be mocked.
@@ -162,6 +174,7 @@ func TestAssignUserRoleSystemGrant_Success(t *testing.T) {
 }
 
 func TestAssignUserRoleSystemGrant_AssignRoleError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AssignRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -172,12 +185,14 @@ func TestAssignUserRoleSystemGrant_AssignRoleError(t *testing.T) {
 // ── login_lockout.go — UnlockUser ────────────────────────────────────────
 
 func TestUnlockUser_ZeroID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.UnlockUser(context.Background(), 0, 0)
 	require.Error(t, err)
 }
 
 func TestUnlockUser_UserNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(5)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)

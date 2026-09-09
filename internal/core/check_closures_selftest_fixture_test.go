@@ -20,6 +20,7 @@ import (
 // "gated" stops being an excuse the moment the gate condition the row itself
 // claims is actually met.
 func TestCheckClosuresSelfTestFixture_AlwaysSkip(t *testing.T) {
+	t.Parallel()
 	t.Skip("check-closures.sh self-test fixture -- this test is SUPPOSED to skip")
 }
 
@@ -31,6 +32,7 @@ func TestCheckClosuresSelfTestFixture_AlwaysSkip(t *testing.T) {
 // when the DSN genuinely isn't available in this environment — the one
 // behavior this whole ledger change exists to add.
 func TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("KEYORIX_TEST_PG_DSN") == "" {
 		t.Skip("check-closures.sh self-test fixture -- SUPPOSED to skip without a DSN")
 	}

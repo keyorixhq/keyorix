@@ -39,6 +39,7 @@ func seedMachineWithRole(t *testing.T, st *store.LocalStorage, roleName string, 
 // hasAuditRead was always false for a machine caller — silently under-
 // privileging it relative to a human holding the identical role.
 func TestGetDashboardStats_MachineIdentityWithAuditReadMatchesEquivalentUser(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -73,6 +74,7 @@ func TestGetDashboardStats_MachineIdentityWithAuditReadMatchesEquivalentUser(t *
 // caller unconditionally getting the deployment-wide aggregates regardless of
 // its actual roles.
 func TestGetDashboardStats_MachineIdentityWithoutRoleSeesBaseline(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	m, err := st.CreateMachineIdentity(ctx, &models.MachineIdentity{Name: "no-role-bot", State: MachineActive})

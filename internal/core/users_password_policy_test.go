@@ -14,6 +14,7 @@ import (
 // password — the one path where a human picks the credential. Before the fix this
 // path accepted any non-empty password, so an admin could seed a weak account.
 func TestCreateUser_EnforcesPasswordPolicy(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 

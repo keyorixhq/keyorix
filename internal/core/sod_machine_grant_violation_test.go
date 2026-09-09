@@ -19,6 +19,7 @@ import (
 )
 
 func TestRequireMachineGrantNoSoDViolation_AddingRolePermissionsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1, Name: "split-duty", PermissionA: "secrets.write", PermissionB: "secrets.delete"}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)
@@ -30,6 +31,7 @@ func TestRequireMachineGrantNoSoDViolation_AddingRolePermissionsError(t *testing
 }
 
 func TestRequireMachineGrantNoSoDViolation_NoAddedPermissions_NoOp(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1, Name: "split-duty", PermissionA: "secrets.write", PermissionB: "secrets.delete"}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)
@@ -42,6 +44,7 @@ func TestRequireMachineGrantNoSoDViolation_NoAddedPermissions_NoOp(t *testing.T)
 }
 
 func TestRequireMachineGrantNoSoDViolation_MachineRolesError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1, Name: "split-duty", PermissionA: "secrets.write", PermissionB: "secrets.delete"}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)
@@ -54,6 +57,7 @@ func TestRequireMachineGrantNoSoDViolation_MachineRolesError(t *testing.T) {
 }
 
 func TestRequireMachineGrantNoSoDViolation_HeldRolePermissionsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1, Name: "split-duty", PermissionA: "secrets.write", PermissionB: "secrets.delete"}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)
@@ -72,6 +76,7 @@ func TestRequireMachineGrantNoSoDViolation_HeldRolePermissionsError(t *testing.T
 // granted a role that adds secrets.write, since the pair completes the SoD
 // policy.
 func TestRequireMachineGrantNoSoDViolation_ViolationDetected_Blocked(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1, Name: "split-duty", PermissionA: "secrets.write", PermissionB: "secrets.delete"}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)
@@ -89,6 +94,7 @@ func TestRequireMachineGrantNoSoDViolation_ViolationDetected_Blocked(t *testing.
 // path: granting a role that adds a permission with no SoD-conflicting
 // counterpart already held must succeed.
 func TestRequireMachineGrantNoSoDViolation_NoViolation_Allowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	policy := &models.SoDPolicy{ID: 1, Name: "split-duty", PermissionA: "secrets.write", PermissionB: "secrets.delete"}
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{policy}, nil)

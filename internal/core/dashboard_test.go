@@ -113,6 +113,7 @@ func (s *failingDashboardRecentActivityStore) GetAuditLogs(ctx context.Context, 
 // window even when the query that would report failed logins errored out).
 // These tests prove the sub-checks now surface as Degraded instead.
 func TestGetDashboardStats_DegradedOnAuditLogsQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "auditor1", "system_auditor", storage.Scope{})
 	c.storage = &failingDashboardAuditStore{LocalStorage: st}
@@ -132,6 +133,7 @@ func TestGetDashboardStats_DegradedOnAuditLogsQueryError(t *testing.T) {
 }
 
 func TestGetDashboardStats_DegradedOnActiveUsersQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "auditor2", "system_auditor", storage.Scope{})
 	c.storage = &failingDashboardStatsStore{LocalStorage: st}
@@ -145,6 +147,7 @@ func TestGetDashboardStats_DegradedOnActiveUsersQueryError(t *testing.T) {
 }
 
 func TestGetDashboardStats_DegradedOnInactiveUsersQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "auditor3", "system_auditor", storage.Scope{})
 	c.storage = &failingDashboardUsersStore{LocalStorage: st}
@@ -162,6 +165,7 @@ func TestGetDashboardStats_DegradedOnInactiveUsersQueryError(t *testing.T) {
 // truncation is now surfaced via Degraded even for a baseline caller without
 // audit.read (the expiring-secrets rollup is not gated by hasAuditRead).
 func TestGetDashboardStats_DegradedOnExpiringSecretsQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	viewerID := seedUserWithRole(t, st, "viewer1", "system_viewer", storage.Scope{})
 	c.storage = &failingExpiringSecretsStore{LocalStorage: st}
@@ -186,6 +190,7 @@ func TestGetDashboardStats_DegradedOnExpiringSecretsQueryError(t *testing.T) {
 // unsurfaced ListSecrets failure here would corrupt the next day's trend
 // computation too. These tests prove all 4 sub-checks now surface as Degraded.
 func TestGetDashboardStats_DegradedOnTotalSecretsQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	viewerID := seedUserWithRole(t, st, "viewer2", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardTotalSecretsStore{LocalStorage: st}
@@ -199,6 +204,7 @@ func TestGetDashboardStats_DegradedOnTotalSecretsQueryError(t *testing.T) {
 }
 
 func TestGetDashboardStats_DegradedOnSharedSecretsQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	viewerID := seedUserWithRole(t, st, "viewer3", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardSharesByOwnerStore{LocalStorage: st}
@@ -212,6 +218,7 @@ func TestGetDashboardStats_DegradedOnSharedSecretsQueryError(t *testing.T) {
 }
 
 func TestGetDashboardStats_DegradedOnSharedWithMeQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	viewerID := seedUserWithRole(t, st, "viewer4", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardSharesByUserStore{LocalStorage: st}
@@ -225,6 +232,7 @@ func TestGetDashboardStats_DegradedOnSharedWithMeQueryError(t *testing.T) {
 }
 
 func TestGetDashboardStats_DegradedOnRecentActivityQueryError(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	viewerID := seedUserWithRole(t, st, "viewer5", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardRecentActivityStore{LocalStorage: st}
@@ -243,6 +251,7 @@ func TestGetDashboardStats_DegradedOnRecentActivityQueryError(t *testing.T) {
 // CreatedBy regardless of the caller's RBAC role, so even a system_admin's
 // dashboard undercounted every secret another user had created.
 func TestGetDashboardStats_TotalSecretsIsDeploymentWideForAuditReadCaller(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	auditorID := seedUserWithRole(t, st, "auditor5", "system_auditor", storage.Scope{})
@@ -270,6 +279,7 @@ func TestGetDashboardStats_TotalSecretsIsDeploymentWideForAuditReadCaller(t *tes
 // behavior: their own home dashboard reflects only secrets they personally
 // created, not the whole deployment.
 func TestGetDashboardStats_TotalSecretsIsPersonalForBaselineCaller(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	viewerID := seedUserWithRole(t, st, "viewer6", "system_viewer", storage.Scope{})
@@ -294,6 +304,7 @@ func TestGetDashboardStats_TotalSecretsIsPersonalForBaselineCaller(t *testing.T)
 
 // A fully-healthy storage must never report Degraded.
 func TestGetDashboardStats_NotDegradedOnSuccess(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "auditor4", "system_auditor", storage.Scope{})
 

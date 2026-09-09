@@ -33,6 +33,7 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 }
 
 func TestCreateRole_RejectsReservedBuiltinName(t *testing.T) {
+	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
 	_, err := c.CreateRole(context.Background(), 1, "super_admin", "d")
 	require.Error(t, err)
@@ -43,6 +44,7 @@ func TestCreateRole_RejectsReservedBuiltinName(t *testing.T) {
 // closed gap: IsBuiltinRole's exact map lookup only matches the folded form,
 // so the reserved check must run AFTER folding, not against the raw name.
 func TestCreateRole_RejectsReservedBuiltinName_CaseVariant(t *testing.T) {
+	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
 	_, err := c.CreateRole(context.Background(), 1, "Super_Admin", "d")
 	require.Error(t, err)
@@ -50,12 +52,14 @@ func TestCreateRole_RejectsReservedBuiltinName_CaseVariant(t *testing.T) {
 }
 
 func TestCreateRole_RejectsControlCharacters(t *testing.T) {
+	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
 	_, err := c.CreateRole(context.Background(), 1, "readonly\n[AUDIT] granted admin", "d")
 	require.Error(t, err)
 }
 
 func TestCreateRole_RejectsTooShortName(t *testing.T) {
+	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
 	_, err := c.CreateRole(context.Background(), 1, "ab", "d")
 	require.Error(t, err)
@@ -63,6 +67,7 @@ func TestCreateRole_RejectsTooShortName(t *testing.T) {
 }
 
 func TestCreateRole_RejectsTooLongName(t *testing.T) {
+	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
 	_, err := c.CreateRole(context.Background(), 1, strings.Repeat("a", RoleNameMaxLen+1), "d")
 	require.Error(t, err)
@@ -70,6 +75,7 @@ func TestCreateRole_RejectsTooLongName(t *testing.T) {
 }
 
 func TestCreateRole_HappyPathAudited(t *testing.T) {
+	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
 	role, err := c.CreateRole(context.Background(), 7, "custom-role", "a custom role")
 	require.NoError(t, err)
@@ -82,6 +88,7 @@ func TestCreateRole_HappyPathAudited(t *testing.T) {
 }
 
 func TestCreateRole_DuplicateNameRejected(t *testing.T) {
+	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
 	// Mirrors factory.go's ensureRoleNameIndex, which AutoMigrate alone does
 	// not create -- without it, this test's own duplicate-create wouldn't hit
@@ -95,6 +102,7 @@ func TestCreateRole_DuplicateNameRejected(t *testing.T) {
 }
 
 func TestUpdateRole_RejectsBuiltin(t *testing.T) {
+	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", NameFolded: "super_admin"}).Error)
 
@@ -108,6 +116,7 @@ func TestUpdateRole_RejectsBuiltin(t *testing.T) {
 }
 
 func TestUpdateRole_HappyPathAudited(t *testing.T) {
+	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
 	created, err := c.CreateRole(context.Background(), 1, "editable-role", "old")
 	require.NoError(t, err)
@@ -131,6 +140,7 @@ func TestUpdateRole_HappyPathAudited(t *testing.T) {
 // validation genuinely lives in internal/core and isn't just something both
 // transports happen to still do for themselves.
 func TestDeleteRole_RejectsBuiltin(t *testing.T) {
+	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", NameFolded: "super_admin"}).Error)
 
@@ -143,6 +153,7 @@ func TestDeleteRole_RejectsBuiltin(t *testing.T) {
 }
 
 func TestDeleteRole_HappyPathAudited(t *testing.T) {
+	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
 	created, err := c.CreateRole(context.Background(), 1, "deletable-role", "desc")
 	require.NoError(t, err)
@@ -159,6 +170,7 @@ func TestDeleteRole_HappyPathAudited(t *testing.T) {
 }
 
 func TestDeleteRole_NonexistentReturnsError(t *testing.T) {
+	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
 	err := c.DeleteRole(context.Background(), 1, 999999)
 	require.Error(t, err)

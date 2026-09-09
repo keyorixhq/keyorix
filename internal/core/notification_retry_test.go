@@ -18,6 +18,7 @@ import (
 // TestSetNotificationRetryPolicy_HappyPath verifies a valid config is persisted
 // and an audit event is emitted.
 func TestSetNotificationRetryPolicy_HappyPath(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -32,6 +33,7 @@ func TestSetNotificationRetryPolicy_HappyPath(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_MaxRetriesZero verifies MaxRetries=0 (no retry) is valid.
 func TestSetNotificationRetryPolicy_MaxRetriesZero(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -45,6 +47,7 @@ func TestSetNotificationRetryPolicy_MaxRetriesZero(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_MaxRetriesTen verifies MaxRetries=10 (ceiling) is valid.
 func TestSetNotificationRetryPolicy_MaxRetriesTen(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -58,6 +61,7 @@ func TestSetNotificationRetryPolicy_MaxRetriesTen(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_MaxRetriesEleven verifies MaxRetries=11 is rejected.
 func TestSetNotificationRetryPolicy_MaxRetriesEleven(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -70,6 +74,7 @@ func TestSetNotificationRetryPolicy_MaxRetriesEleven(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_MaxRetriesNegative verifies MaxRetries=-1 is rejected.
 func TestSetNotificationRetryPolicy_MaxRetriesNegative(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -82,6 +87,7 @@ func TestSetNotificationRetryPolicy_MaxRetriesNegative(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_BackoffMsMin verifies RetryBackoffMs=100 (floor) is valid.
 func TestSetNotificationRetryPolicy_BackoffMsMin(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -95,6 +101,7 @@ func TestSetNotificationRetryPolicy_BackoffMsMin(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_BackoffMsMax verifies RetryBackoffMs=60000 (ceiling) is valid.
 func TestSetNotificationRetryPolicy_BackoffMsMax(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -108,6 +115,7 @@ func TestSetNotificationRetryPolicy_BackoffMsMax(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_BackoffMsBelowMin verifies RetryBackoffMs=99 is rejected.
 func TestSetNotificationRetryPolicy_BackoffMsBelowMin(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -120,6 +128,7 @@ func TestSetNotificationRetryPolicy_BackoffMsBelowMin(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_BackoffMsAboveMax verifies RetryBackoffMs=60001 is rejected.
 func TestSetNotificationRetryPolicy_BackoffMsAboveMax(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -132,6 +141,7 @@ func TestSetNotificationRetryPolicy_BackoffMsAboveMax(t *testing.T) {
 
 // TestSetNotificationRetryPolicy_StorageError verifies storage errors are propagated.
 func TestSetNotificationRetryPolicy_StorageError(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -148,6 +158,7 @@ func TestSetNotificationRetryPolicy_StorageError(t *testing.T) {
 
 // TestGetNotificationRetryPolicy_HappyPath verifies the policy is read from the channel.
 func TestGetNotificationRetryPolicy_HappyPath(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -171,6 +182,7 @@ func TestGetNotificationRetryPolicy_HappyPath(t *testing.T) {
 
 // TestGetNotificationRetryPolicy_StorageError verifies storage errors are propagated.
 func TestGetNotificationRetryPolicy_StorageError(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()

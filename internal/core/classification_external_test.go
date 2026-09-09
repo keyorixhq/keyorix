@@ -16,6 +16,7 @@ func strptr(s string) *string { return &s }
 
 // ClassifySecret sets a valid label, rejects an invalid one, and clears with "".
 func TestClassifySecret(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.AuditEvent{}))
@@ -43,6 +44,7 @@ func TestClassifySecret(t *testing.T) {
 // The classification filter on ListSecrets matches a level, and "unclassified"
 // matches the empty label.
 func TestListSecrets_ClassificationFilter(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}))
@@ -64,6 +66,7 @@ func TestListSecrets_ClassificationFilter(t *testing.T) {
 }
 
 func TestIsValidClassification(t *testing.T) {
+	t.Parallel()
 	assert.True(t, core.IsValidClassification(""))
 	assert.True(t, core.IsValidClassification("confidential"))
 	assert.False(t, core.IsValidClassification("secret"))

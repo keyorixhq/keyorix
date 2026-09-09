@@ -59,6 +59,7 @@ func mockAllowACL(ms *MockStorage, secretID, userID uint, perms ...string) {
 // TestHasSecretACL_DirectAllow verifies that a direct ACL on the secret node
 // itself (no folder walk needed) returns true.
 func TestHasSecretACL_DirectAllow(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newMockACLCore(ms)
 	ctx := context.Background()
@@ -83,6 +84,7 @@ func TestHasSecretACL_DirectAllow(t *testing.T) {
 // TestHasSecretACL_NoDirectACL_FolderInheritance verifies that an ACL on a
 // parent folder is inherited by a child secret when the secret has no direct ACL.
 func TestHasSecretACL_NoDirectACL_FolderInheritance(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newMockACLCore(ms)
 	ctx := context.Background()
@@ -111,6 +113,7 @@ func TestHasSecretACL_NoDirectACL_FolderInheritance(t *testing.T) {
 // (grandparent) is inherited by a grandchild secret when neither the secret
 // itself nor its direct parent folder carries an ACL.
 func TestHasSecretACL_GrandparentInheritance(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newMockACLCore(ms)
 	ctx := context.Background()
@@ -143,6 +146,7 @@ func TestHasSecretACL_GrandparentInheritance(t *testing.T) {
 // secret ACL takes precedence over a folder-level ACL: the secret-level
 // allow should be returned without ever consulting ancestors.
 func TestHasSecretACL_DirectOverridesFolder(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newMockACLCore(ms)
 	ctx := context.Background()
@@ -168,6 +172,7 @@ func TestHasSecretACL_DirectOverridesFolder(t *testing.T) {
 // TestHasSecretACL_UnrelatedFolderNotGranted verifies that a folder ACL does NOT
 // grant access to secrets outside that folder tree.
 func TestHasSecretACL_UnrelatedFolderNotGranted(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newMockACLCore(ms)
 	ctx := context.Background()
@@ -197,6 +202,7 @@ func TestHasSecretACL_UnrelatedFolderNotGranted(t *testing.T) {
 // in the ancestor chain does not cause an infinite loop. GetSecretAncestors is
 // expected to cap the walk at maxAncestorDepth (20) and return whatever it found.
 func TestHasSecretACL_CycleProtection(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newMockACLCore(ms)
 	ctx := context.Background()
@@ -229,6 +235,7 @@ func TestHasSecretACL_CycleProtection(t *testing.T) {
 // only the node-level ACL is consulted — no ancestor walk happens — and the
 // function returns without error.
 func TestHasSecretACL_RemoteStorageSkipsAncestorWalk(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newMockACLCore(ms)
 	ctx := context.Background()

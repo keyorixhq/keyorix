@@ -28,6 +28,7 @@ func (f *fakeSink) Deliver(ev NotificationEvent) bool {
 }
 
 func TestNotify_DispatchesToSinkWithResolvedEmail(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("CreateNotification", mock.Anything, mock.Anything).Return(&models.Notification{ID: 1}, nil)
 	store.On("GetUser", mock.Anything, uint(7)).Return(&models.User{ID: 7, Email: "ada@x.io"}, nil)
@@ -49,6 +50,7 @@ func TestNotify_DispatchesToSinkWithResolvedEmail(t *testing.T) {
 }
 
 func TestNotify_NoSink_SkipsDispatchAndEmailLookup(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("CreateNotification", mock.Anything, mock.Anything).Return(&models.Notification{ID: 1}, nil)
 	// No sink wired → GetUser must never be called (no needless query per notification).
@@ -58,6 +60,7 @@ func TestNotify_NoSink_SkipsDispatchAndEmailLookup(t *testing.T) {
 }
 
 func TestNotify_ZeroUser_DoesNothing(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	c.SetRecipientNotificationSink(&fakeSink{})
@@ -72,6 +75,7 @@ func TestNotify_ZeroUser_DoesNothing(t *testing.T) {
 // broadcasting e.g. "secret shared with you" to an entire Slack channel regardless
 // of project membership or secret access.
 func TestNotify_NeverReachesBroadcastSink(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("CreateNotification", mock.Anything, mock.Anything).Return(&models.Notification{ID: 1}, nil)
 	store.On("GetUser", mock.Anything, uint(7)).Return(&models.User{ID: 7, Email: "ada@x.io"}, nil)
@@ -99,6 +103,7 @@ func TestNotify_NeverReachesBroadcastSink(t *testing.T) {
 // Critical while unread updated Title/Message/Severity in the DB but never re-sent the
 // email/webhook that would actually alert the user to the more severe state.
 func TestUpgradeReminder_RedispatchesOnEscalation(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil)
 	store.On("GetUser", mock.Anything, uint(5)).Return(&models.User{ID: 5, Email: "admin@x.io"}, nil)
@@ -135,6 +140,7 @@ func TestUpgradeReminder_RedispatchesOnEscalation(t *testing.T) {
 // TestUpgradeReminder_UpdateFailure_SkipsDispatch ensures a failed DB update does not
 // still fire an out-of-band delivery for a row that was never actually persisted.
 func TestUpgradeReminder_UpdateFailure_SkipsDispatch(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("UpdateNotification", mock.Anything, mock.Anything).Return(assert.AnError)
 
@@ -155,6 +161,7 @@ func TestUpgradeReminder_UpdateFailure_SkipsDispatch(t *testing.T) {
 // (Slack/Teams/webhook), never the per-user recipient sink (which they don't
 // address to any specific user).
 func TestSendComplianceDigest_UsesBroadcastSinkNotRecipientSink(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newEvidenceExportCore(t) // real store, empty deployment
 	broadcast := &fakeSink{}
 	recipient := &fakeSink{}

@@ -26,6 +26,7 @@ import (
 // secret meant to be read N times must never be read N+1 times, even under contention.
 // Uses a file-backed SQLite (real multi-connection concurrency), run under -race.
 func TestConcurrency_MaxReads_FullReadPathEnforcesCap(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	dsn := "file:" + filepath.Join(t.TempDir(), "c.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})

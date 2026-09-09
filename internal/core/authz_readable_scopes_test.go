@@ -26,6 +26,7 @@ func (s *userRoleScopesStub) GetUserRoleScopes(_ context.Context, _ uint) ([]cor
 // TestGetReadableScopes_StorageError verifies that a GetUserRoleScopes error is
 // propagated unchanged.
 func TestGetReadableScopes_StorageError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newACLCore(t)
 	wantErr := errors.New("scopes db failure")
@@ -39,6 +40,7 @@ func TestGetReadableScopes_StorageError(t *testing.T) {
 // (global) are silently skipped; the result is empty even though a scope was
 // returned by storage.
 func TestGetReadableScopes_GlobalScopeSkipped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newACLCore(t)
 	stub := &userRoleScopesStub{
@@ -56,6 +58,7 @@ func TestGetReadableScopes_GlobalScopeSkipped(t *testing.T) {
 // non-zero-project scope; the real storage (DB) is then closed so that the
 // Authorize call fails with a DB error, triggering the aerr != nil continue.
 func TestGetReadableScopes_AuthorizeError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	stub := &userRoleScopesStub{
@@ -77,6 +80,7 @@ func TestGetReadableScopes_AuthorizeError(t *testing.T) {
 // TestGetReadableScopes_AuthorizeFalse verifies that a scope where Authorize
 // returns (false, nil) is not included in the result.
 func TestGetReadableScopes_AuthorizeFalse(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newACLCore(t)
 	// User 99 has no role grants in the DB → Authorize returns (false, nil).
@@ -93,6 +97,7 @@ func TestGetReadableScopes_AuthorizeFalse(t *testing.T) {
 // TestGetReadableScopes_AuthorizeTrue verifies that a scope where the user has
 // the required permission is included in the result.
 func TestGetReadableScopes_AuthorizeTrue(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 
@@ -124,6 +129,7 @@ func TestGetReadableScopes_AuthorizeTrue(t *testing.T) {
 // during this fix's sibling sweep, same "helper written for humans, never
 // updated for machines" shape).
 func TestGetReadableScopes_MachineIdentityMatchesEquivalentUser(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 

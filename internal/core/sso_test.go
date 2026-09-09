@@ -52,6 +52,7 @@ func ssoTestCore(t *testing.T) (*KeyorixCore, *MockStorage, *rsa.PrivateKey, *SS
 }
 
 func TestVerifyIDToken(t *testing.T) {
+	t.Parallel()
 	c, _, key, p := ssoTestCore(t)
 	ctx := context.Background()
 	base := func() jwt.MapClaims {
@@ -93,6 +94,7 @@ func TestVerifyIDToken(t *testing.T) {
 }
 
 func TestVerifyIDToken_EmailVerified(t *testing.T) {
+	t.Parallel()
 	c, _, key, p := ssoTestCore(t)
 	ctx := context.Background()
 	base := func() jwt.MapClaims {
@@ -143,6 +145,7 @@ func TestVerifyIDToken_EmailVerified(t *testing.T) {
 // multi-audience token MUST carry an azp equal to this provider's client_id, or a token
 // legitimately issued to a different (also-trusted) party could be replayed here.
 func TestVerifyIDToken_Azp(t *testing.T) {
+	t.Parallel()
 	c, _, key, p := ssoTestCore(t)
 	ctx := context.Background()
 	base := func() jwt.MapClaims {
@@ -186,6 +189,7 @@ func TestVerifyIDToken_Azp(t *testing.T) {
 }
 
 func TestResolveSSOUser(t *testing.T) {
+	t.Parallel()
 	// Mirrors the real storage "not found" error (wrapping the typed
 	// storage.ErrUserNotFound sentinel, #504), so the mock matches the real path.
 	notFound := func() error {
@@ -294,6 +298,7 @@ func TestResolveSSOUser(t *testing.T) {
 }
 
 func TestProvisionSSOUser(t *testing.T) {
+	t.Parallel()
 	notFound := func() error {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 	}
@@ -417,6 +422,7 @@ func TestProvisionSSOUser(t *testing.T) {
 }
 
 func TestExtractTokenStringList(t *testing.T) {
+	t.Parallel()
 	_, _, key, _ := ssoTestCore(t)
 	tok := func(claims jwt.MapClaims) string { return signToken(t, key, "kid-1", claims) }
 
@@ -456,6 +462,7 @@ func TestExtractTokenStringList(t *testing.T) {
 }
 
 func TestSyncSSOGroups(t *testing.T) {
+	t.Parallel()
 	t.Run("authoritative: adds asserted, removes non-asserted native groups", func(t *testing.T) {
 		c, store, key, p := ssoTestCore(t)
 		p.GroupSync = true
@@ -514,6 +521,7 @@ func TestSyncSSOGroups(t *testing.T) {
 // SCIM admin-group guard applied to the SSO path), while a non-admin group still syncs.
 // Uses real storage so the GetGroupRoles → roleSetContainsAdmin predicate is exercised.
 func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -545,6 +553,7 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 }
 
 func TestSyncSSORoles(t *testing.T) {
+	t.Parallel()
 	t.Run("authoritative over mapped roles only", func(t *testing.T) {
 		c, store, key, p := ssoTestCore(t)
 		p.GroupRoleMap = map[string]string{"keyorix-secrets-rw": "secrets_writer", "keyorix-auditors": "system_auditor"}
@@ -622,6 +631,7 @@ func TestSyncSSORoles(t *testing.T) {
 // just the coarse aggregate auth.sso_roles_synced count (#297). Uses real storage so
 // ListRBACAuditLogs (reading the actual persisted rows) is exercised end to end.
 func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -670,6 +680,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 }
 
 func TestBeginSSO_BuildsAuthURLWithStateAndNonce(t *testing.T) {
+	t.Parallel()
 	c, store, _, _ := ssoTestCore(t)
 	var captured *models.SSOLoginState
 	store.On("CreateSSOLoginState", mock.Anything, mock.MatchedBy(func(s *models.SSOLoginState) bool {
@@ -690,6 +701,7 @@ func TestBeginSSO_BuildsAuthURLWithStateAndNonce(t *testing.T) {
 }
 
 func TestBeginSSO_UnknownProvider(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := ssoTestCore(t)
 	_, err := c.BeginSSO(context.Background(), "nope", "")
 	require.Error(t, err)
@@ -704,6 +716,7 @@ func TestBeginSSO_UnknownProvider(t *testing.T) {
 // clean error, and — since the old panic happened AFTER CreateSSOLoginState — must not
 // leave an orphaned SSOLoginState row behind (asserted by AssertNotCalled).
 func TestBeginSSO_RejectsSAMLTypedProvider(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{redirect: "https://idp.example/sso", requestID: "req-1"}
 	c, store := samlTestCore(stub)
 
@@ -720,6 +733,7 @@ func TestBeginSSO_RejectsSAMLTypedProvider(t *testing.T) {
 // panic), the guard must hold defensively — and must fire BEFORE touching storage, so a
 // type-mismatched callback never even attempts to consume a login state.
 func TestCompleteSSO_RejectsSAMLTypedProvider(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{redirect: "https://idp.example/sso", requestID: "req-1"}
 	c, store := samlTestCore(stub)
 
@@ -735,6 +749,7 @@ func TestCompleteSSO_RejectsSAMLTypedProvider(t *testing.T) {
 // The test uses an in-process httptest server as the OAuth2 token endpoint to
 // avoid any real network dependency.
 func TestCompleteSSO_PasswordExpiredGateError(t *testing.T) {
+	t.Parallel()
 	c, store, key, p := ssoTestCore(t)
 	c.passwordPolicy = PasswordPolicy{MaxAgeDays: 1}
 
@@ -780,6 +795,7 @@ func TestCompleteSSO_PasswordExpiredGateError(t *testing.T) {
 // function went on to reject the login a few lines later. The id_token here
 // asserts a brand-new group that WOULD be added if reconciliation ran.
 func TestCompleteSSO_LockedAccountSkipsGroupRoleSync(t *testing.T) {
+	t.Parallel()
 	c, store, key, p := ssoTestCore(t)
 	c.loginLockout = LoginLockoutPolicy{
 		Enabled: true, MaxAttempts: 5, Window: time.Hour,
@@ -838,6 +854,7 @@ func TestCompleteSSO_LockedAccountSkipsGroupRoleSync(t *testing.T) {
 }
 
 func TestSanitizeReturnTo(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "/secrets", sanitizeReturnTo("/secrets"))
 	assert.Equal(t, "", sanitizeReturnTo("//evil.com"))
 	assert.Equal(t, "", sanitizeReturnTo("https://evil.com"))

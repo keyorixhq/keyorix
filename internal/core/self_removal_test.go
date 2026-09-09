@@ -14,6 +14,7 @@ import (
 )
 
 func TestRemoveSelfFromShare_Success(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
@@ -65,6 +66,7 @@ func TestRemoveSelfFromShare_Success(t *testing.T) {
 // "share_self_removed" audit event — otherwise the trail would permanently assert
 // a removal happened even though the share is still live.
 func TestRemoveSelfFromShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
+	t.Parallel()
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
 
@@ -105,6 +107,7 @@ func TestRemoveSelfFromShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
 }
 
 func TestRemoveSelfFromShare_ShareNotFound(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
@@ -148,6 +151,7 @@ func TestRemoveSelfFromShare_ShareNotFound(t *testing.T) {
 // access via group membership, not a direct user share. Self-remove must skip it and
 // return "share not found" — deleting it would remove the secret for the whole group.
 func TestRemoveSelfFromShare_GroupShareNotSelfRemovable(t *testing.T) {
+	t.Parallel()
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
 
@@ -184,6 +188,7 @@ func TestRemoveSelfFromShare_GroupShareNotSelfRemovable(t *testing.T) {
 }
 
 func TestRemoveSelfFromShare_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
@@ -208,6 +213,7 @@ func TestRemoveSelfFromShare_ValidationErrors(t *testing.T) {
 }
 
 func TestRemoveSelfFromShare_AuditLogging(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)

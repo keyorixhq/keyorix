@@ -29,6 +29,7 @@ import (
 )
 
 func TestCreateNotificationChannel_AuditsCreation(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	c.webhookURLValidator = noopWebhookURLValidator
@@ -62,6 +63,7 @@ func TestCreateNotificationChannel_AuditsCreation(t *testing.T) {
 }
 
 func TestUpdateNotificationChannel_AuditsURLChange(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	c.webhookURLValidator = noopWebhookURLValidator
@@ -97,6 +99,7 @@ func TestUpdateNotificationChannel_AuditsURLChange(t *testing.T) {
 }
 
 func TestUpdateNotificationChannel_AuditsEnabledFlagChange(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	c.webhookURLValidator = noopWebhookURLValidator
@@ -124,6 +127,7 @@ func TestUpdateNotificationChannel_AuditsEnabledFlagChange(t *testing.T) {
 }
 
 func TestDeleteNotificationChannel_AuditsDeletion(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	ctx := context.Background()
@@ -154,6 +158,7 @@ func TestDeleteNotificationChannel_AuditsDeletion(t *testing.T) {
 // actually deleted) -- the Get-before-Delete added by this fix must not
 // silently swallow the not-found error either.
 func TestDeleteNotificationChannel_NotFound_NoAuditEvent(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	ctx := context.Background()

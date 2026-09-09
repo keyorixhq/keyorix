@@ -128,6 +128,7 @@ func seedPendingRequest(t *testing.T, k *KeyorixCore, projectID, userID uint, ro
 }
 
 func TestBulkApproveAccessRequests_SuccessPath(t *testing.T) {
+	t.Parallel()
 	k, _, approverID, requesterID, projectID := setupBulkAccessDB(t)
 	ctx := context.Background()
 
@@ -140,6 +141,7 @@ func TestBulkApproveAccessRequests_SuccessPath(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_SuccessPath(t *testing.T) {
+	t.Parallel()
 	k, _, approverID, requesterID, projectID := setupBulkAccessDB(t)
 	ctx := context.Background()
 
@@ -158,6 +160,7 @@ func TestBulkRejectAccessRequests_SuccessPath(t *testing.T) {
 // core and every single request succeeds, exactly as it did before the cap
 // was added.
 func TestBulkApproveAccessRequests_AtBatchLimit_RealApprovals(t *testing.T) {
+	t.Parallel()
 	k, db, approverID, _, projectID := setupBulkAccessDB(t)
 	ctx := context.Background()
 

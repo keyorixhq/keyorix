@@ -19,6 +19,7 @@ import (
 // ── blastRiskLevel unit tests ──────────────────────────────────────────────────
 
 func TestBlastRiskLevel_AllBranches(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		depth    int
 		srcClass string
@@ -138,6 +139,7 @@ func mkBlastDep(t *testing.T, db *gorm.DB, dependent, dependsOn uint) {
 }
 
 func TestGetBlastRadius_SourceNotFound(t *testing.T) {
+	t.Parallel()
 	c, _ := newBlastRadiusCore(t)
 	_, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, 99999)
 	require.Error(t, err)
@@ -145,6 +147,7 @@ func TestGetBlastRadius_SourceNotFound(t *testing.T) {
 }
 
 func TestGetBlastRadius_NoDependents(t *testing.T) {
+	t.Parallel()
 	c, db := newBlastRadiusCore(t)
 	srcID := mkBlastSecret(t, db, "standalone")
 	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, srcID)
@@ -157,6 +160,7 @@ func TestGetBlastRadius_NoDependents(t *testing.T) {
 }
 
 func TestGetBlastRadius_OneDirectDependent(t *testing.T) {
+	t.Parallel()
 	c, db := newBlastRadiusCore(t)
 	srcID := mkBlastSecret(t, db, "db-password", withOwner(10))
 	depID := mkBlastSecret(t, db, "app-token", withOwner(20))
@@ -176,6 +180,7 @@ func TestGetBlastRadius_OneDirectDependent(t *testing.T) {
 }
 
 func TestGetBlastRadius_TransitiveDependents(t *testing.T) {
+	t.Parallel()
 	// A→B→C: rotating A affects B (depth=1) and C (depth=2).
 	c, db := newBlastRadiusCore(t)
 	a := mkBlastSecret(t, db, "A")
@@ -200,6 +205,7 @@ func TestGetBlastRadius_TransitiveDependents(t *testing.T) {
 }
 
 func TestGetBlastRadius_CycleDetection(t *testing.T) {
+	t.Parallel()
 	// Hand-forge a cycle A→B, B→A in storage (bypassing the add-time guard).
 	// GetBlastRadius must terminate and visit each node only once.
 	c, db := newBlastRadiusCore(t)
@@ -221,6 +227,7 @@ func TestGetBlastRadius_CycleDetection(t *testing.T) {
 }
 
 func TestGetBlastRadius_MaxDepthRespected(t *testing.T) {
+	t.Parallel()
 	// Build a chain of 12 nodes; the BFS must stop at depth=10.
 	c, db := newBlastRadiusCore(t)
 	prev := mkBlastSecret(t, db, "root")
@@ -242,6 +249,7 @@ func TestGetBlastRadius_MaxDepthRespected(t *testing.T) {
 // TestGetBlastRadius_NotTruncatedWhenWithinDepth is the #G24 counterpart: a
 // chain shorter than maxDepth must NOT be flagged as truncated.
 func TestGetBlastRadius_NotTruncatedWhenWithinDepth(t *testing.T) {
+	t.Parallel()
 	c, db := newBlastRadiusCore(t)
 	prev := mkBlastSecret(t, db, "root")
 	for i := 0; i < 3; i++ {
@@ -256,6 +264,7 @@ func TestGetBlastRadius_NotTruncatedWhenWithinDepth(t *testing.T) {
 }
 
 func TestGetBlastRadius_RiskLevelCritical(t *testing.T) {
+	t.Parallel()
 	// Source is "restricted": a direct dependent must be "critical".
 	c, db := newBlastRadiusCore(t)
 	srcID := mkBlastSecret(t, db, "restricted-secret", withClassification("restricted"))
@@ -269,6 +278,7 @@ func TestGetBlastRadius_RiskLevelCritical(t *testing.T) {
 }
 
 func TestGetBlastRadius_RiskLevelDepClassification(t *testing.T) {
+	t.Parallel()
 	// Dependent is "restricted": even at depth=1 it must be "critical".
 	c, db := newBlastRadiusCore(t)
 	srcID := mkBlastSecret(t, db, "plain-secret")
@@ -282,6 +292,7 @@ func TestGetBlastRadius_RiskLevelDepClassification(t *testing.T) {
 }
 
 func TestGetBlastRadius_RiskLevelHighFromDeepConfidential(t *testing.T) {
+	t.Parallel()
 	// Source is "confidential" but dependent is at depth=2 → "high"
 	// (because isHighSensitivity(sourceClass) is true).
 	c, db := newBlastRadiusCore(t)
@@ -301,6 +312,7 @@ func TestGetBlastRadius_RiskLevelHighFromDeepConfidential(t *testing.T) {
 }
 
 func TestGetBlastRadius_RiskLevelLow(t *testing.T) {
+	t.Parallel()
 	// A chain of 3 hops with no labels: the third node is "low".
 	c, db := newBlastRadiusCore(t)
 	a := mkBlastSecret(t, db, "A")
@@ -318,6 +330,7 @@ func TestGetBlastRadius_RiskLevelLow(t *testing.T) {
 }
 
 func TestGetBlastRadius_SameDeptSortedByID(t *testing.T) {
+	t.Parallel()
 	// A has two direct dependents B and C (both at depth=1).
 	// They must be sorted by ID when depths are equal, exercising the
 	// ID-fallback branch in the sort.Slice comparator.
@@ -347,6 +360,7 @@ func newMockBlastCore(t *testing.T) (*KeyorixCore, *MockStorage) {
 }
 
 func TestGetBlastRadius_StorageErrorOnListDependencies(t *testing.T) {
+	t.Parallel()
 	c, ms := newMockBlastCore(t)
 	src := &models.SecretNode{ID: 1, ProjectID: 1, EnvironmentID: 1, Name: "src", IsSecret: true}
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(src, nil)
@@ -359,6 +373,7 @@ func TestGetBlastRadius_StorageErrorOnListDependencies(t *testing.T) {
 }
 
 func TestGetBlastRadius_SourceIsFolder_Rejected(t *testing.T) {
+	t.Parallel()
 	c, ms := newMockBlastCore(t)
 	folder := &models.SecretNode{ID: 5, ProjectID: 1, EnvironmentID: 1, Name: "folder", IsSecret: false}
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(folder, nil)
@@ -369,6 +384,7 @@ func TestGetBlastRadius_SourceIsFolder_Rejected(t *testing.T) {
 }
 
 func TestGetBlastRadius_SkipsSoftDeletedDependent(t *testing.T) {
+	t.Parallel()
 	// The BFS finds a dependent in the edge list but GetSecret returns an error
 	// (simulating a soft-deleted dependent). The node should be silently skipped
 	// and not appear in the report.

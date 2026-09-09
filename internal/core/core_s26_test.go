@@ -32,6 +32,7 @@ import (
 const testPassword = "Secret#Passw0rd!"
 
 func TestValidateCreateUserRequest_MissingEmail(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	req := &CreateUserRequest{Username: "alice", Password: testPassword}
@@ -42,6 +43,7 @@ func TestValidateCreateUserRequest_MissingEmail(t *testing.T) {
 }
 
 func TestValidateCreateUserRequest_MissingPassword(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	req := &CreateUserRequest{Username: "alice", Email: "a@x.com"}
@@ -51,6 +53,7 @@ func TestValidateCreateUserRequest_MissingPassword(t *testing.T) {
 }
 
 func TestValidateCreateUserRequest_MissingUsername(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	req := &CreateUserRequest{Email: "a@x.com", Password: testPassword}
@@ -62,6 +65,7 @@ func TestValidateCreateUserRequest_MissingUsername(t *testing.T) {
 // ── users.go — CreateUser success path ──────────────────────────────────────
 
 func TestCreateUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByUsername", mock.Anything, "alice").Return(nil, storage.ErrUserNotFound)
 	ms.On("GetUserByEmail", mock.Anything, "alice@x.com").Return(nil, storage.ErrUserNotFound)
@@ -82,6 +86,7 @@ func TestCreateUser_Success(t *testing.T) {
 }
 
 func TestCreateUser_DuplicateEmail(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByUsername", mock.Anything, "alice").Return(nil, storage.ErrUserNotFound)
 	ms.On("GetUserByEmail", mock.Anything, "dup@x.com").Return(nil, storage.ErrUserNotFound)
@@ -97,6 +102,7 @@ func TestCreateUser_DuplicateEmail(t *testing.T) {
 }
 
 func TestCreateUser_UsernameConflict(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByUsername", mock.Anything, "taken").Return(&models.User{ID: 99}, nil)
 	c := NewKeyorixCore(ms)
@@ -112,6 +118,7 @@ func TestCreateUser_UsernameConflict(t *testing.T) {
 // ── users.go — UpdateUser branches ──────────────────────────────────────────
 
 func TestUpdateUser_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 0})
@@ -120,6 +127,7 @@ func TestUpdateUser_ZeroID(t *testing.T) {
 }
 
 func TestUpdateUser_UserNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(42)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -128,6 +136,7 @@ func TestUpdateUser_UserNotFound(t *testing.T) {
 }
 
 func TestUpdateUser_UsernameAlreadyExists(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -140,6 +149,7 @@ func TestUpdateUser_UsernameAlreadyExists(t *testing.T) {
 }
 
 func TestUpdateUser_EmailAlreadyExists(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -153,6 +163,7 @@ func TestUpdateUser_EmailAlreadyExists(t *testing.T) {
 }
 
 func TestUpdateUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -164,6 +175,7 @@ func TestUpdateUser_Success(t *testing.T) {
 }
 
 func TestUpdateUser_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -192,6 +204,7 @@ func TestUpdateUser_StorageError(t *testing.T) {
 // IsActive assertion (re-activating an inactive user) is routed through
 // UpdateUserIfActiveStateMatches, not the plain UpdateUser.
 func TestUpdateUser_Reactivate_UsesConditionalPath(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: false}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -211,6 +224,7 @@ func TestUpdateUser_Reactivate_UsesConditionalPath(t *testing.T) {
 // == the requested value, so deactivating is false) still routes through the
 // conditional path — the caller explicitly cares about this field either way.
 func TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -230,6 +244,7 @@ func TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath(t *testing.T
 // moved is_active away from the value this call observed must surface as
 // ErrUserActiveStateConflict, not be silently retried or dropped.
 func TestUpdateUser_Reactivate_LostRace_ReturnsConflictError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: false}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -248,6 +263,7 @@ func TestUpdateUser_Reactivate_LostRace_ReturnsConflictError(t *testing.T) {
 // losing it skips PAT revocation / session deletion — the loser must not
 // apply any part of its write, not just IsActive.
 func TestUpdateUser_Deactivate_LostRace_ReturnsConflictError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -280,6 +296,7 @@ func TestUpdateUser_Deactivate_LostRace_ReturnsConflictError(t *testing.T) {
 // a plain unconditional UpdateUser/Save here would be exactly the check-then-act
 // race this fix closes, since GetUser's read and this write are not atomic.
 func TestUpdateUser_PlainFieldUpdate_UsesActiveStateConditionalPath(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -299,6 +316,7 @@ func TestUpdateUser_PlainFieldUpdate_UsesActiveStateConditionalPath(t *testing.T
 // surfaces ErrUserActiveStateConflict rather than silently overwriting a
 // concurrent IsActive flip.
 func TestUpdateUser_PlainFieldUpdate_LostRace_ReturnsConflictError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -311,6 +329,7 @@ func TestUpdateUser_PlainFieldUpdate_LostRace_ReturnsConflictError(t *testing.T)
 // ── users.go — RestoreUser ───────────────────────────────────────────────────
 
 func TestRestoreUser_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RestoreUser(context.Background(), 0, 0)
@@ -319,6 +338,7 @@ func TestRestoreUser_ZeroID(t *testing.T) {
 }
 
 func TestRestoreUser_NotFoundErr(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// storage.IsUserNotFound recognises ErrUserNotFound
 	ms.On("RestoreUser", mock.Anything, uint(7)).Return(storage.ErrUserNotFound)
@@ -329,6 +349,7 @@ func TestRestoreUser_NotFoundErr(t *testing.T) {
 }
 
 func TestRestoreUser_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("RestoreUser", mock.Anything, uint(7)).Return(errors.New("db exploded"))
 	c := NewKeyorixCore(ms)
@@ -338,6 +359,7 @@ func TestRestoreUser_StorageError(t *testing.T) {
 }
 
 func TestRestoreUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("RestoreUser", mock.Anything, uint(5)).Return(nil)
 	restored := &models.User{ID: 5, Username: "alice", AccountState: "active"}
@@ -355,6 +377,7 @@ func TestRestoreUser_Success(t *testing.T) {
 // without calling ListSharesBySecret at all.
 
 func TestGetSecretVersionsWithPermissionCheck_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 10, OwnerID: 1}
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(secret, nil)
@@ -368,6 +391,7 @@ func TestGetSecretVersionsWithPermissionCheck_Success(t *testing.T) {
 }
 
 func TestGetSecretVersionWithPermissionCheck_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 10, OwnerID: 1}
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(secret, nil)
@@ -381,6 +405,7 @@ func TestGetSecretVersionWithPermissionCheck_Success(t *testing.T) {
 }
 
 func TestGetLatestSecretVersionWithPermissionCheck_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 10, OwnerID: 1}
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(secret, nil)
@@ -397,6 +422,7 @@ func TestGetLatestSecretVersionWithPermissionCheck_Success(t *testing.T) {
 // ── CheckSecretPermission — direct-share and no-permission paths ─────────────
 
 func TestCheckSecretPermission_DirectShare(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// Secret owned by user 99 (not user 1).
 	secret := &models.SecretNode{ID: 5, OwnerID: 99}
@@ -417,6 +443,7 @@ func TestCheckSecretPermission_DirectShare(t *testing.T) {
 }
 
 func TestCheckSecretPermission_Denied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 5, OwnerID: 99}
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(secret, nil)
@@ -438,23 +465,28 @@ func TestCheckSecretPermission_Denied(t *testing.T) {
 // ── setup_consume.go — helpers ───────────────────────────────────────────────
 
 func TestLocalPart_WithAt(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "alice", localPart("alice@example.com"))
 }
 
 func TestLocalPart_NoAt(t *testing.T) {
+	t.Parallel()
 	// When no '@' exists the whole string is returned.
 	assert.Equal(t, "noatsign", localPart("noatsign"))
 }
 
 func TestDisplayNameFromEmail_NormalEmail(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "bob", displayNameFromEmail("bob@example.com"))
 }
 
 func TestDisplayNameFromEmail_NoAt(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "bob", displayNameFromEmail("bob"))
 }
 
 func TestExpireInvitationIfOverdue_NotExpired(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	future := time.Now().Add(time.Hour)
@@ -465,6 +497,7 @@ func TestExpireInvitationIfOverdue_NotExpired(t *testing.T) {
 }
 
 func TestExpireInvitationIfOverdue_PastExpiry(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	past := time.Now().Add(-time.Hour)
 	inv := &models.ProjectInvitation{ID: 1, State: InvitationPending, ExpiresAt: &past}
@@ -475,6 +508,7 @@ func TestExpireInvitationIfOverdue_PastExpiry(t *testing.T) {
 }
 
 func TestExpireInvitationIfOverdue_AlreadyAccepted(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	past := time.Now().Add(-time.Hour)
@@ -485,6 +519,7 @@ func TestExpireInvitationIfOverdue_AlreadyAccepted(t *testing.T) {
 }
 
 func TestExpireInvitationIfOverdue_NoExpiry(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	inv := &models.ProjectInvitation{State: InvitationPending, ExpiresAt: nil}
@@ -495,6 +530,7 @@ func TestExpireInvitationIfOverdue_NoExpiry(t *testing.T) {
 // ── sharing_validation.go — validateUpdateShareRequest ───────────────────────
 
 func TestValidateUpdateShareRequest_Nil(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.validateUpdateShareRequest(nil)
@@ -503,6 +539,7 @@ func TestValidateUpdateShareRequest_Nil(t *testing.T) {
 }
 
 func TestValidateUpdateShareRequest_ZeroShareID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.validateUpdateShareRequest(&UpdateShareRequest{ShareID: 0, Permission: "read", UpdatedBy: 1})
@@ -511,6 +548,7 @@ func TestValidateUpdateShareRequest_ZeroShareID(t *testing.T) {
 }
 
 func TestValidateUpdateShareRequest_InvalidPermission(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.validateUpdateShareRequest(&UpdateShareRequest{ShareID: 1, Permission: "admin", UpdatedBy: 1})
@@ -519,6 +557,7 @@ func TestValidateUpdateShareRequest_InvalidPermission(t *testing.T) {
 }
 
 func TestValidateUpdateShareRequest_ZeroUpdatedBy(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.validateUpdateShareRequest(&UpdateShareRequest{ShareID: 1, Permission: "read", UpdatedBy: 0})
@@ -527,6 +566,7 @@ func TestValidateUpdateShareRequest_ZeroUpdatedBy(t *testing.T) {
 }
 
 func TestValidateUpdateShareRequest_Valid(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.validateUpdateShareRequest(&UpdateShareRequest{ShareID: 1, Permission: "write", UpdatedBy: 2})
@@ -536,6 +576,7 @@ func TestValidateUpdateShareRequest_Valid(t *testing.T) {
 // ── audit_checkpoint.go — SeedAuditWatermark no-key branch ──────────────────
 
 func TestSeedAuditWatermark_NoKey(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// No audit checkpoint key set → AuditCheckpointsAvailable() is false → early return.
@@ -545,6 +586,7 @@ func TestSeedAuditWatermark_NoKey(t *testing.T) {
 }
 
 func TestSeedAuditWatermark_WithKey_NoMark(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).Return("", false, nil)
 	c := NewKeyorixCore(ms)
@@ -556,6 +598,7 @@ func TestSeedAuditWatermark_WithKey_NoMark(t *testing.T) {
 // ── audit_checkpoint.go — advanceAuditHighWater ──────────────────────────────
 
 func TestAdvanceAuditHighWater_WritesMetadata(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).Return("", false, nil)
 	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
@@ -567,6 +610,7 @@ func TestAdvanceAuditHighWater_WritesMetadata(t *testing.T) {
 }
 
 func TestAdvanceAuditHighWater_DoesNotLowerMark(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// Existing persisted mark at 100 events.
 	c := NewKeyorixCore(ms)
@@ -586,6 +630,7 @@ func TestAdvanceAuditHighWater_DoesNotLowerMark(t *testing.T) {
 // ── access_review_revoke.go — verifyAccessReviewGrantExists branches ─────────
 
 func TestVerifyAccessReviewGrantExists_RoleSource_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListProjectRoleAssignments", mock.Anything, uint(1)).Return([]storage.RoleAssignment{}, nil)
 	c := NewKeyorixCore(ms)
@@ -600,6 +645,7 @@ func TestVerifyAccessReviewGrantExists_RoleSource_NotFound(t *testing.T) {
 }
 
 func TestVerifyAccessReviewGrantExists_RoleSource_Found(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	assignments := []storage.RoleAssignment{
 		{PrincipalType: "user", PrincipalID: 5, RoleID: 3, EnvironmentID: 0},
@@ -621,6 +667,7 @@ func TestVerifyAccessReviewGrantExists_RoleSource_Found(t *testing.T) {
 // a separate storage call from the user/group path — and must NOT fall through
 // to ListProjectRoleAssignments at all (it would never match there).
 func TestVerifyAccessReviewGrantExists_RoleSource_Machine(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	assignments := []storage.RoleAssignment{
 		{PrincipalType: "machine", PrincipalID: 50, RoleID: 3, EnvironmentID: 0},
@@ -639,6 +686,7 @@ func TestVerifyAccessReviewGrantExists_RoleSource_Machine(t *testing.T) {
 }
 
 func TestVerifyAccessReviewGrantExists_DirectShare_Found(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1}, nil)
 	shares := []*models.ShareRecord{
@@ -660,6 +708,7 @@ func TestVerifyAccessReviewGrantExists_DirectShare_Found(t *testing.T) {
 // though the recipient/isGroup match — the secret's own project must gate the
 // share lookup.
 func TestVerifyAccessReviewGrantExists_DirectShare_CrossProjectRefused(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 2}, nil)
 	c := NewKeyorixCore(ms)
@@ -675,6 +724,7 @@ func TestVerifyAccessReviewGrantExists_DirectShare_CrossProjectRefused(t *testin
 }
 
 func TestVerifyAccessReviewGrantExists_DirectShare_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1}, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(10)).Return([]*models.ShareRecord{}, nil)
@@ -690,6 +740,7 @@ func TestVerifyAccessReviewGrantExists_DirectShare_NotFound(t *testing.T) {
 }
 
 func TestVerifyAccessReviewGrantExists_Owner_Found(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1, OwnerID: 5}, nil)
 	c := NewKeyorixCore(ms)
@@ -703,6 +754,7 @@ func TestVerifyAccessReviewGrantExists_Owner_Found(t *testing.T) {
 }
 
 func TestVerifyAccessReviewGrantExists_Owner_WrongOwner(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1, OwnerID: 99}, nil)
 	c := NewKeyorixCore(ms)
@@ -720,6 +772,7 @@ func TestVerifyAccessReviewGrantExists_Owner_WrongOwner(t *testing.T) {
 // secret's ownership grant in a DIFFERENT project must be refused even when
 // the owner ID matches, exactly mirroring the direct_share cross-project case.
 func TestVerifyAccessReviewGrantExists_Owner_CrossProjectRefused(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 2, OwnerID: 5}, nil)
 	c := NewKeyorixCore(ms)
@@ -734,6 +787,7 @@ func TestVerifyAccessReviewGrantExists_Owner_CrossProjectRefused(t *testing.T) {
 }
 
 func TestVerifyAccessReviewGrantExists_Owner_MissingIDs(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	d := AccessReviewDecision{Source: "owner", SecretID: 0, PrincipalID: 0}
@@ -743,6 +797,7 @@ func TestVerifyAccessReviewGrantExists_Owner_MissingIDs(t *testing.T) {
 }
 
 func TestVerifyAccessReviewGrantExists_UnknownSource(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	d := AccessReviewDecision{Source: "bogus"}
@@ -754,6 +809,7 @@ func TestVerifyAccessReviewGrantExists_UnknownSource(t *testing.T) {
 // ── audit_checkpoint.go — parseAuditHighWater helper ─────────────────────────
 
 func TestParseAuditHighWater_ValidValue(t *testing.T) {
+	t.Parallel()
 	cp := &models.AuditCheckpoint{ChainedEvents: 42, HeadID: 7, HeadHash: "deadbeef", KeyVersion: "v1"}
 	val := auditHighWaterValue(cp, "sig123")
 	parsed, sig, ok := parseAuditHighWater(val)
@@ -765,11 +821,13 @@ func TestParseAuditHighWater_ValidValue(t *testing.T) {
 }
 
 func TestParseAuditHighWater_InvalidValue(t *testing.T) {
+	t.Parallel()
 	_, _, ok := parseAuditHighWater("not_valid")
 	assert.False(t, ok)
 }
 
 func TestParseAuditHighWater_WrongVersion(t *testing.T) {
+	t.Parallel()
 	// Replace "v1" prefix with "v2" → wrong version
 	val := "v2\x1f42\x1f7\x1fdeadbeef\x1fv1\x1fsig"
 	_, _, ok := parseAuditHighWater(val)
@@ -779,6 +837,7 @@ func TestParseAuditHighWater_WrongVersion(t *testing.T) {
 // ── audit_checkpoint.go — checkpointCanonical / signCheckpoint ───────────────
 
 func TestCheckpointCanonical_Format(t *testing.T) {
+	t.Parallel()
 	cp := &models.AuditCheckpoint{ChainedEvents: 10, HeadID: 3, HeadHash: "abc", KeyVersion: "kv1"}
 	canon := checkpointCanonical(cp)
 	assert.Contains(t, canon, "v1\x00")
@@ -786,6 +845,7 @@ func TestCheckpointCanonical_Format(t *testing.T) {
 }
 
 func TestCheckpointSignatureValid_Roundtrip(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("testkeywithenoughbytes1234567890"), "v1")
@@ -795,6 +855,7 @@ func TestCheckpointSignatureValid_Roundtrip(t *testing.T) {
 }
 
 func TestCheckpointSignatureValid_TamperedData(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("testkeywithenoughbytes1234567890"), "v1")
@@ -808,6 +869,7 @@ func TestCheckpointSignatureValid_TamperedData(t *testing.T) {
 // ── validateShareSecretRequest — self-share path (sharing_validation.go) ─────
 
 func TestValidateShareSecretRequest_SelfShare(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.validateShareSecretRequest(&ShareSecretRequest{
@@ -822,6 +884,7 @@ func TestValidateShareSecretRequest_SelfShare(t *testing.T) {
 }
 
 func TestValidateShareSecretRequest_GroupSelfShareAllowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// IsGroup=true: RecipientID is a group ID, so same numeric value as SharedBy is fine.
@@ -838,6 +901,7 @@ func TestValidateShareSecretRequest_GroupSelfShareAllowed(t *testing.T) {
 // ── RevokeAccessReviewGrant — validation branches ────────────────────────────
 
 func TestRevokeAccessReviewGrant_ZeroProjectID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 0, AccessReviewDecision{Source: "role"})
@@ -846,6 +910,7 @@ func TestRevokeAccessReviewGrant_ZeroProjectID(t *testing.T) {
 }
 
 func TestRevokeAccessReviewGrant_OwnerSource(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{Source: "owner"})
@@ -854,6 +919,7 @@ func TestRevokeAccessReviewGrant_OwnerSource(t *testing.T) {
 }
 
 func TestRevokeAccessReviewGrant_UnknownSource(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{Source: "mystery"})
@@ -862,6 +928,7 @@ func TestRevokeAccessReviewGrant_UnknownSource(t *testing.T) {
 }
 
 func TestRevokeAccessReviewGrant_RoleMissingIDs(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{
@@ -876,6 +943,7 @@ func TestRevokeAccessReviewGrant_RoleMissingIDs(t *testing.T) {
 // ── AttestAccessReviewGrant — basic validation ───────────────────────────────
 
 func TestAttestAccessReviewGrant_ZeroProjectID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.AttestAccessReviewGrant(context.Background(), 1, 0, AccessReviewDecision{Source: "role"})
@@ -884,6 +952,7 @@ func TestAttestAccessReviewGrant_ZeroProjectID(t *testing.T) {
 }
 
 func TestAttestAccessReviewGrant_EmptySource(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.AttestAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{Source: ""})

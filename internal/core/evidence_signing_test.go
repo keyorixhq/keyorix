@@ -9,6 +9,7 @@ import (
 )
 
 func TestEvidenceSignature_RoundTrip(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
 	data := []byte(`{"generated_at":"2026-06-15T00:00:00Z"}`)
@@ -50,6 +51,7 @@ func TestEvidenceSignature_RoundTrip(t *testing.T) {
 // version string (skipping the constant-time HMAC check) would pass every other test but make
 // evidence signatures trivially forgeable — this catches it.
 func TestEvidenceSignature_WrongKeySameVersionRejected(t *testing.T) {
+	t.Parallel()
 	data := []byte(`{"generated_at":"2026-06-15T00:00:00Z"}`)
 	const fname = "keyorix-evidence-20260615T000000Z.json"
 
@@ -82,6 +84,7 @@ func TestEvidenceSignature_WrongKeySameVersionRejected(t *testing.T) {
 // honest, non-misleading outcome documented at the top of this file — never as
 // freshly "tampered" just because the fix changed the label format.
 func TestEvidenceSignature_PreFixPackReportedSupersededNotTampered(t *testing.T) {
+	t.Parallel()
 	data := []byte(`{"generated_at":"2026-01-01T00:00:00Z"}`)
 	const fname = "keyorix-evidence-20260101T000000Z.json"
 
@@ -108,6 +111,7 @@ func TestEvidenceSignature_PreFixPackReportedSupersededNotTampered(t *testing.T)
 }
 
 func TestEvidenceSignature_UnavailableWithoutKey(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	assert.False(t, c.EvidenceSigningAvailable())
 	_, ok := c.signEvidence("pack.json", []byte("x"))

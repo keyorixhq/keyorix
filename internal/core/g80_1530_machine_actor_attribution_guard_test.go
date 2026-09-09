@@ -133,6 +133,7 @@ func findDirectLogAuditEventCallers(t *testing.T) map[string]bool {
 // stamp) must be in auditAttributionAllowlist with a reason, or the test
 // fails -- a new bypass site is exactly how this gap would reappear.
 func TestDirectLogAuditEventCallersAreSafe(t *testing.T) {
+	t.Parallel()
 	actual := findDirectLogAuditEventCallers(t)
 
 	var unjustified []string

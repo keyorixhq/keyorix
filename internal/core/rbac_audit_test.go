@@ -26,6 +26,7 @@ func newRBACAuditCore(t *testing.T) *KeyorixCore {
 }
 
 func TestRBACAuditTrail_AssignAndRemove(t *testing.T) {
+	t.Parallel()
 	c := newRBACAuditCore(t)
 	ctx := context.Background()
 
@@ -67,6 +68,7 @@ func TestRBACAuditTrail_AssignAndRemove(t *testing.T) {
 // environment-scoped grant's audit row silently lost its EnvironmentID on
 // the read side even though it was captured at write time.
 func TestRBACAuditTrail_EnvironmentIDRoundTrips(t *testing.T) {
+	t.Parallel()
 	c := newRBACAuditCore(t)
 	ctx := context.Background()
 
@@ -89,6 +91,7 @@ func TestRBACAuditTrail_EnvironmentIDRoundTrips(t *testing.T) {
 // A change made without an authenticated principal (actorID 0, e.g. local CLI)
 // records no actor.
 func TestRBACAuditTrail_SystemActor(t *testing.T) {
+	t.Parallel()
 	c := newRBACAuditCore(t)
 	ctx := context.Background()
 
@@ -103,6 +106,7 @@ func TestRBACAuditTrail_SystemActor(t *testing.T) {
 }
 
 func TestRBACAuditTrail_GroupRole(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -132,6 +136,7 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 }
 
 func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -171,6 +176,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 
 // SetUserRoles diffs the current vs desired set and audits each resulting change.
 func TestRBACAuditTrail_SetUserRolesEmitsPerChange(t *testing.T) {
+	t.Parallel()
 	c := newRBACAuditCore(t)
 	ctx := context.Background()
 

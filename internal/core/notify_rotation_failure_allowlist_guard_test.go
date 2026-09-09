@@ -26,6 +26,7 @@ import (
 // failure paths in rotateOneSecret produce (see rotation_executor.go), so it
 // does not depend on any particular upstream backend's error wording.
 func TestNotifyRotationFailures_PayloadIsAllowlisted(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	sink := &fakeSink{}
 	c.SetNotificationSink(sink)

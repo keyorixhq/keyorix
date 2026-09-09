@@ -27,6 +27,7 @@ import (
 // reinstated contains an admin-tier role, and asserts the reinstatement is
 // denied rather than silently allowed.
 func TestRequireGlobalAdminToReinstateAdminRoles_StorageErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	mockStorage := &MockStorage{}
 	mockStorage.On("RoleSetBypassesPermissionChecks", mock.Anything, mock.Anything).
 		Return(false, errors.New("connection reset by peer"))
@@ -43,6 +44,7 @@ func TestRequireGlobalAdminToReinstateAdminRoles_StorageErrorFailsClosed(t *test
 // admin-tier role, and asserts token issuance is denied rather than silently
 // allowed.
 func TestRequireMachinePrivilegeCeiling_StorageErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	mockStorage := &MockStorage{}
 	mockStorage.On("GetMachineRoles", mock.Anything, uint(7)).
 		Return([]*models.Role{{ID: 42, Name: "some-custom-role"}}, nil)

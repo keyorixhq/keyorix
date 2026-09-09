@@ -34,6 +34,7 @@ func deniedEventMatcher(adminID, targetID uint, descSubstr string) func(*models.
 }
 
 func TestStartImpersonation_Success(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -64,6 +65,7 @@ func TestStartImpersonation_Success(t *testing.T) {
 }
 
 func TestStartImpersonation_RejectsSelf(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -87,6 +89,7 @@ func TestStartImpersonation_RejectsSelf(t *testing.T) {
 // otherwise the impersonation session (which carries no restriction) would launder the
 // PAT's bound and act as the target with full permissions.
 func TestStartImpersonation_RejectsRestrictedPAT(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := WithPATRestriction(context.Background(), &PATRestriction{Permissions: []string{"users.*"}})
@@ -109,6 +112,7 @@ func TestStartImpersonation_RejectsRestrictedPAT(t *testing.T) {
 // can't tell an unrestricted PAT apart from a session (both carry nil), so
 // the restricted-PAT check above misses this case entirely.
 func TestStartImpersonation_RejectsNonSessionAuth(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := WithSessionAuth(context.Background(), false)
@@ -129,6 +133,7 @@ func TestStartImpersonation_RejectsNonSessionAuth(t *testing.T) {
 // A genuine interactive session (the untagged/default case, and the explicit
 // true case) is unaffected by the #G07 check.
 func TestStartImpersonation_AllowsSessionAuth(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := WithSessionAuth(context.Background(), true)
@@ -144,6 +149,7 @@ func TestStartImpersonation_AllowsSessionAuth(t *testing.T) {
 // A suspended/inactive target cannot be impersonated (the session would be dead on
 // arrival and only emit a misleading audit event).
 func TestStartImpersonation_RejectsInactiveTarget(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -169,6 +175,7 @@ func TestStartImpersonation_RejectsInactiveTarget(t *testing.T) {
 
 // A non-admin caller cannot impersonate a global admin (privilege escalation guard).
 func TestStartImpersonation_RejectsAdminTargetForNonAdminCaller(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -204,6 +211,7 @@ func TestStartImpersonation_RejectsAdminTargetForNonAdminCaller(t *testing.T) {
 // scoped to a single PROJECT (never itself flagged "global admin") — the
 // scope-aware gap #165 closes beyond the older global-only check.
 func TestStartImpersonation_RejectsProjectScopedAdminTargetForNonAdminCaller(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -232,6 +240,7 @@ func TestStartImpersonation_RejectsProjectScopedAdminTargetForNonAdminCaller(t *
 // impersonate a project-scoped admin target — the ceiling is satisfied, not
 // unconditionally blocked.
 func TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCaller(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -264,6 +273,7 @@ func TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCalle
 // check, which silently skipped the ceiling entirely for any role it didn't
 // recognize by name, no matter how privileged its actual permission bundle.
 func TestStartImpersonation_RejectsCustomAdminTierRoleTargetForNonAdminCaller(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -298,6 +308,7 @@ func TestStartImpersonation_RejectsCustomAdminTierRoleTargetForNonAdminCaller(t 
 // must now refuse, so the session is terminated within one re-auth cycle
 // rather than remaining valid for the rest of its TTL.
 func TestReauthorizeImpersonation_RevokedImpersonatePermission(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -319,6 +330,7 @@ func TestReauthorizeImpersonation_RevokedImpersonatePermission(t *testing.T) {
 // The companion positive case: an admin who still holds users.impersonate and
 // still outranks the target passes re-authorization.
 func TestReauthorizeImpersonation_StillAuthorized(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -336,6 +348,7 @@ func TestReauthorizeImpersonation_StillAuthorized(t *testing.T) {
 // grants are otherwise untouched (the pre-existing account-state half of
 // MT-007, still exercised through the shared ReauthorizeImpersonation path).
 func TestReauthorizeImpersonation_SuspendedAdmin(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -347,6 +360,7 @@ func TestReauthorizeImpersonation_SuspendedAdmin(t *testing.T) {
 }
 
 func TestEndImpersonation_LogsDurationAndActionCount(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -375,6 +389,7 @@ func TestEndImpersonation_LogsDurationAndActionCount(t *testing.T) {
 }
 
 func TestEndImpersonation_RejectsNonImpersonationSession(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()
@@ -392,6 +407,7 @@ func TestEndImpersonation_RejectsNonImpersonationSession(t *testing.T) {
 // audit write ran first unconditionally, so a failed delete still left an
 // audit trail claiming the session had ended.
 func TestEndImpersonation_DeleteSessionFails_NoMisleadingAuditEvent(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := context.Background()

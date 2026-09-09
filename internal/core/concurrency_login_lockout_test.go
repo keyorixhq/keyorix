@@ -28,6 +28,7 @@ import (
 // guess budget. This drives many concurrent wrong logins against a real file-backed SQLite
 // and asserts the account ends up locked exactly once.
 func TestConcurrency_LoginLockout_NoLostIncrements(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "lockout.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

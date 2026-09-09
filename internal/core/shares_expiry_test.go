@@ -60,6 +60,7 @@ func newSharesExpiryFixture(t *testing.T) (*KeyorixCore, uint, time.Time, *gorm.
 }
 
 func TestShareExpiry_Enforcement(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("active future-dated share authorizes and lists", func(t *testing.T) {
@@ -131,6 +132,7 @@ func TestShareExpiry_Enforcement(t *testing.T) {
 }
 
 func TestUpdateShareExpiry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// share creates a permanent read share of the fixture secret to recipient 2 and
@@ -206,6 +208,7 @@ func TestUpdateShareExpiry(t *testing.T) {
 // fixture (no mocks) so the assertions exercise the actual upsert SQL, not a
 // hand-rolled double.
 func TestReShareTightensExpiry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("direct share: re-sharing a permanent grant with an expiry persists it", func(t *testing.T) {
@@ -283,6 +286,7 @@ func TestReShareTightensExpiry(t *testing.T) {
 }
 
 func TestListUserShareViews(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, secretID, now, _ := newSharesExpiryFixture(t)
 
@@ -315,6 +319,7 @@ func mustShare(t *testing.T) (*KeyorixCore, uint, time.Time) {
 }
 
 func TestRemoveExpiredShares(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, secretID, now, db := newSharesExpiryFixture(t)
 

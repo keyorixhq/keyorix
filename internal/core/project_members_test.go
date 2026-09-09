@@ -29,6 +29,7 @@ func grantGlobalAdmin(t *testing.T, st *store.LocalStorage, actorID uint) {
 }
 
 func TestProjectMemberLifecycle(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -78,6 +79,7 @@ func TestProjectMemberLifecycle(t *testing.T) {
 }
 
 func TestAddProjectMemberUnknownRole(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	u, err := st.CreateUser(ctx, &models.User{Username: "bob", Email: "bob@example.com", IsActive: true})
@@ -90,6 +92,7 @@ func TestAddProjectMemberUnknownRole(t *testing.T) {
 // direct-add path, e.g. an admin or SCIM caller with roles.assign) bypassed
 // it entirely. Verify it's now enforced here too.
 func TestAddProjectMember_RejectsDisallowedDomain(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -113,6 +116,7 @@ func TestAddProjectMember_RejectsDisallowedDomain(t *testing.T) {
 // none" path — a second userID-keyed entry point that must not bypass the
 // allowlist either.
 func TestSetProjectMemberRole_RejectsDisallowedDomainForNewMember(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -132,6 +136,7 @@ func TestSetProjectMemberRole_RejectsDisallowedDomainForNewMember(t *testing.T) 
 // check — the allowlist governs who can join, not every subsequent role edit
 // for someone who already legitimately joined.
 func TestSetProjectMemberRole_AllowsRoleChangeForExistingMemberRegardlessOfDomain(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -157,6 +162,7 @@ func TestSetProjectMemberRole_AllowsRoleChangeForExistingMemberRegardlessOfDomai
 // trail identically (#234) — previously these bypassed AssignUserRole/RemoveUserRole
 // and wrote nothing.
 func TestProjectMemberGrantIsRBACAudited(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(9)
@@ -202,6 +208,7 @@ func TestProjectMemberGrantIsRBACAudited(t *testing.T) {
 // prior version only deleted the exact project-level (environment_id = 0) row,
 // leaving the environment-scoped one live and invisible to the offboarding admin.
 func TestRemoveProjectMember_RevokesEnvironmentScopedGrantToo(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -244,6 +251,7 @@ func TestRemoveProjectMember_RevokesEnvironmentScopedGrantToo(t *testing.T) {
 // ordinary member-management API — doing so would leave the project with zero
 // project-scoped admins.
 func TestRemoveProjectMember_RefusesLastAdmin(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -268,6 +276,7 @@ func TestRemoveProjectMember_RefusesLastAdmin(t *testing.T) {
 // #236: demoting the sole remaining project admin to a non-admin role is refused
 // the same way removal is — SetProjectMemberRole must not be a bypass.
 func TestSetProjectMemberRole_RefusesLastAdminDemotion(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -291,6 +300,7 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion(t *testing.T) {
 // #236 (negative case): removing a NON-last admin — another project admin still
 // present — must still succeed. The guard must not over-block ordinary removals.
 func TestRemoveProjectMember_AllowsNonLastAdmin(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -323,6 +333,7 @@ func TestRemoveProjectMember_AllowsNonLastAdmin(t *testing.T) {
 // access because AuthorizeSecret checks ACL grants before project-scope RBAC
 // and short-circuits on the first match.
 func TestRemoveProjectMember_RevokesSecretACLGrants(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(5)
@@ -369,6 +380,7 @@ func TestRemoveProjectMember_RevokesSecretACLGrants(t *testing.T) {
 // #236 (negative case): a non-admin member (no roles.assign) can always be freely
 // removed — the guard only fires for the LAST roles.assign holder.
 func TestRemoveProjectMember_NonAdminAlwaysRemovable(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -396,6 +408,7 @@ func TestRemoveProjectMember_NonAdminAlwaysRemovable(t *testing.T) {
 // Negative case 1: the admin-granting group exists and has the right role, but has
 // NO members at all.
 func TestRemoveProjectMember_RefusesLastAdmin_EmptyAdminGroup(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -425,6 +438,7 @@ func TestRemoveProjectMember_RefusesLastAdmin_EmptyAdminGroup(t *testing.T) {
 // Negative case 2: the admin-granting group has a member, but that member is
 // deactivated (IsActive=false) — not usable as a fallback admin.
 func TestRemoveProjectMember_RefusesLastAdmin_AllGroupMembersDeactivated(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -466,6 +480,7 @@ func TestRemoveProjectMember_RefusesLastAdmin_AllGroupMembersDeactivated(t *test
 // soft-delete (DeleteGroup only marks the group deleted, it doesn't remove the
 // grant/membership rows), but a soft-deleted group confers no authority.
 func TestRemoveProjectMember_RefusesLastAdmin_SoftDeletedAdminGroup(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -500,6 +515,7 @@ func TestRemoveProjectMember_RefusesLastAdmin_SoftDeletedAdminGroup(t *testing.T
 // a surviving admin, so removing the human admin is allowed — the guard must not
 // over-block once the group actually has someone who can administer the project.
 func TestRemoveProjectMember_AllowsRemoval_WhenAdminGroupHasLiveMember(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -532,6 +548,7 @@ func TestRemoveProjectMember_AllowsRemoval_WhenAdminGroupHasLiveMember(t *testin
 // demotion path — a second entry point into the same guardLastProjectAdmin call
 // that must not be bypassable either (mirrors TestSetProjectMemberRole_RefusesLastAdminDemotion).
 func TestSetProjectMemberRole_RefusesLastAdminDemotion_EmptyAdminGroup(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)

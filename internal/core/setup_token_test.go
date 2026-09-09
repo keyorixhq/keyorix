@@ -18,6 +18,7 @@ func anyAudit(ms *MockStorage) {
 }
 
 func TestIssueSetupToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("returns plaintext once, stores only the hash, supersedes prior tokens", func(t *testing.T) {
@@ -99,6 +100,7 @@ func TestIssueSetupToken(t *testing.T) {
 }
 
 func TestValidateSetupToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	raw := setupPrefix + "abc123"
 	hash := sha256Hex(raw)
@@ -164,6 +166,7 @@ func TestValidateSetupToken(t *testing.T) {
 }
 
 func TestConsumeSetupToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	raw := setupPrefix + "xyz789"
 	hash := sha256Hex(raw)

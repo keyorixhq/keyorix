@@ -18,6 +18,7 @@ import (
 // must not silently widen which external secrets can be pulled through a connector, and it
 // is easy to regress by "helpfully" adding an admin shortcut to the federated-read path.
 func TestConnectRefRBAC_NoAdminBypass(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 
 	// User 1 is a GLOBAL super_admin — the role that bypasses core RBAC.

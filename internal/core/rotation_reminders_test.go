@@ -51,6 +51,7 @@ func newRotationReminderCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 }
 
 func TestSendRotationReminders(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newRotationReminderCore(t)
 
@@ -89,6 +90,7 @@ func TestSendRotationReminders(t *testing.T) {
 // must not depend on the reminder happening to fall inside a "newest N of any
 // type" window.
 func TestHasUnreadRotationReminder_NotBuriedByNotificationVolume(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, now := newRotationReminderCore(t)
 
@@ -129,6 +131,7 @@ func TestHasUnreadRotationReminder_NotBuriedByNotificationVolume(t *testing.T) {
 }
 
 func TestSendRotationReminders_NothingDue(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, now := newRotationReminderCore(t)
 	// Rotate the secret now → no longer overdue/approaching.
@@ -146,6 +149,7 @@ func TestSendRotationReminders_NothingDue(t *testing.T) {
 // unread, the next run must escalate the SAME notification row in place rather
 // than silently suppressing the far more consequential state.
 func TestSendRotationReminders_EscalatesOnMoreSevereState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, now := newRotationReminderCore(t)
 
@@ -191,6 +195,7 @@ func TestSendRotationReminders_EscalatesOnMoreSevereState(t *testing.T) {
 // reminder silently escalated to "overdue" while still unread would never actually
 // receive a second alert — undermining the entire point of escalation-aware reminders.
 func TestSendRotationReminders_EscalationRedispatchesDelivery(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, now := newRotationReminderCore(t)
 	sink := &fakeSink{}
@@ -226,6 +231,7 @@ func TestSendRotationReminders_EscalationRedispatchesDelivery(t *testing.T) {
 // standing, a recheck that finds the state no worse must not touch it or
 // create noise — only a genuine escalation updates the notification.
 func TestSendRotationReminders_NoEscalation_SameOrLowerSeverity_NoNoise(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newRotationReminderCore(t)
 
@@ -251,6 +257,7 @@ func TestSendRotationReminders_NoEscalation_SameOrLowerSeverity_NoNoise(t *testi
 }
 
 func TestRotationReminderMessage(t *testing.T) {
+	t.Parallel()
 	assert.Contains(t, rotationReminderMessage("p", 3, 2), "3 secret(s) in p are overdue")
 	assert.Contains(t, rotationReminderMessage("p", 3, 2), "2 more are approaching")
 	assert.Equal(t, "1 secret(s) in p are overdue for rotation.", rotationReminderMessage("p", 1, 0))

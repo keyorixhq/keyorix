@@ -27,6 +27,7 @@ func hasOpenCampaign(campaigns []*core.CampaignWithProgress) bool {
 // A never-reviewed project with an admin gets one reminder; a second run does not
 // re-notify (the admin still holds an unread one).
 func TestRunScheduledRecertification_RemindsAndDedupes(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -60,6 +61,7 @@ func TestRunScheduledRecertification_RemindsAndDedupes(t *testing.T) {
 // With auto_open on, an overdue project (last campaign closed > cadence ago) gets a
 // fresh open campaign, while a recently-reviewed project does not.
 func TestRunScheduledRecertification_AutoOpensOverdueNotRecent(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -96,6 +98,7 @@ func TestRunScheduledRecertification_AutoOpensOverdueNotRecent(t *testing.T) {
 // genuinely completed close (ForcedIncomplete=false) with the same old open time but
 // a recent close is, by contrast, a real completed review and must NOT be due.
 func TestRunScheduledRecertification_ForcedIncompleteAnchorsToOpenTime(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -173,6 +176,7 @@ func (qc *queryCounter) count(table string) int {
 // access_review_items whether a project has 5 or 100 historical (closed) campaigns —
 // a query COUNT assertion, not a timing one, so it can't flake under load.
 func TestRunScheduledRecertification_CampaignQueryCostDoesNotScaleWithHistory(t *testing.T) {
+	t.Parallel()
 	runTickAndCountCampaignQueries := func(historicalCampaigns int) (campaignQueries, itemQueries int) {
 		h := testhelper.NewRBACTestHelper(t)
 		defer h.Cleanup()

@@ -14,6 +14,7 @@ import (
 // install with no one able to administer it); once a second global admin exists,
 // removing the first is allowed again.
 func TestRemoveUserRole_RefusesLastGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 	ctx := context.Background()

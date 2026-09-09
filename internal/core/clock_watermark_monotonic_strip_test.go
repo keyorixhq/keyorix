@@ -51,6 +51,7 @@ func hasMonotonicReading(t time.Time) bool {
 // tests below are exercising the real hazard, not a no-op on a platform
 // where it never applied.
 func TestRealTimeNow_CarriesMonotonicReading(t *testing.T) {
+	t.Parallel()
 	require.True(t, hasMonotonicReading(time.Now()), "calibration: time.Now() must carry a monotonic reading for these tests to mean anything")
 }
 
@@ -60,6 +61,7 @@ func TestRealTimeNow_CarriesMonotonicReading(t *testing.T) {
 // structurally CANNOT reproduce this bug class, explaining why those tests
 // passed throughout even while the production code was broken.
 func TestDateConstructedTime_NeverCarriesMonotonicReading(t *testing.T) {
+	t.Parallel()
 	require.False(t, hasMonotonicReading(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 }
 
@@ -70,6 +72,7 @@ func TestDateConstructedTime_NeverCarriesMonotonicReading(t *testing.T) {
 // authEffectiveNow itself) is a genuine wall-clock comparison, capable of
 // observing a backward OS clock step.
 func TestAuthEffectiveNow_StripsMonotonicReading(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{now: time.Now}
 	real := time.Now()
 	require.True(t, hasMonotonicReading(real), "sanity: the input this test feeds through c.now must itself carry a monotonic reading")
@@ -81,6 +84,7 @@ func TestAuthEffectiveNow_StripsMonotonicReading(t *testing.T) {
 // TestCheckSecretExpiryClockNotRegressed_StripsMonotonicReading is the same
 // proof for #1635's actual named target.
 func TestCheckSecretExpiryClockNotRegressed_StripsMonotonicReading(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	require.NoError(t, c.checkSecretExpiryClockNotRegressed(time.Now()))
 	assert.False(t, hasMonotonicReading(c.secretExpiryWatermark), "secretExpiryWatermark must be stored without a monotonic reading")
@@ -96,6 +100,7 @@ func TestCheckSecretExpiryClockNotRegressed_StripsMonotonicReading(t *testing.T)
 // shareEffectiveNow, OIDCVerifier.effectiveNow) in one pass -- same proof,
 // same reason, applied to each.
 func TestConnectShareOIDCEffectiveNow_StripMonotonicReading(t *testing.T) {
+	t.Parallel()
 	t.Run("connectEffectiveNow", func(t *testing.T) {
 		c := &KeyorixCore{now: time.Now}
 		got := c.connectEffectiveNow()
@@ -116,6 +121,7 @@ func TestConnectShareOIDCEffectiveNow_StripMonotonicReading(t *testing.T) {
 // TestSessionRefreshAndAccessRequestApprovalClockChecks_StripMonotonicReading
 // covers the two REFUSE-shaped (#1653) mechanisms.
 func TestSessionRefreshAndAccessRequestApprovalClockChecks_StripMonotonicReading(t *testing.T) {
+	t.Parallel()
 	// Neither function under test calls i18n.T (both return a plain
 	// fmt.Errorf), so no i18n init/reset is needed here -- deliberately
 	// avoided to not add another instance of the pre-existing i18n global-

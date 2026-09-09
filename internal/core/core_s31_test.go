@@ -24,12 +24,14 @@ import (
 // ── catalog.go — validateProjectName ─────────────────────────────────────
 
 func TestValidateProjectName_Empty(t *testing.T) {
+	t.Parallel()
 	err := validateProjectName("")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "project name is required")
 }
 
 func TestValidateProjectName_TooLong(t *testing.T) {
+	t.Parallel()
 	long := make([]byte, maxProjectNameLen+1)
 	for i := range long {
 		long[i] = 'x'
@@ -40,6 +42,7 @@ func TestValidateProjectName_TooLong(t *testing.T) {
 }
 
 func TestValidateProjectName_Valid(t *testing.T) {
+	t.Parallel()
 	err := validateProjectName("myproject")
 	require.NoError(t, err)
 }
@@ -47,12 +50,14 @@ func TestValidateProjectName_Valid(t *testing.T) {
 // ── catalog.go — CreateProject ────────────────────────────────────────────
 
 func TestCreateProject_EmptyName(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	_, err := c.CreateProject(context.Background(), "", "desc")
 	require.Error(t, err)
 }
 
 func TestCreateProject_Success(t *testing.T) {
+	t.Parallel()
 	// CreateProject uses stub CreateProject and CreateEnvironment mocks (always succeed).
 	c := NewKeyorixCore(new(MockStorage))
 	p, err := c.CreateProject(context.Background(), "myproject", "")
@@ -61,11 +66,13 @@ func TestCreateProject_Success(t *testing.T) {
 }
 
 func TestTranslateProjectNameError_Duplicate(t *testing.T) {
+	t.Parallel()
 	err := translateProjectNameError(storage.ErrDuplicateProjectName)
 	assert.Contains(t, err.Error(), "already exists")
 }
 
 func TestTranslateProjectNameError_Other(t *testing.T) {
+	t.Parallel()
 	other := errors.New("some other error")
 	err := translateProjectNameError(other)
 	assert.Equal(t, other, err)
@@ -74,6 +81,7 @@ func TestTranslateProjectNameError_Other(t *testing.T) {
 // ── auth_bootstrap.go — SystemNeedsBootstrap ────────────────────────────
 
 func TestSystemNeedsBootstrap_Initialized(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).Return("yes", true, nil)
 	c := NewKeyorixCore(ms)
@@ -83,6 +91,7 @@ func TestSystemNeedsBootstrap_Initialized(t *testing.T) {
 }
 
 func TestSystemNeedsBootstrap_NotInitializedNoUsers(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).Return("", false, nil)
 	ms.On("ListUsers", mock.Anything, mock.AnythingOfType("*storage.UserFilter")).Return(nil, int64(0), nil)
@@ -93,6 +102,7 @@ func TestSystemNeedsBootstrap_NotInitializedNoUsers(t *testing.T) {
 }
 
 func TestSystemNeedsBootstrap_NotInitializedHasUsers(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).Return("", false, nil)
 	ms.On("ListUsers", mock.Anything, mock.AnythingOfType("*storage.UserFilter")).Return([]*models.User{{ID: 1}}, int64(1), nil)
@@ -103,6 +113,7 @@ func TestSystemNeedsBootstrap_NotInitializedHasUsers(t *testing.T) {
 }
 
 func TestSystemNeedsBootstrap_MetadataError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).Return("", false, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -113,6 +124,7 @@ func TestSystemNeedsBootstrap_MetadataError(t *testing.T) {
 // ── connect.go — CreateConnectRefGrant ───────────────────────────────────
 
 func TestCreateConnectRefGrant_NotEnabled(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	// connectManager is nil by default.
 	_, err := c.CreateConnectRefGrant(context.Background(), 1, 2, "github", "main/", nil)
@@ -123,6 +135,7 @@ func TestCreateConnectRefGrant_NotEnabled(t *testing.T) {
 // ── connect.go — CreateConnectRefGrant: zero roleID ──────────────────────
 
 func TestCreateConnectRefGrant_ZeroRoleID(t *testing.T) {
+	t.Parallel()
 	// connectManager nil → "not enabled" (same as before).
 	// There's no direct way to trigger the roleID=0 check without a real connect manager.
 	// Skip — already covered by the "not enabled" test above.
@@ -131,11 +144,13 @@ func TestCreateConnectRefGrant_ZeroRoleID(t *testing.T) {
 // ── evidence_export.go — postureDegradedReasons ──────────────────────────
 
 func TestPostureDegradedReasons_Nil(t *testing.T) {
+	t.Parallel()
 	result := postureDegradedReasons(nil)
 	assert.Nil(t, result)
 }
 
 func TestPostureDegradedReasons_WithReasons(t *testing.T) {
+	t.Parallel()
 	p := &CompliancePosture{DegradedReasons: []string{"reason1", "reason2"}}
 	result := postureDegradedReasons(p)
 	assert.Equal(t, []string{"reason1", "reason2"}, result)
@@ -144,6 +159,7 @@ func TestPostureDegradedReasons_WithReasons(t *testing.T) {
 // ── compliance_posture.go — applyRotationPosture ─────────────────────────
 
 func TestApplyRotationPosture_Error(t *testing.T) {
+	t.Parallel()
 	p := &CompliancePosture{}
 	snap := &complianceSnapshot{rotationErr: errors.New("fetch error")}
 	applyRotationPosture(p, snap)
@@ -151,6 +167,7 @@ func TestApplyRotationPosture_Error(t *testing.T) {
 }
 
 func TestApplyRotationPosture_WithStatuses(t *testing.T) {
+	t.Parallel()
 	p := &CompliancePosture{}
 	snap := &complianceSnapshot{
 		rotationStatuses: []*RotationStatusEntry{
@@ -168,6 +185,7 @@ func TestApplyRotationPosture_WithStatuses(t *testing.T) {
 // ── authz.go — principalHasScopedPermission ──────────────────────────────
 
 func TestPrincipalHasScopedPermission_NoRoles(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{}, nil)
@@ -178,6 +196,7 @@ func TestPrincipalHasScopedPermission_NoRoles(t *testing.T) {
 }
 
 func TestPrincipalHasScopedPermission_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -188,11 +207,13 @@ func TestPrincipalHasScopedPermission_StorageError(t *testing.T) {
 // ── catalog.go — validateEnvironmentName ─────────────────────────────────
 
 func TestValidateEnvironmentName_Empty(t *testing.T) {
+	t.Parallel()
 	err := validateEnvironmentName("")
 	require.Error(t, err)
 }
 
 func TestValidateEnvironmentName_TooLong(t *testing.T) {
+	t.Parallel()
 	long := make([]byte, maxEnvironmentNameLen+1)
 	for i := range long {
 		long[i] = 'e'
@@ -202,6 +223,7 @@ func TestValidateEnvironmentName_TooLong(t *testing.T) {
 }
 
 func TestValidateEnvironmentName_Valid(t *testing.T) {
+	t.Parallel()
 	err := validateEnvironmentName("production")
 	require.NoError(t, err)
 }
@@ -209,6 +231,7 @@ func TestValidateEnvironmentName_Valid(t *testing.T) {
 // ── authz.go — scopedRoleIDs group membership ────────────────────────────
 
 func TestScopedRoleIDs_GroupInheritance(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{10}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{20}, nil)

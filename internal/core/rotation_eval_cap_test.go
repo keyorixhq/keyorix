@@ -19,6 +19,7 @@ import (
 // more than one page must not have the secrets past the page silently skipped
 // (which would hide overdue secrets from the reminder scheduler and status views).
 func TestEvaluateRotationPolicies_NoSilentCap(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}))

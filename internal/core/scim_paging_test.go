@@ -19,6 +19,7 @@ import (
 // total, honouring the 1-based startIndex — so an unfiltered SCIM list can't drain the
 // whole directory into one response.
 func TestListSCIMUsersPage(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -70,6 +71,7 @@ func TestListSCIMUsersPage(t *testing.T) {
 // and native (no externalId) users and asserts both the returned page AND the
 // total/count reflect only the SCIM-managed subset.
 func TestListSCIMUsersPage_ExcludesNonSCIMManaged(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

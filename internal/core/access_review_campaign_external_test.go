@@ -17,6 +17,7 @@ func migrateCampaignTables(t *testing.T, h *testhelper.RBACTestHelper) {
 
 // Opening a campaign snapshots the current access review into pending items.
 func TestOpenAccessReviewCampaign_SnapshotsEntries(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -44,6 +45,7 @@ func TestOpenAccessReviewCampaign_SnapshotsEntries(t *testing.T) {
 // close a campaign. actorID (0, ADR-030) alone loses which machine did it;
 // the *MachineIdentityID companion fields must carry it through.
 func TestAccessReviewCampaign_RecordsActingMachineIdentity(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -66,6 +68,7 @@ func TestAccessReviewCampaign_RecordsActingMachineIdentity(t *testing.T) {
 
 // Attesting an item marks it kept; revoking removes the underlying grant.
 func TestDecideAccessReviewItem_AttestAndRevoke(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -118,6 +121,7 @@ func TestDecideAccessReviewItem_AttestAndRevoke(t *testing.T) {
 
 // A reviewer must not certify their OWN access (ISO 27001 A.5.18 independence).
 func TestDecideAccessReviewItem_RejectsSelfCertification(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -148,6 +152,7 @@ func TestDecideAccessReviewItem_RejectsSelfCertification(t *testing.T) {
 // could rubber-stamp a campaign with the evidence recording reviewer "0"/nil, and the
 // self-review independence check (keyed on actorID) would be inert for it.
 func TestDecideAccessReviewItem_RejectsNonHumanReviewer(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -178,6 +183,7 @@ func TestDecideAccessReviewItem_RejectsNonHumanReviewer(t *testing.T) {
 // Independence extends to GROUP-conferred access: a reviewer who belongs to a group
 // must not certify that group's review item (self-certification via a group grant).
 func TestDecideAccessReviewItem_RejectsGroupSelfCertification(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -214,6 +220,7 @@ func TestDecideAccessReviewItem_RejectsGroupSelfCertification(t *testing.T) {
 // An item is decided once: a decided item can't be flipped, so the recorded decision
 // can't drift from the real grant state (false certification evidence).
 func TestDecideAccessReviewItem_RejectsDoubleDecision(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -243,6 +250,7 @@ func TestDecideAccessReviewItem_RejectsDoubleDecision(t *testing.T) {
 // Closing refuses while items are pending unless forced; a closed campaign rejects
 // further decisions.
 func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -284,6 +292,7 @@ func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {
 // force=true, it must NOT be flagged ForcedIncomplete, so it isn't penalized by the
 // recertification cadence the way a genuinely abandoned/rushed close is.
 func TestCloseAccessReviewCampaign_FullyDecidedIsNotForcedIncomplete(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -310,6 +319,7 @@ func TestCloseAccessReviewCampaign_FullyDecidedIsNotForcedIncomplete(t *testing.
 
 // A campaign id from another project is not reachable through this project's scope.
 func TestAccessReviewCampaign_CrossProjectGuard(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -329,6 +339,7 @@ func TestAccessReviewCampaign_CrossProjectGuard(t *testing.T) {
 }
 
 func TestOpenAccessReviewCampaign_RequiresProject(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateCampaignTables(t, h)
@@ -343,6 +354,7 @@ func TestOpenAccessReviewCampaign_RequiresProject(t *testing.T) {
 // the campaign row itself, verified by reading the row back from storage (not just
 // trusting the in-memory return value).
 func TestOpenAccessReviewCampaign_PersistsDegradedFromReport(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	// Only the campaign tables are migrated — models.AuditEvent is deliberately NOT

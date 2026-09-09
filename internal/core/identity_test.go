@@ -11,6 +11,7 @@ import (
 )
 
 func TestPrimaryRole(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		roles []string
@@ -33,6 +34,7 @@ func TestPrimaryRole(t *testing.T) {
 }
 
 func TestGetUserIdentity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("assembles primary role, all roles, and permission union", func(t *testing.T) {

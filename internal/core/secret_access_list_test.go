@@ -17,6 +17,7 @@ import (
 )
 
 func TestListSecretAccessors(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -90,6 +91,7 @@ func TestListSecretAccessors(t *testing.T) {
 }
 
 func TestListSecretAccessors_StrongestGrantWins(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -144,6 +146,7 @@ func (s *failingGroupMembersStore) ListGroupMembers(_ context.Context, _ uint) (
 // ListGroupMembers call now surfaces as Degraded instead of silently omitting
 // the entire group's accessors from an incident-response-critical report (#417).
 func TestListSecretAccessors_DegradedOnGroupMembersError(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

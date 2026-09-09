@@ -25,6 +25,7 @@ func rollbackCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 }
 
 func TestRollbackSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := rollbackCore(t)
 	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "db-password", Type: "password"}).Error)
@@ -57,6 +58,7 @@ func TestRollbackSecret(t *testing.T) {
 }
 
 func TestRollbackSecret_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := rollbackCore(t)
 	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "k", Type: "password"}).Error)

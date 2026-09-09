@@ -17,6 +17,7 @@ import (
 )
 
 func TestSuspendUser_RefusesLastAdminDeactivation(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
@@ -29,6 +30,7 @@ func TestSuspendUser_RefusesLastAdminDeactivation(t *testing.T) {
 }
 
 func TestSuspendUser_AllowsWhenAnotherAdminExists(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
@@ -42,6 +44,7 @@ func TestSuspendUser_AllowsWhenAnotherAdminExists(t *testing.T) {
 }
 
 func TestUpdateUser_RefusesLastAdminDeactivation(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", Email: "root@x.io", IsActive: true, AccountState: AccountActive}).Error)
@@ -55,6 +58,7 @@ func TestUpdateUser_RefusesLastAdminDeactivation(t *testing.T) {
 }
 
 func TestUpdateUser_AllowsDeactivationWhenAnotherAdminExists(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", Email: "root@x.io", IsActive: true, AccountState: AccountActive}).Error)
@@ -70,6 +74,7 @@ func TestUpdateUser_AllowsDeactivationWhenAnotherAdminExists(t *testing.T) {
 }
 
 func TestDeprovisionSCIMGroup_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
@@ -87,6 +92,7 @@ func TestDeprovisionSCIMGroup_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
 }
 
 func TestDeprovisionSCIMGroup_AllowsWhenGroupConfersNoAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Engineering"}).Error)
@@ -96,6 +102,7 @@ func TestDeprovisionSCIMGroup_AllowsWhenGroupConfersNoAdmin(t *testing.T) {
 }
 
 func TestReplaceSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
@@ -114,6 +121,7 @@ func TestReplaceSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
 }
 
 func TestPatchSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
@@ -131,6 +139,7 @@ func TestPatchSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
 }
 
 func TestPatchSCIMGroup_AllowsRemovingMemberWhenAnotherAdminExists(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)

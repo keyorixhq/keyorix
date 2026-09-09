@@ -18,6 +18,7 @@ import (
 // server/http/handlers/machine_identities.go's changeMachineRole (and its
 // siblings) now tag ctx before calling into core.
 func TestAssignMachineRole_MachineGranterHoldingRolePermissionsAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -46,6 +47,7 @@ func TestAssignMachineRole_MachineGranterHoldingRolePermissionsAllowed(t *testin
 // target role's full permission set must still be refused -- proving the fix
 // resolves the machine's REAL permissions rather than failing open.
 func TestAssignMachineRole_MachineGranterMissingRolePermissionsBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -74,6 +76,7 @@ func TestAssignMachineRole_MachineGranterMissingRolePermissionsBlocked(t *testin
 // exact shape the reverted first attempt got wrong when it consulted the
 // general-purpose WithMachineActor tag instead.
 func TestAssignMachineRole_MachineGranterUntaggedContextFailsClosed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 

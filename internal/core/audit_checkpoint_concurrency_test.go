@@ -62,6 +62,7 @@ func checkpointConcurrentDB(t *testing.T) *gorm.DB {
 // ascending id order, and that no writer is ever spuriously refused (a correctly
 // serialized writer never races its own high-water floor).
 func TestConcurrency_AuditCheckpoint_NoOutOfOrderChain(t *testing.T) {
+	t.Parallel()
 	db := checkpointConcurrentDB(t)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")

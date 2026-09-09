@@ -15,6 +15,7 @@ import (
 // TestGetRotationState_PolicyExists verifies that a secret covered by an active
 // rotation policy returns the policy's stamped state fields.
 func TestGetRotationState_PolicyExists(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -45,6 +46,7 @@ func TestGetRotationState_PolicyExists(t *testing.T) {
 // TestGetRotationState_NoPolicy verifies that when no active policy covers the
 // secret the response has State="idle" and PolicyID=nil (not an error).
 func TestGetRotationState_NoPolicy(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -64,6 +66,7 @@ func TestGetRotationState_NoPolicy(t *testing.T) {
 // TestGetRotationState_EmptyStateDefaultsToIdle verifies that a policy row whose
 // RotationState is "" (not yet stamped) is reported as "idle".
 func TestGetRotationState_EmptyStateDefaultsToIdle(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -84,6 +87,7 @@ func TestGetRotationState_EmptyStateDefaultsToIdle(t *testing.T) {
 // TestGetRotationState_StorageError verifies that a genuine storage failure is
 // propagated as an error (not silenced as "no policy").
 func TestGetRotationState_StorageError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -100,6 +104,7 @@ func TestGetRotationState_StorageError(t *testing.T) {
 // TestSetRotationState_Valid verifies that a valid state transition calls
 // UpdateRotationState with the correct arguments.
 func TestSetRotationState_Valid(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -114,6 +119,7 @@ func TestSetRotationState_Valid(t *testing.T) {
 // TestSetRotationState_InvalidState verifies that an unknown state string returns
 // a validation error without calling storage.
 func TestSetRotationState_InvalidState(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -127,6 +133,7 @@ func TestSetRotationState_InvalidState(t *testing.T) {
 // TestSetRotationState_NotFound verifies that "rotation policy not found" from
 // storage surfaces as an error.
 func TestSetRotationState_NotFound(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -142,6 +149,7 @@ func TestSetRotationState_NotFound(t *testing.T) {
 
 // TestSetRotationState_StorageError verifies that a storage failure is propagated.
 func TestSetRotationState_StorageError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -157,6 +165,7 @@ func TestSetRotationState_StorageError(t *testing.T) {
 
 // TestSetRotationState_AllValidStates verifies every valid state value is accepted.
 func TestSetRotationState_AllValidStates(t *testing.T) {
+	t.Parallel()
 	valid := []string{
 		RotationStateIdle,
 		RotationStatePending,

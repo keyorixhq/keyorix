@@ -14,6 +14,7 @@ import (
 )
 
 func TestAccountStateHelpers(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, AccountActive, NormalizeAccountState(""))
 	assert.Equal(t, AccountSuspended, NormalizeAccountState(AccountSuspended))
 
@@ -35,6 +36,7 @@ func TestAccountStateHelpers(t *testing.T) {
 // TestIsValidAccountState proves #334's write-path validation: the empty string
 // and every canonical ADR-025 value are valid, and nothing else is.
 func TestIsValidAccountState(t *testing.T) {
+	t.Parallel()
 	for _, s := range []string{"", AccountActive, AccountPendingFirstLogin, AccountPasswordResetRequired, AccountSuspended, AccountDeprovisioned} {
 		assert.True(t, IsValidAccountState(s), "expected %q to be valid", s)
 	}
@@ -51,6 +53,7 @@ func TestIsValidAccountState(t *testing.T) {
 // outright by AccountLoginBlocked — both fail closed, just to different
 // degrees of severity, matching what each function protects.
 func TestAccountState_UnrecognizedValueFailsClosed(t *testing.T) {
+	t.Parallel()
 	garbage := "not-a-real-state"
 
 	assert.True(t, AccountRestricted(garbage), "unrecognized state must fail closed to restricted")
@@ -93,6 +96,7 @@ func TestAccountState_UnrecognizedValueFailsClosed(t *testing.T) {
 // produced in a real, confirmed incident) must be refused, not read as "not
 // blocked" the way this function's original fail-open default did.
 func TestAccountLoginBlocked_FailsClosedOnBlankAndWhitespace(t *testing.T) {
+	t.Parallel()
 	for _, s := range []string{"", " ", "\t", "   "} {
 		assert.True(t, AccountLoginBlocked(1, s), "blank/whitespace state %q must block login", s)
 	}
@@ -103,6 +107,7 @@ func TestAccountLoginBlocked_FailsClosedOnBlankAndWhitespace(t *testing.T) {
 // unrecognized-state counter (the routine Suspended/Deprovisioned path must
 // NOT increment it -- that's expected, not anomalous).
 func TestAccountLoginBlocked_MetricAndLogOnFailClosed(t *testing.T) {
+	t.Parallel()
 	before := testutil.ToFloat64(accountStateUnrecognizedTotal)
 
 	assert.True(t, AccountLoginBlocked(1, AccountSuspended))
@@ -124,6 +129,7 @@ func newAccountCore(store *MockStorage) *KeyorixCore {
 }
 
 func TestAdminAccountTransitions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		call      func(c *KeyorixCore, ctx context.Context) error
@@ -172,6 +178,7 @@ func TestAdminAccountTransitions(t *testing.T) {
 }
 
 func TestLogin_BlocksSuspended(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAccountCore(store)
 	ctx := context.Background()
@@ -191,6 +198,7 @@ func TestLogin_BlocksSuspended(t *testing.T) {
 // SCIM/IdP deactivation) must be refused login even with the correct password and an
 // otherwise-active account_state — the state gate alone does not cover IsActive.
 func TestLogin_BlocksDeactivated(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAccountCore(store)
 	ctx := context.Background()
@@ -207,6 +215,7 @@ func TestLogin_BlocksDeactivated(t *testing.T) {
 // A suspended or deactivated account must not authenticate via an existing,
 // not-yet-expired session token (the suspend/deactivate revocation gap).
 func TestValidateSessionToken_RejectsBlockedOrInactive(t *testing.T) {
+	t.Parallel()
 	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC) // after newAccountCore's fixed now
 	cases := []struct {
 		name string
@@ -239,6 +248,7 @@ func TestValidateSessionToken_RejectsBlockedOrInactive(t *testing.T) {
 // admin is suspended/deactivated — the session is keyed to the target's user_id, so
 // the target-state gate alone would let a revoked admin keep acting as the target.
 func TestValidateSessionToken_RejectsWhenImpersonatorBlocked(t *testing.T) {
+	t.Parallel()
 	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	c := newAccountCore(store)
@@ -255,6 +265,7 @@ func TestValidateSessionToken_RejectsWhenImpersonatorBlocked(t *testing.T) {
 }
 
 func TestValidateSessionToken_AllowsActive(t *testing.T) {
+	t.Parallel()
 	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	c := newAccountCore(store)
@@ -271,6 +282,7 @@ func TestValidateSessionToken_AllowsActive(t *testing.T) {
 }
 
 func TestChangePassword_ClearsRestriction(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAccountCore(store)
 	ctx := context.Background()
@@ -299,6 +311,7 @@ func TestChangePassword_ClearsRestriction(t *testing.T) {
 // restriction for up to validTokenTTL (30 s) — the cache fast-path returns the
 // old, unrestricted identity without re-reading the DB.
 func TestRequirePasswordReset_EvictsPATCache(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAccountCore(store)
 	ctx := context.Background()

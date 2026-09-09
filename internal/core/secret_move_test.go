@@ -81,6 +81,7 @@ func newMoveFixture(t *testing.T) (c *KeyorixCore, secretID, folderID uint, db *
 
 // TestMoveSecret_ToFolder moves a secret into a valid folder.
 func TestMoveSecret_ToFolder(t *testing.T) {
+	t.Parallel()
 	c, secretID, folderID, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -92,6 +93,7 @@ func TestMoveSecret_ToFolder(t *testing.T) {
 
 // TestMoveSecret_ToRoot moves a secret to the root (nil parent).
 func TestMoveSecret_ToRoot(t *testing.T) {
+	t.Parallel()
 	c, secretID, folderID, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -106,6 +108,7 @@ func TestMoveSecret_ToRoot(t *testing.T) {
 
 // TestMoveSecret_ToRoot_ZeroParentID treats parent_id=0 as root (nil parent).
 func TestMoveSecret_ToRoot_ZeroParentID(t *testing.T) {
+	t.Parallel()
 	c, secretID, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -117,6 +120,7 @@ func TestMoveSecret_ToRoot_ZeroParentID(t *testing.T) {
 
 // TestMoveSecret_NonFolderParent rejects moving into a secret (not a folder).
 func TestMoveSecret_NonFolderParent(t *testing.T) {
+	t.Parallel()
 	c, secretID, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -128,6 +132,7 @@ func TestMoveSecret_NonFolderParent(t *testing.T) {
 
 // TestMoveSecret_NonFolder_OtherSecret rejects using another secret as parent.
 func TestMoveSecret_NonFolder_OtherSecret(t *testing.T) {
+	t.Parallel()
 	c, secretID, _, db := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -153,6 +158,7 @@ func TestMoveSecret_NonFolder_OtherSecret(t *testing.T) {
 
 // TestMoveSecret_SecretNotFound returns an error when the secret does not exist.
 func TestMoveSecret_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -169,6 +175,7 @@ func TestMoveSecret_SecretNotFound(t *testing.T) {
 // entirely different project, and folder-inheriting ACL/sharing resolution
 // would then apply that other project's grants to it.
 func TestMoveSecret_RefusesCrossProjectParent(t *testing.T) {
+	t.Parallel()
 	c, secretID, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -187,6 +194,7 @@ func TestMoveSecret_RefusesCrossProjectParent(t *testing.T) {
 
 // TestMoveSecret_ParentNotFound returns a validation error when the parent does not exist.
 func TestMoveSecret_ParentNotFound(t *testing.T) {
+	t.Parallel()
 	c, secretID, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -198,6 +206,7 @@ func TestMoveSecret_ParentNotFound(t *testing.T) {
 
 // TestMoveSecret_AuditEvent verifies that an audit event is written after a successful move.
 func TestMoveSecret_AuditEvent(t *testing.T) {
+	t.Parallel()
 	c, secretID, folderID, db := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -212,6 +221,7 @@ func TestMoveSecret_AuditEvent(t *testing.T) {
 
 // TestMoveSecret_AuditEvent_ToRoot verifies that moving to root is also audited.
 func TestMoveSecret_AuditEvent_ToRoot(t *testing.T) {
+	t.Parallel()
 	c, secretID, _, db := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -226,6 +236,7 @@ func TestMoveSecret_AuditEvent_ToRoot(t *testing.T) {
 
 // TestMoveSecret_ZeroActorID rejects a zero actor ID (validation).
 func TestMoveSecret_ZeroActorID(t *testing.T) {
+	t.Parallel()
 	c, secretID, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -236,6 +247,7 @@ func TestMoveSecret_ZeroActorID(t *testing.T) {
 
 // TestMoveSecret_ZeroSecretID rejects a zero secret ID (validation).
 func TestMoveSecret_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -265,6 +277,7 @@ func createFolder(t *testing.T, c *KeyorixCore, name string, parentID *uint) uin
 // secretID) does not catch this, since A != C — only walking C's ancestor
 // chain (C -> B -> A) reveals that A is being moved under its own descendant.
 func TestMoveSecret_RefusesDescendantCycle(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -281,6 +294,7 @@ func TestMoveSecret_RefusesDescendantCycle(t *testing.T) {
 // deeper: A -> B -> C -> D, move A under D (A's great-grandchild). Confirms
 // the ancestor walk isn't accidentally limited to a single hop.
 func TestMoveSecret_RefusesDescendantCycle_Deeper(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -298,6 +312,7 @@ func TestMoveSecret_RefusesDescendantCycle_Deeper(t *testing.T) {
 // two cycle tests above: given the same A -> B -> C chain plus an unrelated
 // folder E, moving C under E (not a descendant of C) must still succeed.
 func TestMoveSecret_AllowsNonDescendantMove(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newMoveFixture(t)
 	ctx := context.Background()
 
@@ -314,6 +329,7 @@ func TestMoveSecret_AllowsNonDescendantMove(t *testing.T) {
 
 // TestMoveFolder_ToAnotherFolder moves a folder node into a sibling folder.
 func TestMoveFolder_ToAnotherFolder(t *testing.T) {
+	t.Parallel()
 	c, _, folderID, db := newMoveFixture(t)
 	ctx := context.Background()
 

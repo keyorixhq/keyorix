@@ -37,6 +37,7 @@ import (
 //     that has genuinely already expired. After the fix, the regression
 //     guard refuses before the expiry check is ever reached.
 func TestApproveSecretAccessRequest_ClockSteppedBackward_ExpiredRequestStaysRefused(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, requesterID, approverID, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -70,6 +71,7 @@ func TestApproveSecretAccessRequest_ClockSteppedBackward_ExpiredRequestStaysRefu
 // is the positive control: a request well within its TTL, approved after a
 // SMALL in-tolerance backward step, must still succeed.
 func TestApproveSecretAccessRequest_ClockSteppedBackward_LegitimatelyLiveRequestStillApproves(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, requesterID, approverID, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -87,6 +89,7 @@ func TestApproveSecretAccessRequest_ClockSteppedBackward_LegitimatelyLiveRequest
 // TestCheckAccessRequestApprovalClockNotRegressed_FreshWatermarkNeverRefuses
 // covers the zero-value watermark case directly.
 func TestCheckAccessRequestApprovalClockNotRegressed_FreshWatermarkNeverRefuses(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	err := c.checkAccessRequestApprovalClockNotRegressed(time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err, "an unset watermark must never itself cause a refusal")

@@ -41,6 +41,7 @@ func newG38TestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // `identifier` rule enforces — must be refused at the core layer, not just
 // when a caller happens to route through the HTTP JSON decoder.
 func TestCreateProject_RejectsHomographCharset(t *testing.T) {
+	t.Parallel()
 	c, _ := newG38TestCore(t)
 	ctx := context.Background()
 
@@ -62,6 +63,7 @@ func TestCreateProject_RejectsHomographCharset(t *testing.T) {
 
 // TestUpdateProject_RejectsHomographCharset: same guard, update path.
 func TestUpdateProject_RejectsHomographCharset(t *testing.T) {
+	t.Parallel()
 	c, _ := newG38TestCore(t)
 	ctx := context.Background()
 
@@ -76,6 +78,7 @@ func TestUpdateProject_RejectsHomographCharset(t *testing.T) {
 // TestCreateProjectWithEnvs_RejectsHomographCharset: same guard, the
 // --envs-overriding create path.
 func TestCreateProjectWithEnvs_RejectsHomographCharset(t *testing.T) {
+	t.Parallel()
 	c, _ := newG38TestCore(t)
 	ctx := context.Background()
 
@@ -92,6 +95,7 @@ func TestCreateProjectWithEnvs_RejectsHomographCharset(t *testing.T) {
 // Cyrillic "а" standing in for Latin "a") could slip past every transport,
 // not just HTTP.
 func TestCreateEnvironment_RejectsHomographCharset(t *testing.T) {
+	t.Parallel()
 	c, _ := newG38TestCore(t)
 	ctx := context.Background()
 
@@ -125,6 +129,7 @@ func TestCreateEnvironment_RejectsHomographCharset(t *testing.T) {
 // core.CreateEnvironment directly (gRPC, CLI embedded mode) had no such
 // check at all.
 func TestCreateEnvironment_RefusesDeadParentProject(t *testing.T) {
+	t.Parallel()
 	c, db := newG38TestCore(t)
 	ctx := context.Background()
 
@@ -149,6 +154,7 @@ func TestCreateEnvironment_RefusesDeadParentProject(t *testing.T) {
 // path's `validate:"required,email"` rule — not merely documented by a
 // struct tag nothing reads.
 func TestCreateUser_RejectsMalformedEmail(t *testing.T) {
+	t.Parallel()
 	c, _ := newG38TestCore(t)
 	ctx := context.Background()
 
@@ -167,6 +173,7 @@ func TestCreateUser_RejectsMalformedEmail(t *testing.T) {
 // TestCreateUser_RejectsShortUsername pins the username length half of the
 // same gap (HTTP: `validate:"required,min=3,max=50"`).
 func TestCreateUser_RejectsShortUsername(t *testing.T) {
+	t.Parallel()
 	c, _ := newG38TestCore(t)
 	ctx := context.Background()
 
@@ -181,6 +188,7 @@ func TestCreateUser_RejectsShortUsername(t *testing.T) {
 // Email means "leave unchanged" (partial update), so only a NON-empty,
 // malformed value should be refused.
 func TestUpdateUser_RejectsMalformedEmail(t *testing.T) {
+	t.Parallel()
 	c, _ := newG38TestCore(t)
 	ctx := context.Background()
 

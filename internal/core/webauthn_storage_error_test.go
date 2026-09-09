@@ -86,6 +86,7 @@ func (s *webauthnStorageErrStub) SetUserWebAuthnEnabled(ctx context.Context, use
 // ── storeWebAuthnSession ──────────────────────────────────────────────────
 
 func TestStoreWebAuthnSession_StorageErrorPropagates(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	wantErr := errors.New("db down")
 	c.storage = &webauthnStorageErrStub{Storage: c.storage, createSessionErr: wantErr}
@@ -98,6 +99,7 @@ func TestStoreWebAuthnSession_StorageErrorPropagates(t *testing.T) {
 // ── BeginWebAuthnRegistration ────────────────────────────────────────────
 
 func TestBeginWebAuthnRegistration_StoreSessionFails(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	wantErr := errors.New("db down")
 	c.storage = &webauthnStorageErrStub{Storage: c.storage, createSessionErr: wantErr}
@@ -110,12 +112,14 @@ func TestBeginWebAuthnRegistration_StoreSessionFails(t *testing.T) {
 // ── BeginWebAuthnLogin ────────────────────────────────────────────────────
 
 func TestBeginWebAuthnLogin_DisabledServerRejects(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, false)
 	_, _, err := c.BeginWebAuthnLogin(context.Background(), "irrelevant")
 	require.ErrorIs(t, err, ErrWebAuthnDisabled)
 }
 
 func TestBeginWebAuthnLogin_LoadUserFails(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-1")
 	ch, err := c.CreateMFAChallenge(context.Background(), 1)
@@ -130,6 +134,7 @@ func TestBeginWebAuthnLogin_LoadUserFails(t *testing.T) {
 }
 
 func TestBeginWebAuthnLogin_StoreSessionFails(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-1")
 	ch, err := c.CreateMFAChallenge(context.Background(), 1)
@@ -146,6 +151,7 @@ func TestBeginWebAuthnLogin_StoreSessionFails(t *testing.T) {
 // ── BeginWebAuthnPasswordlessLogin ───────────────────────────────────────
 
 func TestBeginWebAuthnPasswordlessLogin_StoreSessionFails(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	wantErr := errors.New("db down")
 	c.storage = &webauthnStorageErrStub{Storage: c.storage, createSessionErr: wantErr}
@@ -158,6 +164,7 @@ func TestBeginWebAuthnPasswordlessLogin_StoreSessionFails(t *testing.T) {
 // ── FinishWebAuthnRegistration ───────────────────────────────────────────
 
 func TestFinishWebAuthnRegistration_SessionPurposeMismatch(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	// A session minted for the LOGIN flow must not complete a registration.
@@ -169,6 +176,7 @@ func TestFinishWebAuthnRegistration_SessionPurposeMismatch(t *testing.T) {
 }
 
 func TestFinishWebAuthnRegistration_InvalidSessionToken(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	_, err := c.FinishWebAuthnRegistration(ctx, 1, "not-a-real-token", "laptop", webauthnTestPassword, nil)
@@ -177,6 +185,7 @@ func TestFinishWebAuthnRegistration_InvalidSessionToken(t *testing.T) {
 }
 
 func TestFinishWebAuthnRegistration_CreateCredentialStorageFails(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 
@@ -204,6 +213,7 @@ func TestFinishWebAuthnRegistration_CreateCredentialStorageFails(t *testing.T) {
 // ── DeleteWebAuthnCredential ─────────────────────────────────────────────
 
 func TestDeleteWebAuthnCredential_GetUserFails(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-1")
 	var cred models.WebAuthnCredential
@@ -218,6 +228,7 @@ func TestDeleteWebAuthnCredential_GetUserFails(t *testing.T) {
 // unlike deleting the LAST one (already covered by
 // TestWebAuthn_DeleteClearsFlagOnLastAndIsUserScoped) -- the n>0 branch.
 func TestDeleteWebAuthnCredential_NotLastPasskeyStaysEnabled(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-1")
 	seedCredential(t, c, db, 1, "cred-2")
@@ -238,6 +249,7 @@ func TestDeleteWebAuthnCredential_NotLastPasskeyStaysEnabled(t *testing.T) {
 }
 
 func TestDeleteWebAuthnCredential_StorageDeleteFails(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-1")
 	seedStepUpGrant(t, db, 1, c.now())
@@ -253,6 +265,7 @@ func TestDeleteWebAuthnCredential_StorageDeleteFails(t *testing.T) {
 }
 
 func TestDeleteWebAuthnCredential_CountFails(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-1")
 	seedStepUpGrant(t, db, 1, c.now())
@@ -268,6 +281,7 @@ func TestDeleteWebAuthnCredential_CountFails(t *testing.T) {
 }
 
 func TestDeleteWebAuthnCredential_SetEnabledFalseFails(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-1")
 	seedStepUpGrant(t, db, 1, c.now())
@@ -288,6 +302,7 @@ func TestDeleteWebAuthnCredential_SetEnabledFalseFails(t *testing.T) {
 // fail the whole ceremony -- one bad row shouldn't lock the user out of every
 // OTHER passkey they hold.
 func TestLoadWebAuthnUser_SkipsUnreadableCredentialBlob(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-good")
 	require.NoError(t, db.Create(&models.WebAuthnCredential{
@@ -304,6 +319,7 @@ func TestLoadWebAuthnUser_SkipsUnreadableCredentialBlob(t *testing.T) {
 // to a NEW ceremony, whether login candidate set or registration exclusion
 // list.
 func TestLoadWebAuthnUser_SkipsDisabledCredential(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	seedCredential(t, c, db, 1, "cred-active")
 	blob, err := json.Marshal(webauthn.Credential{ID: []byte("cred-disabled")})

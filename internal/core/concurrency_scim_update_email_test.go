@@ -31,6 +31,7 @@ import (
 // pre-check already returns — not a raw constraint-violation message — and the DB holding
 // exactly one row for the contested email.
 func TestConcurrency_UpdateSCIMUser_NoDuplicateEmail(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "scim_update.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

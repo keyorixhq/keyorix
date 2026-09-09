@@ -39,6 +39,7 @@ func setupSearchCore(t *testing.T) (*KeyorixCore, *MockStorage) {
 // ── no filter: returns all events ─────────────────────────────────────────────
 
 func TestSearchAuditLogs_NoFilter(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{
 		mockAuditEvent(1, "secret.read"),
@@ -57,6 +58,7 @@ func TestSearchAuditLogs_NoFilter(t *testing.T) {
 // ── filter by actor username ───────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByActorUsername(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{mockAuditEvent(1, "secret.read")}
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -71,6 +73,7 @@ func TestSearchAuditLogs_FilterByActorUsername(t *testing.T) {
 // ── filter by project_id ───────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByProjectID(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{mockAuditEvent(5, "secret.created")}
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -85,6 +88,7 @@ func TestSearchAuditLogs_FilterByProjectID(t *testing.T) {
 // ── filter by action ──────────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByAction(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{mockAuditEvent(2, "user.login")}
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -100,6 +104,7 @@ func TestSearchAuditLogs_FilterByAction(t *testing.T) {
 // ── filter by success = true ──────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterBySuccessTrue(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	tru := true
 	events := []*models.AuditEvent{mockAuditEvent(3, "secret.read")}
@@ -115,6 +120,7 @@ func TestSearchAuditLogs_FilterBySuccessTrue(t *testing.T) {
 // ── filter by success = false ─────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterBySuccessFalse(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	fal := false
 	fse := true
@@ -131,6 +137,7 @@ func TestSearchAuditLogs_FilterBySuccessFalse(t *testing.T) {
 // ── filter by time range ──────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByTimeRange(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	since := time.Now().Add(-24 * time.Hour)
 	until := time.Now()
@@ -147,6 +154,7 @@ func TestSearchAuditLogs_FilterByTimeRange(t *testing.T) {
 // ── filter by IP address ──────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByIPAddress(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{mockAuditEvent(4, "secret.read")}
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -161,6 +169,7 @@ func TestSearchAuditLogs_FilterByIPAddress(t *testing.T) {
 // ── filter by resource_type ────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByResourceType(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{
 		mockAuditEvent(1, "secret.read"),
@@ -178,6 +187,7 @@ func TestSearchAuditLogs_FilterByResourceType(t *testing.T) {
 // ── filter by user ID ─────────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByUserID(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{mockAuditEvent(8, "user.updated")}
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -192,6 +202,7 @@ func TestSearchAuditLogs_FilterByUserID(t *testing.T) {
 // ── filter by resource ID ─────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_FilterByResourceID(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{mockAuditEvent(9, "secret.read")}
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -206,6 +217,7 @@ func TestSearchAuditLogs_FilterByResourceID(t *testing.T) {
 // ── limit/offset pagination ───────────────────────────────────────────────────
 
 func TestSearchAuditLogs_LimitOffset(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	events := []*models.AuditEvent{mockAuditEvent(6, "secret.read")}
 	// With limit=10 and offset=10 → page = 10/10 + 1 = 2, pageSize = 10.
@@ -222,6 +234,7 @@ func TestSearchAuditLogs_LimitOffset(t *testing.T) {
 // ── limit > 1000 → capped ────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_LimitCappedAt1000(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
 		// PageSize must be capped to 1000, never 5000.
@@ -236,6 +249,7 @@ func TestSearchAuditLogs_LimitCappedAt1000(t *testing.T) {
 // ── default limit 100 when Limit == 0 ────────────────────────────────────────
 
 func TestSearchAuditLogs_DefaultLimit(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
 		return f.PageSize == 100
@@ -249,6 +263,7 @@ func TestSearchAuditLogs_DefaultLimit(t *testing.T) {
 // ── empty result → {events:[], total:0} ──────────────────────────────────────
 
 func TestSearchAuditLogs_EmptyResult(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	ms.On("GetAuditLogs", mock.Anything, mock.Anything).Return([]*models.AuditEvent{}, int64(0), nil)
 
@@ -261,6 +276,7 @@ func TestSearchAuditLogs_EmptyResult(t *testing.T) {
 // ── nil events from storage → normalised to empty slice ──────────────────────
 
 func TestSearchAuditLogs_NilEventsNormalised(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	ms.On("GetAuditLogs", mock.Anything, mock.Anything).Return(nil, int64(0), nil)
 
@@ -273,6 +289,7 @@ func TestSearchAuditLogs_NilEventsNormalised(t *testing.T) {
 // ── inverted time range returns error ─────────────────────────────────────────
 
 func TestSearchAuditLogs_InvertedTimeRange(t *testing.T) {
+	t.Parallel()
 	c, _ := setupSearchCore(t)
 	since := time.Now()
 	until := time.Now().Add(-time.Hour) // until < since
@@ -285,6 +302,7 @@ func TestSearchAuditLogs_InvertedTimeRange(t *testing.T) {
 // ── storage error propagates ──────────────────────────────────────────────────
 
 func TestSearchAuditLogs_StorageError(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	ms.On("GetAuditLogs", mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("db gone"))
 
@@ -296,6 +314,7 @@ func TestSearchAuditLogs_StorageError(t *testing.T) {
 // ── since-only (no until) still passes ───────────────────────────────────────
 
 func TestSearchAuditLogs_SinceOnly(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	since := time.Now().Add(-time.Hour)
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -310,6 +329,7 @@ func TestSearchAuditLogs_SinceOnly(t *testing.T) {
 // ── offset=0 → page=1 ────────────────────────────────────────────────────────
 
 func TestSearchAuditLogs_ZeroOffsetIsPage1(t *testing.T) {
+	t.Parallel()
 	c, ms := setupSearchCore(t)
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
 		return f.Page == 1

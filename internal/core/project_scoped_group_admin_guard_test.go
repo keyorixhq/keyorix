@@ -21,6 +21,7 @@ import (
 )
 
 func TestDeleteGroup_RefusesLastProjectAdmin(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -46,6 +47,7 @@ func TestDeleteGroup_RefusesLastProjectAdmin(t *testing.T) {
 }
 
 func TestDeleteGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -72,6 +74,7 @@ func TestDeleteGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
 }
 
 func TestDeleteGroup_AllowsWhenGroupHoldsNoProjectAdminRole(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const actor = uint(55)
@@ -85,6 +88,7 @@ func TestDeleteGroup_AllowsWhenGroupHoldsNoProjectAdminRole(t *testing.T) {
 }
 
 func TestDeleteGroup_RefusesWhenGroupAdminsMultipleProjects(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const projA, projB = uint(7), uint(8)
@@ -112,6 +116,7 @@ func TestDeleteGroup_RefusesWhenGroupAdminsMultipleProjects(t *testing.T) {
 }
 
 func TestRemoveUserFromGroup_RefusesLastProjectAdminMember(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -138,6 +143,7 @@ func TestRemoveUserFromGroup_RefusesLastProjectAdminMember(t *testing.T) {
 }
 
 func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberSurvives(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -170,6 +176,7 @@ func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberSurvives(t *testing.T) 
 // bypasses core.DeleteGroup entirely — see scim_groups.go's own inline guard
 // calls) got the same project-scope fix, not just the native path.
 func TestDeprovisionSCIMGroup_RefusesLastProjectAdmin(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)

@@ -17,6 +17,7 @@ import (
 )
 
 func TestSetSecretDescription(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -61,6 +62,7 @@ func TestSetSecretDescription(t *testing.T) {
 }
 
 func TestCreateSecret_Description(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

@@ -39,6 +39,7 @@ func seedIsolatedRole(t *testing.T, h *testhelper.RBACTestHelper, roleName, perm
 // grant against the user's pre-join permissions independently and missed this
 // entirely; joining must now be refused.
 func TestAddUserToGroup_BlocksSoDViolationAcrossGroupRoleSet(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -82,6 +83,7 @@ func TestAddUserToGroup_BlocksSoDViolationAcrossGroupRoleSet(t *testing.T) {
 // pin for the scenario the finding calls out, alongside the set-combination
 // gap above that the old code actually missed.
 func TestAddUserToGroup_BlocksSoDViolationWithExistingRole(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -114,6 +116,7 @@ func TestAddUserToGroup_BlocksSoDViolationWithExistingRole(t *testing.T) {
 // the user already holds) to complete any SoD policy must still let the user
 // join normally — the new set-based check must not be overbroad.
 func TestAddUserToGroup_AllowsNonViolatingGroupJoin(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))

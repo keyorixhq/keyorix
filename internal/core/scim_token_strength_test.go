@@ -12,6 +12,7 @@ import (
 // configured" (not a strength failure) — SCIMToken's own empty-token fail-closed
 // gate handles that case per-request.
 func TestValidateSCIMTokenStrength(t *testing.T) {
+	t.Parallel()
 	t.Run("empty token is not a strength error", func(t *testing.T) {
 		assert.NoError(t, ValidateSCIMTokenStrength(""))
 	})

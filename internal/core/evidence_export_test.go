@@ -38,6 +38,7 @@ func newEvidenceExportCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 }
 
 func TestExportComplianceEvidence_WritesFileAndAudits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, now := newEvidenceExportCore(t)
 	dir := t.TempDir()
@@ -70,6 +71,7 @@ func TestExportComplianceEvidence_WritesFileAndAudits(t *testing.T) {
 // path must have its mode tightened to 0600, not left at whatever looser mode a
 // prior file happened to have.
 func TestExportComplianceEvidence_EnforcesPermsOnExistingFile(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, now := newEvidenceExportCore(t)
 	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
@@ -93,6 +95,7 @@ func TestExportComplianceEvidence_EnforcesPermsOnExistingFile(t *testing.T) {
 }
 
 func TestExportComplianceEvidence_SignsAndVerifies(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newEvidenceExportCore(t)
 	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
 	dir := t.TempDir()
@@ -117,6 +120,7 @@ func TestExportComplianceEvidence_SignsAndVerifies(t *testing.T) {
 }
 
 func TestExportComplianceEvidence_EmptyOutputDirErrors(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newEvidenceExportCore(t)
 	_, err := c.ExportComplianceEvidence(context.Background(), "")
 	require.Error(t, err)
@@ -142,6 +146,7 @@ func (f *fakeEvidenceForwarder) ForwardEvidence(_ context.Context, name string, 
 func (f *fakeEvidenceForwarder) Target() string { return "webhook" }
 
 func TestExportComplianceEvidence_WebhookOnly(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newEvidenceExportCore(t)
 	fwd := &fakeEvidenceForwarder{}
@@ -162,6 +167,7 @@ func TestExportComplianceEvidence_WebhookOnly(t *testing.T) {
 }
 
 func TestExportComplianceEvidence_FileAndWebhook(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, _ := newEvidenceExportCore(t)
 	fwd := &fakeEvidenceForwarder{}
@@ -175,6 +181,7 @@ func TestExportComplianceEvidence_FileAndWebhook(t *testing.T) {
 }
 
 func TestExportComplianceEvidence_WebhookFailureWithFileSucceeds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, _ := newEvidenceExportCore(t)
 	c.SetEvidenceForwarder(&fakeEvidenceForwarder{err: errors.New("boom")})
@@ -186,6 +193,7 @@ func TestExportComplianceEvidence_WebhookFailureWithFileSucceeds(t *testing.T) {
 }
 
 func TestExportComplianceEvidence_WebhookOnlyFailureErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, _ := newEvidenceExportCore(t)
 	c.SetEvidenceForwarder(&fakeEvidenceForwarder{err: errors.New("boom")})

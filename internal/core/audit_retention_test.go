@@ -13,6 +13,7 @@ import (
 )
 
 func TestAuditRetentionCoverage_MeetsNIS2(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	oldest := fixed.AddDate(0, 0, -400) // 400d back → > 365
 	newest := fixed.AddDate(0, 0, -1)
@@ -36,6 +37,7 @@ func TestAuditRetentionCoverage_MeetsNIS2(t *testing.T) {
 }
 
 func TestAuditRetentionCoverage_YoungDeployment(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	oldest := fixed.AddDate(0, 0, -100) // only 100d of history
 
@@ -56,6 +58,7 @@ func TestAuditRetentionCoverage_YoungDeployment(t *testing.T) {
 }
 
 func TestVerifyAuditChain_PassesThrough(t *testing.T) {
+	t.Parallel()
 	brokenID := uint(42)
 	store := new(MockStorage)
 	store.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
@@ -71,6 +74,7 @@ func TestVerifyAuditChain_PassesThrough(t *testing.T) {
 }
 
 func TestAuditRetentionCoverage_Empty(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("AuditRetentionStats", mock.Anything).Return(&storage.AuditRetentionStats{
 		TotalEvents: 0, Oldest: nil, Newest: nil,
@@ -91,6 +95,7 @@ func TestAuditRetentionCoverage_Empty(t *testing.T) {
 // clamp in AuditRetentionCoverage when the oldest recorded event has a timestamp
 // in the future relative to `now` (clock skew / test-clock edge case).
 func TestAuditRetentionCoverage_FutureOldest(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	// oldest is 1 day in the future relative to the fixed clock.
 	oldest := fixed.Add(24 * time.Hour)
@@ -117,6 +122,7 @@ func TestAuditRetentionCoverage_FutureOldest(t *testing.T) {
 // storage failure in GetSystemMetadata (the high-water read inside
 // enforceAuditHighWater).
 func TestVerifyAuditChain_CheckpointEnforceError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
 		Valid: true, ChainedEvents: 5,

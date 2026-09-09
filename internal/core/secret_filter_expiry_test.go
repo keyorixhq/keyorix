@@ -14,6 +14,7 @@ import (
 // expiring at/after the cutoff and never-expiring secrets are dropped. This backs
 // GET /api/v1/secrets?expires_before=… across the combined owned+shared list.
 func TestApplySecretFilters_ExpiresBefore(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	now := time.Date(2026, 6, 13, 10, 0, 0, 0, time.UTC)
 	cutoff := now.Add(30 * 24 * time.Hour)

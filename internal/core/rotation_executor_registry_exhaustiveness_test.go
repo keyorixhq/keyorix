@@ -69,6 +69,7 @@ var knownRotationExecutorConstructors = map[string]func(name string) rotation.Ex
 // `New*Executor` top-level constructor that knownRotationExecutorConstructors above
 // does not know about -- the guard against a silently-missed future backend.
 func TestRotationExecutorRegistry_NoUncoveredConstructor(t *testing.T) {
+	t.Parallel()
 	discovered := discoverRotationExecutorConstructors(t)
 	if len(discovered) == 0 {
 		t.Fatal("found zero New*Executor constructors in internal/rotation -- the discovery logic itself is broken")
@@ -97,6 +98,7 @@ func TestRotationExecutorRegistry_NoUncoveredConstructor(t *testing.T) {
 // type-agnostic across every currently known backend, not just the three
 // generate-upstream ones (AWS/Azure/GCP) this fix's finding named explicitly.
 func TestRotationExecutorRegistry_AllKnownConstructorsRegisterAndResolve(t *testing.T) {
+	t.Parallel()
 	var execs []rotation.Executor
 	for name, factory := range knownRotationExecutorConstructors {
 		execs = append(execs, factory(name))

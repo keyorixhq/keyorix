@@ -113,6 +113,7 @@ func grantACL(t *testing.T, db *gorm.DB, nodeID, userID uint, perm string) {
 // holds a SecretACL grant on a secret (and neither owns it nor has a ShareRecord
 // for it) sees the secret in the listing result.
 func TestListSecretsWithSharingInfo_ACLGrantedDirectSecret(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -144,6 +145,7 @@ func TestListSecretsWithSharingInfo_ACLGrantedDirectSecret(t *testing.T) {
 // who holds a SecretACL grant on a folder sees every direct-child leaf secret
 // in the listing (folder-level inheritance).
 func TestListSecretsWithSharingInfo_ACLGrantedFolderSecret(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -175,6 +177,7 @@ func TestListSecretsWithSharingInfo_ACLGrantedFolderSecret(t *testing.T) {
 // TestListSecretsWithSharingInfo_ACLGrantedNestedFolder verifies two-level
 // folder nesting: a grant on the grandparent folder propagates to all descendants.
 func TestListSecretsWithSharingInfo_ACLGrantedNestedFolder(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -197,6 +200,7 @@ func TestListSecretsWithSharingInfo_ACLGrantedNestedFolder(t *testing.T) {
 // TestListSecretsWithSharingInfo_ACLDeduplicatedFromOwned verifies that a secret
 // the user owns AND has an ACL grant for appears exactly once (as owned).
 func TestListSecretsWithSharingInfo_ACLDeduplicatedFromOwned(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -222,6 +226,7 @@ func TestListSecretsWithSharingInfo_ACLDeduplicatedFromOwned(t *testing.T) {
 // TestListSecretsWithSharingInfo_ACLDeduplicatedFromShared verifies that a secret
 // the user already has a ShareRecord for does not appear a second time as ACL-granted.
 func TestListSecretsWithSharingInfo_ACLDeduplicatedFromShared(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -245,6 +250,7 @@ func TestListSecretsWithSharingInfo_ACLDeduplicatedFromShared(t *testing.T) {
 // TestListSecretsWithSharingInfo_ShowOwnedOnly_SkipsACL verifies that
 // ShowOwnedOnly=true suppresses the ACL-granted path entirely.
 func TestListSecretsWithSharingInfo_ShowOwnedOnly_SkipsACL(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -263,6 +269,7 @@ func TestListSecretsWithSharingInfo_ShowOwnedOnly_SkipsACL(t *testing.T) {
 // TestListSecretsWithSharingInfo_ProjectFilter_HonoursACL verifies that an ACL
 // grant on a secret in project 2 is NOT included when the caller filters by project 1.
 func TestListSecretsWithSharingInfo_ProjectFilter_HonoursACL(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -296,6 +303,7 @@ func TestListSecretsWithSharingInfo_ProjectFilter_HonoursACL(t *testing.T) {
 // ensuring that a user with no ACL grants at all gets exactly the same secrets
 // as before the patch (owned + shared only, no extras).
 func TestListSecretsWithSharingInfo_NoACLGrants_NoExtraSecrets(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 

@@ -21,6 +21,7 @@ import (
 // only via the admin-role BYPASS, while a MACHINE with the SAME role — which goes
 // straight to the permission check — must be denied.
 func TestMachineIdentity_NoAdminBypass_RealDB(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityRole{}))

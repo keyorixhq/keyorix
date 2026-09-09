@@ -44,6 +44,7 @@ func newGroupsS38Core(t *testing.T) (*KeyorixCore, *gorm.DB) {
 
 // TestAddUserToGroup_ZeroUserID verifies a zero userID is rejected.
 func TestAddUserToGroup_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "dev"}).Error)
 	err := c.AddUserToGroupGlobal(context.Background(), 1, false, 0, 5)
@@ -53,6 +54,7 @@ func TestAddUserToGroup_ZeroUserID(t *testing.T) {
 
 // TestAddUserToGroup_ZeroGroupID verifies a zero groupID is rejected.
 func TestAddUserToGroup_ZeroGroupID(t *testing.T) {
+	t.Parallel()
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.User{ID: 7, Username: "bob", Email: "bob@example.com"}).Error)
 	err := c.AddUserToGroupGlobal(context.Background(), 1, false, 7, 0)
@@ -63,6 +65,7 @@ func TestAddUserToGroup_ZeroGroupID(t *testing.T) {
 // TestAddUserToGroup_CLIActor_ZeroActorID verifies the CLI actor (actorID=0) path
 // bypasses role-check and succeeds when user+group are valid.
 func TestAddUserToGroup_CLIActor_ZeroActorID(t *testing.T) {
+	t.Parallel()
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "cli-group"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 20, Username: "cli-user", Email: "cli@example.com"}).Error)
@@ -74,6 +77,7 @@ func TestAddUserToGroup_CLIActor_ZeroActorID(t *testing.T) {
 
 // TestRemoveUserFromGroup_ZeroUserID verifies a zero userID is rejected.
 func TestRemoveUserFromGroup_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.Group{ID: 15, Name: "ops"}).Error)
 	err := c.RemoveUserFromGroupGlobal(context.Background(), 1, 0, 15)
@@ -83,6 +87,7 @@ func TestRemoveUserFromGroup_ZeroUserID(t *testing.T) {
 
 // TestRemoveUserFromGroup_ZeroGroupID verifies a zero groupID is rejected.
 func TestRemoveUserFromGroup_ZeroGroupID(t *testing.T) {
+	t.Parallel()
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.User{ID: 25, Username: "alice", Email: "alice@example.com"}).Error)
 	err := c.RemoveUserFromGroupGlobal(context.Background(), 1, 25, 0)
@@ -94,6 +99,7 @@ func TestRemoveUserFromGroup_ZeroGroupID(t *testing.T) {
 
 // TestGetGroupMembers_ZeroGroupID verifies a zero groupID returns a validation error.
 func TestGetGroupMembers_ZeroGroupID(t *testing.T) {
+	t.Parallel()
 	c, _ := newGroupsS38Core(t)
 	_, err := c.GetGroupMembers(context.Background(), 0)
 	require.Error(t, err)
@@ -102,6 +108,7 @@ func TestGetGroupMembers_ZeroGroupID(t *testing.T) {
 
 // TestGetGroupMembers_HappyPath verifies GetGroupMembers returns the correct members.
 func TestGetGroupMembers_HappyPath(t *testing.T) {
+	t.Parallel()
 	c, db := newGroupsS38Core(t)
 	ctx := context.Background()
 
@@ -127,6 +134,7 @@ func TestGetGroupMembers_HappyPath(t *testing.T) {
 
 // TestGetGroup_ZeroID verifies a zero ID returns a validation error.
 func TestGetGroup_ZeroID(t *testing.T) {
+	t.Parallel()
 	c, _ := newGroupsS38Core(t)
 	_, err := c.GetGroup(context.Background(), 0)
 	require.Error(t, err)
@@ -137,6 +145,7 @@ func TestGetGroup_ZeroID(t *testing.T) {
 
 // TestListGroups_ReturnsAll verifies that ListGroups returns all created groups.
 func TestListGroups_ReturnsAll(t *testing.T) {
+	t.Parallel()
 	c, db := newGroupsS38Core(t)
 	ctx := context.Background()
 

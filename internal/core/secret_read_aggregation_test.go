@@ -31,6 +31,7 @@ func stubAggAuthorized(ms *MockStorage, secretID uint) {
 // ── happy path ────────────────────────────────────────────────────────────────
 
 func TestGetSecretReadSummary_HappyPath(t *testing.T) {
+	t.Parallel()
 	c, ms := newAggCore(t)
 	now := time.Now().UTC()
 	since := now.Add(-24 * time.Hour)
@@ -61,6 +62,7 @@ func TestGetSecretReadSummary_HappyPath(t *testing.T) {
 // ── defaults ──────────────────────────────────────────────────────────────────
 
 func TestGetSecretReadSummary_SinceDefaultIs30Days(t *testing.T) {
+	t.Parallel()
 	c, ms := newAggCore(t)
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.MatchedBy(func(since time.Time) bool {
@@ -85,6 +87,7 @@ func TestGetSecretReadSummary_SinceDefaultIs30Days(t *testing.T) {
 }
 
 func TestGetSecretReadSummary_UntilDefaultIsNow(t *testing.T) {
+	t.Parallel()
 	c, ms := newAggCore(t)
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.MatchedBy(func(until time.Time) bool {
@@ -103,6 +106,7 @@ func TestGetSecretReadSummary_UntilDefaultIsNow(t *testing.T) {
 }
 
 func TestGetSecretReadSummary_LimitZeroDefaultsTo10(t *testing.T) {
+	t.Parallel()
 	c, ms := newAggCore(t)
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 10).
@@ -115,6 +119,7 @@ func TestGetSecretReadSummary_LimitZeroDefaultsTo10(t *testing.T) {
 }
 
 func TestGetSecretReadSummary_LimitCappedAt50(t *testing.T) {
+	t.Parallel()
 	c, ms := newAggCore(t)
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 50).
@@ -132,6 +137,7 @@ func TestGetSecretReadSummary_LimitCappedAt50(t *testing.T) {
 // ── validation ────────────────────────────────────────────────────────────────
 
 func TestGetSecretReadSummary_SinceEqualUntilReturnsError(t *testing.T) {
+	t.Parallel()
 	c, _ := newAggCore(t)
 
 	ts := time.Now()
@@ -145,6 +151,7 @@ func TestGetSecretReadSummary_SinceEqualUntilReturnsError(t *testing.T) {
 }
 
 func TestGetSecretReadSummary_SinceAfterUntilReturnsError(t *testing.T) {
+	t.Parallel()
 	c, _ := newAggCore(t)
 
 	ts := time.Now()
@@ -160,6 +167,7 @@ func TestGetSecretReadSummary_SinceAfterUntilReturnsError(t *testing.T) {
 // ── storage error propagation ─────────────────────────────────────────────────
 
 func TestGetSecretReadSummary_StorageErrorPropagated(t *testing.T) {
+	t.Parallel()
 	c, ms := newAggCore(t)
 
 	storageErr := errors.New("db is on fire")
@@ -175,6 +183,7 @@ func TestGetSecretReadSummary_StorageErrorPropagated(t *testing.T) {
 // ── nil entries from storage → empty slice ────────────────────────────────────
 
 func TestGetSecretReadSummary_NilEntriesBecomesEmpty(t *testing.T) {
+	t.Parallel()
 	c, ms := newAggCore(t)
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 10).

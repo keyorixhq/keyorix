@@ -22,6 +22,7 @@ import (
 // A reference that does not correspond to any currently-detected SoD
 // violation must be refused at creation time.
 func TestCreateRiskException_RejectsNonExistentSoDReference(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}, &models.RiskException{}))
@@ -49,6 +50,7 @@ func TestCreateRiskException_RejectsNonExistentSoDReference(t *testing.T) {
 // A reference naming a violation that IS currently live must still succeed —
 // the fix must not break the legitimate flow.
 func TestCreateRiskException_AcceptsLiveSoDReference(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}, &models.RiskException{}))
@@ -75,6 +77,7 @@ func TestCreateRiskException_AcceptsLiveSoDReference(t *testing.T) {
 // and approval, approval must be refused too — a stale reference cannot be
 // rubber-stamped just because it was live at creation time.
 func TestApproveRiskException_RejectsSoDReferenceThatWentStale(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}, &models.RiskException{}))

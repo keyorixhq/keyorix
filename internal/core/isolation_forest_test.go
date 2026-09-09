@@ -7,6 +7,7 @@ import (
 )
 
 func TestAvgPathLength(t *testing.T) {
+	t.Parallel()
 	// Documented anchor values: c(1)=0, c(2)=1; c(n) grows ~ln(n).
 	if got := avgPathLength(1); got != 0 {
 		t.Fatalf("c(1) = %v, want 0", got)
@@ -22,6 +23,7 @@ func TestAvgPathLength(t *testing.T) {
 // TestIsolationForestSeparatesOutlier is the core behavioural guarantee: a point far
 // outside a tight normal cluster scores higher (more anomalous) than a point inside it.
 func TestIsolationForestSeparatesOutlier(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewSource(42))
 	// 200 normal points clustered tightly around (10,10,10).
 	data := make([][]float64, 0, 201)
@@ -53,6 +55,7 @@ func TestIsolationForestSeparatesOutlier(t *testing.T) {
 // TestIsolationForestDeterministic verifies the seed makes scoring reproducible — the
 // property the rest of the system relies on for stable, testable alerts.
 func TestIsolationForestDeterministic(t *testing.T) {
+	t.Parallel()
 	data := make([][]float64, 100)
 	for i := range data {
 		data[i] = []float64{float64(i % 24), float64(i % 5), float64(i % 7)}
@@ -66,6 +69,7 @@ func TestIsolationForestDeterministic(t *testing.T) {
 }
 
 func TestIsolationForestTooLittleData(t *testing.T) {
+	t.Parallel()
 	if newIsolationForest([][]float64{{1, 2, 3}}, 100, 256, rand.New(rand.NewSource(1))) != nil {
 		t.Fatal("a single-row dataset should yield no forest")
 	}
@@ -75,6 +79,7 @@ func TestIsolationForestTooLittleData(t *testing.T) {
 }
 
 func TestIsolationForestConstantFeatures(t *testing.T) {
+	t.Parallel()
 	// All-identical points: no split can separate them, so every score collapses to
 	// the neutral 0.5 — nothing is flagged. Must not panic or diverge.
 	data := make([][]float64, 50)

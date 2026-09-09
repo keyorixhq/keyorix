@@ -13,6 +13,7 @@ import (
 )
 
 func TestInviteGlobal_ValidatesAndSnapshotsAssignments(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -49,6 +50,7 @@ func TestInviteGlobal_ValidatesAndSnapshotsAssignments(t *testing.T) {
 }
 
 func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -69,6 +71,7 @@ func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
 // ADR-022: domain allowlist applies to global invites the same way it does to
 // project-scoped invites (TestInviteToProject_RejectsDisallowedDomain).
 func TestInviteGlobal_RejectsDisallowedDomain(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	c.SetMembershipDomainAllowlist([]string{"acme.com"})
@@ -82,6 +85,7 @@ func TestInviteGlobal_RejectsDisallowedDomain(t *testing.T) {
 }
 
 func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -102,6 +106,7 @@ func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
 // its own role parameter. Uses real storage since the check goes through
 // GetUserRoleIDsAt, not a mockable single call.
 func TestInviteGlobal_RejectsNonAdminGrantingGlobalAdminRole(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -119,6 +124,7 @@ func TestInviteGlobal_RejectsNonAdminGrantingGlobalAdminRole(t *testing.T) {
 // smuggle an admin-conferring project assignment into an otherwise-plain
 // global invite.
 func TestInviteGlobal_RejectsNonAdminGrantingProjectAdminAssignment(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -134,6 +140,7 @@ func TestInviteGlobal_RejectsNonAdminGrantingProjectAdminAssignment(t *testing.T
 }
 
 func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -152,6 +159,7 @@ func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {
 // applyInvitationGrants on a global invite must grant the system role at scope 0
 // plus one membership per assignment.
 func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	anyAudit(store)
@@ -194,6 +202,7 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 // other grant path, not vanish with zero trace (#299). Uses real storage so
 // ListRBACAuditLogs is exercised end to end.
 func TestApplyInvitationGrants_SystemRoleIsRBACAudited(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 

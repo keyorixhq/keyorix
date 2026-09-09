@@ -14,6 +14,7 @@ import (
 // GenerateComplianceEvidence bundles the posture with its supporting records — the
 // audit anchor, campaigns, and the break-glass register.
 func TestGenerateComplianceEvidence_BundlesRecords(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(

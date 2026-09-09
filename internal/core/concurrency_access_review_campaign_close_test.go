@@ -31,6 +31,7 @@ import (
 // is cleanly rejected as "campaign is closed" — never a silent overwrite, panic, or
 // generic 500.
 func TestConcurrency_DecideAccessReviewItem_RejectsWhenRacingClose(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	dsn := "file:" + filepath.Join(t.TempDir(), "arc-close-race.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})

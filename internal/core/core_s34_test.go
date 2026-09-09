@@ -35,18 +35,21 @@ func makeJWT(claims map[string]interface{}) string {
 }
 
 func TestExtractTokenStringList_InvalidParts(t *testing.T) {
+	t.Parallel()
 	// Not 3 parts → false
 	_, ok := extractTokenStringList("onlytwoparts.here", "groups")
 	assert.False(t, ok)
 }
 
 func TestExtractTokenStringList_InvalidBase64Payload(t *testing.T) {
+	t.Parallel()
 	// Part 2 is invalid base64url
 	_, ok := extractTokenStringList("header.!!!invalid.sig", "groups")
 	assert.False(t, ok)
 }
 
 func TestExtractTokenStringList_InvalidJSONPayload(t *testing.T) {
+	t.Parallel()
 	// Valid base64 but not JSON
 	bad := base64.RawURLEncoding.EncodeToString([]byte("not-json"))
 	_, ok := extractTokenStringList("header."+bad+".sig", "groups")
@@ -54,6 +57,7 @@ func TestExtractTokenStringList_InvalidJSONPayload(t *testing.T) {
 }
 
 func TestExtractTokenStringList_ClaimNotFound(t *testing.T) {
+	t.Parallel()
 	tok := makeJWT(map[string]interface{}{"other": "val"})
 	result, ok := extractTokenStringList(tok, "groups")
 	assert.False(t, ok)
@@ -61,6 +65,7 @@ func TestExtractTokenStringList_ClaimNotFound(t *testing.T) {
 }
 
 func TestExtractTokenStringList_StringSliceClaim(t *testing.T) {
+	t.Parallel()
 	tok := makeJWT(map[string]interface{}{"groups": []string{"a", "b"}})
 	result, ok := extractTokenStringList(tok, "groups")
 	assert.True(t, ok)
@@ -68,6 +73,7 @@ func TestExtractTokenStringList_StringSliceClaim(t *testing.T) {
 }
 
 func TestExtractTokenStringList_AnySliceClaim(t *testing.T) {
+	t.Parallel()
 	// JSON with mixed types (numeric → skipped, string → kept)
 	tok := makeJWT(map[string]interface{}{"groups": []interface{}{"x", 42}})
 	result, ok := extractTokenStringList(tok, "groups")
@@ -76,6 +82,7 @@ func TestExtractTokenStringList_AnySliceClaim(t *testing.T) {
 }
 
 func TestExtractTokenStringList_SingleStringClaim(t *testing.T) {
+	t.Parallel()
 	tok := makeJWT(map[string]interface{}{"role": "admin"})
 	result, ok := extractTokenStringList(tok, "role")
 	assert.True(t, ok)
@@ -83,6 +90,7 @@ func TestExtractTokenStringList_SingleStringClaim(t *testing.T) {
 }
 
 func TestExtractTokenStringList_UnrecognizedShape(t *testing.T) {
+	t.Parallel()
 	// A number — not a string, not a slice → return nil, true (present but unrecognized)
 	tok := makeJWT(map[string]interface{}{"count": 42})
 	result, ok := extractTokenStringList(tok, "count")
@@ -93,6 +101,7 @@ func TestExtractTokenStringList_UnrecognizedShape(t *testing.T) {
 // ── oidc.go — DeleteOIDCBinding ──────────────────────────────────────────
 
 func TestDeleteOIDCBinding_MachineNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -101,6 +110,7 @@ func TestDeleteOIDCBinding_MachineNotFound(t *testing.T) {
 }
 
 func TestDeleteOIDCBinding_BindingNotFound_s34(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 1}, nil)
 	ms.On("GetOIDCBindingByID", mock.Anything, uint(5)).Return(nil, errors.New("not found"))
@@ -111,6 +121,7 @@ func TestDeleteOIDCBinding_BindingNotFound_s34(t *testing.T) {
 }
 
 func TestDeleteOIDCBinding_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	machine := &models.MachineIdentity{ID: 1, ProjectID: 1}
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
@@ -126,6 +137,7 @@ func TestDeleteOIDCBinding_Success(t *testing.T) {
 // ── mfa.go — CreateMFAChallenge ───────────────────────────────────────────
 
 func TestCreateMFAChallenge_Success(t *testing.T) {
+	t.Parallel()
 	// MockStorage.CreateMFAChallenge is a hardcoded stub returning nil.
 	c := NewKeyorixCore(new(MockStorage))
 	token, err := c.CreateMFAChallenge(context.Background(), 5)
@@ -136,6 +148,7 @@ func TestCreateMFAChallenge_Success(t *testing.T) {
 // ── dynamic_secrets.go — requireLiveProjectAndEnvironment ─────────────────
 
 func TestRequireLiveProjectAndEnvironment_ProjectNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetProject", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -145,6 +158,7 @@ func TestRequireLiveProjectAndEnvironment_ProjectNotFound(t *testing.T) {
 }
 
 func TestRequireLiveProjectAndEnvironment_ProjectFoundNoEnv(t *testing.T) {
+	t.Parallel()
 	// GetProject smart stub returns &models.Project{} by default when not mocked → success.
 	// environmentID=0 → skip env check
 	c := NewKeyorixCore(new(MockStorage))
@@ -153,6 +167,7 @@ func TestRequireLiveProjectAndEnvironment_ProjectFoundNoEnv(t *testing.T) {
 }
 
 func TestRequireLiveProjectAndEnvironment_ProjectFoundWithEnv(t *testing.T) {
+	t.Parallel()
 	// GetEnvironment stub always returns a valid env.
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.requireLiveProjectAndEnvironment(context.Background(), 1, 2)
@@ -162,6 +177,7 @@ func TestRequireLiveProjectAndEnvironment_ProjectFoundWithEnv(t *testing.T) {
 // ── invitations.go — revokeSystemRoleGrant ───────────────────────────────
 
 func TestRevokeSystemRoleGrant_EmptySystemRole_s34(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	inv := &models.ProjectInvitation{SystemRole: ""}
 	// Empty SystemRole → return immediately.
@@ -169,6 +185,7 @@ func TestRevokeSystemRoleGrant_EmptySystemRole_s34(t *testing.T) {
 }
 
 func TestRevokeSystemRoleGrant_RoleNotFound_s34(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -178,6 +195,7 @@ func TestRevokeSystemRoleGrant_RoleNotFound_s34(t *testing.T) {
 }
 
 func TestRevokeSystemRoleGrant_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "viewer").Return(&models.Role{ID: 2, Name: "viewer"}, nil)
 	// RemoveUserRole calls installAdminRoleIDSet which tries GetRoleByName for admin role names
@@ -196,6 +214,7 @@ func TestRevokeSystemRoleGrant_Success(t *testing.T) {
 // ── jit_access.go — assignUserRoleWithExpirySkipSoD ──────────────────────
 
 func TestAssignUserRoleWithExpirySkipSoD_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AssignRoleWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope"), mock.AnythingOfType("time.Time")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -205,6 +224,7 @@ func TestAssignUserRoleWithExpirySkipSoD_Success(t *testing.T) {
 }
 
 func TestAssignUserRoleWithExpirySkipSoD_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AssignRoleWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope"), mock.AnythingOfType("time.Time")).Return(errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -215,6 +235,7 @@ func TestAssignUserRoleWithExpirySkipSoD_StorageError(t *testing.T) {
 // ── webauthn.go — storeWebAuthnSession ───────────────────────────────────
 
 func TestStoreWebAuthnSession_Success(t *testing.T) {
+	t.Parallel()
 	// CreateWebAuthnSession is a hardcoded stub returning nil.
 	c := NewKeyorixCore(new(MockStorage))
 	sd := &gowebauthn.SessionData{}

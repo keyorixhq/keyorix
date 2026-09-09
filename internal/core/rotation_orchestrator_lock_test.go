@@ -90,6 +90,7 @@ func (r *raceGeneratingExecutor) peakInFlight() int {
 // call enter and complete while the first is still in flight. This is the baseline
 // this package's orchestrator-level lock (tested below) must close.
 func TestRaceGeneratingExecutor_UnserializedCallsOverlap(t *testing.T) {
+	t.Parallel()
 	fake := newRaceGeneratingExecutor("unlocked")
 
 	bDone := make(chan struct{})
@@ -123,6 +124,7 @@ func TestRaceGeneratingExecutor_UnserializedCallsOverlap(t *testing.T) {
 // applyBackendRotation call (which holds the per-(backend,ref) lock for its whole
 // duration) has returned.
 func TestApplyBackendRotation_ConcurrentSameBackendRef_Serializes(t *testing.T) {
+	t.Parallel()
 	fake := newRaceGeneratingExecutor("locked")
 	c := &KeyorixCore{}
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
@@ -177,6 +179,7 @@ func TestApplyBackendRotation_ConcurrentSameBackendRef_Serializes(t *testing.T) 
 // needlessly serializing regression (every rotation across every ref queued behind
 // one mutex), so this is asserted explicitly, not just assumed.
 func TestApplyBackendRotation_DifferentRefs_RunConcurrently(t *testing.T) {
+	t.Parallel()
 	fake := newRaceGeneratingExecutor("locked-multi-ref")
 	c := &KeyorixCore{}
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
@@ -214,6 +217,7 @@ func TestApplyBackendRotation_DifferentRefs_RunConcurrently(t *testing.T) {
 // in rotation_executor_registry_exhaustiveness_test.go for the companion guard that
 // keeps the set of known executor constructors from silently drifting stale.
 func TestRotationBackendLock_KeyedByBackendAndRefOnly(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 
 	same1 := c.rotationBackendLock("aws-prod", "svc-app")

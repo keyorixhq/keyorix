@@ -224,6 +224,7 @@ func actualActorSentinelSites(t *testing.T) map[string]bool {
 //     was fixed, removed, or rewritten to avoid the sentinel) also fails,
 //     keeping the table from accumulating stale entries.
 func TestActorSentinelComparisonsAreAllowlisted(t *testing.T) {
+	t.Parallel()
 	actual := actualActorSentinelSites(t)
 
 	var missing []string
@@ -263,6 +264,7 @@ func TestActorSentinelComparisonsAreAllowlisted(t *testing.T) {
 // via #1545, not blocked on this table), just a standing visibility check
 // that fails if the open count silently grows without anyone noticing.
 func TestActorSentinelOpenGapsAreTracked(t *testing.T) {
+	t.Parallel()
 	var open []string
 	for key, e := range actorSentinelAllowlist {
 		if e.class == classPerActorCeiling && e.status == statusOpenGap {

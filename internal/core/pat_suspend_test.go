@@ -21,6 +21,7 @@ import (
 // access. This drives the real flow through LocalStorage and asserts the PAT is rejected
 // once the account is suspended.
 func TestValidatePATToken_SuspendRevokesTokenAccess(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

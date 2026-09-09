@@ -20,6 +20,7 @@ import (
 )
 
 func TestCompleteSSO_DeactivatedAccount_Rejected(t *testing.T) {
+	t.Parallel()
 	c, store, key, p := ssoTestCore(t)
 	deactivated := &models.User{ID: 88, IsActive: false, AccountState: "active"}
 
@@ -47,6 +48,7 @@ func TestCompleteSSO_DeactivatedAccount_Rejected(t *testing.T) {
 }
 
 func TestCompleteSSO_SuspendedAccount_Rejected(t *testing.T) {
+	t.Parallel()
 	c, store, key, p := ssoTestCore(t)
 	suspended := &models.User{ID: 89, IsActive: true, AccountState: AccountSuspended}
 

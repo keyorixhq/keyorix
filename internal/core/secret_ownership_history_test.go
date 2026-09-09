@@ -31,6 +31,7 @@ func setupOwnerPermission(store *MockStorage, ctx context.Context, secretID, act
 }
 
 func TestGetSecretOwnershipHistory_Empty(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newOwnershipCore(store)
 	ctx := context.Background()
@@ -45,6 +46,7 @@ func TestGetSecretOwnershipHistory_Empty(t *testing.T) {
 }
 
 func TestGetSecretOwnershipHistory_ParsesOwnershipDescription(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newOwnershipCore(store)
 	ctx := context.Background()
@@ -75,6 +77,7 @@ func TestGetSecretOwnershipHistory_ParsesOwnershipDescription(t *testing.T) {
 }
 
 func TestGetSecretOwnershipHistory_InvalidDescriptionKeepsZeroIDs(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newOwnershipCore(store)
 	ctx := context.Background()
@@ -98,6 +101,7 @@ func TestGetSecretOwnershipHistory_InvalidDescriptionKeepsZeroIDs(t *testing.T) 
 }
 
 func TestGetSecretOwnershipHistory_MultipleRecordsPreserveOrder(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newOwnershipCore(store)
 	ctx := context.Background()
@@ -121,6 +125,7 @@ func TestGetSecretOwnershipHistory_MultipleRecordsPreserveOrder(t *testing.T) {
 }
 
 func TestGetSecretOwnershipHistory_PermissionDenied(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newOwnershipCore(store)
 	ctx := context.Background()
@@ -145,6 +150,7 @@ func TestGetSecretOwnershipHistory_PermissionDenied(t *testing.T) {
 }
 
 func TestGetSecretOwnershipHistory_AuditLogsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newOwnershipCore(store)
 	ctx := context.Background()
@@ -208,6 +214,7 @@ func newOwnershipHistoryFixture(t *testing.T) (*KeyorixCore, uint) {
 // real IDs are read from a structured Diff field the malicious name can never
 // reach.
 func TestGetSecretOwnershipHistory_MaliciousSecretNameCannotForgeTransferIDs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, secretID := newOwnershipHistoryFixture(t)
 
@@ -241,6 +248,7 @@ func TestGetSecretOwnershipHistory_MaliciousSecretNameCannotForgeTransferIDs(t *
 
 // Ensure the filter produced by GetSecretOwnershipHistory uses the correct action type.
 func TestGetSecretOwnershipHistory_FilterUsesOwnerTransferredAction(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newOwnershipCore(store)
 	ctx := context.Background()

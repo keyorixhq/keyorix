@@ -25,6 +25,7 @@ func captureActorType(t *testing.T, write func(c *KeyorixCore, ctx context.Conte
 }
 
 func TestWriteAuditEvent_DefaultsToUserActorType(t *testing.T) {
+	t.Parallel()
 	got := captureActorType(t, func(c *KeyorixCore, ctx context.Context) {
 		c.writeAuditEventFull(ctx, "secret.read", nil, nil, nil, "", "x")
 	})
@@ -34,6 +35,7 @@ func TestWriteAuditEvent_DefaultsToUserActorType(t *testing.T) {
 }
 
 func TestWriteAuditEvent_StampsMachineActorTypeFromContext(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	var got string
@@ -52,6 +54,7 @@ func TestWriteAuditEvent_StampsMachineActorTypeFromContext(t *testing.T) {
 }
 
 func TestWriteAuditEventFailed_StampsActorTypeFromContext(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	var got string
@@ -70,6 +73,7 @@ func TestWriteAuditEventFailed_StampsActorTypeFromContext(t *testing.T) {
 }
 
 func TestActorTypeFromContext_DefaultAndTagged(t *testing.T) {
+	t.Parallel()
 	if at := actorTypeFromContext(context.Background()); at != ActorTypeUser {
 		t.Errorf("untagged context actor type = %q, want %q", at, ActorTypeUser)
 	}
@@ -86,6 +90,7 @@ func TestActorTypeFromContext_DefaultAndTagged(t *testing.T) {
 // DetachedAuditContext must carry the actor-type tag (and impersonation) past
 // request cancellation into the detached audit goroutine.
 func TestDetachedAuditContext_PreservesActorTypeAndImpersonation(t *testing.T) {
+	t.Parallel()
 	parent := WithActorType(WithImpersonation(context.Background(), 7), ActorTypeMachine)
 	detached := DetachedAuditContext(parent)
 

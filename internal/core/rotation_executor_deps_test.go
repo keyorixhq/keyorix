@@ -52,6 +52,7 @@ func autoRotateEventDescriptions(t *testing.T, db *gorm.DB) []string {
 // HIGHER id than its dependent so a naive id-ordered pass would rotate them in the wrong
 // order — proving the ordering comes from the dependency graph, not the scan order.
 func TestRunAutoRotation_RotatesInDependencyOrder(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := depExecCore(t)
 	overdue := fixed.Add(-60 * 24 * time.Hour)
 	// secret 1 (app-token) depends on secret 2 (db-password): db-password must rotate first.
@@ -75,6 +76,7 @@ func TestRunAutoRotation_RotatesInDependencyOrder(t *testing.T) {
 // against a now-stale dependency — and the deferral propagates transitively down the
 // chain (A fails → B deferred → C deferred).
 func TestRunAutoRotation_DefersDependentsOfFailedDependency(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
 	c, db, fixed := depExecCore(t)
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
@@ -109,6 +111,7 @@ func TestRunAutoRotation_DefersDependentsOfFailedDependency(t *testing.T) {
 // A sibling dependent of a SUCCESSFUL dependency still rotates — deferral is scoped to the
 // dependents of secrets that did not rotate, not a blanket stand-down.
 func TestRunAutoRotation_SuccessfulDependencyDoesNotDeferDependent(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := depExecCore(t)
 	overdue := fixed.Add(-60 * 24 * time.Hour)
 	seedRotatableSecret(t, db, 1, "db-password", true, overdue) // generated → succeeds
@@ -124,6 +127,7 @@ func TestRunAutoRotation_SuccessfulDependencyDoesNotDeferDependent(t *testing.T)
 // A cyclic graph (which the add path normally rejects, ADR-052) must never block
 // rotation: the executor falls back to a flat best-effort pass and still rotates.
 func TestRunAutoRotation_CyclicGraphFallsBackToFlatRotation(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := depExecCore(t)
 	overdue := fixed.Add(-60 * 24 * time.Hour)
 	seedRotatableSecret(t, db, 1, "a", true, overdue)

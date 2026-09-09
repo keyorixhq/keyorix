@@ -68,6 +68,7 @@ func roleHasPerm(t *testing.T, c *KeyorixCore, role, perm string) bool {
 }
 
 func TestReconcileRBAC_AddsNewPermissionToBaselineRoles(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACReconcileCore(t)
 	seedOldCatalog(t, c, db)
 	ctx := context.Background()
@@ -121,6 +122,7 @@ func seedOldCatalogWithoutPlatformUse(t *testing.T, c *KeyorixCore, db *gorm.DB)
 // gains it on the next reconcile pass, with no manual migration, exactly like
 // connect.read did when it was added.
 func TestReconcileRBAC_AddsConnectPlatformUseToBaselineRoles(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACReconcileCore(t)
 	seedOldCatalogWithoutPlatformUse(t, c, db)
 	ctx := context.Background()
@@ -136,6 +138,7 @@ func TestReconcileRBAC_AddsConnectPlatformUseToBaselineRoles(t *testing.T) {
 }
 
 func TestReconcileRBAC_DoesNotClobberExistingGrants(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACReconcileCore(t)
 	seedOldCatalog(t, c, db)
 	ctx := context.Background()
@@ -155,6 +158,7 @@ func TestReconcileRBAC_DoesNotClobberExistingGrants(t *testing.T) {
 }
 
 func TestReconcileRBAC_NoopOnFreshInstall(t *testing.T) {
+	t.Parallel()
 	c, _ := newRBACReconcileCore(t)
 	// Empty catalog (pre-bootstrap): reconcile must do nothing.
 	require.NoError(t, c.ReconcileRBACPermissions(context.Background()))
@@ -164,6 +168,7 @@ func TestReconcileRBAC_NoopOnFreshInstall(t *testing.T) {
 }
 
 func TestReconcileRBAC_Idempotent(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACReconcileCore(t)
 	seedOldCatalog(t, c, db)
 	ctx := context.Background()
@@ -183,6 +188,7 @@ func TestReconcileRBAC_Idempotent(t *testing.T) {
 // Startup reconciliation grants must land in the RBAC audit trail like every other
 // permission grant, attributed to the system actor (0), not vanish silently (#293).
 func TestReconcileRBAC_GrantsAreRBACAudited(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACReconcileCore(t)
 	seedOldCatalog(t, c, db)
 	ctx := context.Background()

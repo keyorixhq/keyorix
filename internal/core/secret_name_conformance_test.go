@@ -18,6 +18,7 @@ import (
 )
 
 func TestSecretNameConformance(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -106,6 +107,7 @@ func TestSecretNameConformance(t *testing.T) {
 // which already surfaces a Truncated flag. Uses MockStorage to simulate a
 // project with more secrets (5000) than the scan cap returned (0).
 func TestSecretNameConformance_Truncated(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	const proj = uint(9)
 	ctx := context.Background()

@@ -31,6 +31,7 @@ func newSCIMGuardCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 }
 
 func TestUpdateSCIMUser_RejectsEmailCollision(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	// EmailFolded is what the collision check's GetUserByEmail actually
@@ -51,6 +52,7 @@ func TestUpdateSCIMUser_RejectsEmailCollision(t *testing.T) {
 // proceeding further, whether that email is registered to a different account —
 // without ever having rights to touch the target id at all.
 func TestUpdateSCIMUser_OwnershipCheckedBeforeEmailCollision(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	// user 1 is a NATIVE account (no ExternalID) — never provisioned via SCIM.
@@ -72,6 +74,7 @@ func TestUpdateSCIMUser_OwnershipCheckedBeforeEmailCollision(t *testing.T) {
 }
 
 func TestUpdateSCIMUser_RefusesLastAdminDeactivation(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
@@ -92,6 +95,7 @@ func TestUpdateSCIMUser_RefusesLastAdminDeactivation(t *testing.T) {
 // membership in a single-member admin group was never recognized as the last
 // admin, so SCIM could deactivate them and leave the install with zero admins.
 func TestUpdateSCIMUser_RefusesLastAdminDeactivation_ViaGroupMembership(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
@@ -110,6 +114,7 @@ func TestUpdateSCIMUser_RefusesLastAdminDeactivation_ViaGroupMembership(t *testi
 // is the positive control: a group with more than one member still has a
 // surviving admin route after one member is deactivated.
 func TestUpdateSCIMUser_AllowsGroupAdminDeactivationWhenAnotherGroupMemberExists(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
@@ -127,6 +132,7 @@ func TestUpdateSCIMUser_AllowsGroupAdminDeactivationWhenAnotherGroupMemberExists
 }
 
 func TestUpdateSCIMUser_AllowsAdminDeactivationWhenAnotherExists(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
@@ -142,6 +148,7 @@ func TestUpdateSCIMUser_AllowsAdminDeactivationWhenAnotherExists(t *testing.T) {
 }
 
 func TestPatchSCIMGroup_RefusesAddingMemberToAdminGroup(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
@@ -163,6 +170,7 @@ func TestPatchSCIMGroup_RefusesAddingMemberToAdminGroup(t *testing.T) {
 // hardened against. Simulates a genuine storage failure (not the "user not found"
 // sentinel text) via MockStorage and asserts the update is refused, not silently applied.
 func TestUpdateSCIMUser_FailsClosedOnTransientEmailLookupError(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -189,6 +197,7 @@ func TestUpdateSCIMUser_FailsClosedOnTransientEmailLookupError(t *testing.T) {
 // sentinel GetUserByEmail actually returns for a genuinely-unused email) must still let
 // the update proceed.
 func TestUpdateSCIMUser_ProceedsWhenEmailGenuinelyUnused(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "bob@x.io", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
@@ -208,6 +217,7 @@ func TestUpdateSCIMUser_ProceedsWhenEmailGenuinelyUnused(t *testing.T) {
 // MockStorage and asserts both call sites — UpdateSCIMUser(active:false) and
 // DeprovisionSCIMUser — now refuse the operation instead of silently permitting it.
 func TestGuardLastAdminDeactivation_FailsClosedOnIsGlobalAdminError(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	dbErr := errors.New("connection pool exhausted")
 
@@ -246,6 +256,7 @@ func TestGuardLastAdminDeactivation_FailsClosedOnIsGlobalAdminError(t *testing.T
 // constraint-violation error. See concurrency_scim_update_email_test.go for the full
 // concurrent-UpdateSCIMUser race regression.
 func TestLocalStorage_UpdateUser_DuplicateEmailWrapsSentinel(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	_ = c
 	// Install the same partial unique index production installs get (mirrors
@@ -281,6 +292,7 @@ func TestLocalStorage_UpdateUser_DuplicateEmailWrapsSentinel(t *testing.T) {
 // take effect).
 
 func TestProvisionSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive, ExternalID: "okta|alice"}).Error)
@@ -294,6 +306,7 @@ func TestProvisionSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
 }
 
 func TestProvisionSCIMGroup_RefusesNonSCIMManagedMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	// Native user: no ExternalID — never SCIM-provisioned.
@@ -311,6 +324,7 @@ func TestProvisionSCIMGroup_RefusesNonSCIMManagedMember(t *testing.T) {
 }
 
 func TestReplaceSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive, ExternalID: "okta|alice"}).Error)
@@ -325,6 +339,7 @@ func TestReplaceSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
 }
 
 func TestReplaceSCIMGroup_RefusesNonSCIMManagedMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "native", IsActive: true, AccountState: AccountActive}).Error)
@@ -340,6 +355,7 @@ func TestReplaceSCIMGroup_RefusesNonSCIMManagedMember(t *testing.T) {
 }
 
 func TestPatchSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive, ExternalID: "okta|alice"}).Error)
@@ -354,6 +370,7 @@ func TestPatchSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
 }
 
 func TestPatchSCIMGroup_RefusesNonSCIMManagedMember(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "native", IsActive: true, AccountState: AccountActive}).Error)

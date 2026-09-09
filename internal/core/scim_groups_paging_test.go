@@ -20,6 +20,7 @@ import (
 // storage query — so an unfiltered SCIM Groups list can't drain the whole groups
 // table into memory the way the plain ListGroups full-scan does.
 func TestListSCIMGroupsPage(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

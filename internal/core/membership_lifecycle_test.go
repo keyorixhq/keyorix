@@ -20,6 +20,7 @@ func newMembershipCore(store *MockStorage) *KeyorixCore {
 }
 
 func TestCanTransition(t *testing.T) {
+	t.Parallel()
 	valid := [][2]string{
 		{MembershipInvited, MembershipIdentityVerified},
 		{MembershipIdentityVerified, MembershipProvisioned},
@@ -43,6 +44,7 @@ func TestCanTransition(t *testing.T) {
 }
 
 func TestInitialMembershipStateForMode(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, MembershipActive, initialMembershipStateForMode(ValidationModeOpen, false))
 	assert.Equal(t, MembershipInvited, initialMembershipStateForMode(ValidationModeAllowlist, true))
 	assert.Equal(t, MembershipProvisioned, initialMembershipStateForMode(ValidationModeIDP, true), "idp-resolved skips early states")
@@ -51,6 +53,7 @@ func TestInitialMembershipStateForMode(t *testing.T) {
 }
 
 func TestInviteMember_AllowlistStartsInvited(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	c.membershipValidationMode = ValidationModeAllowlist
@@ -74,6 +77,7 @@ func TestInviteMember_AllowlistStartsInvited(t *testing.T) {
 // project member. invitedBy (0, ADR-030) alone loses which machine did it;
 // InvitedByMachineIdentityID must carry it through to the persisted row.
 func TestInviteMember_RecordsActingMachineIdentity(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	c.membershipValidationMode = ValidationModeAllowlist
@@ -92,6 +96,7 @@ func TestInviteMember_RecordsActingMachineIdentity(t *testing.T) {
 }
 
 func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	c.membershipValidationMode = ValidationModeOpen
@@ -116,6 +121,7 @@ func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
 // InviteToProject/InviteGlobal flow — InviteMember (the userID-keyed invite
 // path) bypassed it entirely. Verify it's now enforced here too.
 func TestInviteMember_RejectsDisallowedDomain(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	c.membershipDomainAllowlist = []string{"allowed.com"}
@@ -137,6 +143,7 @@ func TestInviteMember_RejectsDisallowedDomain(t *testing.T) {
 // identity consumer of the same raw string parses '@' differently. A well-formed email
 // has exactly one '@'; anything else must be rejected outright, not domain-guessed.
 func TestDomainAllowed_RejectsMalformedMultiAtEmail(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	c.membershipDomainAllowlist = []string{"allowed.com"}
@@ -155,6 +162,7 @@ func TestDomainAllowed_RejectsMalformedMultiAtEmail(t *testing.T) {
 }
 
 func TestInviteMember_RejectsDuplicate(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -169,6 +177,7 @@ func TestInviteMember_RejectsDuplicate(t *testing.T) {
 }
 
 func TestTransitionMembership_RejectsIllegalJump(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -193,6 +202,7 @@ func TestTransitionMembership_RejectsIllegalJump(t *testing.T) {
 // longer reads as active — it must not survive as an orphaned "ghost" active
 // membership behind a reported failure.
 func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	c.membershipValidationMode = ValidationModeOpen
@@ -235,6 +245,7 @@ func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *t
 // must restore THAT state (leaving the membership retriable) rather than jumping
 // straight to the terminal `revoked` state.
 func TestTransitionMembership_ActivationFailure_RevertsToPriorState(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -266,6 +277,7 @@ func TestTransitionMembership_ActivationFailure_RevertsToPriorState(t *testing.T
 // Cross-project guard: a membership in project 2 must not be transitionable when
 // the caller is authorized for project 1 (would otherwise grant a role in 2).
 func TestTransitionMembership_RejectsOtherProject(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -280,6 +292,7 @@ func TestTransitionMembership_RejectsOtherProject(t *testing.T) {
 }
 
 func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -299,6 +312,7 @@ func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
 }
 
 func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -336,6 +350,7 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 // fix must revert the membership back to its pre-transition state and
 // surface the error.
 func TestTransitionMembership_RevokeRefusedForLastAdmin_RevertsAndReturnsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -368,6 +383,7 @@ func TestTransitionMembership_RevokeRefusedForLastAdmin_RevertsAndReturnsError(t
 }
 
 func TestStaleInvites_PassesCutoff(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()

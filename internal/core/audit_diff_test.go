@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildSecretUpdateDiff_ValueChangedOnly(t *testing.T) {
+	t.Parallel()
 	old := &models.SecretNode{}
 	req := &UpdateSecretRequest{}
 	diff := BuildSecretUpdateDiff(old, req, true)
@@ -35,6 +36,7 @@ func TestBuildSecretUpdateDiff_ValueChangedOnly(t *testing.T) {
 }
 
 func TestBuildSecretUpdateDiff_MaxReadsChange(t *testing.T) {
+	t.Parallel()
 	five, ten := 5, 10
 	old := &models.SecretNode{MaxReads: &five}
 	req := &UpdateSecretRequest{MaxReads: &ten}
@@ -51,6 +53,7 @@ func TestBuildSecretUpdateDiff_MaxReadsChange(t *testing.T) {
 }
 
 func TestBuildSecretUpdateDiff_NoChange(t *testing.T) {
+	t.Parallel()
 	five := 5
 	old := &models.SecretNode{MaxReads: &five}
 	// Same max_reads, no value provided → nothing changed → empty diff.
@@ -61,6 +64,7 @@ func TestBuildSecretUpdateDiff_NoChange(t *testing.T) {
 }
 
 func TestBuildSecretUpdateDiff_ExpirationChange(t *testing.T) {
+	t.Parallel()
 	exp := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
 	old := &models.SecretNode{}
 	req := &UpdateSecretRequest{Expiration: &exp}
@@ -80,6 +84,7 @@ func TestBuildSecretUpdateDiff_ExpirationChange(t *testing.T) {
 // is nil, and the diff must record that transition explicitly rather than
 // silently omitting it (the old code only ever checked req.Expiration != nil).
 func TestBuildSecretUpdateDiff_ClearExpiration(t *testing.T) {
+	t.Parallel()
 	exp := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
 	old := &models.SecretNode{Expiration: &exp}
 	req := &UpdateSecretRequest{ClearExpiration: true}
@@ -106,6 +111,7 @@ func TestBuildSecretUpdateDiff_ClearExpiration(t *testing.T) {
 // TestBuildSecretUpdateDiff_ClearExpiration_NoOpWhenAlreadyUnset confirms that
 // clearing an already-nil expiration produces no diff entry (nothing changed).
 func TestBuildSecretUpdateDiff_ClearExpiration_NoOpWhenAlreadyUnset(t *testing.T) {
+	t.Parallel()
 	old := &models.SecretNode{}
 	req := &UpdateSecretRequest{ClearExpiration: true}
 	if diff := BuildSecretUpdateDiff(old, req, false); diff != "" {
@@ -117,6 +123,7 @@ func TestBuildSecretUpdateDiff_ClearExpiration_NoOpWhenAlreadyUnset(t *testing.T
 // unconditionally applies req.Metadata when non-nil, but the diff builder
 // previously never inspected it at all.
 func TestBuildSecretUpdateDiff_MetadataChange(t *testing.T) {
+	t.Parallel()
 	old := &models.SecretNode{Metadata: models.JSON(`{"env":"staging"}`)}
 	req := &UpdateSecretRequest{Metadata: map[string]string{"env": "production"}}
 	diff := BuildSecretUpdateDiff(old, req, false)
@@ -144,6 +151,7 @@ func TestBuildSecretUpdateDiff_MetadataChange(t *testing.T) {
 // TestBuildSecretUpdateDiff_MetadataUnchanged confirms setting metadata to the
 // same value produces no diff entry.
 func TestBuildSecretUpdateDiff_MetadataUnchanged(t *testing.T) {
+	t.Parallel()
 	old := &models.SecretNode{Metadata: models.JSON(`{"env":"staging"}`)}
 	req := &UpdateSecretRequest{Metadata: map[string]string{"env": "staging"}}
 	if diff := BuildSecretUpdateDiff(old, req, false); diff != "" {
@@ -154,6 +162,7 @@ func TestBuildSecretUpdateDiff_MetadataUnchanged(t *testing.T) {
 // TestBuildSecretUpdateDiff_MetadataFromEmpty confirms setting metadata on a
 // secret that previously had none registers as a change.
 func TestBuildSecretUpdateDiff_MetadataFromEmpty(t *testing.T) {
+	t.Parallel()
 	old := &models.SecretNode{}
 	req := &UpdateSecretRequest{Metadata: map[string]string{"env": "production"}}
 	diff := BuildSecretUpdateDiff(old, req, false)
@@ -169,6 +178,7 @@ func TestBuildSecretUpdateDiff_MetadataFromEmpty(t *testing.T) {
 // ever starts applying Tags, this test should be revisited alongside wiring a
 // real diff for it.
 func TestBuildSecretUpdateDiff_TagsStillNotDiffed(t *testing.T) {
+	t.Parallel()
 	old := &models.SecretNode{}
 	req := &UpdateSecretRequest{Tags: []string{"prod", "db"}}
 	if diff := BuildSecretUpdateDiff(old, req, false); diff != "" {
@@ -177,12 +187,14 @@ func TestBuildSecretUpdateDiff_TagsStillNotDiffed(t *testing.T) {
 }
 
 func TestBuildSecretUpdateDiff_NilSafe(t *testing.T) {
+	t.Parallel()
 	if got := BuildSecretUpdateDiff(nil, nil, true); got != "" {
 		t.Errorf("nil inputs must yield empty diff, got %q", got)
 	}
 }
 
 func TestImpersonationContext_RoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := WithImpersonation(context.Background(), 42)
 	id, ok := impersonatorFromContext(ctx)
 	if !ok || id != 42 {
@@ -191,6 +203,7 @@ func TestImpersonationContext_RoundTrip(t *testing.T) {
 }
 
 func TestImpersonationContext_ZeroIsNoop(t *testing.T) {
+	t.Parallel()
 	ctx := WithImpersonation(context.Background(), 0)
 	if _, ok := impersonatorFromContext(ctx); ok {
 		t.Error("admin ID 0 must not establish an impersonation context")
@@ -198,6 +211,7 @@ func TestImpersonationContext_ZeroIsNoop(t *testing.T) {
 }
 
 func TestDetachedAuditContext_PreservesTag(t *testing.T) {
+	t.Parallel()
 	parent := WithImpersonation(context.Background(), 7)
 	detached := DetachedAuditContext(parent)
 	id, ok := impersonatorFromContext(detached)
@@ -207,6 +221,7 @@ func TestDetachedAuditContext_PreservesTag(t *testing.T) {
 }
 
 func TestDetachedAuditContext_PlainPassesThrough(t *testing.T) {
+	t.Parallel()
 	detached := DetachedAuditContext(context.Background())
 	if _, ok := impersonatorFromContext(detached); ok {
 		t.Error("a non-impersonation parent must not gain a tag")

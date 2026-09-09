@@ -71,6 +71,7 @@ func replicaBootstrapCore(shared storage.Storage, token string) *KeyorixCore {
 // AlreadyInitialized, and the store must end up in a fully consistent state: one
 // user, and none of the seeded RBAC data duplicated.
 func TestConcurrency_BootstrapSystem_CrossReplicaExactlyOneAdmin(t *testing.T) {
+	t.Parallel()
 	shared := sharedBootstrapStorage(t)
 	const token = "correct-token"
 

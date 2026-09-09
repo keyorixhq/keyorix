@@ -46,6 +46,7 @@ func freshFolderCoreDB(t *testing.T) (*KeyorixCore, *gorm.DB) {
 
 // TestCreateFolder_HappyPath verifies a root folder is created with IsSecret=false.
 func TestCreateFolder_HappyPath(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	folder, err := cs.CreateFolder(context.Background(), 1, "my-folder", 1, 5, nil)
@@ -62,6 +63,7 @@ func TestCreateFolder_HappyPath(t *testing.T) {
 
 // TestCreateFolder_EmptyName ensures an empty name is rejected.
 func TestCreateFolder_EmptyName(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	_, err := cs.CreateFolder(context.Background(), 1, "  ", 1, 5, nil)
@@ -71,6 +73,7 @@ func TestCreateFolder_EmptyName(t *testing.T) {
 
 // TestCreateFolder_MissingProjectID ensures zero projectID is rejected.
 func TestCreateFolder_MissingProjectID(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	_, err := cs.CreateFolder(context.Background(), 1, "folder", 0, 5, nil)
@@ -80,6 +83,7 @@ func TestCreateFolder_MissingProjectID(t *testing.T) {
 
 // TestCreateFolder_MissingEnvID ensures zero environmentID is rejected.
 func TestCreateFolder_MissingEnvID(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	_, err := cs.CreateFolder(context.Background(), 1, "folder", 1, 0, nil)
@@ -89,6 +93,7 @@ func TestCreateFolder_MissingEnvID(t *testing.T) {
 
 // TestCreateFolder_InvalidParent verifies that a non-existent parent is rejected.
 func TestCreateFolder_InvalidParent(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	nonExistent := uint(999)
@@ -99,6 +104,7 @@ func TestCreateFolder_InvalidParent(t *testing.T) {
 
 // TestCreateFolder_ParentMustBeFolder verifies that a secret node cannot be used as a parent.
 func TestCreateFolder_ParentMustBeFolder(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	// Create a real secret (IsSecret=true).
@@ -115,6 +121,7 @@ func TestCreateFolder_ParentMustBeFolder(t *testing.T) {
 
 // TestCreateFolder_NestedFolder verifies that a folder can be nested under another folder.
 func TestCreateFolder_NestedFolder(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	parent, err := cs.CreateFolder(context.Background(), 1, "parent", 1, 5, nil)
@@ -128,6 +135,7 @@ func TestCreateFolder_NestedFolder(t *testing.T) {
 
 // TestListFolders_FiltersByIsSecret verifies that only folder nodes are returned.
 func TestListFolders_FiltersByIsSecret(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	// Create a folder and a real secret.
@@ -157,6 +165,7 @@ func TestListFolders_FiltersByIsSecret(t *testing.T) {
 // HasSecretACL's ancestor walk in secret_acl.go) would then apply that other
 // project's grants to it. Mirrors TestMoveSecret_RefusesCrossProjectParent.
 func TestCreateFolder_RefusesCrossProjectParent(t *testing.T) {
+	t.Parallel()
 	cs, db := freshFolderCoreDB(t)
 	ctx := context.Background()
 
@@ -175,6 +184,7 @@ func TestCreateFolder_RefusesCrossProjectParent(t *testing.T) {
 // catches a same-project, different-environment mismatch (folders/secrets in
 // this codebase are scoped by project AND environment).
 func TestCreateFolder_RefusesCrossEnvironmentParent(t *testing.T) {
+	t.Parallel()
 	cs, db := freshFolderCoreDB(t)
 	ctx := context.Background()
 
@@ -189,6 +199,7 @@ func TestCreateFolder_RefusesCrossEnvironmentParent(t *testing.T) {
 
 // TestListFolders_ParentFilter verifies that parent_id filtering works.
 func TestListFolders_ParentFilter(t *testing.T) {
+	t.Parallel()
 	cs, _ := freshFolderCoreDB(t)
 
 	parent, err := cs.CreateFolder(context.Background(), 1, "parent", 1, 5, nil)

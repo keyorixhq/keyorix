@@ -21,6 +21,7 @@ import (
 )
 
 func TestCompleteSSO_Success_MintsSessionAndAudits(t *testing.T) {
+	t.Parallel()
 	c, store, key, p := ssoTestCore(t)
 	// GroupSync/GroupRoleMap enabled with no groups claim on the token: exercises
 	// CompleteSSO's own two call sites into syncSSOGroups/syncSSORoles (an absent
@@ -81,6 +82,7 @@ func TestCompleteSSO_Success_MintsSessionAndAudits(t *testing.T) {
 // error, and RecordLogin/the audit write must never run for a login that
 // didn't actually complete.
 func TestCompleteSSO_MintSessionError_Propagates(t *testing.T) {
+	t.Parallel()
 	c, store, key, p := ssoTestCore(t)
 
 	activeUser := &models.User{ID: 78, IsActive: true, AccountState: "active"}

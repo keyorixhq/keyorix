@@ -37,6 +37,7 @@ func createTestUserWithEmail(t *testing.T, h *testhelper.RBACTestHelper, usernam
 // disallowed-domain user must be refused, matching
 // TestAddProjectMember_RejectsDisallowedDomain's assertions for the direct path.
 func TestAddUserToGroup_RejectsDisallowedDomain_ProjectScopedGrant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -72,6 +73,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_ProjectScopedGrant(t *testing.T)
 // if anything the MORE dangerous route since it reaches every project the
 // group has a grant in, not just one.
 func TestAddUserToGroup_RejectsDisallowedDomain_GlobalMembershipReachesProjectGrant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -97,6 +99,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_GlobalMembershipReachesProjectGr
 // allowed-domain user can still be added to a group that confers project
 // access normally once the allowlist passes.
 func TestAddUserToGroup_AllowsAllowedDomain(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -132,6 +135,7 @@ func TestAddUserToGroup_AllowsAllowedDomain(t *testing.T) {
 // allowlist — mirroring the direct-grant paths, which only ever fire once a
 // role is actually being assigned.
 func TestAddUserToGroup_NoRoleGrant_NotGatedByDomainAllowlist(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))

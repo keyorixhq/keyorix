@@ -14,6 +14,7 @@ import (
 // TestIssueMachineToken_StoresCIDRs verifies that allowed_cidrs are JSON-encoded
 // into the stored credential when a non-empty slice is supplied.
 func TestIssueMachineToken_StoresCIDRs(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	fixed := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 
@@ -50,6 +51,7 @@ func TestIssueMachineToken_StoresCIDRs(t *testing.T) {
 // TestIssueMachineToken_NilCIDRsOmitted verifies that no AllowedCIDRs JSON is
 // written when the caller passes nil (most existing callers).
 func TestIssueMachineToken_NilCIDRsOmitted(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	fixed := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 
@@ -83,6 +85,7 @@ func TestIssueMachineToken_NilCIDRsOmitted(t *testing.T) {
 // TestValidateMachineToken_ReturnsCIDRRestriction verifies that a credential
 // with AllowedCIDRs in JSON returns a non-nil MachineTokenRestriction.
 func TestValidateMachineToken_ReturnsCIDRRestriction(t *testing.T) {
+	t.Parallel()
 	raw := "kx_machine_cidr_test"
 	hash := sha256Hex(raw)
 	fixed := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
@@ -110,6 +113,7 @@ func TestValidateMachineToken_ReturnsCIDRRestriction(t *testing.T) {
 
 // TestMachineRestrictionFrom covers the machineRestrictionFrom helper directly.
 func TestMachineRestrictionFrom(t *testing.T) {
+	t.Parallel()
 	t.Run("empty AllowedCIDRs returns nil", func(t *testing.T) {
 		cred := &models.MachineIdentityCredential{}
 		assert.Nil(t, machineRestrictionFrom(cred))

@@ -19,6 +19,7 @@ import (
 )
 
 func TestConnectorHasAnyDelegationForActor_ListGrantsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListConnectRefGrantsByConnector", mock.Anything, "db-prod").Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -28,6 +29,7 @@ func TestConnectorHasAnyDelegationForActor_ListGrantsError(t *testing.T) {
 }
 
 func TestConnectorHasAnyDelegationForActor_NoGrants(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListConnectRefGrantsByConnector", mock.Anything, "db-prod").Return([]*models.ConnectRefGrant{}, nil)
 	c := NewKeyorixCore(ms)
@@ -38,6 +40,7 @@ func TestConnectorHasAnyDelegationForActor_NoGrants(t *testing.T) {
 }
 
 func TestConnectorHasAnyDelegationForActor_ActorRoleIDsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListConnectRefGrantsByConnector", mock.Anything, "db-prod").Return(
 		[]*models.ConnectRefGrant{{ID: 1, RoleID: 5, Connector: "db-prod"}}, nil)
@@ -49,6 +52,7 @@ func TestConnectorHasAnyDelegationForActor_ActorRoleIDsError(t *testing.T) {
 }
 
 func TestConnectorHasAnyDelegationForActor_MatchingActiveGrant_True(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListConnectRefGrantsByConnector", mock.Anything, "db-prod").Return(
 		[]*models.ConnectRefGrant{{ID: 1, RoleID: 5, Connector: "db-prod", RefPrefix: ""}}, nil)
@@ -60,6 +64,7 @@ func TestConnectorHasAnyDelegationForActor_MatchingActiveGrant_True(t *testing.T
 }
 
 func TestConnectorHasAnyDelegationForActor_RoleMismatch_False(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListConnectRefGrantsByConnector", mock.Anything, "db-prod").Return(
 		[]*models.ConnectRefGrant{{ID: 1, RoleID: 5, Connector: "db-prod", RefPrefix: ""}}, nil)
@@ -71,6 +76,7 @@ func TestConnectorHasAnyDelegationForActor_RoleMismatch_False(t *testing.T) {
 }
 
 func TestConnectorHasAnyDelegationForActor_ExpiredGrant_False(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	past := time.Now().Add(-time.Hour)
 	ms.On("ListConnectRefGrantsByConnector", mock.Anything, "db-prod").Return(

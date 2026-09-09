@@ -18,6 +18,7 @@ import (
 // Group CRUD must be audited (create/update/delete), like other governance
 // mutations — previously these wrote nothing on the API/CLI path.
 func TestGroupCRUDAudit(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))
@@ -69,6 +70,7 @@ func TestGroupCRUDAudit(t *testing.T) {
 // role the group holds — so it must land in the RBAC audit trail (#233), the same
 // as a direct /user-roles grant.
 func TestGroupMembershipAudit(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))
@@ -119,6 +121,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 
 // A CLI invocation (actorID 0) still audits, with no actor recorded.
 func TestGroupCreateAudit_UnauthenticatedActor(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))

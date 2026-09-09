@@ -72,6 +72,7 @@ func seedFolder(t *testing.T, db *gorm.DB, projectID, envID uint) *models.Secret
 // TestCreateSecret_ParentID_SetsParent verifies that a valid folder ParentID is
 // persisted on the created secret node.
 func TestCreateSecret_ParentID_SetsParent(t *testing.T) {
+	t.Parallel()
 	c, db := newFolderCoreDB(t)
 	folder := seedFolder(t, db, 1, 10)
 
@@ -96,6 +97,7 @@ func TestCreateSecret_ParentID_SetsParent(t *testing.T) {
 // ADR-030) alone loses which machine did it; OwnerMachineIdentityID must
 // carry it through to the persisted row.
 func TestCreateSecret_RecordsActingMachineIdentity(t *testing.T) {
+	t.Parallel()
 	c, _ := newFolderCoreDB(t)
 
 	req := &CreateSecretRequest{
@@ -117,6 +119,7 @@ func TestCreateSecret_RecordsActingMachineIdentity(t *testing.T) {
 // TestCreateSecret_ParentID_NotAFolder verifies that using a real secret as the
 // parent is rejected with a validation error.
 func TestCreateSecret_ParentID_NotAFolder(t *testing.T) {
+	t.Parallel()
 	c, _ := newFolderCoreDB(t)
 
 	// Create a real secret first.
@@ -148,6 +151,7 @@ func TestCreateSecret_ParentID_NotAFolder(t *testing.T) {
 // TestCreateSecret_ParentID_NonExistent verifies that a non-existent parent ID
 // is rejected with a validation error.
 func TestCreateSecret_ParentID_NonExistent(t *testing.T) {
+	t.Parallel()
 	c, _ := newFolderCoreDB(t)
 	nonExistent := uint(99999)
 
@@ -168,6 +172,7 @@ func TestCreateSecret_ParentID_NonExistent(t *testing.T) {
 // TestCreateSecret_ParentID_CrossProject verifies that a folder in a different
 // project/environment cannot be used as a parent.
 func TestCreateSecret_ParentID_CrossProject(t *testing.T) {
+	t.Parallel()
 	c, db := newFolderCoreDB(t)
 	// Folder lives in project 2 / env 20.
 	otherFolder := seedFolder(t, db, 2, 20)
@@ -189,6 +194,7 @@ func TestCreateSecret_ParentID_CrossProject(t *testing.T) {
 // TestCreateSecret_ParentID_Zero verifies that ParentID=0 is treated as "no parent"
 // (root level) and succeeds without validation errors.
 func TestCreateSecret_ParentID_Zero(t *testing.T) {
+	t.Parallel()
 	c, _ := newFolderCoreDB(t)
 	zero := uint(0)
 

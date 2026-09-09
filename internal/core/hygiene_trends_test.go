@@ -31,6 +31,7 @@ func setupComputeCalls(store *MockStorage, ctx context.Context, stalePATs, expir
 // --- GetHygieneTrends ---
 
 func TestGetHygieneTrends_ValidDaysAccepted(t *testing.T) {
+	t.Parallel()
 	for _, days := range []int{30, 60, 90} {
 		store := new(MockStorage)
 		c := newHygieneCore(store)
@@ -49,6 +50,7 @@ func TestGetHygieneTrends_ValidDaysAccepted(t *testing.T) {
 }
 
 func TestGetHygieneTrends_InvalidDaysDefaultsTo30(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newHygieneCore(store)
 	ctx := context.Background()
@@ -66,6 +68,7 @@ func TestGetHygieneTrends_InvalidDaysDefaultsTo30(t *testing.T) {
 }
 
 func TestGetHygieneTrends_TodayPointPopulatedFromLiveState(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newHygieneCore(store)
 	ctx := context.Background()
@@ -88,6 +91,7 @@ func TestGetHygieneTrends_TodayPointPopulatedFromLiveState(t *testing.T) {
 }
 
 func TestGetHygieneTrends_HistoricalPointsAppended(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newHygieneCore(store)
 	ctx := context.Background()
@@ -112,6 +116,7 @@ func TestGetHygieneTrends_HistoricalPointsAppended(t *testing.T) {
 }
 
 func TestGetHygieneTrends_TodaySnapshotExcluded(t *testing.T) {
+	t.Parallel()
 	// A stored snapshot whose SnapshotDate equals today must be dropped — the
 	// live computation already provides today's point.
 	store := new(MockStorage)
@@ -138,6 +143,7 @@ func TestGetHygieneTrends_TodaySnapshotExcluded(t *testing.T) {
 }
 
 func TestGetHygieneTrends_CountStalePATsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newHygieneCore(store)
 	ctx := context.Background()
@@ -150,6 +156,7 @@ func TestGetHygieneTrends_CountStalePATsError(t *testing.T) {
 }
 
 func TestGetHygieneTrends_ListSnapshotsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newHygieneCore(store)
 	ctx := context.Background()
@@ -167,6 +174,7 @@ func TestGetHygieneTrends_ListSnapshotsError(t *testing.T) {
 // --- RecordHygieneTrendPoint ---
 
 func TestRecordHygieneTrendPoint_PersistsSnapshot(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newHygieneCore(store)
 	ctx := context.Background()
@@ -198,6 +206,7 @@ func TestRecordHygieneTrendPoint_PersistsSnapshot(t *testing.T) {
 }
 
 func TestRecordHygieneTrendPoint_PropagatesSaveError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newHygieneCore(store)
 	ctx := context.Background()
@@ -214,6 +223,7 @@ func TestRecordHygieneTrendPoint_PropagatesSaveError(t *testing.T) {
 }
 
 func TestTruncateToDay_ReturnsUTCMidnight(t *testing.T) {
+	t.Parallel()
 	ts := time.Date(2026, 3, 15, 17, 45, 59, 999, time.UTC)
 	got := truncateToDay(ts)
 	assert.Equal(t, time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC), got)

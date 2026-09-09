@@ -22,6 +22,7 @@ import (
 // even after PR #1695 closed the identical shape for DeleteSoDPolicy -- the fix
 // was never swept to this sibling site.
 func TestRevokeRiskException_NonAdmin_NonExistentAndNonOwned_IdenticalDenial(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.RiskException{}, &models.AuditEvent{}))
@@ -56,6 +57,7 @@ func TestRevokeRiskException_NonAdmin_NonExistentAndNonOwned_IdenticalDenial(t *
 // ErrRiskExceptionNotFoundPublic for a nonexistent id rather than the generic
 // denial a non-admin caller gets. Mirrors TestDeleteSoDPolicy_AdminTier_NonExistentGetsRealNotFound.
 func TestRevokeRiskException_AdminTier_NonExistentGetsRealNotFound(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.RiskException{}, &models.AuditEvent{}))

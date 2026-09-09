@@ -15,6 +15,7 @@ import (
 // / ok against the policy interval + alert window, including healthy secrets
 // (which EvaluateRotationPolicies omits).
 func TestGetRotationStatus_Classification(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	daysAgo := func(d int) *time.Time {
 		t := fixed.Add(-time.Duration(d) * 24 * time.Hour)
@@ -76,6 +77,7 @@ func TestGetRotationStatus_Classification(t *testing.T) {
 // for a DIFFERENT environment is skipped entirely — so an environment-scoped reader
 // can't see another environment's rotation posture.
 func TestGetRotationStatus_ConfinedToEnvironment(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	projectID := uint(1)

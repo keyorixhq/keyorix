@@ -30,6 +30,7 @@ func newSCIMStateCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // active=true for every active user, so without a distinct deprovisioned state that
 // sync would silently undo an incident-response lockout.
 func TestUpdateSCIMUser_AdminSuspensionSurvivesReactivation(t *testing.T) {
+	t.Parallel()
 	c, _ := newSCIMStateCore(t)
 	ctx := context.Background()
 	yes := true
@@ -45,6 +46,7 @@ func TestUpdateSCIMUser_AdminSuspensionSurvivesReactivation(t *testing.T) {
 // The legitimate SCIM lifecycle still works: deactivation blocks login (deprovisioned),
 // and a later reactivation restores access.
 func TestUpdateSCIMUser_DeactivateThenReactivate(t *testing.T) {
+	t.Parallel()
 	c, _ := newSCIMStateCore(t)
 	ctx := context.Background()
 	yes, no := true, false
@@ -68,6 +70,7 @@ func TestUpdateSCIMUser_DeactivateThenReactivate(t *testing.T) {
 // to active, the forced reset would be silently lifted (the same class as the
 // admin-suspension case, for the other sticky admin state).
 func TestUpdateSCIMUser_ForcedResetSurvivesDeactivateReactivate(t *testing.T) {
+	t.Parallel()
 	c, _ := newSCIMStateCore(t)
 	ctx := context.Background()
 	yes, no := true, false
@@ -88,6 +91,7 @@ func TestUpdateSCIMUser_ForcedResetSurvivesDeactivateReactivate(t *testing.T) {
 // Deactivating an already admin-suspended user must not downgrade the suspension to a
 // deprovisioned state (which a later reactivation could then clear).
 func TestUpdateSCIMUser_DeactivateKeepsAdminSuspension(t *testing.T) {
+	t.Parallel()
 	c, _ := newSCIMStateCore(t)
 	ctx := context.Background()
 	yes, no := true, false

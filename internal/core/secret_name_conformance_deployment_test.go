@@ -17,6 +17,7 @@ import (
 )
 
 func TestDeploymentSecretNameConformance(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -97,6 +98,7 @@ func TestDeploymentSecretNameConformance(t *testing.T) {
 // COUNT assertion (attachTotalQueryCounter, defined in deployment_hygiene_test.go),
 // not a timing one, so it can't flake under load.
 func TestDeploymentSecretNameConformance_QueryCostDoesNotScaleWithProjectCount(t *testing.T) {
+	t.Parallel()
 	runWithNProjects := func(n int) int {
 		require.NoError(t, i18n.InitializeForTesting())
 		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

@@ -21,6 +21,7 @@ import (
 // SetProjectMemberRole's OWN upfront guardLastProjectAdmin call (using the
 // true before/after state) had already confirmed it does not.
 func TestSetProjectMemberRole_SoleAdminSwapBetweenTwoAdminRolesAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)

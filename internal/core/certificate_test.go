@@ -68,6 +68,7 @@ func caCertPEM(t *testing.T, cn string, notAfter time.Time) []byte {
 // defeated by chain ordering or a corrupt leading block: parseLeafCertificate always
 // surfaces the soonest-expiring end-entity (non-CA) leaf regardless of position.
 func TestParseLeafCertificate_OrderIndependent(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	leafPEM, _ := selfSignedPEM(t, "leaf.example.com", base.Add(30*24*time.Hour)) // short-lived leaf
 	caPEM := caCertPEM(t, "Root CA", base.Add(3650*24*time.Hour))                 // long-lived CA
@@ -127,6 +128,7 @@ func mkCertSecret(t *testing.T, db *gorm.DB, id uint, name, status string, value
 // real leaf exhausts the budget before ever reaching it, so the leaf is not
 // found. One fewer padding block and it IS found — proving the bound is exact.
 func TestParseLeafCertificate_AttemptBound(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	leafPEM, _ := selfSignedPEM(t, "leaf.example.com", base.Add(30*24*time.Hour))
 	padding := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("dummy-key-bytes-not-a-real-key")})
@@ -154,6 +156,7 @@ func TestParseLeafCertificate_AttemptBound(t *testing.T) {
 }
 
 func TestInspectCertificate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -181,6 +184,7 @@ func TestInspectCertificate(t *testing.T) {
 // against the leaf's OWN public key) must correctly report SelfSigned:false, where the
 // old string comparison would have wrongly reported true.
 func TestInspectCertificateCAIssuedWithMatchingSubjectIssuerString(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -232,6 +236,7 @@ func TestInspectCertificateCAIssuedWithMatchingSubjectIssuerString(t *testing.T)
 }
 
 func TestInspectCertificateExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -247,6 +252,7 @@ func TestInspectCertificateExpired(t *testing.T) {
 // A value that bundles the cert AND its private key (the common TLS layout) still
 // parses to the cert, and the response never carries the key.
 func TestInspectCertificateWithBundledKey(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -261,6 +267,7 @@ func TestInspectCertificateWithBundledKey(t *testing.T) {
 }
 
 func TestInspectCertificateNotACert(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -272,6 +279,7 @@ func TestInspectCertificateNotACert(t *testing.T) {
 }
 
 func TestInspectCertificateSuspended(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -293,6 +301,7 @@ func TestInspectCertificateSuspended(t *testing.T) {
 // proves both directions: a non-owner/non-shared actor is now refused, and a share
 // recipient still succeeds — no regression for the legitimate path.
 func TestInspectCertificateEnforcesPerSecretPermission(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

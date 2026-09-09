@@ -11,6 +11,7 @@ import (
 // -- parseDSNHost -------------------------------------------------------------
 
 func TestParseDSNHost_URLForms(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		dsn  string
 		want string
@@ -31,6 +32,7 @@ func TestParseDSNHost_URLForms(t *testing.T) {
 }
 
 func TestParseDSNHost_PostgresKeyValue(t *testing.T) {
+	t.Parallel()
 	dsn := "host=db.internal port=5432 user=admin dbname=app sslmode=require"
 	assert.Equal(t, "db.internal", parseDSNHost(dsn))
 
@@ -39,6 +41,7 @@ func TestParseDSNHost_PostgresKeyValue(t *testing.T) {
 }
 
 func TestParseDSNHost_MySQLTCPWrapper(t *testing.T) {
+	t.Parallel()
 	dsn := "admin:pass@tcp(db.internal:3306)/app"
 	assert.Equal(t, "db.internal", parseDSNHost(dsn))
 
@@ -50,11 +53,13 @@ func TestParseDSNHost_MySQLTCPWrapper(t *testing.T) {
 }
 
 func TestParseDSNHost_UnrecognisedReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "", parseDSNHost(""))
 	assert.Equal(t, "", parseDSNHost("not-a-dsn"))
 }
 
 func TestParseDSNHost_KubernetesJSONConfig(t *testing.T) {
+	t.Parallel()
 	dsn := `{"api_server":"https://k8s.internal:6443","token":"tok","ca_cert":"cert"}`
 	assert.Equal(t, "k8s.internal", parseDSNHost(dsn))
 
@@ -70,6 +75,7 @@ func TestParseDSNHost_KubernetesJSONConfig(t *testing.T) {
 // -- validateAdminDSNHost -----------------------------------------------------
 
 func TestValidateAdminDSNHost_PrivateLiteralIPRejected(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		desc string
 		dsn  string
@@ -100,6 +106,7 @@ func TestValidateAdminDSNHost_PrivateLiteralIPRejected(t *testing.T) {
 // on a zone-qualified address and would otherwise land in the "unresolvable, skip"
 // branch, silently bypassing the fe80::/10 blocklist entry.
 func TestValidateAdminDSNHost_ZoneQualifiedLinkLocalRejected(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		desc string
 		dsn  string
@@ -117,11 +124,13 @@ func TestValidateAdminDSNHost_ZoneQualifiedLinkLocalRejected(t *testing.T) {
 }
 
 func TestValidateAdminDSNHost_PublicIPAllowed(t *testing.T) {
+	t.Parallel()
 	dsn := "postgres://admin:pass@203.0.113.5:5432/app" // TEST-NET, globally routable
 	require.NoError(t, validateAdminDSNHost(dsn))
 }
 
 func TestValidateAdminDSNHost_UnresolvableHostAllowed(t *testing.T) {
+	t.Parallel()
 	// A hostname that can't be DNS-resolved at register time — fail-open so that
 	// private-segment targets (reachable from Keyorix but not from DNS resolvers
 	// it happens to use at startup) aren't locked out without AllowPrivateNetworkTargets.
@@ -130,6 +139,7 @@ func TestValidateAdminDSNHost_UnresolvableHostAllowed(t *testing.T) {
 }
 
 func TestValidateAdminDSNHost_UnrecognisedDSNAllowed(t *testing.T) {
+	t.Parallel()
 	// Unrecognised DSN format → host extraction fails → skip check (can't validate).
 	require.NoError(t, validateAdminDSNHost("not-a-dsn"))
 }
@@ -137,6 +147,7 @@ func TestValidateAdminDSNHost_UnrecognisedDSNAllowed(t *testing.T) {
 // -- CreateDynamicSecretConfig SSRF guard integration -------------------------
 
 func TestDynamicSecrets_CreateConfig_SSRFGuardRejectsPrivateIP(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 
@@ -155,6 +166,7 @@ func TestDynamicSecrets_CreateConfig_SSRFGuardRejectsPrivateIP(t *testing.T) {
 }
 
 func TestDynamicSecrets_CreateConfig_SSRFGuardBypassed(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	// Opt in to allow private targets — the private IP must now be accepted.
@@ -174,6 +186,7 @@ func TestDynamicSecrets_CreateConfig_SSRFGuardBypassed(t *testing.T) {
 }
 
 func TestDynamicSecrets_CreateConfig_SSRFGuardRejectsKubernetesPrivateAPIServer(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 
@@ -198,6 +211,7 @@ func TestDynamicSecrets_CreateConfig_SSRFGuardRejectsKubernetesPrivateAPIServer(
 }
 
 func TestDynamicSecrets_CreateConfig_SSRFGuardLinkLocal(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 

@@ -12,6 +12,7 @@ import (
 )
 
 func TestSecretOwnedBy(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		owner uint
@@ -35,6 +36,7 @@ func TestSecretOwnedBy(t *testing.T) {
 // the OwnerID=0 gap: a machine actor (id 0) must NOT be treated as the owner of an
 // ownerless (machine-created) secret, so it cannot revoke shares on it.
 func TestRevokeShare_MachineCannotManageOwnerlessSecret(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{storage: mockStorage}
 	ctx := context.Background()
@@ -55,6 +57,7 @@ func TestRevokeShare_MachineCannotManageOwnerlessSecret(t *testing.T) {
 // TestShareSecret_OwnerlessSecretNotShareable confirms an ownerless secret can't be
 // shared via the owner gate even by a non-zero caller (defence in depth).
 func TestShareSecret_OwnerlessSecretNotShareable(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{storage: mockStorage}
 	ctx := context.Background()

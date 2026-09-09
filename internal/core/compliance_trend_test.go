@@ -41,6 +41,7 @@ func complianceTrendCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // TestGetCompliancePosture_TrendNoData verifies that the first call with no prior
 // snapshot returns a Trend with Direction "no_data".
 func TestGetCompliancePosture_TrendNoData(t *testing.T) {
+	t.Parallel()
 	c, _ := complianceTrendCore(t)
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -56,6 +57,7 @@ func TestGetCompliancePosture_TrendNoData(t *testing.T) {
 // TestGetCompliancePosture_TrendImproving verifies that when the previous snapshot
 // had fewer passed controls than the current one, Direction = "improving".
 func TestGetCompliancePosture_TrendImproving(t *testing.T) {
+	t.Parallel()
 	c, db := complianceTrendCore(t)
 	ctx := context.Background()
 
@@ -85,6 +87,7 @@ func TestGetCompliancePosture_TrendImproving(t *testing.T) {
 // TestGetCompliancePosture_TrendStable verifies that when the passed-control and
 // failed-control counts are identical to the prior snapshot, Direction = "stable".
 func TestGetCompliancePosture_TrendStable(t *testing.T) {
+	t.Parallel()
 	c, db := complianceTrendCore(t)
 	ctx := context.Background()
 
@@ -129,6 +132,7 @@ func TestGetCompliancePosture_TrendStable(t *testing.T) {
 // (passedDelta < 0 || failedDelta > 0) of computeComplianceTrend directly,
 // using a seeded previous snapshot with more passed controls than the current one.
 func TestComputeComplianceTrend_Regressing(t *testing.T) {
+	t.Parallel()
 	c, db := complianceTrendCore(t)
 	ctx := context.Background()
 
@@ -167,6 +171,7 @@ func TestComputeComplianceTrend_Regressing(t *testing.T) {
 // passedDelta is zero but failedDelta > 0 (more controls failing with the same
 // passed count — still a regression).
 func TestComputeComplianceTrend_RegressingOnFailedDelta(t *testing.T) {
+	t.Parallel()
 	c, db := complianceTrendCore(t)
 	ctx := context.Background()
 
@@ -199,6 +204,7 @@ func TestComputeComplianceTrend_RegressingOnFailedDelta(t *testing.T) {
 // GetPreviousCompliancePostureSnapshot returns an error, computeComplianceTrend
 // returns a "no_data" trend rather than propagating the error.
 func TestComputeComplianceTrend_ErrorPathReturnsNoData(t *testing.T) {
+	t.Parallel()
 	c, db := complianceTrendCore(t)
 	ctx := context.Background()
 
@@ -231,6 +237,7 @@ func TestComputeComplianceTrend_ErrorPathReturnsNoData(t *testing.T) {
 // correctly increments DegradedControls rather than counting those controls as passed
 // or failed.
 func TestBuildCompliancePostureSnapshot_DegradedControlsCounter(t *testing.T) {
+	t.Parallel()
 	// Construct a posture with a degraded identity sub-rollup. "identity" is the
 	// DegradedArea prefix checked by the second-factor control in EvaluateControls,
 	// so that control will evaluate to ControlStatusUnknown.
@@ -270,6 +277,7 @@ func (s *failingListProjectsStore) ListProjects(_ context.Context) ([]*models.Pr
 // buildComplianceSnapshot error path.  All normal test helpers keep the DB alive so
 // ListProjects always succeeds; this test injects a store that always fails it.
 func TestGetCompliancePosture_ReturnsErrorWhenListProjectsFails(t *testing.T) {
+	t.Parallel()
 	c, db := complianceTrendCore(t)
 	// Replace the storage with a wrapper that fails ListProjects.
 	c.storage = &failingListProjectsStore{LocalStorage: c.storage.(*store.LocalStorage)}

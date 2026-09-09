@@ -47,6 +47,7 @@ import (
 // write (UpdateLoginLockoutState) is a plain, unconditional `WHERE id = ?`
 // update with no compare-and-swap guard.
 func TestConcurrency_RecordFailedLogin_MultiInstancePostgres_NoLostUpdates(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)
@@ -103,6 +104,7 @@ func TestConcurrency_RecordFailedLogin_MultiInstancePostgres_NoLostUpdates(t *te
 // store couldn't import due to the core->store dependency direction) — calling
 // production directly means the REAL canTransitionMachine gate runs.
 func TestConcurrency_TransitionMachineIdentity_MultiInstancePostgres_RevokedIsTerminal(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)

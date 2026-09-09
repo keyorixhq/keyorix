@@ -91,6 +91,7 @@ func bulkRotateDB(t *testing.T) (*KeyorixCore, func(name, classification string,
 }
 
 func TestBulkRotateSecrets_ByIDs(t *testing.T) {
+	t.Parallel()
 	c, mk := bulkRotateDB(t)
 	ctx := context.Background()
 
@@ -125,6 +126,7 @@ func TestBulkRotateSecrets_ByIDs(t *testing.T) {
 }
 
 func TestBulkRotateSecrets_ByProject(t *testing.T) {
+	t.Parallel()
 	c, mk := bulkRotateDB(t)
 	ctx := context.Background()
 
@@ -151,6 +153,7 @@ func TestBulkRotateSecrets_ByProject(t *testing.T) {
 }
 
 func TestBulkRotateSecrets_ByClassification(t *testing.T) {
+	t.Parallel()
 	c, mk := bulkRotateDB(t)
 	ctx := context.Background()
 
@@ -177,6 +180,7 @@ func TestBulkRotateSecrets_ByClassification(t *testing.T) {
 }
 
 func TestBulkRotateSecrets_SkipsNoConfig(t *testing.T) {
+	t.Parallel()
 	c, mk := bulkRotateDB(t)
 	ctx := context.Background()
 
@@ -206,6 +210,7 @@ func TestBulkRotateSecrets_SkipsNoConfig(t *testing.T) {
 }
 
 func TestBulkRotateSecrets_PartialFailure(t *testing.T) {
+	t.Parallel()
 	c, mk := bulkRotateDB(t)
 	ctx := context.Background()
 
@@ -252,6 +257,7 @@ func TestBulkRotateSecrets_PartialFailure(t *testing.T) {
 
 // TestBulkRotateSecrets_MissingProjectID covers the ProjectID == 0 early-return (line 71-73).
 func TestBulkRotateSecrets_MissingProjectID(t *testing.T) {
+	t.Parallel()
 	c, _ := bulkRotateDB(t)
 	ctx := context.Background()
 
@@ -266,6 +272,7 @@ func TestBulkRotateSecrets_MissingProjectID(t *testing.T) {
 
 // TestBulkRotateSecrets_DefaultRotatedBy covers the default RotatedBy assignment (line 74-76).
 func TestBulkRotateSecrets_DefaultRotatedBy(t *testing.T) {
+	t.Parallel()
 	c, mk := bulkRotateDB(t)
 	ctx := context.Background()
 
@@ -288,6 +295,7 @@ func TestBulkRotateSecrets_DefaultRotatedBy(t *testing.T) {
 // TestBulkRotateSecrets_GetSecretsByIDsError covers the storage error on GetSecretsByIDs
 // (line 86-88) using a mock storage.
 func TestBulkRotateSecrets_GetSecretsByIDsError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
@@ -309,6 +317,7 @@ func TestBulkRotateSecrets_GetSecretsByIDsError(t *testing.T) {
 // TestBulkRotateSecrets_CrossProjectGuard covers the case where a requested secret belongs
 // to a different project than the one in the request (line 107-113).
 func TestBulkRotateSecrets_CrossProjectGuard(t *testing.T) {
+	t.Parallel()
 	c, ls := bulkRotateDBRaw(t)
 	ctx := context.Background()
 
@@ -363,6 +372,7 @@ func TestBulkRotateSecrets_CrossProjectGuard(t *testing.T) {
 
 // TestBulkRotateSecrets_FolderNodeSkipped covers the IsSecret == false guard (line 115-121).
 func TestBulkRotateSecrets_FolderNodeSkipped(t *testing.T) {
+	t.Parallel()
 	c, ls := bulkRotateDBRaw(t)
 	ctx := context.Background()
 
@@ -412,6 +422,7 @@ func TestBulkRotateSecrets_FolderNodeSkipped(t *testing.T) {
 // TestBulkRotateSecrets_ListSecretsError covers the ListSecrets storage error (line 160-162)
 // using a mock storage.
 func TestBulkRotateSecrets_ListSecretsError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
@@ -431,6 +442,7 @@ func TestBulkRotateSecrets_ListSecretsError(t *testing.T) {
 
 // TestBulkRotateSecrets_ByEnvID covers the EnvID filter branch (line 150-152).
 func TestBulkRotateSecrets_ByEnvID(t *testing.T) {
+	t.Parallel()
 	c, ls := bulkRotateDBRaw(t)
 	ctx := context.Background()
 
@@ -477,6 +489,7 @@ func TestBulkRotateSecrets_ByEnvID(t *testing.T) {
 // TestBulkRotateSecrets_RotateOnDemandError covers bulkRotateOne when RotateSecretOnDemand
 // fails (line 191-197): the secret is reported in Failed but the operation continues.
 func TestBulkRotateSecrets_RotateOnDemandError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
@@ -513,6 +526,7 @@ func TestBulkRotateSecrets_RotateOnDemandError(t *testing.T) {
 // fails (lines 184-190 and 131-135 of bulk_rotate.go). We substitute bulkValueGen with a
 // stub that returns an error to simulate a crypto/rand failure.
 func TestBulkRotateSecrets_ValueGenError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
@@ -551,6 +565,7 @@ func TestBulkRotateSecrets_ValueGenError(t *testing.T) {
 // TestBulkRotateSecrets_ProjectWideRotateOnDemandError covers bulkRotateOne failure
 // in the project-wide path (no SecretIDs provided).
 func TestBulkRotateSecrets_ProjectWideRotateOnDemandError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}

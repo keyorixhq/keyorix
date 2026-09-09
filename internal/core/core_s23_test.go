@@ -37,6 +37,7 @@ func auditCore(t *testing.T) (*MockStorage, *KeyorixCore) {
 // ── audit.go — role-definition events ────────────────────────────────────────
 
 func TestLogRoleCreated(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogRoleCreated(context.Background(), 1, 42, "editor")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -45,6 +46,7 @@ func TestLogRoleCreated(t *testing.T) {
 }
 
 func TestLogRoleUpdated(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogRoleUpdated(context.Background(), 2, 7, "reviewer")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -53,6 +55,7 @@ func TestLogRoleUpdated(t *testing.T) {
 }
 
 func TestLogRoleDeleted(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogRoleDeleted(context.Background(), 3, 9, "old-role")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -63,6 +66,7 @@ func TestLogRoleDeleted(t *testing.T) {
 // logRoleDefinitionChange is exercised through the three callers above.
 // A test with actorID==0 exercises the nil-actor branch in writeRBACAudit.
 func TestLogRoleCreated_ZeroActorID(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogRoleCreated(context.Background(), 0, 5, "viewer")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -74,6 +78,7 @@ func TestLogRoleCreated_ZeroActorID(t *testing.T) {
 // ── audit.go — secret audit events ───────────────────────────────────────────
 
 func TestLogSecretRead(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogSecretRead(context.Background(), 1, 10, "alice", "db-password", "1.2.3.4", "curl")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -85,6 +90,7 @@ func TestLogSecretRead(t *testing.T) {
 }
 
 func TestLogSecretCreated(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogSecretCreated(context.Background(), 1, 11, "alice", "new-secret", "1.2.3.4", "go-client")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -96,6 +102,7 @@ func TestLogSecretCreated(t *testing.T) {
 }
 
 func TestLogSecretUpdated(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogSecretUpdated(context.Background(), 1, 12, "alice", "some-secret", "1.2.3.4", "ua")
 	ms.AssertCalled(t, "CreateSecretAccessLog", mock.Anything, mock.MatchedBy(func(l *models.SecretAccessLog) bool {
@@ -104,6 +111,7 @@ func TestLogSecretUpdated(t *testing.T) {
 }
 
 func TestLogSecretRotated(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogSecretRotated(context.Background(), 1, 13, "alice", "api-key", "127.0.0.1", "ua")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -115,6 +123,7 @@ func TestLogSecretRotated(t *testing.T) {
 }
 
 func TestLogSecretRotatedWithProject(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogSecretRotatedWithProject(context.Background(), 1, 14, 99, "alice", "key", "1.2.3.4", "ua")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -123,6 +132,7 @@ func TestLogSecretRotatedWithProject(t *testing.T) {
 }
 
 func TestLogSecretDeleted(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogSecretDeleted(context.Background(), 1, 15, "alice", "old-key", "1.2.3.4", "ua")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -134,6 +144,7 @@ func TestLogSecretDeleted(t *testing.T) {
 }
 
 func TestLogSecretDeletedWithProject(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogSecretDeletedWithProject(context.Background(), 1, 16, 100, "alice", "key", "1.2.3.4", "ua")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -144,6 +155,7 @@ func TestLogSecretDeletedWithProject(t *testing.T) {
 // ── audit.go — auth events ────────────────────────────────────────────────────
 
 func TestLogAuthLogin(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogAuthLogin(context.Background(), 5, "bob", "10.0.0.1", "Firefox")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -152,6 +164,7 @@ func TestLogAuthLogin(t *testing.T) {
 }
 
 func TestLogAuthFailure(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogAuthFailure(context.Background(), "eve", "192.168.1.1")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -160,6 +173,7 @@ func TestLogAuthFailure(t *testing.T) {
 }
 
 func TestLogAuthLogout(t *testing.T) {
+	t.Parallel()
 	ms, c := auditCore(t)
 	c.LogAuthLogout(context.Background(), 5, "bob", "10.0.0.1", "Firefox")
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -170,6 +184,7 @@ func TestLogAuthLogout(t *testing.T) {
 // ── audit.go — LookupSessionUser ─────────────────────────────────────────────
 
 func TestLookupSessionUser_SessionNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSession", mock.Anything, "bad").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -179,6 +194,7 @@ func TestLookupSessionUser_SessionNotFound(t *testing.T) {
 }
 
 func TestLookupSessionUser_UserNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSession", mock.Anything, "tok").Return(&models.Session{ID: 1, UserID: 7}, nil)
 	ms.On("GetUser", mock.Anything, uint(7)).Return(nil, errors.New("not found"))
@@ -189,6 +205,7 @@ func TestLookupSessionUser_UserNotFound(t *testing.T) {
 }
 
 func TestLookupSessionUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSession", mock.Anything, "tok").Return(&models.Session{ID: 1, UserID: 7}, nil)
 	ms.On("GetUser", mock.Anything, uint(7)).Return(&models.User{ID: 7, Username: "carol"}, nil)
@@ -201,6 +218,7 @@ func TestLookupSessionUser_Success(t *testing.T) {
 // ── auth.go — Logout ──────────────────────────────────────────────────────────
 
 func TestLogout_SessionNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSession", mock.Anything, "unknown").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -210,6 +228,7 @@ func TestLogout_SessionNotFound(t *testing.T) {
 }
 
 func TestLogout_DeletesSession(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSession", mock.Anything, "valid-tok").Return(&models.Session{ID: 42, UserID: 1}, nil)
 	ms.On("DeleteSession", mock.Anything, uint(42)).Return(nil)
@@ -221,6 +240,7 @@ func TestLogout_DeletesSession(t *testing.T) {
 // ── auth.go — GetSessionForRemoteProxy ───────────────────────────────────────
 
 func TestGetSessionForRemoteProxy_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSession", mock.Anything, "bad-tok").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -229,6 +249,7 @@ func TestGetSessionForRemoteProxy_NotFound(t *testing.T) {
 }
 
 func TestGetSessionForRemoteProxy_Found(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	sess := &models.Session{ID: 10, UserID: 3, SessionToken: "good-tok"}
 	ms.On("GetSession", mock.Anything, "good-tok").Return(sess, nil)
@@ -241,6 +262,7 @@ func TestGetSessionForRemoteProxy_Found(t *testing.T) {
 // ── auth.go — DeleteSessionForRemoteProxy ────────────────────────────────────
 
 func TestDeleteSessionForRemoteProxy_DeleteFails(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// GetSessionByID may or may not be called; stub it to succeed in case it is.
 	ms.On("GetSessionByID", mock.Anything, uint(5)).Return(
@@ -252,6 +274,7 @@ func TestDeleteSessionForRemoteProxy_DeleteFails(t *testing.T) {
 }
 
 func TestDeleteSessionForRemoteProxy_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	sess := &models.Session{ID: 6, SessionToken: "live-tok", UserID: 1}
 	ms.On("GetSessionByID", mock.Anything, uint(6)).Return(sess, nil)
@@ -262,6 +285,7 @@ func TestDeleteSessionForRemoteProxy_Success(t *testing.T) {
 }
 
 func TestDeleteSessionForRemoteProxy_LookupFails_StillDeletes(t *testing.T) {
+	t.Parallel()
 	// If GetSessionByID fails we still call DeleteSession (delete wins).
 	ms := new(MockStorage)
 	ms.On("GetSessionByID", mock.Anything, uint(7)).Return(nil, errors.New("not found"))
@@ -273,6 +297,7 @@ func TestDeleteSessionForRemoteProxy_LookupFails_StillDeletes(t *testing.T) {
 // ── auth_bootstrap.go — IsBuiltinRole ────────────────────────────────────────
 
 func TestIsBuiltinRole_Builtins(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{
 		"admin", "editor", "viewer", "auditor", "super_admin",
 		"system_admin", "system_auditor", "system_viewer",
@@ -283,6 +308,7 @@ func TestIsBuiltinRole_Builtins(t *testing.T) {
 }
 
 func TestIsBuiltinRole_NonBuiltins(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"", "custom-role", "my_admin", "superadmin"} {
 		assert.False(t, IsBuiltinRole(name), "expected %q NOT to be a builtin", name)
 	}
@@ -291,6 +317,7 @@ func TestIsBuiltinRole_NonBuiltins(t *testing.T) {
 // ── auth_bootstrap.go — GenerateBootstrapToken ───────────────────────────────
 
 func TestGenerateBootstrapToken_Unique(t *testing.T) {
+	t.Parallel()
 	tok1, err1 := GenerateBootstrapToken()
 	tok2, err2 := GenerateBootstrapToken()
 	require.NoError(t, err1)
@@ -301,6 +328,7 @@ func TestGenerateBootstrapToken_Unique(t *testing.T) {
 }
 
 func TestGenerateBootstrapToken_MinLength(t *testing.T) {
+	t.Parallel()
 	tok, err := GenerateBootstrapToken()
 	require.NoError(t, err)
 	// hex-encoded 32 bytes = 64 chars; allow for base64/URL variants
@@ -310,6 +338,7 @@ func TestGenerateBootstrapToken_MinLength(t *testing.T) {
 // ── catalog.go — CreateProjectWithEnvs ───────────────────────────────────────
 
 func TestCreateProjectWithEnvs_EmptyName(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.CreateProjectWithEnvs(context.Background(), "", "desc", []string{"dev"})
@@ -318,6 +347,7 @@ func TestCreateProjectWithEnvs_EmptyName(t *testing.T) {
 }
 
 func TestCreateProjectWithEnvs_TooManyEnvs(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	envs := make([]string, maxEnvNamesPerCreate+1)
@@ -330,6 +360,7 @@ func TestCreateProjectWithEnvs_TooManyEnvs(t *testing.T) {
 }
 
 func TestCreateProjectWithEnvs_EmptyEnvName(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.CreateProjectWithEnvs(context.Background(), "myproject", "", []string{"dev", ""})
@@ -338,6 +369,7 @@ func TestCreateProjectWithEnvs_EmptyEnvName(t *testing.T) {
 }
 
 func TestCreateProjectWithEnvs_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// CreateProject returns the passed project; CreateEnvironment does too.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -348,6 +380,7 @@ func TestCreateProjectWithEnvs_Success(t *testing.T) {
 }
 
 func TestCreateProjectWithEnvs_EmptyEnvsList(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	proj, err := c.CreateProjectWithEnvs(context.Background(), "bare", "", nil)
@@ -358,12 +391,14 @@ func TestCreateProjectWithEnvs_EmptyEnvsList(t *testing.T) {
 // ── compliance_evidence.go — appendEvidenceRotations ─────────────────────────
 
 func TestAppendEvidenceRotations_Empty(t *testing.T) {
+	t.Parallel()
 	ev := &ComplianceEvidence{}
 	appendEvidenceRotations(ev, nil)
 	assert.Empty(t, ev.RotationOverdue)
 }
 
 func TestAppendEvidenceRotations_OnlyOverdue(t *testing.T) {
+	t.Parallel()
 	ev := &ComplianceEvidence{}
 	statuses := []*RotationStatusEntry{
 		{SecretID: 1, SecretName: "api-key", PolicyName: "30d", DaysOverdue: 5, Status: RotationStatusOverdue},
@@ -377,6 +412,7 @@ func TestAppendEvidenceRotations_OnlyOverdue(t *testing.T) {
 }
 
 func TestAppendEvidenceRotations_NoneOverdue(t *testing.T) {
+	t.Parallel()
 	ev := &ComplianceEvidence{}
 	statuses := []*RotationStatusEntry{
 		{SecretID: 1, Status: RotationStatusOK},
@@ -389,6 +425,7 @@ func TestAppendEvidenceRotations_NoneOverdue(t *testing.T) {
 // ── dashboard.go — mapAuditEventToActivity — remaining branches ──────────────
 
 func TestMapAuditEventToActivity_SecretCreated(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 10, EventType: "secret.created", Description: "User admin created secret my-api-key", EventTime: time.Now()}
 	item := mapAuditEventToActivity(e, "admin")
 	assert.Equal(t, "created", item.Type)
@@ -396,6 +433,7 @@ func TestMapAuditEventToActivity_SecretCreated(t *testing.T) {
 }
 
 func TestMapAuditEventToActivity_SecretUpdated(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 11, EventType: "secret.updated", Description: "User alice updated secret db-pass", EventTime: time.Now()}
 	item := mapAuditEventToActivity(e, "alice")
 	assert.Equal(t, "updated", item.Type)
@@ -403,12 +441,14 @@ func TestMapAuditEventToActivity_SecretUpdated(t *testing.T) {
 }
 
 func TestMapAuditEventToActivity_SecretDeleted(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 12, EventType: "secret.deleted", Description: "User alice deleted secret old-key", EventTime: time.Now()}
 	item := mapAuditEventToActivity(e, "alice")
 	assert.Equal(t, "deleted", item.Type)
 }
 
 func TestMapAuditEventToActivity_SecretRotated(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 13, EventType: "secret.rotated", Description: "User admin rotated secret cert", EventTime: time.Now()}
 	item := mapAuditEventToActivity(e, "admin")
 	assert.Equal(t, "rotated", item.Type)
@@ -416,18 +456,21 @@ func TestMapAuditEventToActivity_SecretRotated(t *testing.T) {
 }
 
 func TestMapAuditEventToActivity_SecretShared(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 14, EventType: "secret.shared", Description: "User admin shared secret my-secret", EventTime: time.Now()}
 	item := mapAuditEventToActivity(e, "admin")
 	assert.Equal(t, "shared", item.Type)
 }
 
 func TestMapAuditEventToActivity_ShareRevoked(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 15, EventType: "share.revoked", Description: "User admin revoked share for secret my-secret", EventTime: time.Now()}
 	item := mapAuditEventToActivity(e, "admin")
 	assert.Equal(t, "share_revoked", item.Type)
 }
 
 func TestMapAuditEventToActivity_AuthLogout(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 16, EventType: "auth.logout", Description: "User bob logged out"}
 	item := mapAuditEventToActivity(e, "bob")
 	assert.Equal(t, "logout", item.Type)
@@ -435,6 +478,7 @@ func TestMapAuditEventToActivity_AuthLogout(t *testing.T) {
 }
 
 func TestMapAuditEventToActivity_AuthPasswordReset(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 17, EventType: "auth.password_reset", Description: "password reset"}
 	item := mapAuditEventToActivity(e, "user")
 	assert.Equal(t, "password_reset", item.Type)
@@ -444,6 +488,7 @@ func TestMapAuditEventToActivity_AuthPasswordReset(t *testing.T) {
 // ── dynamic_secrets.go — ListDynamicSecretConfigs ────────────────────────────
 
 func TestListDynamicSecretConfigs_Delegated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// MockStorage stub returns (nil, nil).
@@ -455,6 +500,7 @@ func TestListDynamicSecretConfigs_Delegated(t *testing.T) {
 // ── dynamic_secrets.go — SetDynamicSecretConfigEnabled ───────────────────────
 
 func TestSetDynamicSecretConfigEnabled_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.SetDynamicSecretConfigEnabled(context.Background(), 1, 0, true)
@@ -470,6 +516,7 @@ func TestSetDynamicSecretConfigEnabled_ZeroID(t *testing.T) {
 // storage call is attempted.
 
 func TestSetDynamicSecretConfigEnabled_ZeroID_DisableCase(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.SetDynamicSecretConfigEnabled(context.Background(), 1, 0, false)
@@ -480,6 +527,7 @@ func TestSetDynamicSecretConfigEnabled_ZeroID_DisableCase(t *testing.T) {
 // ── dynamic_secrets.go — GetDynamicSecretLease ───────────────────────────────
 
 func TestGetDynamicSecretLease_Delegated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// MockStorage stub returns (nil, nil) for GetDynamicSecretLease.
 	c := NewKeyorixCore(ms)
@@ -491,6 +539,7 @@ func TestGetDynamicSecretLease_Delegated(t *testing.T) {
 // ── impersonation.go — SessionImpersonator ────────────────────────────────────
 
 func TestSessionImpersonator_TokenNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSession", mock.Anything, "bad").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -499,6 +548,7 @@ func TestSessionImpersonator_TokenNotFound(t *testing.T) {
 }
 
 func TestSessionImpersonator_NotImpersonation(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// Session with no ImpersonatedBy.
 	ms.On("GetSession", mock.Anything, "reg-tok").Return(&models.Session{ID: 1, UserID: 2}, nil)
@@ -508,6 +558,7 @@ func TestSessionImpersonator_NotImpersonation(t *testing.T) {
 }
 
 func TestSessionImpersonator_IsImpersonation(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	adminID := uint(7)
 	sess := &models.Session{ID: 2, UserID: 3, ImpersonatedBy: &adminID}
@@ -521,6 +572,7 @@ func TestSessionImpersonator_IsImpersonation(t *testing.T) {
 // ── invitations.go — revokeSystemRoleGrant ────────────────────────────────────
 
 func TestRevokeSystemRoleGrant_EmptySystemRole(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// An invitation with no SystemRole — revokeSystemRoleGrant must be a no-op.
@@ -531,6 +583,7 @@ func TestRevokeSystemRoleGrant_EmptySystemRole(t *testing.T) {
 }
 
 func TestRevokeSystemRoleGrant_RoleNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "viewer").Return(nil, errors.New("not found"))
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -545,6 +598,7 @@ func TestRevokeSystemRoleGrant_RoleNotFound(t *testing.T) {
 // ── invitations.go — revokeInvitationGrants ──────────────────────────────────
 
 func TestRevokeInvitationGrants_ProjectScoped_UserNotMember(t *testing.T) {
+	t.Parallel()
 	// When the user is not a member, RemoveProjectMember returns an error which
 	// revokeInvitationGrants audits. The storage.GetUserRoleIDsExact mock returns
 	// an empty slice → "user is not a member" early return.
@@ -559,6 +613,7 @@ func TestRevokeInvitationGrants_ProjectScoped_UserNotMember(t *testing.T) {
 }
 
 func TestRevokeInvitationGrants_WithSystemRole_RoleNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(nil, errors.New("not found"))
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -571,6 +626,7 @@ func TestRevokeInvitationGrants_WithSystemRole_RoleNotFound(t *testing.T) {
 // ── anomaly.go — auditBusinessHoursConfig ────────────────────────────────────
 
 func TestAuditBusinessHoursConfig_NilStorage(t *testing.T) {
+	t.Parallel()
 	// AnomalyDetector with a nil StorageInterface — must not panic.
 	d := &AnomalyDetector{storage: nil}
 	p := defaultOffHoursPolicy()
@@ -579,6 +635,7 @@ func TestAuditBusinessHoursConfig_NilStorage(t *testing.T) {
 }
 
 func TestAuditBusinessHoursConfig_StorageSuccess(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
 		return e.EventType == EventAnomalyBusinessHoursConfigured
@@ -590,6 +647,7 @@ func TestAuditBusinessHoursConfig_StorageSuccess(t *testing.T) {
 }
 
 func TestAuditBusinessHoursConfig_StorageError_NoReturnError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(errors.New("db down"))
 	d := NewAnomalyDetector(ms)
@@ -599,6 +657,7 @@ func TestAuditBusinessHoursConfig_StorageError_NoReturnError(t *testing.T) {
 }
 
 func TestAuditBusinessHoursConfig_EmptyTZ_UsesUTCLabel(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
 		return e.EventType == EventAnomalyBusinessHoursConfigured &&
@@ -613,6 +672,7 @@ func TestAuditBusinessHoursConfig_EmptyTZ_UsesUTCLabel(t *testing.T) {
 // SetBusinessHours is the public entry point that calls auditBusinessHoursConfig —
 // also exercises the full success/error branches of that internal helper.
 func TestSetBusinessHours_InvalidTZ(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	d := NewAnomalyDetector(ms)
 	err := d.SetBusinessHours(context.Background(), "Not/A/Timezone", 0, 0)
@@ -621,6 +681,7 @@ func TestSetBusinessHours_InvalidTZ(t *testing.T) {
 }
 
 func TestSetBusinessHours_DegenerateBand(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	d := NewAnomalyDetector(ms)
 	err := d.SetBusinessHours(context.Background(), "UTC", 10, 10)
@@ -629,6 +690,7 @@ func TestSetBusinessHours_DegenerateBand(t *testing.T) {
 }
 
 func TestSetBusinessHours_Success_AuditsChange(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	d := NewAnomalyDetector(ms)
@@ -638,6 +700,7 @@ func TestSetBusinessHours_Success_AuditsChange(t *testing.T) {
 }
 
 func TestSetBusinessHours_BothZeroKeepsDefault(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	d := NewAnomalyDetector(ms)

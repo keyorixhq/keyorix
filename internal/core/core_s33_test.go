@@ -28,6 +28,7 @@ import (
 // ── oidc_jwks.go — parseJWK EC branches ─────────────────────────────────
 
 func TestParseJWK_ECUnsupportedCurve(t *testing.T) {
+	t.Parallel()
 	k := jwk{Kty: "EC", Crv: "P-999"}
 	_, err := parseJWK(k)
 	require.Error(t, err)
@@ -35,6 +36,7 @@ func TestParseJWK_ECUnsupportedCurve(t *testing.T) {
 }
 
 func TestParseJWK_ECUnsupportedKty(t *testing.T) {
+	t.Parallel()
 	k := jwk{Kty: "OKP"}
 	_, err := parseJWK(k)
 	require.Error(t, err)
@@ -42,6 +44,7 @@ func TestParseJWK_ECUnsupportedKty(t *testing.T) {
 }
 
 func TestParseJWK_ECP256Success(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	k := jwk{
@@ -58,6 +61,7 @@ func TestParseJWK_ECP256Success(t *testing.T) {
 }
 
 func TestParseJWK_ECP384Success(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	require.NoError(t, err)
 	k := jwk{
@@ -74,6 +78,7 @@ func TestParseJWK_ECP384Success(t *testing.T) {
 }
 
 func TestParseJWK_ECP521Success(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	require.NoError(t, err)
 	k := jwk{
@@ -90,12 +95,14 @@ func TestParseJWK_ECP521Success(t *testing.T) {
 }
 
 func TestParseJWK_ECInvalidXBase64(t *testing.T) {
+	t.Parallel()
 	k := jwk{Kty: "EC", Crv: "P-256", X: "!!!invalid", Y: "AAAA"}
 	_, err := parseJWK(k)
 	require.Error(t, err)
 }
 
 func TestParseJWK_RSAInvalidNBase64(t *testing.T) {
+	t.Parallel()
 	k := jwk{Kty: "RSA", N: "!!!bad base64", E: "AQAB"}
 	_, err := parseJWK(k)
 	require.Error(t, err)
@@ -104,6 +111,7 @@ func TestParseJWK_RSAInvalidNBase64(t *testing.T) {
 // ── setup_consume.go — displayNameFromEmail empty email ──────────────────
 
 func TestDisplayNameFromEmail_EmptyEmail(t *testing.T) {
+	t.Parallel()
 	// localPart("") returns "" → displayNameFromEmail returns ""
 	result := displayNameFromEmail("")
 	assert.Equal(t, "", result)
@@ -112,6 +120,7 @@ func TestDisplayNameFromEmail_EmptyEmail(t *testing.T) {
 // ── invitations.go — revokeAssignmentGrants ──────────────────────────────
 
 func TestRevokeAssignmentGrants_EmptyJSON(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	inv := &models.ProjectInvitation{AssignmentsJSON: ""}
 	// Should return immediately without error or panicking.
@@ -119,6 +128,7 @@ func TestRevokeAssignmentGrants_EmptyJSON(t *testing.T) {
 }
 
 func TestRevokeAssignmentGrants_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	inv := &models.ProjectInvitation{AssignmentsJSON: "not-json"}
 	// Invalid JSON → returns early without panicking.
@@ -126,6 +136,7 @@ func TestRevokeAssignmentGrants_InvalidJSON(t *testing.T) {
 }
 
 func TestRevokeAssignmentGrants_ValidJSON_RemoveFails(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// RemoveProjectMember calls GetUserRoleIDsExact.
 	ms.On("GetUserRoleIDsExact", mock.Anything, uint(5), mock.AnythingOfType("storage.Scope")).Return([]uint{}, nil)
@@ -144,6 +155,7 @@ func TestRevokeAssignmentGrants_ValidJSON_RemoveFails(t *testing.T) {
 // ── jit_access.go — AssignGroupRoleWithExpiry ────────────────────────────
 
 func TestAssignGroupRoleWithExpiry_RoleNotFound_s33(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(99)).Return(nil, errors.New("role not found"))
 	c := NewKeyorixCore(ms)
@@ -152,6 +164,7 @@ func TestAssignGroupRoleWithExpiry_RoleNotFound_s33(t *testing.T) {
 }
 
 func TestAssignGroupRoleWithExpiry_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	role := &models.Role{ID: 2, Name: "viewer"} // actorID 0, actorIsMachine false → trusted system pseudo-actor, ceiling skipped
 	ms.On("GetRole", mock.Anything, uint(2)).Return(role, nil)
@@ -166,12 +179,14 @@ func TestAssignGroupRoleWithExpiry_Success(t *testing.T) {
 // ── notifications.go — notifyGroupSecretShareRevoked ─────────────────────
 
 func TestNotifyGroupSecretShareRevoked_NilSecret(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	// nil secret → return immediately
 	c.notifyGroupSecretShareRevoked(context.Background(), nil, 1, 2)
 }
 
 func TestNotifyGroupSecretShareRevoked_ListMembersError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListGroupMembers", mock.Anything, uint(1)).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -181,6 +196,7 @@ func TestNotifyGroupSecretShareRevoked_ListMembersError(t *testing.T) {
 }
 
 func TestNotifyGroupSecretShareRevoked_WithMembers(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	members := []*models.User{{ID: 10}, {ID: 11}}
 	ms.On("ListGroupMembers", mock.Anything, uint(5)).Return(members, nil)
@@ -196,6 +212,7 @@ func TestNotifyGroupSecretShareRevoked_WithMembers(t *testing.T) {
 // ── rbac.go — AssignRoleToUser success path ──────────────────────────────
 
 func TestAssignRoleToUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "alice@example.com").Return(&models.User{ID: 5}, nil)
 	ms.On("GetRoleByName", mock.Anything, "viewer").Return(&models.Role{ID: 3, Name: "viewer"}, nil)
@@ -210,6 +227,7 @@ func TestAssignRoleToUser_Success(t *testing.T) {
 }
 
 func TestAssignRoleToUser_UserNotFound_s33(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "nobody@example.com").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -220,6 +238,7 @@ func TestAssignRoleToUser_UserNotFound_s33(t *testing.T) {
 // ── rbac.go — RemoveRoleFromUser success path ────────────────────────────
 
 func TestRemoveRoleFromUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "alice@example.com").Return(&models.User{ID: 5}, nil)
 	// installAdminRoleIDSet tries GetRoleByName for "super_admin", "admin", "system_admin" — all not found
@@ -238,6 +257,7 @@ func TestRemoveRoleFromUser_Success(t *testing.T) {
 }
 
 func TestRemoveRoleFromUser_UserNotFound_s33(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "nobody@example.com").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)

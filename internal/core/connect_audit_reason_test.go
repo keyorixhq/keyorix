@@ -32,6 +32,7 @@ func lastConnectSecretReadEvent(t *testing.T, db *gorm.DB) models.AuditEvent {
 // and a ProjectID matching the connector's OWNING project (nil for a
 // platform-scoped connector, per ConnectOwnership's own doc comment).
 func TestReadFederatedSecret_AuditReasons_Allow(t *testing.T) {
+	t.Parallel()
 	t.Run("project_membership", func(t *testing.T) {
 		c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 		c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 42}})
@@ -108,6 +109,7 @@ func TestReadFederatedSecret_AuditReasons_Allow(t *testing.T) {
 // the ONLY place these two outcomes are distinguishable at all, since both
 // return the identical opaque unknown-connector error to the caller.
 func TestReadFederatedSecret_AuditReasons_Deny(t *testing.T) {
+	t.Parallel()
 	t.Run("connect_disabled", func(t *testing.T) {
 		ms := new(MockStorage)
 		var got *models.AuditEvent
@@ -212,6 +214,7 @@ func TestReadFederatedSecret_AuditReasons_Deny(t *testing.T) {
 // genuinely unknown connector — but the audit trail still records which one
 // actually happened, distinctly and correctly.
 func TestReadFederatedSecret_OwnershipDenialProducesAuditEventDespiteOpaqueHTTPShape(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 42}})
 	seedRoleForUserAtProject(t, db, 6, 31, "not-owner", 99)

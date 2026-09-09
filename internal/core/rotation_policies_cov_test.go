@@ -78,6 +78,7 @@ func newRotPolicyCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // --- CreateRotationPolicy ---
 
 func TestCreateRotationPolicy_ProjectScopeNilID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	_, err := c.CreateRotationPolicy(ctx, 1, &CreateRotationPolicyRequest{
@@ -89,6 +90,7 @@ func TestCreateRotationPolicy_ProjectScopeNilID(t *testing.T) {
 }
 
 func TestCreateRotationPolicy_ValidateDescriptionError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	pid := uint(1)
@@ -104,6 +106,7 @@ func TestCreateRotationPolicy_ValidateDescriptionError(t *testing.T) {
 }
 
 func TestCreateRotationPolicy_StorageError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	wantErr := errors.New("db write failed")
@@ -120,6 +123,7 @@ func TestCreateRotationPolicy_StorageError(t *testing.T) {
 // --- GetRotationPolicy ---
 
 func TestGetRotationPolicy_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	_, err := c.GetRotationPolicy(ctx, 99999)
@@ -130,6 +134,7 @@ func TestGetRotationPolicy_NotFound(t *testing.T) {
 // --- UpdateRotationPolicy ---
 
 func TestUpdateRotationPolicy_AlertGTInterval(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	_, err := c.UpdateRotationPolicy(ctx, 1, &UpdateRotationPolicyRequest{
@@ -140,6 +145,7 @@ func TestUpdateRotationPolicy_AlertGTInterval(t *testing.T) {
 }
 
 func TestUpdateRotationPolicy_ValidateDescriptionError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	_, err := c.UpdateRotationPolicy(ctx, 1, &UpdateRotationPolicyRequest{
@@ -151,6 +157,7 @@ func TestUpdateRotationPolicy_ValidateDescriptionError(t *testing.T) {
 }
 
 func TestUpdateRotationPolicy_GetNotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	_, err := c.UpdateRotationPolicy(ctx, 1, &UpdateRotationPolicyRequest{
@@ -161,6 +168,7 @@ func TestUpdateRotationPolicy_GetNotFound(t *testing.T) {
 }
 
 func TestUpdateRotationPolicy_StorageError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newRotPolicyCore(t)
 	pid := uint(1)
@@ -181,6 +189,7 @@ func TestUpdateRotationPolicy_StorageError(t *testing.T) {
 // --- DeleteRotationPolicy ---
 
 func TestDeleteRotationPolicy_GetNotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	err := c.DeleteRotationPolicy(ctx, 1, 99999)
@@ -189,6 +198,7 @@ func TestDeleteRotationPolicy_GetNotFound(t *testing.T) {
 }
 
 func TestDeleteRotationPolicy_StorageError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newRotPolicyCore(t)
 	pid := uint(1)
@@ -207,6 +217,7 @@ func TestDeleteRotationPolicy_StorageError(t *testing.T) {
 // --- EvaluateRotationPolicies ---
 
 func TestEvaluateRotationPolicies_ListError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newRotPolicyCore(t)
 	wantErr := errors.New("list failed")
@@ -217,6 +228,7 @@ func TestEvaluateRotationPolicies_ListError(t *testing.T) {
 }
 
 func TestEvaluateRotationPolicies_InactivePolicySkipped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newRotPolicyCore(t)
 	// Create an inactive policy — EvaluateRotationPolicies must skip it.

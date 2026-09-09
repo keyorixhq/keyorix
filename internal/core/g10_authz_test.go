@@ -22,6 +22,7 @@ const g10UnauthorizedActor = uint(999)
 var errNotFoundForTest = errors.New("record not found")
 
 func TestListGroupShares_RefusesUnauthorizedActor(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	stubUnauthorizedPrincipal(ms, g10UnauthorizedActor, Scope{})
@@ -33,6 +34,7 @@ func TestListGroupShares_RefusesUnauthorizedActor(t *testing.T) {
 }
 
 func TestListGroupSharedSecrets_RefusesUnauthorizedActor(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	stubUnauthorizedPrincipal(ms, g10UnauthorizedActor, Scope{})
@@ -44,6 +46,7 @@ func TestListGroupSharedSecrets_RefusesUnauthorizedActor(t *testing.T) {
 }
 
 func TestGetSecretReadSummary_RefusesUnauthorizedActor(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5}, nil)
@@ -58,6 +61,7 @@ func TestGetSecretReadSummary_RefusesUnauthorizedActor(t *testing.T) {
 }
 
 func TestExportSecretAccessLog_RefusesUnauthorizedActor(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5}, nil)
@@ -72,6 +76,7 @@ func TestExportSecretAccessLog_RefusesUnauthorizedActor(t *testing.T) {
 }
 
 func TestReassignOwnedSecrets_RefusesUnauthorizedActor(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	stubUnauthorizedPrincipal(ms, g10UnauthorizedActor, Scope{ProjectID: 3})
@@ -83,6 +88,7 @@ func TestReassignOwnedSecrets_RefusesUnauthorizedActor(t *testing.T) {
 }
 
 func TestGetSecretSharingStatus_RefusesUnauthorizedActor(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5}, nil)

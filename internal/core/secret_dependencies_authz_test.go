@@ -78,6 +78,7 @@ func grantDepACL(t *testing.T, c *KeyorixCore, secretID uint) {
 // peers, but not the other. Same project+environment membership must not stand in for
 // authorization on the unauthorized peer.
 func TestListSecretDependencies_DoesNotDiscloseUnauthorizedPeer(t *testing.T) {
+	t.Parallel()
 	c, db := newDepAuthzCore(t)
 	focal := mkAuthzSecret(t, db, "focal")
 	seen := mkAuthzSecret(t, db, "peer-authorized")
@@ -104,6 +105,7 @@ func TestListSecretDependencies_DoesNotDiscloseUnauthorizedPeer(t *testing.T) {
 // independently-authorized dependents, but must never disclose the unauthorized peer
 // itself.
 func TestGetSecretImpact_DoesNotDiscloseUnauthorizedPeer(t *testing.T) {
+	t.Parallel()
 	c, db := newDepAuthzCore(t)
 	focal := mkAuthzSecret(t, db, "focal")
 	hidden := mkAuthzSecret(t, db, "hidden-mid")
@@ -127,6 +129,7 @@ func TestGetSecretImpact_DoesNotDiscloseUnauthorizedPeer(t *testing.T) {
 // TestGetBlastRadius_DoesNotDiscloseUnauthorizedPeer mirrors the GetSecretImpact
 // regression for the richer blast-radius report.
 func TestGetBlastRadius_DoesNotDiscloseUnauthorizedPeer(t *testing.T) {
+	t.Parallel()
 	c, db := newDepAuthzCore(t)
 	focal := mkAuthzSecret(t, db, "focal")
 	hidden := mkAuthzSecret(t, db, "hidden-mid")
@@ -151,6 +154,7 @@ func TestGetBlastRadius_DoesNotDiscloseUnauthorizedPeer(t *testing.T) {
 // whether to delete), but the identifying AffectedSecretIDs list is filtered to only
 // the peers the caller is independently authorized to read.
 func TestGetSecretImpactPreview_CountsFullButIDsFiltered(t *testing.T) {
+	t.Parallel()
 	c, db := newDepAuthzCore(t)
 	focal := mkAuthzSecret(t, db, "focal")
 	seen := mkAuthzSecret(t, db, "peer-authorized")
@@ -173,6 +177,7 @@ func TestGetSecretImpactPreview_CountsFullButIDsFiltered(t *testing.T) {
 // the dependency target — same project+environment must not substitute for an
 // independent authorization check on the target.
 func TestAddSecretDependency_RejectsUnauthorizedPeer(t *testing.T) {
+	t.Parallel()
 	c, db := newDepAuthzCore(t)
 	focal := mkAuthzSecret(t, db, "focal")
 	target := mkAuthzSecret(t, db, "unauthorized-target")
@@ -192,6 +197,7 @@ func TestAddSecretDependency_RejectsUnauthorizedPeer(t *testing.T) {
 // focal (path) secret but not on the edge's other endpoint — removal must be rejected,
 // not silently allowed because both endpoints share a project+environment.
 func TestRemoveSecretDependency_RejectsUnauthorizedPeer(t *testing.T) {
+	t.Parallel()
 	c, db := newDepAuthzCore(t)
 	focal := mkAuthzSecret(t, db, "focal")
 	target := mkAuthzSecret(t, db, "unauthorized-target")

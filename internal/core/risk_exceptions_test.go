@@ -21,6 +21,7 @@ func riskCore(store *MockStorage, now time.Time) *KeyorixCore {
 // risk_exceptions_external_test.go for the "sod" category's live-reference
 // enforcement (Wave 6 core-sod finding #3).
 func TestCreateRiskException_ValidatesAndAudits(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	store.On("CreateRiskException", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
@@ -42,6 +43,7 @@ func TestCreateRiskException_ValidatesAndAudits(t *testing.T) {
 }
 
 func TestCreateRiskException_Rejects(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	c := riskCore(new(MockStorage), now)
 
@@ -68,6 +70,7 @@ func TestCreateRiskException_Rejects(t *testing.T) {
 // successful create uses, matching this file's own creator-or-admin denial
 // convention for Revoke/Approve below.
 func TestCreateRiskException_DeniesMachineActor(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	var audited string
@@ -87,6 +90,7 @@ func TestCreateRiskException_DeniesMachineActor(t *testing.T) {
 }
 
 func TestListRiskExceptions_ComputesStatusAndFilters(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	rows := []*models.RiskException{
@@ -106,6 +110,7 @@ func TestListRiskExceptions_ComputesStatusAndFilters(t *testing.T) {
 }
 
 func TestRevokeRiskException(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	// #1529: RevokeRiskException now requires creator-or-admin. CreatedBy: 3
@@ -133,6 +138,7 @@ func TestRevokeRiskException(t *testing.T) {
 // the negative case, not just accepts the positive one (TestRevokeRiskException
 // above only exercises the creator branch).
 func TestRevokeRiskException_DeniesNonCreatorNonAdmin(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
@@ -158,6 +164,7 @@ func TestRevokeRiskException_DeniesNonCreatorNonAdmin(t *testing.T) {
 // revoke it -- the OTHER half of the creator-OR-admin gate, proving admin
 // status alone is sufficient without being the creator.
 func TestRevokeRiskException_AdminNonCreatorSucceeds(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
@@ -178,6 +185,7 @@ func TestRevokeRiskException_AdminNonCreatorSucceeds(t *testing.T) {
 // concurrent racing RevokeRiskException/ApproveRiskException) — must surface as
 // a clear error, not be silently swallowed or retried.
 func TestRevokeRiskException_LostRaceReturnsError(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	// #1529: CreatedBy: 3 makes actor 3 the creator, satisfying the
@@ -201,6 +209,7 @@ func TestRevokeRiskException_LostRaceReturnsError(t *testing.T) {
 // control. The audit trail records the denial distinctly (Success=false) and the
 // exception is left unapproved (no UpdateRiskException call expected).
 func TestApproveRiskException_DeniesSelfApproval(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
@@ -226,6 +235,7 @@ func TestApproveRiskException_DeniesSelfApproval(t *testing.T) {
 // A DIFFERENT principal than the creator may approve — the exception is marked
 // approved and attributed to the approver.
 func TestApproveRiskException_DifferentActorSucceeds(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
@@ -248,6 +258,7 @@ func TestApproveRiskException_DifferentActorSucceeds(t *testing.T) {
 // (the same human is refused) -- this is the third case neither of those
 // covers: a non-human actor, regardless of whose exception it is.
 func TestApproveRiskException_DeniesMachineActor(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
@@ -275,6 +286,7 @@ func TestApproveRiskException_DeniesMachineActor(t *testing.T) {
 // write (e.g. a concurrent racing revoke or a racing approve that landed
 // first) — must surface as a clear error, not be silently swallowed.
 func TestApproveRiskException_LostRaceReturnsError(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
@@ -289,6 +301,7 @@ func TestApproveRiskException_LostRaceReturnsError(t *testing.T) {
 
 // An already-approved exception cannot be approved again.
 func TestApproveRiskException_RejectsAlreadyApproved(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, Approved: true, ExpiresAt: now.Add(24 * time.Hour)}, nil)
@@ -300,6 +313,7 @@ func TestApproveRiskException_RejectsAlreadyApproved(t *testing.T) {
 }
 
 func TestCountActiveRiskExceptions(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	store.On("ListRiskExceptions", mock.Anything, true).Return([]*models.RiskException{
@@ -319,6 +333,7 @@ func TestCountActiveRiskExceptions(t *testing.T) {
 // distinct from a genuinely-active one — it dropped out of the active tally with no
 // other signal that its accepted risk is unmitigated again.
 func TestCountExpiredRiskExceptions(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	store.On("ListRiskExceptions", mock.Anything, true).Return([]*models.RiskException{
@@ -335,6 +350,7 @@ func TestCountExpiredRiskExceptions(t *testing.T) {
 
 // Zero stored exceptions, or exceptions that are all current, count zero expired.
 func TestCountExpiredRiskExceptions_NoneExpired(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	store.On("ListRiskExceptions", mock.Anything, true).Return([]*models.RiskException{

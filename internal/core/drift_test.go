@@ -11,6 +11,7 @@ import (
 )
 
 func TestDetectProjectDrift_Classification(t *testing.T) {
+	t.Parallel()
 	const projectID = uint(1)
 	store := new(MockStorage)
 
@@ -63,6 +64,7 @@ func TestDetectProjectDrift_Classification(t *testing.T) {
 }
 
 func TestDetectProjectDrift_SingleEnvironmentNoDrift(t *testing.T) {
+	t.Parallel()
 	const projectID = uint(2)
 	store := new(MockStorage)
 	store.On("ListEnvironmentsByProject", mock.Anything, projectID).Return([]*models.Environment{
@@ -82,6 +84,7 @@ func TestDetectProjectDrift_SingleEnvironmentNoDrift(t *testing.T) {
 }
 
 func TestDetectProjectDrift_ExpirationAndMaxReadsDrift(t *testing.T) {
+	t.Parallel()
 	const projectID = uint(3)
 	store := new(MockStorage)
 	store.On("ListEnvironmentsByProject", mock.Anything, projectID).Return([]*models.Environment{

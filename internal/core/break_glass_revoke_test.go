@@ -34,6 +34,7 @@ func newTestActivation() *models.BreakGlassActivation {
 // in user_roles while the activation, API response, and audit trail all reported it
 // as revoked.
 func TestRevokeBreakGlass_GenuineRoleRemovalFailureAbortsRevoke(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: mockStorage, now: func() time.Time { return now }}
@@ -69,6 +70,7 @@ func TestRevokeBreakGlass_GenuineRoleRemovalFailureAbortsRevoke(t *testing.T) {
 // or a racing revoke already removed it) must still be treated as success, not a
 // hard failure that blocks the revoke.
 func TestRevokeBreakGlass_AlreadyGoneRoleRemovalIsNotAFailure(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: mockStorage, now: func() time.Time { return now }}

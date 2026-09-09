@@ -33,6 +33,7 @@ import (
 // admin (#core-auth-03) — a duplicate-admin race that silently corrupts the
 // RBAC seed until someone notices two admins exist.
 func TestConcurrency_BootstrapSystem_CrossReplicaPostgres_ExactlyOneAdmin(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)

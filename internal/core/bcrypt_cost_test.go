@@ -17,6 +17,7 @@ import (
 // value nondeterministic by design); it only proves no race is reported and
 // nothing panics.
 func TestSetBcryptCostForTesting_ConcurrentWithReads(t *testing.T) {
+	t.Parallel()
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 

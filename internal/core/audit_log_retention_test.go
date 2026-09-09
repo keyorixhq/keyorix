@@ -51,6 +51,7 @@ func seedRetentionAuditEvent(t *testing.T, db *gorm.DB, at time.Time) {
 // TestPurgeAuditLogs_HappyPath seeds 5 old + 3 recent events, purges with
 // retention_days=30, and asserts exactly 5 are deleted with 3 remaining.
 func TestPurgeAuditLogs_HappyPath(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newPurgeTestCore(t)
 	ctx := context.Background()
 
@@ -85,6 +86,7 @@ func TestPurgeAuditLogs_HappyPath(t *testing.T) {
 
 // TestPurgeAuditLogs_RetentionDaysBelowMin ensures values below 7 are rejected.
 func TestPurgeAuditLogs_RetentionDaysBelowMin(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -98,6 +100,7 @@ func TestPurgeAuditLogs_RetentionDaysBelowMin(t *testing.T) {
 
 // TestPurgeAuditLogs_RetentionDaysExactlyMin ensures 7 is accepted.
 func TestPurgeAuditLogs_RetentionDaysExactlyMin(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newPurgeTestCore(t)
 	result, err := c.PurgeAuditLogs(context.Background(), AuditLogRetentionConfig{RetentionDays: 7})
 	require.NoError(t, err)
@@ -111,6 +114,7 @@ func TestPurgeAuditLogs_RetentionDaysExactlyMin(t *testing.T) {
 
 // TestPurgeAuditLogs_StorageErrorPropagated ensures a storage failure bubbles up.
 func TestPurgeAuditLogs_StorageErrorPropagated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	storageErr := errors.New("db offline")
 	// legalHoldGuard → IsLegalHoldActive → storage.GetActiveLegalHold: no active hold.
@@ -131,6 +135,7 @@ func TestPurgeAuditLogs_StorageErrorPropagated(t *testing.T) {
 // skipped the legalHoldGuard that PurgeExpiredSoftDeletes and
 // PurgeExpiredComplianceRecords call, allowing audit evidence to be destroyed under hold).
 func TestPurgeAuditLogs_LegalHoldBlocked(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// GetActiveLegalHold returns a non-nil hold → legalHoldGuard refuses the purge.
 	ms.On("GetActiveLegalHold", mock.Anything).Return(&models.LegalHold{ID: 1}, nil)

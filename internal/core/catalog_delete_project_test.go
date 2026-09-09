@@ -73,6 +73,7 @@ func (s *deleteProjectSpy) ListDynamicSecretConfigs(_ context.Context, _, _ uint
 }
 
 func TestDeleteProject_EmptyProjectDeletesAtomically(t *testing.T) {
+	t.Parallel()
 	spy := &deleteProjectSpy{blockingSecretCount: 0}
 	c := core.NewKeyorixCore(spy)
 
@@ -82,6 +83,7 @@ func TestDeleteProject_EmptyProjectDeletesAtomically(t *testing.T) {
 }
 
 func TestDeleteProject_RejectsWhenSecretsExist(t *testing.T) {
+	t.Parallel()
 	spy := &deleteProjectSpy{blockingSecretCount: 3}
 	c := core.NewKeyorixCore(spy)
 
@@ -93,6 +95,7 @@ func TestDeleteProject_RejectsWhenSecretsExist(t *testing.T) {
 }
 
 func TestDeleteProject_ForceSkipsGuardEntirely(t *testing.T) {
+	t.Parallel()
 	// blockingSecretCount would reject if the guard ran; deleteIfEmptyErr would fail
 	// the test if DeleteProjectIfEmpty were reached at all.
 	spy := &deleteProjectSpy{blockingSecretCount: 99, deleteIfEmptyErr: fmt.Errorf("must not be called")}
@@ -117,6 +120,7 @@ func TestDeleteProject_ForceSkipsGuardEntirely(t *testing.T) {
 // cascade co-located in one transaction); these round it out against real storage.
 
 func TestDeleteProject_RealStorage_RejectsWhenSecretsExist(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
@@ -136,6 +140,7 @@ func TestDeleteProject_RealStorage_RejectsWhenSecretsExist(t *testing.T) {
 }
 
 func TestDeleteProject_RealStorage_EmptyProjectSucceeds(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
@@ -152,6 +157,7 @@ func TestDeleteProject_RealStorage_EmptyProjectSucceeds(t *testing.T) {
 }
 
 func TestDeleteProject_RealStorage_ForceCascadesOverSecrets(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
@@ -175,6 +181,7 @@ func TestDeleteProject_RealStorage_ForceCascadesOverSecrets(t *testing.T) {
 // (real target credentials that should stop working) behind an orphaned/soft-deleted
 // project.
 func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}, &models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))

@@ -46,6 +46,7 @@ func seedMaxReadsSecret(t *testing.T, c *KeyorixCore, max int) uint {
 }
 
 func TestMaxReads_SequentialStopsAtCap(t *testing.T) {
+	t.Parallel()
 	c, _ := newMaxReadsCore(t)
 	id := seedMaxReadsSecret(t, c, 3)
 	ctx := context.Background()
@@ -63,6 +64,7 @@ func TestMaxReads_SequentialStopsAtCap(t *testing.T) {
 // successes, never more. Before the atomic check-and-increment, concurrent readers
 // could all pass the in-memory check and exceed the cap.
 func TestMaxReads_ConcurrentNeverExceedsCap(t *testing.T) {
+	t.Parallel()
 	c, db := newMaxReadsCore(t)
 	const cap = 5
 	const readers = 50
@@ -95,6 +97,7 @@ func TestMaxReads_ConcurrentNeverExceedsCap(t *testing.T) {
 // A by-version read enforces the same max-reads cap as the latest-version read —
 // the by-version path must not be a bypass for the read ceiling.
 func TestMaxReads_ByVersionStopsAtCap(t *testing.T) {
+	t.Parallel()
 	c, _ := newMaxReadsCore(t)
 	id := seedMaxReadsSecret(t, c, 2)
 	ctx := context.Background()
@@ -114,6 +117,7 @@ func TestMaxReads_ByVersionStopsAtCap(t *testing.T) {
 // back, which also creates a new version) it, resetting the budget. The cap
 // must be enforced against the secret's lifetime read count, surviving both.
 func TestMaxReads_SurvivesRotateAndRollback(t *testing.T) {
+	t.Parallel()
 	c, _ := newMaxReadsCore(t)
 	id := seedMaxReadsSecret(t, c, 1)
 	ctx := context.Background()

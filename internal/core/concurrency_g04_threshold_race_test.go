@@ -65,6 +65,7 @@ func newSoDGrantFixture(t *testing.T, dbFile string) (c *core.KeyorixCore, db *g
 // read the user's pre-grant permission set before either write commits, and
 // both succeed, leaving the user holding the full toxic combination.
 func TestConcurrency_AssignUserRole_SoDGrantRace(t *testing.T) {
+	t.Parallel()
 	const trials = 50
 	var bothGranted, neitherGranted int
 	for trial := 0; trial < trials; trial++ {
@@ -104,6 +105,7 @@ func TestConcurrency_AssignUserRole_SoDGrantRace(t *testing.T) {
 // happened even though only the winner's stamp survives, leaving recorded
 // evidence that disagrees with the actual grant state.
 func TestConcurrency_DecideAccessReviewItem_AttestRevokeRace(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	const trials = 30
 	for trial := 0; trial < trials; trial++ {
@@ -207,6 +209,7 @@ func newDualControlFixture(t *testing.T, dbFile string) (c *core.KeyorixCore, db
 // is a process mutex, so this in-process assertion is unchanged; the
 // cross-replica half lives in the Postgres tests alongside it.
 func TestConcurrency_ApproveAccessRequestWithExpiry_ThresholdRace(t *testing.T) {
+	t.Parallel()
 	const trials = 30
 	for trial := 0; trial < trials; trial++ {
 		c, db, requestID := newDualControlFixture(t, fmt.Sprintf("dual_control_%d", trial))

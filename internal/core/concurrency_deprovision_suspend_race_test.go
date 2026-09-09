@@ -40,6 +40,7 @@ import (
 // it tried to lock it) is excluded from the assertion — that ordering is a clean
 // "too late" error, not silent corruption.
 func TestConcurrency_DeprovisionSCIMUser_DoesNotRevertConcurrentSuspend(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "deprovision_suspend_race.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

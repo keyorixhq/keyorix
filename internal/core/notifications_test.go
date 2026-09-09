@@ -23,6 +23,7 @@ func allowNotifications(store *MockStorage) {
 }
 
 func TestIsApproverRole(t *testing.T) {
+	t.Parallel()
 	for _, r := range []string{"project_admin", "system_admin", "admin", "super_admin"} {
 		assert.True(t, isApproverRole(r), r)
 	}
@@ -32,6 +33,7 @@ func TestIsApproverRole(t *testing.T) {
 }
 
 func TestNotifyMembershipActivated(t *testing.T) {
+	t.Parallel()
 	t.Run("notifies a distinct inviter with a project link", func(t *testing.T) {
 		store := new(MockStorage)
 		c := newMembershipCore(store)
@@ -67,6 +69,7 @@ func TestNotifyMembershipActivated(t *testing.T) {
 }
 
 func TestNotifyAccessResolved_NotifiesRequester(t *testing.T) {
+	t.Parallel()
 	t.Run("approved", func(t *testing.T) {
 		store := new(MockStorage)
 		c := newMembershipCore(store)
@@ -102,6 +105,7 @@ func TestNotifyAccessResolved_NotifiesRequester(t *testing.T) {
 }
 
 func TestNotificationSelfScopedDelegations(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -122,6 +126,7 @@ func TestNotificationSelfScopedDelegations(t *testing.T) {
 }
 
 func TestNotifySecretShared(t *testing.T) {
+	t.Parallel()
 	mkCore := func(store *MockStorage) *KeyorixCore {
 		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
 	}
@@ -163,6 +168,7 @@ func TestNotifySecretShared(t *testing.T) {
 }
 
 func TestNotifySecretOwnershipTransferred(t *testing.T) {
+	t.Parallel()
 	mkCore := func(store *MockStorage) *KeyorixCore {
 		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
 	}
@@ -194,6 +200,7 @@ func TestNotifySecretOwnershipTransferred(t *testing.T) {
 }
 
 func TestNotifySecretsReassigned(t *testing.T) {
+	t.Parallel()
 	mkCore := func(store *MockStorage) *KeyorixCore {
 		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
 	}
@@ -224,6 +231,7 @@ func TestNotifySecretsReassigned(t *testing.T) {
 }
 
 func TestNotifySecretShareRevoked(t *testing.T) {
+	t.Parallel()
 	mkCore := func(store *MockStorage) *KeyorixCore {
 		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
 	}
@@ -255,6 +263,7 @@ func TestNotifySecretShareRevoked(t *testing.T) {
 }
 
 func TestNotifyGroupSecretShared(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
 	ctx := context.Background()
@@ -275,6 +284,7 @@ func TestNotifyGroupSecretShared(t *testing.T) {
 }
 
 func TestNotifyGroupSecretShared_LookupErrorIsNoOp(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
 	ctx := context.Background()

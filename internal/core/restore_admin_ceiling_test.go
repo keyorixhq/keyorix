@@ -44,6 +44,7 @@ func newRestoreCeilingCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // that holds an admin-tier role — restoring would hand that admin access right
 // back to any member of the group, including the restoring actor themselves.
 func TestRestoreGroup_RefusesNonAdminWhenGroupHoldsAdminRole(t *testing.T) {
+	t.Parallel()
 	c, db := newRestoreCeilingCore(t)
 	ctx := context.Background()
 
@@ -64,6 +65,7 @@ func TestRestoreGroup_RefusesNonAdminWhenGroupHoldsAdminRole(t *testing.T) {
 // #147: a global admin CAN restore a group holding an admin-tier role — the
 // ceiling check does not block legitimate administrators.
 func TestRestoreGroup_AllowsGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newRestoreCeilingCore(t)
 	ctx := context.Background()
 
@@ -81,6 +83,7 @@ func TestRestoreGroup_AllowsGlobalAdmin(t *testing.T) {
 // #147: a group holding only a NON-admin role needs no elevated authority to
 // restore — the ceiling check must not over-reach into ordinary restores.
 func TestRestoreGroup_AllowsNonAdminWhenGroupHoldsOnlyNonAdminRole(t *testing.T) {
+	t.Parallel()
 	c, db := newRestoreCeilingCore(t)
 	ctx := context.Background()
 
@@ -96,6 +99,7 @@ func TestRestoreGroup_AllowsNonAdminWhenGroupHoldsOnlyNonAdminRole(t *testing.T)
 // project that has a directly-bound admin-tier role — restoring reinstates
 // EVERY role bound to the project, potentially handing back admin access.
 func TestRestoreProject_RefusesNonAdminWhenProjectHoldsAdminRole(t *testing.T) {
+	t.Parallel()
 	c, db := newRestoreCeilingCore(t)
 	ctx := context.Background()
 
@@ -111,6 +115,7 @@ func TestRestoreProject_RefusesNonAdminWhenProjectHoldsAdminRole(t *testing.T) {
 
 // #161: a global admin CAN restore a project holding an admin-tier role grant.
 func TestRestoreProject_AllowsGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newRestoreCeilingCore(t)
 	ctx := context.Background()
 
@@ -126,6 +131,7 @@ func TestRestoreProject_AllowsGlobalAdmin(t *testing.T) {
 // actor is refused when the OWNING PROJECT carries an admin-tier role grant
 // (the environment's grants are a subset of the project's).
 func TestRestoreEnvironment_RefusesNonAdminWhenProjectHoldsAdminRole(t *testing.T) {
+	t.Parallel()
 	c, db := newRestoreCeilingCore(t)
 	ctx := context.Background()
 
@@ -148,6 +154,7 @@ func TestRestoreEnvironment_RefusesNonAdminWhenProjectHoldsAdminRole(t *testing.
 // #161: a global admin CAN restore an environment under a project holding an
 // admin-tier role grant.
 func TestRestoreEnvironment_AllowsGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newRestoreCeilingCore(t)
 	ctx := context.Background()
 

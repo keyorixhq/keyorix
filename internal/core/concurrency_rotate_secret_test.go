@@ -32,6 +32,7 @@ import (
 // a lost race rather than failing it), and the DB must end up with exactly one row
 // per version number, 1..N+1, with no gaps or duplicates.
 func TestConcurrency_RotateSecret_NoDuplicateVersionNumbers(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	dsn := "file:" + filepath.Join(t.TempDir(), "rotate.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})

@@ -31,6 +31,7 @@ import (
 //     its real absolute lifetime. After the fix, the regression guard
 //     refuses before the ceiling check is ever reached.
 func TestRefreshSession_ClockSteppedBackward_PastCeilingStaysRefused(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
 
@@ -57,6 +58,7 @@ func TestRefreshSession_ClockSteppedBackward_PastCeilingStaysRefused(t *testing.
 // is the positive control: a session well within its ceiling, refreshed
 // after a SMALL in-tolerance backward step, must still succeed.
 func TestRefreshSession_ClockSteppedBackward_LegitimatelyWithinCeilingStillRefreshes(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureRotatedSession(store, 7)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
@@ -75,6 +77,7 @@ func TestRefreshSession_ClockSteppedBackward_LegitimatelyWithinCeilingStillRefre
 // TestCheckSessionRefreshClockNotRegressed_FreshWatermarkNeverRefuses covers
 // the zero-value watermark case directly.
 func TestCheckSessionRefreshClockNotRegressed_FreshWatermarkNeverRefuses(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	err := c.checkSessionRefreshClockNotRegressed(time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err, "an unset watermark must never itself cause a refusal")

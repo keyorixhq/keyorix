@@ -20,6 +20,7 @@ func newInviteCore(store *MockStorage) *KeyorixCore {
 }
 
 func TestInviteToProject(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -41,6 +42,7 @@ func TestInviteToProject(t *testing.T) {
 // project member. invitedBy (0, ADR-030) alone loses which machine did it;
 // InvitedByMachineIdentityID must carry it through to the persisted row.
 func TestInviteToProject_RecordsActingMachineIdentity(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -66,6 +68,7 @@ func TestInviteToProject_RecordsActingMachineIdentity(t *testing.T) {
 // succeeds with no allowlist set.
 
 func TestInviteToProject_RejectsDisallowedDomain(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	c.SetMembershipDomainAllowlist([]string{"acme.com"})
@@ -79,6 +82,7 @@ func TestInviteToProject_RejectsDisallowedDomain(t *testing.T) {
 }
 
 func TestInviteToProject_AllowsAllowlistedDomain(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	c.SetMembershipDomainAllowlist([]string{"acme.com"})
@@ -99,6 +103,7 @@ func TestInviteToProject_AllowsAllowlistedDomain(t *testing.T) {
 }
 
 func TestRevokeInvitation_RejectsNonPending(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -113,6 +118,7 @@ func TestRevokeInvitation_RejectsNonPending(t *testing.T) {
 // Cross-project guard: revoking an invitation in project 2 while authorized for
 // project 1 must be rejected.
 func TestRevokeInvitation_RejectsOtherProject(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -125,6 +131,7 @@ func TestRevokeInvitation_RejectsOtherProject(t *testing.T) {
 }
 
 func TestApproveAccessRequest_GrantsRole(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -160,6 +167,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 }
 
 func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -194,6 +202,7 @@ func stubAdminRoleLookups(store *MockStorage, ctx context.Context) {
 // (roles.assign but not admin) cannot invite someone as an admin role — escalation-by-
 // proxy. A non-admin role invite still works.
 func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -229,6 +238,7 @@ func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
 // Privilege ceiling: a non-admin approver cannot sign off a request that grants an
 // admin role — that would mint a principal more powerful than the approver.
 func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -258,6 +268,7 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 // An admin approver may grant an admin role — the ceiling permits an equal-or-higher
 // authority to sign off.
 func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -285,6 +296,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 // A request whose TTL has elapsed is refused on the approve path (lazy expiry), not
 // only on the list path — GetAccessRequest returns the stored record verbatim.
 func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -304,6 +316,7 @@ func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
 }
 
 func TestApproveAccessRequest_RejectsNonPending(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -319,6 +332,7 @@ func TestApproveAccessRequest_RejectsNonPending(t *testing.T) {
 // caller is authorized for project 1 must be rejected — otherwise the role grant
 // lands in a project the caller has no rights over (privilege escalation).
 func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -337,6 +351,7 @@ func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
 // against a project retired specifically to shut off further access, waiting to be
 // approved (and go live) whenever the project is restored.
 func TestRequestProjectAccess_RejectsUnknownProject(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -351,6 +366,7 @@ func TestRequestProjectAccess_RejectsUnknownProject(t *testing.T) {
 // #371: RequestProjectAccess must refuse a soft-deleted project the same way it refuses
 // an unknown one — GetProject's default soft-delete scope makes this the same check.
 func TestRequestProjectAccess_RejectsSoftDeletedProject(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -370,6 +386,7 @@ func TestRequestProjectAccess_RejectsSoftDeletedProject(t *testing.T) {
 // endpoint repeatedly — a second request while the first is still pending
 // must be refused.
 func TestRequestProjectAccess_RefusesDuplicatePending(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -397,6 +414,7 @@ func TestRequestProjectAccess_RefusesDuplicatePending(t *testing.T) {
 // after the fact and go live the moment the project is later restored, against
 // potentially-stale intent and with no re-review.
 func TestApproveAccessRequestWithExpiry_RejectsSoftDeletedProject(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -429,6 +447,7 @@ func TestApproveAccessRequestWithExpiry_RejectsSoftDeletedProject(t *testing.T) 
 }
 
 func TestWithdrawAccessRequest_OwnershipChecked(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -443,6 +462,7 @@ func TestWithdrawAccessRequest_OwnershipChecked(t *testing.T) {
 }
 
 func TestListProjectInvitations_LazyExpire(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
@@ -467,6 +487,7 @@ func TestListProjectInvitations_LazyExpire(t *testing.T) {
 // now hit the same per-(purpose, email) min-interval throttle ResendInvitationLink
 // already enforces (#183).
 func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
@@ -511,6 +532,7 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 // token via InviteToProjectWithLink. createdBy (0, ADR-030) alone loses which
 // machine did it; SetupToken.CreatedByMachineIdentityID must carry it through.
 func TestInviteToProjectWithLink_RecordsActingMachineIdentityOnSetupToken(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
@@ -545,6 +567,7 @@ func TestInviteToProjectWithLink_RecordsActingMachineIdentityOnSetupToken(t *tes
 // #345: InviteGlobalWithLink has the same unthrottled-initial-send shape as
 // InviteToProjectWithLink, reachable via the users.write-gated global-invite endpoint.
 func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
@@ -582,6 +605,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 // just the generic access_request.approved event (#298). Uses real storage so
 // ListRBACAuditLogs is exercised end to end.
 func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 

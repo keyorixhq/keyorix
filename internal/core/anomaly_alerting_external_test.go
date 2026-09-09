@@ -15,6 +15,7 @@ import (
 // AlertNewAnomalies pushes each not-yet-alerted anomaly out (audit/SIEM event +
 // admin notify), marks it alerted, and is idempotent on a second pass.
 func TestAlertNewAnomalies(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AnomalyAlert{}, &models.AuditEvent{}, &models.SecretNode{}))
@@ -47,6 +48,7 @@ func TestAlertNewAnomalies(t *testing.T) {
 // on the audit trail (so the dismissal can't quietly bury an alert), and reports a
 // missing alert id as not-found rather than a silent success.
 func TestAcknowledgeAnomalyAlert_AuditsAndChecksExistence(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AnomalyAlert{}, &models.AuditEvent{}))
@@ -83,6 +85,7 @@ func TestAcknowledgeAnomalyAlert_AuditsAndChecksExistence(t *testing.T) {
 // catch the writer drifting (action string, field mapping) and silently
 // re-blinding detection to real reads.
 func TestLogSecretRead_FeedsAnomalyDetection(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -130,6 +133,7 @@ func TestLogSecretRead_FeedsAnomalyDetection(t *testing.T) {
 // the fix the triggering read seeded its own baseline (knownUsers/knownIPs already
 // contained it) and these two high-severity rules could never fire end-to-end.
 func TestRunDetection_FlagsNewUserAndIPAgainstPriorBaseline(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{}))
@@ -171,6 +175,7 @@ func TestRunDetection_FlagsNewUserAndIPAgainstPriorBaseline(t *testing.T) {
 // though each individual secret only sees one unremarkable access from that principal
 // (never crossing any single-secret threshold on its own).
 func TestRunDetection_DetectsPrincipalBreadthAcrossSecrets(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{}))
@@ -220,6 +225,7 @@ func TestRunDetection_DetectsPrincipalBreadthAcrossSecrets(t *testing.T) {
 // event still fired, masking the gap). This drives the real detect → alert flow end to
 // end and asserts a project admin actually receives an in-app notification.
 func TestAlertNewAnomalies_PrincipalBreadthNotifiesProjectAdmins(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{},
@@ -262,6 +268,7 @@ func TestAlertNewAnomalies_PrincipalBreadthNotifiesProjectAdmins(t *testing.T) {
 
 // The compliance posture counts open (unacknowledged) anomalies, with a high-severity tally.
 func TestCompliancePosture_Anomalies(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(

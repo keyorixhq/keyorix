@@ -32,6 +32,7 @@ import (
 // create an "environment-scoped" rotation policy whose EnvironmentID actually
 // belongs to a different project (project 2) they may have no access to.
 func TestCreateRotationPolicy_EnvironmentProjectMismatchRejected(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}, &models.AuditEvent{}))
@@ -69,6 +70,7 @@ func TestCreateRotationPolicy_EnvironmentProjectMismatchRejected(t *testing.T) {
 // project, never left nil. A nil ProjectID on an environment-scoped policy is
 // exactly what let scopedPolicySecrets's environment branch go unscoped.
 func TestCreateRotationPolicy_EnvironmentScopeDerivesProjectID(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}, &models.AuditEvent{}))
@@ -96,6 +98,7 @@ func TestCreateRotationPolicy_EnvironmentScopeDerivesProjectID(t *testing.T) {
 // scoped (via EnvironmentID) to project 2's environment. The secret lookup must
 // never surface project 2's secrets.
 func TestScopedPolicySecrets_EnvironmentScopeDoesNotLeakAcrossProjects(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}))
@@ -129,6 +132,7 @@ func TestScopedPolicySecrets_EnvironmentScopeDoesNotLeakAcrossProjects(t *testin
 // its own environment, as CreateRotationPolicy now guarantees) must still see
 // its own project's secrets in that environment.
 func TestScopedPolicySecrets_EnvironmentScopeMatchesOwnProject(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}))

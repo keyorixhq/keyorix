@@ -25,6 +25,7 @@ func newUsageReportCore(t *testing.T) (*KeyorixCore, *MockStorage) {
 // GetProjectUsageStats is called with a nil slice and both projects appear in
 // the returned report.
 func TestGetUsageReport_AllProjects(t *testing.T) {
+	t.Parallel()
 	c, ms := newUsageReportCore(t)
 
 	stats := []storage.ProjectUsageStat{
@@ -45,6 +46,7 @@ func TestGetUsageReport_AllProjects(t *testing.T) {
 // TestGetUsageReport_SingleProject verifies that a non-nil projectID is
 // forwarded as a single-element slice to GetProjectUsageStats.
 func TestGetUsageReport_SingleProject(t *testing.T) {
+	t.Parallel()
 	c, ms := newUsageReportCore(t)
 
 	id := uint(7)
@@ -64,6 +66,7 @@ func TestGetUsageReport_SingleProject(t *testing.T) {
 // TestGetUsageReport_DefaultsInvalidDays verifies that out-of-range windowDays
 // values are clamped to 30 before the storage call.
 func TestGetUsageReport_DefaultsInvalidDays(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		days int
@@ -88,6 +91,7 @@ func TestGetUsageReport_DefaultsInvalidDays(t *testing.T) {
 // TestGetUsageReport_EmptyStats verifies that a nil slice from storage is
 // coerced to an empty non-nil slice in the returned report.
 func TestGetUsageReport_EmptyStats(t *testing.T) {
+	t.Parallel()
 	c, ms := newUsageReportCore(t)
 	ms.On("GetProjectUsageStats", mock.Anything, []uint(nil), 30).Return(nil, nil)
 

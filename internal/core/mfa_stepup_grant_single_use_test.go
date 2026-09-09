@@ -46,6 +46,7 @@ import (
 // sensitive action, and it succeeds -- the baseline the negative tests below
 // must not break.
 func TestRequireReauth_PasswordPlusGrant_OneActionSucceeds(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -71,6 +72,7 @@ func TestRequireReauth_PasswordPlusGrant_OneActionSucceeds(t *testing.T) {
 // non-consuming read) -- the second call would have found the SAME grant still
 // "active" and succeeded. GREEN after the fix (ConsumeMFAStepUpGrant).
 func TestRequireReauth_GrantConsumedOnFirstAction_SecondDifferentActionRejected(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -103,6 +105,7 @@ func TestRequireReauth_GrantConsumedOnFirstAction_SecondDifferentActionRejected(
 // and let a bare password through the UNRELATED "no second factor enrolled"
 // branch -- that would prove nothing about grant consumption.
 func TestRequireReauth_GrantConsumedOnFirstAction_ThirdActionAlsoRejected(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -128,6 +131,7 @@ func TestRequireReauth_GrantConsumedOnFirstAction_ThirdActionAlsoRejected(t *tes
 // SECOND, independent re-auth ceremony (a fresh grant, not a reuse of the
 // consumed one) must satisfy a second sensitive action normally.
 func TestRequireReauth_FreshGrantAfterConsumption_SecondActionSucceeds(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -160,6 +164,7 @@ func TestRequireReauth_FreshGrantAfterConsumption_SecondActionSucceeds(t *testin
 // assume symmetry between the WebAuthn and TOTP paths" check the fix's
 // investigation required.
 func TestRequireReauth_TOTPCode_AlreadyInherentlySingleUsePerCall(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, _ := activateMFAForTest(t, c, fixed)

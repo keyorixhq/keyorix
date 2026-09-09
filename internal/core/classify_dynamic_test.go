@@ -27,6 +27,7 @@ func makeDynConfig(t *testing.T, c *KeyorixCore, name, classification string) ui
 }
 
 func TestCreateDynamicSecretConfig_WithClassification(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 
 	id := makeDynConfig(t, c, "analytics-ro", ClassificationConfidential)
@@ -44,6 +45,7 @@ func TestCreateDynamicSecretConfig_WithClassification(t *testing.T) {
 }
 
 func TestClassifyDynamicSecretConfig(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	id := makeDynConfig(t, c, "prod-admin", "") // starts unclassified
@@ -73,6 +75,7 @@ func TestClassifyDynamicSecretConfig(t *testing.T) {
 }
 
 func TestClassificationPosture_CoversDynamicConfigs(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	makeDynConfig(t, c, "a", ClassificationRestricted)
 	makeDynConfig(t, c, "b", ClassificationRestricted)

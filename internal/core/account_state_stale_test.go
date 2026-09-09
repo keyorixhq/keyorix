@@ -12,6 +12,7 @@ import (
 )
 
 func TestStaleAccounts_PassesCutoffAndDefaultsState(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -28,6 +29,7 @@ func TestStaleAccounts_PassesCutoffAndDefaultsState(t *testing.T) {
 }
 
 func TestProjectMembershipCounts_Delegates(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()
@@ -42,6 +44,7 @@ func TestProjectMembershipCounts_Delegates(t *testing.T) {
 }
 
 func TestListUserProjectMemberships_Delegates(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMembershipCore(store)
 	ctx := context.Background()

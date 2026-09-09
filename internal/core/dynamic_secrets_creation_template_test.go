@@ -6,6 +6,7 @@ package core
 import "testing"
 
 func TestValidateCreationTemplate_RejectsPrivilegeEscalationKeywords(t *testing.T) {
+	t.Parallel()
 	dangerous := []string{
 		"GRANT OPTION",
 		"WITH GRANT",
@@ -35,6 +36,7 @@ func TestValidateCreationTemplate_RejectsPrivilegeEscalationKeywords(t *testing.
 }
 
 func TestValidateCreationTemplate_AllowsOrdinaryTemplate(t *testing.T) {
+	t.Parallel()
 	tmpl := `CREATE ROLE "{{name}}" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{{name}}";`
 	if err := validateCreationTemplate("postgresql", tmpl); err != nil {
 		t.Errorf("an ordinary read-only-grant template must not be rejected: %v", err)
@@ -42,6 +44,7 @@ func TestValidateCreationTemplate_AllowsOrdinaryTemplate(t *testing.T) {
 }
 
 func TestValidateCreationTemplate_NonSQLBackendsSkipped(t *testing.T) {
+	t.Parallel()
 	// AWS STS uses creation_statements as a session-policy JSON, not SQL;
 	// Kubernetes ignores it — neither should be scanned for SQL keywords.
 	if err := validateCreationTemplate("aws-sts", `{"Effect":"Allow","Action":"SUPERUSER"}`); err != nil {
@@ -50,6 +53,7 @@ func TestValidateCreationTemplate_NonSQLBackendsSkipped(t *testing.T) {
 }
 
 func TestValidateCreationTemplate_EmptyTemplateAllowed(t *testing.T) {
+	t.Parallel()
 	if err := validateCreationTemplate("postgresql", ""); err != nil {
 		t.Errorf("an empty template must be allowed: %v", err)
 	}

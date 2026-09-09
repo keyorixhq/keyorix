@@ -33,6 +33,7 @@ var updateUserDeactivationDBSeq atomic.Int64
 // live sessions/PATs intact, so the user could keep authenticating until
 // their credentials expired naturally.
 func TestUpdateUser_Deactivation_RevokesSessionsAndPATs(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	dsn := fmt.Sprintf("file:kx_update_user_deactivation_%d?mode=memory&cache=shared&_journal_mode=WAL&_busy_timeout=5000", updateUserDeactivationDBSeq.Add(1))
@@ -124,6 +125,7 @@ func TestUpdateUser_Deactivation_RevokesSessionsAndPATs(t *testing.T) {
 // UpdateUser on a user who is already inactive does not trigger redundant
 // session/PAT revocations (the deactivating transition only fires once).
 func TestUpdateUser_NoRevocation_WhenAlreadyInactive(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	dsn := fmt.Sprintf("file:kx_update_user_deactivation_%d?mode=memory&cache=shared&_journal_mode=WAL&_busy_timeout=5000", updateUserDeactivationDBSeq.Add(1))
@@ -190,6 +192,7 @@ func TestUpdateUser_NoRevocation_WhenAlreadyInactive(t *testing.T) {
 // isolation while the conditional write still succeeds -- not reproducible
 // against LocalStorage without a fault-injection seam.
 func TestUpdateUser_Deactivation_SucceedsDespiteSessionRevocationFailure(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 44, Username: "carol", Email: "carol@example.com", IsActive: true}
 	ms.On("GetUser", mock.Anything, uint(44)).Return(original, nil)

@@ -10,6 +10,7 @@ import (
 )
 
 func TestPasswordPolicy_Default(t *testing.T) {
+	t.Parallel()
 	p := DefaultPasswordPolicy()
 	user := &models.User{Username: "alice", Email: "alice@example.com", DisplayName: "Alice Smith"}
 
@@ -43,6 +44,7 @@ func TestPasswordPolicy_Default(t *testing.T) {
 
 // All unmet requirements are reported together, not just the first.
 func TestPasswordPolicy_ReportsAllFailures(t *testing.T) {
+	t.Parallel()
 	p := DefaultPasswordPolicy()
 	err := p.Validate("abc", nil) // short, no upper, no digit, no special
 	require.Error(t, err)
@@ -55,6 +57,7 @@ func TestPasswordPolicy_ReportsAllFailures(t *testing.T) {
 
 // A relaxed (lab) policy accepts a simple password and skips disabled checks.
 func TestPasswordPolicy_Relaxed(t *testing.T) {
+	t.Parallel()
 	p := PasswordPolicy{MinLength: 8} // complexity + personal-info off
 	user := &models.User{Username: "alice"}
 	assert.NoError(t, p.Validate("simplepw", user))
@@ -71,6 +74,7 @@ func TestPasswordPolicy_Relaxed(t *testing.T) {
 // empty or trivially-short password — Validate falls back to the conservative
 // built-in length floor rather than disabling it.
 func TestPasswordPolicy_ZeroMinLengthFallsBackToDefaultFloor(t *testing.T) {
+	t.Parallel()
 	p := PasswordPolicy{RejectCommonPasswords: true} // MinLength defaults to 0
 
 	for _, pw := range []string{"", "a", "short", "Passw0rd!"} { // all < 16
@@ -85,6 +89,7 @@ func TestPasswordPolicy_ZeroMinLengthFallsBackToDefaultFloor(t *testing.T) {
 // The common-password rule rejects denylisted passwords (case-insensitive) and
 // is independent of the complexity checks.
 func TestPasswordPolicy_RejectsCommonPasswords(t *testing.T) {
+	t.Parallel()
 	p := PasswordPolicy{RejectCommonPasswords: true}
 	for _, pw := range []string{"password", "PASSWORD", "Keyorix123", "letmein"} {
 		err := p.Validate(pw, nil)
@@ -96,6 +101,7 @@ func TestPasswordPolicy_RejectsCommonPasswords(t *testing.T) {
 }
 
 func TestIsCommonPassword(t *testing.T) {
+	t.Parallel()
 	assert.True(t, isCommonPassword("qwerty"))
 	assert.True(t, isCommonPassword("  Admin  "), "trimmed + lowercased")
 	assert.False(t, isCommonPassword("a-genuinely-unusual-passphrase-42"))

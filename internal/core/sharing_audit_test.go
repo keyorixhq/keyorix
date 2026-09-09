@@ -12,6 +12,7 @@ import (
 )
 
 func TestKeyorixCore_LogShareCreated(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -47,6 +48,7 @@ func TestKeyorixCore_LogShareCreated(t *testing.T) {
 }
 
 func TestKeyorixCore_LogShareUpdated(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -83,6 +85,7 @@ func TestKeyorixCore_LogShareUpdated(t *testing.T) {
 }
 
 func TestKeyorixCore_LogShareRevoked(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -117,6 +120,7 @@ func TestKeyorixCore_LogShareRevoked(t *testing.T) {
 }
 
 func TestKeyorixCore_LogGroupShareCreated(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -152,6 +156,7 @@ func TestKeyorixCore_LogGroupShareCreated(t *testing.T) {
 }
 
 func TestKeyorixCore_LogGroupShareUpdated(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -188,6 +193,7 @@ func TestKeyorixCore_LogGroupShareUpdated(t *testing.T) {
 }
 
 func TestKeyorixCore_LogGroupShareRevoked(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -229,6 +235,7 @@ func TestKeyorixCore_LogGroupShareRevoked(t *testing.T) {
 // 99) impersonates target user T (id 2) and shares a secret as T; the resulting
 // audit row must NOT be indistinguishable from T's own genuine action.
 func TestShareAudit_StampsImpersonationContext(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
@@ -283,6 +290,7 @@ func TestShareAudit_StampsImpersonationContext(t *testing.T) {
 // context leaves Impersonation/ImpersonatedBy/ActingAs unset, so the fix does not
 // spuriously tag ordinary sharing actions.
 func TestShareAudit_NoImpersonationOutsideSession(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
@@ -305,6 +313,7 @@ func TestShareAudit_NoImpersonationOutsideSession(t *testing.T) {
 }
 
 func TestShareAuditContext_Validation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		ctx     *ShareAuditContext

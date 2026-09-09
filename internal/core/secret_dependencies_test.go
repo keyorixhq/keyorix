@@ -22,6 +22,7 @@ func edge(dependent, dependsOn uint) *models.SecretDependency {
 }
 
 func TestDependencyReachable(t *testing.T) {
+	t.Parallel()
 	// 1→2→3 (1 depends on 2 depends on 3), plus 4→2.
 	edges := []*models.SecretDependency{edge(1, 2), edge(2, 3), edge(4, 2)}
 	assert.True(t, dependencyReachable(edges, 1, 3), "1 transitively depends on 3")
@@ -32,6 +33,7 @@ func TestDependencyReachable(t *testing.T) {
 }
 
 func TestTransitiveDependents(t *testing.T) {
+	t.Parallel()
 	// 3 is depended on by 2 and 4; 2 is depended on by 1. So rotating 3 impacts 2,4 (depth1) then 1 (depth2).
 	edges := []*models.SecretDependency{edge(1, 2), edge(2, 3), edge(4, 3)}
 	got, truncated := transitiveDependents(edges, 3)
@@ -55,6 +57,7 @@ func TestTransitiveDependents(t *testing.T) {
 // a chain deeper than maxDependencyBFSDepth must stop at the cap and report
 // Truncated, not silently walk the entire graph.
 func TestTransitiveDependents_DepthCapped(t *testing.T) {
+	t.Parallel()
 	// Chain: 2 depends on 1, 3 depends on 2, ... 16 depends on 15 -- 15 hops
 	// deep, well past maxDependencyBFSDepth (10).
 	edges := make([]*models.SecretDependency, 0, 15)
@@ -74,6 +77,7 @@ func TestTransitiveDependents_DepthCapped(t *testing.T) {
 // with blastBFS) -- a single secret with a very wide fan-out of direct
 // dependents must still be capped at maxDependencyBFSNodes.
 func TestTransitiveDependents_NodeCapped(t *testing.T) {
+	t.Parallel()
 	const fanOut = maxDependencyBFSNodes + 500
 	edges := make([]*models.SecretDependency, 0, fanOut)
 	for i := uint(0); i < fanOut; i++ {
@@ -88,6 +92,7 @@ func TestTransitiveDependents_NodeCapped(t *testing.T) {
 // TestTransitiveDependents_NotTruncatedWithinBounds is the negative
 // counterpart: a graph within both caps must not be flagged truncated.
 func TestTransitiveDependents_NotTruncatedWithinBounds(t *testing.T) {
+	t.Parallel()
 	edges := make([]*models.SecretDependency, 0, 5)
 	for i := uint(1); i <= 5; i++ {
 		edges = append(edges, edge(i+1, i))
@@ -98,6 +103,7 @@ func TestTransitiveDependents_NotTruncatedWithinBounds(t *testing.T) {
 }
 
 func TestTopologicalRotationOrder(t *testing.T) {
+	t.Parallel()
 	// Diamond: 1 depends on 2 and 3; both 2 and 3 depend on 4.
 	// Safe rotation = dependencies first: 4 before {2,3} before 1.
 	edges := []*models.SecretDependency{edge(1, 2), edge(1, 3), edge(2, 4), edge(3, 4)}
@@ -111,6 +117,7 @@ func TestTopologicalRotationOrder(t *testing.T) {
 }
 
 func TestTopologicalRotationOrderDetectsCycle(t *testing.T) {
+	t.Parallel()
 	// A hand-built cycle 1→2→1 (the add path prevents this; the sort must still flag it).
 	edges := []*models.SecretDependency{edge(1, 2), edge(2, 1)}
 	_, ok := topologicalRotationOrder(edges)
@@ -171,6 +178,7 @@ func mkSecretEnv(t *testing.T, db *gorm.DB, projectID, environmentID uint, name 
 }
 
 func TestAddSecretDependency_Validation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	dbPass := mkSecret(t, db, 1, "db-password")
@@ -230,6 +238,7 @@ func TestAddSecretDependency_Validation(t *testing.T) {
 // forensic query resolving CreatedBy against the users table would name a
 // real human who did nothing.
 func TestAddSecretDependency_MachineAndUserAttributionDistinguishable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 
@@ -294,6 +303,7 @@ func TestAddSecretDependency_MachineAndUserAttributionDistinguishable(t *testing
 // granular, so a cross-environment edge would let an env-scoped caller reference a
 // secret in another environment of the same project.
 func TestAddSecretDependency_CrossEnvironmentRejected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	staging := mkSecretEnv(t, db, 1, 1, "app-token")     // project 1, env 1
@@ -306,6 +316,7 @@ func TestAddSecretDependency_CrossEnvironmentRejected(t *testing.T) {
 // Removal is scoped to the focal secret: the edge must reference it, so a caller
 // authorized only on another secret cannot delete an unrelated edge.
 func TestRemoveSecretDependency_RequiresFocalReference(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	a := mkSecret(t, db, 1, "a")
@@ -327,6 +338,7 @@ func TestRemoveSecretDependency_RequiresFocalReference(t *testing.T) {
 // directly, bypassing the add guard), the read paths must not surface the other
 // environment's secret — they filter to the focal secret's environment independently.
 func TestSecretDependencyReadsFilterByEnvironment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	envA := mkSecretEnv(t, db, 1, 1, "env-a-secret")
@@ -347,6 +359,7 @@ func TestSecretDependencyReadsFilterByEnvironment(t *testing.T) {
 }
 
 func TestSecretDependencyImpactAndOrderAndRemove(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	root := mkSecret(t, db, 1, "root-ca")
@@ -403,6 +416,7 @@ func TestSecretDependencyImpactAndOrderAndRemove(t *testing.T) {
 // technique that originally reproduced the race deterministically) so the narrow
 // pre-fix race window is reliably exercised, not just occasionally hit.
 func TestAddSecretDependency_ConcurrentRaceCannotPersistACycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	sqlDB, err := db.DB()

@@ -21,6 +21,7 @@ func seedPendingRequest(t *testing.T, h *testhelper.RBACTestHelper, requester ui
 
 // With the default threshold (1), a single approval grants the role immediately.
 func TestApprove_SingleControlDefault(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
@@ -46,6 +47,7 @@ func TestApprove_SingleControlDefault(t *testing.T) {
 // With a threshold of 2, the role is granted only after two distinct approvers;
 // the requester can't approve, and an approver can't approve twice.
 func TestApprove_DualControl(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
@@ -91,6 +93,7 @@ func TestApprove_DualControl(t *testing.T) {
 // locked to the request's suggested_role. Before the fix, only the last approver's
 // granted_role was used, so one approver could escalate after K-1 others signed off.
 func TestApprove_DualControl_RoleLockedToRequest(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
@@ -132,6 +135,7 @@ func TestApprove_DualControl_RoleLockedToRequest(t *testing.T) {
 // A multi-approver request with no role stated at request time is rejected — there is
 // nothing for the approvers to consent to in common.
 func TestApprove_DualControl_RequiresRoleAtRequestTime(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
@@ -175,6 +179,7 @@ func TestApprove_DualControl_RequiresRoleAtRequestTime(t *testing.T) {
 // as TestAssignUserRole_EmptyRoleAlwaysGrantable's pattern for the identical
 // "nothing to ceiling-check" case.
 func TestApprove_DualControl_TwoDistinctMachineApprovers(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
@@ -216,6 +221,7 @@ func TestApprove_DualControl_TwoDistinctMachineApprovers(t *testing.T) {
 // something this test exercises). Using a permission-less role isolates this
 // test to its actual subject — same-machine dedup.
 func TestApprove_DualControl_SameMachineApproverTwiceRejected(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))
@@ -240,6 +246,7 @@ func TestApprove_DualControl_SameMachineApproverTwiceRejected(t *testing.T) {
 
 // The listing annotates a pending request with its M-of-K progress.
 func TestListAccessRequests_AnnotatesProgress(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.AuditEvent{}))

@@ -15,6 +15,7 @@ import (
 // "editor" here stands in for any pre-existing/seeded permission-rich role: the
 // attacker never touched its definition, only its grant.
 func TestAssignUserRole_RequiresActorHoldRolePermissions(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
@@ -36,6 +37,7 @@ func TestAssignUserRole_RequiresActorHoldRolePermissions(t *testing.T) {
 // self-grant — a roles.assign holder must not be able to hand a permission-rich
 // role to anyone else either.
 func TestAssignUserRole_CannotGrantToThirdPartyEither(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
@@ -60,6 +62,7 @@ func TestAssignUserRole_CannotGrantToThirdPartyEither(t *testing.T) {
 // role at a BROADER (global) scope than they hold it at — the ceiling check
 // resolves the actor's authority AT THE TARGET SCOPE, not anywhere.
 func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
@@ -85,6 +88,7 @@ func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
 // equal-or-broader scope) may grant the role — the fix must not block the
 // legitimate case.
 func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
@@ -112,6 +116,7 @@ func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
 // including one bundling a permission they don't explicitly hold by name (the
 // admin bypass in Authorize covers it).
 func TestAssignUserRole_AdminBypassesCeiling(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
@@ -131,6 +136,7 @@ func TestAssignUserRole_AdminBypassesCeiling(t *testing.T) {
 // grant-ceiling check exactly like it bypasses #169's AssignPermissionToRole check,
 // so local/system-driven role assignment at bootstrap keeps working.
 func TestAssignUserRole_SystemActorBypassesCeiling(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
@@ -148,6 +154,7 @@ func TestAssignUserRole_SystemActorBypassesCeiling(t *testing.T) {
 // A role with NO bundled permissions at all (an empty/placeholder role) is always
 // grantable — there is nothing to ceiling-check.
 func TestAssignUserRole_EmptyRoleAlwaysGrantable(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "empty-role"}).Error)

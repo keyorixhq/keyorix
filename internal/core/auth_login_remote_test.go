@@ -30,6 +30,7 @@ func (m *remoteLoginVerifierStorage) VerifyLoginCredentials(ctx context.Context,
 }
 
 func TestLogin_Remote_VerifyError(t *testing.T) {
+	t.Parallel()
 	storage := &remoteLoginVerifierStorage{
 		MockStorage: new(MockStorage),
 		verify: func(ctx context.Context, username, password, userAgent, ipAddress string) (*models.User, *models.Session, error) {
@@ -44,6 +45,7 @@ func TestLogin_Remote_VerifyError(t *testing.T) {
 }
 
 func TestLogin_Remote_MFARequired(t *testing.T) {
+	t.Parallel()
 	storage := &remoteLoginVerifierStorage{
 		MockStorage: new(MockStorage),
 		verify: func(ctx context.Context, username, password, userAgent, ipAddress string) (*models.User, *models.Session, error) {
@@ -63,6 +65,7 @@ func TestLogin_Remote_MFARequired(t *testing.T) {
 // (a contract violation on the upstream's part) must not let Login proceed
 // with a nil session -- it fails closed with an explicit error instead.
 func TestLogin_Remote_NilSessionWithoutMFA_FailsClosed(t *testing.T) {
+	t.Parallel()
 	storage := &remoteLoginVerifierStorage{
 		MockStorage: new(MockStorage),
 		verify: func(ctx context.Context, username, password, userAgent, ipAddress string) (*models.User, *models.Session, error) {
@@ -78,6 +81,7 @@ func TestLogin_Remote_NilSessionWithoutMFA_FailsClosed(t *testing.T) {
 }
 
 func TestLogin_Remote_Success(t *testing.T) {
+	t.Parallel()
 	wantUser := &models.User{ID: 3, Username: "carol"}
 	wantSession := &models.Session{ID: 99, UserID: 3, SessionToken: "tok-abc"}
 	storage := &remoteLoginVerifierStorage{

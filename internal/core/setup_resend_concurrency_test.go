@@ -28,6 +28,7 @@ import (
 // may be created. Before setupResendMu, concurrent callers counted zero in parallel and
 // all minted, exceeding the cap; this test fails (many tokens) without the lock.
 func TestConcurrency_SetupLinkResendThrottle(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "resend.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

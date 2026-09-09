@@ -83,6 +83,7 @@ func mkACLSecretInFolder(t *testing.T, db *gorm.DB, name string, parentID uint) 
 
 // TestGrantSecretACL_CreatesACLRow verifies that GrantSecretACL stores a row.
 func TestGrantSecretACL_CreatesACLRow(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "stripe-api-key")
@@ -101,6 +102,7 @@ func TestGrantSecretACL_CreatesACLRow(t *testing.T) {
 
 // TestGrantSecretACL_InvalidPerm verifies that invalid permissions are rejected.
 func TestGrantSecretACL_InvalidPerm(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "my-secret")
@@ -112,6 +114,7 @@ func TestGrantSecretACL_InvalidPerm(t *testing.T) {
 
 // TestHasSecretACL_MatchingPerm verifies HasSecretACL returns true for matching perm.
 func TestHasSecretACL_MatchingPerm(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "api-key")
@@ -125,6 +128,7 @@ func TestHasSecretACL_MatchingPerm(t *testing.T) {
 
 // TestHasSecretACL_OtherPerm verifies HasSecretACL returns false for a different perm.
 func TestHasSecretACL_OtherPerm(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "api-key")
@@ -138,6 +142,7 @@ func TestHasSecretACL_OtherPerm(t *testing.T) {
 
 // TestHasSecretACL_NoGrant returns false when no ACL exists.
 func TestHasSecretACL_NoGrant(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "no-grant-secret")
@@ -149,6 +154,7 @@ func TestHasSecretACL_NoGrant(t *testing.T) {
 
 // TestRevokeSecretACL_DeletesRow verifies that RevokeSecretACL removes the row.
 func TestRevokeSecretACL_DeletesRow(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "to-revoke")
@@ -169,6 +175,7 @@ func TestRevokeSecretACL_DeletesRow(t *testing.T) {
 
 // TestRevokeSecretACL_WrongSecret returns an error when aclID doesn't belong to secretID.
 func TestRevokeSecretACL_WrongSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid1 := mkACLSecret(t, db, "secret-one")
@@ -188,6 +195,7 @@ func TestRevokeSecretACL_WrongSecret(t *testing.T) {
 // TestAuthorizeSecret_ACLGrant verifies a user with only a SecretACL (no project role)
 // gets secrets.read access to that specific secret.
 func TestAuthorizeSecret_ACLGrant(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "acl-only-secret")
@@ -210,6 +218,7 @@ func TestAuthorizeSecret_ACLGrant(t *testing.T) {
 // TestAuthorizeSecret_ProjectRoleFallback verifies that a user with a project role
 // (and no SecretACL) still gets access via the RBAC fallback path.
 func TestAuthorizeSecret_ProjectRoleFallback(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "rbac-secret")
@@ -233,6 +242,7 @@ func TestAuthorizeSecret_ProjectRoleFallback(t *testing.T) {
 // (used by RequireScopedSecretPermission) honors a per-secret ACL grant for a
 // human user with no project role, mirroring TestAuthorizeSecret_ACLGrant.
 func TestAuthorizeSecretPrincipal_UserACLGrant(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "principal-acl-only-secret")
@@ -256,6 +266,7 @@ func TestAuthorizeSecretPrincipal_UserACLGrant(t *testing.T) {
 // is enforced structurally, not by accident of test data. A machine principal
 // with no role grant at the secret's scope must be denied.
 func TestAuthorizeSecretPrincipal_MachineSkipsACL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "machine-secret")
@@ -277,6 +288,7 @@ func TestAuthorizeSecretPrincipal_MachineSkipsACL(t *testing.T) {
 // propagate the storage error rather than falling through to
 // AuthorizePrincipal with a zero-value scope.
 func TestAuthorizeSecretPrincipal_MachineGetSecretError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newACLCore(t)
 
@@ -295,6 +307,7 @@ func TestAuthorizeSecretPrincipal_MachineGetSecretError(t *testing.T) {
 // when cleanup didn't run (a gap in that path, a backend that doesn't
 // support it, a TOCTOU window), not only when it did.
 func TestHasSecretACL_DeniesStaleGrantAfterMembershipRemoved(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "offboarding-secret")
@@ -323,6 +336,7 @@ func TestHasSecretACL_DeniesStaleGrantAfterMembershipRemoved(t *testing.T) {
 // member can no longer even reach TransferSecretOwnership via that route,
 // since AuthorizeSecret(..., "secrets.write") now denies them too.
 func TestAuthorizeSecret_DeniesStaleGrantAfterMembershipRemoved(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "offboarding-secret-2")
@@ -345,6 +359,7 @@ func TestAuthorizeSecret_DeniesStaleGrantAfterMembershipRemoved(t *testing.T) {
 // than failing every secret-access check closed — mirroring HasSecretACL's
 // existing GetSecretAncestors handling for the same sentinel.
 func TestHasSecretACL_UnsupportedBackendDegradesToNoGrant(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "unsupported-backend-secret")
@@ -358,6 +373,7 @@ func TestHasSecretACL_UnsupportedBackendDegradesToNoGrant(t *testing.T) {
 // TestGrantSecretACL_Upsert verifies that a second grant on the same (secret, user)
 // updates rather than inserting a duplicate.
 func TestGrantSecretACL_Upsert(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "upsert-secret")
@@ -387,6 +403,7 @@ func TestGrantSecretACL_Upsert(t *testing.T) {
 // a child secret with NO direct grant of its own inherits access via the real
 // ancestor walk.
 func TestGrantSecretACL_OnFolder_ReachableAndInherited(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 
@@ -417,6 +434,7 @@ func TestGrantSecretACL_OnFolder_ReachableAndInherited(t *testing.T) {
 // the real ancestor walk, mirroring TestHasSecretACL_GrandparentInheritance's
 // mocked scenario but end to end against real storage.
 func TestGrantSecretACL_OnFolder_GrandchildInheritance(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 

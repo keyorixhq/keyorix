@@ -28,6 +28,7 @@ var (
 )
 
 func TestEnforcePasswordExpiryGate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("no-op when MaxAgeDays is zero (feature disabled)", func(t *testing.T) {
@@ -104,6 +105,7 @@ func TestEnforcePasswordExpiryGate(t *testing.T) {
 // password_reset_required when the password max-age policy has elapsed (ADR-025
 // hard gate), so EnforceAccountRestriction blocks API access on subsequent requests.
 func TestLogin_ExpiredPassword(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ctx := context.Background()
 
@@ -138,6 +140,7 @@ func TestLogin_ExpiredPassword(t *testing.T) {
 // TestLogin_ExpiredPassword_StorageError verifies that Login fails closed when the
 // account-state update for an expired password cannot be persisted.
 func TestLogin_ExpiredPassword_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ctx := context.Background()
 
@@ -165,6 +168,7 @@ func TestLogin_ExpiredPassword_StorageError(t *testing.T) {
 // TestLogin_NotExpired_NoStateChange verifies that a user whose password is within
 // the max-age window logs in normally with no account-state side effect.
 func TestLogin_NotExpired_NoStateChange(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ctx := context.Background()
 

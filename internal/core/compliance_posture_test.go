@@ -56,6 +56,7 @@ func (s *failingLegalHoldStore) GetActiveLegalHold(_ context.Context) (*models.L
 // records under hold, and it feeds an HMAC-signed evidence pack an auditor trusts. A query
 // failure must surface as Degraded, not as a silently-clean zero value.
 func TestGetCompliancePosture_DegradedOnLegalHoldQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t)
 	c.storage = &failingLegalHoldStore{LocalStorage: c.storage.(*store.LocalStorage)}
 
@@ -79,6 +80,7 @@ func TestGetCompliancePosture_DegradedOnLegalHoldQueryError(t *testing.T) {
 // at their zero values — byte-identical to the expected "no keys pinned, ordinary dev build"
 // state — masking a genuine "couldn't even check" failure as benign not-configured.
 func TestGetCompliancePosture_DegradedOnSupplyChainTrustRegistryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t)
 	c.SetTrustRegistryFunc(func() (*trust.KeyRegistry, error) {
 		return nil, errors.New("simulated malformed embedded key data")
@@ -111,6 +113,7 @@ func (s *failingRiskExceptionsStore) ListRiskExceptions(_ context.Context, _ boo
 // from count=1 to count=0 — a query failure must surface as Degraded, not a silently-clean
 // zero count.
 func TestGetCompliancePosture_DegradedOnRiskExceptionQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t)
 	c.storage = &failingRiskExceptionsStore{LocalStorage: c.storage.(*store.LocalStorage)}
 
@@ -136,6 +139,7 @@ func (s *failingSoDPoliciesStore) ListSoDPolicies(_ context.Context) ([]*models.
 // violation from count>=1 to count=0 — a query failure must surface as Degraded, not a
 // silently-clean zero count.
 func TestGetCompliancePosture_DegradedOnSoDPoliciesQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t)
 	c.storage = &failingSoDPoliciesStore{LocalStorage: c.storage.(*store.LocalStorage)}
 
@@ -175,6 +179,7 @@ func compliancePostureCoreWithProject(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // flip the posture's Rotation sub-rollup to degraded instead of leaving
 // CoveredSecrets/Overdue/DueSoon at their zero-value "0 secrets overdue" reading.
 func TestGetCompliancePosture_DegradedOnRotationQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t) // models.RotationPolicy deliberately NOT migrated
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -188,6 +193,7 @@ func TestGetCompliancePosture_DegradedOnRotationQueryError(t *testing.T) {
 // #359: a failed ListAnomalyAlerts query must not read as "no open alerts" — that masks
 // active, unreviewed high-severity access anomalies.
 func TestGetCompliancePosture_DegradedOnAnomalyQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t) // models.AnomalyAlert deliberately NOT migrated
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -204,6 +210,7 @@ func TestGetCompliancePosture_DegradedOnAnomalyQueryError(t *testing.T) {
 // but NOT the three classification tables isolates exactly those three calls as the
 // failure, demonstrating all three degrade independently in one pass.
 func TestGetCompliancePosture_DegradedOnClassificationCountQueryErrors(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreDB(t)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}))
 	// models.DynamicSecretConfig / MachineIdentity / MachineIdentityCredential deliberately NOT migrated.
@@ -223,6 +230,7 @@ func TestGetCompliancePosture_DegradedOnClassificationCountQueryErrors(t *testin
 // #361(a): a project whose ListAccessReviewCampaigns query errors must not be silently
 // dropped from ProjectsNeverReviewed/ProjectsWithOpenCampaign/PendingItems/ProjectsOverdue.
 func TestGetCompliancePosture_DegradedOnAccessReviewCampaignsQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 	// models.AccessReviewCampaign deliberately NOT migrated.
@@ -238,6 +246,7 @@ func TestGetCompliancePosture_DegradedOnAccessReviewCampaignsQueryError(t *testi
 // EmergencyAccess — the most severe of the three, since it hides CURRENTLY-ACTIVE
 // emergency access from the report.
 func TestGetCompliancePosture_DegradedOnBreakGlassQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 	// models.BreakGlassActivation deliberately NOT migrated.
@@ -254,6 +263,7 @@ func TestGetCompliancePosture_DegradedOnBreakGlassQueryError(t *testing.T) {
 // LastUserSecretActivity) must each independently degrade rather than silently return 0
 // (undercounting stale privileged access) on a storage error.
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsAssignmentsQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.AuditEvent{}))
 	// models.UserRole / GroupRole deliberately NOT migrated → ListProjectRoleAssignments fails.
@@ -267,6 +277,7 @@ func TestGetCompliancePosture_DegradedOnDormantRoleGrantsAssignmentsQueryError(t
 }
 
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsActivityQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.Group{}))
 	// models.AuditEvent deliberately NOT migrated → LastUserSecretReadActivity's raw
@@ -297,6 +308,7 @@ func (s *failingSecretWriteActivityStore) LastUserSecretWriteActivity(_ context.
 // independently degrade rather than silently return 0 (undercounting stale
 // standing access) on a storage error.
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsWriteActivityQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Group{}))
 	c.storage = &failingSecretWriteActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
@@ -325,6 +337,7 @@ func (s *failingRoleManagementActivityStore) LastUserRoleManagementActivity(_ co
 // independently degrade rather than silently return 0 (undercounting stale
 // privileged access) on a storage error.
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsRoleManagementActivityQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Group{}))
 	c.storage = &failingRoleManagementActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
@@ -348,6 +361,7 @@ func (s *failingSecretsDeletionActivityStore) LastUserSecretDeletionActivity(_ c
 }
 
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsSecretsDeletionActivityQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Group{}))
 	c.storage = &failingSecretsDeletionActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
