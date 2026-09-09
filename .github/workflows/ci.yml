@@ -9,6 +9,11 @@ on:
     # directly, until it's that PR's turn to land) — without these, a PR
     # based on a sibling feature branch never triggers CI at all.
     branches: [main, 'adr082/**', 'feat/**', 'fix/**']
+  # Merge queue. Every REQUIRED status check must also report on the
+  # merge_group event or the queue never merges anything -- a check that
+  # simply does not run is indistinguishable from one still pending, and it
+  # blocks the queue forever rather than failing loudly.
+  merge_group:
 
 # Workflow-level default: zero permissions. No job here writes to the repo,
 # comments on PRs, or publishes anything — a compromised dependency/action in
