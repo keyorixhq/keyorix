@@ -89,6 +89,7 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 }
 
 func TestTransferSecretOwnership(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("owner transfers to an already-privileged user", func(t *testing.T) {

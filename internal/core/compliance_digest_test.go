@@ -11,6 +11,7 @@ import (
 )
 
 func TestFormatComplianceDigest(t *testing.T) {
+	t.Parallel()
 	p := &CompliancePosture{
 		AccessGovernance: AccessGovernancePosture{ProjectsOverdue: 2, SoDViolations: 1, DormantRoleGrants: 3},
 		Rotation:         RotationPosture{Overdue: 1, DueSoon: 2},
@@ -36,6 +37,7 @@ func TestFormatComplianceDigest(t *testing.T) {
 }
 
 func TestFormatComplianceDigest_AllPass(t *testing.T) {
+	t.Parallel()
 	p := &CompliancePosture{Identity: IdentityPosture{SecondFactorPercent: 100}}
 	controls := []ControlState{{Name: "X", Status: ControlStatusPass}, {Name: "Y", Status: ControlStatusPass}}
 	title, _ := formatComplianceDigest(p, controls)
@@ -43,6 +45,7 @@ func TestFormatComplianceDigest_AllPass(t *testing.T) {
 }
 
 func TestSendComplianceDigest_NoSinkNoOp(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{storage: new(MockStorage), now: time.Now}
 	sent, err := c.SendComplianceDigest(context.Background(), 0)
 	require.NoError(t, err)
@@ -50,6 +53,7 @@ func TestSendComplianceDigest_NoSinkNoOp(t *testing.T) {
 }
 
 func TestSendComplianceDigest_Broadcasts(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newEvidenceExportCore(t) // real store, empty deployment
 	sink := &fakeSink{}
 	c.SetNotificationSink(sink)
@@ -74,6 +78,7 @@ func TestSendComplianceDigest_Broadcasts(t *testing.T) {
 // hardcoded to actor_type=system with a nil UserID, indistinguishable from
 // the unattended scheduled run.
 func TestSendComplianceDigest_AttributesOnDemandSendToActor(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newEvidenceExportCore(t) // real store, empty deployment
 	sink := &fakeSink{}
 	c.SetNotificationSink(sink)
@@ -100,6 +105,7 @@ func TestSendComplianceDigest_AttributesOnDemandSendToActor(t *testing.T) {
 // must now say the broadcast was NOT delivered, and a log line must make the gap
 // discoverable.
 func TestSendComplianceDigest_NoChannelAcceptsIt(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newEvidenceExportCore(t) // real store, empty deployment
 	sink := &fakeSink{refuse: true}
 	c.SetNotificationSink(sink)

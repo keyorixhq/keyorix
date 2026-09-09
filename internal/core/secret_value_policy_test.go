@@ -8,6 +8,7 @@ import (
 )
 
 func TestSecretValuePolicy_Disabled(t *testing.T) {
+	t.Parallel()
 	p := DefaultSecretValuePolicy() // disabled
 	require.NoError(t, p.Validate([]byte("changeme")))
 	require.NoError(t, p.Validate([]byte("")))
@@ -15,6 +16,7 @@ func TestSecretValuePolicy_Disabled(t *testing.T) {
 }
 
 func TestSecretValuePolicy_MinLength(t *testing.T) {
+	t.Parallel()
 	p := SecretValuePolicy{Enabled: true, MinLength: 12}
 	err := p.Validate([]byte("short"))
 	require.Error(t, err)
@@ -23,6 +25,7 @@ func TestSecretValuePolicy_MinLength(t *testing.T) {
 }
 
 func TestSecretValuePolicy_RejectCommon(t *testing.T) {
+	t.Parallel()
 	p := SecretValuePolicy{Enabled: true, RejectCommon: true}
 	for _, weak := range []string{"changeme", "CHANGEME", "  password  ", "123456", "secret", "admin", ""} {
 		require.Error(t, p.Validate([]byte(weak)), "%q should be rejected", weak)
@@ -31,6 +34,7 @@ func TestSecretValuePolicy_RejectCommon(t *testing.T) {
 }
 
 func TestSecretValuePolicy_ExtraDenylist(t *testing.T) {
+	t.Parallel()
 	p := SecretValuePolicy{Enabled: true, ExtraDenylist: []string{"acme-default", "Internal-Test"}}
 	require.Error(t, p.Validate([]byte("acme-default")))
 	require.Error(t, p.Validate([]byte("internal-test")), "case-insensitive")
@@ -38,6 +42,7 @@ func TestSecretValuePolicy_ExtraDenylist(t *testing.T) {
 }
 
 func TestSecretValuePolicy_ErrorNeverEchoesValue(t *testing.T) {
+	t.Parallel()
 	p := SecretValuePolicy{Enabled: true, RejectCommon: true, MinLength: 20}
 	err := p.Validate([]byte("changeme"))
 	require.Error(t, err)

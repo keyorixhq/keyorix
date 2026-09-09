@@ -27,6 +27,7 @@ var errRemoteAccountState = fmt.Errorf("account_state cannot be persisted throug
 // "success" that leaves the account state unchanged and the admin believing the
 // suspension took effect.
 func TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	store := new(MockStorage)
 	c := newAccountCore(store)
@@ -57,6 +58,7 @@ func TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState(t *testing.T)
 // backend that cannot persist account_state must fail closed, not report success
 // while the account silently stays reachable.
 func TestUpdateSCIMUser_HardFailsWhenBackendCannotPersistDeprovision(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
@@ -84,6 +86,7 @@ func TestUpdateSCIMUser_HardFailsWhenBackendCannotPersistDeprovision(t *testing.
 // persist account_state, since SetAccountState is only invoked when the state
 // actually changes.
 func TestUpdateSCIMUser_NoStateChange_DoesNotConsultSetAccountState(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)

@@ -16,6 +16,7 @@ import (
 )
 
 func TestExpireSetupTokenByID_UnknownID_NoOp(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSetupTokenByID", mock.Anything, uint(404)).Return(nil, errors.New("setup token not found"))
 	c := NewKeyorixCore(ms)
@@ -25,6 +26,7 @@ func TestExpireSetupTokenByID_UnknownID_NoOp(t *testing.T) {
 }
 
 func TestExpireSetupTokenByID_GenuineStorageError_Surfaces(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSetupTokenByID", mock.Anything, uint(5)).Return(nil, errors.New("connection reset"))
 	c := NewKeyorixCore(ms)

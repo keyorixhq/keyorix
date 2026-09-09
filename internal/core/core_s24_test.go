@@ -31,6 +31,7 @@ import (
 // ── service.go — setters and simple accessors ─────────────────────────────────
 
 func TestSetAuditForwarder(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// Setting a nil forwarder must not panic.
@@ -39,12 +40,14 @@ func TestSetAuditForwarder(t *testing.T) {
 }
 
 func TestWebAuthnEnabled_False(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	assert.False(t, c.WebAuthnEnabled())
 }
 
 func TestSetPasswordPolicy_Stored(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	p := PasswordPolicy{MinLength: 12}
@@ -53,6 +56,7 @@ func TestSetPasswordPolicy_Stored(t *testing.T) {
 }
 
 func TestSetSessionTTLs_Stored(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetSessionTTLs(30*time.Minute, 8*time.Hour)
@@ -61,6 +65,7 @@ func TestSetSessionTTLs_Stored(t *testing.T) {
 }
 
 func TestHealthCheck_StorageNil(t *testing.T) {
+	t.Parallel()
 	// Bypass NewKeyorixCore to construct a nil-storage core.
 	c := &KeyorixCore{storage: nil}
 	err := c.HealthCheck(context.Background())
@@ -69,6 +74,7 @@ func TestHealthCheck_StorageNil(t *testing.T) {
 }
 
 func TestHealthCheck_StorageOK(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("HealthCheck", mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
@@ -77,6 +83,7 @@ func TestHealthCheck_StorageOK(t *testing.T) {
 }
 
 func TestHealthCheck_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("HealthCheck", mock.Anything).Return(errors.New("db down"))
 	c := NewKeyorixCore(ms)
@@ -86,6 +93,7 @@ func TestHealthCheck_StorageError(t *testing.T) {
 }
 
 func TestListActiveSecrets_Empty(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSecrets", mock.Anything, mock.Anything).Return(nil, int64(0), nil)
 	c := NewKeyorixCore(ms)
@@ -94,6 +102,7 @@ func TestListActiveSecrets_Empty(t *testing.T) {
 }
 
 func TestListActiveSecrets_NonEmpty(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	nodes := []*models.SecretNode{{ID: 1, Name: "s1"}, {ID: 2, Name: "s2"}}
 	ms.On("ListSecrets", mock.Anything, mock.Anything).Return(nodes, int64(2), nil)
@@ -103,6 +112,7 @@ func TestListActiveSecrets_NonEmpty(t *testing.T) {
 }
 
 func TestListActiveSecrets_ErrorReturnsNil(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSecrets", mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("boom"))
 	c := NewKeyorixCore(ms)
@@ -111,6 +121,7 @@ func TestListActiveSecrets_ErrorReturnsNil(t *testing.T) {
 }
 
 func TestResolveUsernames_EmptyEvents(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	result := c.ResolveUsernames(context.Background(), nil)
@@ -118,6 +129,7 @@ func TestResolveUsernames_EmptyEvents(t *testing.T) {
 }
 
 func TestResolveUsernames_ResolvesUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	uid := uint(42)
 	ms.On("GetUser", mock.Anything, uid).Return(&models.User{ID: uid, Username: "alice"}, nil)
@@ -129,6 +141,7 @@ func TestResolveUsernames_ResolvesUserID(t *testing.T) {
 }
 
 func TestResolveUsernames_UserNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	uid := uint(99)
 	ms.On("GetUser", mock.Anything, uid).Return(nil, errors.New("not found"))
@@ -139,6 +152,7 @@ func TestResolveUsernames_UserNotFound(t *testing.T) {
 }
 
 func TestResolveUsernames_ImpersonatedBy(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	uid := uint(5)
 	ms.On("GetUser", mock.Anything, uid).Return(&models.User{ID: uid, Username: "admin"}, nil)
@@ -151,6 +165,7 @@ func TestResolveUsernames_ImpersonatedBy(t *testing.T) {
 // ── secret_policy_info.go — SecretPolicies ────────────────────────────────────
 
 func TestSecretPolicies_DefaultsDisabled(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	info := c.SecretPolicies()
@@ -159,6 +174,7 @@ func TestSecretPolicies_DefaultsDisabled(t *testing.T) {
 }
 
 func TestSecretPolicies_AfterSetNamePolicy(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, Pattern: "[A-Z_]+", MaxLength: 64})
@@ -172,6 +188,7 @@ func TestSecretPolicies_AfterSetNamePolicy(t *testing.T) {
 // ── secret_name_policy.go ────────────────────────────────────────────────────
 
 func TestDefaultSecretNamePolicy_Disabled(t *testing.T) {
+	t.Parallel()
 	p := DefaultSecretNamePolicy()
 	assert.False(t, p.Enabled)
 	assert.Empty(t, p.Pattern)
@@ -179,12 +196,14 @@ func TestDefaultSecretNamePolicy_Disabled(t *testing.T) {
 }
 
 func TestCompileNamePattern_Empty(t *testing.T) {
+	t.Parallel()
 	re, err := compileNamePattern("")
 	require.NoError(t, err)
 	assert.Nil(t, re)
 }
 
 func TestCompileNamePattern_Valid(t *testing.T) {
+	t.Parallel()
 	re, err := compileNamePattern("[A-Z_]+")
 	require.NoError(t, err)
 	require.NotNil(t, re)
@@ -193,12 +212,14 @@ func TestCompileNamePattern_Valid(t *testing.T) {
 }
 
 func TestCompileNamePattern_Invalid(t *testing.T) {
+	t.Parallel()
 	_, err := compileNamePattern("[invalid")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid secret name pattern")
 }
 
 func TestValidateSecretName_PolicyDisabled(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// policy disabled by default — any name passes
@@ -206,6 +227,7 @@ func TestValidateSecretName_PolicyDisabled(t *testing.T) {
 }
 
 func TestValidateSecretName_MaxLengthExceeded(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, MaxLength: 5})
@@ -216,6 +238,7 @@ func TestValidateSecretName_MaxLengthExceeded(t *testing.T) {
 }
 
 func TestValidateSecretName_PatternMismatch(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, Pattern: "[A-Z_]+"})
@@ -226,6 +249,7 @@ func TestValidateSecretName_PatternMismatch(t *testing.T) {
 }
 
 func TestValidateSecretName_PatternMatches(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	require.NoError(t, c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, Pattern: "[A-Z_]+"}))
@@ -233,6 +257,7 @@ func TestValidateSecretName_PatternMatches(t *testing.T) {
 }
 
 func TestSetSecretNamePolicy_InvalidPattern(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, Pattern: "[broken"})
@@ -242,6 +267,7 @@ func TestSetSecretNamePolicy_InvalidPattern(t *testing.T) {
 // ── secrets.go — GetSecretByName ─────────────────────────────────────────────
 
 func TestGetSecretByName_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	node := &models.SecretNode{ID: 5, Name: "db-pass", ProjectID: 1, EnvironmentID: 1}
 	ms.On("GetSecretByName", mock.Anything, "db-pass", uint(1), uint(1)).Return(node, nil)
@@ -252,6 +278,7 @@ func TestGetSecretByName_Success(t *testing.T) {
 }
 
 func TestGetSecretByName_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretByName", mock.Anything, "missing", uint(1), uint(1)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -260,6 +287,7 @@ func TestGetSecretByName_NotFound(t *testing.T) {
 }
 
 func TestGetSecretByName_Expired(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	exp := time.Now().Add(-time.Hour)
 	node := &models.SecretNode{ID: 5, Name: "old", Expiration: &exp}
@@ -273,6 +301,7 @@ func TestGetSecretByName_Expired(t *testing.T) {
 // ── secrets.go — GetSecretByNameWithPermissionCheck ──────────────────────────
 
 func TestGetSecretByNameWithPermissionCheck_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretByName", mock.Anything, "x", uint(1), uint(1)).Return(nil, errors.New("db err"))
 	c := NewKeyorixCore(ms)
@@ -283,6 +312,7 @@ func TestGetSecretByNameWithPermissionCheck_StorageError(t *testing.T) {
 // ── secrets.go — DeleteSecret ─────────────────────────────────────────────────
 
 func TestDeleteSecret_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.DeleteSecret(context.Background(), 0)
@@ -291,6 +321,7 @@ func TestDeleteSecret_ZeroID(t *testing.T) {
 }
 
 func TestDeleteSecret_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -299,6 +330,7 @@ func TestDeleteSecret_NotFound(t *testing.T) {
 }
 
 func TestDeleteSecret_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(3)).Return(&models.SecretNode{ID: 3, ProjectID: 1}, nil)
 	ms.On("DeleteSecret", mock.Anything, uint(3)).Return(nil)
@@ -309,6 +341,7 @@ func TestDeleteSecret_Success(t *testing.T) {
 }
 
 func TestDeleteSecret_StorageFails(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(3)).Return(&models.SecretNode{ID: 3}, nil)
 	ms.On("DeleteSecret", mock.Anything, uint(3)).Return(errors.New("io error"))
@@ -320,6 +353,7 @@ func TestDeleteSecret_StorageFails(t *testing.T) {
 // ── secrets.go — DeleteSecretWithPermissionCheck ─────────────────────────────
 
 func TestDeleteSecretWithPermissionCheck_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.DeleteSecretWithPermissionCheck(context.Background(), 1, 0)
@@ -330,6 +364,7 @@ func TestDeleteSecretWithPermissionCheck_ZeroUserID(t *testing.T) {
 // ── secrets.go — RestoreSecret ────────────────────────────────────────────────
 
 func TestRestoreSecret_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RestoreSecret(context.Background(), 1, 0)
@@ -338,6 +373,7 @@ func TestRestoreSecret_ZeroID(t *testing.T) {
 }
 
 func TestRestoreSecret_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
 	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1}, nil)
@@ -349,6 +385,7 @@ func TestRestoreSecret_StorageError(t *testing.T) {
 }
 
 func TestRestoreSecret_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
 	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1}, nil)
@@ -363,6 +400,7 @@ func TestRestoreSecret_Success(t *testing.T) {
 // ── secrets.go — UpdateSecretWithPermissionCheck ──────────────────────────────
 
 func TestUpdateSecretWithPermissionCheck_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	req := &UpdateSecretRequest{ID: 1, UserID: 0, UpdatedBy: "alice"}
@@ -374,6 +412,7 @@ func TestUpdateSecretWithPermissionCheck_ZeroUserID(t *testing.T) {
 // ── versions.go — GetSecretVersions ──────────────────────────────────────────
 
 func TestGetSecretVersions_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersions(context.Background(), 0)
@@ -382,6 +421,7 @@ func TestGetSecretVersions_ZeroID(t *testing.T) {
 }
 
 func TestGetSecretVersions_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -390,6 +430,7 @@ func TestGetSecretVersions_SecretNotFound(t *testing.T) {
 }
 
 func TestGetSecretVersions_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1}, nil)
 	versions := []*models.SecretVersion{{ID: 1, VersionNumber: 1}, {ID: 2, VersionNumber: 2}}
@@ -401,6 +442,7 @@ func TestGetSecretVersions_Success(t *testing.T) {
 }
 
 func TestGetSecretVersions_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1}, nil)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return(nil, errors.New("db err"))
@@ -412,6 +454,7 @@ func TestGetSecretVersions_StorageError(t *testing.T) {
 // ── versions.go — GetSecretVersionsWithPermissionCheck ────────────────────────
 
 func TestGetSecretVersionsWithPermissionCheck_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersionsWithPermissionCheck(context.Background(), 1, 0)
@@ -422,6 +465,7 @@ func TestGetSecretVersionsWithPermissionCheck_ZeroUserID(t *testing.T) {
 // ── versions.go — GetSecretVersion ───────────────────────────────────────────
 
 func TestGetSecretVersion_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersion(context.Background(), 0, 1)
@@ -430,6 +474,7 @@ func TestGetSecretVersion_ZeroSecretID(t *testing.T) {
 }
 
 func TestGetSecretVersion_ZeroVersionNumber(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersion(context.Background(), 1, 0)
@@ -438,6 +483,7 @@ func TestGetSecretVersion_ZeroVersionNumber(t *testing.T) {
 }
 
 func TestGetSecretVersion_VersionNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return([]*models.SecretVersion{
 		{ID: 1, VersionNumber: 1},
@@ -449,6 +495,7 @@ func TestGetSecretVersion_VersionNotFound(t *testing.T) {
 }
 
 func TestGetSecretVersion_Found(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return([]*models.SecretVersion{
 		{ID: 2, VersionNumber: 2},
@@ -463,6 +510,7 @@ func TestGetSecretVersion_Found(t *testing.T) {
 // ── versions.go — GetSecretVersionWithPermissionCheck ────────────────────────
 
 func TestGetSecretVersionWithPermissionCheck_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersionWithPermissionCheck(context.Background(), 1, 0, 1)
@@ -473,6 +521,7 @@ func TestGetSecretVersionWithPermissionCheck_ZeroUserID(t *testing.T) {
 // ── versions.go — GetLatestSecretVersion ─────────────────────────────────────
 
 func TestGetLatestSecretVersion_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetLatestSecretVersion(context.Background(), 0)
@@ -481,6 +530,7 @@ func TestGetLatestSecretVersion_ZeroID(t *testing.T) {
 }
 
 func TestGetLatestSecretVersion_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return(nil, errors.New("db err"))
 	c := NewKeyorixCore(ms)
@@ -489,6 +539,7 @@ func TestGetLatestSecretVersion_StorageError(t *testing.T) {
 }
 
 func TestGetLatestSecretVersion_NoVersions(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return([]*models.SecretVersion{}, nil)
 	c := NewKeyorixCore(ms)
@@ -497,6 +548,7 @@ func TestGetLatestSecretVersion_NoVersions(t *testing.T) {
 }
 
 func TestGetLatestSecretVersion_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return([]*models.SecretVersion{
 		{ID: 3, VersionNumber: 3},
@@ -511,6 +563,7 @@ func TestGetLatestSecretVersion_Success(t *testing.T) {
 // ── versions.go — GetLatestSecretVersionWithPermissionCheck ──────────────────
 
 func TestGetLatestSecretVersionWithPermissionCheck_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetLatestSecretVersionWithPermissionCheck(context.Background(), 1, 0)
@@ -521,6 +574,7 @@ func TestGetLatestSecretVersionWithPermissionCheck_ZeroUserID(t *testing.T) {
 // ── versions.go — GetSecretValueWithPermissionCheck ──────────────────────────
 
 func TestGetSecretValueWithPermissionCheck_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretValueWithPermissionCheck(context.Background(), 1, 0)
@@ -531,6 +585,7 @@ func TestGetSecretValueWithPermissionCheck_ZeroUserID(t *testing.T) {
 // ── versions.go — GetSecretValueByVersionWithPermissionCheck ─────────────────
 
 func TestGetSecretValueByVersionWithPermissionCheck_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretValueByVersionWithPermissionCheck(context.Background(), 1, 0, 1)
@@ -541,6 +596,7 @@ func TestGetSecretValueByVersionWithPermissionCheck_ZeroUserID(t *testing.T) {
 // ── sharing_query.go — ListSharedSecrets ─────────────────────────────────────
 
 func TestListSharedSecrets_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.ListSharedSecrets(context.Background(), 0)
@@ -549,6 +605,7 @@ func TestListSharedSecrets_ZeroUserID(t *testing.T) {
 }
 
 func TestListSharedSecrets_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSharedSecrets", mock.Anything, uint(1)).Return(nil, errors.New("db err"))
 	c := NewKeyorixCore(ms)
@@ -557,6 +614,7 @@ func TestListSharedSecrets_StorageError(t *testing.T) {
 }
 
 func TestListSharedSecrets_NilReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSharedSecrets", mock.Anything, uint(1)).Return(([]*models.SecretNode)(nil), nil)
 	c := NewKeyorixCore(ms)
@@ -566,6 +624,7 @@ func TestListSharedSecrets_NilReturnsEmpty(t *testing.T) {
 }
 
 func TestListSharedSecrets_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secrets := []*models.SecretNode{{ID: 10, Name: "shared-secret"}}
 	ms.On("ListSharedSecrets", mock.Anything, uint(2)).Return(secrets, nil)
@@ -578,6 +637,7 @@ func TestListSharedSecrets_Success(t *testing.T) {
 // ── sharing_query.go — ListSecretShares ──────────────────────────────────────
 
 func TestListSecretShares_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.ListSecretShares(context.Background(), 0)
@@ -586,6 +646,7 @@ func TestListSecretShares_ZeroSecretID(t *testing.T) {
 }
 
 func TestListSecretShares_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -594,6 +655,7 @@ func TestListSecretShares_SecretNotFound(t *testing.T) {
 }
 
 func TestListSecretShares_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1}, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return(nil, errors.New("db err"))
@@ -603,6 +665,7 @@ func TestListSecretShares_StorageError(t *testing.T) {
 }
 
 func TestListSecretShares_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1}, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{{ID: 1, SecretID: 1, Permission: "read"}}, nil)
@@ -615,6 +678,7 @@ func TestListSecretShares_Success(t *testing.T) {
 // ── sharing_query.go — ListSecretSharesWithPermissionCheck ────────────────────
 
 func TestListSecretSharesWithPermissionCheck_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.ListSecretSharesWithPermissionCheck(context.Background(), 0, 1)
@@ -623,6 +687,7 @@ func TestListSecretSharesWithPermissionCheck_ZeroSecretID(t *testing.T) {
 }
 
 func TestListSecretSharesWithPermissionCheck_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -631,6 +696,7 @@ func TestListSecretSharesWithPermissionCheck_SecretNotFound(t *testing.T) {
 }
 
 func TestListSecretSharesWithPermissionCheck_NotOwner(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// Secret owned by user 2, caller is user 1
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 2}, nil)
@@ -641,6 +707,7 @@ func TestListSecretSharesWithPermissionCheck_NotOwner(t *testing.T) {
 }
 
 func TestListSecretSharesWithPermissionCheck_OwnerSuccess(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7, ProjectID: 5}, nil)
 	ms.On("IsProjectMember", mock.Anything, uint(7), uint(5)).Return(true, nil)
@@ -661,6 +728,7 @@ func TestListSecretSharesWithPermissionCheck_OwnerSuccess(t *testing.T) {
 // fails against that old code (confirmed red before the requireLiveOwnerAuthority
 // swap) and passes now that IsProjectMember is consulted.
 func TestListSecretSharesWithPermissionCheck_DepartedOwnerDenied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 7, ProjectID: 5}, nil)
 	// The owner still carries OwnerID 7 on the secret row, but no longer holds a
@@ -676,6 +744,7 @@ func TestListSecretSharesWithPermissionCheck_DepartedOwnerDenied(t *testing.T) {
 // ── sharing_query.go — CheckSharePermission ───────────────────────────────────
 
 func TestCheckSharePermission_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.CheckSharePermission(context.Background(), 0, 1)
@@ -684,6 +753,7 @@ func TestCheckSharePermission_ZeroSecretID(t *testing.T) {
 }
 
 func TestCheckSharePermission_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.CheckSharePermission(context.Background(), 1, 0)
@@ -692,6 +762,7 @@ func TestCheckSharePermission_ZeroUserID(t *testing.T) {
 }
 
 func TestCheckSharePermission_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("CheckSharePermission", mock.Anything, uint(1), uint(2)).Return("", errors.New("no share"))
 	c := NewKeyorixCore(ms)
@@ -700,6 +771,7 @@ func TestCheckSharePermission_StorageError(t *testing.T) {
 }
 
 func TestCheckSharePermission_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("CheckSharePermission", mock.Anything, uint(1), uint(2)).Return("read", nil)
 	c := NewKeyorixCore(ms)
@@ -711,6 +783,7 @@ func TestCheckSharePermission_Success(t *testing.T) {
 // ── sharing_query.go — ListUserShareViews ─────────────────────────────────────
 
 func TestListUserShareViews_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.ListUserShareViews(context.Background(), 0)
@@ -718,6 +791,7 @@ func TestListUserShareViews_ZeroUserID(t *testing.T) {
 }
 
 func TestListUserShareViews_StorageErrorOnReceived(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSharesByUser", mock.Anything, uint(1)).Return(nil, errors.New("db err"))
 	c := NewKeyorixCore(ms)
@@ -726,6 +800,7 @@ func TestListUserShareViews_StorageErrorOnReceived(t *testing.T) {
 }
 
 func TestListUserShareViews_EmptyShares(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSharesByUser", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 	ms.On("ListSharesByOwner", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
@@ -736,6 +811,7 @@ func TestListUserShareViews_EmptyShares(t *testing.T) {
 }
 
 func TestListUserShareViews_UserShare(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	share := &models.ShareRecord{
 		ID:          1,
@@ -759,6 +835,7 @@ func TestListUserShareViews_UserShare(t *testing.T) {
 }
 
 func TestListUserShareViews_GroupShare(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	share := &models.ShareRecord{
 		ID:          2,
@@ -784,6 +861,7 @@ func TestListUserShareViews_GroupShare(t *testing.T) {
 // ── usage_analytics.go — MostAccessedSecrets ─────────────────────────────────
 
 func TestMostAccessedSecrets_DefaultsApplied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// Expect defaults: days=30, limit=10
 	stats := []storage.SecretUsageStat{{SecretID: 1, SecretName: "db-pass", ReadCount: 42}}
@@ -795,6 +873,7 @@ func TestMostAccessedSecrets_DefaultsApplied(t *testing.T) {
 }
 
 func TestMostAccessedSecrets_LimitCapped(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time"), 100).Return([]storage.SecretUsageStat{}, nil)
 	c := NewKeyorixCore(ms)
@@ -804,6 +883,7 @@ func TestMostAccessedSecrets_LimitCapped(t *testing.T) {
 }
 
 func TestMostAccessedSecrets_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("MostAccessedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time"), 10).Return(nil, errors.New("query failed"))
 	c := NewKeyorixCore(ms)
@@ -817,6 +897,7 @@ func TestMostAccessedSecrets_StorageError(t *testing.T) {
 // ignored environment_id and always returned the whole project's aggregate)
 // is threaded through to the storage layer unchanged.
 func TestMostAccessedSecrets_WithEnvironmentScope(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pid := uint(5)
 	eid := uint(9)
@@ -831,6 +912,7 @@ func TestMostAccessedSecrets_WithEnvironmentScope(t *testing.T) {
 // ── usage_analytics.go — UnusedSecrets ───────────────────────────────────────
 
 func TestUnusedSecrets_DefaultsApplied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("UnusedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time")).Return([]storage.UnusedSecretStat{}, nil)
 	c := NewKeyorixCore(ms)
@@ -840,6 +922,7 @@ func TestUnusedSecrets_DefaultsApplied(t *testing.T) {
 }
 
 func TestUnusedSecrets_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("UnusedSecrets", mock.Anything, (*uint)(nil), (*uint)(nil), mock.AnythingOfType("time.Time")).Return(nil, errors.New("db err"))
 	c := NewKeyorixCore(ms)
@@ -849,6 +932,7 @@ func TestUnusedSecrets_StorageError(t *testing.T) {
 }
 
 func TestUnusedSecrets_WithProjectScope(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pid := uint(5)
 	ms.On("UnusedSecrets", mock.Anything, &pid, (*uint)(nil), mock.AnythingOfType("time.Time")).Return([]storage.UnusedSecretStat{{SecretID: 3}}, nil)
@@ -861,6 +945,7 @@ func TestUnusedSecrets_WithProjectScope(t *testing.T) {
 // TestUnusedSecrets_WithEnvironmentScope confirms the environmentID argument
 // is threaded through to the storage layer unchanged.
 func TestUnusedSecrets_WithEnvironmentScope(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pid := uint(5)
 	eid := uint(9)
@@ -875,6 +960,7 @@ func TestUnusedSecrets_WithEnvironmentScope(t *testing.T) {
 // ── users.go — GetUser ────────────────────────────────────────────────────────
 
 func TestGetUser_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetUser(context.Background(), 0)
@@ -883,6 +969,7 @@ func TestGetUser_ZeroID(t *testing.T) {
 }
 
 func TestGetUser_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -891,6 +978,7 @@ func TestGetUser_NotFound(t *testing.T) {
 }
 
 func TestGetUser_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, Username: "alice"}, nil)
 	c := NewKeyorixCore(ms)
@@ -902,6 +990,7 @@ func TestGetUser_Success(t *testing.T) {
 // ── users.go — ListUsers ──────────────────────────────────────────────────────
 
 func TestListUsers_DefaultPagination(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListUsers", mock.Anything, mock.MatchedBy(func(f *storage.UserFilter) bool {
 		return f.Page == 1 && f.PageSize == 20
@@ -914,6 +1003,7 @@ func TestListUsers_DefaultPagination(t *testing.T) {
 }
 
 func TestListUsers_PageSizeCapped(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListUsers", mock.Anything, mock.MatchedBy(func(f *storage.UserFilter) bool {
 		return f.PageSize == 100
@@ -925,6 +1015,7 @@ func TestListUsers_PageSizeCapped(t *testing.T) {
 }
 
 func TestListUsers_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListUsers", mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("db err"))
 	c := NewKeyorixCore(ms)
@@ -935,6 +1026,7 @@ func TestListUsers_StorageError(t *testing.T) {
 // ── users.go — GetUserByEmail ─────────────────────────────────────────────────
 
 func TestGetUserByEmail_EmptyEmail(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetUserByEmail(context.Background(), "")
@@ -943,6 +1035,7 @@ func TestGetUserByEmail_EmptyEmail(t *testing.T) {
 }
 
 func TestGetUserByEmail_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "x@y.com").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -951,6 +1044,7 @@ func TestGetUserByEmail_NotFound(t *testing.T) {
 }
 
 func TestGetUserByEmail_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "alice@example.com").Return(&models.User{ID: 1, Email: "alice@example.com"}, nil)
 	c := NewKeyorixCore(ms)
@@ -962,6 +1056,7 @@ func TestGetUserByEmail_Success(t *testing.T) {
 // ── users.go — GetUserByUsername ──────────────────────────────────────────────
 
 func TestGetUserByUsername_Empty(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetUserByUsername(context.Background(), "")
@@ -970,6 +1065,7 @@ func TestGetUserByUsername_Empty(t *testing.T) {
 }
 
 func TestGetUserByUsername_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByUsername", mock.Anything, "nobody").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -978,6 +1074,7 @@ func TestGetUserByUsername_NotFound(t *testing.T) {
 }
 
 func TestGetUserByUsername_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByUsername", mock.Anything, "alice").Return(&models.User{ID: 1, Username: "alice"}, nil)
 	c := NewKeyorixCore(ms)
@@ -989,6 +1086,7 @@ func TestGetUserByUsername_Success(t *testing.T) {
 // ── users.go — GetUserByExternalID ───────────────────────────────────────────
 
 func TestGetUserByExternalID_Empty(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetUserByExternalID(context.Background(), "")
@@ -997,6 +1095,7 @@ func TestGetUserByExternalID_Empty(t *testing.T) {
 }
 
 func TestGetUserByExternalID_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "sso|abc123").Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -1005,6 +1104,7 @@ func TestGetUserByExternalID_NotFound(t *testing.T) {
 }
 
 func TestGetUserByExternalID_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByExternalID", mock.Anything, "sso|alice").Return(&models.User{ID: 1, ExternalID: "sso|alice"}, nil)
 	c := NewKeyorixCore(ms)
@@ -1016,6 +1116,7 @@ func TestGetUserByExternalID_Success(t *testing.T) {
 // ── scim_groups.go — DeprovisionSCIMGroup ────────────────────────────────────
 
 func TestDeprovisionSCIMGroup_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// guardLastGlobalAdminGroupDelete (#G02) resolves the install-admin role IDs
 	// first; none exist in this fixture, so the guard is a no-op and the delete
@@ -1034,6 +1135,7 @@ func TestDeprovisionSCIMGroup_StorageError(t *testing.T) {
 }
 
 func TestDeprovisionSCIMGroup_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))

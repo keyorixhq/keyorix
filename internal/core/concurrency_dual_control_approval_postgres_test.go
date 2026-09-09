@@ -63,6 +63,7 @@ var dualControlModels = []interface{}{
 // role TWICE over (both AssignUserRole calls having landed before the loser's revert
 // completes) rather than exactly once.
 func TestConcurrency_ApproveAccessRequestWithExpiry_CrossReplicaPostgres_ThresholdRace(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)

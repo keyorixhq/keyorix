@@ -38,6 +38,7 @@ func newShareClockRegressionCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // resurrected merely because the real time.Now() reading right now looks
 // earlier than that watermark.
 func TestListSecretShares_ClockSteppedBackward_ExpiredShareStaysExcluded(t *testing.T) {
+	t.Parallel()
 	c, db := newShareClockRegressionCore(t)
 	ctx := context.Background()
 
@@ -62,6 +63,7 @@ func TestListSecretShares_ClockSteppedBackward_ExpiredShareStaysExcluded(t *test
 // is the positive control: a share genuinely still live even past the
 // watermark must still resolve normally.
 func TestListSecretShares_ClockSteppedBackward_LegitimatelyLiveShareStillResolves(t *testing.T) {
+	t.Parallel()
 	c, db := newShareClockRegressionCore(t)
 	ctx := context.Background()
 
@@ -83,6 +85,7 @@ func TestListSecretShares_ClockSteppedBackward_LegitimatelyLiveShareStillResolve
 // TestShareEffectiveNow_ClampsBackwardReadingToWatermark is a direct unit
 // test of the clamp itself.
 func TestShareEffectiveNow_ClampsBackwardReadingToWatermark(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{now: time.Now}
 	watermark := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	c.shareClockWatermark = watermark

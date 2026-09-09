@@ -16,6 +16,7 @@ import (
 // most recent of several reads), and leaves it nil for a user with no recorded
 // activity — the dormant-access signal.
 func TestGenerateProjectAccessReview_AnnotatesLastUsed(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -56,6 +57,7 @@ func TestGenerateProjectAccessReview_AnnotatesLastUsed(t *testing.T) {
 
 // Activity in another project does not count toward this project's last-used.
 func TestGenerateProjectAccessReview_LastUsedIsProjectScoped(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -85,6 +87,7 @@ func TestGenerateProjectAccessReview_LastUsedIsProjectScoped(t *testing.T) {
 // audit_events table is unmigrated, so the underlying query errors) must now
 // flip Degraded rather than silently produce a report that looks complete.
 func TestGenerateProjectAccessReview_DegradedOnLastUsedQueryError(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	// models.AuditEvent deliberately NOT migrated → LastUserSecretActivity's raw

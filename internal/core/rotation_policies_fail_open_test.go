@@ -84,6 +84,7 @@ func rotationPoliciesFailOpenCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Ti
 // silently-short "clean" result — before the fix, this returned (1 entry, nil error),
 // indistinguishable from "rotation coverage is fully known and only 1 secret exists".
 func TestGetRotationStatus_LogsAndFailsOnScopedSecretsError(t *testing.T) {
+	t.Parallel()
 	c, _, _ := rotationPoliciesFailOpenCore(t)
 
 	var entries []*RotationStatusEntry
@@ -101,6 +102,7 @@ func TestGetRotationStatus_LogsAndFailsOnScopedSecretsError(t *testing.T) {
 // #363: same fix, EvaluateRotationPolicies — this result also feeds the admin-nudge
 // reminder scheduler (rotation_reminders.go), which already bails on a non-nil error.
 func TestEvaluateRotationPolicies_LogsAndFailsOnScopedSecretsError(t *testing.T) {
+	t.Parallel()
 	c, _, _ := rotationPoliciesFailOpenCore(t)
 
 	var evals []*RotationPolicyEvaluation
@@ -123,6 +125,7 @@ func TestEvaluateRotationPolicies_LogsAndFailsOnScopedSecretsError(t *testing.T)
 // A clean run (no failing policy) is unaffected: both functions still return the full
 // result with no error.
 func TestGetRotationStatus_NoErrorWhenAllPoliciesSucceed(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}, &models.Project{}))

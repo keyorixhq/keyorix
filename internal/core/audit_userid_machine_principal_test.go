@@ -32,6 +32,7 @@ import (
 // nil` line from emitAudit (service.go), confirmed this test failed with
 // UserID still holding the machine's raw ID, then restored it.
 func TestEmitAudit_MachineActorNeverGetsUserID(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	ctx := WithMachineActor(context.Background(), 77)
@@ -55,6 +56,7 @@ func TestEmitAudit_MachineActorNeverGetsUserID(t *testing.T) {
 // MachineIdentityID stays nil. The fix must not widen into "always clear
 // UserID"; it is conditioned on ActorType == machine specifically.
 func TestEmitAudit_HumanActorKeepsUserID(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	ctx := context.Background()
@@ -88,6 +90,7 @@ func TestEmitAudit_HumanActorKeepsUserID(t *testing.T) {
 // writer's context-derived ActorType/MachineIdentityID stamp, so a bare
 // context.Background() here would not reproduce the real bug.
 func TestAddSecretDependency_AuditEventUserIDNotMachinePrincipal(t *testing.T) {
+	t.Parallel()
 	const machineID = uint(7)
 	ctx := WithMachineActor(WithActorType(context.Background(), ActorTypeMachine), machineID)
 	c, db := newDepCore(t)

@@ -24,6 +24,7 @@ func findControl(t *testing.T, controls []ControlState, id string) ControlState 
 // A fully-healthy posture yields all controls pass/not-configured, never a gap, and
 // every control carries an ISO 27001 reference.
 func TestEvaluateControls_HealthyPosture(t *testing.T) {
+	t.Parallel()
 	p := &CompliancePosture{
 		AuditIntegrity:   AuditIntegrityPosture{ChainVerified: true, Checkpointed: true, ChainedEvents: 100},
 		AccessGovernance: AccessGovernancePosture{Projects: 3},
@@ -47,6 +48,7 @@ func TestEvaluateControls_HealthyPosture(t *testing.T) {
 
 // Each unhealthy posture figure flips the matching control to a gap.
 func TestEvaluateControls_GapsFromPosture(t *testing.T) {
+	t.Parallel()
 	p := &CompliancePosture{
 		AuditIntegrity: AuditIntegrityPosture{ChainVerified: false},
 		AccessGovernance: AccessGovernancePosture{
@@ -78,6 +80,7 @@ func TestEvaluateControls_GapsFromPosture(t *testing.T) {
 // configs / machine identities / machine credentials must report a Gap, never a
 // false Pass.
 func TestEvaluateControls_DataClassification_NonSecretSurfaces(t *testing.T) {
+	t.Parallel()
 	// Zero unclassified STATIC secrets, but each of the other three surfaces has an
 	// unclassified item.
 	p := &CompliancePosture{
@@ -111,6 +114,7 @@ func TestEvaluateControls_DataClassification_NonSecretSurfaces(t *testing.T) {
 // three measure frameworks (org. / op. / mp.) so the matrix can't carry a typo'd or
 // stray code that an auditor would reject.
 func TestEvaluateControls_ENSMeasureCodesWellFormed(t *testing.T) {
+	t.Parallel()
 	controls := EvaluateControls(&CompliancePosture{})
 	validPrefix := func(code string) bool {
 		for _, p := range []string{"org.", "op.", "mp."} {
@@ -129,6 +133,7 @@ func TestEvaluateControls_ENSMeasureCodesWellFormed(t *testing.T) {
 }
 
 func TestGetComplianceControls_SummaryTallies(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newEvidenceExportCore(t) // real in-memory store, empty deployment
 	got, err := c.GetComplianceControls(context.Background())
 	require.NoError(t, err)
@@ -141,6 +146,7 @@ func TestGetComplianceControls_SummaryTallies(t *testing.T) {
 // pinned signing key: a signed release passes; an unsigned/source build is "not
 // configured" (the control doesn't apply), never a gap.
 func TestEvaluateControls_SupplyChainIntegrity(t *testing.T) {
+	t.Parallel()
 	signed := EvaluateControls(&CompliancePosture{
 		SupplyChain: SupplyChainPosture{UpdateSigningTrusted: true, TrustedUpdateKeys: 1, LicenseState: "active", LicenseValid: true},
 	})
@@ -159,6 +165,7 @@ func TestEvaluateControls_SupplyChainIntegrity(t *testing.T) {
 // disabled, not a single certificate has ever been evaluated, so the control must read
 // as not-configured — never a permanent, unearned "pass" just because Expired stayed 0.
 func TestEvaluateControls_CertificateHygiene_ScanningNeverEnabled(t *testing.T) {
+	t.Parallel()
 	// No certificate secrets at all: trivially nothing to evaluate.
 	none := EvaluateControls(&CompliancePosture{})
 	cn := findControl(t, none, "certificate-hygiene")
@@ -181,6 +188,7 @@ func TestEvaluateControls_CertificateHygiene_ScanningNeverEnabled(t *testing.T) 
 // again. Zero exceptions, or exceptions that are all current, must pass; any
 // expired-but-not-yet-revoked exception must surface as a gap naming the count.
 func TestEvaluateControls_RiskExceptionHygiene(t *testing.T) {
+	t.Parallel()
 	none := EvaluateControls(&CompliancePosture{})
 	rn := findControl(t, none, "risk-exception-hygiene")
 	assert.Equal(t, ControlStatusPass, rn.Status)
@@ -214,6 +222,7 @@ func TestEvaluateControls_RiskExceptionHygiene(t *testing.T) {
 // were all explicitly resolved, must pass; any expired-but-unresolved request must
 // surface as a gap naming the count.
 func TestEvaluateControls_AccessRequestHygiene(t *testing.T) {
+	t.Parallel()
 	none := EvaluateControls(&CompliancePosture{})
 	an := findControl(t, none, "access-request-hygiene")
 	assert.Equal(t, ControlStatusPass, an.Status)
@@ -245,6 +254,7 @@ func TestEvaluateControls_AccessRequestHygiene(t *testing.T) {
 // Once the scan has evaluated at least one certificate, the control reflects the real
 // data: pass when none are expired, gap when at least one is.
 func TestEvaluateControls_CertificateHygiene_ScanningEnabled(t *testing.T) {
+	t.Parallel()
 	healthy := EvaluateControls(&CompliancePosture{
 		Certificates: CertificatePosture{TotalCertificates: 2, ExpiringSoon: 0, Expired: 0, NotEvaluated: 0},
 	})

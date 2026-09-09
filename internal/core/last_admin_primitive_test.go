@@ -28,6 +28,7 @@ import (
 // last roles.assign holder, even though NEITHER of those entry-point guards
 // is anywhere in this call path.
 func TestRemoveUserRole_RefusesLastProjectAdminAtThePrimitive(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -55,6 +56,7 @@ func TestRemoveUserRole_RefusesLastProjectAdminAtThePrimitive(t *testing.T) {
 // positive control: the guard only bites on the LAST holder, not every
 // project-admin removal.
 func TestRemoveUserRole_AllowsProjectAdminRemovalWhenAnotherSurvives(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -82,6 +84,7 @@ func TestRemoveUserRole_AllowsProjectAdminRemovalWhenAnotherSurvives(t *testing.
 // scoped grants too, without additional guarding). An environment-scoped
 // removal must proceed even when it's the user's only grant.
 func TestRemoveUserRole_EnvironmentScopeUnaffected(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj, env = uint(7), uint(3)
@@ -106,6 +109,7 @@ func TestRemoveUserRole_EnvironmentScopeUnaffected(t *testing.T) {
 // project_scoped_group_admin_guard_test.go) a group can stop conferring
 // project-admin authority, and had no guard at all.
 func TestRemoveRoleFromGroup_RefusesLastProjectAdmin(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -136,6 +140,7 @@ func TestRemoveRoleFromGroup_RefusesLastProjectAdmin(t *testing.T) {
 // TestRemoveRoleFromGroup_AllowsWhenAnotherProjectAdminExists is the positive
 // control.
 func TestRemoveRoleFromGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -161,6 +166,7 @@ func TestRemoveRoleFromGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
 // bites on a roles.assign-bearing role — removing an ordinary role from a
 // group must never be blocked, regardless of the project's admin count.
 func TestRemoveRoleFromGroup_AllowsNonAdminRole(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
@@ -185,6 +191,7 @@ func TestRemoveRoleFromGroup_AllowsNonAdminRole(t *testing.T) {
 // confirms the user's membership in a group holding a project's last
 // roles.assign grant survives when the IdP stops asserting it.
 func TestReconcileSSOGroups_RefusesStrandingLastProjectAdmin(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)

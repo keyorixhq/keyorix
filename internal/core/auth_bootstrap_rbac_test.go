@@ -67,6 +67,7 @@ func seedUserWithRole(t *testing.T, st *store.LocalStorage, username, roleName s
 
 // BootstrapSystem must seed the legacy roles plus the ADR-021 two-tier catalog.
 func TestBootstrapSeedsTwoTierRoleCatalog(t *testing.T) {
+	t.Parallel()
 	c, _ := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -87,6 +88,7 @@ func TestBootstrapSeedsTwoTierRoleCatalog(t *testing.T) {
 // boot. Roles without connect.read at all (editor/viewer/etc.) must not hold
 // it either (least privilege — mirrors connect.read's own baseline).
 func TestBootstrapGrantsConnectPlatformUseToAdminRoles(t *testing.T) {
+	t.Parallel()
 	c, _ := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -121,6 +123,7 @@ func TestBootstrapGrantsConnectPlatformUseToAdminRoles(t *testing.T) {
 // (removed as dead code by finding #131). A misleading description here is an
 // informed-consent gap for whoever grants this permission on a custom role.
 func TestSystemWritePermissionDescriptionMatchesFullFootprint(t *testing.T) {
+	t.Parallel()
 	for _, def := range defaultPermissions {
 		if def.Name != "system.write" {
 			continue
@@ -136,6 +139,7 @@ func TestSystemWritePermissionDescriptionMatchesFullFootprint(t *testing.T) {
 // within their project, and *_admin roles bypass the per-permission check at the
 // scope they hold.
 func TestAuthorizeTwoTierScopes(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const projA, projB = uint(10), uint(20)

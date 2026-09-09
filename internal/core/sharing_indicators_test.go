@@ -25,6 +25,7 @@ func setupTestCore(t *testing.T) *KeyorixCore {
 }
 
 func TestBuildSharingIndicators(t *testing.T) {
+	t.Parallel()
 	core := setupTestCore(t)
 
 	secret := &models.SecretNode{
@@ -117,6 +118,7 @@ func TestBuildSharingIndicators(t *testing.T) {
 }
 
 func TestBuildShareDetails(t *testing.T) {
+	t.Parallel()
 	core := setupTestCore(t)
 
 	// Mock user and group lookups
@@ -174,6 +176,7 @@ func TestBuildShareDetails(t *testing.T) {
 }
 
 func TestListSecretsWithSharingInfo(t *testing.T) {
+	t.Parallel()
 	core := setupTestCore(t)
 	mockStorage := core.storage.(*MockStorage)
 
@@ -269,6 +272,7 @@ func TestListSecretsWithSharingInfo(t *testing.T) {
 }
 
 func TestSecretListFiltering(t *testing.T) {
+	t.Parallel()
 	core := setupTestCore(t)
 	mockStorage := core.storage.(*MockStorage)
 

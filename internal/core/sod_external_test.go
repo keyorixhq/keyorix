@@ -15,6 +15,7 @@ import (
 // DetectSoDViolations flags a user whose effective permissions include both sides
 // of a policy, and leaves a user holding only one side alone.
 func TestDetectSoDViolations(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -49,6 +50,7 @@ func TestDetectSoDViolations(t *testing.T) {
 // the fix it consulted only direct user_roles, so a conflict satisfied via a group
 // grant went silently undetected.
 func TestDetectSoDViolations_GroupInheritedPermission(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -88,6 +90,7 @@ func TestDetectSoDViolations_GroupInheritedPermission(t *testing.T) {
 // role_permissions name only one side (or neither). Before the fix this most-
 // privileged principal was invisible to the control.
 func TestDetectSoDViolations_AdminBypass(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -131,6 +134,7 @@ func TestDetectSoDViolations_AdminBypass(t *testing.T) {
 // sides of a policy via its roles is a real violation. Before the fix the scan only
 // iterated human users and never examined automation principals.
 func TestDetectSoDViolations_MachinePrincipal(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{},
@@ -168,6 +172,7 @@ func TestDetectSoDViolations_MachinePrincipal(t *testing.T) {
 
 // With no policies, there are no violations.
 func TestDetectSoDViolations_NoPolicies(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}))
@@ -182,6 +187,7 @@ func TestDetectSoDViolations_NoPolicies(t *testing.T) {
 
 // CreateSoDPolicy validates its inputs.
 func TestCreateSoDPolicy_Validation(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -214,6 +220,7 @@ func TestCreateSoDPolicy_Validation(t *testing.T) {
 // CreateSoDPolicy's authority gate actually rejects the negative case, not
 // just the validation errors TestCreateSoDPolicy_Validation exercises above.
 func TestCreateSoDPolicy_DeniesNonAdmin(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -234,6 +241,7 @@ func TestCreateSoDPolicy_DeniesNonAdmin(t *testing.T) {
 // role must be denied a delete -- the negative case for DeleteSoDPolicy's
 // creator-or-admin gate.
 func TestDeleteSoDPolicy_DeniesNonCreatorNonAdmin(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -258,6 +266,7 @@ func TestDeleteSoDPolicy_DeniesNonCreatorNonAdmin(t *testing.T) {
 // admin-tier status -- proves the creator branch of the creator-OR-admin
 // gate is sufficient on its own, not merely redundant with the admin check.
 func TestDeleteSoDPolicy_CreatorSucceedsEvenIfNoLongerAdmin(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -283,6 +292,7 @@ func TestDeleteSoDPolicy_CreatorSucceedsEvenIfNoLongerAdmin(t *testing.T) {
 // GetSoDPolicy's raw "not found" error (404) while an existing-but-foreign id
 // surfaced a distinct "permission denied" error (403) -- a reliable oracle.
 func TestDeleteSoDPolicy_NonAdmin_NonExistentAndNonOwned_IdenticalDenial(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -319,6 +329,7 @@ func TestDeleteSoDPolicy_NonAdmin_NonExistentAndNonOwned_IdenticalDenial(t *test
 // access had it existed" condition ADR-096/#1645 requires for the exception
 // to apply.
 func TestDeleteSoDPolicy_AdminTier_NonExistentGetsRealNotFound(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))

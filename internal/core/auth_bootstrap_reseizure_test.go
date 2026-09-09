@@ -35,6 +35,7 @@ func emptyUsersTable(t *testing.T, c *KeyorixCore, ids ...uint) {
 // marker keeps SystemNeedsBootstrap reporting false even once the users table is
 // completely empty.
 func TestSystemNeedsBootstrap_StaysFalseAfterUsersTableEmptied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -56,6 +57,7 @@ func TestSystemNeedsBootstrap_StaysFalseAfterUsersTableEmptied(t *testing.T) {
 // refuse to seed a NEW admin once the marker is set — the concrete re-seizure this
 // finding describes.
 func TestBootstrapSystem_RefusesReseizureAfterUsersTableEmptied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -81,6 +83,7 @@ func TestBootstrapSystem_RefusesReseizureAfterUsersTableEmptied(t *testing.T) {
 // (GenerateBootstrapToken logs it) can never be replayed even before the marker
 // check — belt-and-suspenders alongside the marker.
 func TestBootstrapSystem_TokenClearedAfterSuccess(t *testing.T) {
+	t.Parallel()
 	c := freshBootstrapCore(t)
 	c.SetBootstrapToken("only-once-token")
 
@@ -96,6 +99,7 @@ func TestBootstrapSystem_TokenClearedAfterSuccess(t *testing.T) {
 // the server's startup idempotency check) must backfill the marker rather than
 // leaving the install unprotected.
 func TestBootstrapSystem_BackfillsMarkerForPreFixInstall(t *testing.T) {
+	t.Parallel()
 	c := freshBootstrapCore(t)
 	ctx := context.Background()
 

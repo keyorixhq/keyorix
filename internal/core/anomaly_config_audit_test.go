@@ -33,6 +33,7 @@ import (
 // admin flips ml_enabled from true to false (disabling detection), which must
 // be on the permanent audit record with both the before and after state.
 func TestUpdateAnomalyConfig_AuditsMLDisable(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -62,6 +63,7 @@ func TestUpdateAnomalyConfig_AuditsMLDisable(t *testing.T) {
 // TestUpdateAnomalyConfig_AuditsOffHoursDisable covers the other detection
 // knob named explicitly in the finding: off_hours_enabled.
 func TestUpdateAnomalyConfig_AuditsOffHoursDisable(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -88,6 +90,7 @@ func TestUpdateAnomalyConfig_AuditsOffHoursDisable(t *testing.T) {
 // (and its audit event) must still happen -- a missing before-snapshot must
 // never suppress the record that the change occurred.
 func TestUpdateAnomalyConfig_BeforeFetchFailureStillAuditsWrite(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()

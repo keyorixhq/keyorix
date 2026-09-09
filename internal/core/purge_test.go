@@ -12,6 +12,7 @@ import (
 )
 
 func TestPurgeExpiredSoftDeletes_CountsAndAudits(t *testing.T) {
+	t.Parallel()
 	before := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 	store.On("GetActiveLegalHold", mock.Anything).Return(nil, nil) // no active legal hold
@@ -42,6 +43,7 @@ func TestPurgeExpiredSoftDeletes_CountsAndAudits(t *testing.T) {
 }
 
 func TestPurgeExpiredSoftDeletes_NoAuditWhenNothingPurged(t *testing.T) {
+	t.Parallel()
 	before := time.Now()
 	store := new(MockStorage)
 	store.On("GetActiveLegalHold", mock.Anything).Return(nil, nil) // no active legal hold
@@ -63,6 +65,7 @@ func TestPurgeExpiredSoftDeletes_NoAuditWhenNothingPurged(t *testing.T) {
 // placed after the scheduler's pre-lock check would let an in-flight purge destroy
 // records now under hold.
 func TestPurgeExpiredSoftDeletes_AbortsUnderActiveLegalHold(t *testing.T) {
+	t.Parallel()
 	before := time.Now()
 	store := new(MockStorage)
 	store.On("GetActiveLegalHold", mock.Anything).Return(&models.LegalHold{ID: 1, Reason: "litigation"}, nil)
@@ -79,6 +82,7 @@ func TestPurgeExpiredSoftDeletes_AbortsUnderActiveLegalHold(t *testing.T) {
 // Fail SAFE: if the legal-hold status can't be confirmed, the purge aborts rather than
 // risk destroying data that may be under hold.
 func TestPurgeExpiredSoftDeletes_AbortsWhenHoldStatusUnknown(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("GetActiveLegalHold", mock.Anything).Return(nil, fmt.Errorf("db down"))
 

@@ -36,23 +36,27 @@ func newPATExpiryDB(t *testing.T) *gorm.DB {
 // ── IsPATExpired ──────────────────────────────────────────────────────────────
 
 func TestIsPATExpired_NilExpiresAt(t *testing.T) {
+	t.Parallel()
 	pat := &models.PersonalAccessToken{}
 	assert.False(t, IsPATExpired(pat, time.Now()), "nil ExpiresAt → never expired")
 }
 
 func TestIsPATExpired_FutureExpiresAt(t *testing.T) {
+	t.Parallel()
 	future := time.Now().Add(time.Hour)
 	pat := &models.PersonalAccessToken{ExpiresAt: &future}
 	assert.False(t, IsPATExpired(pat, time.Now()), "future ExpiresAt → not yet expired")
 }
 
 func TestIsPATExpired_PastExpiresAt(t *testing.T) {
+	t.Parallel()
 	past := time.Now().Add(-time.Minute)
 	pat := &models.PersonalAccessToken{ExpiresAt: &past}
 	assert.True(t, IsPATExpired(pat, time.Now()), "past ExpiresAt → expired")
 }
 
 func TestIsPATExpired_ExactlyNow(t *testing.T) {
+	t.Parallel()
 	// At the boundary: time.After is strict, so ExpiresAt == now is NOT expired.
 	now := time.Now()
 	pat := &models.PersonalAccessToken{ExpiresAt: &now}
@@ -62,6 +66,7 @@ func TestIsPATExpired_ExactlyNow(t *testing.T) {
 // ── emitPATExpiredNotification ────────────────────────────────────────────────
 
 func TestEmitPATExpiredNotification_CreatesWarningNotification(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -94,6 +99,7 @@ func TestEmitPATExpiredNotification_CreatesWarningNotification(t *testing.T) {
 // expectation at all, so it would fail loudly (unexpected call) against
 // pre-fix code instead of silently passing.
 func TestEmitPATExpiredNotification_UnreadExisting_Skipped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -118,6 +124,7 @@ func TestEmitPATExpiredNotification_UnreadExisting_Skipped(t *testing.T) {
 // standing reminder for a DIFFERENT token owned by the same user must not
 // suppress this token's notification (#G22-style token-identity concern).
 func TestEmitPATExpiredNotification_UnreadExisting_DifferentToken_StillFires(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -139,6 +146,7 @@ func TestEmitPATExpiredNotification_UnreadExisting_DifferentToken_StillFires(t *
 }
 
 func TestEmitPATExpiredNotification_ZeroUserID_NoOp(t *testing.T) {
+	t.Parallel()
 	// notifyWithSeverity returns immediately when userID == 0; storage must not be
 	// called at all.
 	ctx := context.Background()
@@ -154,6 +162,7 @@ func TestEmitPATExpiredNotification_ZeroUserID_NoOp(t *testing.T) {
 // ── ValidatePATToken with expiry → ErrPATExpired ──────────────────────────────
 
 func TestValidatePATToken_ExpiredPAT_ReturnsErrPATExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	raw := patPrefix + "expiredtok0test"
 	hash := sha256Hex(raw)
@@ -183,6 +192,7 @@ func TestValidatePATToken_ExpiredPAT_ReturnsErrPATExpired(t *testing.T) {
 // check reads back what CreateNotification actually persisted, exactly as it
 // does in production.
 func TestValidatePATToken_ExpiredPAT_RepeatedPresentation_OnlyFirstNotifies(t *testing.T) {
+	t.Parallel()
 	db := newPATExpiryDB(t)
 	raw := patPrefix + "repeatedspam0test"
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -236,6 +246,7 @@ func TestValidatePATToken_ExpiredPAT_RepeatedPresentation_OnlyFirstNotifies(t *t
 }
 
 func TestValidatePATToken_ValidNonExpiredPAT_Succeeds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	raw := patPrefix + "validtok12test5"
 	hash := sha256Hex(raw)
@@ -262,6 +273,7 @@ func TestValidatePATToken_ValidNonExpiredPAT_Succeeds(t *testing.T) {
 // ── ListExpiredOwnPATs ────────────────────────────────────────────────────────
 
 func TestListExpiredOwnPATs_ReturnsExpiredNonRevokedTokens(t *testing.T) {
+	t.Parallel()
 	db := newPATExpiryDB(t)
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 	past := now.Add(-time.Hour)
@@ -283,6 +295,7 @@ func TestListExpiredOwnPATs_ReturnsExpiredNonRevokedTokens(t *testing.T) {
 }
 
 func TestListExpiredOwnPATs_ZeroUserID_Error(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.ListExpiredOwnPATs(context.Background(), 0)
@@ -291,6 +304,7 @@ func TestListExpiredOwnPATs_ZeroUserID_Error(t *testing.T) {
 }
 
 func TestListExpiredOwnPATs_NoExpiredTokens_ReturnsEmptySlice(t *testing.T) {
+	t.Parallel()
 	db := newPATExpiryDB(t)
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 	future := now.Add(24 * time.Hour)
@@ -305,6 +319,7 @@ func TestListExpiredOwnPATs_NoExpiredTokens_ReturnsEmptySlice(t *testing.T) {
 // ── BulkRevokeExpiredOwnPATs ──────────────────────────────────────────────────
 
 func TestBulkRevokeExpiredOwnPATs_RevokesExpiredTokensAndReturnsHashes(t *testing.T) {
+	t.Parallel()
 	db := newPATExpiryDB(t)
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 	past := now.Add(-time.Hour)
@@ -330,6 +345,7 @@ func TestBulkRevokeExpiredOwnPATs_RevokesExpiredTokensAndReturnsHashes(t *testin
 }
 
 func TestBulkRevokeExpiredOwnPATs_ZeroUserID_Error(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.BulkRevokeExpiredOwnPATs(context.Background(), 0)
@@ -338,6 +354,7 @@ func TestBulkRevokeExpiredOwnPATs_ZeroUserID_Error(t *testing.T) {
 }
 
 func TestBulkRevokeExpiredOwnPATs_NoneExpired_ReturnsNilHashes(t *testing.T) {
+	t.Parallel()
 	db := newPATExpiryDB(t)
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 	future := now.Add(24 * time.Hour)

@@ -36,6 +36,7 @@ func pendingReq(id uint) *models.AccessRequest {
 // ── BulkApproveAccessRequests ─────────────────────────────────────────────────
 
 func TestBulkApproveAccessRequests_EmptyIDs(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	_, err := k.BulkApproveAccessRequests(context.Background(), nil, 1)
 	require.Error(t, err)
@@ -43,6 +44,7 @@ func TestBulkApproveAccessRequests_EmptyIDs(t *testing.T) {
 }
 
 func TestBulkApproveAccessRequests_EmptySlice(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	_, err := k.BulkApproveAccessRequests(context.Background(), []uint{}, 1)
 	require.Error(t, err)
@@ -50,6 +52,7 @@ func TestBulkApproveAccessRequests_EmptySlice(t *testing.T) {
 }
 
 func TestBulkApproveAccessRequests_FetchError(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	storageErr := errors.New("db exploded")
@@ -61,6 +64,7 @@ func TestBulkApproveAccessRequests_FetchError(t *testing.T) {
 }
 
 func TestBulkApproveAccessRequests_NotFound(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	// ListAccessRequestsByIDs returns empty — the ID was not found.
@@ -76,6 +80,7 @@ func TestBulkApproveAccessRequests_NotFound(t *testing.T) {
 }
 
 func TestBulkApproveAccessRequests_ApproveError(t *testing.T) {
+	t.Parallel()
 	// BulkApproveAccessRequests delegates to ApproveAccessRequest which calls
 	// GetAccessRequest, GetProject, GetRoleByName, etc. — the simplest way to
 	// exercise the "approve failed" branch is to have GetAccessRequest return an
@@ -99,6 +104,7 @@ func TestBulkApproveAccessRequests_ApproveError(t *testing.T) {
 }
 
 func TestBulkApproveAccessRequests_TooManyIDs(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 
@@ -116,6 +122,7 @@ func TestBulkApproveAccessRequests_TooManyIDs(t *testing.T) {
 }
 
 func TestBulkApproveAccessRequests_AtBatchLimit(t *testing.T) {
+	t.Parallel()
 	// A batch exactly AT the cap must not be rejected by the size check, and every
 	// item must still reach the per-item processing loop as before (no regression
 	// on legitimate use). Permission is denied for all items (as in
@@ -145,6 +152,7 @@ func TestBulkApproveAccessRequests_AtBatchLimit(t *testing.T) {
 }
 
 func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
+	t.Parallel()
 	// ID 1 will succeed (found), ID 99 will fail (not found in pre-fetch).
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
@@ -167,6 +175,7 @@ func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
 // ── BulkRejectAccessRequests ──────────────────────────────────────────────────
 
 func TestBulkRejectAccessRequests_EmptyIDs(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	_, err := k.BulkRejectAccessRequests(context.Background(), nil, 1, "no access")
 	require.Error(t, err)
@@ -174,6 +183,7 @@ func TestBulkRejectAccessRequests_EmptyIDs(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_EmptySlice(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{}, 1, "no access")
 	require.Error(t, err)
@@ -181,6 +191,7 @@ func TestBulkRejectAccessRequests_EmptySlice(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_EmptyReason(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{1}, 1, "")
 	require.Error(t, err)
@@ -188,6 +199,7 @@ func TestBulkRejectAccessRequests_EmptyReason(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_FetchError(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{1}).
@@ -199,6 +211,7 @@ func TestBulkRejectAccessRequests_FetchError(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_NotFound(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{55}).
@@ -213,6 +226,7 @@ func TestBulkRejectAccessRequests_NotFound(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_RejectError(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 
@@ -231,6 +245,7 @@ func TestBulkRejectAccessRequests_RejectError(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_RejectNonPending(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 
@@ -259,6 +274,7 @@ func TestBulkRejectAccessRequests_RejectNonPending(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_TooManyIDs(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 
@@ -276,6 +292,7 @@ func TestBulkRejectAccessRequests_TooManyIDs(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_AtBatchLimit(t *testing.T) {
+	t.Parallel()
 	// A batch exactly AT the cap must not be rejected by the size check, and every
 	// item must still reach the per-item processing loop as before (no regression
 	// on legitimate use). See TestBulkApproveAccessRequests_AtBatchLimit for why
@@ -301,6 +318,7 @@ func TestBulkRejectAccessRequests_AtBatchLimit(t *testing.T) {
 }
 
 func TestBulkRejectAccessRequests_MixedResults(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 
@@ -320,6 +338,7 @@ func TestBulkRejectAccessRequests_MixedResults(t *testing.T) {
 // ── RejectionReasonTemplate CRUD ──────────────────────────────────────────────
 
 func TestCreateRejectionReasonTemplate_EmptyName(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	_, err := k.CreateRejectionReasonTemplate(context.Background(), 1, "", "too many requests")
 	require.Error(t, err)
@@ -327,6 +346,7 @@ func TestCreateRejectionReasonTemplate_EmptyName(t *testing.T) {
 }
 
 func TestCreateRejectionReasonTemplate_EmptyReason(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	_, err := k.CreateRejectionReasonTemplate(context.Background(), 1, "no-resources", "")
 	require.Error(t, err)
@@ -334,6 +354,7 @@ func TestCreateRejectionReasonTemplate_EmptyReason(t *testing.T) {
 }
 
 func TestCreateRejectionReasonTemplate_StorageError(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("CreateRejectionReasonTemplate", mock.Anything, mock.AnythingOfType("*models.RejectionReasonTemplate")).
@@ -344,6 +365,7 @@ func TestCreateRejectionReasonTemplate_StorageError(t *testing.T) {
 }
 
 func TestCreateRejectionReasonTemplate_Success(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("CreateRejectionReasonTemplate", mock.Anything, mock.AnythingOfType("*models.RejectionReasonTemplate")).
@@ -357,6 +379,7 @@ func TestCreateRejectionReasonTemplate_Success(t *testing.T) {
 }
 
 func TestListRejectionReasonTemplates_Success(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	templates := []models.RejectionReasonTemplate{
@@ -371,6 +394,7 @@ func TestListRejectionReasonTemplates_Success(t *testing.T) {
 }
 
 func TestListRejectionReasonTemplates_StorageError(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("ListRejectionReasonTemplates", mock.Anything).Return(nil, errors.New("db error"))
@@ -380,6 +404,7 @@ func TestListRejectionReasonTemplates_StorageError(t *testing.T) {
 }
 
 func TestDeleteRejectionReasonTemplate_Success(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("DeleteRejectionReasonTemplate", mock.Anything, uint(5)).Return(nil)
@@ -390,6 +415,7 @@ func TestDeleteRejectionReasonTemplate_Success(t *testing.T) {
 }
 
 func TestDeleteRejectionReasonTemplate_NotFound(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("DeleteRejectionReasonTemplate", mock.Anything, uint(99)).
@@ -405,6 +431,7 @@ func TestDeleteRejectionReasonTemplate_NotFound(t *testing.T) {
 // audit event now records the acting user, mirroring DeleteGroup's
 // actorID-attributed pattern (internal/core/groups.go).
 func TestDeleteRejectionReasonTemplate_WritesAuditEvent(t *testing.T) {
+	t.Parallel()
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("DeleteRejectionReasonTemplate", mock.Anything, uint(7)).Return(nil)

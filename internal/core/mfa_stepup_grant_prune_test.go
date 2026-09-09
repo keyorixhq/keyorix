@@ -25,6 +25,7 @@ import (
 // already expired — it's the retention window, not the active-grant window,
 // that matters here) survives.
 func TestPruneMFAStepUpGrants_RemovesOldRowsKeepsRecent(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -53,6 +54,7 @@ func TestPruneMFAStepUpGrants_RemovesOldRowsKeepsRecent(t *testing.T) {
 // everything (e.g. a zero time.Duration must not mean "prune anything expired
 // at all", which would defeat the "kept for audit purposes" design).
 func TestPruneMFAStepUpGrants_ZeroRetentionUsesDefault(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -75,6 +77,7 @@ func TestPruneMFAStepUpGrants_ZeroRetentionUsesDefault(t *testing.T) {
 // RemoteStorage proxy) must never widen the deletion window — the storage
 // call underneath must always receive the clamped cutoff.
 func TestPruneMFAStepUpGrants_ClampsFutureBeforeToRetention(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	retention := 30 * 24 * time.Hour
 	maxCutoff := now.Add(-retention)
@@ -94,6 +97,7 @@ func TestPruneMFAStepUpGrants_ClampsFutureBeforeToRetention(t *testing.T) {
 // still narrow the deletion window below the retention-derived cutoff — only
 // widening past it is blocked.
 func TestPruneMFAStepUpGrants_NarrowerBeforeIsHonored(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	retention := 30 * 24 * time.Hour
 	narrowerBefore := now.Add(-60 * 24 * time.Hour)
@@ -116,6 +120,7 @@ func TestPruneMFAStepUpGrants_NarrowerBeforeIsHonored(t *testing.T) {
 // record. This guards against a future change reflexively bolting on an
 // audit event without revisiting that reasoning.
 func TestPruneMFAStepUpGrants_NoAuditEventEmitted(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	mockStore := new(MockStorage)
 	mockStore.On("PruneMFAStepUpGrants", mock.Anything, mock.Anything).Return(int64(5), nil)

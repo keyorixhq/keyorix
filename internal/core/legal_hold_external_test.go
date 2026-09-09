@@ -14,6 +14,7 @@ import (
 // A legal hold can be placed once and lifted once; while active IsLegalHoldActive
 // reports true (the purge jobs gate on it).
 func TestLegalHold_PlaceAndLift(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}))
@@ -59,6 +60,7 @@ func TestLegalHold_PlaceAndLift(t *testing.T) {
 // place a legal hold — placement requires an admin-tier role, mirroring #157's
 // tightening of lift.
 func TestLegalHold_PlaceDeniedForNonAdmin(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
@@ -91,6 +93,7 @@ func TestLegalHold_PlaceDeniedForNonAdmin(t *testing.T) {
 // be attributable to the impersonating admin, not just the userID it was
 // attempted as.
 func TestLegalHold_PlaceDeniedAuditsImpersonator(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
@@ -113,6 +116,7 @@ func TestLegalHold_PlaceDeniedAuditsImpersonator(t *testing.T) {
 // control, and a project-scoped admin does not hold "all permissions" the
 // way a true global admin does.
 func TestLegalHold_PlaceDeniedForProjectScopedAdmin(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
@@ -134,6 +138,7 @@ func TestLegalHold_PlaceDeniedForProjectScopedAdmin(t *testing.T) {
 // persisted on the row (ReleaseReason) and appears in the audit description, and an
 // empty reason is rejected just like placement's.
 func TestLegalHold_LiftRecordsReason(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}))
@@ -165,6 +170,7 @@ func TestLegalHold_LiftRecordsReason(t *testing.T) {
 // admin-tier role must not be able to lift it — only the placer or an admin-tier
 // principal may. The denial is itself audited, and the hold stays active.
 func TestLegalHold_LiftDeniedForThirdParty(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
@@ -202,6 +208,7 @@ func TestLegalHold_LiftDeniedForThirdParty(t *testing.T) {
 
 // The compliance posture reflects an active legal hold.
 func TestLegalHold_SurfacesInPosture(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(

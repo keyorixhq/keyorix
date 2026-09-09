@@ -36,6 +36,7 @@ import (
 // installs get is actually in place — and asserts exactly one unread
 // rotation.reminder notification row survives for the admin.
 func TestConcurrency_SendRotationReminders_NoDuplicateReminder(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "rotation-reminders.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

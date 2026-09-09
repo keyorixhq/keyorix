@@ -18,6 +18,7 @@ import (
 )
 
 func TestEnsureSSOUser_ExistingReturnedDirectly(t *testing.T) {
+	t.Parallel()
 	c, _, _, p := ssoTestCore(t)
 	existing := &models.User{ID: 7, Email: "ada@x.io"}
 	got, err := c.ensureSSOUser(context.Background(), p, existing, "okta|7", "ada@x.io", true, "Ada")
@@ -26,6 +27,7 @@ func TestEnsureSSOUser_ExistingReturnedDirectly(t *testing.T) {
 }
 
 func TestEnsureSSOUser_NoAutoProvision_Rejected(t *testing.T) {
+	t.Parallel()
 	c, _, _, p := ssoTestCore(t)
 	p.AutoProvision = false
 	_, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "new@x.io", true, "New Person")
@@ -38,6 +40,7 @@ func TestEnsureSSOUser_NoAutoProvision_Rejected(t *testing.T) {
 // email, a fresh username derived, the account created active with the
 // provider's default role assigned.
 func TestEnsureSSOUser_AutoProvision_CreatesUser(t *testing.T) {
+	t.Parallel()
 	c, store, _, p := ssoTestCore(t)
 	p.AutoProvision = true
 	p.DefaultRole = "system_viewer"
@@ -66,6 +69,7 @@ func TestEnsureSSOUser_AutoProvision_CreatesUser(t *testing.T) {
 // precondition: an IdP assertion with no email can never be auto-provisioned,
 // regardless of AutoProvision being enabled.
 func TestEnsureSSOUser_AutoProvision_NoEmail_Rejected(t *testing.T) {
+	t.Parallel()
 	c, _, _, p := ssoTestCore(t)
 	p.AutoProvision = true
 	_, err := c.ensureSSOUser(context.Background(), p, nil, "okta|new", "", true, "New Person")

@@ -39,6 +39,7 @@ func ptr[T any](v T) *T { return &v }
 
 // GetRotationCalendar returns an error when from is after to.
 func TestGetRotationCalendar_InvalidRange(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := calCore(ms)
 
@@ -49,6 +50,7 @@ func TestGetRotationCalendar_InvalidRange(t *testing.T) {
 
 // GetRotationCalendar surfaces a storage error from ListRotationPolicies.
 func TestGetRotationCalendar_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return(nil, errors.New("db down"))
@@ -61,6 +63,7 @@ func TestGetRotationCalendar_StorageError(t *testing.T) {
 
 // Inactive policies are skipped; the result is empty.
 func TestGetRotationCalendar_InactivePolicy(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return([]*models.RotationPolicy{calPolicy(1, false, 30)}, nil)
@@ -73,6 +76,7 @@ func TestGetRotationCalendar_InactivePolicy(t *testing.T) {
 
 // scopedPolicySecrets failure is propagated as an error.
 func TestGetRotationCalendar_SecretListError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return([]*models.RotationPolicy{calPolicy(1, true, 30)}, nil)
@@ -88,6 +92,7 @@ func TestGetRotationCalendar_SecretListError(t *testing.T) {
 // A secret whose NextRotationAt falls within [from, to] is included, using
 // LastRotatedAt as the baseline.
 func TestGetRotationCalendar_SecretInWindowUsesLastRotatedAt(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pol := calPolicy(5, true, 30)
 	// LastRotatedAt = 2026-07-10 → next = 2026-08-09 (within window)
@@ -118,6 +123,7 @@ func TestGetRotationCalendar_SecretInWindowUsesLastRotatedAt(t *testing.T) {
 
 // A secret with no LastRotatedAt falls back to CreatedAt as the baseline.
 func TestGetRotationCalendar_FallsBackToCreatedAt(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pol := calPolicy(6, true, 30)
 	created := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
@@ -142,6 +148,7 @@ func TestGetRotationCalendar_FallsBackToCreatedAt(t *testing.T) {
 
 // A secret whose NextRotationAt is before from is filtered out.
 func TestGetRotationCalendar_BeforeWindowFiltered(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pol := calPolicy(7, true, 30)
 	// LastRotatedAt 2026-05-01 → next = 2026-05-31 (before calFrom=2026-07-01)
@@ -162,6 +169,7 @@ func TestGetRotationCalendar_BeforeWindowFiltered(t *testing.T) {
 
 // A secret whose NextRotationAt is after to is filtered out.
 func TestGetRotationCalendar_AfterWindowFiltered(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pol := calPolicy(8, true, 90)
 	// LastRotatedAt 2026-07-01 → next = 2026-09-29 (after calTo=2026-08-31)
@@ -183,6 +191,7 @@ func TestGetRotationCalendar_AfterWindowFiltered(t *testing.T) {
 // An overdue secret (next < now) within the window is marked IsOverdue=true
 // with a negative DaysUntilDue.
 func TestGetRotationCalendar_OverdueSecret(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pol := calPolicy(9, true, 30)
 	// LastRotatedAt = 2026-06-10 → next = 2026-07-10 (< calNow=2026-07-21, in window)
@@ -207,6 +216,7 @@ func TestGetRotationCalendar_OverdueSecret(t *testing.T) {
 
 // Results are sorted by NextRotationAt ascending.
 func TestGetRotationCalendar_SortedByNextRotation(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	pol := calPolicy(10, true, 30)
 	// Three secrets due in different order
@@ -236,6 +246,7 @@ func TestGetRotationCalendar_SortedByNextRotation(t *testing.T) {
 
 // No policies → empty result (not an error).
 func TestGetRotationCalendar_NoPolicies(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return([]*models.RotationPolicy{}, nil)
@@ -248,6 +259,7 @@ func TestGetRotationCalendar_NoPolicies(t *testing.T) {
 
 // Multiple policies across scopes are all evaluated.
 func TestGetRotationCalendar_MultiplePolicies(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	p1 := calPolicy(11, true, 30)
 	p2 := &models.RotationPolicy{
@@ -299,6 +311,7 @@ func TestGetRotationCalendar_MultiplePolicies(t *testing.T) {
 // regression back to the unscoped ListRotationPolicies(nil, nil) call would panic
 // here on an unmatched call rather than silently leaking project B's data.
 func TestGetRotationCalendar_ScopedToProject(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	projectA := uint(1)
 	polA := calPolicy(20, true, 30)
@@ -332,6 +345,7 @@ func TestGetRotationCalendar_ScopedToProject(t *testing.T) {
 // TestGetRotationStatus_ConfinedToEnvironment via the same
 // policyAppliesToEnv + scopedPolicySecrets(reqEnvID) machinery.
 func TestGetRotationCalendar_ScopedToEnvironment(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	projectID := uint(1)
 	envID := uint(2)

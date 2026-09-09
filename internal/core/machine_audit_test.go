@@ -18,6 +18,7 @@ func newMachineAuditCore(store *MockStorage) *KeyorixCore {
 }
 
 func TestGetMachineAuditReport_Empty(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -34,6 +35,7 @@ func TestGetMachineAuditReport_Empty(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_StaleWhenNeverUsed(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -54,6 +56,7 @@ func TestGetMachineAuditReport_StaleWhenNeverUsed(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_StaleWhenLastUsedTooLongAgo(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -71,6 +74,7 @@ func TestGetMachineAuditReport_StaleWhenLastUsedTooLongAgo(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_NotStaleWhenRecentlyUsed(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -88,6 +92,7 @@ func TestGetMachineAuditReport_NotStaleWhenRecentlyUsed(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_LastUsedPicksMostRecent(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -109,6 +114,7 @@ func TestGetMachineAuditReport_LastUsedPicksMostRecent(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_RevokedCounted(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -126,6 +132,7 @@ func TestGetMachineAuditReport_RevokedCounted(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_CredentialCountIncludesAll(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -146,6 +153,7 @@ func TestGetMachineAuditReport_CredentialCountIncludesAll(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_ListIdentitiesError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -157,6 +165,7 @@ func TestGetMachineAuditReport_ListIdentitiesError(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_ListCredentialsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()
@@ -170,6 +179,7 @@ func TestGetMachineAuditReport_ListCredentialsError(t *testing.T) {
 }
 
 func TestGetMachineAuditReport_RowFieldsPopulated(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineAuditCore(store)
 	ctx := context.Background()

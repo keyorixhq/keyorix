@@ -39,6 +39,7 @@ import (
 // wins every single trial, regardless of which call's read happened to observe the
 // stale state first.
 func TestConcurrency_SuspendUser_SurvivesConcurrentSCIMResync(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "suspend_scim_race.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
@@ -105,6 +106,7 @@ func TestConcurrency_SuspendUser_SurvivesConcurrentSCIMResync(t *testing.T) {
 // in AccountSuspended once accountStateMu enforces one call at a time: the final state
 // is not just "some login-blocked value" but deterministically the suspension itself.
 func TestConcurrency_SuspendUser_SurvivesConcurrentSCIMDeactivateReactivate(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "suspend_scim_deact_race.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

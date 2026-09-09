@@ -21,6 +21,7 @@ import (
 // #480: CreateUserWithAssignments must refuse a non-admin actor granting a global
 // admin system role — mirrors TestInviteGlobal_RejectsNonAdminGrantingGlobalAdminRole.
 func TestCreateUserWithAssignments_RejectsNonAdminGrantingGlobalAdminRole(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -40,6 +41,7 @@ func TestCreateUserWithAssignments_RejectsNonAdminGrantingGlobalAdminRole(t *tes
 // individually ceiling-checked too — mirrors
 // TestInviteGlobal_RejectsNonAdminGrantingProjectAdminAssignment.
 func TestCreateUserWithAssignments_RejectsNonAdminGrantingProjectAdminAssignment(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -60,6 +62,7 @@ func TestCreateUserWithAssignments_RejectsNonAdminGrantingProjectAdminAssignment
 // system role and project assignments in one call — no regression for the
 // legitimate case.
 func TestCreateUserWithAssignments_AdminActorAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -86,6 +89,7 @@ func TestCreateUserWithAssignments_AdminActorAllowed(t *testing.T) {
 // ceiling, unlike the old name-based one, the actor must actually hold whatever
 // they're granting, even for a "non-admin-tier" role name.
 func TestCreateUserWithAssignments_NonAdminRoleAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 

@@ -12,6 +12,7 @@ import (
 )
 
 func TestKeyorixCore_ListSecretsWithSharingInfo(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -110,6 +111,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo(t *testing.T) {
 }
 
 func TestKeyorixCore_ListSecretsWithSharingInfo_ShowOwnedOnly(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -155,6 +157,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowOwnedOnly(t *testing.T) {
 }
 
 func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -215,6 +218,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 }
 
 func TestKeyorixCore_GetSecretSharingStatus(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -285,6 +289,7 @@ func TestKeyorixCore_GetSecretSharingStatus(t *testing.T) {
 }
 
 func TestKeyorixCore_GetUserSecretPermission(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -396,6 +401,7 @@ func TestKeyorixCore_GetUserSecretPermission(t *testing.T) {
 // Permission "owner" with no error instead of the "no permission" error asserted
 // here) before the requireLiveOwnerAuthority swap.
 func TestKeyorixCore_GetUserSecretPermission_DepartedOwnerDenied(t *testing.T) {
+	t.Parallel()
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{storage: mockStorage, now: time.Now}
 	ctx := context.Background()

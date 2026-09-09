@@ -25,6 +25,7 @@ import (
 // ordinary, legitimately-scoped PAT could therefore suspend/deactivate the
 // install's last remaining global admin with this guard silently no-op'ing.
 func TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	setup := func(t *testing.T) (*KeyorixCore, *gorm.DB) {
@@ -99,6 +100,7 @@ func TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction(t *te
 // IsGlobalAdmin's short-circuit fires on the CALLER's restriction, not the
 // per-iteration target user's actual role.
 func TestSuspendInactiveUsers_NotFooledByCallersPATRestriction(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

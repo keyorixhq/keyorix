@@ -90,6 +90,7 @@ func mkConfig(t *testing.T, c *KeyorixCore, ctx context.Context) *models.Dynamic
 // after routing the write through the new conditional
 // TransitionDynamicSecretConfigDisabled call.
 func TestSetDynamicSecretConfigEnabled_HappyPathAndNoop(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -142,6 +143,7 @@ func TestSetDynamicSecretConfigEnabled_HappyPathAndNoop(t *testing.T) {
 // — the latter is inherently timing-sensitive and would be flaky under
 // `go test -race`, which this repo's CI runs.)
 func TestSetDynamicSecretConfigEnabled_LostRaceReportedCleanly(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ctx := context.Background()
@@ -176,6 +178,7 @@ func TestSetDynamicSecretConfigEnabled_LostRaceReportedCleanly(t *testing.T) {
 // rotation-backend authz gap). A non-admin actor must be refused; an admin actor (the
 // suite's default testAdminActorID) must still succeed, matching mkConfig's baseline.
 func TestDynamicSecrets_CreateConfig_RequiresAdminAuthority(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 
@@ -202,6 +205,7 @@ func TestDynamicSecrets_CreateConfig_RequiresAdminAuthority(t *testing.T) {
 // (project, environment, name) tuple must fail with a clear validation error, not
 // silently create a duplicate row.
 func TestDynamicSecrets_CreateConfig_DuplicateNameRejected(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	_ = mkConfig(t, c, ctx) // "app-db" on ProjectID 1 / EnvironmentID 2
@@ -223,6 +227,7 @@ func TestDynamicSecrets_CreateConfig_DuplicateNameRejected(t *testing.T) {
 // environment, a different project, or a different name must all succeed
 // independently of an existing config.
 func TestDynamicSecrets_CreateConfig_DifferentScopeAllowed(t *testing.T) {
+	t.Parallel()
 	c, db, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	_ = mkConfig(t, c, ctx) // "app-db" on ProjectID 1 / EnvironmentID 2
@@ -260,6 +265,7 @@ func TestDynamicSecrets_CreateConfig_DifferentScopeAllowed(t *testing.T) {
 // rejected, not silently accepted with a config whose stored ProjectID and actual
 // environment disagree about which project the config belongs to.
 func TestDynamicSecrets_CreateConfig_RejectsCrossProjectEnvironment(t *testing.T) {
+	t.Parallel()
 	c, db, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Project{ID: 4, Name: "dyn-test-project-2"}).Error)
@@ -280,6 +286,7 @@ func TestDynamicSecrets_CreateConfig_RejectsCrossProjectEnvironment(t *testing.T
 // an EnvironmentID with no backing row at all must also be rejected, not just a
 // mismatched one.
 func TestDynamicSecrets_CreateConfig_RejectsUnknownEnvironment(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 
@@ -292,6 +299,7 @@ func TestDynamicSecrets_CreateConfig_RejectsUnknownEnvironment(t *testing.T) {
 }
 
 func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -309,6 +317,7 @@ func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
 // scoped to a different backend entirely. This exercises the live IssueLease
 // (decryptAuthSecret) path end-to-end, not just the low-level AEAD primitive.
 func TestDynamicSecrets_AdminDSNTransplantBetweenConfigsFailsToDecrypt(t *testing.T) {
+	t.Parallel()
 	c, db, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfgA := mkConfig(t, c, ctx)
@@ -334,6 +343,7 @@ func TestDynamicSecrets_AdminDSNTransplantBetweenConfigsFailsToDecrypt(t *testin
 }
 
 func TestDynamicSecrets_MaxActiveLeasesCeiling(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
@@ -368,6 +378,7 @@ func TestDynamicSecrets_MaxActiveLeasesCeiling(t *testing.T) {
 // configured ceiling forever, since every subsequent count would undercount the leftover
 // live credential.
 func TestDynamicSecrets_MaxActiveLeasesCeiling_CountsRevokeFailed(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
@@ -402,6 +413,7 @@ func TestDynamicSecrets_MaxActiveLeasesCeiling_CountsRevokeFailed(t *testing.T) 
 }
 
 func TestDynamicSecrets_IssueListRevoke(t *testing.T) {
+	t.Parallel()
 	c, db, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -439,6 +451,7 @@ func TestDynamicSecrets_IssueListRevoke(t *testing.T) {
 }
 
 func TestDynamicSecrets_SweepRevokesExpired(t *testing.T) {
+	t.Parallel()
 	c, _, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -462,6 +475,7 @@ func TestDynamicSecrets_SweepRevokesExpired(t *testing.T) {
 }
 
 func TestDynamicSecrets_RevokeFailureMarksLease(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -494,6 +508,7 @@ func TestDynamicSecrets_RevokeFailureMarksLease(t *testing.T) {
 // attempt) must be directly retryable via RevokeLease once the target recovers — not
 // just through the expiry sweep — and only THEN does RevokedAt get stamped.
 func TestDynamicSecrets_RevokeLeaseRetrySucceeds(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -521,6 +536,7 @@ func TestDynamicSecrets_RevokeLeaseRetrySucceeds(t *testing.T) {
 // via the sweep — not be a terminal dead-end. The sweep also surfaces a persistent
 // failure as an error so a mass TTL-enforcement outage isn't reported as a clean pass.
 func TestDynamicSecrets_RevokeFailedIsRetryable(t *testing.T) {
+	t.Parallel()
 	c, _, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -556,6 +572,7 @@ func TestDynamicSecrets_RevokeFailedIsRetryable(t *testing.T) {
 }
 
 func TestDynamicSecrets_IssueRejectsUnknownConfig(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	_, err := c.IssueLease(ctx, 999, 0, 7)
@@ -563,6 +580,7 @@ func TestDynamicSecrets_IssueRejectsUnknownConfig(t *testing.T) {
 }
 
 func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
+	t.Parallel()
 	c, _, _, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
@@ -583,6 +601,7 @@ func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
 // ExpiresAt in the past. 20_000_000_000 seconds (~634 years) comfortably exceeds the
 // ~9.22e9s int64-nanosecond overflow threshold.
 func TestDynamicSecrets_IssueRejectsOverflowingTTLSeconds(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
@@ -598,6 +617,7 @@ func TestDynamicSecrets_IssueRejectsOverflowingTTLSeconds(t *testing.T) {
 
 // The same overflow guard applies to RenewLease's ttlSeconds parameter.
 func TestDynamicSecrets_RenewRejectsOverflowingTTLSeconds(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
@@ -618,6 +638,7 @@ func TestDynamicSecrets_RenewRejectsOverflowingTTLSeconds(t *testing.T) {
 // override is (in dynamicTTL's clamp and RenewLease's per-lease hardCap), so they carry
 // the identical int64-nanosecond overflow risk.
 func TestDynamicSecrets_CreateRejectsOverflowingConfigTTLFields(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 
@@ -641,6 +662,7 @@ func TestDynamicSecrets_CreateRejectsOverflowingConfigTTLFields(t *testing.T) {
 // (or, on a misconfigured install, the config default) could mint an arbitrarily
 // long-lived credential.
 func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
+	t.Parallel()
 	c, _, _, fixed := newDynamicTestCore(t)
 	c.SetDynamicMaxLeaseTTL(2 * time.Hour)
 	ctx := context.Background()
@@ -660,6 +682,7 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
 // A zero/unset install-wide ceiling must fall back to the package default (90 days),
 // not disable the ceiling entirely.
 func TestDynamicSecrets_InstallWideMaxLeaseTTLDefaultsWhenUnset(t *testing.T) {
+	t.Parallel()
 	c, _, _, fixed := newDynamicTestCore(t)
 	// SetDynamicMaxLeaseTTL is never called — dynamicMaxLeaseTTL stays its zero value.
 	ctx := context.Background()
@@ -681,6 +704,7 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLDefaultsWhenUnset(t *testing.T) {
 // auto-revoke sweep, which acts on ExpiresAt) would understate the credential's true
 // lifetime.
 func TestDynamicSecrets_ExpiresAtUsesProviderActualExpiryWhenSurfaced(t *testing.T) {
+	t.Parallel()
 	c, _, fake, fixed := newDynamicTestCore(t)
 	fake.Ephemeral = true
 	// The engine floored a short requested TTL up to its own provider minimum — the
@@ -704,6 +728,7 @@ func TestDynamicSecrets_ExpiresAtUsesProviderActualExpiryWhenSurfaced(t *testing
 // ExpiresAt must still fall back to the requested-ttl computation — the correction is
 // additive, not a behavior change for backends that don't surface one.
 func TestDynamicSecrets_ExpiresAtFallsBackWithoutProviderExpiry(t *testing.T) {
+	t.Parallel()
 	c, _, _, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -719,6 +744,7 @@ func TestDynamicSecrets_ExpiresAtFallsBackWithoutProviderExpiry(t *testing.T) {
 // active-lease accounting / stops appearing as issuable-from-this-lease), but the
 // audit message must say so honestly.
 func TestDynamicSecrets_RevokeEphemeralBackendAuditsHonestly(t *testing.T) {
+	t.Parallel()
 	c, db, fake, _ := newDynamicTestCore(t)
 	fake.Ephemeral = true
 	ctx := context.Background()
@@ -742,6 +768,7 @@ func TestDynamicSecrets_RevokeEphemeralBackendAuditsHonestly(t *testing.T) {
 // "revocable":true — see kubernetes.go) must NOT be lumped in with the no-op
 // backends' misleading "cannot be invalidated early" message.
 func TestDynamicSecrets_RevokeEffectiveEphemeralBackendAuditsAsGenuineRevoke(t *testing.T) {
+	t.Parallel()
 	c, db, fake, _ := newDynamicTestCore(t)
 	fake.Ephemeral = true
 	effective := true
@@ -763,6 +790,7 @@ func TestDynamicSecrets_RevokeEffectiveEphemeralBackendAuditsAsGenuineRevoke(t *
 }
 
 func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 		Name: "bad", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
@@ -776,6 +804,7 @@ func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
 // own ceiling could have its lease's total lifetime stretched arbitrarily far by
 // repeated renewals.
 func TestDynamicSecrets_RenewRespectsInstallWideMaxLeaseTTL(t *testing.T) {
+	t.Parallel()
 	c, _, _, fixed := newDynamicTestCore(t)
 	c.SetDynamicMaxLeaseTTL(20 * time.Minute)
 	ctx := context.Background()
@@ -797,6 +826,7 @@ func TestDynamicSecrets_RenewRespectsInstallWideMaxLeaseTTL(t *testing.T) {
 }
 
 func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {
+	t.Parallel()
 	c, _, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
@@ -825,6 +855,7 @@ func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {
 // An ephemeral (cloud-IAM, e.g. AWS STS) backend surfaces its credential via Fields
 // and refuses renewal — its lifetime is fixed by the provider at issue.
 func TestDynamicSecrets_EphemeralBackendFieldsAndRenewRefused(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	fake.Ephemeral = true
 	fake.IssueFields = map[string]string{"access_key_id": "AKIA", "session_token": "tok"}
@@ -842,6 +873,7 @@ func TestDynamicSecrets_EphemeralBackendFieldsAndRenewRefused(t *testing.T) {
 }
 
 func TestDynamicSecrets_RevokeLeasesForConfig(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -877,6 +909,7 @@ func TestDynamicSecrets_RevokeLeasesForConfig(t *testing.T) {
 // cleanly on the first try. Also pins #192: a successful retry must clear the
 // earlier RevokeError, not leave a stale failure message on a now-clean lease.
 func TestDynamicSecrets_RevokeLeasesForConfigRetriesRevokeFailed(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -915,6 +948,7 @@ func TestDynamicSecrets_RevokeLeasesForConfigRetriesRevokeFailed(t *testing.T) {
 // must remain revoke_failed (not be silently marked revoked) and still carry no
 // RevokedAt timestamp — the bulk path must not paper over a persistent failure.
 func TestDynamicSecrets_RevokeLeasesForConfigReportsPersistentFailure(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -939,6 +973,7 @@ func TestDynamicSecrets_RevokeLeasesForConfigReportsPersistentFailure(t *testing
 }
 
 func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
+	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -954,6 +989,7 @@ func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
 // would push the backend credential's lifetime forward and resurrect a credential that
 // should be dead, so RenewLease must refuse and must NOT call the engine.
 func TestDynamicSecrets_RenewRejectsExpiredLease(t *testing.T) {
+	t.Parallel()
 	c, _, fake, fixed := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -977,6 +1013,7 @@ func TestDynamicSecrets_RenewRejectsExpiredLease(t *testing.T) {
 // TestDynamicSecrets_RealFactoryValidatesBackend checks the real engine factory
 // (no fake): config creation accepts the supported backends and rejects others.
 func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -1010,6 +1047,7 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 // A backend without DB-level expiry (MySQL/MongoDB) must not issue while the
 // auto-revoke sweeper is disabled — otherwise the lease TTL is never enforced.
 func TestDynamicSecrets_IssueRequiresSweeperForNoExpiryBackend(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)
@@ -1033,6 +1071,7 @@ func TestDynamicSecrets_IssueRequiresSweeperForNoExpiryBackend(t *testing.T) {
 // revoke_failed lease (so the orphaned target role is not silently permanent),
 // while a clean drop records nothing.
 func TestDynamicSecrets_CleanupOrphanedRole(t *testing.T) {
+	t.Parallel()
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
 	cfg := mkConfig(t, c, ctx)

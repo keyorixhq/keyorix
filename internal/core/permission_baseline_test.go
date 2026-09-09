@@ -29,6 +29,7 @@ func userFilterPageSize(n int) interface{} {
 }
 
 func TestGetPermissionBaseline_Empty(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -45,6 +46,7 @@ func TestGetPermissionBaseline_Empty(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_DirectGrant_GlobalScope(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -76,6 +78,7 @@ func TestGetPermissionBaseline_DirectGrant_GlobalScope(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_DirectGrant_ProjectScope(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -102,6 +105,7 @@ func TestGetPermissionBaseline_DirectGrant_ProjectScope(t *testing.T) {
 // the DIRECT-grant path: a grant scoped to one environment within a project
 // must not be reported as applying to the whole project.
 func TestGetPermissionBaseline_DirectGrant_EnvironmentScope(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -125,6 +129,7 @@ func TestGetPermissionBaseline_DirectGrant_EnvironmentScope(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_GroupInheritedGrant(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -158,6 +163,7 @@ func TestGetPermissionBaseline_GroupInheritedGrant(t *testing.T) {
 // actual project/environment. A group holding a role scoped to one
 // environment must report that real (narrower) scope, not "global".
 func TestGetPermissionBaseline_GroupInheritedGrant_EnvironmentScope(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -182,6 +188,7 @@ func TestGetPermissionBaseline_GroupInheritedGrant_EnvironmentScope(t *testing.T
 }
 
 func TestGetPermissionBaseline_RolePermissionsCached(t *testing.T) {
+	t.Parallel()
 	// Two grants with the same roleID should only call GetRolePermissions once.
 	store := new(MockStorage)
 	c := newBaselineCore(store)
@@ -212,6 +219,7 @@ func TestGetPermissionBaseline_RolePermissionsCached(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_SkipsGrantsForMissingUsers(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -234,6 +242,7 @@ func TestGetPermissionBaseline_SkipsGrantsForMissingUsers(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_ListUsersError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -246,6 +255,7 @@ func TestGetPermissionBaseline_ListUsersError(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_ListGrantsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -259,6 +269,7 @@ func TestGetPermissionBaseline_ListGrantsError(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_ListGroupGrantsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -273,6 +284,7 @@ func TestGetPermissionBaseline_ListGroupGrantsError(t *testing.T) {
 }
 
 func TestGetPermissionBaseline_ListUserGroupMembershipsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -294,6 +306,7 @@ func TestGetPermissionBaseline_ListUserGroupMembershipsError(t *testing.T) {
 // must be called exactly ONCE (not three times), and each user's rows must
 // still resolve to exactly their own group memberships, not another user's.
 func TestGetPermissionBaseline_BatchLoadsMembershipOnceForManyUsers(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()
@@ -335,6 +348,7 @@ func TestGetPermissionBaseline_BatchLoadsMembershipOnceForManyUsers(t *testing.T
 }
 
 func TestScopeLabel(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "global", scopeLabel(0, 0))
 	assert.Equal(t, "project:7", scopeLabel(7, 0))
 	assert.Equal(t, "project:100", scopeLabel(100, 0))
@@ -356,6 +370,7 @@ func TestScopeLabel(t *testing.T) {
 //     project+environment — the old code hardcoded every group-inherited row's
 //     scope to "global"; it must now report the real, narrower scope.
 func TestGetPermissionBaseline_G25Regression(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newBaselineCore(store)
 	ctx := context.Background()

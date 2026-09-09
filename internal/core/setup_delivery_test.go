@@ -51,6 +51,7 @@ func (f *fakeDeliverer) Name() string { return "fake" }
 const testBaseURL = "https://keyorix.test"
 
 func TestResendAccountSetupLink(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	uid := uint(4)
 	fixed := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
@@ -138,6 +139,7 @@ func TestResendAccountSetupLink(t *testing.T) {
 }
 
 func TestProvisionRequiresBaseURL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -153,6 +155,7 @@ func TestProvisionRequiresBaseURL(t *testing.T) {
 }
 
 func TestCreateUserWithSetupLink(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	ms := new(MockStorage)
@@ -199,6 +202,7 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 // without this fix each such "recreate" would look like a fresh, unthrottled initial
 // provision and send another email with no cooldown and no daily cap.
 func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	ms := new(MockStorage)
@@ -251,6 +255,7 @@ func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T)
 }
 
 func TestCreateUserWithOneTimePassword(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	ms := new(MockStorage)
@@ -292,6 +297,7 @@ func TestCreateUserWithOneTimePassword(t *testing.T) {
 }
 
 func TestGenerateInitialCredential(t *testing.T) {
+	t.Parallel()
 	policy := DefaultPasswordPolicy()
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {

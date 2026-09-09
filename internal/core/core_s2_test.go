@@ -19,6 +19,7 @@ import (
 // ── account.go ────────────────────────────────────────────────────────────────
 
 func TestCurrentSessionID_EmptyToken(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// An empty token must return 0 without any storage call.
@@ -28,6 +29,7 @@ func TestCurrentSessionID_EmptyToken(t *testing.T) {
 }
 
 func TestCurrentSessionID_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSession", mock.Anything, "bad-token").Return(nil, errors.New("not found"))
@@ -37,6 +39,7 @@ func TestCurrentSessionID_StorageError(t *testing.T) {
 }
 
 func TestCurrentSessionID_Valid(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	sess := &models.Session{ID: 42, SessionToken: "tok"}
@@ -46,6 +49,7 @@ func TestCurrentSessionID_Valid(t *testing.T) {
 }
 
 func TestListOwnSessions_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.ListOwnSessions(context.Background(), 0)
@@ -54,6 +58,7 @@ func TestListOwnSessions_ZeroUserID(t *testing.T) {
 }
 
 func TestRevokeOwnSession_WrongOwner(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// Session belongs to user 2, caller is user 1.
@@ -66,6 +71,7 @@ func TestRevokeOwnSession_WrongOwner(t *testing.T) {
 }
 
 func TestRevokeOwnSession_ZeroIDs(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeOwnSession(context.Background(), 0, 5)
@@ -76,6 +82,7 @@ func TestRevokeOwnSession_ZeroIDs(t *testing.T) {
 // ── catalog.go ────────────────────────────────────────────────────────────────
 
 func TestGetProject_Delegated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetProject", mock.Anything, uint(7)).Return(&models.Project{ID: 7, Name: "web"}, nil)
 	c := NewKeyorixCore(ms)
@@ -85,6 +92,7 @@ func TestGetProject_Delegated(t *testing.T) {
 }
 
 func TestGetProject_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetProject", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -93,6 +101,7 @@ func TestGetProject_NotFound(t *testing.T) {
 }
 
 func TestListProjectsWithCounts_Delegated(t *testing.T) {
+	t.Parallel()
 	// MockStorage.ListProjectsWithCounts is a fixed stub returning (nil, nil).
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -102,6 +111,7 @@ func TestListProjectsWithCounts_Delegated(t *testing.T) {
 }
 
 func TestDeleteEnvironment_Delegated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// MockStorage.DeleteEnvironment returns nil.
@@ -109,6 +119,7 @@ func TestDeleteEnvironment_Delegated(t *testing.T) {
 }
 
 func TestGetEnvironment_Delegated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// MockStorage.GetEnvironment returns &models.Environment{}.
@@ -118,6 +129,7 @@ func TestGetEnvironment_Delegated(t *testing.T) {
 }
 
 func TestListEnvironments_Delegated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// MockStorage.ListEnvironments returns nil, nil.
@@ -127,6 +139,7 @@ func TestListEnvironments_Delegated(t *testing.T) {
 }
 
 func TestCreateEnvironment_EmptyName(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.CreateEnvironment(context.Background(), 1, "")
@@ -135,6 +148,7 @@ func TestCreateEnvironment_EmptyName(t *testing.T) {
 }
 
 func TestCreateEnvironment_TooLongName(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	long := make([]byte, 201)
@@ -147,6 +161,7 @@ func TestCreateEnvironment_TooLongName(t *testing.T) {
 }
 
 func TestCreateEnvironment_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// MockStorage.CreateEnvironment returns the passed env back.
@@ -159,6 +174,7 @@ func TestCreateEnvironment_Success(t *testing.T) {
 // ── connect.go ────────────────────────────────────────────────────────────────
 
 func TestConnectConnectorNames_NoManager(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	names := c.ConnectConnectorNames()
@@ -166,6 +182,7 @@ func TestConnectConnectorNames_NoManager(t *testing.T) {
 }
 
 func TestConnectConnectorNames_WithManager(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := &KeyorixCore{storage: ms}
@@ -175,6 +192,7 @@ func TestConnectConnectorNames_WithManager(t *testing.T) {
 }
 
 func TestListConnectRefGrants_Delegated(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// MockStorage.ListConnectRefGrants is a fixed stub returning (nil, nil).
 	c := NewKeyorixCore(ms)
@@ -184,6 +202,7 @@ func TestListConnectRefGrants_Delegated(t *testing.T) {
 }
 
 func TestDeleteConnectRefGrant_Success(t *testing.T) {
+	t.Parallel()
 	// DeleteConnectRefGrant mock is a fixed stub (returns nil, no m.Called).
 	// LogAuditEvent is called via writeAuditEvent — mock it to avoid panics.
 	ms := new(MockStorage)
@@ -196,6 +215,7 @@ func TestDeleteConnectRefGrant_Success(t *testing.T) {
 // ── catalog.go – extra helpers ────────────────────────────────────────────────
 
 func TestListEnvironmentsByProjectIncludingDeleted(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// MockStorage.ListEnvironmentsByProjectIncludingDeleted is a fixed stub.
 	c := NewKeyorixCore(ms)
@@ -205,6 +225,7 @@ func TestListEnvironmentsByProjectIncludingDeleted(t *testing.T) {
 }
 
 func TestTranslateProjectNameError_DuplicateName(t *testing.T) {
+	t.Parallel()
 	// Call CreateProject with a duplicate-name storage error so translateProjectNameError
 	// is exercised on the non-duplicate path via the mock.
 	ms := new(MockStorage)
@@ -229,10 +250,12 @@ func TestTranslateProjectNameError_DuplicateName(t *testing.T) {
 // ── dashboard.go helpers ──────────────────────────────────────────────────────
 
 func TestComputeTrend_BothZero(t *testing.T) {
+	t.Parallel()
 	assert.Nil(t, computeTrend(0, 0))
 }
 
 func TestComputeTrend_PrevZeroCurrentNonZero(t *testing.T) {
+	t.Parallel()
 	trend := computeTrend(0, 10)
 	require.NotNil(t, trend)
 	assert.Equal(t, 100.0, trend.Value)
@@ -240,10 +263,12 @@ func TestComputeTrend_PrevZeroCurrentNonZero(t *testing.T) {
 }
 
 func TestComputeTrend_NoChange(t *testing.T) {
+	t.Parallel()
 	assert.Nil(t, computeTrend(10, 10))
 }
 
 func TestComputeTrend_Increase(t *testing.T) {
+	t.Parallel()
 	trend := computeTrend(100, 150)
 	require.NotNil(t, trend)
 	assert.Equal(t, 50.0, trend.Value)
@@ -251,6 +276,7 @@ func TestComputeTrend_Increase(t *testing.T) {
 }
 
 func TestComputeTrend_Decrease(t *testing.T) {
+	t.Parallel()
 	trend := computeTrend(100, 80)
 	require.NotNil(t, trend)
 	assert.Equal(t, 20.0, trend.Value)
@@ -258,27 +284,33 @@ func TestComputeTrend_Decrease(t *testing.T) {
 }
 
 func TestLastIndex_EmptySubstr(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, 5, lastIndex("hello", ""))
 }
 
 func TestLastIndex_NotFound(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, -1, lastIndex("hello", "xyz"))
 }
 
 func TestLastIndex_LastOccurrence(t *testing.T) {
+	t.Parallel()
 	// "aXbXc" — second X is at index 3.
 	assert.Equal(t, 3, lastIndex("aXbXc", "X"))
 }
 
 func TestExtractSecretName_Found(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "prod-db", extractSecretName("User admin deleted secret prod-db"))
 }
 
 func TestExtractSecretName_NotFound(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "", extractSecretName("User admin logged in"))
 }
 
 func TestMapAuditEventToActivity_SecretRead(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 1, EventType: "secret.read", Description: "User alice read secret api-key", EventTime: time.Now()}
 	item := mapAuditEventToActivity(e, "alice")
 	assert.Equal(t, "accessed", item.Type)
@@ -286,6 +318,7 @@ func TestMapAuditEventToActivity_SecretRead(t *testing.T) {
 }
 
 func TestMapAuditEventToActivity_AuthLogin(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 2, EventType: "auth.login", Description: "User bob logged in"}
 	item := mapAuditEventToActivity(e, "bob")
 	assert.Equal(t, "login", item.Type)
@@ -293,6 +326,7 @@ func TestMapAuditEventToActivity_AuthLogin(t *testing.T) {
 }
 
 func TestMapAuditEventToActivity_Fallback(t *testing.T) {
+	t.Parallel()
 	e := &models.AuditEvent{ID: 3, EventType: "rbac.role_assigned", Description: "role assigned"}
 	item := mapAuditEventToActivity(e, "admin")
 	assert.Equal(t, "rbac.role_assigned", item.Type)
@@ -300,6 +334,7 @@ func TestMapAuditEventToActivity_Fallback(t *testing.T) {
 }
 
 func TestGetActivityFeed_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetAuditLogs", mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("db down"))
 	c := NewKeyorixCore(ms)
@@ -311,6 +346,7 @@ func TestGetActivityFeed_StorageError(t *testing.T) {
 }
 
 func TestGetActivityFeed_WithEvents(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	events := []*models.AuditEvent{
 		{ID: 1, EventType: "secret.read", Description: "User alice read secret db-pw", EventTime: time.Now()},
@@ -326,6 +362,7 @@ func TestGetActivityFeed_WithEvents(t *testing.T) {
 // ── group_sharing.go ──────────────────────────────────────────────────────────
 
 func TestCheckUserGroupPermission_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, _, err := c.CheckUserGroupPermission(context.Background(), 0, 1)
@@ -334,6 +371,7 @@ func TestCheckUserGroupPermission_ZeroSecretID(t *testing.T) {
 }
 
 func TestCheckUserGroupPermission_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, _, err := c.CheckUserGroupPermission(context.Background(), 1, 0)
@@ -342,6 +380,7 @@ func TestCheckUserGroupPermission_ZeroUserID(t *testing.T) {
 }
 
 func TestCheckUserGroupPermission_Valid(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ok, perm, err := c.CheckUserGroupPermission(context.Background(), 1, 1)
@@ -353,6 +392,7 @@ func TestCheckUserGroupPermission_Valid(t *testing.T) {
 // ── groups.go ────────────────────────────────────────────────────────────────
 
 func TestListGroups_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	grps := []*models.Group{{ID: 1, Name: "admins"}}
 	ms.On("ListGroups", mock.Anything).Return(grps, nil)
@@ -364,6 +404,7 @@ func TestListGroups_Success(t *testing.T) {
 }
 
 func TestListGroups_Error(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListGroups", mock.Anything).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -374,6 +415,7 @@ func TestListGroups_Error(t *testing.T) {
 // ── anomaly.go ────────────────────────────────────────────────────────────────
 
 func TestSetBaselineQuarantine(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	d := NewAnomalyDetector(ms)
 	d.SetBaselineQuarantine(48 * time.Hour)
@@ -381,6 +423,7 @@ func TestSetBaselineQuarantine(t *testing.T) {
 }
 
 func TestSetMLConfig(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	d := NewAnomalyDetector(ms)
 	cfg := MLConfig{Enabled: true}

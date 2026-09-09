@@ -6,6 +6,7 @@ import "testing"
 // Description so a crafted secret name can't inject a forged audit line or smuggle ANSI
 // escapes into a CLI audit viewer.
 func TestSanitizeAuditText(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"plain secret name":                 "plain secret name",
 		"line1\nline2":                      "line1line2", // newline dropped (no forged line)

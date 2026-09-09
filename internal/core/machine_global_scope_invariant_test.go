@@ -40,6 +40,7 @@ import (
 // matches"), confirmed this test failed with storage.AssignMachineRole
 // actually invoked, then reverted.
 func TestAssignMachineRole_GlobalScopeRejected(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	machine := &models.MachineIdentity{ID: 1, ProjectID: 5, Name: "ci-runner", State: MachineActive}
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
@@ -68,6 +69,7 @@ func TestAssignMachineRole_GlobalScopeRejected(t *testing.T) {
 // check. See TestCreateMachineIdentity_RejectsZeroProject for the
 // creation-side half of this invariant.
 func TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	machine := &models.MachineIdentity{ID: 1, ProjectID: 0, Name: "corrupted-fixture", State: MachineActive}
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
@@ -89,6 +91,7 @@ func TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal(t *testi
 // test above shows would defeat machineInProject's check. This is the
 // invariant's real enforcement point.
 func TestCreateMachineIdentity_RejectsZeroProject(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 

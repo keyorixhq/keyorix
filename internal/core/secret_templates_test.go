@@ -22,6 +22,7 @@ func newCoreWithMock() (*KeyorixCore, *MockStorage) {
 // ---------- CreateSecretTemplate ----------
 
 func TestCreateSecretTemplate_Success(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	// CreatedAt/UpdatedAt are set inside CreateSecretTemplate, so use MatchedBy.
 	m.On("CreateSecretTemplate", context.Background(), mock.MatchedBy(func(t *models.SecretTemplate) bool {
@@ -45,6 +46,7 @@ func TestCreateSecretTemplate_Success(t *testing.T) {
 }
 
 func TestCreateSecretTemplate_EmptyName(t *testing.T) {
+	t.Parallel()
 	c, _ := newCoreWithMock()
 	_, err := c.CreateSecretTemplate(context.Background(), &CreateSecretTemplateRequest{Name: "  "})
 	require.Error(t, err)
@@ -52,6 +54,7 @@ func TestCreateSecretTemplate_EmptyName(t *testing.T) {
 }
 
 func TestCreateSecretTemplate_InvalidClassification(t *testing.T) {
+	t.Parallel()
 	c, _ := newCoreWithMock()
 	_, err := c.CreateSecretTemplate(context.Background(), &CreateSecretTemplateRequest{
 		Name:                  "tpl",
@@ -62,6 +65,7 @@ func TestCreateSecretTemplate_InvalidClassification(t *testing.T) {
 }
 
 func TestCreateSecretTemplate_StorageError(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("CreateSecretTemplate", context.Background(), mock.MatchedBy(func(t *models.SecretTemplate) bool { return true })).
 		Return(errors.New("db error"))
@@ -73,6 +77,7 @@ func TestCreateSecretTemplate_StorageError(t *testing.T) {
 // ---------- GetSecretTemplate ----------
 
 func TestGetSecretTemplate_Found(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	want := &models.SecretTemplate{ID: 7, Name: "api-keys"}
 	m.On("GetSecretTemplate", context.Background(), uint(7)).Return(want, nil)
@@ -83,6 +88,7 @@ func TestGetSecretTemplate_Found(t *testing.T) {
 }
 
 func TestGetSecretTemplate_NotFound(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("GetSecretTemplate", context.Background(), uint(99)).Return(nil, errors.New("secret template not found"))
 
@@ -94,6 +100,7 @@ func TestGetSecretTemplate_NotFound(t *testing.T) {
 // ---------- GetSecretTemplateByName ----------
 
 func TestGetSecretTemplateByName_Found(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	want := &models.SecretTemplate{ID: 3, Name: "db-prod"}
 	m.On("GetSecretTemplateByName", context.Background(), "db-prod").Return(want, nil)
@@ -104,6 +111,7 @@ func TestGetSecretTemplateByName_Found(t *testing.T) {
 }
 
 func TestGetSecretTemplateByName_NotFound(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("GetSecretTemplateByName", context.Background(), "missing").Return(nil, errors.New("secret template not found"))
 
@@ -115,6 +123,7 @@ func TestGetSecretTemplateByName_NotFound(t *testing.T) {
 // ---------- ListSecretTemplates ----------
 
 func TestListSecretTemplates_Empty(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("ListSecretTemplates", context.Background()).Return([]*models.SecretTemplate{}, nil)
 
@@ -124,6 +133,7 @@ func TestListSecretTemplates_Empty(t *testing.T) {
 }
 
 func TestListSecretTemplates_Multiple(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	want := []*models.SecretTemplate{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}}
 	m.On("ListSecretTemplates", context.Background()).Return(want, nil)
@@ -134,6 +144,7 @@ func TestListSecretTemplates_Multiple(t *testing.T) {
 }
 
 func TestListSecretTemplates_StorageError(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("ListSecretTemplates", context.Background()).Return(nil, errors.New("storage down"))
 
@@ -145,6 +156,7 @@ func TestListSecretTemplates_StorageError(t *testing.T) {
 // ---------- UpdateSecretTemplate ----------
 
 func TestUpdateSecretTemplate_Success(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 5, Name: "old-name"}
 	m.On("GetSecretTemplate", context.Background(), uint(5)).Return(existing, nil)
@@ -160,6 +172,7 @@ func TestUpdateSecretTemplate_Success(t *testing.T) {
 }
 
 func TestUpdateSecretTemplate_NotFound(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("GetSecretTemplate", context.Background(), uint(99)).Return(nil, errors.New("secret template not found"))
 
@@ -169,6 +182,7 @@ func TestUpdateSecretTemplate_NotFound(t *testing.T) {
 }
 
 func TestUpdateSecretTemplate_EmptyName(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 5, Name: "old"}
 	m.On("GetSecretTemplate", context.Background(), uint(5)).Return(existing, nil)
@@ -179,6 +193,7 @@ func TestUpdateSecretTemplate_EmptyName(t *testing.T) {
 }
 
 func TestUpdateSecretTemplate_InvalidClassification(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 5, Name: "tpl"}
 	m.On("GetSecretTemplate", context.Background(), uint(5)).Return(existing, nil)
@@ -192,6 +207,7 @@ func TestUpdateSecretTemplate_InvalidClassification(t *testing.T) {
 }
 
 func TestUpdateSecretTemplate_StorageError(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 5, Name: "tpl"}
 	m.On("GetSecretTemplate", context.Background(), uint(5)).Return(existing, nil)
@@ -205,6 +221,7 @@ func TestUpdateSecretTemplate_StorageError(t *testing.T) {
 // ---------- DeleteSecretTemplate ----------
 
 func TestDeleteSecretTemplate_Success(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 3}
 	m.On("GetSecretTemplate", context.Background(), uint(3)).Return(existing, nil)
@@ -215,6 +232,7 @@ func TestDeleteSecretTemplate_Success(t *testing.T) {
 }
 
 func TestDeleteSecretTemplate_NotFound(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("GetSecretTemplate", context.Background(), uint(99)).Return(nil, errors.New("secret template not found"))
 
@@ -224,6 +242,7 @@ func TestDeleteSecretTemplate_NotFound(t *testing.T) {
 }
 
 func TestDeleteSecretTemplate_StorageError(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 3}
 	m.On("GetSecretTemplate", context.Background(), uint(3)).Return(existing, nil)
@@ -237,6 +256,7 @@ func TestDeleteSecretTemplate_StorageError(t *testing.T) {
 // ---------- ApplyTemplate ----------
 
 func TestApplyTemplate_EmptyRequest_GetsTemplateValues(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	tmpl := &models.SecretTemplate{
 		ID:                    1,
@@ -254,6 +274,7 @@ func TestApplyTemplate_EmptyRequest_GetsTemplateValues(t *testing.T) {
 }
 
 func TestApplyTemplate_NonEmptyPreserved(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	tmpl := &models.SecretTemplate{
 		ID:                    2,
@@ -272,6 +293,7 @@ func TestApplyTemplate_NonEmptyPreserved(t *testing.T) {
 }
 
 func TestApplyTemplate_InvalidClassification_Error(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	// GetSecretTemplate must not even be reached: validation happens first.
 	result, err := c.ApplyTemplate(context.Background(), 1, "topsecret", "", nil)
@@ -282,6 +304,7 @@ func TestApplyTemplate_InvalidClassification_Error(t *testing.T) {
 }
 
 func TestApplyTemplate_UnknownTemplate_Error(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	m.On("GetSecretTemplate", context.Background(), uint(999)).Return(nil, errors.New("secret template not found"))
 
@@ -291,6 +314,7 @@ func TestApplyTemplate_UnknownTemplate_Error(t *testing.T) {
 }
 
 func TestApplyTemplate_EmptyDefaultTags_NoTagsSet(t *testing.T) {
+	t.Parallel()
 	c, m := newCoreWithMock()
 	tmpl := &models.SecretTemplate{ID: 3, DefaultClassification: "public"}
 	m.On("GetSecretTemplate", context.Background(), uint(3)).Return(tmpl, nil)
@@ -303,6 +327,7 @@ func TestApplyTemplate_EmptyDefaultTags_NoTagsSet(t *testing.T) {
 // ---------- validateTemplateClassification ----------
 
 func TestValidateTemplateClassification(t *testing.T) {
+	t.Parallel()
 	for _, valid := range []string{"", "public", "internal", "confidential", "restricted"} {
 		assert.NoError(t, validateTemplateClassification(valid), "should accept %q", valid)
 	}

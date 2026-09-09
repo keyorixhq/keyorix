@@ -18,6 +18,7 @@ import (
 // Restore operations must be audited (the inverse of the delete events), so a
 // soft-deleted secret/project/environment reappearing leaves a trail.
 func TestRestoreOperationsAudit(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

@@ -22,6 +22,7 @@ const roleAuditor = uint(5)
 // privilege-escalation vector (e.g. a read-only auditor granting itself roles). Uses
 // NON-admin roles only; super_admin/admin bypass granular checks by design.
 func TestPermissionGranularity_DistinctPermissionsEnforced(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 

@@ -18,6 +18,7 @@ import (
 // RemoveRoleFromGroup: removing the group's global admin role must be refused when
 // no other admin route (user or group) survives.
 func TestRemoveRoleFromGroup_RefusesLastGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
@@ -37,6 +38,7 @@ func TestRemoveRoleFromGroup_RefusesLastGlobalAdmin(t *testing.T) {
 // RemoveRoleFromGroup: succeeds once another admin route (a direct user grant)
 // exists — the guard must not over-block.
 func TestRemoveRoleFromGroup_AllowsWhenAnotherAdminExists(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
@@ -51,6 +53,7 @@ func TestRemoveRoleFromGroup_AllowsWhenAnotherAdminExists(t *testing.T) {
 // RemoveRoleFromGroup: a non-admin role grant is never blocked, regardless of the
 // install's admin count.
 func TestRemoveRoleFromGroup_NonAdminRoleAlwaysRemovable(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "editor"}).Error)
@@ -63,6 +66,7 @@ func TestRemoveRoleFromGroup_NonAdminRoleAlwaysRemovable(t *testing.T) {
 // DeleteGroup: deleting a group holding the install's last global admin grant
 // must be refused — deleting the group cascades to remove EVERY role it holds.
 func TestDeleteGroup_RefusesWhenHoldsLastGlobalAdminRole(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
@@ -81,6 +85,7 @@ func TestDeleteGroup_RefusesWhenHoldsLastGlobalAdminRole(t *testing.T) {
 
 // DeleteGroup: succeeds once another admin route survives.
 func TestDeleteGroup_AllowsWhenAnotherAdminExists(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
@@ -95,6 +100,7 @@ func TestDeleteGroup_AllowsWhenAnotherAdminExists(t *testing.T) {
 // DeleteGroup: a group with no admin-tier grant is always deletable, regardless of
 // the install's overall admin count (must not over-block unrelated groups).
 func TestDeleteGroup_NonAdminGroupAlwaysDeletable(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "editor"}).Error)
@@ -109,6 +115,7 @@ func TestDeleteGroup_NonAdminGroupAlwaysDeletable(t *testing.T) {
 // catch. Removing the sole member of an admin-conferring group must be refused
 // when no other admin route exists.
 func TestRemoveUserFromGroup_RefusesLastAdminMember(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
@@ -131,6 +138,7 @@ func TestRemoveUserFromGroup_RefusesLastAdminMember(t *testing.T) {
 // RemoveUserFromGroup: succeeds once another member of the SAME group would still
 // carry the admin authority forward.
 func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberRemains(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
@@ -148,6 +156,7 @@ func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberRemains(t *testing.T) {
 // RemoveUserFromGroup: succeeds once another admin route survives (a direct grant
 // on a different user), even with only one member in the admin-conferring group.
 func TestRemoveUserFromGroup_AllowsWhenDirectAdminExists(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
@@ -170,6 +179,7 @@ func TestRemoveUserFromGroup_AllowsWhenDirectAdminExists(t *testing.T) {
 // last global admin route) be deleted, silently stranding the deployment with
 // zero real global admins even though the guard reported success.
 func TestDeleteGroup_ProjectScopedSoleMemberNotCountedAsGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
@@ -193,6 +203,7 @@ func TestDeleteGroup_ProjectScopedSoleMemberNotCountedAsGlobalAdmin(t *testing.T
 // (project_id=0) correctly counts as a global admin holder, so the group
 // remains deletable once ANOTHER such member exists.
 func TestDeleteGroup_GlobalMemberCountedAsGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
@@ -212,6 +223,7 @@ func TestDeleteGroup_GlobalMemberCountedAsGlobalAdmin(t *testing.T) {
 // RemoveUserFromGroup: membership in a group with no admin-tier grant is always
 // removable, regardless of the install's overall admin count.
 func TestRemoveUserFromGroup_NonAdminGroupAlwaysRemovable(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))

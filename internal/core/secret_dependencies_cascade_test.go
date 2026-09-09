@@ -28,6 +28,7 @@ func rotationOrderNames(t *testing.T, c *KeyorixCore, projectID uint) []string {
 // phantom, blank-named node), the rest of the graph is unaffected, and restoring it brings
 // it — and its edges, which were never removed — straight back.
 func TestGetProjectRotationOrder_CascadesSoftDeleteAndRestore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	dbPass := mkSecret(t, db, 1, "db-password")
@@ -56,6 +57,7 @@ func TestGetProjectRotationOrder_CascadesSoftDeleteAndRestore(t *testing.T) {
 // Impact analysis (the blast radius of rotating a secret) excludes a soft-deleted
 // dependent and includes it again after restore.
 func TestGetSecretImpact_CascadesSoftDeleteAndRestore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 	dbPass := mkSecret(t, db, 1, "db-password")
@@ -89,6 +91,7 @@ func TestGetSecretImpact_CascadesSoftDeleteAndRestore(t *testing.T) {
 
 // DeleteSecret emits secret.dependency_invalidated for each incident edge.
 func TestDeleteSecret_EmitsDependencyInvalidatedAuditEvents(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 
@@ -122,6 +125,7 @@ func TestDeleteSecret_EmitsDependencyInvalidatedAuditEvents(t *testing.T) {
 
 // RestoreSecret emits secret.dependency_restored for each incident edge.
 func TestRestoreSecret_EmitsDependencyRestoredAuditEvents(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 
@@ -143,6 +147,7 @@ func TestRestoreSecret_EmitsDependencyRestoredAuditEvents(t *testing.T) {
 
 // No dependency audit events are emitted when the secret has no dependency edges.
 func TestDeleteSecret_NoDependencyEventsWhenNoEdges(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 
@@ -157,6 +162,7 @@ func TestDeleteSecret_NoDependencyEventsWhenNoEdges(t *testing.T) {
 // DeleteSecret emits an event for the edge where the deleted secret is the dependent
 // (not just where it is the depends-on target).
 func TestDeleteSecret_EmitsEventWhenDeletedSecretIsDependent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newDepCore(t)
 

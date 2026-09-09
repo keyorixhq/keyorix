@@ -16,6 +16,7 @@ import (
 const strongPw = "Str0ng!Passw0rd-2026"
 
 func TestDescribeSetupToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	raw := setupPrefix + "describe1"
 	hash := sha256Hex(raw)
@@ -61,6 +62,7 @@ func TestDescribeSetupToken(t *testing.T) {
 }
 
 func TestCompleteSetup(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	raw := setupPrefix + "consume1"
 	hash := sha256Hex(raw)

@@ -38,6 +38,7 @@ var sodGrantModels = []interface{}{
 // loser re-checks under the lock, now sees the winner's already-committed grant,
 // and is correctly refused.
 func TestConcurrency_AssignUserRole_CrossReplicaPostgres_SoDBypass(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)

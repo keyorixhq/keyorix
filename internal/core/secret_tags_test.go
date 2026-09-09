@@ -19,6 +19,7 @@ import (
 )
 
 func TestSecretTags(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -94,6 +95,7 @@ func TestSecretTags(t *testing.T) {
 // intending an immediate "reviewed"/"exempt"-style tag at creation time got no tag
 // and no error.
 func TestCreateSecret_AppliesTags(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -165,6 +167,7 @@ func (f *failingSetTagsStorage) SetSecretTags(_ context.Context, _ uint, _ []str
 // convention for post-primary-action enhancements (e.g. project_members.go's
 // best-effort cleanup, dashboard.go's best-effort sub-rollups).
 func TestCreateSecret_TagFailureDoesNotDeleteSecret(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

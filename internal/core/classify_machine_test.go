@@ -11,6 +11,7 @@ import (
 )
 
 func TestClassifyMachineIdentity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("sets the label and audits", func(t *testing.T) {
@@ -63,6 +64,7 @@ func TestClassifyMachineIdentity(t *testing.T) {
 }
 
 func TestClassifyMachineToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("sets the label on a credential of the machine", func(t *testing.T) {
@@ -94,6 +96,7 @@ func TestClassifyMachineToken(t *testing.T) {
 }
 
 func TestClassificationPosture_CoversMachineEntities(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newMachineCore(store)
 	// Static secrets + dynamic configs are not the focus here; let their counts be 0/err.

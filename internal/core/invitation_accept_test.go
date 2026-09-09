@@ -13,6 +13,7 @@ import (
 )
 
 func TestCompleteInvitationAccept(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	raw := setupPrefix + "invite1"
@@ -156,6 +157,7 @@ func TestCompleteInvitationAccept(t *testing.T) {
 }
 
 func TestDeriveUsername(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 

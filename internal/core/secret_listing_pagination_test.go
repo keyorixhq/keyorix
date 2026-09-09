@@ -32,6 +32,7 @@ import (
 // an empty page, and Total/TotalPages must reflect the 3 true matches — not
 // the 6 raw rows or whatever happened to land on the DB's page 1.
 func TestListSecretsInScope_PaginationSurvivesPostFetchTagFilter(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -108,6 +109,7 @@ func TestListSecretsInScope_PaginationSurvivesPostFetchTagFilter(t *testing.T) {
 // itself was offset by the caller's page/pageSize, and then the merged,
 // filtered result was re-sliced with the same page/pageSize again.
 func TestListSecretsWithSharingInfo_PaginationSurvivesPostFetchSearchFilter(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

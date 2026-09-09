@@ -20,6 +20,7 @@ import (
 )
 
 func TestHTTPJWKSResolver_FetchAndCache(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pub := &key.PublicKey
 
@@ -63,6 +64,7 @@ func TestHTTPJWKSResolver_FetchAndCache(t *testing.T) {
 // grace window past the TTL — so a key the issuer rotated out (e.g. compromised)
 // cannot be honoured indefinitely while the issuer is unreachable.
 func TestHTTPJWKSResolver_StaleFallbackBounded(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	// A JWKS endpoint that always fails, forcing reliance on the cache.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -97,6 +99,7 @@ func TestHTTPJWKSResolver_StaleFallbackBounded(t *testing.T) {
 // jwksMinRefetchInterval per issuer, so a flood of tokens bearing a trusted issuer
 // and random kids can't amplify into a JWKS-fetch storm against the IdP.
 func TestHTTPJWKSResolver_UnknownKidRefetchRateLimited(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pub := &key.PublicKey
 	var hits int
@@ -140,6 +143,7 @@ func TestHTTPJWKSResolver_UnknownKidRefetchRateLimited(t *testing.T) {
 // fetch, so a caller (or an outage that keeps refetches failing) could force an
 // unbounded stream of them.
 func TestHTTPJWKSResolver_StaleRefetchRateLimited(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -193,6 +197,7 @@ func TestHTTPJWKSResolver_StaleRefetchRateLimited(t *testing.T) {
 // pre-authentication, since keyfunc runs during JWT parse before the token's
 // signature is checked.
 func TestHTTPJWKSResolver_ColdCacheRefetchRateLimited(t *testing.T) {
+	t.Parallel()
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits++
@@ -230,6 +235,7 @@ func TestHTTPJWKSResolver_ColdCacheRefetchRateLimited(t *testing.T) {
 // A JWKS with more keys than maxJWKSKeys is capped so a pathological key set can't
 // bloat the cache.
 func TestHTTPJWKSResolver_CapsKeyCount(t *testing.T) {
+	t.Parallel()
 	// Generate all RSA-2048 keys UP FRONT, not inside the HTTP handler: generating
 	// 70 of them (maxJWKSKeys+20) takes long enough under load (heavy parallel test
 	// suite contention) that doing it per-request could exceed the resolver's 10s
@@ -269,6 +275,7 @@ func TestHTTPJWKSResolver_CapsKeyCount(t *testing.T) {
 // its expensive modular-exponentiation cost is paid on every verification in that
 // window — a sustained DoS, not just a one-time cost at fetch.
 func TestParseJWK_RejectsOversizedRSAModulus(t *testing.T) {
+	t.Parallel()
 	// Construct a JWK whose modulus is artificially larger than maxRSABits, without
 	// paying the cost of actually generating an RSA key that size: fill N with random
 	// bytes sized just over the limit.
@@ -294,6 +301,7 @@ func TestParseJWK_RejectsOversizedRSAModulus(t *testing.T) {
 // key is skipped (parseJWK errors, and fetch continues past unparsable keys), so a
 // lookup for that kid fails rather than yielding the oversized key.
 func TestHTTPJWKSResolver_RejectsOversizedRSAKeyInJWKS(t *testing.T) {
+	t.Parallel()
 	nBytes := make([]byte, (maxRSABits/8)+16)
 	_, err := rand.Read(nBytes)
 	require.NoError(t, err)
@@ -319,6 +327,7 @@ func TestHTTPJWKSResolver_RejectsOversizedRSAKeyInJWKS(t *testing.T) {
 }
 
 func TestNewHTTPJWKSResolver_RejectsInsecureScheme(t *testing.T) {
+	t.Parallel()
 	// Plaintext http to a non-loopback host is refused (signing-key MITM).
 	_, err := NewHTTPJWKSResolver(map[string]string{"https://iss": "http://idp.example.com/jwks"})
 	require.ErrorContains(t, err, "must use https")
@@ -347,6 +356,7 @@ func syntheticRSAModulus(bits int) *big.Int {
 // key — cached and reused for every subsequent token from that kid — turning
 // each signature verification into a multi-second modexp (CPU-DoS amplifier).
 func TestParseJWK_RejectsRSAModulusOutOfRange(t *testing.T) {
+	t.Parallel()
 	tooSmall := jwk{Kty: "RSA", Kid: "small", N: base64.RawURLEncoding.EncodeToString(syntheticRSAModulus(1024).Bytes()), E: "AQAB"}
 	_, err := parseJWK(tooSmall)
 	require.ErrorContains(t, err, "outside allowed range")
@@ -369,6 +379,7 @@ func TestParseJWK_RejectsRSAModulusOutOfRange(t *testing.T) {
 // through the full fetch path: a JWKS whose only key has a pathological modulus
 // yields "no usable signing keys", not a cached, verifiable oversized key.
 func TestHTTPJWKSResolver_RejectsOversizedRSAKey(t *testing.T) {
+	t.Parallel()
 	huge := syntheticRSAModulus(1 << 20) // ~1M bits
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -394,6 +405,7 @@ func TestHTTPJWKSResolver_RejectsOversizedRSAKey(t *testing.T) {
 // e=65537 key — the same sustained-DoS shape maxRSABits guards against, via
 // the other operand of the modexp.
 func TestParseJWK_RejectsOversizedRSAExponent(t *testing.T) {
+	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -424,6 +436,7 @@ func TestParseJWK_RejectsOversizedRSAExponent(t *testing.T) {
 // guard is wired through the full fetch path, mirroring
 // TestHTTPJWKSResolver_RejectsOversizedRSAKeyInJWKS for the modulus check.
 func TestHTTPJWKSResolver_RejectsOversizedRSAExponentInJWKS(t *testing.T) {
+	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	hugeE := new(big.Int).Lsh(big.NewInt(1), 62)
@@ -451,6 +464,7 @@ func TestHTTPJWKSResolver_RejectsOversizedRSAExponentInJWKS(t *testing.T) {
 // and relying solely on whatever validation the underlying crypto/ecdsa
 // verification path happens to do internally.
 func TestParseJWK_RejectsOffCurveECPoint(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
@@ -486,6 +500,7 @@ func TestParseJWK_RejectsOffCurveECPoint(t *testing.T) {
 // parseJWK's own check, independent of (in addition to) whatever bound the
 // underlying crypto/ecdsa/nistec implementation happens to enforce.
 func TestParseJWK_RejectsOversizedECCoordinate(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 

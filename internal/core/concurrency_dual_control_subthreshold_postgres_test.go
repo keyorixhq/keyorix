@@ -43,6 +43,7 @@ import (
 // WithNamedLock advisory lock is what has to serialize them -- there is no shared
 // in-process mutex left to accidentally paper over the gap.
 func TestConcurrency_ApproveAccessRequestWithExpiry_CrossReplicaPostgres_SubThresholdStraddle(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)

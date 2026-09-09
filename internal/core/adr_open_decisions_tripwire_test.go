@@ -107,6 +107,7 @@ var adrOpenDecisionRegistry = []adrOpenDecision{
 // TestADR102_SystemWriteBlastRadiusStillOpen is the enforcing test named in
 // docs/adr-102-system-write-blast-radius.md's own Consequences section.
 func TestADR102_SystemWriteBlastRadiusStillOpen(t *testing.T) {
+	t.Parallel()
 	checkADROpenDecisionNotStale(t, "ADR-102")
 }
 
@@ -118,6 +119,7 @@ func TestADR102_SystemWriteBlastRadiusStillOpen(t *testing.T) {
 // documents what a premise check for that regression would look like —
 // exercised for real here, not just simulated.
 func TestADRDecisionRoleSetContainsAdminIsStructural(t *testing.T) {
+	t.Parallel()
 	stillOpen, detail := adr084Premise()
 	if stillOpen {
 		t.Fatalf("ADR-084's decision reads as unresolved again: %s", detail)
@@ -207,6 +209,7 @@ func evaluateOpenDecision(d adrOpenDecision, now time.Time) error {
 // synthetic entries, not the real registry, so it exercises the MECHANISM
 // deterministically rather than depending on real ADRs' real ages.
 func TestEvaluateOpenDecision_MechanismSelfTest(t *testing.T) {
+	t.Parallel()
 	fixedNow, err := time.Parse("2006-01-02", "2026-09-07")
 	if err != nil {
 		t.Fatalf("bad fixed 'now' in test setup: %v", err)

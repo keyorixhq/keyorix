@@ -32,6 +32,7 @@ func newRBACManagementCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // roles.write holder with nothing else) — must not be able to bundle ANY permission
 // into a role's definition, including a low-privilege one they don't personally hold.
 func TestAssignPermissionToRole_RequiresActorHoldPermission(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -61,6 +62,7 @@ func TestAssignPermissionToRole_RequiresActorHoldPermission(t *testing.T) {
 // clause locally and confirmed this test failed with the assignment
 // succeeding), green after.
 func TestAssignPermissionToRole_MachineActorRequiresHoldPermission(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -80,6 +82,7 @@ func TestAssignPermissionToRole_MachineActorRequiresHoldPermission(t *testing.T)
 // top-up, #293) must remain exempt from the #169 check exactly as before —
 // the fix narrows the exemption to that genuine case, it does not remove it.
 func TestAssignPermissionToRole_SystemPseudoActorStillExempt(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -97,6 +100,7 @@ func TestAssignPermissionToRole_SystemPseudoActorStillExempt(t *testing.T) {
 // role (a global catalog object) must still require GLOBAL authority, not just
 // scoped authority, since the resulting role could be granted anywhere.
 func TestAssignPermissionToRole_ScopedHolderCannotBundleGlobally(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -115,6 +119,7 @@ func TestAssignPermissionToRole_ScopedHolderCannotBundleGlobally(t *testing.T) {
 // An actor who genuinely holds the permission (directly, at global scope) may bundle
 // it into a role — the fix must not block the legitimate case.
 func TestAssignPermissionToRole_HolderMaySelfBundle(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -135,6 +140,7 @@ func TestAssignPermissionToRole_HolderMaySelfBundle(t *testing.T) {
 // A global admin bypasses the self-permission check (matching every other authz gate
 // in this codebase) — an admin can bundle any permission into any role.
 func TestAssignPermissionToRole_AdminBypasses(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -150,6 +156,7 @@ func TestAssignPermissionToRole_AdminBypasses(t *testing.T) {
 // RemovePermissionFromRole is purely subtractive (weakens a role) — it must NOT
 // require the actor hold the permission being removed, unlike assignment.
 func TestRemovePermissionFromRole_NoSelfPermissionRequired(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -181,6 +188,7 @@ func lastRBACEventDetail(t *testing.T, c *KeyorixCore, eventType string) (*model
 // this only asserts the operation succeeds and its audit event carries the
 // distinct built-in signal, not that it's refused.
 func TestRemovePermissionFromRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error) // builtin
@@ -205,6 +213,7 @@ func TestRemovePermissionFromRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T)
 // A non-built-in role produces the ordinary event: no reason= token, no
 // structured flag, no SECURITY log line.
 func TestRemovePermissionFromRole_NonBuiltinRole_NoSignal(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -224,6 +233,7 @@ func TestRemovePermissionFromRole_NonBuiltinRole_NoSignal(t *testing.T) {
 // #1500: assigning a permission to a built-in role also stays PERMITTED and
 // must carry the same signal — the inverse of RemovePermissionFromRole above.
 func TestAssignPermissionToRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error) // builtin
@@ -247,6 +257,7 @@ func TestAssignPermissionToRole_BuiltinRoleTarget_SignalsInAudit(t *testing.T) {
 
 // A non-built-in role produces the ordinary event on assignment too.
 func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
@@ -274,6 +285,7 @@ func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
 // NOT be deleted (they stay logged in; only the cached authorization decision is
 // forced to re-resolve from storage on the next request).
 func TestRemoveUserRole_EvictsSessionCacheWithoutLoggingOut(t *testing.T) {
+	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)

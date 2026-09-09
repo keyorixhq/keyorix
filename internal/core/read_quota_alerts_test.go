@@ -22,32 +22,39 @@ func maxReadsPtr(n int) *int { return &n }
 
 // TestQuotaUsagePct verifies the percentage helper across boundary values.
 func TestQuotaUsagePct_ZeroMaxReads(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, 0, QuotaUsagePct(50, 0))
 }
 
 func TestQuotaUsagePct_NegativeMaxReads(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, 0, QuotaUsagePct(50, -1))
 }
 
 func TestQuotaUsagePct_Half(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, 50, QuotaUsagePct(50, 100))
 }
 
 func TestQuotaUsagePct_NinetyFive(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, 95, QuotaUsagePct(95, 100))
 }
 
 func TestQuotaUsagePct_Full(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, 100, QuotaUsagePct(100, 100))
 }
 
 func TestQuotaUsagePct_Exceeds(t *testing.T) {
+	t.Parallel()
 	// Capped at 100 even when readCount > maxReads.
 	assert.Equal(t, 100, QuotaUsagePct(110, 100))
 }
 
 // TestCheckReadQuotas_NoSecretsWithQuota — empty result when storage returns none.
 func TestCheckReadQuotas_NoSecretsWithQuota(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -64,6 +71,7 @@ func TestCheckReadQuotas_NoSecretsWithQuota(t *testing.T) {
 
 // TestCheckReadQuotas_BelowThreshold — 50% usage, no notification.
 func TestCheckReadQuotas_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -82,6 +90,7 @@ func TestCheckReadQuotas_BelowThreshold(t *testing.T) {
 
 // TestCheckReadQuotas_AtWarningThreshold — 80% usage → Warning notification.
 func TestCheckReadQuotas_AtWarningThreshold(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -103,6 +112,7 @@ func TestCheckReadQuotas_AtWarningThreshold(t *testing.T) {
 
 // TestCheckReadQuotas_AtCriticalThreshold — 95% usage → Critical notification.
 func TestCheckReadQuotas_AtCriticalThreshold(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -124,6 +134,7 @@ func TestCheckReadQuotas_AtCriticalThreshold(t *testing.T) {
 
 // TestCheckReadQuotas_Exhausted — 100% usage → Critical + Exhausted count.
 func TestCheckReadQuotas_Exhausted(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -145,6 +156,7 @@ func TestCheckReadQuotas_Exhausted(t *testing.T) {
 
 // TestCheckReadQuotas_DeduplicateSameSeverity — existing warning → skip.
 func TestCheckReadQuotas_DeduplicateSameSeverity(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -170,6 +182,7 @@ func TestCheckReadQuotas_DeduplicateSameSeverity(t *testing.T) {
 
 // TestCheckReadQuotas_EscalateWarningToCritical — existing warning, now 95% → upgrade.
 func TestCheckReadQuotas_EscalateWarningToCritical(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -196,6 +209,7 @@ func TestCheckReadQuotas_EscalateWarningToCritical(t *testing.T) {
 
 // TestCheckReadQuotas_StorageError — propagates ListSecretsWithQuota error.
 func TestCheckReadQuotas_StorageError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -210,6 +224,7 @@ func TestCheckReadQuotas_StorageError(t *testing.T) {
 // TestCheckReadQuotas_ListNotificationsError — gracefully handles read error
 // on dedup check by notifying (fail-open for notifications).
 func TestCheckReadQuotas_ListNotificationsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -229,6 +244,7 @@ func TestCheckReadQuotas_ListNotificationsError(t *testing.T) {
 
 // TestCheckReadQuotas_ZeroOwnerSkipsNotification — ownerID=0 must not notify.
 func TestCheckReadQuotas_ZeroOwnerSkipsNotification(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -249,6 +265,7 @@ func TestCheckReadQuotas_ZeroOwnerSkipsNotification(t *testing.T) {
 // TestCheckReadQuotas_NilMaxReadsSkipped — a secret returned by storage with nil
 // MaxReads (defensive guard) must be skipped without panicking.
 func TestCheckReadQuotas_NilMaxReadsSkipped(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -266,6 +283,7 @@ func TestCheckReadQuotas_NilMaxReadsSkipped(t *testing.T) {
 
 // TestListSecretsWithQuota_CorePassThrough — exercises the core method.
 func TestListSecretsWithQuota_CorePassThrough(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()
@@ -282,6 +300,7 @@ func TestListSecretsWithQuota_CorePassThrough(t *testing.T) {
 
 // TestCheckReadQuotas_ExhaustedOverMaxReads — ReadCount > MaxReads still caps at 100%.
 func TestCheckReadQuotas_ExhaustedOverMaxReads(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newQuotaCore(store)
 	ctx := context.Background()

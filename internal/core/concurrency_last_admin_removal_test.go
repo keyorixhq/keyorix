@@ -27,6 +27,7 @@ import (
 // succeed and the other must be refused, however the goroutines interleave.
 // File-backed SQLite (real multi-connection concurrency) run under -race.
 func TestConcurrency_RemoveUserRole_CannotStrandLastTwoAdmins(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	dsn := "file:" + filepath.Join(t.TempDir(), "c.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -82,6 +83,7 @@ func TestConcurrency_RemoveUserRole_CannotStrandLastTwoAdmins(t *testing.T) {
 // two-admin scenarios in the same run to make a would-be race window more likely
 // to be hit than a single pair alone.
 func TestConcurrency_RemoveUserRole_RepeatedPairsNeverStrandInstall(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	const trials = 8

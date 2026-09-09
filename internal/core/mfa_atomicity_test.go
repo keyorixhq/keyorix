@@ -80,6 +80,7 @@ func (f *failingStorage) DeleteMFARecoveryCodes(ctx context.Context, userID uint
 // back too, or the account would end up MFA-enabled with zero recovery codes and no
 // fallback if the device is ever lost.
 func TestActivateMFA_AtomicOnRecoveryCodesFailure(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
@@ -108,6 +109,7 @@ func TestActivateMFA_AtomicOnRecoveryCodesFailure(t *testing.T) {
 // SetUserMFAEnabled's flip to false must roll back too, or the account would report
 // MFA disabled while the TOTP secret and recovery codes are still live in storage.
 func TestDisableMFA_AtomicOnDeleteFailure(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -137,6 +139,7 @@ func TestDisableMFA_AtomicOnDeleteFailure(t *testing.T) {
 // set (creation failed), an unsafe state the API nonetheless reports as a clean
 // failure to the caller.
 func TestRegenerateMFARecoveryCodes_AtomicOnCreateFailure(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	_, original := activateMFAForTest(t, c, fixed)

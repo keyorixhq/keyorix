@@ -59,6 +59,7 @@ func seedActivePolicy(t *testing.T, db *gorm.DB) {
 // TestSimulateRotation_SecretNotFound ensures an error is returned (not a DryRunResult)
 // when the secret ID does not exist.
 func TestSimulateRotation_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	c, _ := newDryRunCore(t)
 	_, err := c.SimulateRotation(context.Background(), RotationDryRunRequest{SecretID: 9999})
 	require.Error(t, err)
@@ -68,6 +69,7 @@ func TestSimulateRotation_SecretNotFound(t *testing.T) {
 // TestSimulateRotation_NoPolicy verifies that a secret with no covering rotation policy
 // results in Valid=false with the policy_exists check failing.
 func TestSimulateRotation_NoPolicy(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	// No rotation policy inserted.
@@ -87,6 +89,7 @@ func TestSimulateRotation_NoPolicy(t *testing.T) {
 // TestSimulateRotation_InactivePolicyOnly verifies that a secret covered only by
 // an INACTIVE policy still fails policy_exists.
 func TestSimulateRotation_InactivePolicyOnly(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	// Insert the inactive policy via raw SQL to force is_active = false (GORM's struct
@@ -108,6 +111,7 @@ func TestSimulateRotation_InactivePolicyOnly(t *testing.T) {
 // TestSimulateRotation_EnvironmentScopedPolicyCovering verifies that an environment-
 // scoped policy covering this secret's environment passes policy_exists.
 func TestSimulateRotation_EnvironmentScopedPolicyCovering(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	envID := uint(1)
@@ -128,6 +132,7 @@ func TestSimulateRotation_EnvironmentScopedPolicyCovering(t *testing.T) {
 // TestSimulateRotation_EnvironmentScopedPolicyWrongEnv verifies that an environment-
 // scoped policy for a different environment does NOT cover this secret.
 func TestSimulateRotation_EnvironmentScopedPolicyWrongEnv(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	otherEnvID := uint(99)
@@ -148,6 +153,7 @@ func TestSimulateRotation_EnvironmentScopedPolicyWrongEnv(t *testing.T) {
 // TestSimulateRotation_UnknownBackend verifies that a secret with no/unknown backend
 // fails the backend_known check.
 func TestSimulateRotation_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "unknown-backend", "myrole")
 	seedActivePolicy(t, db)
@@ -167,6 +173,7 @@ func TestSimulateRotation_UnknownBackend(t *testing.T) {
 // TestSimulateRotation_NoBackendConfigured verifies that a secret with an empty backend
 // fails the backend_known check with a "no backend configured" message.
 func TestSimulateRotation_NoBackendConfigured(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "", "myrole")
 	seedActivePolicy(t, db)
@@ -184,6 +191,7 @@ func TestSimulateRotation_NoBackendConfigured(t *testing.T) {
 // TestSimulateRotation_NoRotationManagerConfigured verifies the message when the
 // rotation manager is nil (no backends configured at all).
 func TestSimulateRotation_NoRotationManagerConfigured(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	seedActivePolicy(t, db)
@@ -201,6 +209,7 @@ func TestSimulateRotation_NoRotationManagerConfigured(t *testing.T) {
 
 // TestSimulateRotation_EmptyRef verifies that an empty rotation ref fails ref_non_empty.
 func TestSimulateRotation_EmptyRef(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "")
 	seedActivePolicy(t, db)
@@ -219,6 +228,7 @@ func TestSimulateRotation_EmptyRef(t *testing.T) {
 // TestSimulateRotation_InvalidRef verifies that a ref containing disallowed characters
 // fails the ref_valid check.
 func TestSimulateRotation_InvalidRef(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	// A ref with a SQL metacharacter (single-quote) should fail ref_valid.
 	seedDryRunSecret(t, db, 1, "pg", "bad'ref")
@@ -237,6 +247,7 @@ func TestSimulateRotation_InvalidRef(t *testing.T) {
 // TestSimulateRotation_AllValid verifies that a fully configured secret passes
 // all checks and returns Valid=true.
 func TestSimulateRotation_AllValid(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	seedActivePolicy(t, db)
@@ -263,6 +274,7 @@ func TestSimulateRotation_AllValid(t *testing.T) {
 // TestSimulateRotation_AllChecksPresent verifies that the result always has all
 // four named checks, even on a fully failing secret.
 func TestSimulateRotation_AllChecksPresent(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "", "")
 	// No policy, no manager.
@@ -282,6 +294,7 @@ func TestSimulateRotation_AllChecksPresent(t *testing.T) {
 
 // TestSimulateRotation_SimulatedAtPopulated verifies that SimulatedAt is always set.
 func TestSimulateRotation_SimulatedAtPopulated(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	seedActivePolicy(t, db)
@@ -295,6 +308,7 @@ func TestSimulateRotation_SimulatedAtPopulated(t *testing.T) {
 // TestCheckRefValid_EmptyRefPassthrough verifies the special-case path where
 // checkRefValid is called with an empty ref (defers to ref_non_empty).
 func TestCheckRefValid_EmptyRefPassthrough(t *testing.T) {
+	t.Parallel()
 	ch := checkRefValid("")
 	assert.True(t, ch.Passed)
 	assert.Equal(t, "ref_valid", ch.Name)
@@ -303,6 +317,7 @@ func TestCheckRefValid_EmptyRefPassthrough(t *testing.T) {
 
 // TestCheckRefNonEmpty_NonEmpty verifies the passing case.
 func TestCheckRefNonEmpty_NonEmpty(t *testing.T) {
+	t.Parallel()
 	ch := checkRefNonEmpty("myrole")
 	assert.True(t, ch.Passed)
 	assert.Equal(t, "ref_non_empty", ch.Name)
@@ -310,6 +325,7 @@ func TestCheckRefNonEmpty_NonEmpty(t *testing.T) {
 
 // TestCheckRefValid_ValidRef verifies a clean ref passes.
 func TestCheckRefValid_ValidRef(t *testing.T) {
+	t.Parallel()
 	ch := checkRefValid("myrole")
 	assert.True(t, ch.Passed)
 	assert.Equal(t, "ref_valid", ch.Name)
@@ -318,6 +334,7 @@ func TestCheckRefValid_ValidRef(t *testing.T) {
 // TestSimulateRotation_ProjectScopedPolicyCovering verifies that a project-scoped
 // active policy passes policy_exists.
 func TestSimulateRotation_ProjectScopedPolicyCovering(t *testing.T) {
+	t.Parallel()
 	c, db := newDryRunCore(t)
 	seedDryRunSecret(t, db, 1, "pg", "myrole")
 	seedActivePolicy(t, db) // project-scoped
@@ -335,6 +352,7 @@ func TestSimulateRotation_ProjectScopedPolicyCovering(t *testing.T) {
 // TestCheckPolicyExists_StorageErrorFirstQuery verifies that a storage error on the
 // project-policy query (first call) returns a failing policy_exists check.
 func TestCheckPolicyExists_StorageErrorFirstQuery(t *testing.T) {
+	t.Parallel()
 	mockSt := new(MockStorage)
 	c := &KeyorixCore{
 		storage: mockSt,
@@ -356,6 +374,7 @@ func TestCheckPolicyExists_StorageErrorFirstQuery(t *testing.T) {
 // environment-policy query (second call, after the first returns no active policy)
 // returns a failing policy_exists check.
 func TestCheckPolicyExists_StorageErrorSecondQuery(t *testing.T) {
+	t.Parallel()
 	mockSt := new(MockStorage)
 	c := &KeyorixCore{
 		storage: mockSt,

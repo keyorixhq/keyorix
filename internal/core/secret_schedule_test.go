@@ -28,41 +28,48 @@ func monFridaySched() *models.SecretAccessSchedule {
 }
 
 func TestEnforceSchedule_WithinWindow(t *testing.T) {
+	t.Parallel()
 	// Wednesday 14:00 UTC — within Mon–Fri 09–17
 	now := time.Date(2026, 7, 15, 14, 0, 0, 0, time.UTC) // Wednesday
 	assert.NoError(t, enforceSchedule(monFridaySched(), now))
 }
 
 func TestEnforceSchedule_BeforeStartHour(t *testing.T) {
+	t.Parallel()
 	// Wednesday 08:00 UTC — before start hour
 	now := time.Date(2026, 7, 15, 8, 0, 0, 0, time.UTC)
 	assert.ErrorIs(t, enforceSchedule(monFridaySched(), now), ErrAccessOutsideSchedule)
 }
 
 func TestEnforceSchedule_AtEndHour(t *testing.T) {
+	t.Parallel()
 	// Wednesday 17:00 UTC — end hour is exclusive
 	now := time.Date(2026, 7, 15, 17, 0, 0, 0, time.UTC)
 	assert.ErrorIs(t, enforceSchedule(monFridaySched(), now), ErrAccessOutsideSchedule)
 }
 
 func TestEnforceSchedule_AfterEndHour(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 7, 15, 20, 0, 0, 0, time.UTC)
 	assert.ErrorIs(t, enforceSchedule(monFridaySched(), now), ErrAccessOutsideSchedule)
 }
 
 func TestEnforceSchedule_OutsideDays(t *testing.T) {
+	t.Parallel()
 	// Saturday (ISO 6) — not in Mon–Fri schedule
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC) // Saturday
 	assert.ErrorIs(t, enforceSchedule(monFridaySched(), now), ErrAccessOutsideSchedule)
 }
 
 func TestEnforceSchedule_Sunday(t *testing.T) {
+	t.Parallel()
 	// Sunday is ISO 7 — not in Mon–Fri (1,2,3,4,5)
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC) // Sunday
 	assert.ErrorIs(t, enforceSchedule(monFridaySched(), now), ErrAccessOutsideSchedule)
 }
 
 func TestEnforceSchedule_StarDaysAlwaysPass(t *testing.T) {
+	t.Parallel()
 	sched := &models.SecretAccessSchedule{
 		AllowedDays: "*",
 		StartHour:   0,
@@ -75,6 +82,7 @@ func TestEnforceSchedule_StarDaysAlwaysPass(t *testing.T) {
 }
 
 func TestEnforceSchedule_UnknownTimezone_FailOpen(t *testing.T) {
+	t.Parallel()
 	sched := &models.SecretAccessSchedule{
 		AllowedDays: "1,2,3,4,5",
 		StartHour:   9,
@@ -112,6 +120,7 @@ func newScheduleCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 }
 
 func TestCheckSecretAccessSchedule_NoSchedule(t *testing.T) {
+	t.Parallel()
 	c, _ := newScheduleCore(t)
 	// secretNodeID 999 has no schedule row — must return nil (no restriction)
 	err := c.checkSecretAccessSchedule(context.Background(), 999)
@@ -119,6 +128,7 @@ func TestCheckSecretAccessSchedule_NoSchedule(t *testing.T) {
 }
 
 func TestCheckSecretAccessSchedule_WithSchedule_InWindow(t *testing.T) {
+	t.Parallel()
 	c, db := newScheduleCore(t)
 	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-in", IsSecret: true, Status: "active"}
 	require.NoError(t, db.Create(s).Error)
@@ -137,6 +147,7 @@ func TestCheckSecretAccessSchedule_WithSchedule_InWindow(t *testing.T) {
 }
 
 func TestCheckSecretAccessSchedule_Denied(t *testing.T) {
+	t.Parallel()
 	_, db := newScheduleCore(t)
 	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-deny", IsSecret: true, Status: "active"}
 	require.NoError(t, db.Create(s).Error)
@@ -201,6 +212,7 @@ func allowedDaysExcludingToday() string {
 }
 
 func TestGetSecretValue_DeniedOutsideAccessSchedule(t *testing.T) {
+	t.Parallel()
 	c, db := newScheduleCore(t)
 	ctx := context.Background()
 	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-value-gate", IsSecret: true, Status: "active", Type: "generic"}
@@ -220,6 +232,7 @@ func TestGetSecretValue_DeniedOutsideAccessSchedule(t *testing.T) {
 }
 
 func TestGetSecretValueByVersion_DeniedOutsideAccessSchedule(t *testing.T) {
+	t.Parallel()
 	c, db := newScheduleCore(t)
 	ctx := context.Background()
 	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-value-byver-gate", IsSecret: true, Status: "active", Type: "generic"}
@@ -239,6 +252,7 @@ func TestGetSecretValueByVersion_DeniedOutsideAccessSchedule(t *testing.T) {
 }
 
 func TestGetSecretValue_AllowedWithinSchedule(t *testing.T) {
+	t.Parallel()
 	c, db := newScheduleCore(t)
 	ctx := context.Background()
 	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-value-allow", IsSecret: true, Status: "active", Type: "generic"}
@@ -261,6 +275,7 @@ func TestGetSecretValue_AllowedWithinSchedule(t *testing.T) {
 // ── SetSecretSchedule / GetSecretSchedule / DeleteSecretSchedule ─────────────
 
 func TestSetAndGetSecretSchedule(t *testing.T) {
+	t.Parallel()
 	c, db := newScheduleCore(t)
 	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-set", IsSecret: true, Status: "active"}
 	require.NoError(t, db.Create(s).Error)
@@ -279,6 +294,7 @@ func TestSetAndGetSecretSchedule(t *testing.T) {
 }
 
 func TestDeleteSecretSchedule(t *testing.T) {
+	t.Parallel()
 	c, db := newScheduleCore(t)
 	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-del", IsSecret: true, Status: "active"}
 	require.NoError(t, db.Create(s).Error)
@@ -294,6 +310,7 @@ func TestDeleteSecretSchedule(t *testing.T) {
 }
 
 func TestSetSecretSchedule_ValidationError(t *testing.T) {
+	t.Parallel()
 	c, _ := newScheduleCore(t)
 	// start_hour > end_hour triggers validateScheduleParams error before storage is reached.
 	_, err := c.SetSecretSchedule(context.Background(), 999, "*", 17, 9, "UTC")
@@ -302,6 +319,7 @@ func TestSetSecretSchedule_ValidationError(t *testing.T) {
 }
 
 func TestSetSecretSchedule_StorageError(t *testing.T) {
+	t.Parallel()
 	c, db := newScheduleCore(t)
 	// Drop the table so storage.SetSecretAccessSchedule returns an error.
 	require.NoError(t, db.Exec("DROP TABLE IF EXISTS secret_access_schedules").Error)
@@ -312,30 +330,36 @@ func TestSetSecretSchedule_StorageError(t *testing.T) {
 // ── validateScheduleParams ───────────────────────────────────────────────────
 
 func TestValidateScheduleParams_Valid(t *testing.T) {
+	t.Parallel()
 	assert.NoError(t, validateScheduleParams("1,2,3,4,5", 9, 17, "UTC"))
 	assert.NoError(t, validateScheduleParams("*", 0, 24, "America/New_York"))
 }
 
 func TestValidateScheduleParams_BadStartHour(t *testing.T) {
+	t.Parallel()
 	assert.Error(t, validateScheduleParams("*", -1, 17, "UTC"))
 	assert.Error(t, validateScheduleParams("*", 24, 25, "UTC"))
 }
 
 func TestValidateScheduleParams_BadEndHour(t *testing.T) {
+	t.Parallel()
 	assert.Error(t, validateScheduleParams("*", 9, 0, "UTC"))
 	assert.Error(t, validateScheduleParams("*", 9, 25, "UTC"))
 }
 
 func TestValidateScheduleParams_EndNotAfterStart(t *testing.T) {
+	t.Parallel()
 	assert.Error(t, validateScheduleParams("*", 17, 9, "UTC"))
 	assert.Error(t, validateScheduleParams("*", 9, 9, "UTC"))
 }
 
 func TestValidateScheduleParams_BadTimezone(t *testing.T) {
+	t.Parallel()
 	assert.Error(t, validateScheduleParams("*", 9, 17, "Not/A/Timezone"))
 }
 
 func TestValidateScheduleParams_BadDayValue(t *testing.T) {
+	t.Parallel()
 	assert.Error(t, validateScheduleParams("0,1,2", 9, 17, "UTC")) // 0 is invalid
 	assert.Error(t, validateScheduleParams("1,8", 9, 17, "UTC"))   // 8 is invalid
 	assert.Error(t, validateScheduleParams("mon", 9, 17, "UTC"))   // string, not number

@@ -19,6 +19,7 @@ import (
 // DeleteUser left IsActive/AccountState untouched and never revoked the target's
 // session or PAT, leaving both usable indefinitely.
 func TestDeleteUser_DeprovisionsAndRevokesCredentials(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	admin, err := st.GetUserByEmail(ctx, "admin@example.com")
@@ -61,6 +62,7 @@ func TestDeleteUser_DeprovisionsAndRevokesCredentials(t *testing.T) {
 // TestDeleteUser_RefusesLastGlobalAdmin mirrors guardLastAdminDeactivation's SCIM
 // coverage for the plain admin DeleteUser path.
 func TestDeleteUser_RefusesLastGlobalAdmin(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	admin, err := st.GetUserByEmail(ctx, "admin@example.com")
@@ -74,6 +76,7 @@ func TestDeleteUser_RefusesLastGlobalAdmin(t *testing.T) {
 // TestDeleteUser_AllowsWhenAnotherAdminExists is the positive control: the guard
 // only blocks the LAST admin, not every admin deletion.
 func TestDeleteUser_AllowsWhenAnotherAdminExists(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	admin, err := st.GetUserByEmail(ctx, "admin@example.com")
@@ -89,6 +92,7 @@ func TestDeleteUser_AllowsWhenAnotherAdminExists(t *testing.T) {
 // as it was pre-deletion (IsActive/AccountState untouched). Now the account comes
 // back requiring a fresh credential.
 func TestRestoreUser_ForcesPasswordReset(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	admin, err := st.GetUserByEmail(ctx, "admin@example.com")
@@ -110,6 +114,7 @@ func TestRestoreUser_ForcesPasswordReset(t *testing.T) {
 // revocations are permanent (hard-deleted sessions, revoked=true PATs) and are not
 // undone by a later restore.
 func TestRestoreUser_DoesNotResurrectRevokedCredentials(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	admin, err := st.GetUserByEmail(ctx, "admin@example.com")

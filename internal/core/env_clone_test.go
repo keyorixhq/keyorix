@@ -47,6 +47,7 @@ func newCloneTestCore(t *testing.T) *KeyorixCore {
 }
 
 func TestCloneEnvironment_Basic(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -74,6 +75,7 @@ func TestCloneEnvironment_Basic(t *testing.T) {
 }
 
 func TestCloneEnvironment_SkipsExisting(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -107,6 +109,7 @@ func TestCloneEnvironment_SkipsExisting(t *testing.T) {
 }
 
 func TestCloneEnvironment_EmptySource(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -122,6 +125,7 @@ func TestCloneEnvironment_EmptySource(t *testing.T) {
 }
 
 func TestCloneEnvironment_DifferentProject(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -137,6 +141,7 @@ func TestCloneEnvironment_DifferentProject(t *testing.T) {
 }
 
 func TestCloneEnvironment_DestNotFound(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -149,6 +154,7 @@ func TestCloneEnvironment_DestNotFound(t *testing.T) {
 }
 
 func TestCloneEnvironment_ZeroIDs(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -170,6 +176,7 @@ func TestCloneEnvironment_ZeroIDs(t *testing.T) {
 }
 
 func TestCloneEnvironment_SameSrcDst(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -181,6 +188,7 @@ func TestCloneEnvironment_SameSrcDst(t *testing.T) {
 }
 
 func TestCloneEnvironment_SrcNotFound(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	c := newCloneTestCore(t)
 	ctx := context.Background()
@@ -213,6 +221,7 @@ func (m *mockEnvCloneStorage) ListSecrets(ctx context.Context, filter *storage.S
 }
 
 func TestCloneEnvironment_ListSecretsError(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	ms := &mockEnvCloneStorage{}

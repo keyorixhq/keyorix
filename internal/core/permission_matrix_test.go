@@ -81,6 +81,7 @@ func seedMatrixRolePerm(t *testing.T, db *gorm.DB, roleID, permID uint) {
 // TestGetPermissionMatrix_GlobalGrant — a user with a global role (project_id=0)
 // yields a row with Scope="global" and no project/environment name.
 func TestGetPermissionMatrix_GlobalGrant(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -113,6 +114,7 @@ func TestGetPermissionMatrix_GlobalGrant(t *testing.T) {
 // TestGetPermissionMatrix_ProjectScoped — a project-scoped grant appears with the
 // project's name in the row.
 func TestGetPermissionMatrix_ProjectScoped(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -139,6 +141,7 @@ func TestGetPermissionMatrix_ProjectScoped(t *testing.T) {
 // TestGetPermissionMatrix_FilterByProject — projectID filter excludes grants for
 // other projects while including global grants (project_id=0).
 func TestGetPermissionMatrix_FilterByProject(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -174,6 +177,7 @@ func TestGetPermissionMatrix_FilterByProject(t *testing.T) {
 // TestGetPermissionMatrix_MultiplePermissions — a role with 2 permissions produces
 // 2 rows per grant.
 func TestGetPermissionMatrix_MultiplePermissions(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -225,6 +229,7 @@ func TestGetPermissionMatrix_MultiplePermissions(t *testing.T) {
 // TestGetPermissionMatrix_EnvironmentScoped — a grant with both project_id and
 // environment_id set yields Scope="environment" and records both names.
 func TestGetPermissionMatrix_EnvironmentScoped(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -256,6 +261,7 @@ func TestGetPermissionMatrix_EnvironmentScoped(t *testing.T) {
 // project that no longer exists (soft-deleted or missing) falls back to the
 // "project-<id>" synthetic name rather than failing.
 func TestGetPermissionMatrix_SoftDeletedProjectFallback(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -280,6 +286,7 @@ func TestGetPermissionMatrix_SoftDeletedProjectFallback(t *testing.T) {
 // TestGetPermissionMatrix_MissingEnvironmentFallback — a grant with a valid project
 // but a missing environment falls back to the "env-<id>" synthetic name.
 func TestGetPermissionMatrix_MissingEnvironmentFallback(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -307,6 +314,7 @@ func TestGetPermissionMatrix_MissingEnvironmentFallback(t *testing.T) {
 // TestGetPermissionMatrix_UnknownUserSkipped — a grant whose user_id has no matching
 // user row is silently skipped (stale JIT grant scenario).
 func TestGetPermissionMatrix_UnknownUserSkipped(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -330,6 +338,7 @@ func TestGetPermissionMatrix_UnknownUserSkipped(t *testing.T) {
 // TestGetPermissionMatrix_MissingRoleSkipped — a grant whose role_id has no matching
 // role row causes the entire grant to be skipped (defensive: stale/orphaned grant).
 func TestGetPermissionMatrix_MissingRoleSkipped(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -351,6 +360,7 @@ func TestGetPermissionMatrix_MissingRoleSkipped(t *testing.T) {
 
 // TestGetPermissionMatrix_EmptyDB — an empty deployment returns an empty slice.
 func TestGetPermissionMatrix_EmptyDB(t *testing.T) {
+	t.Parallel()
 	c, _ := newMatrixCore(t)
 	rows, err := c.GetPermissionMatrix(context.Background(), 0)
 	require.NoError(t, err)
@@ -360,6 +370,7 @@ func TestGetPermissionMatrix_EmptyDB(t *testing.T) {
 // TestGetPermissionMatrix_ListGrantsError — storage failure in ListAllUserRoleGrants
 // propagates as an error.
 func TestGetPermissionMatrix_ListGrantsError(t *testing.T) {
+	t.Parallel()
 	base := &MockStorage{}
 	override := &matrixStorageOverride{
 		Storage:       base,
@@ -374,6 +385,7 @@ func TestGetPermissionMatrix_ListGrantsError(t *testing.T) {
 // TestGetPermissionMatrix_GetRolePermsError — a storage failure in GetRolePermissions
 // causes that grant to be silently skipped (continue path at line 152-154).
 func TestGetPermissionMatrix_GetRolePermsError(t *testing.T) {
+	t.Parallel()
 	// Build a LocalStorage-backed core that has a valid user + role, then wrap it
 	// with the override that injects an error from GetRolePermissions.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -403,6 +415,7 @@ func TestGetPermissionMatrix_GetRolePermsError(t *testing.T) {
 // TestGetPermissionMatrix_RoleWithNoPermissions — a role that has zero permissions
 // contributes no rows (empty perms slice, inner loop never executes).
 func TestGetPermissionMatrix_RoleWithNoPermissions(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -419,6 +432,7 @@ func TestGetPermissionMatrix_RoleWithNoPermissions(t *testing.T) {
 // uses the cache; only one DB lookup occurs (indirectly verified by result
 // correctness across multiple grants for the same project).
 func TestGetPermissionMatrix_ProjectNameCache(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
@@ -443,6 +457,7 @@ func TestGetPermissionMatrix_ProjectNameCache(t *testing.T) {
 // TestGetPermissionMatrix_EnvNameCache — the same environment_id resolved twice
 // exercises the envCache hit path in getEnvName (the second lookup returns from cache).
 func TestGetPermissionMatrix_EnvNameCache(t *testing.T) {
+	t.Parallel()
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 

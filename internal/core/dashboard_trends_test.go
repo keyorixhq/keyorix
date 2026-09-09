@@ -16,6 +16,7 @@ import (
 // TestDashboardTrends_NoPreviousSnapshot_NoTrend verifies that when no previous
 // deployment snapshot exists the trend fields are nil (not a false "0% change").
 func TestDashboardTrends_NoPreviousSnapshot_NoTrend(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "trend_auditor1", "system_auditor", storage.Scope{})
 
@@ -33,6 +34,7 @@ func TestDashboardTrends_NoPreviousSnapshot_NoTrend(t *testing.T) {
 // TestDashboardTrends_WithPreviousSnapshot_ComputesTrend verifies that when a
 // previous deployment snapshot exists the trend is computed correctly.
 func TestDashboardTrends_WithPreviousSnapshot_ComputesTrend(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "trend_auditor2", "system_auditor", storage.Scope{})
 
@@ -80,6 +82,7 @@ func TestDashboardTrends_WithPreviousSnapshot_ComputesTrend(t *testing.T) {
 // TestDashboardTrends_SnapshotSavedAfterAdminCall verifies that the first call
 // saves a deployment snapshot so that the second call can pick it up as "previous".
 func TestDashboardTrends_SnapshotSavedAfterAdminCall(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "trend_auditor3", "system_auditor", storage.Scope{})
 

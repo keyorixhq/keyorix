@@ -91,6 +91,7 @@ func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint, uint
 }
 
 func TestBulkDeleteSecrets_Success(t *testing.T) {
+	t.Parallel()
 	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
@@ -107,6 +108,7 @@ func TestBulkDeleteSecrets_Success(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_PartialFailure(t *testing.T) {
+	t.Parallel()
 	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
@@ -127,6 +129,7 @@ func TestBulkDeleteSecrets_PartialFailure(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_EmptyRequest(t *testing.T) {
+	t.Parallel()
 	c, _, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
@@ -142,6 +145,7 @@ func TestBulkDeleteSecrets_EmptyRequest(t *testing.T) {
 // resource-exhaustion vector, the same class of bug maxBulkAccessRequestBatchSize
 // already guards against elsewhere in this package.
 func TestBulkDeleteSecrets_ExceedsMaxBatchSize(t *testing.T) {
+	t.Parallel()
 	c, _, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
@@ -156,6 +160,7 @@ func TestBulkDeleteSecrets_ExceedsMaxBatchSize(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_AlreadyDeleted(t *testing.T) {
+	t.Parallel()
 	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
@@ -177,6 +182,7 @@ func TestBulkDeleteSecrets_AlreadyDeleted(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_VerifyCleanup(t *testing.T) {
+	t.Parallel()
 	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
@@ -203,6 +209,7 @@ func TestBulkDeleteSecrets_VerifyCleanup(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_ZeroID(t *testing.T) {
+	t.Parallel()
 	c, _, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
@@ -228,6 +235,7 @@ func TestBulkDeleteSecrets_ZeroID(t *testing.T) {
 // refused identically to a nonexistent one (not a distinguishing "does not belong
 // to this project" message revealing that SOMETHING exists at that ID).
 func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 
@@ -317,6 +325,7 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 // accepted regardless of which project it belonged to); it must now be refused
 // outright before any secret is even looked up.
 func TestBulkDeleteSecrets_RefusesProjectIDZero(t *testing.T) {
+	t.Parallel()
 	c, mk, _ := setupBulkDeleteDB(t)
 	ctx := context.Background()
 	id := mk("some-secret")
@@ -371,6 +380,7 @@ func (s *slowAuditLogStorage) CreateSecretAccessLog(ctx context.Context, entry *
 // count must already be complete the instant BulkDeleteSecrets returns — a
 // detached goroutine would let both of those go to zero instead.
 func TestBulkDeleteSecrets_AuditLogWriteIsSynchronous(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	dsn := fmt.Sprintf("file:bulkdelete_sync_%d?mode=memory&cache=shared&_busy_timeout=5000", bulkDeleteDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})

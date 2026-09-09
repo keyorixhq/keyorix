@@ -34,6 +34,7 @@ import (
 // matters — no live project role grant for the invited user survives when revoke
 // wins the race.
 func TestConcurrency_RevokeInvitation_RacesAccept(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))

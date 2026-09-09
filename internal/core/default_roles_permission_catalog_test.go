@@ -42,6 +42,7 @@ func defaultPermissionNames() map[string]bool {
 // stale name — the grant would fail at bootstrap since AssignPermissionToRole
 // resolves it against the created catalog).
 func TestAdminPermissions_MatchesDefaultPermissionsCatalogExactly(t *testing.T) {
+	t.Parallel()
 	catalog := defaultPermissionNames()
 
 	admin := make(map[string]bool, len(adminPermissions))
@@ -84,6 +85,7 @@ func TestAdminPermissions_MatchesDefaultPermissionsCatalogExactly(t *testing.T) 
 // permission that's never created — a live bug, not a missing test, since
 // AssignPermissionToRole would fail to resolve it during bootstrap.
 func TestDefaultRoles_NonAdminEntriesReferenceOnlyCatalogedPermissions(t *testing.T) {
+	t.Parallel()
 	catalog := defaultPermissionNames()
 
 	// "admin" and "system_admin" both use adminPermissions and are covered by

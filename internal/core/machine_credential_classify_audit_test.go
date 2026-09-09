@@ -27,6 +27,7 @@ import (
 )
 
 func TestClassifyMachineTokenByID_RealChange_WritesOneAuditEvent(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ctx := context.Background()
@@ -58,6 +59,7 @@ func TestClassifyMachineTokenByID_RealChange_WritesOneAuditEvent(t *testing.T) {
 }
 
 func TestClassifyMachineTokenByID_NoOp_WritesNoAuditEvent(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ctx := context.Background()
@@ -72,6 +74,7 @@ func TestClassifyMachineTokenByID_NoOp_WritesNoAuditEvent(t *testing.T) {
 }
 
 func TestClassifyMachineTokenByID_InvalidClassification_Rejected(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ctx := context.Background()

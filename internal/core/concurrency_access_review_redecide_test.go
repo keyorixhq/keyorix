@@ -28,6 +28,7 @@ import (
 // recorded and every other caller gets a clear rejection — never a silently
 // overwritten compliance record, and never a panic or generic 500.
 func TestConcurrency_DecideAccessReviewItem_OnlyOneDecisionWins(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	dsn := "file:" + filepath.Join(t.TempDir(), "arc.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})

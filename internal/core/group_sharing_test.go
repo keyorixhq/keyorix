@@ -18,6 +18,7 @@ import (
 )
 
 func TestKeyorixCore_ShareSecretWithGroup(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -79,6 +80,7 @@ func TestKeyorixCore_ShareSecretWithGroup(t *testing.T) {
 }
 
 func TestKeyorixCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -160,6 +162,7 @@ func TestKeyorixCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
 }
 
 func TestKeyorixCore_ShareSecretWithGroup_StorageError(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -187,6 +190,7 @@ func TestKeyorixCore_ShareSecretWithGroup_StorageError(t *testing.T) {
 }
 
 func TestKeyorixCore_ListGroupShares(t *testing.T) {
+	t.Parallel()
 	// Setup
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
@@ -214,6 +218,7 @@ func TestKeyorixCore_ListGroupShares(t *testing.T) {
 }
 
 func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -239,6 +244,7 @@ func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
 }
 
 func TestKeyorixCore_ListGroupSharedSecrets(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))
@@ -275,6 +281,7 @@ func TestKeyorixCore_ListGroupSharedSecrets(t *testing.T) {
 }
 
 func TestKeyorixCore_ListGroupSharedSecrets_ValidationError(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{storage: new(MockStorage), now: time.Now}
 	_, err := c.ListGroupSharedSecrets(context.Background(), ActorTypeUser, 1, 0)
 	assert.Error(t, err)
@@ -286,6 +293,7 @@ func TestKeyorixCore_ListGroupSharedSecrets_ValidationError(t *testing.T) {
 // OwnerID on the secret row is untouched) must no longer be able to group-share it
 // — mirrors CheckSecretPermission's owner branch. A still-live owner is unaffected.
 func TestShareSecretWithGroup_DepartedOwnerDenied(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))
@@ -329,6 +337,7 @@ func TestShareSecretWithGroup_DepartedOwnerDenied(t *testing.T) {
 // secret they don't own, even with secrets.write — the owner check in
 // ShareSecretWithGroup enforces it (previously missing).
 func TestShareSecretWithGroup_NonOwnerDenied(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))
@@ -356,6 +365,7 @@ func TestShareSecretWithGroup_NonOwnerDenied(t *testing.T) {
 // sqlite-backed LocalStorage (no mocks) so the assertions exercise the actual
 // group-role-scope query, not a hand-rolled double.
 func TestShareSecretWithGroup_CrossProjectRefused(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

@@ -57,6 +57,7 @@ func seedAuditEvent(t *testing.T, db *gorm.DB, eventType string, actorID *uint, 
 
 // TestGetPermissionChangeAudit_NoEvents — empty DB yields empty report.
 func TestGetPermissionChangeAudit_NoEvents(t *testing.T) {
+	t.Parallel()
 	c, _ := newPermAuditCore(t)
 	now := time.Now()
 	since := now.Add(-time.Hour)
@@ -70,6 +71,7 @@ func TestGetPermissionChangeAudit_NoEvents(t *testing.T) {
 
 // TestGetPermissionChangeAudit_RoleGranted — role.assigned event → action="role.assigned".
 func TestGetPermissionChangeAudit_RoleGranted(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -97,6 +99,7 @@ func TestGetPermissionChangeAudit_RoleGranted(t *testing.T) {
 
 // TestGetPermissionChangeAudit_RoleRevoked — role.removed event → action="role.removed".
 func TestGetPermissionChangeAudit_RoleRevoked(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -122,6 +125,7 @@ func TestGetPermissionChangeAudit_RoleRevoked(t *testing.T) {
 
 // TestGetPermissionChangeAudit_RoleExpired — role.expired event is included.
 func TestGetPermissionChangeAudit_RoleExpired(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -141,6 +145,7 @@ func TestGetPermissionChangeAudit_RoleExpired(t *testing.T) {
 
 // TestGetPermissionChangeAudit_NonRoleEventExcluded — other event types are not returned.
 func TestGetPermissionChangeAudit_NonRoleEventExcluded(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -157,6 +162,7 @@ func TestGetPermissionChangeAudit_NonRoleEventExcluded(t *testing.T) {
 
 // TestGetPermissionChangeAudit_SinceUntilFiltering — only events in range returned.
 func TestGetPermissionChangeAudit_SinceUntilFiltering(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -179,6 +185,7 @@ func TestGetPermissionChangeAudit_SinceUntilFiltering(t *testing.T) {
 // TestGetPermissionChangeAudit_ZeroSinceDefaultsTo30Days — events older than
 // 30 days are excluded when since is zero.
 func TestGetPermissionChangeAudit_ZeroSinceDefaultsTo30Days(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -201,6 +208,7 @@ func TestGetPermissionChangeAudit_ZeroSinceDefaultsTo30Days(t *testing.T) {
 
 // TestGetPermissionChangeAudit_LimitApplied — results capped at requested limit.
 func TestGetPermissionChangeAudit_LimitApplied(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -222,6 +230,7 @@ func TestGetPermissionChangeAudit_LimitApplied(t *testing.T) {
 
 // TestGetPermissionChangeAudit_LimitExceedsMax — limit > 1000 is capped at 1000.
 func TestGetPermissionChangeAudit_LimitExceedsMax(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -239,6 +248,7 @@ func TestGetPermissionChangeAudit_LimitExceedsMax(t *testing.T) {
 
 // TestGetPermissionChangeAudit_UnknownActorUserID — actor user not in DB → empty actor name, no error.
 func TestGetPermissionChangeAudit_UnknownActorUserID(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -255,6 +265,7 @@ func TestGetPermissionChangeAudit_UnknownActorUserID(t *testing.T) {
 // TestGetPermissionChangeAudit_UnknownTargetUserID — target user not in DB →
 // "user:<id>" fallback, no error.
 func TestGetPermissionChangeAudit_UnknownTargetUserID(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -270,6 +281,7 @@ func TestGetPermissionChangeAudit_UnknownTargetUserID(t *testing.T) {
 
 // TestGetPermissionChangeAudit_UnknownRoleID — role not in DB → "role:<id>" fallback.
 func TestGetPermissionChangeAudit_UnknownRoleID(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -285,6 +297,7 @@ func TestGetPermissionChangeAudit_UnknownRoleID(t *testing.T) {
 
 // TestGetPermissionChangeAudit_NilActorID — event without UserID → empty actor name.
 func TestGetPermissionChangeAudit_NilActorID(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -299,6 +312,7 @@ func TestGetPermissionChangeAudit_NilActorID(t *testing.T) {
 
 // TestGetPermissionChangeAudit_EmptyDiff — event with no Diff is handled gracefully.
 func TestGetPermissionChangeAudit_EmptyDiff(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 
@@ -316,6 +330,7 @@ func TestGetPermissionChangeAudit_EmptyDiff(t *testing.T) {
 
 // TestGetPermissionChangeAudit_StorageError — storage failure propagated as error.
 func TestGetPermissionChangeAudit_StorageError(t *testing.T) {
+	t.Parallel()
 	// Use a core backed by an erroring storage stub.
 	c := NewKeyorixCore(&storageErrorStub{})
 	_, err := c.GetPermissionChangeAudit(context.Background(), time.Time{}, time.Time{}, 0)
@@ -327,6 +342,7 @@ func TestGetPermissionChangeAudit_StorageError(t *testing.T) {
 // Events are seeded in ascending time order so the DB insertion order (and thus
 // the ascending-id order the storage layer uses) matches the chronological order.
 func TestGetPermissionChangeAudit_ChronologicalOrder(t *testing.T) {
+	t.Parallel()
 	c, db := newPermAuditCore(t)
 	ctx := context.Background()
 

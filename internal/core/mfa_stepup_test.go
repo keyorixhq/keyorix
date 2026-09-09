@@ -13,6 +13,7 @@ import (
 
 // TestVerifyMFAStepUp_UserNotFound verifies that a missing user returns an error.
 func TestVerifyMFAStepUp_UserNotFound(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newMFATestCore(t)
 	err := c.VerifyMFAStepUp(context.Background(), 9999, "000000")
 	require.Error(t, err)
@@ -21,6 +22,7 @@ func TestVerifyMFAStepUp_UserNotFound(t *testing.T) {
 
 // TestVerifyMFAStepUp_InactiveAccount verifies that an inactive account is rejected.
 func TestVerifyMFAStepUp_InactiveAccount(t *testing.T) {
+	t.Parallel()
 	c, db, _ := newMFATestCore(t)
 	// Mark alice as deprovisioned (AccountLoginBlocked returns true for this state).
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("account_state", AccountDeprovisioned).Error)
@@ -32,6 +34,7 @@ func TestVerifyMFAStepUp_InactiveAccount(t *testing.T) {
 
 // TestVerifyMFAStepUp_AccountLocked verifies that a locked-out account is rejected.
 func TestVerifyMFAStepUp_AccountLocked(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 
@@ -46,6 +49,7 @@ func TestVerifyMFAStepUp_AccountLocked(t *testing.T) {
 
 // TestVerifyMFAStepUp_MFANotEnabled verifies that a user without MFA cannot step-up.
 func TestVerifyMFAStepUp_MFANotEnabled(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newMFATestCore(t)
 	// alice was created without MFA enabled (MFAEnabled defaults to false).
 	err := c.VerifyMFAStepUp(context.Background(), 1, "000000")
@@ -55,6 +59,7 @@ func TestVerifyMFAStepUp_MFANotEnabled(t *testing.T) {
 
 // TestVerifyMFAStepUp_WrongCode verifies that an incorrect TOTP code is rejected.
 func TestVerifyMFAStepUp_WrongCode(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -67,6 +72,7 @@ func TestVerifyMFAStepUp_WrongCode(t *testing.T) {
 // TestVerifyMFAStepUp_CorrectTOTPCode_GrantCreated verifies that a correct TOTP code
 // successfully creates an MFAStepUpGrant in the database.
 func TestVerifyMFAStepUp_CorrectTOTPCode_GrantCreated(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, _ := activateMFAForTest(t, c, fixed)
@@ -88,6 +94,7 @@ func TestVerifyMFAStepUp_CorrectTOTPCode_GrantCreated(t *testing.T) {
 // TestVerifyMFAStepUp_CorrectRecoveryCode_GrantCreated verifies that a correct recovery
 // code also successfully creates an MFAStepUpGrant.
 func TestVerifyMFAStepUp_CorrectRecoveryCode_GrantCreated(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	_, codes := activateMFAForTest(t, c, fixed)
@@ -105,6 +112,7 @@ func TestVerifyMFAStepUp_CorrectRecoveryCode_GrantCreated(t *testing.T) {
 // TestVerifyMFAStepUp_AntiReplay_SameTOTPStepRejectedTwice verifies that replaying the
 // same TOTP code within the same step window is rejected by the anti-replay check.
 func TestVerifyMFAStepUp_AntiReplay_SameTOTPStepRejectedTwice(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, _ := activateMFAForTest(t, c, fixed)
@@ -124,6 +132,7 @@ func TestVerifyMFAStepUp_AntiReplay_SameTOTPStepRejectedTwice(t *testing.T) {
 
 // TestHasActiveMFAStepUp_NoGrant verifies that a user with no grant returns false.
 func TestHasActiveMFAStepUp_NoGrant(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -134,6 +143,7 @@ func TestHasActiveMFAStepUp_NoGrant(t *testing.T) {
 
 // TestHasActiveMFAStepUp_ExpiredGrant verifies that an expired grant is treated as absent.
 func TestHasActiveMFAStepUp_ExpiredGrant(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -150,6 +160,7 @@ func TestHasActiveMFAStepUp_ExpiredGrant(t *testing.T) {
 
 // TestHasActiveMFAStepUp_ActiveGrant verifies that a non-expired grant returns true.
 func TestHasActiveMFAStepUp_ActiveGrant(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 

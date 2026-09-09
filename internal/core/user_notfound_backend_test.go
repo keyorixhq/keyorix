@@ -35,6 +35,7 @@ import (
 // (GetUser, GetUserByEmail, GetUserByUsername, GetUserByExternalID, RestoreUser) — all
 // against a real sqlite DB, not a hand-rolled mock error.
 func TestIsUserNotFound_RealLocalStorage(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}))
@@ -88,6 +89,7 @@ func sendErrorJSON(w http.ResponseWriter, errorType, message string, statusCode 
 // server emitting the exact JSON shape sendError produces — as "not found", and that a
 // real non-404 failure (500) is NOT misclassified as "not found" (fail-closed).
 func TestIsUserNotFound_RealRemoteStorage404(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sendErrorJSON(w, "NotFound", "User not found", http.StatusNotFound)
 	}))
@@ -128,6 +130,7 @@ func TestIsUserNotFound_RealRemoteStorage404(t *testing.T) {
 // so a genuinely-absent account's email lookup surfaced as a hard login error instead
 // of the documented (nil, nil) "no match" outcome.
 func TestResolveSSOUser_EmailFallback_RealRemoteStorage404(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sendErrorJSON(w, "NotFound", "User not found", http.StatusNotFound)
 	}))

@@ -31,6 +31,7 @@ import (
 // AssignUserRole must BLOCK a grant that would newly complete an SoD policy given
 // the target user's OTHER current permissions — the direct-grant half of #419.
 func TestAssignUserRole_BlocksNewSoDViolation(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -59,6 +60,7 @@ func TestAssignUserRole_BlocksNewSoDViolation(t *testing.T) {
 // A grant that does NOT complete any SoD policy must still succeed normally —
 // critical non-regression, since this gate now runs on every role-grant path.
 func TestAssignUserRole_AllowsNonViolatingGrant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -88,6 +90,7 @@ func TestAssignUserRole_AllowsNonViolatingGrant(t *testing.T) {
 // fully expire between two DetectSoDViolations runs, invisible to the periodic
 // scan, while still genuinely authorizing access for its whole (short) lifetime.
 func TestAssignUserRoleWithExpiry_BlocksJITSoDViolation(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -118,6 +121,7 @@ func TestAssignUserRoleWithExpiry_BlocksJITSoDViolation(t *testing.T) {
 // The JIT path's non-regression counterpart: a time-bound grant that does not
 // complete any policy must still succeed and actually authorize.
 func TestAssignUserRoleWithExpiry_AllowsNonViolatingGrant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -147,6 +151,7 @@ func TestAssignUserRoleWithExpiry_AllowsNonViolatingGrant(t *testing.T) {
 // grant, so it must be checked the same way — a member who would newly complete a
 // policy blocks the whole group-role assignment.
 func TestAssignRoleToGroup_BlocksNewSoDViolationForMember(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -177,6 +182,7 @@ func TestAssignRoleToGroup_BlocksNewSoDViolationForMember(t *testing.T) {
 // A group-role grant that violates nothing for any current member must still
 // succeed normally.
 func TestAssignRoleToGroup_AllowsNonViolatingGrant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -210,6 +216,7 @@ func TestAssignRoleToGroup_AllowsNonViolatingGrant(t *testing.T) {
 // gate instead evaluates whether the FULL set of role grants landing together
 // would complete a policy (requireGrantSetNoSoDViolation).
 func TestCreateUserWithAssignments_BlocksNewSoDViolationAcrossGrantSet(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -236,6 +243,7 @@ func TestCreateUserWithAssignments_BlocksNewSoDViolationAcrossGrantSet(t *testin
 // A brand-new user's combined role grants that do NOT complete any policy must
 // still succeed normally.
 func TestCreateUserWithAssignments_AllowsNonViolatingGrantSet(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -260,6 +268,7 @@ func TestCreateUserWithAssignments_AllowsNonViolatingGrantSet(t *testing.T) {
 // and a false-positive SoD block during a genuine incident would be an
 // unacceptable failure mode. See assignUserRoleWithExpirySkipSoD (jit_access.go).
 func TestActivateBreakGlass_NotBlockedBySoD(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}, &models.BreakGlassActivation{}))
@@ -294,6 +303,7 @@ func TestActivateBreakGlass_NotBlockedBySoD(t *testing.T) {
 // every policy already, and blocking further grants to them would refuse ALL
 // admin-role-holder provisioning the moment any SoD policy exists.
 func TestAssignUserRole_AdminBypassNotBlockedBySoD(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
@@ -318,6 +328,7 @@ func TestAssignUserRole_AdminBypassNotBlockedBySoD(t *testing.T) {
 // admin's own bundled permissions can still combine with a new grant to
 // complete a policy, and that must be blocked like any non-admin grant.
 func TestAssignUserRole_ProjectScopedAdminNotExemptFromSoD(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))

@@ -12,12 +12,14 @@ package core
 import "testing"
 
 func TestValidateIdentifier_Wave6_AllWhitespaceRejected(t *testing.T) {
+	t.Parallel()
 	if err := validateIdentifier("   "); err == nil {
 		t.Error("all-whitespace name must be rejected")
 	}
 }
 
 func TestValidateIdentifier_Wave6_LeadingTrailingWhitespaceRejected(t *testing.T) {
+	t.Parallel()
 	if err := validateIdentifier(" myproject "); err == nil {
 		t.Error("leading/trailing whitespace must be rejected")
 	}
@@ -30,6 +32,7 @@ func TestValidateIdentifier_Wave6_LeadingTrailingWhitespaceRejected(t *testing.T
 }
 
 func TestValidateIdentifier_Wave6_RepeatedInternalWhitespaceRejected(t *testing.T) {
+	t.Parallel()
 	if err := validateIdentifier("my  project"); err == nil {
 		t.Error("double internal space must be rejected")
 	}
@@ -39,6 +42,7 @@ func TestValidateIdentifier_Wave6_RepeatedInternalWhitespaceRejected(t *testing.
 }
 
 func TestValidateIdentifier_Wave6_LegitimateNamesStillPass(t *testing.T) {
+	t.Parallel()
 	if err := validateIdentifier("myproject"); err != nil {
 		t.Errorf("expected no error for plain name, got %v", err)
 	}
@@ -55,6 +59,7 @@ func TestValidateIdentifier_Wave6_LegitimateNamesStillPass(t *testing.T) {
 // CreateProjectWithEnvs), confirming the fix closes the gap end-to-end and
 // not just at the internal helper.
 func TestValidateProjectName_Wave6_WhitespaceOnlyRejected(t *testing.T) {
+	t.Parallel()
 	if err := validateProjectName("   "); err == nil {
 		t.Error("all-whitespace project name must be rejected")
 	}

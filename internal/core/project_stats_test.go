@@ -47,6 +47,7 @@ func newStatsTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // TestGetProjectStats_Empty verifies that a project with no secrets returns
 // zero counts.
 func TestGetProjectStats_Empty(t *testing.T) {
+	t.Parallel()
 	c, _ := newStatsTestCore(t)
 	ctx := context.Background()
 
@@ -74,6 +75,7 @@ func TestGetProjectStats_Empty(t *testing.T) {
 // TestGetProjectStats_SecretCounts seeds 3 active + 1 expired + 1 expiring-soon
 // secret and verifies the secret-count breakdown.
 func TestGetProjectStats_SecretCounts(t *testing.T) {
+	t.Parallel()
 	c, _ := newStatsTestCore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -122,6 +124,7 @@ func TestGetProjectStats_SecretCounts(t *testing.T) {
 // TestGetProjectStats_ClassificationBreakdown seeds secrets with different
 // classification labels and verifies the ClassificationCounts map.
 func TestGetProjectStats_ClassificationBreakdown(t *testing.T) {
+	t.Parallel()
 	c, _ := newStatsTestCore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -159,6 +162,7 @@ func TestGetProjectStats_ClassificationBreakdown(t *testing.T) {
 // TestGetProjectStats_RotationHealth seeds secrets with a rotation policy,
 // marks one as overdue (last rotated long ago), and verifies rotation counts.
 func TestGetProjectStats_RotationHealth(t *testing.T) {
+	t.Parallel()
 	c, _ := newStatsTestCore(t)
 	ctx := context.Background()
 
@@ -215,6 +219,7 @@ func TestGetProjectStats_RotationHealth(t *testing.T) {
 // TestGetProjectStats_WrongProject verifies that a nonexistent project ID
 // returns an error.
 func TestGetProjectStats_WrongProject(t *testing.T) {
+	t.Parallel()
 	c, _ := newStatsTestCore(t)
 	ctx := context.Background()
 

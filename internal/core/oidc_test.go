@@ -52,6 +52,7 @@ func newTestVerifier(t *testing.T, key *rsa.PrivateKey) *OIDCVerifier {
 }
 
 func TestNewOIDCVerifier_RequiresAudience(t *testing.T) {
+	t.Parallel()
 	_, err := NewOIDCVerifier([]OIDCTrustedIssuer{{Issuer: "https://x", Audiences: nil}}, staticResolver{})
 	require.ErrorContains(t, err, "no audiences")
 }
@@ -61,6 +62,7 @@ func TestNewOIDCVerifier_RequiresAudience(t *testing.T) {
 // rejected at startup with a clear error, not silently build an issuer entry
 // that can never satisfy its own audience check (permanent fail-closed lockout).
 func TestNewOIDCVerifier_RejectsBlankOnlyAudiences(t *testing.T) {
+	t.Parallel()
 	_, err := NewOIDCVerifier([]OIDCTrustedIssuer{{Issuer: "https://x", Audiences: []string{"", ""}}}, staticResolver{})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "https://x")
@@ -68,6 +70,7 @@ func TestNewOIDCVerifier_RejectsBlankOnlyAudiences(t *testing.T) {
 }
 
 func TestOIDCVerify_Valid(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	v := newTestVerifier(t, key)
 	raw := signToken(t, key, "kid-1", jwt.MapClaims{
@@ -84,6 +87,7 @@ func TestOIDCVerify_Valid(t *testing.T) {
 }
 
 func TestOIDCVerify_Rejections(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	other, _ := rsa.GenerateKey(rand.Reader, 2048)
 	v := newTestVerifier(t, key)
@@ -201,6 +205,7 @@ func TestOIDCVerify_Rejections(t *testing.T) {
 }
 
 func TestValidateOIDCToken_ResolvesMachine(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	store := new(MockStorage)
 	store.On("GetMachineByOIDCSubject", mock.Anything, "https://k8s.local", "sa").
@@ -223,6 +228,7 @@ func TestValidateOIDCToken_ResolvesMachine(t *testing.T) {
 }
 
 func TestValidateOIDCToken_DisabledAndSuspended(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	raw := signToken(t, key, "kid-1", jwt.MapClaims{
 		"iss": "https://k8s.local", "sub": "sa", "aud": []string{"keyorix"},

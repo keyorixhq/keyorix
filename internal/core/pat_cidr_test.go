@@ -8,6 +8,7 @@ import (
 )
 
 func TestIPInCIDRs(t *testing.T) {
+	t.Parallel()
 	cidrs := []string{"10.0.0.0/8", "192.0.2.4/32", "2001:db8::/32"}
 	cases := []struct {
 		ip   string
@@ -33,6 +34,7 @@ func TestIPInCIDRs(t *testing.T) {
 }
 
 func TestEncodePATCIDRs(t *testing.T) {
+	t.Parallel()
 	// Valid CIDRs + a bare IP (promoted to a host route), deduped.
 	enc, err := encodePATCIDRs([]string{"10.0.0.0/8", " 192.0.2.4 ", "10.0.0.0/8", ""})
 	assert.NoError(t, err)
@@ -51,6 +53,7 @@ func TestEncodePATCIDRs(t *testing.T) {
 }
 
 func TestPATRestrictionFrom_IncludesCIDRs(t *testing.T) {
+	t.Parallel()
 	// A token with ONLY a CIDR allowlist (no scope/project) still yields a restriction.
 	enc, _ := encodePATCIDRs([]string{"10.0.0.0/8"})
 	r := patRestrictionFrom(&models.PersonalAccessToken{AllowedCIDRs: enc})
@@ -67,6 +70,7 @@ func TestPATRestrictionFrom_IncludesCIDRs(t *testing.T) {
 // network access (#r125-H1 — the scope-corruption fix DecodePATScopes received
 // in r124 missed its CIDR sibling).
 func TestDecodePATCIDRs_CorruptionFailsClosed(t *testing.T) {
+	t.Parallel()
 	// A parseable empty column yields nil (no restriction — expected).
 	assert.Nil(t, DecodePATCIDRs(""))
 	assert.Nil(t, DecodePATCIDRs("   "))

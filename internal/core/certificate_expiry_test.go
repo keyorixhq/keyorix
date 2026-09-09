@@ -55,6 +55,7 @@ func newCertExpiryCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 }
 
 func TestScanCertificateExpiry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newCertExpiryCore(t)
 
@@ -87,6 +88,7 @@ func TestScanCertificateExpiry(t *testing.T) {
 }
 
 func TestScanCertificateExpiry_NothingDue(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newCertExpiryCore(t)
 	// Remove the expired + soon certs; only the far-future and broken ones remain.
@@ -98,6 +100,7 @@ func TestScanCertificateExpiry_NothingDue(t *testing.T) {
 }
 
 func TestScanCertificateExpiry_SuspendedSkipped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newCertExpiryCore(t)
 	// Suspend the expired cert; only the "soon" cert should remain countable.
@@ -114,6 +117,7 @@ func TestScanCertificateExpiry_SuspendedSkipped(t *testing.T) {
 }
 
 func TestCertificatePosture(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newCertExpiryCore(t)
 
@@ -141,6 +145,7 @@ func TestCertificatePosture(t *testing.T) {
 }
 
 func TestCertificateHygieneControl(t *testing.T) {
+	t.Parallel()
 	// An expired certificate flips the control to a gap; none → pass.
 	gap := findControl(t, EvaluateControls(&CompliancePosture{Certificates: CertificatePosture{TotalCertificates: 2, Expired: 1}}), "certificate-hygiene")
 	assert.Equal(t, ControlStatusGap, gap.Status)
@@ -156,6 +161,7 @@ func TestCertificateHygieneControl(t *testing.T) {
 // unevaluated ones are an unknown, not an implicit pass, and previously fell through
 // silently to Pass alongside a genuinely fully-scanned-and-clean population.
 func TestCertificateHygieneControl_MixedEvaluationIsNotPass(t *testing.T) {
+	t.Parallel()
 	partial := findControl(t, EvaluateControls(&CompliancePosture{
 		Certificates: CertificatePosture{TotalCertificates: 3, NotEvaluated: 1},
 	}), "certificate-hygiene")
@@ -172,6 +178,7 @@ func TestCertificateHygieneControl_MixedEvaluationIsNotPass(t *testing.T) {
 }
 
 func TestCertificateExpiryMessage(t *testing.T) {
+	t.Parallel()
 	assert.Contains(t, certificateExpiryMessage("p", 2, 3), "2 certificate(s) expired and 3 expiring soon")
 	assert.Contains(t, certificateExpiryMessage("p", 2, 0), "2 certificate(s) have expired")
 	assert.Contains(t, certificateExpiryMessage("p", 0, 4), "4 certificate(s) expiring soon")

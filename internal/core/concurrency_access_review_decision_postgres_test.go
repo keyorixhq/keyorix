@@ -43,6 +43,7 @@ var accessReviewCampaignModels = []interface{}{
 // stamp on a grant that no longer exists is false compliance evidence: it certifies
 // access that was, in fact, revoked in the same window.
 func TestConcurrency_DecideAccessReviewItem_CrossReplicaPostgres_NoFalseCertification(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)

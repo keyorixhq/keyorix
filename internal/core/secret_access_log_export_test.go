@@ -42,6 +42,7 @@ func ptrUint(u uint) *uint { return &u }
 
 // Unsupported format returns an error.
 func TestExportSecretAccessLog_InvalidFormat(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	k := newExportCore(ms)
 
@@ -52,6 +53,7 @@ func TestExportSecretAccessLog_InvalidFormat(t *testing.T) {
 
 // Secret not found returns "secret not found".
 func TestExportSecretAccessLog_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(nil, errors.New("record not found"))
 	k := newExportCore(ms)
@@ -63,6 +65,7 @@ func TestExportSecretAccessLog_SecretNotFound(t *testing.T) {
 
 // GetAuditLogs error is propagated.
 func TestExportSecretAccessLog_AuditLogError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
@@ -77,6 +80,7 @@ func TestExportSecretAccessLog_AuditLogError(t *testing.T) {
 
 // JSON format returns application/json with valid JSON.
 func TestExportSecretAccessLog_JSONFormat(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
@@ -104,6 +108,7 @@ func TestExportSecretAccessLog_JSONFormat(t *testing.T) {
 
 // CSV format returns text/csv with header + rows.
 func TestExportSecretAccessLog_CSVFormat(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
@@ -131,6 +136,7 @@ func TestExportSecretAccessLog_CSVFormat(t *testing.T) {
 
 // Event with nil UserID produces an empty user_id field in CSV.
 func TestExportSecretAccessLog_NilUserID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
@@ -151,6 +157,7 @@ func TestExportSecretAccessLog_NilUserID(t *testing.T) {
 
 // Event with nil Success is treated as success=true.
 func TestExportSecretAccessLog_NilSuccess(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
@@ -171,6 +178,7 @@ func TestExportSecretAccessLog_NilSuccess(t *testing.T) {
 
 // Event with nil SecretNodeID uses the secretID param for the row.
 func TestExportSecretAccessLog_NilSecretNodeID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(99)).Return(&models.SecretNode{ID: 99}, nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 99, Scope{}, permSecretsRead)
@@ -191,6 +199,7 @@ func TestExportSecretAccessLog_NilSecretNodeID(t *testing.T) {
 
 // Empty event list returns an empty JSON array.
 func TestExportSecretAccessLog_EmptyEvents(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 1, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
@@ -206,6 +215,7 @@ func TestExportSecretAccessLog_EmptyEvents(t *testing.T) {
 
 // The AuditFilter passed to storage has SecretID + Action set correctly.
 func TestExportSecretAccessLog_FilterParams(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(77)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 77, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)

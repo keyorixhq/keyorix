@@ -85,6 +85,7 @@ func seedAmbientLoginGrant(t *testing.T, db *gorm.DB, userID uint, now time.Time
 }
 
 func TestWebAuthn_LoginGateRequiresSecondFactor(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -96,6 +97,7 @@ func TestWebAuthn_LoginGateRequiresSecondFactor(t *testing.T) {
 }
 
 func TestWebAuthn_DisabledServerRejects(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, false) // no RP configured
 	ctx := context.Background()
 	_, _, err := c.BeginWebAuthnRegistration(ctx, 1)
@@ -106,6 +108,7 @@ func TestWebAuthn_DisabledServerRejects(t *testing.T) {
 // early as their Begin counterparts when no relying party is configured --
 // neither should reach the requireReauth/challenge-consumption steps below.
 func TestWebAuthn_FinishDisabledServerRejects(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, false)
 	ctx := context.Background()
 	_, err := c.FinishWebAuthnRegistration(ctx, 1, "tok", "laptop", webauthnTestPassword, nil)
@@ -118,6 +121,7 @@ func TestWebAuthn_FinishDisabledServerRejects(t *testing.T) {
 // any assertion is parsed -- distinct from TestWebAuthn_FinishLoginRejectsMismatchedSession,
 // which covers a session that consumes fine but belongs to the wrong purpose/user.
 func TestWebAuthn_FinishLoginRejectsInvalidSessionToken(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -130,6 +134,7 @@ func TestWebAuthn_FinishLoginRejectsInvalidSessionToken(t *testing.T) {
 }
 
 func TestWebAuthn_RegistrationBeginIssuesSingleUseSession(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 
@@ -147,6 +152,7 @@ func TestWebAuthn_RegistrationBeginIssuesSingleUseSession(t *testing.T) {
 }
 
 func TestWebAuthn_BeginLoginResolvesUserFromChallenge(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 
@@ -172,6 +178,7 @@ func TestWebAuthn_BeginLoginResolvesUserFromChallenge(t *testing.T) {
 }
 
 func TestWebAuthn_BeginLoginRejectsBadChallenge(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -180,6 +187,7 @@ func TestWebAuthn_BeginLoginRejectsBadChallenge(t *testing.T) {
 }
 
 func TestWebAuthn_DeleteClearsFlagOnLastAndIsUserScoped(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -213,6 +221,7 @@ func TestWebAuthn_DeleteClearsFlagOnLastAndIsUserScoped(t *testing.T) {
 // a passkey assertion has no typable "code" to hand this check directly).
 // Mirrors TestMFA_RegenerateRequiresReauth's structure.
 func TestWebAuthn_DeleteRequiresReauth(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -259,6 +268,7 @@ func TestWebAuthn_DeleteRequiresReauth(t *testing.T) {
 // pre-purpose-tagging code (where any grant satisfied HasActiveMFAStepUp) and
 // GREEN after it (only a MFAStepUpPurposeReauth grant satisfies it).
 func TestWebAuthn_DeleteRequiresReauth_AmbientLoginGrantRejected(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -289,6 +299,7 @@ func TestWebAuthn_DeleteRequiresReauth_AmbientLoginGrantRejected(t *testing.T) {
 // a bad password is rejected with the re-auth error, and a correct password
 // advances past the gate to the ceremony-session check (a different error).
 func TestWebAuthn_FinishRegistrationRequiresReauth(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 
@@ -321,6 +332,7 @@ func TestWebAuthn_FinishRegistrationRequiresReauth(t *testing.T) {
 }
 
 func TestWebAuthn_PasswordlessBeginIssuesSession(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 
@@ -340,6 +352,7 @@ func TestWebAuthn_PasswordlessBeginIssuesSession(t *testing.T) {
 }
 
 func TestWebAuthn_PasswordlessDisabledServerRejects(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, false)
 	ctx := context.Background()
 	_, _, err := c.BeginWebAuthnPasswordlessLogin(ctx)
@@ -349,6 +362,7 @@ func TestWebAuthn_PasswordlessDisabledServerRejects(t *testing.T) {
 }
 
 func TestWebAuthn_PasswordlessFinishRejectsWrongPurposeSession(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	// A session minted for the second-factor flow must not complete a passwordless
@@ -369,6 +383,7 @@ func TestWebAuthn_PasswordlessFinishRejectsWrongPurposeSession(t *testing.T) {
 // account is refused even with an otherwise-valid ceremony (nil assertion is never
 // reached). Mirrors the passwordless path's existing AccountLoginBlocked gate.
 func TestWebAuthn_FinishLoginRejectsSuspendedAccount(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -390,6 +405,7 @@ func TestWebAuthn_FinishLoginRejectsSuspendedAccount(t *testing.T) {
 // factor: the gate fires before the assertion is validated, so a locked account is
 // refused even with an otherwise-valid ceremony. Parity with the TOTP path.
 func TestWebAuthn_FinishLoginHonorsAccountLockout(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	ctx := context.Background()
@@ -416,6 +432,7 @@ func TestWebAuthn_FinishLoginHonorsAccountLockout(t *testing.T) {
 // for the common case, mirroring go-webauthn's own Authenticator.UpdateCounter gate
 // (which also special-cases 0/0 as never a clone signal).
 func TestWebAuthn_PersistUpdatedCredential_ZeroCounterAuthenticatorAlwaysPersists(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -438,6 +455,7 @@ func TestWebAuthn_PersistUpdatedCredential_ZeroCounterAuthenticatorAlwaysPersist
 }
 
 func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -463,6 +481,7 @@ func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
 // and FinishWebAuthnPasswordlessLogin call once the library's cryptographic
 // assertion check has already succeeded.
 func TestWebAuthn_RejectIfCloned_DisablesCredentialAndRejects(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")
@@ -489,6 +508,7 @@ func TestWebAuthn_RejectIfCloned_DisablesCredentialAndRejects(t *testing.T) {
 // A normal, strictly-incrementing counter must NOT be treated as a clone signal and
 // must leave the credential fully usable.
 func TestWebAuthn_RejectIfCloned_NormalCounterPasses(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "cred-1")

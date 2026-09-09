@@ -20,6 +20,7 @@ import (
 // flags Degraded with a reason, while the other user's real violation is still
 // correctly detected.
 func TestDetectSoDViolations_DegradedOnUserPermissionsError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
@@ -77,6 +78,7 @@ func TestDetectSoDViolations_DegradedOnUserPermissionsError(t *testing.T) {
 // with a reason naming the machine, while a real human violation is still
 // correctly detected.
 func TestDetectSoDViolations_DegradedOnMachineRolesError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
@@ -117,6 +119,7 @@ func TestDetectSoDViolations_DegradedOnMachineRolesError(t *testing.T) {
 // A RoleSetHasPermission error (rather than GetMachineRoles) must also flip
 // Degraded, named for the machine and policy that couldn't be evaluated.
 func TestDetectSoDViolations_DegradedOnMachinePermissionError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
@@ -146,6 +149,7 @@ func TestDetectSoDViolations_DegradedOnMachinePermissionError(t *testing.T) {
 // A clean scan (every principal's permissions resolve) must not be marked
 // Degraded — the signal must not fire on the happy path.
 func TestDetectSoDViolations_NotDegradedOnCleanScan(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)

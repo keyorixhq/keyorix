@@ -56,6 +56,7 @@ func mkCreateReq(projectID, envID uint, value string) *CreateSecretRequest {
 // TestSecretValue_EncryptedRoundTrip proves a value created with encryption wired is
 // ciphertext at rest and round-trips back to the original plaintext.
 func TestSecretValue_EncryptedRoundTrip(t *testing.T) {
+	t.Parallel()
 	c, projectID, envID := newEncryptedCore(t)
 	ctx := context.Background()
 
@@ -77,6 +78,7 @@ func TestSecretValue_EncryptedRoundTrip(t *testing.T) {
 // plaintext when no encryptor is available: decryptVersionValue must error, never
 // hand back the raw ciphertext bytes.
 func TestSecretValue_FailsClosedWithoutKey(t *testing.T) {
+	t.Parallel()
 	c, projectID, envID := newEncryptedCore(t)
 	ctx := context.Background()
 
@@ -96,6 +98,7 @@ func TestSecretValue_FailsClosedWithoutKey(t *testing.T) {
 // TestSecretValue_AADTransplantRejected proves the AAD binding (#94) stops a
 // ciphertext blob copied onto a DIFFERENT secret's version from decrypting.
 func TestSecretValue_AADTransplantRejected(t *testing.T) {
+	t.Parallel()
 	c, projectID, envID := newEncryptedCore(t)
 	ctx := context.Background()
 
@@ -120,6 +123,7 @@ func TestSecretValue_AADTransplantRejected(t *testing.T) {
 // TestSecretValue_PlaintextRowStillReadable proves the metadata-driven read returns a
 // legacy/dev plaintext row (empty metadata) verbatim, even with an encryptor wired.
 func TestSecretValue_PlaintextRowStillReadable(t *testing.T) {
+	t.Parallel()
 	c, projectID, _ := newEncryptedCore(t)
 
 	secret := &models.SecretNode{ID: 42, ProjectID: projectID}
@@ -140,6 +144,7 @@ func TestSecretValue_PlaintextRowStillReadable(t *testing.T) {
 // decryptVersionValue must error rather than silently returning EncryptedValue as if
 // it were the secret's real value.
 func TestSecretValue_MalformedMetadataFailsClosed(t *testing.T) {
+	t.Parallel()
 	c, projectID, _ := newEncryptedCore(t)
 
 	secret := &models.SecretNode{ID: 43, ProjectID: projectID}
@@ -163,6 +168,7 @@ func TestSecretValue_MalformedMetadataFailsClosed(t *testing.T) {
 // empty) "algorithm" field, is treated as ambiguous rather than plaintext.
 // decryptVersionValue must error instead of silently returning EncryptedValue.
 func TestSecretValue_MissingAlgorithmFailsClosed(t *testing.T) {
+	t.Parallel()
 	c, projectID, _ := newEncryptedCore(t)
 
 	testCases := []struct {
@@ -197,6 +203,7 @@ func TestSecretValue_MissingAlgorithmFailsClosed(t *testing.T) {
 // always produces when encryption is disabled) must still be classified as confirmed
 // plaintext and returned verbatim.
 func TestSecretValue_EmptyObjectMetadataIsPlaintext(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, metadataPlaintext, versionMetadataStatus(models.JSON("{}")))
 	assert.Equal(t, metadataPlaintext, versionMetadataStatus(nil))
 	assert.Equal(t, metadataPlaintext, versionMetadataStatus(models.JSON("")))

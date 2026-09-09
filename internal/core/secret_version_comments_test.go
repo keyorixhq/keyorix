@@ -24,6 +24,7 @@ func expectSecretWithVersion(store *MockStorage, ctx context.Context, secretID, 
 }
 
 func TestCreateSecretVersionComment_EmptyCommentReturnsError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -41,6 +42,7 @@ func TestCreateSecretVersionComment_EmptyCommentReturnsError(t *testing.T) {
 }
 
 func TestCreateSecretVersionComment_Success(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -67,6 +69,7 @@ func TestCreateSecretVersionComment_Success(t *testing.T) {
 }
 
 func TestCreateSecretVersionComment_StorageError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -85,6 +88,7 @@ func TestCreateSecretVersionComment_StorageError(t *testing.T) {
 // regression: VersionID 99 belongs to secret 2, not the authorized secret 1 —
 // the write must be refused before it ever reaches storage.
 func TestCreateSecretVersionComment_VersionBelongsToOtherSecret(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -101,6 +105,7 @@ func TestCreateSecretVersionComment_VersionBelongsToOtherSecret(t *testing.T) {
 }
 
 func TestListSecretVersionComments_Success(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -120,6 +125,7 @@ func TestListSecretVersionComments_Success(t *testing.T) {
 }
 
 func TestListSecretVersionComments_Empty(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -133,6 +139,7 @@ func TestListSecretVersionComments_Empty(t *testing.T) {
 }
 
 func TestListSecretVersionComments_Error(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -148,6 +155,7 @@ func TestListSecretVersionComments_Error(t *testing.T) {
 // regression: authorized on secret 1, but the supplied VersionID (99) belongs
 // to secret 2 — must be refused, not silently walk the global VersionID space.
 func TestListSecretVersionComments_CrossSecretVersionRejected(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -162,6 +170,7 @@ func TestListSecretVersionComments_CrossSecretVersionRejected(t *testing.T) {
 }
 
 func TestDeleteSecretVersionComment_Success(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -174,6 +183,7 @@ func TestDeleteSecretVersionComment_Success(t *testing.T) {
 }
 
 func TestDeleteSecretVersionComment_Error(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
@@ -189,6 +199,7 @@ func TestDeleteSecretVersionComment_Error(t *testing.T) {
 // regression for delete: authorized on secret 1, but the supplied VersionID
 // belongs to secret 2 — must be refused before any storage delete is attempted.
 func TestDeleteSecretVersionComment_CrossSecretVersionRejected(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()

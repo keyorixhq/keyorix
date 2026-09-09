@@ -33,12 +33,14 @@ import (
 // ── secrets_validation.go ─────────────────────────────────────────────────────
 
 func TestValidateCreateSecretRequest_EmptyName(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateSecretRequest(&CreateSecretRequest{Value: []byte("v"), ProjectID: 1, EnvironmentID: 1, CreatedBy: "me"})
 	require.Error(t, err)
 }
 
 func TestValidateCreateSecretRequest_NameTooLong(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	long := make([]byte, 300)
 	for i := range long {
@@ -50,48 +52,56 @@ func TestValidateCreateSecretRequest_NameTooLong(t *testing.T) {
 }
 
 func TestValidateCreateSecretRequest_EmptyValue(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateSecretRequest(&CreateSecretRequest{Name: "n", ProjectID: 1, EnvironmentID: 1, CreatedBy: "me"})
 	require.Error(t, err)
 }
 
 func TestValidateCreateSecretRequest_ZeroProjectID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateSecretRequest(&CreateSecretRequest{Name: "n", Value: []byte("v"), EnvironmentID: 1, CreatedBy: "me"})
 	require.Error(t, err)
 }
 
 func TestValidateCreateSecretRequest_ZeroEnvironmentID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateSecretRequest(&CreateSecretRequest{Name: "n", Value: []byte("v"), ProjectID: 1, CreatedBy: "me"})
 	require.Error(t, err)
 }
 
 func TestValidateCreateSecretRequest_EmptyCreatedBy(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateSecretRequest(&CreateSecretRequest{Name: "n", Value: []byte("v"), ProjectID: 1, EnvironmentID: 1})
 	require.Error(t, err)
 }
 
 func TestValidateCreateSecretRequest_Valid(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateSecretRequest(&CreateSecretRequest{Name: "n", Value: []byte("v"), ProjectID: 1, EnvironmentID: 1, CreatedBy: "me"})
 	require.NoError(t, err)
 }
 
 func TestValidateUpdateSecretRequest_ZeroID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateUpdateSecretRequest(&UpdateSecretRequest{UpdatedBy: "me"})
 	require.Error(t, err)
 }
 
 func TestValidateUpdateSecretRequest_EmptyUpdatedBy(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateUpdateSecretRequest(&UpdateSecretRequest{ID: 1})
 	require.Error(t, err)
 }
 
 func TestValidateUpdateSecretRequest_Valid(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateUpdateSecretRequest(&UpdateSecretRequest{ID: 1, UpdatedBy: "me"})
 	require.NoError(t, err)
@@ -100,11 +110,13 @@ func TestValidateUpdateSecretRequest_Valid(t *testing.T) {
 // ── secret_description.go — validateNameLength ─────────────────────────────
 
 func TestValidateNameLength_OK(t *testing.T) {
+	t.Parallel()
 	err := validateNameLength("secret name", "hello")
 	require.NoError(t, err)
 }
 
 func TestValidateNameLength_TooLong(t *testing.T) {
+	t.Parallel()
 	long := make([]byte, 256)
 	for i := range long {
 		long[i] = 'x'
@@ -115,11 +127,13 @@ func TestValidateNameLength_TooLong(t *testing.T) {
 }
 
 func TestValidateDescription_OK(t *testing.T) {
+	t.Parallel()
 	err := validateDescription("short")
 	require.NoError(t, err)
 }
 
 func TestValidateDescription_TooLong(t *testing.T) {
+	t.Parallel()
 	long := make([]byte, 1025)
 	for i := range long {
 		long[i] = 'd'
@@ -131,32 +145,39 @@ func TestValidateDescription_TooLong(t *testing.T) {
 // ── secrets_versions.go — isVersionConflict ────────────────────────────────
 
 func TestIsVersionConflict_Nil(t *testing.T) {
+	t.Parallel()
 	assert.False(t, isVersionConflict(nil))
 }
 
 func TestIsVersionConflict_Sentinel(t *testing.T) {
+	t.Parallel()
 	assert.True(t, isVersionConflict(storage.ErrDuplicateSecretVersion))
 }
 
 func TestIsVersionConflict_SQLite(t *testing.T) {
+	t.Parallel()
 	assert.True(t, isVersionConflict(errors.New("UNIQUE constraint failed: secret_versions.node_id")))
 }
 
 func TestIsVersionConflict_Postgres(t *testing.T) {
+	t.Parallel()
 	assert.True(t, isVersionConflict(errors.New("duplicate key value violates unique constraint \"secret_versions_pkey\"")))
 }
 
 func TestIsVersionConflict_Other(t *testing.T) {
+	t.Parallel()
 	assert.False(t, isVersionConflict(errors.New("some other error")))
 }
 
 // ── compliance_digest.go — plural ─────────────────────────────────────────
 
 func TestPlural_One(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "", plural(1))
 }
 
 func TestPlural_Many(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "s", plural(0))
 	assert.Equal(t, "s", plural(2))
 }
@@ -164,6 +185,7 @@ func TestPlural_Many(t *testing.T) {
 // ── membership_lifecycle.go — transitionVerb ─────────────────────────────
 
 func TestTransitionVerb_KnownStates(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "identity_verified", transitionVerb(MembershipIdentityVerified))
 	assert.Equal(t, "provisioned", transitionVerb(MembershipProvisioned))
 	assert.Equal(t, "activated", transitionVerb(MembershipActive))
@@ -171,39 +193,46 @@ func TestTransitionVerb_KnownStates(t *testing.T) {
 }
 
 func TestTransitionVerb_Unknown(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "custom_state", transitionVerb("custom_state"))
 }
 
 // ── machine_identities.go — machineVerb ─────────────────────────────────
 
 func TestMachineVerb_KnownStates(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "activated", machineVerb(MachineActive))
 	assert.Equal(t, "suspended", machineVerb(MachineSuspended))
 	assert.Equal(t, "revoked", machineVerb(MachineRevoked))
 }
 
 func TestMachineVerb_Unknown(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "some_state", machineVerb("some_state"))
 }
 
 // ── rotation_executor.go — resolveCharset ────────────────────────────────
 
 func TestResolveCharset_LowerAlnum(t *testing.T) {
+	t.Parallel()
 	result := resolveCharset("lower_alphanumeric")
 	assert.Equal(t, charsetLowerAlnum, result)
 }
 
 func TestResolveCharset_Hex(t *testing.T) {
+	t.Parallel()
 	result := resolveCharset("hex")
 	assert.Equal(t, charsetHex, result)
 }
 
 func TestResolveCharset_AlnumSymbols(t *testing.T) {
+	t.Parallel()
 	result := resolveCharset("alphanumeric_symbols")
 	assert.Equal(t, charsetAlnumSymbols, result)
 }
 
 func TestResolveCharset_Default(t *testing.T) {
+	t.Parallel()
 	result := resolveCharset("unknown")
 	assert.Equal(t, charsetAlphanumeric, result)
 }
@@ -211,16 +240,19 @@ func TestResolveCharset_Default(t *testing.T) {
 // ── scim_groups.go — filterNonZero ───────────────────────────────────────
 
 func TestFilterNonZero_Empty(t *testing.T) {
+	t.Parallel()
 	result := filterNonZero([]uint{})
 	assert.Empty(t, result)
 }
 
 func TestFilterNonZero_WithZeros(t *testing.T) {
+	t.Parallel()
 	result := filterNonZero([]uint{0, 1, 0, 2, 3})
 	assert.Equal(t, []uint{1, 2, 3}, result)
 }
 
 func TestFilterNonZero_AllNonZero(t *testing.T) {
+	t.Parallel()
 	result := filterNonZero([]uint{1, 2, 3})
 	assert.Equal(t, []uint{1, 2, 3}, result)
 }
@@ -228,6 +260,7 @@ func TestFilterNonZero_AllNonZero(t *testing.T) {
 // ── groups.go — GetGroupMembers ───────────────────────────────────────────
 
 func TestGetGroupMembers_ZeroID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	_, err := c.GetGroupMembers(context.Background(), 0)
 	require.Error(t, err)
@@ -235,6 +268,7 @@ func TestGetGroupMembers_ZeroID(t *testing.T) {
 }
 
 func TestGetGroupMembers_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListGroupMembers", mock.Anything, uint(1)).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -243,6 +277,7 @@ func TestGetGroupMembers_StorageError(t *testing.T) {
 }
 
 func TestGetGroupMembers_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	members := []*models.User{{ID: 1, Username: "alice"}}
 	ms.On("ListGroupMembers", mock.Anything, uint(1)).Return(members, nil)
@@ -255,6 +290,7 @@ func TestGetGroupMembers_Success(t *testing.T) {
 // ── groups.go — validateCreateGroupRequest ───────────────────────────────
 
 func TestValidateCreateGroupRequest_EmptyName(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateGroupRequest(&CreateGroupRequest{})
 	require.Error(t, err)
@@ -262,6 +298,7 @@ func TestValidateCreateGroupRequest_EmptyName(t *testing.T) {
 }
 
 func TestValidateCreateGroupRequest_NameTooLong(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	long := make([]byte, 300)
 	for i := range long {
@@ -272,6 +309,7 @@ func TestValidateCreateGroupRequest_NameTooLong(t *testing.T) {
 }
 
 func TestValidateCreateGroupRequest_DescriptionTooLong(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	long := make([]byte, 1025)
 	for i := range long {
@@ -282,6 +320,7 @@ func TestValidateCreateGroupRequest_DescriptionTooLong(t *testing.T) {
 }
 
 func TestValidateCreateGroupRequest_Valid(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateCreateGroupRequest(&CreateGroupRequest{Name: "mygroup"})
 	require.NoError(t, err)
@@ -290,6 +329,7 @@ func TestValidateCreateGroupRequest_Valid(t *testing.T) {
 // ── groups.go — validateUpdateGroupRequest ───────────────────────────────
 
 func TestValidateUpdateGroupRequest_ZeroID(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateUpdateGroupRequest(&UpdateGroupRequest{Name: "mygroup"})
 	require.Error(t, err)
@@ -297,6 +337,7 @@ func TestValidateUpdateGroupRequest_ZeroID(t *testing.T) {
 }
 
 func TestValidateUpdateGroupRequest_NameTooLong(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	long := make([]byte, 300)
 	for i := range long {
@@ -307,6 +348,7 @@ func TestValidateUpdateGroupRequest_NameTooLong(t *testing.T) {
 }
 
 func TestValidateUpdateGroupRequest_Valid(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.validateUpdateGroupRequest(&UpdateGroupRequest{ID: 1, Name: "mygroup"})
 	require.NoError(t, err)
@@ -315,6 +357,7 @@ func TestValidateUpdateGroupRequest_Valid(t *testing.T) {
 // ── secret_listing_query.go — sortSecrets ────────────────────────────────
 
 func TestSortSecrets_ByName(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	now := time.Now()
@@ -328,6 +371,7 @@ func TestSortSecrets_ByName(t *testing.T) {
 }
 
 func TestSortSecrets_ByNameDesc(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	now := time.Now()
@@ -340,6 +384,7 @@ func TestSortSecrets_ByNameDesc(t *testing.T) {
 }
 
 func TestSortSecrets_ByCreatedAt(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	older := time.Now().Add(-time.Hour)
@@ -353,6 +398,7 @@ func TestSortSecrets_ByCreatedAt(t *testing.T) {
 }
 
 func TestSortSecrets_ByCreatedAtDesc(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	older := time.Now().Add(-time.Hour)
@@ -366,6 +412,7 @@ func TestSortSecrets_ByCreatedAtDesc(t *testing.T) {
 }
 
 func TestSortSecrets_ByOwner(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	now := time.Now()
@@ -378,6 +425,7 @@ func TestSortSecrets_ByOwner(t *testing.T) {
 }
 
 func TestSortSecrets_ByOwnerDesc(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	now := time.Now()
@@ -390,6 +438,7 @@ func TestSortSecrets_ByOwnerDesc(t *testing.T) {
 }
 
 func TestSortSecrets_ByUpdatedAtDefault(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	older := time.Now().Add(-time.Hour)
@@ -404,6 +453,7 @@ func TestSortSecrets_ByUpdatedAtDefault(t *testing.T) {
 }
 
 func TestSortSecrets_UpdatedAtAsc(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	older := time.Now().Add(-time.Hour)
@@ -419,6 +469,7 @@ func TestSortSecrets_UpdatedAtAsc(t *testing.T) {
 // ── secrets.go — GetSecretByNameWithPermissionCheck ──────────────────────
 
 func TestGetSecretByNameWithPermissionCheck_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecretByName", mock.Anything, "missing", uint(1), uint(1)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -427,6 +478,7 @@ func TestGetSecretByNameWithPermissionCheck_NotFound(t *testing.T) {
 }
 
 func TestGetSecretByNameWithPermissionCheck_PermissionDenied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 5, OwnerID: 99}
 	ms.On("GetSecretByName", mock.Anything, "mysecret", uint(1), uint(1)).Return(secret, nil)
@@ -447,6 +499,7 @@ func TestGetSecretByNameWithPermissionCheck_PermissionDenied(t *testing.T) {
 // ── secrets.go — UpdateSecretWithPermissionCheck ─────────────────────────
 
 func TestUpdateSecretWithPermissionCheck_ZeroUserID_s29(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	_, err := c.UpdateSecretWithPermissionCheck(context.Background(), &UpdateSecretRequest{ID: 1, UpdatedBy: "me"})
 	require.Error(t, err)
@@ -454,6 +507,7 @@ func TestUpdateSecretWithPermissionCheck_ZeroUserID_s29(t *testing.T) {
 }
 
 func TestUpdateSecretWithPermissionCheck_PermissionDenied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 1, OwnerID: 99} // user 2 is not owner
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
@@ -473,6 +527,7 @@ func TestUpdateSecretWithPermissionCheck_PermissionDenied(t *testing.T) {
 // ── secrets.go — DeleteSecretWithPermissionCheck ─────────────────────────
 
 func TestDeleteSecretWithPermissionCheck_ZeroUserID_s29(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	err := c.DeleteSecretWithPermissionCheck(context.Background(), 1, 0)
 	require.Error(t, err)
@@ -480,6 +535,7 @@ func TestDeleteSecretWithPermissionCheck_ZeroUserID_s29(t *testing.T) {
 }
 
 func TestDeleteSecretWithPermissionCheck_PermissionDenied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 1, OwnerID: 99}
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
@@ -496,6 +552,7 @@ func TestDeleteSecretWithPermissionCheck_PermissionDenied(t *testing.T) {
 // ── audit_retention.go — AuditRetentionCoverage, VerifyAuditChain ────────
 
 func TestAuditRetentionCoverage_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AuditRetentionStats", mock.Anything).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -504,6 +561,7 @@ func TestAuditRetentionCoverage_StorageError(t *testing.T) {
 }
 
 func TestAuditRetentionCoverage_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AuditRetentionStats", mock.Anything).Return(&storage.AuditRetentionStats{TotalEvents: 10}, nil)
 	c := NewKeyorixCore(ms)
@@ -513,6 +571,7 @@ func TestAuditRetentionCoverage_Success(t *testing.T) {
 }
 
 func TestVerifyAuditChain_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -521,6 +580,7 @@ func TestVerifyAuditChain_StorageError(t *testing.T) {
 }
 
 func TestVerifyAuditChain_Valid(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
 		Valid:         true,

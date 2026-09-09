@@ -13,6 +13,7 @@ import (
 )
 
 func TestMigrateUserToMachine(t *testing.T) {
+	t.Parallel()
 	t.Run("creates a service identity, suspends the source user, and audits", func(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)

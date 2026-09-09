@@ -44,6 +44,7 @@ func (d *countingDeliverer) Name() string { return "counting-fake" }
 // asserts that only ONE reset email is ever actually sent, not one per
 // concurrent request.
 func TestConcurrency_RequestPasswordReset_BurstIsThrottled(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "pwreset.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

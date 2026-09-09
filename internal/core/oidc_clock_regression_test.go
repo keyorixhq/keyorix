@@ -34,6 +34,7 @@ import (
 //     step-1 watermark, so age is still computed as ~2 hours and the token
 //     stays refused.
 func TestOIDCVerify_ClockSteppedBackward_StaleTokenStaysRejected(t *testing.T) {
+	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -72,6 +73,7 @@ func TestOIDCVerify_ClockSteppedBackward_StaleTokenStaysRejected(t *testing.T) {
 // backward step (well under the OIDC verifier's own leeway), must still be
 // accepted.
 func TestOIDCVerify_ClockSteppedBackward_FreshTokenStillAccepted(t *testing.T) {
+	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -98,6 +100,7 @@ func TestOIDCVerify_ClockSteppedBackward_FreshTokenStillAccepted(t *testing.T) {
 // TestOIDCEffectiveNow_ClampsBackwardReadingToWatermark is a direct unit test
 // of the clamp itself.
 func TestOIDCEffectiveNow_ClampsBackwardReadingToWatermark(t *testing.T) {
+	t.Parallel()
 	v := &OIDCVerifier{}
 	watermark := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	v.clockWatermark = watermark

@@ -53,6 +53,7 @@ func stubAdminCalls(store *MockStorage, ctx context.Context, userID uint) {
 
 // TestSuspendInactiveUsers_InvalidDays ensures InactiveDays <= 0 is rejected.
 func TestSuspendInactiveUsers_InvalidDays(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -73,6 +74,7 @@ func TestSuspendInactiveUsers_InvalidDays(t *testing.T) {
 // expectation configured — if the rejection happened AFTER computing the
 // threshold, the mock call would panic instead of returning a clean error.
 func TestSuspendInactiveUsers_ExceedsMaxDays(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -86,6 +88,7 @@ func TestSuspendInactiveUsers_ExceedsMaxDays(t *testing.T) {
 
 // TestSuspendInactiveUsers_EmptyList ensures an empty inactive-user list returns a zero result.
 func TestSuspendInactiveUsers_EmptyList(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -104,6 +107,7 @@ func TestSuspendInactiveUsers_EmptyList(t *testing.T) {
 // TestSuspendInactiveUsers_InactiveUserSuspended verifies that an inactive user
 // returned by ListInactiveUsers is suspended.
 func TestSuspendInactiveUsers_InactiveUserSuspended(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -127,6 +131,7 @@ func TestSuspendInactiveUsers_InactiveUserSuspended(t *testing.T) {
 // TestSuspendInactiveUsers_AdminUserSkipped verifies that a global admin who is
 // inactive is not suspended.
 func TestSuspendInactiveUsers_AdminUserSkipped(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -148,6 +153,7 @@ func TestSuspendInactiveUsers_AdminUserSkipped(t *testing.T) {
 // TestSuspendInactiveUsers_AlreadySuspendedSkipped ensures an already-suspended
 // inactive user is counted as skipped, not re-suspended.
 func TestSuspendInactiveUsers_AlreadySuspendedSkipped(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -167,6 +173,7 @@ func TestSuspendInactiveUsers_AlreadySuspendedSkipped(t *testing.T) {
 // TestSuspendInactiveUsers_ListInactiveUsersError verifies that a storage error
 // from ListInactiveUsers is propagated.
 func TestSuspendInactiveUsers_ListInactiveUsersError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -182,6 +189,7 @@ func TestSuspendInactiveUsers_ListInactiveUsersError(t *testing.T) {
 // TestSuspendInactiveUsers_IsAdminError verifies that a storage error while
 // checking admin status is propagated.
 func TestSuspendInactiveUsers_IsAdminError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -200,6 +208,7 @@ func TestSuspendInactiveUsers_IsAdminError(t *testing.T) {
 // TestSuspendInactiveUsers_SuspendError verifies that a storage error from
 // SuspendUser is propagated.
 func TestSuspendInactiveUsers_SuspendError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -221,6 +230,7 @@ func TestSuspendInactiveUsers_SuspendError(t *testing.T) {
 // TestSuspendInactiveUsers_MixedUsers verifies the combined result across
 // multiple users in different states.
 func TestSuspendInactiveUsers_MixedUsers(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -249,6 +259,7 @@ func TestSuspendInactiveUsers_MixedUsers(t *testing.T) {
 // TestSuspendInactiveUsers_EmptyLegacyAccountState verifies that a user with an
 // empty (legacy) account_state treated as active is eligible for suspension.
 func TestSuspendInactiveUsers_EmptyLegacyAccountState(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()
@@ -271,6 +282,7 @@ func TestSuspendInactiveUsers_EmptyLegacyAccountState(t *testing.T) {
 // TestSuspendInactiveUsers_DryRun verifies that DryRun=true records which users
 // would be suspended without actually calling SuspendUser.
 func TestSuspendInactiveUsers_DryRun(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newInactivityCore(store)
 	ctx := context.Background()

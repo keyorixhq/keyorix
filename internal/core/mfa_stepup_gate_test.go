@@ -13,6 +13,7 @@ import (
 // TestStepUpGate_BothFlagsOff_NoGating verifies that checkRestrictedSecretReadApproval
 // is a no-op when no gate flags are active.
 func TestStepUpGate_BothFlagsOff_NoGating(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -25,6 +26,7 @@ func TestStepUpGate_BothFlagsOff_NoGating(t *testing.T) {
 // TestStepUpGate_On_NoActiveGrant_Denied verifies that with the MFA step-up gate
 // enabled and no grant present, access to a restricted secret is denied.
 func TestStepUpGate_On_NoActiveGrant_Denied(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newMFATestCore(t)
 	ctx := context.Background()
 	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
@@ -39,6 +41,7 @@ func TestStepUpGate_On_NoActiveGrant_Denied(t *testing.T) {
 // TestStepUpGate_On_ActiveGrant_Allowed verifies that a user with a valid
 // (non-expired) MFAStepUpGrant can pass the gate.
 func TestStepUpGate_On_ActiveGrant_Allowed(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
@@ -55,6 +58,7 @@ func TestStepUpGate_On_ActiveGrant_Allowed(t *testing.T) {
 // TestStepUpGate_LowerClassification_NeverGated verifies that the MFA step-up gate
 // only applies to "restricted" classified secrets and leaves lower tiers alone.
 func TestStepUpGate_LowerClassification_NeverGated(t *testing.T) {
+	t.Parallel()
 	for _, level := range []string{ClassificationPublic, ClassificationInternal, ClassificationConfidential, ""} {
 		t.Run("classification="+level, func(t *testing.T) {
 			c, _, _ := newMFATestCore(t)

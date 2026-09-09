@@ -47,6 +47,7 @@ func newRotateNoopFixture(t *testing.T) (*core.KeyorixCore, uint, *gorm.DB) {
 // was "just rotated"), even though the codebase's chosen behavior still writes a new
 // version row for audit-trail completeness.
 func TestRotateSecret_SameValue_DoesNotBumpLastRotatedAt(t *testing.T) {
+	t.Parallel()
 	c, secretID, db := newRotateNoopFixture(t)
 	ctx := context.Background()
 
@@ -94,6 +95,7 @@ func TestRotateSecret_SameValue_DoesNotBumpLastRotatedAt(t *testing.T) {
 // TestRotateSecret_DifferentValue_AlwaysBumpsLastRotatedAt is the companion positive
 // case: an ordinary rotation to a new value must behave exactly as before this change.
 func TestRotateSecret_DifferentValue_AlwaysBumpsLastRotatedAt(t *testing.T) {
+	t.Parallel()
 	c, secretID, _ := newRotateNoopFixture(t)
 	ctx := context.Background()
 

@@ -25,6 +25,7 @@ func newProjectMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 func boolPtr(b bool) *bool { return &b }
 
 func TestProjectMFA_ToggleAndQuery(t *testing.T) {
+	t.Parallel()
 	c, _ := newProjectMFATestCore(t)
 	ctx := context.Background()
 
@@ -53,6 +54,7 @@ func TestProjectMFA_ToggleAndQuery(t *testing.T) {
 }
 
 func TestProjectMFA_ToggleIsAudited(t *testing.T) {
+	t.Parallel()
 	c, db := newProjectMFATestCore(t)
 	ctx := context.Background()
 
@@ -73,6 +75,7 @@ func TestProjectMFA_ToggleIsAudited(t *testing.T) {
 }
 
 func TestProjectMFA_MissingProject(t *testing.T) {
+	t.Parallel()
 	c, _ := newProjectMFATestCore(t)
 	_, err := c.ProjectRequiresMFA(context.Background(), 999)
 	require.Error(t, err)

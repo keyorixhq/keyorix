@@ -54,6 +54,7 @@ func newExpiryReminderCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 }
 
 func TestSendExpiryReminders(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newExpiryReminderCore(t)
 
@@ -90,6 +91,7 @@ func TestSendExpiryReminders(t *testing.T) {
 // must be escalated in place — not silently suppressed — once the secret has
 // genuinely expired (Critical) while that reminder is still unread.
 func TestSendExpiryReminders_EscalatesOnMoreSevereState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newExpiryReminderCore(t)
 	// Drop the already-expired secret; only the "soon" secret remains due →
@@ -139,6 +141,7 @@ func TestSendExpiryReminders_EscalatesOnMoreSevereState(t *testing.T) {
 // inverse: a recheck that finds the state no worse than what's already
 // standing must not touch the notification or create noise.
 func TestSendExpiryReminders_NoEscalation_SameOrLowerSeverity_NoNoise(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newExpiryReminderCore(t)
 
@@ -163,6 +166,7 @@ func TestSendExpiryReminders_NoEscalation_SameOrLowerSeverity_NoNoise(t *testing
 }
 
 func TestSendExpiryReminders_NothingDue(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, _ := newExpiryReminderCore(t)
 	// Remove the expired + soon secrets; only far-future and no-expiry remain.
@@ -174,6 +178,7 @@ func TestSendExpiryReminders_NothingDue(t *testing.T) {
 }
 
 func TestExpiryReminderMessage(t *testing.T) {
+	t.Parallel()
 	assert.Contains(t, expiryReminderMessage("p", 3, 2), "3 secret(s) in p have expired")
 	assert.Contains(t, expiryReminderMessage("p", 3, 2), "2 more are expiring soon")
 	assert.Equal(t, "1 secret(s) in p have expired.", expiryReminderMessage("p", 1, 0))

@@ -53,6 +53,7 @@ func captureRotatedSession(store *MockStorage, oldID uint) *models.Session {
 
 // mintSession with no absolute TTL configured stamps only the access window.
 func TestMintSession_AccessTTLOnly(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureCreatedSession(store)
 	c := newSessionCore(store, 30*time.Minute, 0)
@@ -67,6 +68,7 @@ func TestMintSession_AccessTTLOnly(t *testing.T) {
 
 // mintSession with an absolute TTL stamps both the access window and the ceiling.
 func TestMintSession_WithAbsoluteCeiling(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureCreatedSession(store)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
@@ -82,6 +84,7 @@ func TestMintSession_WithAbsoluteCeiling(t *testing.T) {
 // A ceiling shorter than one access window is clamped so the first window never
 // already overruns the ceiling.
 func TestMintSession_CeilingShorterThanAccessClamped(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureCreatedSession(store)
 	c := newSessionCore(store, 1*time.Hour, 10*time.Minute)
@@ -95,6 +98,7 @@ func TestMintSession_CeilingShorterThanAccessClamped(t *testing.T) {
 
 // An unset access TTL falls back to the historic 24h default.
 func TestMintSession_DefaultAccessTTL(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureCreatedSession(store)
 	c := newSessionCore(store, 0, 0)
@@ -107,6 +111,7 @@ func TestMintSession_DefaultAccessTTL(t *testing.T) {
 // Refreshing within the absolute window carries the ceiling unchanged onto the new
 // session and starts a fresh access window. The old session is deleted.
 func TestRefreshSession_CarriesCeiling(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureRotatedSession(store, 7)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
@@ -129,6 +134,7 @@ func TestRefreshSession_CarriesCeiling(t *testing.T) {
 
 // The last access window before the ceiling is clamped so it cannot overrun it.
 func TestRefreshSession_ClampsLastWindowToCeiling(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureRotatedSession(store, 7)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
@@ -146,6 +152,7 @@ func TestRefreshSession_ClampsLastWindowToCeiling(t *testing.T) {
 // Refreshing at or past the ceiling is refused and the stale session is deleted —
 // re-authentication is required rather than another rotation.
 func TestRefreshSession_RefusedPastCeiling(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
 
@@ -165,6 +172,7 @@ func TestRefreshSession_RefusedPastCeiling(t *testing.T) {
 // mint a fresh, full-TTL session for the target with the impersonation attribution
 // stripped (laundering).
 func TestRefreshSession_RefusesImpersonationSession(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
 
@@ -180,6 +188,7 @@ func TestRefreshSession_RefusesImpersonationSession(t *testing.T) {
 
 // With no ceiling (legacy behaviour) a session refreshes indefinitely.
 func TestRefreshSession_NoCeilingRefreshesForever(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	captured := captureRotatedSession(store, 7)
 	c := newSessionCore(store, 24*time.Hour, 0)
@@ -198,6 +207,7 @@ func TestRefreshSession_NoCeilingRefreshesForever(t *testing.T) {
 // refreshed into a fresh access window — otherwise a deactivated user keeps a
 // self-renewing session. The stale session is deleted and no new one is minted.
 func TestRefreshSession_RefusedForInactiveOrBlockedAccount(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		user *models.User
@@ -234,6 +244,7 @@ func TestRefreshSession_RefusedForInactiveOrBlockedAccount(t *testing.T) {
 // window is still open yet whose ceiling has passed (a future non-clamping path, or a
 // tampered row) must be rejected at the validation boundary. Self-checking invariant.
 func TestValidateSessionToken_AbsoluteCeilingEnforcedAtBoundary(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("past ceiling is rejected even with an open access window", func(t *testing.T) {
@@ -277,6 +288,7 @@ func TestValidateSessionToken_AbsoluteCeilingEnforcedAtBoundary(t *testing.T) {
 // silently treated as an unknown token. The client-facing error stays the generic
 // "not found or expired" (no oracle distinguishing reuse from a garbage token).
 func TestRefreshSession_ReplayOfRotatedTokenDetectedAndFamilyRevoked(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newSessionCore(store, 30*time.Minute, 0)
 
@@ -305,6 +317,7 @@ func TestRefreshSession_ReplayOfRotatedTokenDetectedAndFamilyRevoked(t *testing.
 // distinctly and the session family revoked, so it can't silently mint a second
 // live session from one token use.
 func TestRefreshSession_LosingRotationRaceIsTreatedAsReuse(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newSessionCore(store, 30*time.Minute, 0)
 

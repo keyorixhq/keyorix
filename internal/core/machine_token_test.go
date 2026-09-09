@@ -12,6 +12,7 @@ import (
 )
 
 func TestIssueMachineToken_ActiveOnly(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 
@@ -59,6 +60,7 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 // RevokeMachineToken must return the revoked credential's hash so the HTTP handler can
 // evict it from the auth cache immediately (otherwise it keeps authenticating ≤30s).
 func TestRevokeMachineToken_ReturnsHashForCacheEviction(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
@@ -73,6 +75,7 @@ func TestRevokeMachineToken_ReturnsHashForCacheEviction(t *testing.T) {
 }
 
 func TestValidateMachineToken(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	raw := "kx_machine_abc"
 	hash := sha256Hex(raw)
@@ -124,6 +127,7 @@ func TestValidateMachineToken(t *testing.T) {
 }
 
 func TestAuthorizePrincipal_Machine(t *testing.T) {
+	t.Parallel()
 	scope := Scope{ProjectID: 2}
 
 	t.Run("granted role permits", func(t *testing.T) {

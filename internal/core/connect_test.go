@@ -77,6 +77,7 @@ func stubConnectPlatformUseCheckMachine(ms *MockStorage, principalID uint, grant
 }
 
 func TestReadFederatedSecret_Success(t *testing.T) {
+	t.Parallel()
 	c, ms := connectTestCore(t, true, fakeConnector{name: "aws", val: "v3ry-secret"})
 	require.True(t, c.ConnectEnabled())
 
@@ -93,6 +94,7 @@ func TestReadFederatedSecret_Success(t *testing.T) {
 // TestReadFederatedSecret_UnknownConnector, where the connector itself doesn't
 // exist) must produce a terminal deny with the platform-specific reason.
 func TestReadFederatedSecret_PlatformUseDeniedByMockFixture(t *testing.T) {
+	t.Parallel()
 	c, ms := connectTestCore(t, false, fakeConnector{name: "aws", val: "v3ry-secret"})
 
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "prod/db")
@@ -105,6 +107,7 @@ func TestReadFederatedSecret_PlatformUseDeniedByMockFixture(t *testing.T) {
 }
 
 func TestReadFederatedSecret_UnknownConnector(t *testing.T) {
+	t.Parallel()
 	// granted=false: the requested connector "nope" doesn't exist, so this never
 	// even reaches the platform-permission check — using false here (not true)
 	// proves that, since a wrongly-reached check would deny for the wrong reason.
@@ -115,6 +118,7 @@ func TestReadFederatedSecret_UnknownConnector(t *testing.T) {
 }
 
 func TestReadFederatedSecret_DisabledWhenNoManager(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := &KeyorixCore{storage: ms}
@@ -127,6 +131,7 @@ func TestReadFederatedSecret_DisabledWhenNoManager(t *testing.T) {
 }
 
 func TestReadFederatedSecret_BackendErrorAudited(t *testing.T) {
+	t.Parallel()
 	c, ms := connectTestCore(t, true, fakeConnector{name: "aws", err: errors.New("AccessDenied")})
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
@@ -154,6 +159,7 @@ func TestReadFederatedSecret_BackendErrorAudited(t *testing.T) {
 // own untagged-context defense, not upstream middleware) — MachineIdentityID must
 // still land correctly because ReadFederatedSecret now tags it itself.
 func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	var got *models.AuditEvent
 	ms.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -178,6 +184,7 @@ func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 // TestReadFederatedSecret_UserAuditedAsUser is the counterpart: an ordinary user read
 // is attributed as ActorTypeUser.
 func TestReadFederatedSecret_UserAuditedAsUser(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	var got *models.AuditEvent
 	ms.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -201,6 +208,7 @@ func TestReadFederatedSecret_UserAuditedAsUser(t *testing.T) {
 // what lets the HTTP layer's isSafeConnectError classify safe vs. unsafe errors by
 // type instead of by substring-matching err.Error() against caller-influenced text.
 func TestConnectErrors_AreTypedSentinels(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := &KeyorixCore{storage: ms}
@@ -244,6 +252,7 @@ func TestConnectErrors_AreTypedSentinels(t *testing.T) {
 // would previously have substring-matched), must never be persisted verbatim into
 // the audit_events.Description written for the failed read.
 func TestReadFederatedSecret_AuditDescriptionRedactsRawUpstreamError(t *testing.T) {
+	t.Parallel()
 	const ref = "prod/db"
 	rawUpstreamErr := errors.New(
 		"dial tcp 10.0.0.5:8200: connection refused (ref=" + ref +

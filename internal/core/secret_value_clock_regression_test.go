@@ -63,6 +63,7 @@ func newClockRegressionCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 // observed and refuses the read regardless of what Expiration says —
 // green.
 func TestGetSecretValue_ClockSteppedBackwardPastExpiry_StillRefused(t *testing.T) {
+	t.Parallel()
 	c, db := newClockRegressionCore(t)
 	ctx := context.Background()
 
@@ -102,6 +103,7 @@ func TestGetSecretValue_ClockSteppedBackwardPastExpiry_StillRefused(t *testing.T
 // the process's lifetime (e.g. right after boot, before any watermark has
 // been established).
 func TestGetSecretValue_ClockSteppedBackward_LegitimatelyUnexpiredSecretStillResolves(t *testing.T) {
+	t.Parallel()
 	c, db := newClockRegressionCore(t)
 	ctx := context.Background()
 
@@ -138,6 +140,7 @@ func TestGetSecretValue_ClockSteppedBackward_LegitimatelyUnexpiredSecretStillRes
 // process boot): it must never refuse solely because the watermark is
 // unset.
 func TestCheckSecretExpiryClockNotRegressed_FreshWatermarkNeverRefuses(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{}
 	err := c.checkSecretExpiryClockNotRegressed(time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err, "an unset watermark must never itself cause a refusal")

@@ -24,6 +24,7 @@ import (
 // resurrected merely because the real time.Now() reading right now looks
 // earlier than that watermark.
 func TestConnectRefAllowed_ClockSteppedBackward_ExpiredGrantStaysDenied(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "temp-reader")
 	seedConnectPlatformUsePermission(t, db, 5)
@@ -45,6 +46,7 @@ func TestConnectRefAllowed_ClockSteppedBackward_ExpiredGrantStaysDenied(t *testi
 // is the positive control: a grant genuinely still live even past the
 // watermark must still authorize normally.
 func TestConnectRefAllowed_ClockSteppedBackward_LegitimatelyLiveGrantStillAllowed(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "temp-reader")
 	seedConnectPlatformUsePermission(t, db, 5)
@@ -63,6 +65,7 @@ func TestConnectRefAllowed_ClockSteppedBackward_LegitimatelyLiveGrantStillAllowe
 // TestConnectEffectiveNow_ClampsBackwardReadingToWatermark is a direct unit
 // test of the clamp itself.
 func TestConnectEffectiveNow_ClampsBackwardReadingToWatermark(t *testing.T) {
+	t.Parallel()
 	c := &KeyorixCore{now: time.Now}
 	watermark := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	c.connectClockWatermark = watermark

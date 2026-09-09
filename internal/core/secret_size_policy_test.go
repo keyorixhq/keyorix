@@ -79,6 +79,7 @@ func newSecretSizeTestCoreAndStorage(t *testing.T) (*core.KeyorixCore, *store.Lo
 // readable via GetSecretValue and the secret must still be deletable via
 // DeleteSecret -- only a new write/update of an oversized value is rejected.
 func TestGetAndDeleteSecret_PreExistingOversizedValue_StillWorks(t *testing.T) {
+	t.Parallel()
 	c, ls := newSecretSizeTestCoreAndStorage(t)
 	c.SetMaxSecretSize(100)
 	ctx := context.Background()
@@ -106,6 +107,7 @@ func TestGetAndDeleteSecret_PreExistingOversizedValue_StillWorks(t *testing.T) {
 }
 
 func TestCreateSecret_SecretSizeCap(t *testing.T) {
+	t.Parallel()
 	c := newSecretSizeTestCore(t)
 	c.SetMaxSecretSize(100)
 	ctx := context.Background()
@@ -136,6 +138,7 @@ func TestCreateSecret_SecretSizeCap(t *testing.T) {
 }
 
 func TestUpdateSecret_SecretSizeCap(t *testing.T) {
+	t.Parallel()
 	c := newSecretSizeTestCore(t)
 	c.SetMaxSecretSize(100)
 	ctx := context.Background()
@@ -170,6 +173,7 @@ func TestUpdateSecret_SecretSizeCap(t *testing.T) {
 }
 
 func TestRotateSecret_SecretSizeCap(t *testing.T) {
+	t.Parallel()
 	c := newSecretSizeTestCore(t)
 	c.SetMaxSecretSize(100)
 	ctx := context.Background()
@@ -203,6 +207,7 @@ func TestRotateSecret_SecretSizeCap(t *testing.T) {
 // SetMaxSecretSize: a zero/negative n (e.g. from a config layer that failed
 // to apply its own default) must not silently disable the cap.
 func TestSetMaxSecretSize_ZeroFallsBackToDefault(t *testing.T) {
+	t.Parallel()
 	c := newSecretSizeTestCore(t)
 	c.SetMaxSecretSize(0)
 	ctx := context.Background()

@@ -17,6 +17,7 @@ import (
 // query (which backs Authorize) filters it out the instant it passes, before any
 // sweep removes the row. A future grant still resolves.
 func TestTimeBoundGrant_ExpiredExcludedFromAuthQueries(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 
@@ -40,6 +41,7 @@ func TestTimeBoundGrant_ExpiredExcludedFromAuthQueries(t *testing.T) {
 // not just the scope-aware queries — otherwise expired access still authorizes
 // those paths between sweeps.
 func TestTimeBoundGrant_ExpiredExcludedFromFlatRoleAndPermLists(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 
@@ -60,6 +62,7 @@ func TestTimeBoundGrant_ExpiredExcludedFromFlatRoleAndPermLists(t *testing.T) {
 // The sweep removes only expired grants (not permanent or future ones), returns
 // the count, and audits each removal as role.expired.
 func TestRemoveExpiredRoleGrants_SweepsAndAudits(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
@@ -94,6 +97,7 @@ func TestRemoveExpiredRoleGrants_SweepsAndAudits(t *testing.T) {
 
 // A second sweep with nothing expired removes nothing (idempotent).
 func TestRemoveExpiredRoleGrants_NoopWhenNothingExpired(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -107,6 +111,7 @@ func TestRemoveExpiredRoleGrants_NoopWhenNothingExpired(t *testing.T) {
 // Approving an access request with a TTL grants the role time-bound: the grant row
 // carries an ExpiresAt roughly TTL in the future and is active until then.
 func TestApproveAccessRequestWithExpiry_TimeBound(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}))
@@ -142,6 +147,7 @@ func TestApproveAccessRequestWithExpiry_TimeBound(t *testing.T) {
 
 // With no TTL, approval grants a permanent role (ExpiresAt nil) — unchanged behavior.
 func TestApproveAccessRequest_PermanentByDefault(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}))

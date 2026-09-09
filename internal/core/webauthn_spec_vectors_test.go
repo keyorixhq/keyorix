@@ -174,6 +174,7 @@ func seedSpecCredential(t *testing.T, c *KeyorixCore, db *gorm.DB, userID uint) 
 // the credential row is stored, WebAuthn is enabled for the account, and the
 // registration is audited.
 func TestFinishWebAuthnRegistration_SucceedsWithRealAttestation(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 
@@ -206,6 +207,7 @@ func TestFinishWebAuthnRegistration_SucceedsWithRealAttestation(t *testing.T) {
 // WebAuthnID must not let userID 1 complete it, even with an otherwise
 // perfectly valid attestation.
 func TestFinishWebAuthnRegistration_RejectsUserIDMismatch(t *testing.T) {
+	t.Parallel()
 	c, _ := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 
@@ -228,6 +230,7 @@ func TestFinishWebAuthnRegistration_RejectsUserIDMismatch(t *testing.T) {
 // account owner is returned, the credential's signature counter is
 // persisted, a genuine MFAStepUpGrant is minted, and the login is audited.
 func TestFinishWebAuthnLogin_SucceedsWithRealAssertion(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedSpecCredential(t, c, db, 1)
@@ -271,6 +274,7 @@ func TestFinishWebAuthnLogin_SucceedsWithRealAssertion(t *testing.T) {
 // go-webauthn's own "unable to find the credential" rejection, reachable only
 // once verification gets far enough to look the credential up.
 func TestFinishWebAuthnLogin_RejectsCredentialMismatch(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	ctx := context.Background()
@@ -298,6 +302,7 @@ func TestFinishWebAuthnLogin_RejectsCredentialMismatch(t *testing.T) {
 // lookup failure), and the failure must be audited + counted toward the
 // account's lockout, mirroring a bad-password attempt.
 func TestFinishWebAuthnLogin_RejectsCorruptedSignature(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedSpecCredential(t, c, db, 1)
@@ -326,6 +331,7 @@ func TestFinishWebAuthnLogin_RejectsCorruptedSignature(t *testing.T) {
 // encoding), the credential verifies, and a full passwordless login
 // completes (session minted, step-up grant minted, audited).
 func TestFinishWebAuthnPasswordlessLogin_SucceedsWithRealAssertion(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedSpecCredential(t, c, db, 1)
@@ -356,6 +362,7 @@ func TestFinishWebAuthnPasswordlessLogin_SucceedsWithRealAssertion(t *testing.T)
 // that failure must refuse the login (not panic or silently proceed
 // unauthenticated).
 func TestFinishWebAuthnPasswordlessLogin_RejectsUnknownUserHandle(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedSpecCredential(t, c, db, 1)
@@ -378,6 +385,7 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsUnknownUserHandle(t *testing.T) 
 // path: the user handle resolves correctly, but the asserted credential ID
 // does not match any of that user's stored passkeys.
 func TestFinishWebAuthnPasswordlessLogin_RejectsCredentialMismatch(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedSpecCredential(t, c, db, 1)
@@ -398,6 +406,7 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsCredentialMismatch(t *testing.T)
 // passwordless login has, since there is no separate MFA challenge) cannot
 // be replayed after a completed login.
 func TestFinishWebAuthnPasswordlessLogin_RejectsReplayedSession(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedSpecCredential(t, c, db, 1)
@@ -423,6 +432,7 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsReplayedSession(t *testing.T) {
 // still be refused, the credential disabled, and the clone audited -- all
 // from inside FinishWebAuthnLogin's own call sequence.
 func TestFinishWebAuthnLogin_ClonedCredentialRejectsAndDisablesEndToEnd(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	credID := specHex(t, specCredentialIDHex)
@@ -461,6 +471,7 @@ func TestFinishWebAuthnLogin_ClonedCredentialRejectsAndDisablesEndToEnd(t *testi
 // the pre-enrolment session purge -- that only fires once, on the passkey
 // that first turns WebAuthn on.
 func TestFinishWebAuthnRegistration_SecondPasskeyDoesNotRepurgeSessions(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedCredential(t, c, db, 1, "already-registered-cred")
@@ -489,6 +500,7 @@ func TestFinishWebAuthnRegistration_SecondPasskeyDoesNotRepurgeSessions(t *testi
 // an account suspended after the ceremony began must still be refused, even
 // with an otherwise cryptographically valid assertion.
 func TestFinishWebAuthnPasswordlessLogin_RejectsSuspendedAccount(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	ctx := context.Background()
 	seedSpecCredential(t, c, db, 1)
@@ -511,6 +523,7 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsSuspendedAccount(t *testing.T) {
 // successful WebAuthn login must also upsert an MFAStepupToken (in addition
 // to the unconditional MFAStepUpGrant both paths always mint).
 func TestFinishWebAuthnLogin_RecordsMFAStepupTokenWhenClassificationRequires(t *testing.T) {
+	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)
 	c.classificationRestrictedRequiresMFAStepUp = true
 	ctx := context.Background()

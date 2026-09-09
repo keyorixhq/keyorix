@@ -16,6 +16,7 @@ import (
 )
 
 func TestSuspendResumeProjectSecrets(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -97,6 +98,7 @@ func TestSuspendResumeProjectSecrets(t *testing.T) {
 // caller who could not PUT-update "unshared" individually must not be able to
 // suspend/resume it via the bulk project-wide op either.
 func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

@@ -30,6 +30,7 @@ func tokenExpiresAt(d time.Duration) *time.Time {
 // ── PAT tests ────────────────────────────────────────────────────────────────
 
 func TestCheckTokenExpiry_NoExpiringTokens(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -48,6 +49,7 @@ func TestCheckTokenExpiry_NoExpiringTokens(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_PATExpiringIn3Days_Warning(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -76,6 +78,7 @@ func TestCheckTokenExpiry_PATExpiringIn3Days_Warning(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_PATExpiringIn12Hours_Critical(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -102,6 +105,7 @@ func TestCheckTokenExpiry_PATExpiringIn12Hours_Critical(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_AlreadyExpiredPAT_NotCounted(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -127,6 +131,7 @@ func TestCheckTokenExpiry_AlreadyExpiredPAT_NotCounted(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_PATDeduplication_SecondCallZero(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -169,6 +174,7 @@ func TestCheckTokenExpiry_PATDeduplication_SecondCallZero(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_PATUpgradeWarningToCritical(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -203,6 +209,7 @@ func TestCheckTokenExpiry_PATUpgradeWarningToCritical(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_ListExpiringPATsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -218,6 +225,7 @@ func TestCheckTokenExpiry_ListExpiringPATsError(t *testing.T) {
 // ── Machine credential tests ──────────────────────────────────────────────────
 
 func TestCheckTokenExpiry_MachineCredExpiringIn3Days_Warning(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -251,6 +259,7 @@ func TestCheckTokenExpiry_MachineCredExpiringIn3Days_Warning(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_MachineCredExpiringIn12Hours_Critical(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -283,6 +292,7 @@ func TestCheckTokenExpiry_MachineCredExpiringIn12Hours_Critical(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_AlreadyExpiredMachineCred_NotCounted(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -310,6 +320,7 @@ func TestCheckTokenExpiry_AlreadyExpiredMachineCred_NotCounted(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_ListExpiringMachineCredsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -325,6 +336,7 @@ func TestCheckTokenExpiry_ListExpiringMachineCredsError(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_MachineCredDeduplication(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -364,6 +376,7 @@ func TestCheckTokenExpiry_MachineCredDeduplication(t *testing.T) {
 }
 
 func TestCheckTokenExpiry_MachineCredUpgradeWarningToCritical(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -406,6 +419,7 @@ func TestCheckTokenExpiry_MachineCredUpgradeWarningToCritical(t *testing.T) {
 // ── Combined PAT + machine in same call ───────────────────────────────────────
 
 func TestCheckTokenExpiry_BothPATAndMachineCred(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -452,6 +466,7 @@ func TestCheckTokenExpiry_BothPATAndMachineCred(t *testing.T) {
 // ── globalAdminIDs error path for machine creds ───────────────────────────────
 
 func TestCheckTokenExpiry_AdminIDsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -478,6 +493,7 @@ func TestCheckTokenExpiry_AdminIDsError(t *testing.T) {
 // TestUnreadPATExpiryReminder_ListNotificationsError verifies that when
 // ListNotifications returns an error, the helper returns nil (prefer to notify).
 func TestUnreadPATExpiryReminder_ListNotificationsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -491,6 +507,7 @@ func TestUnreadPATExpiryReminder_ListNotificationsError(t *testing.T) {
 
 // TestUnreadMachineCredExpiryReminder_ListNotificationsError mirrors the above for machine creds.
 func TestUnreadMachineCredExpiryReminder_ListNotificationsError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -504,6 +521,7 @@ func TestUnreadMachineCredExpiryReminder_ListNotificationsError(t *testing.T) {
 
 // TestBumpTokenExpiryCount_AllBranches exercises every counter branch.
 func TestBumpTokenExpiryCount_AllBranches(t *testing.T) {
+	t.Parallel()
 	r := &TokenExpiryCheckResult{}
 	bumpTokenExpiryCount(r, models.NotificationSeverityWarning, true)
 	assert.Equal(t, 1, r.PATWarnings)
@@ -517,6 +535,7 @@ func TestBumpTokenExpiryCount_AllBranches(t *testing.T) {
 
 // TestTokenExpirySeverity_Boundary verifies the threshold boundary.
 func TestTokenExpirySeverity_Boundary(t *testing.T) {
+	t.Parallel()
 	now := tokenExpiryFixed
 	// Exactly 1 day away → critical (Before check: expiresAt < now+1d is false at == boundary;
 	// need to check one second before to be strictly before.)
@@ -529,6 +548,7 @@ func TestTokenExpirySeverity_Boundary(t *testing.T) {
 
 // TestPATExpiryMessage checks message formatting.
 func TestPATExpiryMessage(t *testing.T) {
+	t.Parallel()
 	exp := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	title, msg := patExpiryMessage("my-token", &exp)
 	assert.Equal(t, "Personal access token expiring", title)
@@ -538,6 +558,7 @@ func TestPATExpiryMessage(t *testing.T) {
 
 // TestMachineCredExpiryMessage checks message formatting.
 func TestMachineCredExpiryMessage(t *testing.T) {
+	t.Parallel()
 	exp := time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)
 	title, msg := machineCredExpiryMessage("runner-cred", &exp)
 	assert.Equal(t, "Machine credential expiring", title)
@@ -548,6 +569,7 @@ func TestMachineCredExpiryMessage(t *testing.T) {
 // TestCheckTokenExpiry_MachineCredNoAdmins verifies that with zero global admins
 // no notifications are emitted but result is all zeros (not an error).
 func TestCheckTokenExpiry_MachineCredNoAdmins(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -574,6 +596,7 @@ func TestCheckTokenExpiry_MachineCredNoAdmins(t *testing.T) {
 // TestCheckTokenExpiry_PATNilExpiresAt ensures a PAT with nil ExpiresAt is skipped
 // even if the storage layer erroneously returns it.
 func TestCheckTokenExpiry_PATNilExpiresAt(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -593,6 +616,7 @@ func TestCheckTokenExpiry_PATNilExpiresAt(t *testing.T) {
 
 // TestCheckTokenExpiry_MachineCredNilExpiresAt mirrors the above for machine creds.
 func TestCheckTokenExpiry_MachineCredNilExpiresAt(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -620,6 +644,7 @@ func TestCheckTokenExpiry_MachineCredNilExpiresAt(t *testing.T) {
 // when multiple admins exist, the machine-cred counter increments only once
 // per credential (not once per admin).
 func TestCheckTokenExpiry_MachineCredMultipleAdmins_OnlyCountsOnce(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -661,6 +686,7 @@ func TestCheckTokenExpiry_MachineCredMultipleAdmins_OnlyCountsOnce(t *testing.T)
 // TestCheckTokenExpiry_MachineCredUpgradeCountsOnceAcrossAdmins verifies
 // that escalation across multiple admins only increments the counter once.
 func TestCheckTokenExpiry_MachineCredUpgradeCountsOnceAcrossAdmins(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -704,6 +730,7 @@ func TestCheckTokenExpiry_MachineCredUpgradeCountsOnceAcrossAdmins(t *testing.T)
 // TestCheckTokenExpiry_MachineCredUpgradeFailNotCounted verifies that a failed
 // upgradeReminder (UpdateNotification error) does not increment the counter.
 func TestCheckTokenExpiry_MachineCredUpgradeFailNotCounted(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -750,6 +777,7 @@ func TestCheckTokenExpiry_MachineCredUpgradeFailNotCounted(t *testing.T) {
 // stable ID (encoded in Link via patExpiryLink), so A's standing reminder no
 // longer masks B's.
 func TestCheckTokenExpiry_PATDedupKeyedOnID_NotName(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()
@@ -789,6 +817,7 @@ func TestCheckTokenExpiry_PATDedupKeyedOnID_NotName(t *testing.T) {
 // above for machine credentials: two credentials with the same Name but
 // different IDs, notified to the same admin, must each get their own reminder.
 func TestCheckTokenExpiry_MachineCredDedupKeyedOnID_NotName(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := newTokenExpiryCore(ms)
 	ctx := context.Background()

@@ -93,12 +93,14 @@ func newACLCoreWithStorage(base *KeyorixCore, st corestorage.Storage) *KeyorixCo
 // --- EncodeSecretACLPerms ---
 
 func TestEncodeSecretACLPerms_Empty(t *testing.T) {
+	t.Parallel()
 	_, err := EncodeSecretACLPerms([]string{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one permission is required")
 }
 
 func TestEncodeSecretACLPerms_Nil(t *testing.T) {
+	t.Parallel()
 	_, err := EncodeSecretACLPerms(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one permission is required")
@@ -107,16 +109,19 @@ func TestEncodeSecretACLPerms_Nil(t *testing.T) {
 // --- DecodeSecretACLPerms ---
 
 func TestDecodeSecretACLPerms_EmptyString(t *testing.T) {
+	t.Parallel()
 	assert.Nil(t, DecodeSecretACLPerms(""))
 }
 
 func TestDecodeSecretACLPerms_BadJSON(t *testing.T) {
+	t.Parallel()
 	assert.Nil(t, DecodeSecretACLPerms("not-valid-json"))
 }
 
 // --- GrantSecretACL validation errors ---
 
 func TestGrantSecretACL_ZeroActorID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "g-actor-zero")
@@ -126,6 +131,7 @@ func TestGrantSecretACL_ZeroActorID(t *testing.T) {
 }
 
 func TestGrantSecretACL_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newACLCore(t)
 	err := c.GrantSecretACL(ctx, 1, 0, 1, []string{"secrets.read"})
@@ -134,6 +140,7 @@ func TestGrantSecretACL_ZeroSecretID(t *testing.T) {
 }
 
 func TestGrantSecretACL_ZeroUserID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "g-user-zero")
@@ -143,6 +150,7 @@ func TestGrantSecretACL_ZeroUserID(t *testing.T) {
 }
 
 func TestGrantSecretACL_EmptyPermsSlice(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "g-empty-perms")
@@ -152,6 +160,7 @@ func TestGrantSecretACL_EmptyPermsSlice(t *testing.T) {
 }
 
 func TestGrantSecretACL_MissingSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _ := newACLCore(t)
 	// secretID 99999 does not exist → requireSecret returns error.
@@ -160,6 +169,7 @@ func TestGrantSecretACL_MissingSecret(t *testing.T) {
 }
 
 func TestGrantSecretACL_CreateOrUpdateError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "g-create-err")
@@ -173,6 +183,7 @@ func TestGrantSecretACL_CreateOrUpdateError(t *testing.T) {
 // --- RevokeSecretACL ---
 
 func TestRevokeSecretACL_ZeroACLID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "rv-zero-id")
@@ -182,6 +193,7 @@ func TestRevokeSecretACL_ZeroACLID(t *testing.T) {
 }
 
 func TestRevokeSecretACL_ListError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "rv-list-err")
@@ -193,6 +205,7 @@ func TestRevokeSecretACL_ListError(t *testing.T) {
 }
 
 func TestRevokeSecretACL_DeleteError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "rv-delete-err")
@@ -208,6 +221,7 @@ func TestRevokeSecretACL_DeleteError(t *testing.T) {
 // --- HasSecretACL ancestor paths ---
 
 func TestHasSecretACL_AncestorUnsupported(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "ha-unsupported")
@@ -220,6 +234,7 @@ func TestHasSecretACL_AncestorUnsupported(t *testing.T) {
 }
 
 func TestHasSecretACL_AncestorStorageError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "ha-anc-err")
@@ -231,6 +246,7 @@ func TestHasSecretACL_AncestorStorageError(t *testing.T) {
 }
 
 func TestHasSecretACL_AncestorLoopACLError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "ha-loop-err")
@@ -245,6 +261,7 @@ func TestHasSecretACL_AncestorLoopACLError(t *testing.T) {
 // --- aclGrantsPermission non-not-found error ---
 
 func TestAclGrantsPermission_NonNotFoundErr(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db := newACLCore(t)
 	sid := mkACLSecret(t, db, "ggp-non-notfound")
@@ -259,10 +276,12 @@ func TestAclGrantsPermission_NonNotFoundErr(t *testing.T) {
 // --- isNotFound ---
 
 func TestIsNotFound_Nil(t *testing.T) {
+	t.Parallel()
 	assert.False(t, isNotFound(nil))
 }
 
 func TestIsNotFound_Messages(t *testing.T) {
+	t.Parallel()
 	assert.True(t, isNotFound(errors.New("record not found")))
 	assert.True(t, isNotFound(errors.New("entry not found")))
 	assert.False(t, isNotFound(errors.New("some other error")))

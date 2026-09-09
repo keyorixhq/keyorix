@@ -34,6 +34,7 @@ import (
 // file-backed SQLite (not :memory:) so many concurrent connections behave like the
 // production single-process case. Run with -race.
 func TestConcurrency_WebAuthnPersistUpdatedCredential_NoStaleCounterRegression(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "webauthn.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
@@ -100,6 +101,7 @@ func TestConcurrency_WebAuthnPersistUpdatedCredential_NoStaleCounterRegression(t
 // write would silently clobber the winner's persisted value. After the fix the
 // transaction re-reads the row's current counter and skips the write.
 func TestConcurrency_WebAuthnPersistUpdatedCredential_StaleWriteAfterWinnerIsRejected(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "webauthn2.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

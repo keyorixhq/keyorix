@@ -39,6 +39,7 @@ import (
 const invariantTestMachineID = uint(88)
 
 func TestDisableClonedWebAuthnCredential_Invariant_ExactlyOneAuditEventWithCorrectActor(t *testing.T) {
+	t.Parallel()
 	t.Run("login-time disable (rejectIfCloned)", func(t *testing.T) {
 		c, db := newWebAuthnTestCore(t, true)
 		credID := []byte("cred-invariant-login")

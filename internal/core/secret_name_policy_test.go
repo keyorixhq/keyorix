@@ -16,6 +16,7 @@ import (
 )
 
 func TestSecretNamePolicy_Validate(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	t.Run("disabled policy passes anything", func(t *testing.T) {
@@ -71,6 +72,7 @@ func TestSecretNamePolicy_Validate(t *testing.T) {
 }
 
 func TestCreateSecret_NamePolicy(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

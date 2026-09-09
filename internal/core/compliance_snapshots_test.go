@@ -40,6 +40,7 @@ func newSnapshotCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 
 // TakeComplianceSnapshot on an empty DB should succeed and return a snapshot.
 func TestTakeComplianceSnapshot_Success(t *testing.T) {
+	t.Parallel()
 	c, _ := newSnapshotCore(t)
 
 	snap, err := c.TakeComplianceSnapshot(context.Background())
@@ -51,6 +52,7 @@ func TestTakeComplianceSnapshot_Success(t *testing.T) {
 // TakeComplianceSnapshot propagates GetCompliancePosture errors.
 // GetCompliancePosture fails at the top level only when ListProjects fails.
 func TestTakeComplianceSnapshot_PropagatesError(t *testing.T) {
+	t.Parallel()
 	c, db := newSnapshotCore(t)
 	// Drop the projects table to force ListProjects (the first call inside
 	// buildComplianceSnapshot) to fail, making GetCompliancePosture return an error.
@@ -63,6 +65,7 @@ func TestTakeComplianceSnapshot_PropagatesError(t *testing.T) {
 
 // ListComplianceSnapshots propagates a storage error.
 func TestListComplianceSnapshots_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListCompliancePostureSnapshots", mock.Anything, 0).
 		Return(nil, errors.New("db down"))
@@ -75,6 +78,7 @@ func TestListComplianceSnapshots_StorageError(t *testing.T) {
 
 // ListComplianceSnapshots returns the slices from storage unmodified.
 func TestListComplianceSnapshots_ReturnsSnapshots(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 	snaps := []*models.CompliancePostureSnapshot{
 		{ID: 1, SnapshotDate: fixed, PassedControls: 10},
@@ -92,6 +96,7 @@ func TestListComplianceSnapshots_ReturnsSnapshots(t *testing.T) {
 
 // ListComplianceSnapshots with limit=0 passes 0 to storage (default handled there).
 func TestListComplianceSnapshots_ZeroLimitPassedThrough(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListCompliancePostureSnapshots", mock.Anything, 0).Return([]*models.CompliancePostureSnapshot{}, nil)
 

@@ -32,6 +32,7 @@ import (
 var csvWriterCompletenessAllowlist = map[string]string{}
 
 func TestCSVWriters_EncodeAgainstFormulaInjection(t *testing.T) {
+	t.Parallel()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed — cannot locate the repo root relative to this test file")

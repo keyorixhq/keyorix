@@ -44,6 +44,7 @@ func strongBootstrapReq(token string) *BootstrapRequest {
 // TestBootstrapSystem_TokenGate pins the fix for the unauthenticated first-admin-claim
 // race: /system/init must refuse unless the caller presents the configured token.
 func TestBootstrapSystem_TokenGate(t *testing.T) {
+	t.Parallel()
 	t.Run("refuses when no server token is configured (fail closed)", func(t *testing.T) {
 		c := freshBootstrapCore(t) // no SetBootstrapToken
 		_, err := c.BootstrapSystem(context.Background(), strongBootstrapReq("anything"))
@@ -103,6 +104,7 @@ func TestBootstrapSystem_TokenGate(t *testing.T) {
 // "first admin". Only one concurrent call may actually create a user; every other
 // concurrent call must observe AlreadyInitialized instead.
 func TestBootstrapSystem_ConcurrentCallsProduceExactlyOneAdmin(t *testing.T) {
+	t.Parallel()
 	c := freshBootstrapCore(t)
 	c.SetBootstrapToken("correct-token")
 

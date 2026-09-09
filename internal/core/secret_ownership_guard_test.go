@@ -48,6 +48,7 @@ var ownerIDMutationAllowlist = map[string]string{
 
 // TestNoUntrackedOwnerIDMutations is the AST freshness check described above.
 func TestNoUntrackedOwnerIDMutations(t *testing.T) {
+	t.Parallel()
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("failed to list package directory: %v", err)
@@ -120,6 +121,7 @@ func TestNoUntrackedOwnerIDMutations(t *testing.T) {
 // entry must name a function that still exists and still assigns OwnerID, so a rename
 // or refactor doesn't leave a stale, misleadingly-permissive entry behind.
 func TestOwnerIDMutationAllowlist_NoStaleEntries(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	found := make(map[string]bool, len(ownerIDMutationAllowlist))
 

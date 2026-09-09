@@ -46,6 +46,7 @@ func newPATScopingCore(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 // the restriction bounds even a GLOBAL ADMIN's authorization — the property mocks
 // alone can't fully establish because it must survive the real admin bypass.
 func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, st := newPATScopingCore(t)
 	admin, err := st.GetUserByUsername(ctx, "admin")

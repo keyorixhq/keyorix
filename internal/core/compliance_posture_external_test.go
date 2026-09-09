@@ -14,6 +14,7 @@ import (
 // GetCompliancePosture rolls up second-factor coverage, access-review campaign
 // coverage, dormant role grants, and break-glass usage across the deployment.
 func TestGetCompliancePosture_RollsUpControls(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -69,6 +70,7 @@ func TestGetCompliancePosture_RollsUpControls(t *testing.T) {
 // applyAccessRequestEffectiveExpiry — used by the posture/evidence read path —
 // corrects this without a write).
 func TestGetCompliancePosture_AccessRequests(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -140,6 +142,7 @@ func TestGetCompliancePosture_AccessRequests(t *testing.T) {
 
 // A recent secret access keeps a role grant out of the dormant tally.
 func TestCompliancePosture_RecentActivityNotDormant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -169,6 +172,7 @@ func TestCompliancePosture_RecentActivityNotDormant(t *testing.T) {
 // accessActivityEventTypes now also matches secret.created/updated/rotated, not
 // just secret.read.
 func TestCompliancePosture_WriteOnlyActivityNotDormant(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -205,6 +209,7 @@ func TestCompliancePosture_WriteOnlyActivityNotDormant(t *testing.T) {
 // anywhere in the project", so the viewer grant's routine use masked a completely
 // separate, unused admin-tier standing grant as "non-dormant".
 func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotMaskedByReadActivity(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -240,6 +245,7 @@ func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotMaskedByReadActivi
 // demonstrating the fix distinguishes "used" from "unused" per grant rather than
 // simply always requiring elevated activity.
 func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotDormantWhenExercised(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -277,6 +283,7 @@ func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotDormantWhenExercis
 // longer masks her separate, genuinely-unused "role_manager" (roles.assign-only)
 // grant.
 func TestCompliancePosture_DormantRoleGrants_DistinctAdminTierGrantsNotMaskedByEachOther(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -319,6 +326,7 @@ func TestCompliancePosture_DormantRoleGrants_DistinctAdminTierGrantsNotMaskedByE
 // secrets.write — must be assessed independently: exercising the write-only grant
 // must not mask the separate, genuinely-unused read-only grant as non-dormant.
 func TestCompliancePosture_DormantRoleGrants_DistinctPlainTierGrantsNotMaskedByEachOther(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -358,6 +366,7 @@ func TestCompliancePosture_DormantRoleGrants_DistinctPlainTierGrantsNotMaskedByE
 // grants are correctly non-dormant — demonstrating the split credits each grant
 // independently rather than only ever flagging the read-tier one dormant.
 func TestCompliancePosture_DormantRoleGrants_DistinctPlainTierGrantsBothCreditedWhenBothExercised(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(

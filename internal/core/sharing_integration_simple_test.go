@@ -24,6 +24,7 @@ var sharingIntegrationDBSeq atomic.Int64
 
 // TestSharingIntegrationSimple tests the complete sharing workflow with real storage
 func TestSharingIntegrationSimple(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)

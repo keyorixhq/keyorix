@@ -18,6 +18,7 @@ import (
 // when a caller last cached it — proving the primitive the auth middleware's
 // cache-hit path relies on to avoid enforcing a stale CIDR allowlist.
 func TestCurrentPATRestriction_ReflectsLiveNarrowing(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PersonalAccessToken{}))
@@ -59,6 +60,7 @@ func TestCurrentPATRestriction_ReflectsLiveNarrowing(t *testing.T) {
 // "unrestricted" — the caller must fail closed / fall back to the prior
 // restriction, never treat a lookup failure as "no restriction."
 func TestCurrentPATRestriction_LookupFailureIsAnError(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PersonalAccessToken{}))

@@ -39,6 +39,7 @@ func newSuspendFixture(t *testing.T) (*KeyorixCore, uint, *gorm.DB) {
 }
 
 func TestSuspendResumeSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("suspend blocks value reads; resume restores them", func(t *testing.T) {
@@ -104,6 +105,7 @@ func newMockSuspendCore(store *MockStorage) *KeyorixCore {
 // persisted. Mirrors TestTransitionMachineIdentity's "lost race on the
 // conditional write is reported like an illegal transition" subtest.
 func TestSuspendResumeSecret_LostRace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("SuspendSecret", func(t *testing.T) {

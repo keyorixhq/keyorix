@@ -14,6 +14,7 @@ import (
 )
 
 func TestRequestPasswordReset(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const email = "reset@acme.io"
 	fixed := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
@@ -166,6 +167,7 @@ func (p *panicDeliverer) Name() string { return "panic-fake" }
 // wrap this call site, this test binary itself would crash before reaching
 // the assertions below.
 func TestRequestPasswordReset_PanicInDetachedGoroutineDoesNotCrash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const email = "reset-panic@acme.io"
 	fixed := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)

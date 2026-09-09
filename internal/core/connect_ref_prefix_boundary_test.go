@@ -15,6 +15,7 @@ import (
 // The fix replaces strings.HasPrefix with connect.RefWithinPrefix, which requires
 // ref to equal the prefix exactly or extend it starting with '/'.
 func TestRefMatches_SegmentBoundaryEnforced(t *testing.T) {
+	t.Parallel()
 	// Exact match is always permitted.
 	assert.True(t, refMatches("db/prod", "db/prod"),
 		"exact match on the prefix itself is allowed")
@@ -51,6 +52,7 @@ func TestRefMatches_SegmentBoundaryEnforced(t *testing.T) {
 // namespace, whereas it must still authorize refs that are exactly the prefix or
 // extend it on a segment boundary.
 func TestConnectRefRBAC_SegmentBoundaryEnforced(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("bare prefix does not leak into the sibling namespace", func(t *testing.T) {

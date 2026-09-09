@@ -60,6 +60,7 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, *gorm.DB, uint, uint) {
 }
 
 func TestRenderSecretTemplate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, projectID, _ := newRenderFixture(t)
 
@@ -106,6 +107,7 @@ func TestRenderSecretTemplate(t *testing.T) {
 // the handler switches on is the same for both branches — using the SAME reference for
 // both queries so the resolver's own "resolve %q" wrapping can't introduce a difference.)
 func TestRenderSecretTemplate_UniformResponseForNotFoundVsForbidden(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, projectID, secretID := newRenderFixture(t)
 
@@ -128,6 +130,7 @@ func TestRenderSecretTemplate_UniformResponseForNotFoundVsForbidden(t *testing.T
 // render can't be a covert exfiltration channel invisible to the audit trail and the
 // anomaly detector (which feeds on SecretAccessLog).
 func TestRenderSecretTemplate_RecordsReads(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, projectID, _ := newRenderFixture(t)
 
@@ -153,6 +156,7 @@ func TestRenderSecretTemplate_RecordsReads(t *testing.T) {
 // anomaly detector (which keys off per-secret SecretAccessLog rows) completely blind,
 // exactly matching the fetch-N-individually-vs-render-once asymmetry #324 called out.
 func TestRenderSecretTemplate_RecordsReadPerSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, projectID, _ := newRenderFixture(t)
 
@@ -241,6 +245,7 @@ func TestRenderSecretTemplate_RecordsReadPerSecret(t *testing.T) {
 // substance, a single read. This exercises the fix end-to-end through the real
 // GetSecretValue/audit-logging path, not just the pure secrettemplate.Render layer.
 func TestRenderSecretTemplate_DedupesRepeatedReference(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, projectID, _ := newRenderFixture(t)
 
@@ -282,6 +287,7 @@ func TestRenderSecretTemplate_DedupesRepeatedReference(t *testing.T) {
 // (no partial reads, no audit rows), even though most callers legitimately need far
 // fewer.
 func TestRenderSecretTemplate_RejectsTooManyDistinctReferences(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, projectID, _ := newRenderFixture(t)
 
@@ -362,6 +368,7 @@ func (s *callRecordingStorage) GetLatestSecretVersion(ctx context.Context, secre
 // a unit test): it asserts the call SET is now uniform, which is what makes the
 // three cases' cost uniform.
 func TestRenderSecretTemplate_EqualizesResolutionCostShape(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, projectID, _ := newRenderFixture(t)
 
@@ -414,6 +421,7 @@ func TestRenderSecretTemplate_EqualizesResolutionCostShape(t *testing.T) {
 // real references plus one deliberately-failing one to burn through a read
 // budget and flood the audit trail with reads that delivered nothing.
 func TestRenderSecretTemplate_NoSideEffectsWhenLaterReferenceFails(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, projectID, dbSecretID := newRenderFixture(t)
 

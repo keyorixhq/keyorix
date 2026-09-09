@@ -16,6 +16,7 @@ import (
 // TestSetSecretRetentionOverride_HappyPath verifies that a valid override (>= 7
 // days) is forwarded to storage and that an audit event is emitted.
 func TestSetSecretRetentionOverride_HappyPath(t *testing.T) {
+	t.Parallel()
 	m := &MockStorage{}
 	c := NewKeyorixCore(m)
 
@@ -31,6 +32,7 @@ func TestSetSecretRetentionOverride_HappyPath(t *testing.T) {
 // TestSetSecretRetentionOverride_ClearOverride verifies that days=0 is allowed
 // (clears the override) and is forwarded to storage.
 func TestSetSecretRetentionOverride_ClearOverride(t *testing.T) {
+	t.Parallel()
 	m := &MockStorage{}
 	c := NewKeyorixCore(m)
 
@@ -45,6 +47,7 @@ func TestSetSecretRetentionOverride_ClearOverride(t *testing.T) {
 // TestSetSecretRetentionOverride_BelowMinimum verifies that days=6 (below the
 // 7-day floor) is rejected with ErrInvalidRetentionDays without touching storage.
 func TestSetSecretRetentionOverride_BelowMinimum(t *testing.T) {
+	t.Parallel()
 	m := &MockStorage{}
 	c := NewKeyorixCore(m)
 
@@ -57,6 +60,7 @@ func TestSetSecretRetentionOverride_BelowMinimum(t *testing.T) {
 // TestSetSecretRetentionOverride_Negative verifies that a negative days value
 // is rejected with ErrInvalidRetentionDays.
 func TestSetSecretRetentionOverride_Negative(t *testing.T) {
+	t.Parallel()
 	m := &MockStorage{}
 	c := NewKeyorixCore(m)
 
@@ -69,6 +73,7 @@ func TestSetSecretRetentionOverride_Negative(t *testing.T) {
 // TestSetSecretRetentionOverride_StorageError verifies that a storage error is
 // propagated to the caller (and no audit event is emitted on failure).
 func TestSetSecretRetentionOverride_StorageError(t *testing.T) {
+	t.Parallel()
 	m := &MockStorage{}
 	c := NewKeyorixCore(m)
 
@@ -85,6 +90,7 @@ func TestSetSecretRetentionOverride_StorageError(t *testing.T) {
 // TestSetSecretRetentionOverride_ExactMinimum verifies that exactly 7 days is
 // accepted (boundary condition).
 func TestSetSecretRetentionOverride_ExactMinimum(t *testing.T) {
+	t.Parallel()
 	m := &MockStorage{}
 	c := NewKeyorixCore(m)
 
@@ -101,6 +107,7 @@ func TestSetSecretRetentionOverride_ExactMinimum(t *testing.T) {
 // TestGetEffectiveRetentionDays_OverrideSet verifies that a non-zero
 // RetentionOverrideDays on the secret takes precedence over the global value.
 func TestGetEffectiveRetentionDays_OverrideSet(t *testing.T) {
+	t.Parallel()
 	secret := &models.SecretNode{RetentionOverrideDays: 365}
 	result := GetEffectiveRetentionDays(secret, 90)
 	assert.Equal(t, 365, result)
@@ -109,6 +116,7 @@ func TestGetEffectiveRetentionDays_OverrideSet(t *testing.T) {
 // TestGetEffectiveRetentionDays_OverrideZero verifies that when
 // RetentionOverrideDays is 0 the global policy value is returned.
 func TestGetEffectiveRetentionDays_OverrideZero(t *testing.T) {
+	t.Parallel()
 	secret := &models.SecretNode{RetentionOverrideDays: 0}
 	result := GetEffectiveRetentionDays(secret, 90)
 	assert.Equal(t, 90, result)
@@ -118,6 +126,7 @@ func TestGetEffectiveRetentionDays_OverrideZero(t *testing.T) {
 // whose override equals the global policy correctly returns the override value
 // (same effective result, but driven by the override branch).
 func TestGetEffectiveRetentionDays_OverrideEqualsGlobal(t *testing.T) {
+	t.Parallel()
 	secret := &models.SecretNode{RetentionOverrideDays: 90}
 	result := GetEffectiveRetentionDays(secret, 90)
 	assert.Equal(t, 90, result)

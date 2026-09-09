@@ -24,6 +24,7 @@ import (
 // with an explicit project-scoped role). If this test fails, the fix is almost
 // never "strip the {0,0} entry, it looks like noise" — read ADR-082 §D/§E first.
 func TestConnectOwnership_ZeroScopeEntryMustSurvive(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 99}})
 
@@ -42,6 +43,7 @@ func TestConnectOwnership_ZeroScopeEntryMustSurvive(t *testing.T) {
 // platform connectors, and ConnectRefGrant delegation for an otherwise-denied
 // connector.
 func TestConnectOwnership_ReadFederatedSecret(t *testing.T) {
+	t.Parallel()
 	const connectorProjectID = 42
 
 	tests := []struct {
@@ -108,6 +110,7 @@ func TestConnectOwnership_ReadFederatedSecret(t *testing.T) {
 // — is denied, terminally (no ConnectRefGrant delegation fallback; see
 // connectDenyReasonPlatformPermissionDenied).
 func TestConnectOwnership_PlatformConnectorRequiresPlatformUse(t *testing.T) {
+	t.Parallel()
 	c, _ := connectRBACCore(t, fakeConnector{name: "shared-vault", val: "shared-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
 
@@ -120,6 +123,7 @@ func TestConnectOwnership_PlatformConnectorRequiresPlatformUse(t *testing.T) {
 // counterpart: a caller who DOES hold connect.platform.use reaches the platform
 // connector, same as any other allow path.
 func TestConnectOwnership_PlatformConnectorAllowsHolderOfPlatformUse(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "shared-vault", val: "shared-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
 	seedRoleForUser(t, db, 1, 10, "platform-caller")
@@ -135,6 +139,7 @@ func TestConnectOwnership_PlatformConnectorAllowsHolderOfPlatformUse(t *testing.
 // connector's project is still allowed through an explicit ConnectRefGrant
 // covering their role and the requested ref.
 func TestConnectOwnership_ConnectRefGrantDelegatesForNonOwnedCaller(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 42}})
 
@@ -161,6 +166,7 @@ func TestConnectOwnership_ConnectRefGrantDelegatesForNonOwnedCaller(t *testing.T
 // delegation path (deny), not "no additional narrowing" (allow) — the shortcut
 // that's correct only for an already-owned caller.
 func TestConnectOwnership_NonOwnedCallerNoGrantsAtAllIsDenied(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 42}})
 	seedRoleForUserAtProject(t, db, 6, 31, "not-owner", 99) // no grant seeded at all
@@ -175,6 +181,7 @@ func TestConnectOwnership_NonOwnedCallerNoGrantsAtAllIsDenied(t *testing.T) {
 // check exists to guarantee this never happens for a correctly-booted server;
 // this proves connectOwnershipSatisfied's own runtime backstop independently.
 func TestConnectOwnership_MissingFromOwnershipMapDenies(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
 	// connectRBACCore defaults every connector to scope: platform (always-owned) —
 	// explicitly clear that here to exercise the genuinely-missing-entry case.
@@ -191,6 +198,7 @@ func TestConnectOwnership_MissingFromOwnershipMapDenies(t *testing.T) {
 // scope entry from GetMachineRoleScopes, not {0,0} — so it does NOT get the
 // global wildcard, and is correctly bounded to that one project.
 func TestConnectOwnership_MachineIdentityProjectScopedRoleNotGlobal(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 42}})
 
@@ -219,6 +227,7 @@ func TestConnectOwnership_MachineIdentityProjectScopedRoleNotGlobal(t *testing.T
 // same ownership wildcard a user would (ADR-082 §E) — roleSetContainsAdmin-style
 // actor-agnostic behavior extended consistently to Connect ownership.
 func TestConnectOwnership_MachineIdentityGlobalRoleGetsWildcard(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "project", ProjectID: 42}})
 
@@ -238,6 +247,7 @@ func TestConnectOwnership_MachineIdentityGlobalRoleGetsWildcard(t *testing.T) {
 // a discovery endpoint that lists an unreachable connector leaks its existence to
 // a caller who cannot use it.
 func TestConnectReadableConnectorNames_FiltersToOwnedSubset(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t,
 		fakeConnector{name: "aws-payments", val: "v1"},
 		fakeConnector{name: "aws-billing", val: "v2"},
@@ -259,6 +269,7 @@ func TestConnectReadableConnectorNames_FiltersToOwnedSubset(t *testing.T) {
 // separate "if admin, return everything" branch — ConnectReadableConnectorNames
 // has no such branch, so this is exercising the loop's actual behavior.
 func TestConnectReadableConnectorNames_GlobalScopedCallerSeesAll(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t,
 		fakeConnector{name: "aws-payments", val: "v1"},
 		fakeConnector{name: "aws-billing", val: "v2"},
@@ -280,6 +291,7 @@ func TestConnectReadableConnectorNames_GlobalScopedCallerSeesAll(t *testing.T) {
 // caller lacking connect.platform.use sees a platform connector disappear from
 // discovery, exactly like ReadFederatedSecret would deny an actual read of it.
 func TestConnectReadableConnectorNames_PlatformFilteredWithoutPlatformUse(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t,
 		fakeConnector{name: "shared-vault", val: "v1"},
 		fakeConnector{name: "aws-payments", val: "v2"},
@@ -299,6 +311,7 @@ func TestConnectReadableConnectorNames_PlatformFilteredWithoutPlatformUse(t *tes
 // counterpart: a caller holding connect.platform.use sees the platform
 // connector in discovery too.
 func TestConnectReadableConnectorNames_PlatformVisibleWithPlatformUse(t *testing.T) {
+	t.Parallel()
 	c, db := connectRBACCore(t, fakeConnector{name: "shared-vault", val: "v1"})
 	c.SetConnectOwnership(map[string]ConnectOwnership{"shared-vault": {Scope: "platform"}})
 	seedRoleForUser(t, db, 1, 10, "platform-caller")

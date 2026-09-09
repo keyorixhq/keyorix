@@ -68,6 +68,7 @@ var guardedConfigMutations = map[string]configMutationSpec{
 // function named in guardedConfigMutations must call writeConfigChangeAuditEvent
 // somewhere in its body.
 func TestGuardedConfigMutations_CallSharedAuditHelper(t *testing.T) {
+	t.Parallel()
 	for name, spec := range guardedConfigMutations {
 		t.Run(name, func(t *testing.T) {
 			if !funcBodyCallsHelper(t, spec.file, name, "writeConfigChangeAuditEvent") {
@@ -83,6 +84,7 @@ func TestGuardedConfigMutations_CallSharedAuditHelper(t *testing.T) {
 // silently stop being checked. A stale entry doesn't fail the guard above (it
 // only checks found functions), so it's checked here explicitly.
 func TestGuardedConfigMutations_EntriesStillExist(t *testing.T) {
+	t.Parallel()
 	for name, spec := range guardedConfigMutations {
 		t.Run(name, func(t *testing.T) {
 			if !funcExists(t, spec.file, name) {
@@ -97,6 +99,7 @@ func TestGuardedConfigMutations_EntriesStillExist(t *testing.T) {
 // with an empty/placeholder justification -- same discipline as writeguard's
 // TestAllowlistJustificationsAreNonEmpty.
 func TestGuardedConfigMutations_ReasonsAreNonEmpty(t *testing.T) {
+	t.Parallel()
 	for name, spec := range guardedConfigMutations {
 		if spec.reason == "" {
 			t.Errorf("guardedConfigMutations entry %q has no written justification", name)
@@ -111,6 +114,7 @@ func TestGuardedConfigMutations_ReasonsAreNonEmpty(t *testing.T) {
 // UpdateAnomalyConfig and must NOT be detected as calling
 // writeConfigChangeAuditEvent; UpdateAnomalyConfig (checked above) must.
 func TestFuncBodyCallsHelper_SelfCheck(t *testing.T) {
+	t.Parallel()
 	if funcBodyCallsHelper(t, "anomaly_config.go", "GetAnomalyConfig", "writeConfigChangeAuditEvent") {
 		t.Fatal("GetAnomalyConfig is a read-only accessor and must not be detected as calling " +
 			"writeConfigChangeAuditEvent -- the scanner is vacuously true")

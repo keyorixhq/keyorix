@@ -33,6 +33,7 @@ func newRateLimitCore(t *testing.T) (*KeyorixCore, func(time.Time)) {
 }
 
 func TestRateLimit_BlocksAtBudgetAndExpiresWithWindow(t *testing.T) {
+	t.Parallel()
 	c, setNow := newRateLimitCore(t)
 	ctx := context.Background()
 	base := c.now()
@@ -56,6 +57,7 @@ func TestRateLimit_BlocksAtBudgetAndExpiresWithWindow(t *testing.T) {
 }
 
 func TestRateLimit_EmptyIPNeverLimited(t *testing.T) {
+	t.Parallel()
 	c, _ := newRateLimitCore(t)
 	ctx := context.Background()
 	for i := 0; i < LoginMaxAttempts+5; i++ {
@@ -67,6 +69,7 @@ func TestRateLimit_EmptyIPNeverLimited(t *testing.T) {
 // TestCanonicalIP is #G20's detection_idea: assert multiple textual
 // representations of the same source normalize to one canonical form.
 func TestCanonicalIP(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ name, in, want string }{
 		{"bare IPv4", "203.0.113.9", "203.0.113.9"},
 		{"IPv4 with port", "203.0.113.9:5555", "203.0.113.9"},
@@ -91,6 +94,7 @@ func TestCanonicalIP(t *testing.T) {
 // strip the port, as several HTTP handlers previously did independently and
 // inconsistently).
 func TestRateLimit_CanonicalizesIPBeforeKeying(t *testing.T) {
+	t.Parallel()
 	c, _ := newRateLimitCore(t)
 	ctx := context.Background()
 
@@ -116,6 +120,7 @@ func TestRateLimit_CanonicalizesIPBeforeKeying(t *testing.T) {
 // BeginSAML previously had no rate limit at all, letting an unauthenticated
 // flood grow the SSOLoginState table without bound.
 func TestRateLimit_SSOBegin_BlocksAtBudgetAndExpiresWithWindow(t *testing.T) {
+	t.Parallel()
 	c, setNow := newRateLimitCore(t)
 	ctx := context.Background()
 	base := c.now()
@@ -135,6 +140,7 @@ func TestRateLimit_SSOBegin_BlocksAtBudgetAndExpiresWithWindow(t *testing.T) {
 }
 
 func TestRateLimit_SSOBegin_EmptyIPNeverLimited(t *testing.T) {
+	t.Parallel()
 	c, _ := newRateLimitCore(t)
 	ctx := context.Background()
 	for i := 0; i < SSOBeginMaxAttempts+5; i++ {
@@ -149,6 +155,7 @@ func TestRateLimit_SSOBegin_EmptyIPNeverLimited(t *testing.T) {
 // counters sharing one table (matching the existing password-reset prefix
 // convention).
 func TestRateLimit_SSOBegin_SharesLoginAttemptTableButOwnBudget(t *testing.T) {
+	t.Parallel()
 	c, _ := newRateLimitCore(t)
 	ctx := context.Background()
 
@@ -160,6 +167,7 @@ func TestRateLimit_SSOBegin_SharesLoginAttemptTableButOwnBudget(t *testing.T) {
 }
 
 func TestRateLimit_PruneRemovesAgedRows(t *testing.T) {
+	t.Parallel()
 	c, setNow := newRateLimitCore(t)
 	ctx := context.Background()
 	base := c.now()
@@ -184,6 +192,7 @@ func TestRateLimit_PruneRemovesAgedRows(t *testing.T) {
 // window — the storage call underneath must always receive the clamped
 // cutoff, not the caller's value.
 func TestPruneLoginAttempts_ClampsFutureBeforeToWindow(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	maxCutoff := now.Add(-LoginWindow)
 	attackerBefore := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -206,6 +215,7 @@ func TestPruneLoginAttempts_ClampsFutureBeforeToWindow(t *testing.T) {
 // narrow the deletion window below the default now-LoginWindow cutoff (a
 // stricter, not wider, request) — only widening past the window is blocked.
 func TestPruneLoginAttempts_NarrowerBeforeIsHonored(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	narrowerBefore := now.Add(-2 * LoginWindow)
 
@@ -226,6 +236,7 @@ func TestPruneLoginAttempts_NarrowerBeforeIsHonored(t *testing.T) {
 // the acting principal, the row count, and the effective cutoff — mirroring
 // PurgeExpiredSoftDeletes/PurgeExpiredComplianceRecords.
 func TestPruneLoginAttempts_AuditsActorRowCountAndCutoff(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	maxCutoff := now.Add(-LoginWindow)
 
@@ -259,6 +270,7 @@ func TestPruneLoginAttempts_AuditsActorRowCountAndCutoff(t *testing.T) {
 // zero rows writes no audit event at all (avoids flooding the audit trail
 // every maintenance-sweep tick when there's nothing to report).
 func TestPruneLoginAttempts_NoAuditWhenNothingRemoved(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	mockStore := new(MockStorage)
 	mockStore.On("PruneLoginAttempts", mock.Anything, mock.Anything).Return(int64(0), nil)
@@ -382,6 +394,7 @@ func newRemoteRateLimitCoreAgainst(t *testing.T, baseURL string) (*KeyorixCore, 
 // still expires old attempts: the exact same behavior TestRateLimit_
 // BlocksAtBudgetAndExpiresWithWindow already proves for LocalStorage.
 func TestRateLimit_RemoteStorageGenuinelyThrottles(t *testing.T) {
+	t.Parallel()
 	upstream := &fakeUpstreamLoginAttempts{}
 	srv := upstream.server(t)
 	defer srv.Close()

@@ -27,6 +27,7 @@ import (
 // (read) grant at the same scope. Reads still resolve via the permanent grant; writes came
 // only from the expired editor grant and must be denied.
 func TestCrossTenant_ExpiredGroupGrantExcluded(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "groupjit", 210)
@@ -55,6 +56,7 @@ func TestCrossTenant_ExpiredGroupGrantExcluded(t *testing.T) {
 // regression that denied any dated grant (e.g. flipping the comparison) would pass the
 // expired-grant test yet silently break legitimate just-in-time access.
 func TestCrossTenant_FutureGroupGrantStillAuthorizes(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "groupfuture", 211)
@@ -77,6 +79,7 @@ func TestCrossTenant_FutureGroupGrantStillAuthorizes(t *testing.T) {
 // (membership revocation — not a soft delete; the row is gone) must immediately drop the
 // inherited role, even though the group and its grant remain.
 func TestCrossTenant_GroupMembershipRevocationRevokesRole(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "exgroupmember", 212)

@@ -19,6 +19,7 @@ import (
 )
 
 func TestValidateReplacementCredential_ZeroID_NoOp(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	hash, err := c.validateReplacementCredential(context.Background(), 1, 0)
@@ -28,6 +29,7 @@ func TestValidateReplacementCredential_ZeroID_NoOp(t *testing.T) {
 }
 
 func TestValidateReplacementCredential_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentityCredentialByID", mock.Anything, uint(50)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -41,6 +43,7 @@ func TestValidateReplacementCredential_NotFound(t *testing.T) {
 // machine must be rejected exactly like a not-found ID -- never revealed as
 // "found but not yours".
 func TestValidateReplacementCredential_WrongMachine_Rejected(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentityCredentialByID", mock.Anything, uint(50)).
 		Return(&models.MachineIdentityCredential{ID: 50, MachineIdentityID: 999, TokenHash: "victim-hash"}, nil)
@@ -51,6 +54,7 @@ func TestValidateReplacementCredential_WrongMachine_Rejected(t *testing.T) {
 }
 
 func TestValidateReplacementCredential_Success(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineIdentityCredentialByID", mock.Anything, uint(50)).
 		Return(&models.MachineIdentityCredential{ID: 50, MachineIdentityID: 1, TokenHash: "old-hash"}, nil)
@@ -65,6 +69,7 @@ func TestValidateReplacementCredential_Success(t *testing.T) {
 // one, and returns the old token's hash for the caller to evict from any auth
 // cache -- never tested end-to-end before this.
 func TestIssueMachineToken_ReplaceCredential_EndToEnd(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 
@@ -93,6 +98,7 @@ func TestIssueMachineToken_ReplaceCredential_EndToEnd(t *testing.T) {
 // caught BEFORE the new credential is created, so a bad rotation request never
 // leaves an orphaned extra credential behind.
 func TestIssueMachineToken_ReplaceCredential_BadID_FailsFast(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
 	store.On("GetMachineIdentityCredentialByID", mock.Anything, uint(999)).Return(nil, errors.New("not found"))

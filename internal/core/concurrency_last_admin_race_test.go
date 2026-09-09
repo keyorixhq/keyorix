@@ -94,6 +94,7 @@ func runTwoAdminRace(t *testing.T, name string, removeA, removeB func(ctx contex
 // TestConcurrency_DeleteUser_ExactlyOneOfTwoAdminsRemoved is the #G03 regression for
 // internal/core/users.go's DeleteUser.
 func TestConcurrency_DeleteUser_ExactlyOneOfTwoAdminsRemoved(t *testing.T) {
+	t.Parallel()
 	bothGone, neitherGone := runTwoAdminRace(t, "delete_user",
 		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeleteUser(ctx, 99, 1) },
 		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeleteUser(ctx, 99, 2) },
@@ -105,6 +106,7 @@ func TestConcurrency_DeleteUser_ExactlyOneOfTwoAdminsRemoved(t *testing.T) {
 // TestConcurrency_UpdateSCIMUser_ExactlyOneOfTwoAdminsDeactivated is the #G03
 // regression for scim.go's UpdateSCIMUser.
 func TestConcurrency_UpdateSCIMUser_ExactlyOneOfTwoAdminsDeactivated(t *testing.T) {
+	t.Parallel()
 	no := false
 	bothGone, neitherGone := runTwoAdminRace(t, "scim_update",
 		func(ctx context.Context, c *core.KeyorixCore) { _, _ = c.UpdateSCIMUser(ctx, 99, 1, nil, nil, &no) },
@@ -119,6 +121,7 @@ func TestConcurrency_UpdateSCIMUser_ExactlyOneOfTwoAdminsDeactivated(t *testing.
 // all before this fix, so it raced not only with itself but with every sibling
 // accountStateMu-guarded path too.
 func TestConcurrency_DeprovisionSCIMUser_ExactlyOneOfTwoAdminsRemoved(t *testing.T) {
+	t.Parallel()
 	bothGone, neitherGone := runTwoAdminRace(t, "scim_deprovision",
 		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeprovisionSCIMUser(ctx, 99, 1) },
 		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeprovisionSCIMUser(ctx, 99, 2) },
@@ -132,6 +135,7 @@ func TestConcurrency_DeprovisionSCIMUser_ExactlyOneOfTwoAdminsRemoved(t *testing
 // RemoveProjectMember calls, each targeting a different one of a project's two
 // roles.assign-holding members.
 func TestConcurrency_RemoveProjectMember_ExactlyOneOfTwoProjectAdminsRemoved(t *testing.T) {
+	t.Parallel()
 	const trials = 50
 	var bothRemoved, neitherRemoved int
 	for trial := 0; trial < trials; trial++ {

@@ -19,6 +19,7 @@ import (
 // --- pure helpers ---
 
 func TestRotationUrgency(t *testing.T) {
+	t.Parallel()
 	// Overdue always outranks due-soon, regardless of risk.
 	overdue := rotationUrgency(RotationStatusOverdue, 0, 0)
 	dueSoon := rotationUrgency(RotationStatusDueSoon, -1, 100)
@@ -36,6 +37,7 @@ func TestRotationUrgency(t *testing.T) {
 }
 
 func TestMoreUrgentEntry(t *testing.T) {
+	t.Parallel()
 	od := &RotationStatusEntry{Status: RotationStatusOverdue, DaysOverdue: 5}
 	ds := &RotationStatusEntry{Status: RotationStatusDueSoon, DaysOverdue: -2}
 	assert.True(t, moreUrgentEntry(od, ds))
@@ -47,6 +49,7 @@ func TestMoreUrgentEntry(t *testing.T) {
 }
 
 func TestRotationWaves(t *testing.T) {
+	t.Parallel()
 	// 1 depends on 2; 3 stands alone. Wave 0 = {2,3}, wave 1 = {1}.
 	edges := []*models.SecretDependency{edge(1, 2)}
 	candidates := map[uint]bool{1: true, 2: true, 3: true}
@@ -58,6 +61,7 @@ func TestRotationWaves(t *testing.T) {
 }
 
 func TestRotationWavesIgnoresNonCandidateEdges(t *testing.T) {
+	t.Parallel()
 	// 1 depends on 2, but 2 is not in the plan → 1 has no in-plan dependency.
 	edges := []*models.SecretDependency{edge(1, 2)}
 	candidates := map[uint]bool{1: true}
@@ -68,6 +72,7 @@ func TestRotationWavesIgnoresNonCandidateEdges(t *testing.T) {
 }
 
 func TestRotationWavesDetectsCycle(t *testing.T) {
+	t.Parallel()
 	edges := []*models.SecretDependency{edge(1, 2), edge(2, 1)}
 	_, ok := rotationWaves(edges, map[uint]bool{1: true, 2: true})
 	assert.False(t, ok)
@@ -98,6 +103,7 @@ func newPlannerCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 }
 
 func TestGenerateRotationPlan(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, db := newPlannerCore(t, now)
@@ -153,6 +159,7 @@ func TestGenerateRotationPlan(t *testing.T) {
 }
 
 func TestGenerateRotationPlanEmptyWhenNothingDue(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, db := newPlannerCore(t, now)
@@ -175,6 +182,7 @@ func TestGenerateRotationPlanEmptyWhenNothingDue(t *testing.T) {
 // risky overdue secret in rotationUrgency's intra-wave ordering, and the API
 // response's RiskDegraded:false would give callers no hint anything failed.
 func TestPlanSecretRiskScoreErrorDegrades(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, _ := newPlannerCore(t, now)
 
@@ -199,6 +207,7 @@ func TestPlanSecretRiskScoreErrorDegrades(t *testing.T) {
 // batched secret lookup itself errored) must degrade the entry the same way a
 // missing-from-result secret does (#486, #409).
 func TestPlanSecretRiskScoreBatchErrorDegrades(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, _ := newPlannerCore(t, now)
 
@@ -226,6 +235,7 @@ func joinReasons(rs []string) string {
 }
 
 func TestGenerateDeploymentRotationPlan(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, db := newPlannerCore(t, now)
@@ -280,6 +290,7 @@ func TestGenerateDeploymentRotationPlan(t *testing.T) {
 // skipped and flagged in BrokenProjects, while every other project's plan still
 // comes back normally.
 func TestGenerateDeploymentRotationPlan_CyclicProjectIsSkippedNotFatal(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, db := newPlannerCore(t, now)
@@ -343,6 +354,7 @@ func TestGenerateDeploymentRotationPlan_CyclicProjectIsSkippedNotFatal(t *testin
 // ListGroupMembersByGroupIDs are actually exercised — a query COUNT assertion, not a
 // timing one, so it can't flake under load.
 func TestGenerateDeploymentRotationPlan_RiskScoringQueryCostDoesNotScaleWithCandidateCount(t *testing.T) {
+	t.Parallel()
 	const numProjects = 3
 
 	runWithCandidatesPerProject := func(perProject int) int {
@@ -407,6 +419,7 @@ func TestGenerateDeploymentRotationPlan_RiskScoringQueryCostDoesNotScaleWithCand
 }
 
 func TestGenerateDeploymentRotationPlan_NothingDueAnywhere(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, db := newPlannerCore(t, now)

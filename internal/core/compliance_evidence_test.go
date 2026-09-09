@@ -22,6 +22,7 @@ import (
 
 // #362: risk_exceptions — models.RiskException deliberately not migrated.
 func TestGenerateComplianceEvidence_DegradesOnRiskExceptionsQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t)
 
 	ev, err := c.GenerateComplianceEvidence(context.Background())
@@ -35,6 +36,7 @@ func TestGenerateComplianceEvidence_DegradesOnRiskExceptionsQueryError(t *testin
 
 // #362: sod_violations — models.SoDPolicy deliberately not migrated.
 func TestGenerateComplianceEvidence_DegradesOnSoDViolationsQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t)
 
 	ev, err := c.GenerateComplianceEvidence(context.Background())
@@ -49,6 +51,7 @@ func TestGenerateComplianceEvidence_DegradesOnSoDViolationsQueryError(t *testing
 // #362: rotation_overdue — models.RotationPolicy deliberately not migrated. Before the
 // fix this was the permanently-archivable evidence pack's own copy of #358.
 func TestGenerateComplianceEvidence_DegradesOnRotationOverdueQueryError(t *testing.T) {
+	t.Parallel()
 	c := compliancePostureCore(t)
 
 	ev, err := c.GenerateComplianceEvidence(context.Background())
@@ -62,6 +65,7 @@ func TestGenerateComplianceEvidence_DegradesOnRotationOverdueQueryError(t *testi
 
 // #362: campaigns, per project — models.AccessReviewCampaign deliberately not migrated.
 func TestGenerateComplianceEvidence_DegradesOnCampaignsQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 
@@ -78,6 +82,7 @@ func TestGenerateComplianceEvidence_DegradesOnCampaignsQueryError(t *testing.T) 
 // not migrated. The evidence pack's break-glass register hiding an active emergency
 // activation is the most severe of this family.
 func TestGenerateComplianceEvidence_DegradesOnBreakGlassQueryError(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 
@@ -128,6 +133,7 @@ func (s *divergingRiskExceptionsStore) ListRiskExceptions(ctx context.Context, a
 // (b) the pack's two views of risk exceptions are therefore always mutually
 // consistent, where before the fix they could diverge.
 func TestGenerateComplianceEvidence_RiskExceptionsConsistentWithPostureAcrossConcurrentChange(t *testing.T) {
+	t.Parallel()
 	c, db := compliancePostureCoreDB(t)
 	require.NoError(t, db.AutoMigrate(&models.RiskException{}))
 	require.NoError(t, db.Create(&models.RiskException{

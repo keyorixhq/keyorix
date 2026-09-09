@@ -57,6 +57,7 @@ func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classif
 // exactly like any other, for both a permission-checked user read and a direct
 // (machine-shaped) read with no user ID at all.
 func TestClassificationGate_OffByDefault_RestrictedSecretUnaffected(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, requesterID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -81,6 +82,7 @@ func TestClassificationGate_OffByDefault_RestrictedSecretUnaffected(t *testing.T
 // Requirement (2): with the setting on, an unapproved read of a restricted
 // secret is denied — even for a user who otherwise has full (owner) read rights.
 func TestClassificationGate_OnAndUnapproved_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, requesterID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -96,6 +98,7 @@ func TestClassificationGate_OnAndUnapproved_Denied(t *testing.T) {
 // same shape server/http uses for a machine-principal read, or the embedded
 // CLI) must be denied too — fail-closed, no silent bypass for automation.
 func TestClassificationGate_OnAndNoUser_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, _, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -109,6 +112,7 @@ func TestClassificationGate_OnAndNoUser_Denied(t *testing.T) {
 // Requirement (3): with an approved, valid AccessRequest scoped to that secret,
 // the read succeeds.
 func TestClassificationGate_OnAndApproved_Succeeds(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, requesterID, approverID, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -143,6 +147,7 @@ func TestClassificationGate_OnAndApproved_Succeeds(t *testing.T) {
 // Requirement (4): a lower-tier classified secret is never gated, regardless of
 // the setting.
 func TestClassificationGate_LowerTierNeverGated(t *testing.T) {
+	t.Parallel()
 	for _, level := range []string{ClassificationPublic, ClassificationInternal, ClassificationConfidential, ""} {
 		level := level
 		t.Run("classification="+level, func(t *testing.T) {
@@ -161,6 +166,7 @@ func TestClassificationGate_LowerTierNeverGated(t *testing.T) {
 // ApproveSecretAccessRequest's own guards: maker != checker, admin-authority
 // ceiling, pending-only, and refusing a project/role (SecretID nil) request.
 func TestApproveSecretAccessRequest_Guards(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, requesterID, approverID, projectID := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -241,6 +247,7 @@ func seedRestrictedPermissionFixture(t *testing.T, st *store.LocalStorage) (secr
 
 // Requirement: off by default — owner (no secrets.read.restricted grant) can still read.
 func TestClassificationPermissionGate_OffByDefault_OwnerCanRead(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -253,6 +260,7 @@ func TestClassificationPermissionGate_OffByDefault_OwnerCanRead(t *testing.T) {
 
 // Requirement: when on, a user without secrets.read.restricted is denied.
 func TestClassificationPermissionGate_On_NoPermission_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -266,6 +274,7 @@ func TestClassificationPermissionGate_On_NoPermission_Denied(t *testing.T) {
 
 // Requirement: machine/no-user read is always denied when the gate is active.
 func TestClassificationPermissionGate_On_NoUser_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, _, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -279,6 +288,7 @@ func TestClassificationPermissionGate_On_NoUser_Denied(t *testing.T) {
 // Requirement: admin role bypass — an admin who owns the secret passes both
 // ValidateSecretAccess (as owner) and the RBAC check (admin bypass in Authorize).
 func TestClassificationPermissionGate_On_AdminAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -311,6 +321,7 @@ func TestClassificationPermissionGate_On_AdminAllowed(t *testing.T) {
 
 // Requirement: explicit secrets.read.restricted grant allows the read.
 func TestClassificationPermissionGate_On_ExplicitGrantAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, _, grantedUserID, _ := seedRestrictedPermissionFixture(t, st)
 	ctx := context.Background()
@@ -323,6 +334,7 @@ func TestClassificationPermissionGate_On_ExplicitGrantAllowed(t *testing.T) {
 
 // Requirement: lower-tier secrets are never gated by the permission check.
 func TestClassificationPermissionGate_On_LowerTierUnaffected(t *testing.T) {
+	t.Parallel()
 	for _, level := range []string{ClassificationPublic, ClassificationInternal, ClassificationConfidential, ""} {
 		level := level
 		t.Run("classification="+level, func(t *testing.T) {
@@ -341,6 +353,7 @@ func TestClassificationPermissionGate_On_LowerTierUnaffected(t *testing.T) {
 // Requirement: when both gates are on, BOTH must be satisfied. A user who holds
 // the permission but lacks an approved access request is still denied.
 func TestClassificationPermissionGate_Combined_BothRequired(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, _, grantedUserID, _ := seedRestrictedPermissionFixture(t, st)
 	ctx := context.Background()
@@ -357,6 +370,7 @@ func TestClassificationPermissionGate_Combined_BothRequired(t *testing.T) {
 
 // Requirement: off by default — no change even for a user without a step-up token.
 func TestClassificationMFAStepUp_OffByDefault_OwnerCanRead(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -368,6 +382,7 @@ func TestClassificationMFAStepUp_OffByDefault_OwnerCanRead(t *testing.T) {
 
 // Requirement: when on, a user without an active step-up token is denied.
 func TestClassificationMFAStepUp_On_NoToken_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -381,6 +396,7 @@ func TestClassificationMFAStepUp_On_NoToken_Denied(t *testing.T) {
 
 // Requirement: machine/no-user read is always denied when the gate is active.
 func TestClassificationMFAStepUp_On_NoUser_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, _, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -393,6 +409,7 @@ func TestClassificationMFAStepUp_On_NoUser_Denied(t *testing.T) {
 
 // Requirement: a user with an active (non-expired) step-up grant can read.
 func TestClassificationMFAStepUp_On_ActiveToken_Allowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -409,6 +426,7 @@ func TestClassificationMFAStepUp_On_ActiveToken_Allowed(t *testing.T) {
 
 // Requirement: an expired step-up grant is treated as absent — denied.
 func TestClassificationMFAStepUp_On_ExpiredToken_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -425,6 +443,7 @@ func TestClassificationMFAStepUp_On_ExpiredToken_Denied(t *testing.T) {
 
 // Requirement: lower-tier secrets are never gated by the MFA step-up check.
 func TestClassificationMFAStepUp_On_LowerTierUnaffected(t *testing.T) {
+	t.Parallel()
 	for _, level := range []string{ClassificationPublic, ClassificationInternal, ClassificationConfidential, ""} {
 		level := level
 		t.Run("classification="+level, func(t *testing.T) {
@@ -443,6 +462,7 @@ func TestClassificationMFAStepUp_On_LowerTierUnaffected(t *testing.T) {
 // Requirement: combined with approval gate — both must pass. A user with a valid
 // step-up token but no approved access request is still denied.
 func TestClassificationMFAStepUp_Combined_BothRequired(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
@@ -462,6 +482,7 @@ func TestClassificationMFAStepUp_Combined_BothRequired(t *testing.T) {
 // the denial message, exercising the positive-windowMinutes branch of
 // SetClassificationRestrictedRequiresMFAStepUp.
 func TestClassificationMFAStepUp_On_CustomWindow_Denied(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()

@@ -39,6 +39,7 @@ func newTestWebAuthnRP(t *testing.T) *gowebauthn.WebAuthn {
 // ── webauthn.go — FinishWebAuthnRegistration GetUser failure ─────────────────
 
 func TestFinishWebAuthnRegistration_GetUserFail(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(5)).Return(nil, errors.New("user not found"))
 	c := NewKeyorixCore(ms)
@@ -53,6 +54,7 @@ func TestFinishWebAuthnRegistration_GetUserFail(t *testing.T) {
 // ConsumeMFAChallenge is a stub returning nil, nil in mock_storage_test.go.
 // With nil challenge, the sess.Purpose != "login" branch fires → session mismatch.
 func TestFinishWebAuthnLogin_NilChallenge(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// ConsumeWebAuthnSession is a hardcoded stub returning nil,nil.
 	// ConsumeMFAChallenge is a stub returning nil, nil.
@@ -67,6 +69,7 @@ func TestFinishWebAuthnLogin_NilChallenge(t *testing.T) {
 // ── webauthn.go — BeginWebAuthnRegistration GetUser fail (has non-nil RP) ────
 
 func TestBeginWebAuthnRegistration_GetUserFail(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(7)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -78,14 +81,17 @@ func TestBeginWebAuthnRegistration_GetUserFail(t *testing.T) {
 // ── anomaly_ml.go — displayOrUnknown ─────────────────────────────────────────
 
 func TestDisplayOrUnknown_Empty(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "an unknown source", displayOrUnknown(""))
 }
 
 func TestDisplayOrUnknown_NonEmpty(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "192.168.1.1", displayOrUnknown("192.168.1.1"))
 }
 
 func TestRandomSeed_ReturnPositive(t *testing.T) {
+	t.Parallel()
 	// Just verifies it doesn't panic and returns a positive int64.
 	v := randomSeed()
 	assert.Greater(t, v, int64(0))
@@ -94,6 +100,7 @@ func TestRandomSeed_ReturnPositive(t *testing.T) {
 // ── audit_checkpoint.go — checkpointTruncation branches ──────────────────────
 
 func TestCheckpointTruncation_TruncatedCount(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
@@ -106,6 +113,7 @@ func TestCheckpointTruncation_TruncatedCount(t *testing.T) {
 }
 
 func TestCheckpointTruncation_ZeroHeadID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// HeadID=0 → genesis chain, not a truncation.
@@ -117,6 +125,7 @@ func TestCheckpointTruncation_ZeroHeadID(t *testing.T) {
 }
 
 func TestCheckpointTruncation_HeadHashMismatch(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AuditEntryHashByID", mock.Anything, uint(5)).Return("differenthash", true, nil)
 	c := NewKeyorixCore(ms)
@@ -129,6 +138,7 @@ func TestCheckpointTruncation_HeadHashMismatch(t *testing.T) {
 }
 
 func TestCheckpointTruncation_HeadMissing(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AuditEntryHashByID", mock.Anything, uint(5)).Return("", false, nil)
 	c := NewKeyorixCore(ms)
@@ -140,6 +150,7 @@ func TestCheckpointTruncation_HeadMissing(t *testing.T) {
 }
 
 func TestCheckpointTruncation_HeadHashMatches(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("AuditEntryHashByID", mock.Anything, uint(5)).Return("correcthash", true, nil)
 	c := NewKeyorixCore(ms)
@@ -153,6 +164,7 @@ func TestCheckpointTruncation_HeadHashMatches(t *testing.T) {
 // ── audit_checkpoint.go — checkpointExists ───────────────────────────────────
 
 func TestCheckpointExists_None(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LatestAuditCheckpoint", mock.Anything).Return(nil, nil)
 	c := NewKeyorixCore(ms)
@@ -162,6 +174,7 @@ func TestCheckpointExists_None(t *testing.T) {
 }
 
 func TestCheckpointExists_Some(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LatestAuditCheckpoint", mock.Anything).Return(&models.AuditCheckpoint{ID: 1}, nil)
 	c := NewKeyorixCore(ms)
@@ -173,6 +186,7 @@ func TestCheckpointExists_Some(t *testing.T) {
 // ── access_review_revoke.go — revokeRoleByPrincipalType ──────────────────────
 
 func TestRevokeRoleByPrincipalType_GroupPath(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// RemoveRoleFromGroup(ctx, actorID, groupID, roleID, scope) calls GetGroup first.
 	ms.On("GetGroup", mock.Anything, uint(3)).Return(nil, errors.New("group not found"))
@@ -185,6 +199,7 @@ func TestRevokeRoleByPrincipalType_GroupPath(t *testing.T) {
 }
 
 func TestRevokeRoleByPrincipalType_MachinePath(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// RemoveMachineRole(ctx, machineID, roleID, scope, actorID) — check what it calls.
 	ms.On("GetMachineIdentity", mock.Anything, uint(4)).Return(nil, errors.New("machine not found"))
@@ -198,6 +213,7 @@ func TestRevokeRoleByPrincipalType_MachinePath(t *testing.T) {
 // ── versions.go — GetSecretValueByVersionWithPermissionCheck: permission error ─
 
 func TestGetSecretValueByVersionWithPermissionCheck_PermissionDenied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 5, OwnerID: 99} // owner != user 2
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(secret, nil)
@@ -218,6 +234,7 @@ func TestGetSecretValueByVersionWithPermissionCheck_PermissionDenied(t *testing.
 // ── users.go — UpdateUser username-retrieval-fail branch ─────────────────────
 
 func TestUpdateUser_UsernameRetrievalError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -230,6 +247,7 @@ func TestUpdateUser_UsernameRetrievalError(t *testing.T) {
 }
 
 func TestUpdateUser_EmailRetrievalError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -244,6 +262,7 @@ func TestUpdateUser_EmailRetrievalError(t *testing.T) {
 // ── sharing_query.go — ListSharesByUser storage errors ───────────────────────
 
 func TestListSharesByUser_ReceivedError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSharesByUser", mock.Anything, uint(3)).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
@@ -252,6 +271,7 @@ func TestListSharesByUser_ReceivedError(t *testing.T) {
 }
 
 func TestListSharesByUser_OwnedError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("ListSharesByUser", mock.Anything, uint(3)).Return([]*models.ShareRecord{}, nil)
 	ms.On("ListSharesByOwner", mock.Anything, uint(3)).Return(nil, errors.New("db error"))
@@ -263,6 +283,7 @@ func TestListSharesByUser_OwnedError(t *testing.T) {
 // ── account.go — UpdateOwnProfile email-change branch ────────────────────────
 
 func TestUpdateOwnProfile_EmailSameAsCurrentNoPasswordCheck(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
@@ -277,6 +298,7 @@ func TestUpdateOwnProfile_EmailSameAsCurrentNoPasswordCheck(t *testing.T) {
 // ── scim.go — deriveSCIMUsername ─────────────────────────────────────────────
 
 func TestDeriveSCIMUsername_UsernameConflict(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	// GetUserByUsername finds a user each time the base username is tried.
 	// After 1000 attempts, it returns "could not derive unique username".
@@ -294,6 +316,7 @@ func TestDeriveSCIMUsername_UsernameConflict(t *testing.T) {
 // ── versions.go — RollbackSecret early errors ────────────────────────────────
 
 func TestRollbackSecret_VersionNotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1}, nil)
 	ms.On("GetSecretVersions", mock.Anything, uint(1)).Return([]*models.SecretVersion{}, nil)
@@ -306,6 +329,7 @@ func TestRollbackSecret_VersionNotFound(t *testing.T) {
 // ── access_review_campaign.go — DecideAccessReviewItem validation ─────────────
 
 func TestDecideAccessReviewItem_ZeroActorID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	// actorID=0 is the main gate: requireHumanReviewer returns error.
@@ -314,6 +338,7 @@ func TestDecideAccessReviewItem_ZeroActorID(t *testing.T) {
 }
 
 func TestDecideAccessReviewItem_ZeroProjectID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetAccessReviewCampaign", mock.Anything, uint(1)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
@@ -325,6 +350,7 @@ func TestDecideAccessReviewItem_ZeroProjectID(t *testing.T) {
 // ── access_review.go — GenerateProjectAccessReview zero project ───────────────
 
 func TestGenerateProjectAccessReview_ZeroProjectID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GenerateProjectAccessReview(context.Background(), 0)
@@ -335,6 +361,7 @@ func TestGenerateProjectAccessReview_ZeroProjectID(t *testing.T) {
 // ── audit_checkpoint.go — writeAuditCheckpointLocked early fail ──────────────
 
 func TestWriteAuditCheckpointLocked_VerifyFails(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
@@ -350,6 +377,7 @@ func TestWriteAuditCheckpointLocked_VerifyFails(t *testing.T) {
 }
 
 func TestWriteAuditCheckpointLocked_InvalidChain(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
@@ -373,6 +401,7 @@ func TestWriteAuditCheckpointLocked_InvalidChain(t *testing.T) {
 // is exactly the property a strings.Contains(err.Error(), "refusing to
 // checkpoint") check (the pre-fix implementation) could not guarantee.
 func TestWriteAuditCheckpointLocked_LookAlikeErrorNotSpoofed(t *testing.T) {
+	t.Parallel()
 	lookAlike := errors.New("driver: refusing to checkpoint transaction on connection 0x7f — connection reset by peer")
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
@@ -386,6 +415,7 @@ func TestWriteAuditCheckpointLocked_LookAlikeErrorNotSpoofed(t *testing.T) {
 }
 
 func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetSystemMetadata", mock.Anything, auditRetentionAnchorKey).Return("", false, nil)
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(&storage.AuditChainVerification{
@@ -410,6 +440,7 @@ func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {
 // ── UpdateUser — email unchanged (same as current) ────────────────────────────
 
 func TestUpdateUser_EmailSameAsCurrentSkipsCheck(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)

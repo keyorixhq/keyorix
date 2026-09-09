@@ -28,6 +28,7 @@ import (
 // membership" error rather than a raw constraint-violation message or a silently-orphaned
 // row.
 func TestConcurrency_InviteMember_NoDuplicateActiveMembership(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "invite.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

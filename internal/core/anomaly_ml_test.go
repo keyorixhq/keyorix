@@ -8,6 +8,7 @@ import (
 )
 
 func TestMLConfigWithDefaults(t *testing.T) {
+	t.Parallel()
 	// #101: an unset seed is drawn from crypto/rand, not the fixed constant 1 — assert
 	// it's positive and non-deterministic across calls, not a specific value.
 	got := MLConfig{Enabled: true}.withDefaults()
@@ -61,6 +62,7 @@ func buildBaselineLogs(n int, start time.Time) []models.SecretAccessLog {
 // pattern access is not. Crucially the new_user/new_ip rules stay silent here (alice
 // and her IP are both in the baseline), so this is a detection the rules cannot make.
 func TestMLOutlierAlertsFlagsRareKnownActor(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 7, Name: "prod-db"}
 	baseline := buildBaselineLogs(160, now)
@@ -92,6 +94,7 @@ func TestMLOutlierAlertsFlagsRareKnownActor(t *testing.T) {
 // rules also catch) scores into the high-severity band, so the ML signal corroborates
 // rather than contradicts the rules.
 func TestMLOutlierAlertsHighSeverityForStranger(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 7, Name: "prod-db"}
 	baseline := buildBaselineLogs(160, now)
@@ -109,6 +112,7 @@ func TestMLOutlierAlertsHighSeverityForStranger(t *testing.T) {
 }
 
 func TestMLOutlierAlertsNoFalsePositiveOnNormal(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 7, Name: "prod-db"}
 	baseline := buildBaselineLogs(160, now)
@@ -125,6 +129,7 @@ func TestMLOutlierAlertsNoFalsePositiveOnNormal(t *testing.T) {
 }
 
 func TestMLOutlierAlertsSkipsSparseBaseline(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 7, Name: "prod-db"}
 	baseline := buildBaselineLogs(mlMinTrainSamples-1, now) // below the training floor
@@ -137,6 +142,7 @@ func TestMLOutlierAlertsSkipsSparseBaseline(t *testing.T) {
 }
 
 func TestMLOutlierAlertsEmptyRecent(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 7, Name: "prod-db"}
 	baseline := buildBaselineLogs(160, now)

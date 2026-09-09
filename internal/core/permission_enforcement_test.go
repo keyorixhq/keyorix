@@ -19,6 +19,7 @@ import (
 )
 
 func TestCheckSecretPermission(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -187,6 +188,7 @@ func TestCheckSecretPermission(t *testing.T) {
 }
 
 func TestHasRequiredPermission(t *testing.T) {
+	t.Parallel()
 	core := &KeyorixCore{}
 
 	tests := []struct {
@@ -212,6 +214,7 @@ func TestHasRequiredPermission(t *testing.T) {
 }
 
 func TestEnforceSecretReadPermission(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -245,6 +248,7 @@ func TestEnforceSecretReadPermission(t *testing.T) {
 }
 
 func TestEnforceSecretWritePermission(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -291,6 +295,7 @@ func TestEnforceSecretWritePermission(t *testing.T) {
 }
 
 func TestCanUserModifySecret(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -386,6 +391,7 @@ func TestCanUserModifySecret(t *testing.T) {
 }
 
 func TestCanUserShareSecret(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -468,6 +474,7 @@ func TestCanUserShareSecret(t *testing.T) {
 }
 
 func TestGetEffectivePermission(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -562,6 +569,7 @@ func TestGetEffectivePermission(t *testing.T) {
 }
 
 func TestCheckGroupPermissions(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -626,6 +634,7 @@ func TestCheckGroupPermissions(t *testing.T) {
 // so the storage-layer scoping SQL itself is exercised, not just the mock's
 // assumed behavior.
 func TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -697,6 +706,7 @@ func TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects(t *te
 // permission-decision logic in isolation, but not the combined "check, then actually
 // retrieve" behavior that GetSecretWithPermissionCheck wraps around it.
 func TestGetSecretWithPermissionCheck(t *testing.T) {
+	t.Parallel()
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -768,6 +778,7 @@ func TestGetSecretWithPermissionCheck(t *testing.T) {
 }
 
 func TestPermissionLevelToRBACPerm(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		level PermissionLevel
 		want  string
@@ -789,6 +800,7 @@ func TestPermissionLevelToRBACPerm(t *testing.T) {
 // TestCheckSecretPermission's own table only ever exercises the deny side of
 // (every case there mocks GetSecretACL to return "not found").
 func TestCheckSecretPermission_ACLFallback_GrantsAccess(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	mockStorage := &MockStorage{}
@@ -823,6 +835,7 @@ func TestCheckSecretPermission_ACLFallback_GrantsAccess(t *testing.T) {
 // with no ownership or share record but a project-scoped RBAC role granting
 // secrets.read is still admitted via the RBAC fallback path (#r124).
 func TestCheckSecretPermission_RBACFallback_GrantsAccess(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
 	mockStorage := &MockStorage{}
@@ -862,6 +875,7 @@ func TestCheckSecretPermission_RBACFallback_GrantsAccess(t *testing.T) {
 // (never expires), a non-nil ExpiresAt denies access the instant the clock reaches
 // or passes it (using strict Before - equal means expired).
 func TestShareActive(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 
 	justBefore := now.Add(-time.Nanosecond)

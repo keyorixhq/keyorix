@@ -20,6 +20,7 @@ import (
 // transient error reading ONE secret's shares must flip Degraded while every OTHER
 // secret's shares are still correctly reported.
 func TestGenerateProjectAccessReview_DegradedOnShareLookupError(t *testing.T) {
+	t.Parallel()
 	const proj = uint(2)
 	ctx := context.Background()
 

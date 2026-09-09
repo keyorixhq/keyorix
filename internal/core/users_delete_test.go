@@ -17,6 +17,7 @@ import (
 // guardLastAdminDeactivation, a transactional deprovision, and cache eviction —
 // too many storage calls to hand-mock reliably.
 func TestDeleteUser_RecordsActorInAuditEvent(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	admin, err := st.GetUserByEmail(ctx, "admin@example.com")
@@ -40,6 +41,7 @@ func TestDeleteUser_RecordsActorInAuditEvent(t *testing.T) {
 // recorded as a spurious "user 0" attribution — the audit event's UserID is
 // left nil rather than pointing at a nonexistent actor.
 func TestDeleteUser_ZeroActorOmitsAttribution(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	target := seedUserWithRole(t, st, "del-target2", "project_viewer", storage.Scope{ProjectID: 1})

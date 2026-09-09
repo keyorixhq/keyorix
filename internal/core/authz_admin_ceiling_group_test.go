@@ -24,6 +24,7 @@ import (
 
 // #93: AddProjectMember must refuse a non-admin actor granting an admin role.
 func TestAddProjectMember_EscalationByProxyBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "pm-attacker", "project_viewer", storage.Scope{ProjectID: 1})
@@ -39,6 +40,7 @@ func TestAddProjectMember_EscalationByProxyBlocked(t *testing.T) {
 // itself, so requireGranterHoldsRolePermissions (#93/#107/#141) is trivially
 // satisfied granting that same role to someone else — this isn't an escalation.
 func TestAddProjectMember_NonAdminRoleAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	actor := seedUserWithRole(t, st, "pm-actor", "project_developer", storage.Scope{ProjectID: 1})
@@ -50,6 +52,7 @@ func TestAddProjectMember_NonAdminRoleAllowed(t *testing.T) {
 // #93: SetProjectMemberRole must refuse a non-admin actor upgrading a member to
 // an admin role.
 func TestSetProjectMemberRole_EscalationByProxyBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "smr-attacker", "project_viewer", storage.Scope{ProjectID: 1})
@@ -67,6 +70,7 @@ func TestSetProjectMemberRole_EscalationByProxyBlocked(t *testing.T) {
 // could bundle-grant a time-bound role carrying a permission they don't hold
 // themselves.
 func TestAssignUserRoleWithExpiry_EscalationByProxyBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "jit-attacker", "project_viewer", storage.Scope{ProjectID: 1})
@@ -82,6 +86,7 @@ func TestAssignUserRoleWithExpiry_EscalationByProxyBlocked(t *testing.T) {
 // #G15: the non-regression counterpart — a time-bound grant of a role the actor
 // already holds every bundled permission of must still succeed unimpeded.
 func TestAssignUserRoleWithExpiry_NonAdminRoleAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	actor := seedUserWithRole(t, st, "jit-actor", "project_developer", storage.Scope{ProjectID: 1})
@@ -96,6 +101,7 @@ func TestAssignUserRoleWithExpiry_NonAdminRoleAllowed(t *testing.T) {
 // #93: AssignMachineRole must refuse a non-admin actor granting an admin role to
 // a machine identity.
 func TestAssignMachineRole_EscalationByProxyBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "mr-attacker", "project_viewer", storage.Scope{ProjectID: 1})
@@ -114,6 +120,7 @@ func TestAssignMachineRole_EscalationByProxyBlocked(t *testing.T) {
 // roles.assign holder self-escalates by joining the group instead of being
 // granted the role.
 func TestAddUserToGroup_EscalationByProxyBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "grp-attacker", "project_viewer", storage.Scope{ProjectID: 1})
@@ -132,6 +139,7 @@ func TestAddUserToGroup_EscalationByProxyBlocked(t *testing.T) {
 // #107 positive control: an admin actor CAN add a member to an admin-conferring
 // group, and the local-CLI (actorID 0) convention is exempt from the ceiling.
 func TestAddUserToGroup_AdminActorAndLocalCLIAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	admin := seedUserWithRole(t, st, "grp-admin", "admin", storage.Scope{})
@@ -165,6 +173,7 @@ func TestAddUserToGroup_AdminActorAndLocalCLIAllowed(t *testing.T) {
 // TestAddUserToGroup_AdminActorAndLocalCLIAllowed's exemption positive control,
 // this is the negative control proving the exemption is scoped correctly.
 func TestAddUserToGroup_MachineActorBlockedFromAdminGroup(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	victim := seedUserWithRole(t, st, "grp-victim-machine", "project_viewer", storage.Scope{ProjectID: 1})
@@ -195,6 +204,7 @@ func TestAddUserToGroup_MachineActorBlockedFromAdminGroup(t *testing.T) {
 // #107: AssignRoleToGroup must refuse a non-admin actor granting an admin role
 // to a group.
 func TestAssignRoleToGroup_EscalationByProxyBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "artg-attacker", "project_viewer", storage.Scope{ProjectID: 1})
@@ -211,6 +221,7 @@ func TestAssignRoleToGroup_EscalationByProxyBlocked(t *testing.T) {
 // #107: RemoveRoleFromGroup must refuse to strip the install's last global-admin
 // path when the group is the sole remaining source.
 func TestRemoveRoleFromGroup_LastGlobalAdminBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -234,6 +245,7 @@ func TestRemoveRoleFromGroup_LastGlobalAdminBlocked(t *testing.T) {
 // #107: DeleteGroup must refuse to delete a group that is the install's last
 // global-admin source.
 func TestDeleteGroup_LastGlobalAdminBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -256,6 +268,7 @@ func TestDeleteGroup_LastGlobalAdminBlocked(t *testing.T) {
 // admin-conferring group when no other path gives the install a global admin —
 // even though the role grant itself survives the membership removal.
 func TestRemoveUserFromGroup_LastMemberBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -280,6 +293,7 @@ func TestRemoveUserFromGroup_LastMemberBlocked(t *testing.T) {
 // #107 positive control: removing a member is fine when another live admin path
 // (here, a second member of the same group) survives.
 func TestRemoveUserFromGroup_OtherMemberSurvivesAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 

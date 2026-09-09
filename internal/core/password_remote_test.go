@@ -60,6 +60,7 @@ func newRemotePasswordCore(t *testing.T, user *models.User) *KeyorixCore {
 // never do either (PasswordHash is also json:"-", so it can't survive that round-trip),
 // an orthogonal pre-existing gap this fix does not need to touch.
 func TestApplyNewPassword_HardFailsUnderRemoteStorage(t *testing.T) {
+	t.Parallel()
 	user := &models.User{ID: 7, Username: "remote-bob", AccountState: AccountActive}
 	c := newRemotePasswordCore(t, user)
 
@@ -73,6 +74,7 @@ func TestApplyNewPassword_HardFailsUnderRemoteStorage(t *testing.T) {
 // restricted account state (ADR-025): SetPasswordHash fails first, inside the same
 // transaction, before SetAccountState is ever reached — no partial application either.
 func TestApplyNewPassword_HardFailsUnderRemoteStorage_EvenWithRestrictedState(t *testing.T) {
+	t.Parallel()
 	user := &models.User{ID: 8, Username: "remote-carol", AccountState: AccountPasswordResetRequired}
 	c := newRemotePasswordCore(t, user)
 
@@ -85,6 +87,7 @@ func TestApplyNewPassword_HardFailsUnderRemoteStorage_EvenWithRestrictedState(t 
 // still performs the real column update via SetPasswordHash/SetAccountState — the #484
 // fix must not regress the working (non-remote) case.
 func TestChangePassword_LocalStoragePersistsHashAndClearsRestriction(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.PersonalAccessToken{}, &models.PasswordHistory{}))

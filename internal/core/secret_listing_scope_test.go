@@ -23,6 +23,7 @@ import (
 // returned (role-scope visibility), with sharing fields left at their zero
 // value (no owned/ACL/shared relationship).
 func TestListSecretsInScopeWithSharingInfo_RoleOnlyVisibility(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -46,6 +47,7 @@ func TestListSecretsInScopeWithSharingInfo_RoleOnlyVisibility(t *testing.T) {
 // that a secret the caller owns is overlaid with real ownership metadata
 // (IsOwnedByUser), not left at role-only zero values.
 func TestListSecretsInScopeWithSharingInfo_OwnedSecretGetsSharingInfo(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -72,6 +74,7 @@ func TestListSecretsInScopeWithSharingInfo_OwnedSecretGetsSharingInfo(t *testing
 // verifies that a secret the caller holds an ACL grant on (but doesn't own)
 // is overlaid with ACL sharing metadata.
 func TestListSecretsInScopeWithSharingInfo_ACLGrantedSecretGetsSharingInfo(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -95,6 +98,7 @@ func TestListSecretsInScopeWithSharingInfo_ACLGrantedSecretGetsSharingInfo(t *te
 // appear when the filter is scoped to project 1, even though the caller is
 // (in this test) authorized to list project 1's scope.
 func TestListSecretsInScopeWithSharingInfo_ProjectBoundary(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 
@@ -118,6 +122,7 @@ func TestListSecretsInScopeWithSharingInfo_ProjectBoundary(t *testing.T) {
 // (no secrets at all) returns cleanly with no error and no panics on the
 // sharing-info overlay's early-return path.
 func TestListSecretsInScopeWithSharingInfo_EmptyScope(t *testing.T) {
+	t.Parallel()
 	c, _ := newACLListCore(t)
 	ctx := context.Background()
 
@@ -135,6 +140,7 @@ func TestListSecretsInScopeWithSharingInfo_EmptyScope(t *testing.T) {
 // ListSecretsWithSharingInfo's existing "project view shows owned/ACL only"
 // rule), a nil-ProjectID filter attaches share-based sharing metadata too.
 func TestListSecretsInScopeWithSharingInfo_UnscopedIncludesSharedSecrets(t *testing.T) {
+	t.Parallel()
 	c, db := newACLListCore(t)
 	ctx := context.Background()
 

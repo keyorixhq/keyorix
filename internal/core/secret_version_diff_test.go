@@ -79,6 +79,7 @@ func addVersion(t *testing.T, db *gorm.DB, secretID uint, versionNumber, readCou
 // TestDiffSecretVersions_NoChanges confirms that two versions with the same
 // read count and no node-level updates return an empty Changes slice.
 func TestDiffSecretVersions_NoChanges(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 	sid := seedDiffFixture(t, db, "internal", nil)
 	addVersion(t, db, sid, 1, 5)
@@ -109,6 +110,7 @@ func TestDiffSecretVersions_NoChanges(t *testing.T) {
 // UpdatedAt is after the from-version's CreatedAt, a classification change is
 // reported as (unknown → current).
 func TestDiffSecretVersions_ClassificationChanged(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 
 	// Seed with the node's UpdatedAt set AFTER the from-version will be created,
@@ -157,6 +159,7 @@ func TestDiffSecretVersions_ClassificationChanged(t *testing.T) {
 // TestDiffSecretVersions_ExpiryAdded confirms that when the node gained an
 // expiry (UpdatedAt > from.CreatedAt) a change entry is emitted.
 func TestDiffSecretVersions_ExpiryAdded(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 
 	past := time.Now().Add(-2 * time.Hour)
@@ -208,6 +211,7 @@ func TestDiffSecretVersions_ExpiryAdded(t *testing.T) {
 // TestDiffSecretVersions_MultipleChanges confirms that both a classification
 // change and a read_count delta are reported when both differ.
 func TestDiffSecretVersions_MultipleChanges(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 
 	past := time.Now().Add(-2 * time.Hour)
@@ -256,6 +260,7 @@ func TestDiffSecretVersions_MultipleChanges(t *testing.T) {
 // TestDiffSecretVersions_InvalidVersion confirms that requesting a non-existent
 // version number returns an error.
 func TestDiffSecretVersions_InvalidVersion(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 	sid := seedDiffFixture(t, db, "", nil)
 	addVersion(t, db, sid, 1, 0)
@@ -269,6 +274,7 @@ func TestDiffSecretVersions_InvalidVersion(t *testing.T) {
 // TestDiffSecretVersions_ZeroSecretID confirms that secretID==0 is rejected
 // with a validation error.
 func TestDiffSecretVersions_ZeroSecretID(t *testing.T) {
+	t.Parallel()
 	c, _ := newDiffCore(t)
 	_, err := c.DiffSecretVersions(context.Background(), 0, 1, 2)
 	require.Error(t, err)
@@ -280,6 +286,7 @@ func TestDiffSecretVersions_ZeroSecretID(t *testing.T) {
 // TestDiffSecretVersions_ZeroVersions confirms that non-positive version
 // numbers are rejected with a validation error.
 func TestDiffSecretVersions_ZeroVersions(t *testing.T) {
+	t.Parallel()
 	c, _ := newDiffCore(t)
 
 	_, err := c.DiffSecretVersions(context.Background(), 1, 0, 2)
@@ -295,6 +302,7 @@ func TestDiffSecretVersions_ZeroVersions(t *testing.T) {
 
 // TestDiffSecretVersions_SameVersion confirms that from==to is rejected.
 func TestDiffSecretVersions_SameVersionCore(t *testing.T) {
+	t.Parallel()
 	c, _ := newDiffCore(t)
 	_, err := c.DiffSecretVersions(context.Background(), 1, 3, 3)
 	require.Error(t, err)
@@ -306,6 +314,7 @@ func TestDiffSecretVersions_SameVersionCore(t *testing.T) {
 // TestDiffSecretVersions_SecretNotFound confirms that a missing secret node
 // surfaces as an error.
 func TestDiffSecretVersions_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	c, _ := newDiffCore(t)
 	_, err := c.DiffSecretVersions(context.Background(), 9999, 1, 2)
 	require.Error(t, err)
@@ -317,6 +326,7 @@ func TestDiffSecretVersions_SecretNotFound(t *testing.T) {
 // version number returns an error (covers the error path after GetSecretVersion
 // for the from-version).
 func TestDiffSecretVersions_FromVersionNotFound(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 	sid := seedDiffFixture(t, db, "", nil)
 	// Only seed version 2; version 1 does not exist.
@@ -331,6 +341,7 @@ func TestDiffSecretVersions_FromVersionNotFound(t *testing.T) {
 // TestDiffSecretVersions_WithACLEntries seeds an ACL entry for the secret and
 // confirms that the ACLUserIDs slice is populated (covers the ACL loop body).
 func TestDiffSecretVersions_WithACLEntries(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 	sid := seedDiffFixture(t, db, "", nil)
 	addVersion(t, db, sid, 1, 0)
@@ -356,6 +367,7 @@ func TestDiffSecretVersions_WithACLEntries(t *testing.T) {
 // central to the version comparison), but must flag Degraded so a caller
 // doesn't treat the empty ACLUserIDs as confirmed.
 func TestDiffSecretVersions_DegradedOnACLLookupError(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 	sid := seedDiffFixture(t, db, "", nil)
 	addVersion(t, db, sid, 1, 0)
@@ -374,6 +386,7 @@ func TestDiffSecretVersions_DegradedOnACLLookupError(t *testing.T) {
 // TestDiffSecretVersions_NegativeDelta exercises the branch where to.ReadCount <
 // from.ReadCount (delta < 0 → sign should be "" not "+").
 func TestDiffSecretVersions_NegativeDelta(t *testing.T) {
+	t.Parallel()
 	c, db := newDiffCore(t)
 
 	past := time.Now().Add(-2 * time.Hour)
@@ -421,6 +434,7 @@ func TestDiffSecretVersions_NegativeDelta(t *testing.T) {
 
 // TestEmptyOr_EmptyString exercises the emptyOr("") branch that returns "(none)".
 func TestEmptyOr_EmptyString(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "(none)", emptyOr(""))
 	assert.Equal(t, "(none)", emptyOr("   "))
 	assert.Equal(t, "hello", emptyOr("hello"))

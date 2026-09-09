@@ -16,6 +16,7 @@ import (
 )
 
 func TestRevokeUserSessions(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -98,6 +99,7 @@ func TestRevokeUserSessions(t *testing.T) {
 // it live — authenticating on the fast path — until the positive-cache TTL
 // expired.
 func TestRevokeUserSessions_EvictsImpersonationSessionsStarted(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

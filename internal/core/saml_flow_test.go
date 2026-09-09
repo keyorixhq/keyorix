@@ -59,6 +59,7 @@ func samlTestCore(stub *stubSAML) (*KeyorixCore, *MockStorage) {
 }
 
 func TestBeginSAML(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{redirect: "https://idp.example/sso?SAMLRequest=x", requestID: "req-1"}
 	c, store := samlTestCore(stub)
 	var stored *models.SSOLoginState
@@ -78,12 +79,14 @@ func TestBeginSAML(t *testing.T) {
 }
 
 func TestBeginSAML_UnknownProvider(t *testing.T) {
+	t.Parallel()
 	c, _ := samlTestCore(&stubSAML{})
 	_, err := c.BeginSAML(context.Background(), "ghost", "")
 	require.Error(t, err)
 }
 
 func TestCompleteSAML_ExistingUser(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|123", Email: "ada@x.io", Name: "Ada"}}
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-1").Return(
@@ -104,6 +107,7 @@ func TestCompleteSAML_ExistingUser(t *testing.T) {
 }
 
 func TestCompleteSAML_InvalidResponseRejected(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{parseErr: errors.New("signature verification failed")}
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-2").Return(
@@ -115,6 +119,7 @@ func TestCompleteSAML_InvalidResponseRejected(t *testing.T) {
 }
 
 func TestCompleteSAML_NoSubjectOrEmail(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{}}
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-3").Return(
@@ -126,6 +131,7 @@ func TestCompleteSAML_NoSubjectOrEmail(t *testing.T) {
 }
 
 func TestCompleteSAML_NoAccountNoProvision(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|999", Email: "noone@x.io"}}
 	store := new(MockStorage)
 	// AutoProvision off → an unmatched identity is refused.
@@ -150,6 +156,7 @@ func TestCompleteSAML_NoAccountNoProvision(t *testing.T) {
 // in via TrustAssertedEmail (off by default), the email fallback must not even
 // query for a match — the login is refused outright (AutoProvision off here).
 func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@company.com", Name: "Mallory"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: false}
@@ -176,6 +183,7 @@ func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
 // email — even with auto-provisioning enabled and TrustAssertedEmail on. The login must
 // fail closed and mint no session.
 func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@x.io", Name: "Mallory"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, TrustAssertedEmail: true}
@@ -202,6 +210,7 @@ func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
 // when an active user's password is expired and SetAccountState fails (storage
 // error), CompleteSAML must return an error and mint no session.
 func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|99", Email: "exp@x.io", Name: "Expired"}}
 	c, store := samlTestCore(stub)
 	c.passwordPolicy = PasswordPolicy{MaxAgeDays: 1}
@@ -230,6 +239,7 @@ func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
 // in CompleteSAML too. The assertion here carries a group that WOULD be
 // added/mapped if reconciliation ran.
 func TestCompleteSAML_LockedAccountSkipsGroupRoleSync(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{
 		Subject: "corp|66", Email: "locked@x.io", Name: "Locked",
 		Groups: []string{"keyorix-admins"},
@@ -282,6 +292,7 @@ func TestCompleteSAML_LockedAccountSkipsGroupRoleSync(t *testing.T) {
 // attacker asserting a victim's email must provision a FRESH account bound to
 // the attacker's own subject, never touching (or returning) the victim's.
 func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "victim@corp.com", Name: "Mallory"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, DefaultRole: "system_viewer"}
@@ -317,6 +328,7 @@ func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T)
 // asserted email can still opt in, and the existing (never-federated) account
 // linking behavior works exactly as it does for a verified OIDC email.
 func TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount(t *testing.T) {
+	t.Parallel()
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|123", Email: "ada@x.io", Name: "Ada"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, TrustAssertedEmail: true}

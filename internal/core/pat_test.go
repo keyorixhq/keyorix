@@ -13,6 +13,7 @@ import (
 )
 
 func TestCreateOwnPAT(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("returns plaintext once and stores only the hash", func(t *testing.T) {
@@ -65,6 +66,7 @@ func TestCreateOwnPAT(t *testing.T) {
 }
 
 func TestValidatePATToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	raw := patPrefix + "abc123def456"
 	hash := sha256Hex(raw)
@@ -167,6 +169,7 @@ func TestValidatePATToken(t *testing.T) {
 }
 
 func TestRevokeOwnPAT(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("revokes a token the caller owns", func(t *testing.T) {
@@ -194,6 +197,7 @@ func TestRevokeOwnPAT(t *testing.T) {
 // valid JSON → parsed list, and corrupted JSON → patScopeCorrupted sentinel
 // (fail-closed, #r124-M).
 func TestDecodePATScopes(t *testing.T) {
+	t.Parallel()
 	t.Run("empty string returns nil (unrestricted)", func(t *testing.T) {
 		assert.Nil(t, DecodePATScopes(""))
 	})

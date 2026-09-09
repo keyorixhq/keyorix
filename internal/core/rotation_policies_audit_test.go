@@ -16,6 +16,7 @@ import (
 // Rotation-policy CRUD must be audited (create/update/delete) — previously these
 // wrote nothing, completing the governance-audit gap alongside roles and groups.
 func TestRotationPolicyCRUDAudit(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.RotationPolicy{}, &models.AuditEvent{}))

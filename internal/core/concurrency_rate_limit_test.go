@@ -24,6 +24,7 @@ import (
 // promise "at most N attempts ever pass" under a race) — the guarantee it MUST keep is
 // that concurrent attempts can't deflate the count and slip the IP back under budget.
 func TestConcurrency_LoginRateLimit_TripsAndStaysTripped(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "rl.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

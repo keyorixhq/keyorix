@@ -15,6 +15,7 @@ import (
 const acctTestUser = "alice"
 
 func TestUpdateOwnProfile(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("updates display name and email with the correct current password", func(t *testing.T) {
@@ -110,6 +111,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 }
 
 func TestChangePassword(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	oldHash, _ := bcrypt.GenerateFromPassword([]byte("oldpassword"), bcrypt.DefaultCost)
 
@@ -221,6 +223,7 @@ func TestChangePassword(t *testing.T) {
 }
 
 func TestPasswordExpired(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	fixed := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
@@ -252,6 +255,7 @@ func TestPasswordExpired(t *testing.T) {
 }
 
 func TestRevokeOwnSession(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("revokes a session the caller owns", func(t *testing.T) {
@@ -277,6 +281,7 @@ func TestRevokeOwnSession(t *testing.T) {
 }
 
 func TestListOwnSessions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)

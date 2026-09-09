@@ -261,6 +261,7 @@ func findAllMFAStepUpSites(t *testing.T, repo string) map[string]mfaStepUpSite {
 // the shape a reintroduced "accept any live grant" bug takes: a call site
 // that no longer pins down which purpose it actually requires.
 func TestMFAStepUpConsumersUseExpectedPurpose(t *testing.T) {
+	t.Parallel()
 	found := findAllMFAStepUpSites(t, mfaStepUpGuardRepoRoot(t))
 
 	var unlisted []string
@@ -300,6 +301,7 @@ func TestMFAStepUpConsumersUseExpectedPurpose(t *testing.T) {
 // entry -- the call site moved, was renamed, or was deleted -- which would
 // otherwise silently stop protecting anything.
 func TestMFAStepUpPurposeAllowlistEntriesStillExist(t *testing.T) {
+	t.Parallel()
 	found := findAllMFAStepUpSites(t, mfaStepUpGuardRepoRoot(t))
 
 	var stale []string
@@ -318,6 +320,7 @@ func TestMFAStepUpPurposeAllowlistEntriesStillExist(t *testing.T) {
 // TestMFAStepUpPurposeAllowlistJustificationsAreNonEmpty guards against an
 // allowlist entry added with an empty/placeholder reason.
 func TestMFAStepUpPurposeAllowlistJustificationsAreNonEmpty(t *testing.T) {
+	t.Parallel()
 	for key, entry := range mfaStepUpPurposeAllowlist {
 		assert.NotEmpty(t, strings.TrimSpace(entry.reason), "allowlist entry %q has no justification", key)
 	}
@@ -329,6 +332,7 @@ func TestMFAStepUpPurposeAllowlistJustificationsAreNonEmpty(t *testing.T) {
 // -- independent of the repository's current contents, so this guard can
 // never pass merely because it never finds anything.
 func TestMFAStepUpPurposeScannerDetectsCallSites(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src := `package fixture
 

@@ -16,6 +16,7 @@ import (
 )
 
 func TestValidateDescription(t *testing.T) {
+	t.Parallel()
 	assert.NoError(t, validateDescription(""))
 	assert.NoError(t, validateDescription(strings.Repeat("x", maxSecretDescriptionLen)))
 	assert.Error(t, validateDescription(strings.Repeat("x", maxSecretDescriptionLen+1)))
@@ -25,6 +26,7 @@ func TestValidateDescription(t *testing.T) {
 
 // The cap is enforced at the governance create/update choke points (covers HTTP+CLI).
 func TestCreateProject_RejectsOverlongDescription(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

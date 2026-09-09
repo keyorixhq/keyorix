@@ -25,6 +25,7 @@ func expiresAt(d time.Duration) *time.Time {
 }
 
 func TestCheckRoleExpiry_NoGrants(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
 	ctx := context.Background()
@@ -39,6 +40,7 @@ func TestCheckRoleExpiry_NoGrants(t *testing.T) {
 }
 
 func TestCheckRoleExpiry_WarningForFiveDayExpiry(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
 	ctx := context.Background()
@@ -60,6 +62,7 @@ func TestCheckRoleExpiry_WarningForFiveDayExpiry(t *testing.T) {
 }
 
 func TestCheckRoleExpiry_CriticalForTwentyHourExpiry(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
 	ctx := context.Background()
@@ -81,6 +84,7 @@ func TestCheckRoleExpiry_CriticalForTwentyHourExpiry(t *testing.T) {
 }
 
 func TestCheckRoleExpiry_SkipsAlreadyExpiredGrants(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
 	ctx := context.Background()
@@ -98,6 +102,7 @@ func TestCheckRoleExpiry_SkipsAlreadyExpiredGrants(t *testing.T) {
 }
 
 func TestCheckRoleExpiry_SkipsDedupSameSeverity(t *testing.T) {
+	t.Parallel()
 	// Existing warning notification for same role → skip (no new notification)
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
@@ -128,6 +133,7 @@ func TestCheckRoleExpiry_SkipsDedupSameSeverity(t *testing.T) {
 }
 
 func TestCheckRoleExpiry_UpgradeWarningToCritical(t *testing.T) {
+	t.Parallel()
 	// Existing warning for a role now expiring in <1 day → escalate to critical
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
@@ -158,6 +164,7 @@ func TestCheckRoleExpiry_UpgradeWarningToCritical(t *testing.T) {
 }
 
 func TestCheckRoleExpiry_ListExpiringError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
 	ctx := context.Background()
@@ -170,6 +177,7 @@ func TestCheckRoleExpiry_ListExpiringError(t *testing.T) {
 }
 
 func TestCheckRoleExpiry_RoleNameFallback(t *testing.T) {
+	t.Parallel()
 	// When GetRole fails, roleName should fall back to "#<id>".
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
@@ -201,6 +209,7 @@ func TestCheckRoleExpiry_RoleNameFallback(t *testing.T) {
 // tuple (encoded in Link via roleExpiryLink), so A's standing reminder no
 // longer masks B's.
 func TestCheckRoleExpiry_DedupKeyedOnGrantTuple_NotRoleName(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newRoleExpiryCore(store)
 	ctx := context.Background()

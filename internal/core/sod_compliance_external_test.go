@@ -14,6 +14,7 @@ import (
 // SoD violations surface in both the compliance posture (as a count) and the
 // evidence pack (as the toxic-combination register).
 func TestSoD_SurfacesInPostureAndEvidence(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(
@@ -44,6 +45,7 @@ func TestSoD_SurfacesInPostureAndEvidence(t *testing.T) {
 // non-matching reference) the violation still counts — a governed exception must
 // actually be granted before it does anything.
 func TestSoD_SuppressedByApprovedRiskException(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(

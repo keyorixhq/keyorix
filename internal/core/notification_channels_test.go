@@ -13,6 +13,7 @@ import (
 )
 
 func TestCreateNotificationChannel_Validation(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	ctx := context.Background()
@@ -33,6 +34,7 @@ func TestCreateNotificationChannel_Validation(t *testing.T) {
 }
 
 func TestCreateNotificationChannel_WebhookRequiresURL(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	ctx := context.Background()
@@ -64,6 +66,7 @@ func TestCreateNotificationChannel_WebhookRequiresURL(t *testing.T) {
 func noopWebhookURLValidator(_ string) error { return nil }
 
 func TestNotificationChannel_CRUD(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 	c.webhookURLValidator = noopWebhookURLValidator
@@ -142,6 +145,7 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 // TestCreateNotificationChannel_StorageError covers the branch where validation
 // passes but the DB write returns an error.
 func TestCreateNotificationChannel_StorageError(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	c.webhookURLValidator = noopWebhookURLValidator
@@ -160,6 +164,7 @@ func TestCreateNotificationChannel_StorageError(t *testing.T) {
 // TestUpdateNotificationChannel_GetError covers the branch where the initial
 // fetch of the channel returns an error.
 func TestUpdateNotificationChannel_GetError(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -176,6 +181,7 @@ func TestUpdateNotificationChannel_GetError(t *testing.T) {
 // TestUpdateNotificationChannel_UpdateStorageError covers the branch where the
 // DB write for the update itself fails.
 func TestUpdateNotificationChannel_UpdateStorageError(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	c.webhookURLValidator = noopWebhookURLValidator
@@ -200,6 +206,7 @@ func TestUpdateNotificationChannel_UpdateStorageError(t *testing.T) {
 // TestValidateNotificationChannel_TeamsRequiresURL explicitly exercises the
 // "teams" case in the URL-required switch.
 func TestValidateNotificationChannel_TeamsRequiresURL(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -214,6 +221,7 @@ func TestValidateNotificationChannel_TeamsRequiresURL(t *testing.T) {
 // TestUpdateNotificationChannel_AllFieldUpdates exercises all field branches
 // in UpdateNotificationChannel (name, type, url, email, events, enabled).
 func TestUpdateNotificationChannel_AllFieldUpdates(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	c.webhookURLValidator = noopWebhookURLValidator
@@ -250,6 +258,7 @@ func TestUpdateNotificationChannel_AllFieldUpdates(t *testing.T) {
 // TestUpdateNotificationChannel_ValidationFails exercises the case where an
 // update causes validation to fail (e.g., clearing the URL of a webhook type).
 func TestUpdateNotificationChannel_ValidationFails(t *testing.T) {
+	t.Parallel()
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
 	ctx := context.Background()
@@ -274,12 +283,14 @@ func TestUpdateNotificationChannel_ValidationFails(t *testing.T) {
 // ---- validateWebhookURL (SSRF guard) ----
 
 func TestValidateWebhookURL_RequiresHTTPS(t *testing.T) {
+	t.Parallel()
 	err := validateWebhookURL("http://hooks.example.com/webhook")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "https")
 }
 
 func TestValidateWebhookURL_RejectsPrivateIPs(t *testing.T) {
+	t.Parallel()
 	disallowed := []string{
 		"https://127.0.0.1/hook",
 		"https://192.168.1.100/hook",
@@ -296,12 +307,14 @@ func TestValidateWebhookURL_RejectsPrivateIPs(t *testing.T) {
 }
 
 func TestValidateWebhookURL_AcceptsPublicIP(t *testing.T) {
+	t.Parallel()
 	// 93.184.216.34 is the well-known IANA example.com address — public, non-private.
 	err := validateWebhookURL("https://93.184.216.34/hook")
 	require.NoError(t, err)
 }
 
 func TestValidateWebhookURL_InvalidURL(t *testing.T) {
+	t.Parallel()
 	err := validateWebhookURL("://bad-url")
 	require.Error(t, err)
 }
@@ -309,6 +322,7 @@ func TestValidateWebhookURL_InvalidURL(t *testing.T) {
 // ---- PII: accessed_by / ip_address must not appear in webhook payload ----
 
 func TestDispatchToChannel_WebhookPayload_NoPII(t *testing.T) {
+	t.Parallel()
 	var capturedBody []byte
 	tr := &fakeWebhookTransport{
 		capture: func(b []byte) { capturedBody = b },

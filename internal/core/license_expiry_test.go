@@ -30,6 +30,7 @@ func gateWithExpiry(t *testing.T, notAfter time.Time) *license.Gate {
 }
 
 func TestScanLicenseExpiry_ActiveFarFromExpiry_NoNotify(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetLicenseGate(gateWithExpiry(t, time.Now().Add(200*24*time.Hour)))
@@ -42,6 +43,7 @@ func TestScanLicenseExpiry_ActiveFarFromExpiry_NoNotify(t *testing.T) {
 }
 
 func TestScanLicenseExpiry_NoLicense_NoNotify(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms) // no gate set → nil gate → baseline
 	n, err := c.ScanLicenseExpiry(context.Background(), 30)
@@ -51,6 +53,7 @@ func TestScanLicenseExpiry_NoLicense_NoNotify(t *testing.T) {
 }
 
 func TestScanLicenseExpiry_Expiring_NotifiesGlobalAdmins(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -73,6 +76,7 @@ func TestScanLicenseExpiry_Expiring_NotifiesGlobalAdmins(t *testing.T) {
 }
 
 func TestScanLicenseExpiry_Dedup_NoResend(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -100,6 +104,7 @@ func TestScanLicenseExpiry_Dedup_NoResend(t *testing.T) {
 // escalated in place — not silently suppressed — once the license has
 // genuinely expired (Critical) while that reminder is still unread.
 func TestScanLicenseExpiry_EscalatesOnExpiry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -130,6 +135,7 @@ func TestScanLicenseExpiry_EscalatesOnExpiry(t *testing.T) {
 // globalAdminIDsPageSize-sized page, or an admin beyond that page would silently
 // never receive the license-expiry notification.
 func TestGlobalAdminIDs_PaginatesActiveUsersBeyondOnePage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -177,6 +183,7 @@ func TestGlobalAdminIDs_PaginatesActiveUsersBeyondOnePage(t *testing.T) {
 // at project scope, since project_admin's grant never appears in the
 // project_id=0 rows those queries select.
 func TestScanLicenseExpiry_SkipsProjectScopedAdmin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
@@ -200,6 +207,7 @@ func TestScanLicenseExpiry_SkipsProjectScopedAdmin(t *testing.T) {
 // does not count — isGlobalAdminRoleName's scope-awareness is orthogonal to
 // its role-name filtering, and both must hold.
 func TestScanLicenseExpiry_SkipsGloballyGrantedNonAdminRole(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)

@@ -66,6 +66,7 @@ func logChainedEvent(t *testing.T, c *KeyorixCore, eventType string, at time.Tim
 // permanently broken at the new earliest row because its prev_hash points at a
 // row the purge just deleted, and the walk unconditionally requires genesis.
 func TestPurgeAuditLogs_ChainVerifiesAfterPurge(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, fixed := newReanchorTestCore(t)
 
@@ -112,6 +113,7 @@ func TestPurgeAuditLogs_ChainVerifiesAfterPurge(t *testing.T) {
 // refuses to sign over a chain it sees as broken. Before the fix, checkpointing
 // was ALSO permanently disabled after the first retention purge.
 func TestWriteAuditCheckpoint_SucceedsAfterPurge(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, _, fixed := newReanchorTestCore(t)
 
@@ -138,6 +140,7 @@ func TestWriteAuditCheckpoint_SucceedsAfterPurge(t *testing.T) {
 // any sanctioned purge did, without a fresh anchor covering the new gap) must
 // still be caught, not silently absorbed by the existing anchor.
 func TestPurgeAuditLogs_AttackerDeletesAnchoredRow_StillDetected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, fixed := newReanchorTestCore(t)
 
@@ -175,6 +178,7 @@ func TestPurgeAuditLogs_AttackerDeletesAnchoredRow_StillDetected(t *testing.T) {
 // signature cannot verify, so the anchor is ignored and the walk correctly
 // reports the chain broken, exactly as if no anchor existed.
 func TestVerifyAuditChain_ForgedRetentionAnchorRejected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	c, db, fixed := newReanchorTestCore(t)
 

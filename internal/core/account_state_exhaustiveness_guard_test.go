@@ -26,6 +26,7 @@ import (
 // "blocked" case group). Adding a new AccountXxx constant without adding it
 // to one of those two groups fails this test.
 func TestAccountLoginBlocked_ExhaustsStateRegistry(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "account_state.go", nil, 0)
 	if err != nil {

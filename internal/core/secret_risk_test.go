@@ -22,6 +22,7 @@ func factorByKey(s *SecretRiskScore, key string) SecretRiskFactor {
 }
 
 func TestComputeSecretRiskScore_HighRisk(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	expired := now.AddDate(0, 0, -3)
 	store := new(MockStorage)
@@ -52,6 +53,7 @@ func TestComputeSecretRiskScore_HighRisk(t *testing.T) {
 }
 
 func TestComputeSecretRiskScore_LowRisk(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
@@ -89,6 +91,7 @@ func TestComputeSecretRiskScore_LowRisk(t *testing.T) {
 // score, so a secret that is actually widely shared can't be incorrectly
 // deprioritized for rotation because its exposure looked artificially low (#407).
 func TestComputeSecretRiskScore_DegradedOnListSharesError(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
@@ -116,6 +119,7 @@ func TestComputeSecretRiskScore_DegradedOnListSharesError(t *testing.T) {
 // exposure count — it now flips Degraded and forces exposure to the worst-case
 // score (#407).
 func TestComputeSecretRiskScore_DegradedOnListGroupMembersError(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
@@ -143,6 +147,7 @@ func TestComputeSecretRiskScore_DegradedOnListGroupMembersError(t *testing.T) {
 // ComputeSecretRiskScore for the same underlying data — batching how the inputs
 // are fetched must not change the scoring logic.
 func TestComputeSecretRiskScoresBatch_MatchesSingleSecretScore(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	expired := now.AddDate(0, 0, -3)
 	store := new(MockStorage)
@@ -176,6 +181,7 @@ func TestComputeSecretRiskScoresBatch_MatchesSingleSecretScore(t *testing.T) {
 // batch's exposure factor to the worst case (#407's "never under-count" invariant,
 // widened from one secret to the whole batch — never the other direction).
 func TestComputeSecretRiskScoresBatch_DegradedOnSharesErrorAffectsWholeBatch(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
@@ -205,6 +211,7 @@ func TestComputeSecretRiskScoresBatch_DegradedOnSharesErrorAffectsWholeBatch(t *
 // actually have a group share — a secret with only a direct-user share (or no
 // shares at all) is unaffected, since it never depended on that failed lookup.
 func TestComputeSecretRiskScoresBatch_GroupMembersErrorOnlyAffectsGroupSharedSecrets(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
@@ -239,6 +246,7 @@ func TestComputeSecretRiskScoresBatch_GroupMembersErrorOnlyAffectsGroupSharedSec
 // one ID (see planSecret's #486 handling), not crash or silently zero the whole
 // batch.
 func TestComputeSecretRiskScoresBatch_MissingSecretIsAbsentFromResult(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
 

@@ -14,6 +14,7 @@ import (
 )
 
 func TestParseSecretRef(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		ref                        string
 		project, environment, name string
@@ -62,6 +63,7 @@ func newRefTestCore(t *testing.T) *KeyorixCore {
 }
 
 func TestResolveSecretRef(t *testing.T) {
+	t.Parallel()
 	c := newRefTestCore(t)
 	ctx := context.Background()
 
@@ -76,6 +78,7 @@ func TestResolveSecretRef(t *testing.T) {
 }
 
 func TestResolveSecretRef_NotFound(t *testing.T) {
+	t.Parallel()
 	c := newRefTestCore(t)
 	ctx := context.Background()
 	for _, ref := range []string{"ghost/prod/db", "alpha/ghost/db", "alpha/prod/ghost"} {
@@ -85,6 +88,7 @@ func TestResolveSecretRef_NotFound(t *testing.T) {
 }
 
 func TestResolveSecretRef_Invalid(t *testing.T) {
+	t.Parallel()
 	_, err := newRefTestCore(t).ResolveSecretRef(context.Background(), "alpha/prod")
 	require.ErrorIs(t, err, ErrSecretRefInvalid)
 }

@@ -46,6 +46,7 @@ func (f *fakeAuditForwarder) Forward(event *models.AuditEvent) {
 // must not leak off-box either). ---
 
 func TestEmitAudit_StorageFailure_LogsWarningAndSkipsSIEMForward(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	storageErr := errors.New("disk full")
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(storageErr)
@@ -66,6 +67,7 @@ func TestEmitAudit_StorageFailure_LogsWarningAndSkipsSIEMForward(t *testing.T) {
 }
 
 func TestEmitAudit_StorageSuccess_ForwardsToSIEMAndDoesNotWarn(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
@@ -84,6 +86,7 @@ func TestEmitAudit_StorageSuccess_ForwardsToSIEMAndDoesNotWarn(t *testing.T) {
 }
 
 func TestWriteAccessLog_StorageFailure_LogsWarning(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	storageErr := errors.New("connection exhausted")
 	ms.On("CreateSecretAccessLog", mock.Anything, mock.Anything).Return(storageErr)
@@ -99,6 +102,7 @@ func TestWriteAccessLog_StorageFailure_LogsWarning(t *testing.T) {
 }
 
 func TestWriteAccessLog_StorageSuccess_DoesNotWarn(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("CreateSecretAccessLog", mock.Anything, mock.Anything).Return(nil)
 
@@ -114,6 +118,7 @@ func TestWriteAccessLog_StorageSuccess_DoesNotWarn(t *testing.T) {
 // --- #381: Description/Diff must be capped, independent of secret_name_policy. ---
 
 func TestEmitAudit_TruncatesOversizedDescriptionAndDiff(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	var persisted *models.AuditEvent
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).
@@ -147,6 +152,7 @@ func TestEmitAudit_TruncatesOversizedDescriptionAndDiff(t *testing.T) {
 }
 
 func TestEmitAudit_NormalLengthDescriptionAndDiffUnaffected(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	var persisted *models.AuditEvent
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).
@@ -173,6 +179,7 @@ func TestEmitAudit_NormalLengthDescriptionAndDiffUnaffected(t *testing.T) {
 }
 
 func TestTruncateAuditField(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "short", truncateAuditField("short", 100))
 
 	long := strings.Repeat("x", 50)

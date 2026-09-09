@@ -63,6 +63,7 @@ func makeHealthSecret(t *testing.T, c *KeyorixCore, name string, projectID, envI
 }
 
 func TestGetProjectHealthSummary_Empty(t *testing.T) {
+	t.Parallel()
 	db := newHealthTestDB(t)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
@@ -81,6 +82,7 @@ func TestGetProjectHealthSummary_Empty(t *testing.T) {
 }
 
 func TestGetProjectHealthSummary_Counts(t *testing.T) {
+	t.Parallel()
 	db := newHealthTestDB(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -153,6 +155,7 @@ func TestGetProjectHealthSummary_Counts(t *testing.T) {
 }
 
 func TestGetProjectHealthSummary_Limit(t *testing.T) {
+	t.Parallel()
 	db := newHealthTestDB(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -181,6 +184,7 @@ func TestGetProjectHealthSummary_Limit(t *testing.T) {
 }
 
 func TestGetProjectHealthSummary_WrongProject(t *testing.T) {
+	t.Parallel()
 	db := newHealthTestDB(t)
 	ctx := context.Background()
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -206,6 +210,7 @@ func TestGetProjectHealthSummary_WrongProject(t *testing.T) {
 // TestGetProjectHealthSummary_LimitClamping ensures that limit values that are
 // out of range (<=0 or >100) are silently clamped to the default of 20.
 func TestGetProjectHealthSummary_LimitClamping(t *testing.T) {
+	t.Parallel()
 	db := newHealthTestDB(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -247,6 +252,7 @@ func TestGetProjectHealthSummary_LimitClamping(t *testing.T) {
 // ComputeSecretRiskScoresBatch short-circuits on empty input) — TotalSecrets
 // must reflect the TRUE total and Truncated must be set.
 func TestGetProjectHealthSummary_Truncated(t *testing.T) {
+	t.Parallel()
 	const proj = uint(9)
 	ctx := context.Background()
 
@@ -267,6 +273,7 @@ func TestGetProjectHealthSummary_Truncated(t *testing.T) {
 // TestGetProjectHealthSummary_ListSecretsError verifies that a storage failure
 // on ListSecrets propagates as an error rather than producing a partial result.
 func TestGetProjectHealthSummary_ListSecretsError(t *testing.T) {
+	t.Parallel()
 	db := newHealthTestDB(t)
 	ctx := context.Background()
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -287,6 +294,7 @@ func TestGetProjectHealthSummary_ListSecretsError(t *testing.T) {
 // slice is non-empty and the batch scorer is called) while GetSecretsByIDs —
 // the first call inside ComputeSecretRiskScoresBatch — returns a synthetic error.
 func TestGetProjectHealthSummary_BatchScoreError(t *testing.T) {
+	t.Parallel()
 	const proj = uint(7)
 	ctx := context.Background()
 

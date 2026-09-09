@@ -18,6 +18,7 @@ import (
 // grants it on every live request. This pins the fix: the union of direct AND
 // group-derived permissions.
 func TestGetUserPermissionsByID_IncludesGroupDerivedPermission(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -53,6 +54,7 @@ func TestGetUserPermissionsByID_IncludesGroupDerivedPermission(t *testing.T) {
 // A user with no group membership at all still gets exactly their direct set —
 // the fix must not fabricate permissions for a user with no groups.
 func TestGetUserPermissionsByID_NoGroups_DirectOnly(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -78,6 +80,7 @@ func TestGetUserPermissionsByID_NoGroups_DirectOnly(t *testing.T) {
 // (mirroring scopedRoleIDs) per scope, so it must agree with Authorize on all
 // three axes that had drifted.
 func TestHasPermissionByEmail_GroupDerivedPermission(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -101,6 +104,7 @@ func TestHasPermissionByEmail_GroupDerivedPermission(t *testing.T) {
 // bypass applies. Before the fix this read as a false "does NOT have
 // permission", exactly the false-negative the finding describes.
 func TestHasPermissionByEmail_AdminBypass(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -118,6 +122,7 @@ func TestHasPermissionByEmail_AdminBypass(t *testing.T) {
 // like Authorize()/scopedRoleIDs — the storage-blind old query ignored scope
 // validity entirely and would have kept reporting "has permission" regardless.
 func TestHasPermissionByEmail_ScopeRestrictedAssignment_DeletedProjectStopsAuthorizing(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -141,6 +146,7 @@ func TestHasPermissionByEmail_ScopeRestrictedAssignment_DeletedProjectStopsAutho
 // not error — Authorize's own "no roles, no permission" resolution at the
 // global scope.
 func TestHasPermissionByEmail_NoGrantsAtAll(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -160,6 +166,7 @@ func TestHasPermissionByEmail_NoGrantsAtAll(t *testing.T) {
 // user's real scopes (GetUserRoleScopes) and re-validates each one through
 // Authorize, so a grant scoped to a single project is still found.
 func TestHasPermissionByEmail_ProjectScopedGrant_HasAccessAtGrantedScope(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -182,6 +189,7 @@ func TestHasPermissionByEmail_ProjectScopedGrant_HasAccessAtGrantedScope(t *test
 // live path HasPermissionByEmail delegates to per discovered scope — must
 // still deny an explicit, different project scope for the same user and grant.
 func TestHasPermissionByEmail_ProjectScopedGrant_DifferentProjectNotAuthorized(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()
@@ -211,6 +219,7 @@ func TestHasPermissionByEmail_ProjectScopedGrant_DifferentProjectNotAuthorized(t
 // with no explicit role_permissions row for the checked permission would have
 // incorrectly read as "does NOT have permission".
 func TestHasPermissionByEmail_ProjectScopedAdminBypass(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	ctx := context.Background()

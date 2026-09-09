@@ -30,6 +30,7 @@ func assignScoped(t *testing.T, h *testhelper.RBACTestHelper, userID, roleID, pr
 }
 
 func TestAuthorize_ProjectScopedDeniesOtherProjects(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "viewerA", 100)
@@ -50,6 +51,7 @@ func TestAuthorize_ProjectScopedDeniesOtherProjects(t *testing.T) {
 }
 
 func TestAuthorize_ProjectWideGrantCoversAllEnvironments(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "editorP", 101)
@@ -64,6 +66,7 @@ func TestAuthorize_ProjectWideGrantCoversAllEnvironments(t *testing.T) {
 }
 
 func TestAuthorize_EnvironmentScopedIsExact(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "editorProd", 102)
@@ -85,6 +88,7 @@ func TestAuthorize_EnvironmentScopedIsExact(t *testing.T) {
 }
 
 func TestAuthorize_GroupInheritedRole(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "groupy", 103)
@@ -105,6 +109,7 @@ func TestAuthorize_GroupInheritedRole(t *testing.T) {
 }
 
 func TestAuthorize_GlobalAdminBypassesScope(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "rootuser", 104)
@@ -119,6 +124,7 @@ func TestAuthorize_GlobalAdminBypassesScope(t *testing.T) {
 }
 
 func TestAuthorize_ProjectScopedAdminDoesNotBypassElsewhere(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "projadmin", 105)
@@ -135,6 +141,7 @@ func TestAuthorize_ProjectScopedAdminDoesNotBypassElsewhere(t *testing.T) {
 }
 
 func TestAuthorize_GlobalGrantCoversEveryScope(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "globalviewer", 106)
@@ -147,6 +154,7 @@ func TestAuthorize_GlobalGrantCoversEveryScope(t *testing.T) {
 }
 
 func TestAuthorize_NoRolesDenied(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "norole", 107)
@@ -157,6 +165,7 @@ func TestAuthorize_NoRolesDenied(t *testing.T) {
 }
 
 func TestAuthorize_SuperAdminBypass(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	u := h.CreateTestUser(t, "super", 108)

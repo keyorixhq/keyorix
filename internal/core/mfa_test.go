@@ -48,6 +48,7 @@ func newMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 // TOTP secret is an always-sensitive credential; enrolling it must never silently
 // fall back to encryptAuthSecret's plaintext passthrough.
 func TestBeginMFAEnrollment_RefusesWhenNoEncryptor(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{}, &models.AuditEvent{}))
@@ -72,6 +73,7 @@ func TestBeginMFAEnrollment_RefusesWhenNoEncryptor(t *testing.T) {
 // config (Enabled: false) — not just when it's nil. Both are the same underlying
 // "encryption is off" state encryptAuthSecret treats as passthrough.
 func TestBeginMFAEnrollment_RefusesWhenEncryptorDisabled(t *testing.T) {
+	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{}, &models.AuditEvent{}))
@@ -91,6 +93,7 @@ func TestBeginMFAEnrollment_RefusesWhenEncryptorDisabled(t *testing.T) {
 // issued (password step passed) just before an admin suspends the account, and the
 // MFA-completion path must refuse it rather than mint a session.
 func TestVerifyMFALogin_RejectsSuspendedAccount(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -117,6 +120,7 @@ func TestVerifyMFALogin_RejectsSuspendedAccount(t *testing.T) {
 }
 
 func TestMFA_FullFlow(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -202,6 +206,7 @@ func TestMFA_FullFlow(t *testing.T) {
 }
 
 func TestMFA_ActivateRejectsWrongCode(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newMFATestCore(t)
 	ctx := context.Background()
 	_, _, err := c.BeginMFAEnrollment(ctx, 1)
@@ -220,6 +225,7 @@ func TestMFA_ActivateRejectsWrongCode(t *testing.T) {
 // is. Mirrors TestMFA_RegenerateRequiresReauth's structure for the disable/
 // regenerate re-auth gate.
 func TestMFA_ActivateRequiresReauth(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -254,6 +260,7 @@ func TestMFA_ActivateRequiresReauth(t *testing.T) {
 // proof — requireReauth must only ever accept a code against an ALREADY-ACTIVE
 // secret (user.MFAEnabled), never the in-flight enrolment secret being activated.
 func TestMFA_ActivateDoesNotAcceptPendingSecretAsReauth(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -286,6 +293,7 @@ func activateMFAForTest(t *testing.T, c *KeyorixCore, fixed time.Time) (secret s
 }
 
 func TestMFA_RecoveryCodesRemaining(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -312,6 +320,7 @@ func TestMFA_RecoveryCodesRemaining(t *testing.T) {
 }
 
 func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, original := activateMFAForTest(t, c, fixed)
@@ -347,6 +356,7 @@ func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
 }
 
 func TestMFA_RegenerateRequiresReauth(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -356,6 +366,7 @@ func TestMFA_RegenerateRequiresReauth(t *testing.T) {
 }
 
 func TestMFA_RegenerateRequiresMFAEnabled(t *testing.T) {
+	t.Parallel()
 	c, _, _ := newMFATestCore(t)
 	_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, mfaTestPassword)
 	require.Error(t, err, "regenerate requires MFA to be enabled")
@@ -364,6 +375,7 @@ func TestMFA_RegenerateRequiresMFAEnabled(t *testing.T) {
 // A TOTP code must be single-use: replaying the same code within its validity window
 // (with a fresh challenge) must be rejected, not mint a second session.
 func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
@@ -398,6 +410,7 @@ func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
 // guessing is throttled even when the per-IP limiter is bypassed (e.g. a spoofed proxy
 // header). After MaxAttempts bad codes the account locks and refuses further attempts.
 func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	ctx := context.Background()
@@ -447,6 +460,7 @@ func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
 // full-authentication point (VerifyMFALogin, once the second factor also
 // succeeds) — see TestLogin_FullMFACompletionClearsLockout below.
 func TestLogin_PasswordOnlyDoesNotClearLockoutWhenMFARequired(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 5, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	ctx := context.Background()
@@ -486,6 +500,7 @@ func TestLogin_PasswordOnlyDoesNotClearLockoutWhenMFARequired(t *testing.T) {
 // second factor, THAT is the true full-authentication point, and the lockout
 // state must be cleared then.
 func TestLogin_FullMFACompletionClearsLockout(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 5, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	// A mutable clock: ActivateMFA below consumes (marks used) the TOTP step at
@@ -536,6 +551,7 @@ func TestLogin_FullMFACompletionClearsLockout(t *testing.T) {
 // Repeated wrong codes must feed the same per-account lockout VerifyMFALogin uses,
 // and once locked even a VALID code must be refused.
 func TestDisableMFA_FailedCodesFeedAccountLockout(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	ctx := context.Background()
@@ -567,6 +583,7 @@ func TestDisableMFA_FailedCodesFeedAccountLockout(t *testing.T) {
 // A successful DisableMFA (correct code/password) must clear any accrued lockout
 // state, mirroring the happy-path reset on a successful login.
 func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 5, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	ctx := context.Background()
@@ -597,6 +614,7 @@ func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
 // endpoint #125 names: repeated wrong-code attempts must feed the same per-account
 // lockout, and once locked even a valid code must be refused.
 func TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
 	ctx := context.Background()
@@ -638,6 +656,7 @@ func TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout(t *testing.T) 
 // exercises the live decryptAuthSecret/loadTOTPSecret path (not just the low-level
 // AEAD primitive), proving the AAD wiring — not merely its existence — is correct.
 func TestMFA_TOTPSecretTransplantBetweenUsersFailsToDecrypt(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "b@b.com",
@@ -672,6 +691,7 @@ func TestMFA_TOTPSecretTransplantBetweenUsersFailsToDecrypt(t *testing.T) {
 // (no replay tracking) instead of validateTOTPStep+MarkTOTPStepUsed; this test
 // confirms the correct anti-replay path now applies.
 func TestRequireReauth_TOTPCodeNotReplayable(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, _ := activateMFAForTest(t, c, fixed)
@@ -703,6 +723,7 @@ func TestRequireReauth_TOTPCodeNotReplayable(t *testing.T) {
 // call site the underlying finding named, and the most direct test surface one
 // layer above requireReauth itself.
 func TestUpdateOwnProfile_EmailChange_PasswordAloneRefusedWhenMFAEnabled(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -719,6 +740,7 @@ func TestUpdateOwnProfile_EmailChange_PasswordAloneRefusedWhenMFAEnabled(t *test
 // satisfies re-auth on its own (unchanged behavior) — the code itself IS the
 // second-factor proof, no step-up grant needed.
 func TestUpdateOwnProfile_EmailChange_ValidTOTPCodeSucceeds(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, _ := activateMFAForTest(t, c, fixed)
@@ -737,6 +759,7 @@ func TestUpdateOwnProfile_EmailChange_ValidTOTPCodeSucceeds(t *testing.T) {
 // password alone is insufficient, but password + a genuine, correctly-purposed
 // step-up grant is equivalent proof to supplying the code directly.
 func TestUpdateOwnProfile_EmailChange_PasswordPlusReauthPurposeGrantSucceeds(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -762,6 +785,7 @@ func TestUpdateOwnProfile_EmailChange_PasswordPlusReauthPurposeGrantSucceeds(t *
 // action. This must fail RED against the pre-purpose-tagging code and GREEN
 // after it.
 func TestUpdateOwnProfile_EmailChange_AmbientLoginPurposeGrantRejected(t *testing.T) {
+	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -785,6 +809,7 @@ func TestUpdateOwnProfile_EmailChange_AmbientLoginPurposeGrantRejected(t *testin
 // caller (DisableMFA) also now refuses password-only re-auth once MFA is
 // enabled.
 func TestDisableMFA_PasswordAloneRefusedWhenMFAEnabled(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
@@ -803,6 +828,7 @@ func TestDisableMFA_PasswordAloneRefusedWhenMFAEnabled(t *testing.T) {
 // exercises the recording branch (mfa.go:352-353) that is otherwise skipped
 // when classificationRestrictedRequiresMFAStepUp is false.
 func TestVerifyMFALogin_RecordsMFAStepupWhenGateEnabled(t *testing.T) {
+	t.Parallel()
 	c, _, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestAuditBroker_SignalDelivered(t *testing.T) {
+	t.Parallel()
 	b := newAuditBroker()
 	id, wake := b.subscribe()
 	defer b.unsubscribe(id)
@@ -25,6 +26,7 @@ func TestAuditBroker_SignalDelivered(t *testing.T) {
 }
 
 func TestAuditBroker_SignalsCoalesce(t *testing.T) {
+	t.Parallel()
 	b := newAuditBroker()
 	id, wake := b.subscribe()
 	defer b.unsubscribe(id)
@@ -43,6 +45,7 @@ func TestAuditBroker_SignalsCoalesce(t *testing.T) {
 }
 
 func TestAuditBroker_SignalNonBlockingAndUnsubscribe(t *testing.T) {
+	t.Parallel()
 	b := newAuditBroker()
 	id, wake := b.subscribe()
 
@@ -63,6 +66,7 @@ func TestAuditBroker_SignalNonBlockingAndUnsubscribe(t *testing.T) {
 }
 
 func TestAuditBroker_MultipleSubscribersAllWoken(t *testing.T) {
+	t.Parallel()
 	b := newAuditBroker()
 	id1, w1 := b.subscribe()
 	id2, w2 := b.subscribe()
@@ -82,6 +86,7 @@ func TestAuditBroker_MultipleSubscribersAllWoken(t *testing.T) {
 // emitAudit must wake a live subscriber (the write→deliver hook), in addition to
 // persisting the row.
 func TestEmitAudit_SignalsSubscribers(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := &KeyorixCore{storage: ms, auditStream: newAuditBroker()}
@@ -101,6 +106,7 @@ func TestEmitAudit_SignalsSubscribers(t *testing.T) {
 
 // A constructed core always has a non-nil broker (no lazy-init nil panic in emitAudit).
 func TestNewKeyorixCore_HasAuditBroker(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	require.NotNil(t, c.auditStream)
 	id, _ := c.SubscribeAuditStream()

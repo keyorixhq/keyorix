@@ -59,6 +59,7 @@ func mkIPSecret(t *testing.T, db *gorm.DB, name string) uint {
 // TestGetSecretImpactPreview_NoDependents: a secret with no downstream dependents
 // returns all-zero counts and an empty (non-nil) slice.
 func TestGetSecretImpactPreview_NoDependents(t *testing.T) {
+	t.Parallel()
 	c, db := newImpactPreviewCore(t)
 	aID := mkIPSecret(t, db, "standalone")
 
@@ -74,6 +75,7 @@ func TestGetSecretImpactPreview_NoDependents(t *testing.T) {
 // TestGetSecretImpactPreview_TwoDirectDependents: two secrets directly depend on
 // the focal secret; no transitive chain beyond depth 1.
 func TestGetSecretImpactPreview_TwoDirectDependents(t *testing.T) {
+	t.Parallel()
 	c, db := newImpactPreviewCore(t)
 	rootID := mkIPSecret(t, db, "root")
 	depA := mkIPSecret(t, db, "dep-a")
@@ -92,6 +94,7 @@ func TestGetSecretImpactPreview_TwoDirectDependents(t *testing.T) {
 // TestGetSecretImpactPreview_TransitiveChain: A is depended on by B; B is
 // depended on by C. Removing A affects B (depth 1) and C (depth 2).
 func TestGetSecretImpactPreview_TransitiveChain(t *testing.T) {
+	t.Parallel()
 	c, db := newImpactPreviewCore(t)
 	aID := mkIPSecret(t, db, "chain-a")
 	bID := mkIPSecret(t, db, "chain-b")
@@ -111,6 +114,7 @@ func TestGetSecretImpactPreview_TransitiveChain(t *testing.T) {
 // TestGetSecretImpactPreview_CycleDetection: a hand-crafted cycle (rejected by
 // core at add-time, but defensive) must not cause an infinite loop.
 func TestGetSecretImpactPreview_CycleDetection(t *testing.T) {
+	t.Parallel()
 	c, db := newImpactPreviewCore(t)
 	aID := mkIPSecret(t, db, "cycle-a")
 	bID := mkIPSecret(t, db, "cycle-b")
@@ -132,6 +136,7 @@ func TestGetSecretImpactPreview_CycleDetection(t *testing.T) {
 // TestGetSecretImpactPreview_SecretNotFound: a non-existent secretID propagates
 // the storage error.
 func TestGetSecretImpactPreview_SecretNotFound(t *testing.T) {
+	t.Parallel()
 	c, db := newImpactPreviewCore(t)
 	_ = db
 	_, err := c.GetSecretImpactPreview(context.Background(), ActorTypeUser, impactPreviewTestActor, 999999)
@@ -143,6 +148,7 @@ func TestGetSecretImpactPreview_SecretNotFound(t *testing.T) {
 // fails the error is surfaced to the caller. Uses MockStorage (already defined in
 // mock_storage_test.go in the same package) to inject the error.
 func TestGetSecretImpactPreview_StorageError(t *testing.T) {
+	t.Parallel()
 	storageErr := errors.New("db unavailable")
 	ms := new(MockStorage)
 	liveSecret := &models.SecretNode{

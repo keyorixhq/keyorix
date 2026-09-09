@@ -21,6 +21,7 @@ import (
 // actorIsMachine=false regardless of the real caller's actor kind -- see the
 // handler/service-level tests alongside those files for the caller-side fix.
 func TestAddUserToGroup_MachineGranterHoldingRolePermissionsAllowed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -47,6 +48,7 @@ func TestAddUserToGroup_MachineGranterHoldingRolePermissionsAllowed(t *testing.T
 }
 
 func TestAddUserToGroup_MachineGranterMissingRolePermissionsBlocked(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
@@ -78,6 +80,7 @@ func TestAddUserToGroup_MachineGranterMissingRolePermissionsBlocked(t *testing.T
 // wrong too (it wasn't; the bug was in the callers never reaching this
 // codepath with actorIsMachine=true at all).
 func TestAddUserToGroup_MachineGranterUntaggedContextFailsClosed(t *testing.T) {
+	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 

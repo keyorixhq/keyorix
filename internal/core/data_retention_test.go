@@ -11,6 +11,7 @@ import (
 )
 
 func TestPurgeExpiredComplianceRecords_CountsCutoffsAndAudits(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	policy := RetentionPolicy{
 		AnomalyAlertsDays:               30,
@@ -50,6 +51,7 @@ func TestPurgeExpiredComplianceRecords_CountsCutoffsAndAudits(t *testing.T) {
 }
 
 func TestPurgeExpiredComplianceRecords_ZeroWindowsSkipped(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	// Only break-glass has a window; every other type is keep-forever (0).
 	policy := RetentionPolicy{BreakGlassDays: 45}
@@ -70,6 +72,7 @@ func TestPurgeExpiredComplianceRecords_ZeroWindowsSkipped(t *testing.T) {
 }
 
 func TestRetentionPolicy_Configured(t *testing.T) {
+	t.Parallel()
 	require.False(t, RetentionPolicy{}.Configured())
 	require.True(t, RetentionPolicy{AnomalyAlertsDays: 1}.Configured())
 	require.True(t, RetentionPolicy{AnomalyAlertsUnackedCeilingDays: 1}.Configured())
@@ -81,6 +84,7 @@ func TestRetentionPolicy_Configured(t *testing.T) {
 // i.e. keep-forever) must still call through with a zero ackBefore (disabling that
 // clause) and the ceiling cutoff.
 func TestPurgeExpiredComplianceRecords_AnomalyUnackedCeilingOnly(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	policy := RetentionPolicy{AnomalyAlertsUnackedCeilingDays: 730}
 	store := new(MockStorage)
@@ -100,6 +104,7 @@ func TestPurgeExpiredComplianceRecords_AnomalyUnackedCeilingOnly(t *testing.T) {
 // with filesystem+restart access who shortens a window otherwise leaves no record
 // of the CHANGE itself.
 func TestSetRetentionPolicy_EmitsAuditEvent(t *testing.T) {
+	t.Parallel()
 	policy := RetentionPolicy{
 		AnomalyAlertsDays:               30,
 		AnomalyAlertsUnackedCeilingDays: 730,

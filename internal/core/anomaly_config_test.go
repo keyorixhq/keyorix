@@ -17,6 +17,7 @@ func newAnomalyConfigCore(store *MockStorage) *KeyorixCore {
 }
 
 func TestGetAnomalyConfig_DelegatesToStorage(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -31,6 +32,7 @@ func TestGetAnomalyConfig_DelegatesToStorage(t *testing.T) {
 }
 
 func TestGetAnomalyConfig_PropagatesError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -42,6 +44,7 @@ func TestGetAnomalyConfig_PropagatesError(t *testing.T) {
 }
 
 func TestUpdateAnomalyConfig_SetsUpdatedByAndDelegatesToStorage(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -69,6 +72,7 @@ func TestUpdateAnomalyConfig_SetsUpdatedByAndDelegatesToStorage(t *testing.T) {
 }
 
 func TestUpdateAnomalyConfig_PropagatesStorageError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -84,6 +88,7 @@ func TestUpdateAnomalyConfig_PropagatesStorageError(t *testing.T) {
 }
 
 func TestApplyAnomalyConfig_SetsLookback(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -98,6 +103,7 @@ func TestApplyAnomalyConfig_SetsLookback(t *testing.T) {
 }
 
 func TestApplyAnomalyConfig_SetsQuarantine(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -112,6 +118,7 @@ func TestApplyAnomalyConfig_SetsQuarantine(t *testing.T) {
 }
 
 func TestApplyAnomalyConfig_SetsMLConfig(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -133,6 +140,7 @@ func TestApplyAnomalyConfig_SetsMLConfig(t *testing.T) {
 }
 
 func TestApplyAnomalyConfig_ZeroValuesNotApplied(t *testing.T) {
+	t.Parallel()
 	// LookbackDays=0 and QuarantineHours=0 should not override detector defaults.
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
@@ -152,6 +160,7 @@ func TestApplyAnomalyConfig_ZeroValuesNotApplied(t *testing.T) {
 }
 
 func TestApplyAnomalyConfig_OffHoursEnabled_AppliesBand(t *testing.T) {
+	t.Parallel()
 	// Legitimate case: OffHoursEnabled with a valid, distinct hour pair must be
 	// applied to the live detector and audited, with no error.
 	store := new(MockStorage)
@@ -183,6 +192,7 @@ func TestApplyAnomalyConfig_OffHoursEnabled_AppliesBand(t *testing.T) {
 // persisted config didn't take effect, AND the other independent knobs (ML here)
 // must still be applied rather than the whole config apply aborting.
 func TestApplyAnomalyConfig_PropagatesBusinessHoursError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -220,6 +230,7 @@ func TestApplyAnomalyConfig_PropagatesBusinessHoursError(t *testing.T) {
 // ApplyAnomalyConfig repeatedly with the SAME persisted config (simulating
 // consecutive scheduler ticks) must only audit once.
 func TestApplyAnomalyConfig_HotloadDoesNotDuplicateAuditOnUnchangedConfig(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -249,6 +260,7 @@ func TestApplyAnomalyConfig_HotloadDoesNotDuplicateAuditOnUnchangedConfig(t *tes
 // off-hours config must still produce a fresh audit event on the next hot-load
 // tick, and that new value must then stop re-auditing on subsequent unchanged ticks.
 func TestApplyAnomalyConfig_HotloadAuditsGenuineChange(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()
@@ -280,6 +292,7 @@ func TestApplyAnomalyConfig_HotloadAuditsGenuineChange(t *testing.T) {
 }
 
 func TestApplyAnomalyConfig_PropagatesGetError(t *testing.T) {
+	t.Parallel()
 	store := new(MockStorage)
 	c := newAnomalyConfigCore(store)
 	ctx := context.Background()

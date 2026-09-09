@@ -13,6 +13,7 @@ import (
 )
 
 func TestListUserPermissions_IncludesGroupShares(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const userID = uint(7)
 	ms := new(MockStorage)
@@ -52,6 +53,7 @@ func TestListUserPermissions_IncludesGroupShares(t *testing.T) {
 }
 
 func TestListUserPermissions_ExcludesExpiredShares(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const userID = uint(9)
 	ms := new(MockStorage)
@@ -95,6 +97,7 @@ func TestListUserPermissions_ExcludesExpiredShares(t *testing.T) {
 // listUserPermissionsOwnedPageSize-sized page, or ownership beyond that page would be
 // silently dropped from the listing.
 func TestListUserPermissions_PaginatesOwnedSecretsBeyondOnePage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const userID = uint(11)
 	ms := new(MockStorage)
@@ -135,6 +138,7 @@ func TestListUserPermissions_PaginatesOwnedSecretsBeyondOnePage(t *testing.T) {
 // has previously observed could be resurrected by a real clock reading that looks
 // earlier (a backward-stepped host clock, e.g. NTP correction or VM pause/resume).
 func TestListUserPermissions_ClockSteppedBackward_ExpiredShareStaysExcluded(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const userID = uint(13)
 	ms := new(MockStorage)
@@ -159,6 +163,7 @@ func TestListUserPermissions_ClockSteppedBackward_ExpiredShareStaysExcluded(t *t
 }
 
 func TestListUserPermissions_NoGroups(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const userID = uint(8)
 	ms := new(MockStorage)

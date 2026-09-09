@@ -14,6 +14,7 @@ import (
 // ADR-056) immediately, so the certificate-hygiene posture reflects the new certificate
 // without waiting for the next expiry scan.
 func TestRotateSecret_RefreshesCertNotAfterCache(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -45,6 +46,7 @@ func TestRotateSecret_RefreshesCertNotAfterCache(t *testing.T) {
 
 // Rotating a non-certificate secret does not touch CertNotAfter (it stays nil).
 func TestRotateSecret_NonCertSecretLeavesCertNotAfterNil(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)
@@ -62,6 +64,7 @@ func TestRotateSecret_NonCertSecretLeavesCertNotAfterNil(t *testing.T) {
 // A certificate-typed secret rotated to a value that is not a certificate clears the now-
 // stale cached expiry, rather than leaving the old certificate's date in place.
 func TestRotateSecret_CertRotatedToNonCertClearsCache(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	c, db := newCertCore(t, now)

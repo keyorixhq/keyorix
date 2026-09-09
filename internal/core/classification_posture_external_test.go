@@ -13,6 +13,7 @@ import (
 // The compliance posture counts secrets per data-classification level (A.5.12),
 // with "unclassified" for the empty label.
 func TestCompliancePosture_ClassificationCounts(t *testing.T) {
+	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(

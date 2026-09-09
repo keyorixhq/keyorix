@@ -30,6 +30,7 @@ import (
 // ── RequireMachinePrivilegeCeiling (MACH-001) ───────────────────────────────
 
 func TestRequireMachinePrivilegeCeiling_AdminTargetActorGlobalAdmin_Allowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 50, Name: "admin"}}, nil)
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{50}).Return(true, nil)
@@ -43,6 +44,7 @@ func TestRequireMachinePrivilegeCeiling_AdminTargetActorGlobalAdmin_Allowed(t *t
 }
 
 func TestRequireMachinePrivilegeCeiling_AdminTargetActorNotGlobalAdmin_Denied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 50, Name: "admin"}}, nil)
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{50}).Return(true, nil)
@@ -60,6 +62,7 @@ func TestRequireMachinePrivilegeCeiling_AdminTargetActorNotGlobalAdmin_Denied(t 
 // clear the admin-tier-target branch regardless of what permissions it
 // bundles -- IsGlobalAdmin must not even be consulted for a machine actor.
 func TestRequireMachinePrivilegeCeiling_AdminTarget_MachineActorAlwaysDenied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 50, Name: "admin"}}, nil)
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{50}).Return(true, nil)
@@ -75,6 +78,7 @@ func TestRequireMachinePrivilegeCeiling_AdminTarget_MachineActorAlwaysDenied(t *
 // project scope -- the SAME authority the human-facing creation route
 // requires.
 func TestRequireMachinePrivilegeCeiling_NewIdentity_ActorHasRolesAssign_Allowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	stubAuthorizedPrincipal(ms, 3, Scope{ProjectID: 2}, permRolesAssign)
 
@@ -84,6 +88,7 @@ func TestRequireMachinePrivilegeCeiling_NewIdentity_ActorHasRolesAssign_Allowed(
 }
 
 func TestRequireMachinePrivilegeCeiling_NewIdentity_ActorLacksRolesAssign_Denied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	stubUnauthorizedPrincipal(ms, 3, Scope{ProjectID: 2})
 
@@ -98,6 +103,7 @@ func TestRequireMachinePrivilegeCeiling_NewIdentity_ActorLacksRolesAssign_Denied
 // without it must still be refused, even though the target itself isn't
 // admin-tier.
 func TestRequireMachinePrivilegeCeiling_NonAdminTarget_ActorLacksRolesAssign_Denied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetMachineRoles", mock.Anything, uint(7)).Return([]*models.Role{{ID: 12, Name: "project_viewer"}}, nil)
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{12}).Return(false, nil)
@@ -111,6 +117,7 @@ func TestRequireMachinePrivilegeCeiling_NonAdminTarget_ActorLacksRolesAssign_Den
 // ── RequireAdminAuthorityAt ──────────────────────────────────────────────
 
 func TestRequireAdminAuthorityAt_Allowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(3), Scope{ProjectID: 2}).Return([]uint{50}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(3), Scope{ProjectID: 2}).Return([]uint{}, nil)
@@ -122,6 +129,7 @@ func TestRequireAdminAuthorityAt_Allowed(t *testing.T) {
 }
 
 func TestRequireAdminAuthorityAt_Denied(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(3), Scope{ProjectID: 2}).Return([]uint{11}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(3), Scope{ProjectID: 2}).Return([]uint{}, nil)
@@ -136,6 +144,7 @@ func TestRequireAdminAuthorityAt_Denied(t *testing.T) {
 // projectID 0 means global scope -- a distinct Scope{} lookup, not just
 // Scope{ProjectID: 0} coincidentally matching.
 func TestRequireAdminAuthorityAt_GlobalScopeAllowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{50}, nil)
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(3), Scope{}).Return([]uint{}, nil)
@@ -149,6 +158,7 @@ func TestRequireAdminAuthorityAt_GlobalScopeAllowed(t *testing.T) {
 // ── ValidateRoleGrantAuthority ───────────────────────────────────────────
 
 func TestValidateRoleGrantAuthority_Allowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "custom"}, nil)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return([]*models.Permission{{Name: "secrets.read"}}, nil)
@@ -161,6 +171,7 @@ func TestValidateRoleGrantAuthority_Allowed(t *testing.T) {
 }
 
 func TestValidateRoleGrantAuthority_DeniedWhenActorLacksBundledPermission(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "custom"}, nil)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return([]*models.Permission{{Name: "secrets.read"}}, nil)
@@ -174,6 +185,7 @@ func TestValidateRoleGrantAuthority_DeniedWhenActorLacksBundledPermission(t *tes
 }
 
 func TestValidateRoleGrantAuthority_RejectsOversizedBatch(t *testing.T) {
+	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	grants := make([]storage.RoleGrant, maxUserCreateAssignments+1)
 	err := c.ValidateRoleGrantAuthority(context.Background(), 1, false, grants)
@@ -182,6 +194,7 @@ func TestValidateRoleGrantAuthority_RejectsOversizedBatch(t *testing.T) {
 }
 
 func TestValidateRoleGrantAuthority_UnknownRoleID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(999)).Return(nil, errors.New("record not found"))
 
@@ -195,6 +208,7 @@ func TestValidateRoleGrantAuthority_UnknownRoleID(t *testing.T) {
 // ── IsValidMachineTransition ─────────────────────────────────────────────
 
 func TestIsValidMachineTransition(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		from, to  string
@@ -224,6 +238,7 @@ func TestIsValidMachineTransition(t *testing.T) {
 // ── SessionStillLive (#G18) ──────────────────────────────────────────────
 
 func TestSessionStillLive(t *testing.T) {
+	t.Parallel()
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	newCore := func(sess *models.Session, err error) *KeyorixCore {
 		ms := new(MockStorage)
@@ -285,6 +300,7 @@ func TestSessionStillLive(t *testing.T) {
 // ── AccountStillUsable (#G18) ─────────────────────────────────────────────
 
 func TestAccountStillUsable(t *testing.T) {
+	t.Parallel()
 	newCore := func(user *models.User, err error) *KeyorixCore {
 		ms := new(MockStorage)
 		ms.On("GetUser", mock.Anything, uint(1)).Return(user, err)
@@ -327,6 +343,7 @@ func TestAccountStillUsable(t *testing.T) {
 // this purpose.
 
 func TestGuardLastAdminDeactivation_RefusesLastAdmin(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
@@ -339,6 +356,7 @@ func TestGuardLastAdminDeactivation_RefusesLastAdmin(t *testing.T) {
 }
 
 func TestGuardLastAdminDeactivation_AllowsWhenAnotherAdminRemains(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
@@ -352,6 +370,7 @@ func TestGuardLastAdminDeactivation_AllowsWhenAnotherAdminRemains(t *testing.T) 
 }
 
 func TestGuardLastAdminDeactivation_AllowsNonAdminTarget(t *testing.T) {
+	t.Parallel()
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "viewer", IsActive: true, AccountState: AccountActive}).Error)
@@ -363,6 +382,7 @@ func TestGuardLastAdminDeactivation_AllowsNonAdminTarget(t *testing.T) {
 // ── requireUserCredentialsRevokeAuthority / RevokeAllPersonalAccessTokensForUser / DeleteSessionsForUserExcept ──
 
 func TestRevokeAllPersonalAccessTokensForUser(t *testing.T) {
+	t.Parallel()
 	t.Run("authorized actor revokes and audits", func(t *testing.T) {
 		ms := new(MockStorage)
 		stubAuthorizedPrincipal(ms, 9, Scope{}, permUsersWrite)
@@ -400,6 +420,7 @@ func TestRevokeAllPersonalAccessTokensForUser(t *testing.T) {
 }
 
 func TestDeleteSessionsForUserExcept(t *testing.T) {
+	t.Parallel()
 	t.Run("authorized actor deletes and audits", func(t *testing.T) {
 		ms := new(MockStorage)
 		stubAuthorizedPrincipal(ms, 9, Scope{}, permUsersWrite)
@@ -435,6 +456,7 @@ func TestDeleteSessionsForUserExcept(t *testing.T) {
 // locally before relaying a state change.
 
 func TestRequireGranterHoldsRolePermissions_Allowed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return([]*models.Permission{{Name: "secrets.read"}, {Name: "secrets.write"}}, nil)
 	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 2}, "secrets.read")
@@ -446,6 +468,7 @@ func TestRequireGranterHoldsRolePermissions_Allowed(t *testing.T) {
 }
 
 func TestRequireGranterHoldsRolePermissions_DeniedWhenMissingOneBundledPermission(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return([]*models.Permission{{Name: "secrets.read"}, {Name: "secrets.write"}}, nil)
 	// The actor holds secrets.read but not secrets.write -- the role grant must
@@ -468,6 +491,7 @@ func TestRequireGranterHoldsRolePermissions_DeniedWhenMissingOneBundledPermissio
 // ceiling is a deliberate no-op here, not an oversight, so GetRolePermissions
 // must never even be consulted.
 func TestRequireGranterHoldsRolePermissions_BootstrapActorBypasses(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	err := c.RequireGranterHoldsRolePermissions(context.Background(), 0, 5, Scope{ProjectID: 2}, false)
@@ -476,6 +500,7 @@ func TestRequireGranterHoldsRolePermissions_BootstrapActorBypasses(t *testing.T)
 }
 
 func TestRequireGranterHoldsRolePermissions_RoleLookupErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return(nil, errors.New("connection reset"))
 	c := NewKeyorixCore(ms)
@@ -488,6 +513,7 @@ func TestRequireGranterHoldsRolePermissions_RoleLookupErrorFailsClosed(t *testin
 // RevokeAllPersonalAccessTokensForUser/DeleteSessionsForUserExcept ─────────
 
 func TestRequireUserCredentialsRevokeAuthority_StorageErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(9), Scope{}).Return(nil, errors.New("connection reset"))
 	c := NewKeyorixCore(ms)
@@ -497,6 +523,7 @@ func TestRequireUserCredentialsRevokeAuthority_StorageErrorFailsClosed(t *testin
 }
 
 func TestRevokeAllPersonalAccessTokensForUser_StorageErrorPropagates(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	stubAuthorizedPrincipal(ms, 9, Scope{}, permUsersWrite)
 	ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, uint(5)).Return(nil, errors.New("db down"))
@@ -507,6 +534,7 @@ func TestRevokeAllPersonalAccessTokensForUser_StorageErrorPropagates(t *testing.
 }
 
 func TestDeleteSessionsForUserExcept_StorageErrorPropagates(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	stubAuthorizedPrincipal(ms, 9, Scope{}, permUsersWrite)
 	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(5)).Return([]string{}, nil)

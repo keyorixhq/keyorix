@@ -21,6 +21,7 @@ import (
 // TestSodViolationReference_S35 pins the stable reference format used by risk-exception
 // matching; any format change would silently break suppression of existing exceptions.
 func TestSodViolationReference_S35(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "sod:policy:3:user:7", sodViolationReference(3, "user", 7))
 	assert.Equal(t, "sod:policy:10:machine:1", sodViolationReference(10, "machine", 1))
 	assert.Equal(t, "sod:policy:0:user:0", sodViolationReference(0, "user", 0))
@@ -29,6 +30,7 @@ func TestSodViolationReference_S35(t *testing.T) {
 // TestSodBlockedErr_S35 confirms the error message contains the policy name and both
 // permissions so operators can act on it directly.
 func TestSodBlockedErr_S35(t *testing.T) {
+	t.Parallel()
 	pol := &models.SoDPolicy{Name: "write-vs-approve", PermissionA: "secrets.write", PermissionB: "access.approve"}
 	err := sodBlockedErr(pol, "grant this role")
 	require.Error(t, err)
@@ -41,6 +43,7 @@ func TestSodBlockedErr_S35(t *testing.T) {
 // TestSodPolicyNewlyCompletedBy_S35 exercises every branch of the predicate:
 // already-violated (skip), newly-completed (return), and harmless (nil).
 func TestSodPolicyNewlyCompletedBy_S35(t *testing.T) {
+	t.Parallel()
 	pol := &models.SoDPolicy{
 		ID: 1, Name: "p", PermissionA: "secrets.write", PermissionB: "secrets.read",
 	}
@@ -108,6 +111,7 @@ func TestSodPolicyNewlyCompletedBy_S35(t *testing.T) {
 
 // TestSodViolationsReport_Degrade_S35 confirms degrade flips Degraded and appends a reason.
 func TestSodViolationsReport_Degrade_S35(t *testing.T) {
+	t.Parallel()
 	r := &SoDViolationsReport{Violations: []SoDViolation{}}
 	assert.False(t, r.Degraded)
 
@@ -123,6 +127,7 @@ func TestSodViolationsReport_Degrade_S35(t *testing.T) {
 
 // TestListSoDPolicies_S35_StorageError covers the error path of ListSoDPolicies.
 func TestListSoDPolicies_S35_StorageError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("ListSoDPolicies", mock.Anything).Return(([]*models.SoDPolicy)(nil), fmt.Errorf("db error"))
@@ -133,6 +138,7 @@ func TestListSoDPolicies_S35_StorageError(t *testing.T) {
 
 // TestListSoDPolicies_S35_Empty covers the empty-slice path.
 func TestListSoDPolicies_S35_Empty(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{}, nil)
@@ -144,6 +150,7 @@ func TestListSoDPolicies_S35_Empty(t *testing.T) {
 // TestCreateSoDPolicy_S35_ValidationErrors exercises the early-return validation paths:
 // blank name, blank permissions, identical permissions.
 func TestCreateSoDPolicy_S35_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ctx := context.Background()
@@ -167,6 +174,7 @@ func TestCreateSoDPolicy_S35_ValidationErrors(t *testing.T) {
 
 // TestDetectSoDViolations_S35_EmptyPolicies confirms no violations when there are no policies.
 func TestDetectSoDViolations_S35_EmptyPolicies(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{}, nil)
@@ -179,6 +187,7 @@ func TestDetectSoDViolations_S35_EmptyPolicies(t *testing.T) {
 
 // TestDetectSoDViolations_S35_ListUsersError covers the ListUsers error path.
 func TestDetectSoDViolations_S35_ListUsersError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("ListSoDPolicies", mock.Anything).Return([]*models.SoDPolicy{
@@ -196,6 +205,7 @@ func TestDetectSoDViolations_S35_ListUsersError(t *testing.T) {
 
 // TestIsOffHours_S35 exercises the wrap-midnight path and the nil-loc (zero-value) guard.
 func TestIsOffHours_S35(t *testing.T) {
+	t.Parallel()
 	utcBand := offHoursPolicy{loc: time.UTC, start: 22, end: 6}
 
 	// Inside the wrap-midnight band: 23:00 UTC → off hours.
@@ -223,6 +233,7 @@ func TestIsOffHours_S35(t *testing.T) {
 
 // TestRandomSeed_S35 confirms randomSeed always returns a positive value.
 func TestRandomSeed_S35(t *testing.T) {
+	t.Parallel()
 	for i := 0; i < 5; i++ {
 		s := randomSeed()
 		assert.Positive(t, s, "randomSeed must return a positive int64")
@@ -234,6 +245,7 @@ func TestRandomSeed_S35(t *testing.T) {
 // TestGenerateSecureToken_S35 confirms the token is non-empty, has the expected
 // hex length (64 chars for 32 random bytes), and is different each call.
 func TestGenerateSecureToken_S35(t *testing.T) {
+	t.Parallel()
 	tok1, err := generateSecureToken()
 	require.NoError(t, err)
 	assert.Len(t, tok1, 64)
@@ -248,6 +260,7 @@ func TestGenerateSecureToken_S35(t *testing.T) {
 // TestPasswordExpired_S35 exercises the nil-user, disabled-policy, no-PasswordChangedAt
 // (falls back to CreatedAt), zero-CreatedAt, and expired paths.
 func TestPasswordExpired_S35(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 
@@ -293,6 +306,7 @@ func TestPasswordExpired_S35(t *testing.T) {
 
 // TestPasswordReused_S35 covers the disabled-policy path and the current-hash match.
 func TestPasswordReused_S35(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ctx := context.Background()
@@ -317,6 +331,7 @@ func TestPasswordReused_S35(t *testing.T) {
 
 // TestLogShareCreated_S35_GroupBranch confirms the description says "group" when IsGroup=true.
 func TestLogShareCreated_S35_GroupBranch(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
 	ctx := context.Background()
@@ -335,6 +350,7 @@ func TestLogShareCreated_S35_GroupBranch(t *testing.T) {
 
 // TestLogShareUpdated_S35_GroupBranch confirms the description says "group" when IsGroup=true.
 func TestLogShareUpdated_S35_GroupBranch(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
 	ctx := context.Background()
@@ -355,6 +371,7 @@ func TestLogShareUpdated_S35_GroupBranch(t *testing.T) {
 
 // TestLogShareRevoked_S35_GroupBranch confirms the description says "group" when IsGroup=true.
 func TestLogShareRevoked_S35_GroupBranch(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
 	ctx := context.Background()
@@ -372,6 +389,7 @@ func TestLogShareRevoked_S35_GroupBranch(t *testing.T) {
 
 // TestLogSelfRemovalFromShare_S35 exercises the LogSelfRemovalFromShare path.
 func TestLogSelfRemovalFromShare_S35(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}
 	ctx := context.Background()
@@ -391,6 +409,7 @@ func TestLogSelfRemovalFromShare_S35(t *testing.T) {
 
 // TestParseAuditHighWater_S35 exercises the malformed-input path (len!=6, not v1).
 func TestParseAuditHighWater_S35(t *testing.T) {
+	t.Parallel()
 	t.Run("empty string → not ok", func(t *testing.T) {
 		_, _, ok := parseAuditHighWater("")
 		assert.False(t, ok)
@@ -439,6 +458,7 @@ func TestParseAuditHighWater_S35(t *testing.T) {
 
 // TestSystemNeedsBootstrap_S35_MetadataError covers the storage-error early-return.
 func TestSystemNeedsBootstrap_S35_MetadataError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).
@@ -451,6 +471,7 @@ func TestSystemNeedsBootstrap_S35_MetadataError(t *testing.T) {
 
 // TestSystemNeedsBootstrap_S35_MarkerFound covers the "marker present → already initialised" path.
 func TestSystemNeedsBootstrap_S35_MarkerFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).
@@ -463,6 +484,7 @@ func TestSystemNeedsBootstrap_S35_MarkerFound(t *testing.T) {
 
 // TestSystemNeedsBootstrap_S35_ListUsersError covers the ListUsers error path.
 func TestSystemNeedsBootstrap_S35_ListUsersError(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).Return("", false, nil)
@@ -476,6 +498,7 @@ func TestSystemNeedsBootstrap_S35_ListUsersError(t *testing.T) {
 
 // TestSystemNeedsBootstrap_S35_HasUsers covers the "users exist → doesn't need bootstrap" path.
 func TestSystemNeedsBootstrap_S35_HasUsers(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSystemMetadata", mock.Anything, systemInitializedKey).Return("", false, nil)
@@ -491,6 +514,7 @@ func TestSystemNeedsBootstrap_S35_HasUsers(t *testing.T) {
 
 // TestGetSecretVersions_S35_ZeroID covers the secretID==0 validation guard.
 func TestGetSecretVersions_S35_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersions(context.Background(), 0)
@@ -501,6 +525,7 @@ func TestGetSecretVersions_S35_ZeroID(t *testing.T) {
 
 // TestGetSecretVersion_S35_ZeroID and non-positive version cover those validation guards.
 func TestGetSecretVersion_S35_Validations(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 
@@ -520,6 +545,7 @@ func TestGetSecretVersion_S35_Validations(t *testing.T) {
 
 // TestGetSecretVersion_S35_NotFound covers the "version not found" path.
 func TestGetSecretVersion_S35_NotFound(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSecretVersions", mock.Anything, uint(42)).Return([]*models.SecretVersion{
@@ -533,6 +559,7 @@ func TestGetSecretVersion_S35_NotFound(t *testing.T) {
 
 // TestGetSecretVersion_S35_Found covers the happy path.
 func TestGetSecretVersion_S35_Found(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	want := &models.SecretVersion{ID: 5, VersionNumber: 2}
@@ -548,6 +575,7 @@ func TestGetSecretVersion_S35_Found(t *testing.T) {
 
 // TestGetSecretVersionsWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
 func TestGetSecretVersionsWithPermissionCheck_S35_ZeroUser(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersionsWithPermissionCheck(context.Background(), 1, 0)
@@ -557,6 +585,7 @@ func TestGetSecretVersionsWithPermissionCheck_S35_ZeroUser(t *testing.T) {
 
 // TestGetSecretValueWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
 func TestGetSecretValueWithPermissionCheck_S35_ZeroUser(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretValueWithPermissionCheck(context.Background(), 1, 0)
@@ -566,6 +595,7 @@ func TestGetSecretValueWithPermissionCheck_S35_ZeroUser(t *testing.T) {
 
 // TestGetLatestSecretVersionWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
 func TestGetLatestSecretVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetLatestSecretVersionWithPermissionCheck(context.Background(), 1, 0)
@@ -575,6 +605,7 @@ func TestGetLatestSecretVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
 
 // TestGetSecretVersionWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
 func TestGetSecretVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretVersionWithPermissionCheck(context.Background(), 1, 0, 1)
@@ -584,6 +615,7 @@ func TestGetSecretVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
 
 // TestGetSecretValueByVersionWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
 func TestGetSecretValueByVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretValueByVersionWithPermissionCheck(context.Background(), 1, 0, 1)
@@ -593,6 +625,7 @@ func TestGetSecretValueByVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
 
 // TestGetLatestSecretVersion_S35_NoVersions covers the "no versions found" path.
 func TestGetLatestSecretVersion_S35_NoVersions(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	ms.On("GetSecretVersions", mock.Anything, uint(7)).Return([]*models.SecretVersion{}, nil)
@@ -603,6 +636,7 @@ func TestGetLatestSecretVersion_S35_NoVersions(t *testing.T) {
 
 // TestGetLatestSecretVersion_S35_ZeroID ensures secretID==0 is rejected.
 func TestGetLatestSecretVersion_S35_ZeroID(t *testing.T) {
+	t.Parallel()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetLatestSecretVersion(context.Background(), 0)
@@ -614,6 +648,7 @@ func TestGetLatestSecretVersion_S35_ZeroID(t *testing.T) {
 
 // TestSetBusinessHours_S35 covers error branches: unknown timezone and start==end.
 func TestSetBusinessHours_S35(t *testing.T) {
+	t.Parallel()
 	d := NewAnomalyDetector(&captureStore{})
 
 	t.Run("unknown timezone is rejected", func(t *testing.T) {
@@ -643,6 +678,7 @@ func TestSetBusinessHours_S35(t *testing.T) {
 
 // TestAddRoleGrant_S35 confirms deduplication: the same roleID+projectID is added only once.
 func TestAddRoleGrant_S35(t *testing.T) {
+	t.Parallel()
 	grants := make([]storage.RoleGrant, 0)
 	seen := map[[2]uint]bool{}
 	addRoleGrant(&grants, seen, 5, 0)
@@ -656,6 +692,7 @@ func TestAddRoleGrant_S35(t *testing.T) {
 
 // TestActorPtr_S35 pins the behaviour: 0 → nil, non-zero → pointer to value.
 func TestActorPtr_S35(t *testing.T) {
+	t.Parallel()
 	assert.Nil(t, actorPtr(0))
 	p := actorPtr(7)
 	require.NotNil(t, p)
@@ -670,6 +707,7 @@ func TestActorPtr_S35(t *testing.T) {
 // TestSetBusinessHours_S35_NilStorage confirms auditBusinessHoursConfig is a no-op when
 // the detector's storage is nil (prevents a nil-deref in tests that build a bare struct).
 func TestSetBusinessHours_S35_NilStorage(t *testing.T) {
+	t.Parallel()
 	d := &AnomalyDetector{}
 	require.NotPanics(t, func() {
 		_ = d.SetBusinessHours(context.Background(), "", 22, 6)

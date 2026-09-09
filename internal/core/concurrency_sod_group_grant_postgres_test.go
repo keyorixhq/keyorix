@@ -30,6 +30,7 @@ import (
 // (concurrency_sod_grant_postgres_test.go), reached through the group edge
 // instead of two direct grants.
 func TestConcurrency_GroupRoleGrant_CrossReplicaPostgres_SoDBypass(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)
@@ -161,6 +162,7 @@ func TestConcurrency_GroupRoleGrant_CrossReplicaPostgres_SoDBypass(t *testing.T)
 // a custom one, so a real deadlock fails loudly rather than silently) if the
 // lock-ordering discipline is ever broken.
 func TestConcurrency_TwoGroupGrants_SharedMember_NoDeadlock(t *testing.T) {
+	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 	base := pgTestDSN(t)
 	dsn := pgIsolatedSchemaDSN(t, base)

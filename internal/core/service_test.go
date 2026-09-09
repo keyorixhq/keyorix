@@ -13,6 +13,7 @@ import (
 )
 
 func TestKeyorixCore_CreateSecret(t *testing.T) {
+	t.Parallel()
 	// i18n is initialized once for the package in TestMain (sharing_test.go)
 
 	// Create mock storage
@@ -116,6 +117,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 }
 
 func TestKeyorixCore_GetSecret(t *testing.T) {
+	t.Parallel()
 	// i18n is initialized once for the package in TestMain (sharing_test.go)
 
 	ctx := context.Background()
@@ -211,6 +213,7 @@ func TestKeyorixCore_GetSecret(t *testing.T) {
 }
 
 func TestKeyorixCore_ListSecrets(t *testing.T) {
+	t.Parallel()
 	// i18n is initialized once for the package in TestMain (sharing_test.go)
 
 	ctx := context.Background()

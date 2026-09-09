@@ -34,6 +34,7 @@ import (
 )
 
 func TestExpireSetupToken_Invariant_ExactlyOneAuditEventWithCorrectActor(t *testing.T) {
+	t.Parallel()
 	background := context.Background()
 
 	cases := []struct {
