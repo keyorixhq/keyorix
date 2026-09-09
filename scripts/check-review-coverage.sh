@@ -72,9 +72,15 @@ fi
 if [ -n "${REVIEW_PKGLIST:-}" ]; then
     pkglist="$(cat "$REVIEW_PKGLIST")"
 else
-    raw="$(cd "$REPO_ROOT" && go list ./... 2>&1)" || {
-        echo "FAIL: go list ./... failed:" >&2; echo "$raw" >&2; exit 1
+    errfile="$(mktemp)"
+    raw="$(cd "$REPO_ROOT" && go list ./... 2>"$errfile")" || {
+        echo "FAIL: go list ./... failed:" >&2; cat "$errfile" >&2; rm -f "$errfile"; exit 1
     }
+    # go list writes progress noise (e.g. "go: downloading ...") to stderr when
+    # modules aren't cached yet — keep that off stdout so it can never be
+    # mistaken for a package path (see FAIL below). Surface it on failure only.
+    if [ -s "$errfile" ]; then cat "$errfile" >&2; fi
+    rm -f "$errfile"
     pkglist="$(sed -e "s|^${MODULE_PREFIX}/||" -e "s|^${MODULE_PREFIX}\$|.|" <<<"$raw")"
 fi
 
