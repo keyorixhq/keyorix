@@ -312,7 +312,7 @@ pkgs_for_leg() {
     root-1) root_1_pkgs ;;
     root-2) root_2_pkgs ;;
     root-3) root_3_pkgs ;;
-    core-1|core-2) core_pkgs ;;
+    core) core_pkgs ;;
     root-4) root_4_pkgs ;;
     storage-store-1|storage-store-2) storage_store_pkgs ;;
     handlers-1|handlers-2) handlers_pkg ;;
@@ -330,8 +330,7 @@ root-1
 root-2
 root-3
 root-4
-core-1
-core-2
+core
 storage-store-1
 storage-store-2
 handlers-1
