@@ -6,6 +6,11 @@ on:
   pull_request:
     # See ci.yml's own comment: also covers stacked-PR review chains.
     branches: [main, 'adr082/**', 'feat/**', 'fix/**']
+  # Merge queue. Every REQUIRED status check must also report on the
+  # merge_group event or the queue never merges anything -- a check that
+  # simply does not run is indistinguishable from one still pending, and it
+  # blocks the queue forever rather than failing loudly.
+  merge_group:
   schedule:
     # Weekly deep scan: catches newly-published CodeQL query packs against
     # unchanged code, not just what a push/PR diff touches.
