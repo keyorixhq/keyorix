@@ -23,7 +23,7 @@ permissions: {}
 # Cancel superseded runs on the same ref (matches web-ci.yml's own convention):
 # a later push/merge on the same branch makes an in-flight run's result moot
 # before it even finishes, and this is by far the most expensive workflow here
-# (8 parallel test-suite shards among ~20 jobs) -- letting a superseded run
+# (18 parallel test-suite shards among ~30 jobs) -- letting a superseded run
 # burn its full runtime is pure wasted Actions-minute spend.
 concurrency:
   group: ci-${{ github.ref }}
@@ -481,9 +481,19 @@ jobs:
           # past the observed duration. 323 test files in one package is
           # itself worth revisiting -- tracked separately (#1523), not folded
           # into this CI-scheduling fix.
-          - leg: core
+          #
+          # Split into two test-name shards 2026-09-09: at 13 min on run
+          # 34329184317 a single core leg was above the rebalanced matrix
+          # maximum on its own. internal/core is also the one heavy package
+          # with zero t.Parallel() (2856 tests, fully serial on a 4-core
+          # runner) -- sharding is the scheduling half of that; the
+          # t.Parallel() half is tracked separately.
+          - leg: core-1
             timeout: 1800
-            coverage-file: coverage_core.out
+            coverage-file: coverage_core1.out
+          - leg: core-2
+            timeout: 1800
+            coverage-file: coverage_core2.out
           # storage-store (internal/storage/store, re-pinned out of root-4's
           # catch-all 2026-09-04) -- same trigger as core's own split above: a
           # real CI run (main, commit b971ed36) found root-4's `go test` step
@@ -497,9 +507,16 @@ jobs:
           # last measured. 1800s here for the same reason every other leg
           # uses it -- generous headroom so a healthy-but-slow run never
           # trips it, not tuned tight to the observed duration.
-          - leg: storage-store
+          #
+          # Split into two test-name shards 2026-09-09: 18 min on run
+          # 34329184317, the slowest leg after http-6 and unsharded, so it
+          # set a floor no rebalancing elsewhere could get under.
+          - leg: storage-store-1
             timeout: 1800
-            coverage-file: coverage_storage_store.out
+            coverage-file: coverage_storage_store1.out
+          - leg: storage-store-2
+            timeout: 1800
+            coverage-file: coverage_storage_store2.out
           # handlers (server/http/handlers, one package, 167 test files, 5151
           # top-level tests, all already t.Parallel()) measured at 911s in CI
           # -- vs. 15s wall / 37s summed-per-test locally without -race. That
@@ -519,12 +536,12 @@ jobs:
           - leg: handlers-2
             timeout: 1800
             coverage-file: coverage_handlers2.out
-          - leg: handlers-3
-            timeout: 1800
-            coverage-file: coverage_handlers3.out
-          - leg: handlers-4
-            timeout: 1800
-            coverage-file: coverage_handlers4.out
+          # Reduced from 4 shards to 2 (2026-09-09): on run 34329184317 the
+          # four legs ran 5/6/5/5 min -- balanced, but each was paying the
+          # ~1.9 min fixed per-leg cost (checkout + setup-go + race/cover
+          # compile + Postgres startup) on ~3.3 min of actual test work. Two
+          # shards land at ~8.6 min, still under the matrix maximum, and
+          # return two runner slots to http where the work actually is.
           # http (server/http, re-enabled 2026-08-23 after ~4 months dark --
           # see docs/g80-remediation-notes.md, G80 C4). Measured 1904.015s
           # locally (-race, unsharded, one full run, zero failures beyond
@@ -568,6 +585,12 @@ jobs:
           - leg: http-6
             timeout: 1800
             coverage-file: coverage_http6.out
+          - leg: http-7
+            timeout: 1800
+            coverage-file: coverage_http7.out
+          - leg: http-8
+            timeout: 1800
+            coverage-file: coverage_http8.out
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -625,29 +648,38 @@ jobs:
           pkgs=$(pkgs_for_leg "$leg")
 
           case "$leg" in
-            handlers-1|handlers-2|handlers-3|handlers-4)
-              # One package (server/http/handlers), 5151 top-level tests, all
-              # already t.Parallel() -- no per-test timing outliers to pin the
-              # way root-1/2/3 do (measured: 60x CI/local gap here is race-
-              # detector contention scaling with total concurrent goroutines
-              # on one runner, not a few slow tests), so split evenly by
-              # (sorted test name index) mod 4 instead. A newly added test
-              # always lands in whichever shard its name happens to hash to --
-              # nothing to keep in sync, unlike root-1/2/3's pinned lists.
+            handlers-1|handlers-2)
+              # One package (server/http/handlers), all tests already
+              # t.Parallel(), no per-test timing outliers to pin the way
+              # root-1/2/3 do -- the 60x CI/local gap here is race-detector
+              # contention scaling with total concurrent goroutines on one
+              # runner, not a few slow tests. Split by (sorted test name
+              # index) mod 2. A newly added test lands in whichever shard its
+              # name hashes to; nothing to keep in sync.
               shard=${leg#handlers-}
-              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 4)
+              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 2)
               pkgs=./server/http/handlers/...
               ;;
-            http-1|http-2|http-3|http-4|http-5|http-6)
-              # server/http, 461 top-level tests -- pinned by measured
-              # per-test time (http-1..5) plus a dynamic catch-all (http-6),
-              # NOT the by-test-name-mod-N hash handlers-N above still uses
-              # (see http_pkg's own comment in scripts/ci-test-legs.sh for
-              # why the two mechanisms diverged and the 2026-08-29
-              # measurement behind this one).
+            http-1|http-2|http-3|http-4|http-5|http-6|http-7|http-8)
+              # server/http, mod 8. Reverted 2026-09-09 from the pinned
+              # per-test lists introduced 2026-08-29 -- see http_pkg's
+              # comment in scripts/ci-test-legs.sh for the measured drift
+              # (82% spread eleven days after pinning, vs. the 54% the
+              # pinning was introduced to fix) and for what a real fix
+              # would look like.
               shard=${leg#http-}
-              run_filter=$(run_filter_for_http_shard "$shard")
+              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 8)
               pkgs=./server/http
+              ;;
+            core-1|core-2)
+              shard=${leg#core-}
+              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 2)
+              pkgs=./internal/core
+              ;;
+            storage-store-1|storage-store-2)
+              shard=${leg#storage-store-}
+              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 2)
+              pkgs=./internal/storage/store
               ;;
           esac
           # $pkgs is deliberately unquoted below: it holds a space-separated
@@ -845,13 +877,13 @@ jobs:
           source scripts/ci-test-legs.sh
           grep_args=()
           while IFS= read -r pattern; do grep_args+=(-e "$pattern"); done < <(coverage_floor_grep_patterns)
-          # coverage_core.out is deliberately NOT in this list -- a pre-existing
+          # coverage_core1.out/coverage_core2.out are deliberately NOT in this list -- a pre-existing
           # gap this PR found but did not fix (out of scope for a CI-sharding
           # change; internal/core's coverage silently isn't counted toward the
-          # floor). coverage_storage_store.out below is included: it's THIS
+          # floor). The coverage_storage_store*.out files below are included: they are THIS
           # leg's own new file, and omitting it would just be reproducing that
           # same gap in new code rather than inheriting an unrelated one.
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_storage_store.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_storage_store1.out coverage_storage_store2.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out coverage_http7.out coverage_http8.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
