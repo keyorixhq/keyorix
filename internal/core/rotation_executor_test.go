@@ -57,7 +57,6 @@ func latestVersion(t *testing.T, db *gorm.DB, secretID uint) *models.SecretVersi
 }
 
 func TestRunAutoRotation_RotatesOverdueOptedInOnly(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -94,7 +93,6 @@ func TestRunAutoRotation_RotatesOverdueOptedInOnly(t *testing.T) {
 // executor never actually called it, so GetRotationState always reported "idle"
 // regardless of real activity.
 func TestRunAutoRotation_StampsRotationStateOnSuccess(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -117,7 +115,6 @@ func TestRunAutoRotation_StampsRotationStateOnSuccess(t *testing.T) {
 // the same #G43 gap: a backend rotation failure must also be visible via
 // GetRotationState, not just in the run's return value / audit trail.
 func TestRunAutoRotation_StampsRotationStateOnFailure(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
 	c, db, fixed := backendPolicyCore(t, fake)
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
@@ -136,7 +133,6 @@ func TestRunAutoRotation_StampsRotationStateOnFailure(t *testing.T) {
 // (and its ProjectID) is known at every one of these call sites — an operator
 // filtering the audit trail by project couldn't find auto-rotation activity.
 func TestRunAutoRotation_AuditEventsCarryProjectID(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -159,7 +155,6 @@ func TestRunAutoRotation_AuditEventsCarryProjectID(t *testing.T) {
 }
 
 func TestRunAutoRotation_InactivePolicyIgnored(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -178,7 +173,6 @@ func TestRunAutoRotation_InactivePolicyIgnored(t *testing.T) {
 }
 
 func TestSetSecretAutoRotate_TogglesAndPersists(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 
@@ -196,7 +190,6 @@ func TestSetSecretAutoRotate_TogglesAndPersists(t *testing.T) {
 }
 
 func TestSetSecretAutoRotate_ValidatesSpec(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	ctx := context.Background()
@@ -211,7 +204,6 @@ func TestSetSecretAutoRotate_ValidatesSpec(t *testing.T) {
 }
 
 func TestGenerateRotatedValueSpec_LengthAndCharset(t *testing.T) {
-	t.Parallel()
 	// hex charset, custom length.
 	v, err := generateRotatedValueSpec(48, "hex")
 	require.NoError(t, err)
@@ -234,7 +226,6 @@ func TestGenerateRotatedValueSpec_LengthAndCharset(t *testing.T) {
 
 // The executor honors a secret's generator spec.
 func TestRunAutoRotation_UsesSecretSpec(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -264,7 +255,6 @@ func TestRunAutoRotation_UsesSecretSpec(t *testing.T) {
 }
 
 func TestGenerateRotatedValue_UniqueAndCharset(t *testing.T) {
-	t.Parallel()
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
 		v, err := generateRotatedValue()
@@ -319,7 +309,6 @@ func backendPolicyCore(t *testing.T, fake *fakeExecutor) (*KeyorixCore, *gorm.DB
 
 // Backend rotation: the executor applies the new value upstream, then it's stored.
 func TestRunAutoRotation_BackendApplied(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg"}
 	c, db, fixed := backendPolicyCore(t, fake)
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
@@ -337,7 +326,6 @@ func TestRunAutoRotation_BackendApplied(t *testing.T) {
 
 // If the upstream apply fails, the value is NOT stored (no drift between Keyorix and upstream).
 func TestRunAutoRotation_BackendFailureNotStored(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
 	c, db, fixed := backendPolicyCore(t, fake)
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
@@ -351,7 +339,6 @@ func TestRunAutoRotation_BackendFailureNotStored(t *testing.T) {
 
 // An unknown backend name (no executor registered) is skipped, not stored.
 func TestRunAutoRotation_UnknownBackendSkipped(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg"}
 	c, db, fixed := backendPolicyCore(t, fake)
 	seedBackendSecret(t, db, 1, "nope", "app_svc", fixed.Add(-60*24*time.Hour))
@@ -364,7 +351,6 @@ func TestRunAutoRotation_UnknownBackendSkipped(t *testing.T) {
 }
 
 func TestSetSecretAutoRotate_BackendRefBothOrNeither(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
@@ -386,7 +372,6 @@ func TestSetSecretAutoRotate_BackendRefBothOrNeither(t *testing.T) {
 }
 
 func TestSetSecretAutoRotate_RejectsUnknownBackend(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	ctx := context.Background()
@@ -410,7 +395,6 @@ func TestSetSecretAutoRotate_RejectsUnknownBackend(t *testing.T) {
 // scheduler run mint that credential into their own readable secret. A non-admin
 // actor must be refused.
 func TestSetSecretAutoRotate_BindingBackendRequiresAdminAuthority(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
@@ -431,7 +415,6 @@ func TestSetSecretAutoRotate_BindingBackendRequiresAdminAuthority(t *testing.T) 
 // the common case (no external backend — Keyorix regenerates the value itself) has
 // no cross-scope credential-minting risk and is unaffected by the new ceiling.
 func TestSetSecretAutoRotate_InKeyorixRotationNoAdminRequired(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	ctx := context.Background()
@@ -448,7 +431,6 @@ func TestSetSecretAutoRotate_InKeyorixRotationNoAdminRequired(t *testing.T) {
 // strip an admin-configured rotation binding they were never allowed to set up in the
 // first place.
 func TestSetSecretAutoRotate_UnbindingBackendRequiresAdminAuthority(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
 	ctx := context.Background()
@@ -468,7 +450,6 @@ func TestSetSecretAutoRotate_UnbindingBackendRequiresAdminAuthority(t *testing.T
 // TestSetSecretAutoRotate_AdminCanUnbindBackend is the positive control: an actor who DOES
 // hold admin authority can still clear an existing rotation-backend binding.
 func TestSetSecretAutoRotate_AdminCanUnbindBackend(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
 	ctx := context.Background()
@@ -489,7 +470,6 @@ func TestSetSecretAutoRotate_AdminCanUnbindBackend(t *testing.T) {
 // is a no-op and needs no elevated authority (mirrors the in-Keyorix-rotation control
 // above, but explicit about the "nothing to unbind" case).
 func TestSetSecretAutoRotate_UnboundSecretNoAdminRequired(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	ctx := context.Background()
@@ -505,7 +485,6 @@ func TestSetSecretAutoRotate_UnboundSecretNoAdminRequired(t *testing.T) {
 // persisted to secret.RotationRef — covers every backend without relying solely on
 // each backend's own (partial, discovered-after-the-fact) defenses.
 func TestSetSecretAutoRotate_RejectsDangerousRefChars(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		name string
 		ref  string
@@ -550,7 +529,6 @@ func TestSetSecretAutoRotate_RejectsDangerousRefChars(t *testing.T) {
 // gcpsa_test.go, postgres_test.go, mysql_test.go): a strict allowlist would have broken
 // these, which is why validateRotationRef is a denylist instead.
 func TestSetSecretAutoRotate_AllowsRealisticLegitimateRefs(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		name string
 		ref  string
@@ -600,7 +578,6 @@ func (f *fakeGenExecutor) GenerateUpstream(_ context.Context, ref string) (strin
 // For a generate-upstream backend the STORED value is what the upstream minted, not the
 // Keyorix-generated candidate.
 func TestRunAutoRotation_GenerateUpstreamStored(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -621,7 +598,6 @@ func TestRunAutoRotation_GenerateUpstreamStored(t *testing.T) {
 
 // A generate-upstream failure stores nothing.
 func TestRunAutoRotation_GenerateUpstreamFailureNotStored(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -659,7 +635,6 @@ func (s *failingProjectSecretsStore) ListSecrets(ctx context.Context, filter *st
 // healthy policy's overdue secret still rotates (the run doesn't abort), and (b) the
 // failure is now logged, unlike before.
 func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
-	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -722,7 +697,6 @@ func timePtr(t time.Time) *time.Time { return &t }
 // per-backend executors (AWS IAM/Azure AD/GCP SA) that construct PartialRotationError
 // are covered individually in internal/rotation/*_test.go.
 func TestRunAutoRotation_GenerateUpstreamPartialDelete_StoresButFlagsIncomplete(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -757,7 +731,6 @@ func TestRunAutoRotation_GenerateUpstreamPartialDelete_StoresButFlagsIncomplete(
 // A rotation failure broadcasts a single summary notification (fakeSink is defined in
 // notification_dispatch_test.go).
 func TestRunAutoRotation_NotifiesFailures(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
 	c, db, fixed := backendPolicyCore(t, fake)
 	sink := &fakeSink{}
@@ -786,7 +759,6 @@ func TestRunAutoRotation_NotifiesFailures(t *testing.T) {
 // failure audit event (EventAutoRotationFailures) must still be written accurately —
 // but the alert-delivery gap itself must be logged, not silently swallowed.
 func TestRunAutoRotation_NotifiesFailures_LogsWhenNoChannelAccepts(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
 	c, db, fixed := backendPolicyCore(t, fake)
 	sink := &fakeSink{refuse: true}
@@ -812,7 +784,6 @@ func TestRunAutoRotation_NotifiesFailures_LogsWhenNoChannelAccepts(t *testing.T)
 
 // A clean run (no failures) sends nothing.
 func TestRunAutoRotation_NoFailuresNoNotify(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.RotationPolicy{
@@ -830,7 +801,6 @@ func TestRunAutoRotation_NoFailuresNoNotify(t *testing.T) {
 // #391 bonus fix: failures in different projects must broadcast as separate,
 // project-scoped notifications — never bundled into one cross-project message.
 func TestRunAutoRotation_FailuresNotBundledAcrossProjects(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "proj-2"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "prod"}).Error)
@@ -926,7 +896,6 @@ func (s *rotationDriftStore) UpdateSecret(_ context.Context, _ *models.SecretNod
 // failure; the live credential could drift from Keyorix's record with no audit trail. The
 // backend-apply-FAILURE path was already audited; this closes the asymmetry.
 func TestRunAutoRotation_BackendSucceedsStoreFails_AuditsDrift(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg"}
 	c, db, fixed := backendPolicyCore(t, fake)
 	// Make the post-backend store fail: RotateSecret's final UpdateSecret errors.
@@ -977,7 +946,6 @@ func (f *fakePartialGenExecutor) GenerateUpstream(_ context.Context, ref string)
 // A secret with no configured rotation backend rotates exactly as before: the
 // caller-supplied value is stored verbatim.
 func TestRotateSecretOnDemand_NoBackendStoresCallerValue(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "plain", false, fixed.Add(-24*time.Hour))
 
@@ -992,7 +960,6 @@ func TestRotateSecretOnDemand_NoBackendStoresCallerValue(t *testing.T) {
 // actually invoke the backend rotation executor (not just overwrite the stored value),
 // and the value stored in Keyorix is the one the backend applied/confirmed.
 func TestRotateSecretOnDemand_AppliesBackend(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg"}
 	c, db, fixed := rotationExecCore(t)
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
@@ -1014,7 +981,6 @@ func TestRotateSecretOnDemand_AppliesBackend(t *testing.T) {
 // For a generate-upstream backend the caller's candidate is ignored — the stored value
 // is what the upstream minted, matching automated-rotation semantics.
 func TestRotateSecretOnDemand_GenerateUpstreamIgnoresCandidate(t *testing.T) {
-	t.Parallel()
 	fake := &fakePartialGenExecutor{name: "cloud", value: `{"access_key_id":"AKIANEW"}`}
 	c, db, fixed := rotationExecCore(t)
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
@@ -1030,7 +996,6 @@ func TestRotateSecretOnDemand_GenerateUpstreamIgnoresCandidate(t *testing.T) {
 // If the upstream rotation fails outright, nothing is stored — the response must never
 // be a misleading "success" while the suspected-compromised credential is untouched.
 func TestRotateSecretOnDemand_BackendFailureRefused(t *testing.T) {
-	t.Parallel()
 	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
 	c, db, fixed := rotationExecCore(t)
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
@@ -1056,7 +1021,6 @@ func TestRotateSecretOnDemand_BackendFailureRefused(t *testing.T) {
 // but the call still returns an error so the caller is never told "success" while a
 // leftover credential needs manual removal.
 func TestRotateSecretOnDemand_PartialFailureStoresButErrors(t *testing.T) {
-	t.Parallel()
 	fake := &fakePartialGenExecutor{name: "cloud", value: `{"access_key_id":"AKIANEW"}`, partial: true}
 	c, db, fixed := rotationExecCore(t)
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
@@ -1078,7 +1042,6 @@ func TestRotateSecretOnDemand_PartialFailureStoresButErrors(t *testing.T) {
 // An unknown backend name (misconfigured after a manager reload) is refused, not
 // silently treated as a plain Keyorix-only rotation.
 func TestRotateSecretOnDemand_UnknownBackendRefused(t *testing.T) {
-	t.Parallel()
 	c, db, fixed := rotationExecCore(t)
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "other"}}))
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))

@@ -48,7 +48,6 @@ func (c *captureStore) LogAuditEvent(_ context.Context, _ *models.AuditEvent) er
 // The recent-access scan window must honor the configured lookback (so a longer scan
 // cadence scans a proportionally longer window), and be floored at one hour.
 func TestRunDetection_ScanWindowHonorsLookback(t *testing.T) {
-	t.Parallel()
 	t.Run("longer lookback widens the window", func(t *testing.T) {
 		store := &captureStore{}
 		d := NewAnomalyDetector(store)
@@ -75,7 +74,6 @@ func TestRunDetection_ScanWindowHonorsLookback(t *testing.T) {
 // A storage failure during detection must surface as a non-nil error so the scheduler
 // records a partial failure rather than reporting a clean pass.
 func TestRunDetection_SurfacesStorageFailure(t *testing.T) {
-	t.Parallel()
 	store := &captureStore{createErr: assertAnErr}
 	d := NewAnomalyDetector(store)
 	// The store always yields one off_hours alert, whose insert fails → a surfaced error.
@@ -111,7 +109,6 @@ func (s *perSecretFailStore) ListSecretAccessLogs(ctx context.Context, secretID 
 // (the detection window is only the last hour and is never retroactively
 // re-evaluated), and (b) not block detection for a sibling secret in the same pass.
 func TestRunDetection_LogsAndContinuesOnAccessLogReadError(t *testing.T) {
-	t.Parallel()
 	store := &perSecretFailStore{captureStore: &captureStore{}, failSecretID: 1}
 	d := NewAnomalyDetector(store)
 
@@ -130,7 +127,6 @@ func TestRunDetection_LogsAndContinuesOnAccessLogReadError(t *testing.T) {
 }
 
 func TestBuildBaseline(t *testing.T) {
-	t.Parallel()
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour) // the live detection window — excluded from the baseline
 	// Each trusted IP/user appears baselineMinSeen (3) times so the count-based
@@ -175,7 +171,6 @@ func TestBuildBaseline(t *testing.T) {
 // ANOMALY-02: additionally requires baselineMinSeen distinct observations before
 // promotion — a single pre-quarantine access is no longer sufficient.
 func TestBuildBaseline_QuarantineWithholdsRecentlySeenIdentities(t *testing.T) {
-	t.Parallel()
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour)
 	quarantine := 24 * time.Hour
@@ -199,7 +194,6 @@ func TestBuildBaseline_QuarantineWithholdsRecentlySeenIdentities(t *testing.T) {
 }
 
 func TestLogsBefore(t *testing.T) {
-	t.Parallel()
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	cutoff := now.Add(-1 * time.Hour)
 	logs := []models.SecretAccessLog{
@@ -214,7 +208,6 @@ func TestLogsBefore(t *testing.T) {
 }
 
 func TestDetectAnomalies(t *testing.T) {
-	t.Parallel()
 	secret := models.SecretNode{ID: 1, Name: "db"}
 	baseline := accessBaseline{
 		knownIPs:   map[string]bool{"10.0.0.1": true},
@@ -279,7 +272,6 @@ func TestDetectAnomalies(t *testing.T) {
 // instant can be off-hours in UTC but business hours elsewhere. This is the bug the
 // hardcoded-UTC rule had on non-UTC deployments.
 func TestOffHoursPolicy(t *testing.T) {
-	t.Parallel()
 	la, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
@@ -305,7 +297,6 @@ func TestOffHoursPolicy(t *testing.T) {
 }
 
 func TestSetBusinessHours(t *testing.T) {
-	t.Parallel()
 	d := NewAnomalyDetector(nil)
 
 	ctx := context.Background()
@@ -344,7 +335,6 @@ func TestSetBusinessHours(t *testing.T) {
 // back to the hardcoded default (22 start / 6 end), and could collide with the
 // explicitly-supplied field to produce a degenerate, zero-width band with no error.
 func TestSetBusinessHours_PartialUpdateCollision(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
 	// startHour=6 collides with the hardcoded default endHour (6) once endHour is
@@ -397,7 +387,6 @@ func TestSetBusinessHours_PartialUpdateCollision(t *testing.T) {
 // purpose and growing the audit table without bound. Repeated calls with the SAME
 // band/timezone must audit exactly once; a genuine change must still audit again.
 func TestSetBusinessHours_AuditsOnlyOnChange(t *testing.T) {
-	t.Parallel()
 	store := &captureStore{}
 	d := NewAnomalyDetector(store)
 	ctx := context.Background()
@@ -431,7 +420,6 @@ func TestSetBusinessHours_AuditsOnlyOnChange(t *testing.T) {
 }
 
 func TestVolumeSpike(t *testing.T) {
-	t.Parallel()
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 1, Name: "db"}
 
@@ -467,7 +455,6 @@ func TestVolumeSpike(t *testing.T) {
 }
 
 func TestFilterAlerts(t *testing.T) {
-	t.Parallel()
 	alerts := []models.AnomalyAlert{
 		{AlertType: "off_hours", Severity: "medium"},
 		{AlertType: "new_ip", Severity: "high"},
@@ -506,7 +493,6 @@ func kindsOf(alerts []models.AnomalyAlert) map[string]bool {
 // ANOMALY-02: a single pre-quarantine access must NOT promote an IP/user to "known."
 // The attacker must appear at least baselineMinSeen times before the trust promotion fires.
 func TestBuildBaseline_SingleAccessDoesNotTrust(t *testing.T) {
-	t.Parallel()
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour)
 	// One access, well outside the quarantine window. Under the old (boolean) logic this
@@ -548,7 +534,6 @@ func TestBuildBaseline_SingleAccessDoesNotTrust(t *testing.T) {
 // receives more than the configured threshold of accesses in a rolling 24h window,
 // even when each individual hour stays below the per-hour spike floor.
 func TestCumulativeRateAnomaly(t *testing.T) {
-	t.Parallel()
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 42, Name: "quiet-secret"}
 
@@ -591,7 +576,6 @@ func TestCumulativeRateAnomaly(t *testing.T) {
 // ANOMALY-02 + ANOMALY-06 (configurable volume floor): verify that SetVolumeMinCount
 // overrides the default floor, allowing detection of bursts below volumeSpikeMinCount.
 func TestVolumeSpike_ConfigurableFloor(t *testing.T) {
-	t.Parallel()
 	baseline := accessBaseline{dailyAvg: 0}
 	// Default floor: 9 reads must not flag.
 	if isVolumeSpike(9, baseline, volumeSpikeMinCount) {

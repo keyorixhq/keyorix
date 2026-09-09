@@ -44,7 +44,6 @@ func makeProjectMember(t *testing.T, h *testhelper.RBACTestHelper, userID, proje
 // Activating break-glass time-bound-grants the configured emergency role to the
 // caller and records the justified activation.
 func TestActivateBreakGlass_GrantsTimeBoundRole(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -75,7 +74,6 @@ func TestActivateBreakGlass_GrantsTimeBoundRole(t *testing.T) {
 
 // A requested TTL is capped at the configured maximum.
 func TestActivateBreakGlass_CapsTTL(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -94,7 +92,6 @@ func TestActivateBreakGlass_CapsTTL(t *testing.T) {
 // not honored unbounded. The core enforces "break-glass is time-bound" itself rather
 // than relying on the config layer to have supplied a ceiling.
 func TestActivateBreakGlass_UnsetMaxTTLFloorsToDefault(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -112,7 +109,6 @@ func TestActivateBreakGlass_UnsetMaxTTLFloorsToDefault(t *testing.T) {
 
 // Break-glass refuses when disabled, and a justification is mandatory.
 func TestActivateBreakGlass_DisabledAndJustificationRequired(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -137,7 +133,6 @@ func TestActivateBreakGlass_DisabledAndJustificationRequired(t *testing.T) {
 // justifications must be refused; a genuine one, including one with leading/
 // trailing whitespace that trims down to a valid length, must be accepted.
 func TestActivateBreakGlass_RejectsWhitespaceOnlyAndTooShortJustification(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -172,7 +167,6 @@ func TestActivateBreakGlass_RejectsWhitespaceOnlyAndTooShortJustification(t *tes
 
 // Revoking an activation removes the grant early and marks it revoked.
 func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -210,7 +204,6 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 // `activation.State == BreakGlassRevoked` check) and the exact storage-layer
 // conditional UPDATE (`state IN ('active','expired')`) this finding fixed.
 func TestRevokeBreakGlass_NotBlockedByExpiredState(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -243,7 +236,6 @@ func TestRevokeBreakGlass_NotBlockedByExpiredState(t *testing.T) {
 // break-glass activation. actorID (0, ADR-030) alone loses which machine did
 // it; RevokedByMachineIdentityID must carry it through to the persisted row.
 func TestRevokeBreakGlass_RecordsActingMachineIdentity(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -273,7 +265,6 @@ func TestRevokeBreakGlass_RecordsActingMachineIdentity(t *testing.T) {
 // revoker's attribution (RevokedBy/RevokedAt) must survive untouched rather than
 // being silently overwritten by the second attempt.
 func TestRevokeBreakGlassActivation_ConditionalUpdateOnlyFirstAttemptWins(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -307,7 +298,6 @@ func TestRevokeBreakGlassActivation_ConditionalUpdateOnlyFirstAttemptWins(t *tes
 // must not both succeed and must not corrupt RevokedBy/RevokedAt attribution —
 // exactly one RevokeBreakGlass call wins, the other gets a clean "not active" error.
 func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -369,7 +359,6 @@ func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
 // (a mutating operation) -- this function, and the storage layer beneath it,
 // must now NEVER write from a read.
 func TestListBreakGlassActivations_ExpiredReconciliation(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -401,7 +390,6 @@ func TestListBreakGlassActivations_ExpiredReconciliation(t *testing.T) {
 // role resolution (GetUserRoleIDsAt). This drives the real activate → authorize → expire
 // flow end to end, rather than only the SQL filter in isolation.
 func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -440,7 +428,6 @@ func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
 // A user with no affiliation to the project cannot break-glass it — otherwise any
 // authenticated user could self-grant the emergency role on an arbitrary project.
 func TestActivateBreakGlass_RejectsNonMember(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -462,7 +449,6 @@ func TestActivateBreakGlass_RejectsNonMember(t *testing.T) {
 // A second activation is refused while the user already holds an active, unexpired
 // grant — so a time-bound emergency grant can't be silently renewed into permanence.
 func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -500,7 +486,6 @@ func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
 // expiry leaves it in place with expires_at in the past, which the assignment's
 // existence check must treat as absent.
 func TestActivateBreakGlass_ReactivatesAfterNaturalExpiry(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -550,7 +535,6 @@ func TestActivateBreakGlass_ReactivatesAfterNaturalExpiry(t *testing.T) {
 // system_viewer baseline every SSO user receives) is NOT a project member and must be
 // refused — otherwise any authenticated user could break-glass any project.
 func TestActivateBreakGlass_RejectsGlobalOnlyAffiliation(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -570,7 +554,6 @@ func TestActivateBreakGlass_RejectsGlobalOnlyAffiliation(t *testing.T) {
 // grant that outlives break-glass, defeating auto-expiry. A (non-admin) role carrying
 // roles.assign is refused; a contained role (editor — no roles.assign) is fine.
 func TestActivateBreakGlass_RejectsRoleAssignEmergencyRole(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)
@@ -602,7 +585,6 @@ func TestActivateBreakGlass_RejectsRoleAssignEmergencyRole(t *testing.T) {
 // emergency role: break-glass grants at a project scope and must not become a vehicle
 // for install-wide super-user.
 func TestActivateBreakGlass_RejectsInstallAdminEmergencyRole(t *testing.T) {
-	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	migrateBreakGlass(t, h)

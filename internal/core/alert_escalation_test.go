@@ -86,7 +86,6 @@ func (t *fakeWebhookTransport) RoundTrip(req *http.Request) (*http.Response, err
 // ---- RunAlertEscalation ----
 
 func TestRunAlertEscalation_NoPolicies(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{}, nil)
 	c := NewKeyorixCore(store)
@@ -99,7 +98,6 @@ func TestRunAlertEscalation_NoPolicies(t *testing.T) {
 }
 
 func TestRunAlertEscalation_NoEnabledPolicies(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	disabled := makePolicy(1, "p1", "medium", 30)
 	disabled.Enabled = false
@@ -113,7 +111,6 @@ func TestRunAlertEscalation_NoEnabledPolicies(t *testing.T) {
 }
 
 func TestRunAlertEscalation_ZeroDelayPolicySkipped(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	p := makePolicy(1, "p1", "medium", 0) // zero delay — skipped
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
@@ -126,7 +123,6 @@ func TestRunAlertEscalation_ZeroDelayPolicySkipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_NoUnackedAlerts(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	p := makePolicy(1, "p1", "medium", 30)
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
@@ -141,7 +137,6 @@ func TestRunAlertEscalation_NoUnackedAlerts(t *testing.T) {
 }
 
 func TestRunAlertEscalation_AlertBelowMinSeverity_Skipped(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	p := makePolicy(1, "p1", "high", 30)
 	p.ChannelIDs = ""
@@ -163,7 +158,6 @@ func TestRunAlertEscalation_AlertBelowMinSeverity_Skipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_AlertTooRecent_Skipped(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	// Policy threshold is 60 min; alert is only 30 min old — store returns nothing
 	// because the query uses the minimum policy delay as the threshold.
@@ -189,7 +183,6 @@ func TestRunAlertEscalation_AlertTooRecent_Skipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_MatchingAlert_Escalated(t *testing.T) {
-	t.Parallel()
 	received := make(chan struct{}, 1)
 	tr := &fakeWebhookTransport{called: received}
 
@@ -243,7 +236,6 @@ func TestRunAlertEscalation_MatchingAlert_Escalated(t *testing.T) {
 // channelLookupIPAddr (the SAME resolver seam validateWebhookURL itself
 // uses) is overridden to simulate the rebind end-to-end.
 func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
-	t.Parallel()
 	origResolve := channelLookupIPAddr
 	defer func() { channelLookupIPAddr = origResolve }()
 
@@ -308,7 +300,6 @@ func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
 }
 
 func TestRunAlertEscalation_DisabledChannel_Skipped(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	now := time.Now().UTC()
 
@@ -342,7 +333,6 @@ func TestRunAlertEscalation_DisabledChannel_Skipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_MultiplePolicies_OneMatches(t *testing.T) {
-	t.Parallel()
 	tr := &fakeWebhookTransport{}
 
 	store := new(MockStorage)
@@ -376,7 +366,6 @@ func TestRunAlertEscalation_MultiplePolicies_OneMatches(t *testing.T) {
 }
 
 func TestRunAlertEscalation_InvalidChannelID_Skipped(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	now := time.Now().UTC()
 
@@ -401,7 +390,6 @@ func TestRunAlertEscalation_InvalidChannelID_Skipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_ChannelFetchError_ContinuesOtherChannels(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	now := time.Now().UTC()
 
@@ -427,7 +415,6 @@ func TestRunAlertEscalation_ChannelFetchError_ContinuesOtherChannels(t *testing.
 }
 
 func TestRunAlertEscalation_SlackChannel_Escalated(t *testing.T) {
-	t.Parallel()
 	received := make(chan struct{}, 1)
 	tr := &fakeWebhookTransport{called: received}
 
@@ -462,7 +449,6 @@ func TestRunAlertEscalation_SlackChannel_Escalated(t *testing.T) {
 }
 
 func TestRunAlertEscalation_EmailChannel_NoHTTPCall(t *testing.T) {
-	t.Parallel()
 	// Email channels don't POST — they log. Verify no panic and escalated=1.
 	store := new(MockStorage)
 	now := time.Now().UTC()
@@ -489,7 +475,6 @@ func TestRunAlertEscalation_EmailChannel_NoHTTPCall(t *testing.T) {
 }
 
 func TestRunAlertEscalation_EmptyChannelIDs_Skipped(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	now := time.Now().UTC()
 
@@ -514,7 +499,6 @@ func TestRunAlertEscalation_EmptyChannelIDs_Skipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_ListPoliciesError(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return(([]models.AlertEscalationPolicy)(nil), fmt.Errorf("db error"))
 	c := NewKeyorixCore(store)
@@ -526,7 +510,6 @@ func TestRunAlertEscalation_ListPoliciesError(t *testing.T) {
 }
 
 func TestRunAlertEscalation_ListAlertsError(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	p := makePolicy(1, "p1", "medium", 30)
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
@@ -540,7 +523,6 @@ func TestRunAlertEscalation_ListAlertsError(t *testing.T) {
 }
 
 func TestRunAlertEscalation_WebhookError_CountsSkipped(t *testing.T) {
-	t.Parallel()
 	// Webhook returns 500; dispatch fails and alert is counted as skipped.
 	tr := &fakeWebhookTransport{statusCode: http.StatusInternalServerError}
 
@@ -574,7 +556,6 @@ func TestRunAlertEscalation_WebhookError_CountsSkipped(t *testing.T) {
 // ---- CRUD tests ----
 
 func TestCreateAlertEscalationPolicy_EmptyName_Error(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -588,7 +569,6 @@ func TestCreateAlertEscalationPolicy_EmptyName_Error(t *testing.T) {
 }
 
 func TestCreateAlertEscalationPolicy_InvalidSeverity_Error(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -602,7 +582,6 @@ func TestCreateAlertEscalationPolicy_InvalidSeverity_Error(t *testing.T) {
 }
 
 func TestCreateAlertEscalationPolicy_ZeroDelay_Error(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -616,7 +595,6 @@ func TestCreateAlertEscalationPolicy_ZeroDelay_Error(t *testing.T) {
 }
 
 func TestCreateAlertEscalationPolicy_Success(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	store.On("CreateAlertEscalationPolicy", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(store)
@@ -634,7 +612,6 @@ func TestCreateAlertEscalationPolicy_Success(t *testing.T) {
 }
 
 func TestGetAlertEscalationPolicy(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	expected := &models.AlertEscalationPolicy{ID: 5, Name: "p5"}
 	store.On("GetAlertEscalationPolicy", mock.Anything, uint(5)).Return(expected, nil)
@@ -647,7 +624,6 @@ func TestGetAlertEscalationPolicy(t *testing.T) {
 }
 
 func TestListAlertEscalationPolicies(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{
 		{ID: 1, Name: "a"},
@@ -662,7 +638,6 @@ func TestListAlertEscalationPolicies(t *testing.T) {
 }
 
 func TestUpdateAlertEscalationPolicy_Success(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	existing := &models.AlertEscalationPolicy{
 		ID:                   3,
@@ -693,7 +668,6 @@ func TestUpdateAlertEscalationPolicy_Success(t *testing.T) {
 }
 
 func TestUpdateAlertEscalationPolicy_ValidationError(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	existing := &models.AlertEscalationPolicy{
 		ID:                   3,
@@ -712,7 +686,6 @@ func TestUpdateAlertEscalationPolicy_ValidationError(t *testing.T) {
 }
 
 func TestDeleteAlertEscalationPolicy(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	store.On("DeleteAlertEscalationPolicy", mock.Anything, uint(9)).Return(nil)
 	c := NewKeyorixCore(store)
@@ -725,7 +698,6 @@ func TestDeleteAlertEscalationPolicy(t *testing.T) {
 // ---- severity ordering ----
 
 func TestSeverityOrdering(t *testing.T) {
-	t.Parallel()
 	// low < medium < high < critical
 	assert.True(t, severityAtLeast("low", "low"))
 	assert.False(t, severityAtLeast("low", "medium"))
@@ -749,7 +721,6 @@ func TestSeverityOrdering(t *testing.T) {
 }
 
 func TestSeverityOrdering_UnknownValues(t *testing.T) {
-	t.Parallel()
 	assert.False(t, severityAtLeast("unknown", "medium"))
 	assert.False(t, severityAtLeast("high", "unknown"))
 }
@@ -757,7 +728,6 @@ func TestSeverityOrdering_UnknownValues(t *testing.T) {
 // ---- splitChannelIDs ----
 
 func TestSplitChannelIDs(t *testing.T) {
-	t.Parallel()
 	assert.Equal(t, []string{"1", "2", "3"}, splitChannelIDs("1,2,3"))
 	assert.Equal(t, []string{"1", "2"}, splitChannelIDs(" 1 , 2 "))
 	assert.Nil(t, splitChannelIDs(""))
@@ -771,7 +741,6 @@ func TestSplitChannelIDs(t *testing.T) {
 // path already applies. The outbound JSON payload must not contain either
 // value anywhere, including inside "description".
 func TestDispatchToChannel_WebhookRedactsPIIEmbeddedInDescription(t *testing.T) {
-	t.Parallel()
 	var body []byte
 	tr := &fakeWebhookTransport{capture: func(b []byte) { body = b }}
 
@@ -798,7 +767,6 @@ func TestDispatchToChannel_WebhookRedactsPIIEmbeddedInDescription(t *testing.T) 
 // ---- dispatchToChannel (teams type) ----
 
 func TestDispatchToChannel_TeamsType_LogOnly(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
 
@@ -813,7 +781,6 @@ func TestDispatchToChannel_TeamsType_LogOnly(t *testing.T) {
 // ---- postJSONToURL error path ----
 
 func TestPostJSONToURL_NetworkError(t *testing.T) {
-	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	// Point to a non-existent URL to trigger a network error.
 	err := c.postJSONToURL(context.Background(), "http://127.0.0.1:1", map[string]string{"key": "val"})
@@ -824,7 +791,6 @@ func TestPostJSONToURL_NetworkError(t *testing.T) {
 // ---- validateEscalationPolicy ----
 
 func TestValidateEscalationPolicy_AllSeverities(t *testing.T) {
-	t.Parallel()
 	for _, sev := range []string{"low", "medium", "high", "critical"} {
 		p := &models.AlertEscalationPolicy{Name: "p", MinSeverity: sev, EscalateAfterMinutes: 1}
 		assert.NoError(t, validateEscalationPolicy(p), "severity %s should be valid", sev)
@@ -834,7 +800,6 @@ func TestValidateEscalationPolicy_AllSeverities(t *testing.T) {
 // ---- CreateAlertEscalationPolicy storage error ----
 
 func TestCreateAlertEscalationPolicy_StorageError(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	store.On("CreateAlertEscalationPolicy", mock.Anything, mock.Anything).Return(fmt.Errorf("db error"))
 	c := NewKeyorixCore(store)
@@ -852,7 +817,6 @@ func TestCreateAlertEscalationPolicy_StorageError(t *testing.T) {
 // ---- UpdateAlertEscalationPolicy storage error path ----
 
 func TestUpdateAlertEscalationPolicy_StorageError(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	existing := &models.AlertEscalationPolicy{
 		ID:                   1,
@@ -875,7 +839,6 @@ func TestUpdateAlertEscalationPolicy_StorageError(t *testing.T) {
 // ---- UpdateAlertEscalationPolicy get error path ----
 
 func TestUpdateAlertEscalationPolicy_GetError(t *testing.T) {
-	t.Parallel()
 	store := new(MockStorage)
 	store.On("GetAlertEscalationPolicy", mock.Anything, uint(99)).Return((*models.AlertEscalationPolicy)(nil), fmt.Errorf("not found"))
 	c := NewKeyorixCore(store)
@@ -894,7 +857,6 @@ type unmarshalableValue struct {
 }
 
 func TestPostJSONToURL_MarshalError(t *testing.T) {
-	t.Parallel()
 	c := NewKeyorixCore(new(MockStorage))
 	// channels are not serializable by encoding/json
 	err := c.postJSONToURL(context.Background(), "http://localhost:9", unmarshalableValue{Ch: make(chan int)})
@@ -905,7 +867,6 @@ func TestPostJSONToURL_MarshalError(t *testing.T) {
 // ---- RunAlertEscalation with two+ active policies (covers minDelay update branch) ----
 
 func TestRunAlertEscalation_MultiPolicyMinDelayUpdate(t *testing.T) {
-	t.Parallel()
 	tr := &fakeWebhookTransport{}
 
 	store := new(MockStorage)

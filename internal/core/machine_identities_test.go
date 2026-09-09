@@ -18,7 +18,6 @@ func newMachineCore(store *MockStorage) *KeyorixCore {
 }
 
 func TestCanTransitionMachine(t *testing.T) {
-	t.Parallel()
 	valid := [][2]string{
 		{MachinePending, MachineActive},
 		{MachineActive, MachineSuspended},
@@ -41,7 +40,6 @@ func TestCanTransitionMachine(t *testing.T) {
 }
 
 func TestCreateMachineIdentity(t *testing.T) {
-	t.Parallel()
 	t.Run("creates an active identity and audits", func(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
@@ -101,7 +99,6 @@ func TestCreateMachineIdentity(t *testing.T) {
 }
 
 func TestTransitionMachineIdentity(t *testing.T) {
-	t.Parallel()
 	t.Run("suspends an active identity", func(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)

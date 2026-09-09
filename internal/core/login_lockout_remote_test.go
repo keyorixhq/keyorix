@@ -95,7 +95,6 @@ func apiOKUser(t *testing.T, w http.ResponseWriter, user *models.User) {
 // backend must still fail OPEN with exactly one loud operator warning, never block
 // or repeat-log.
 func TestLockout_UnsupportedBackendStillFailsOpenLoudly(t *testing.T) {
-	t.Parallel()
 	m := new(MockStorage)
 	uid := uint(7)
 	user := &models.User{ID: uid, Username: "erin", AccountState: AccountActive, IsActive: true}
