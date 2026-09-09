@@ -21,8 +21,11 @@ import (
 // secret-value encryptor wired, plus a seeded project/environment.
 func newEncryptedCore(t *testing.T) (*KeyorixCore, uint, uint) {
 	t.Helper()
+	// No ResetForTesting cleanup here: TestMain owns this package's i18n
+	// lifecycle (see sharing_integration_simple_test.go's note). Tearing the
+	// global localizer down at the end of one test de-initializes it for
+	// whichever test runs next in the same binary.
 	require.NoError(t, i18n.InitializeForTesting())
-	t.Cleanup(i18n.ResetForTesting)
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

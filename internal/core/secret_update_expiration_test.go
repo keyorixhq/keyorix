@@ -25,8 +25,9 @@ func captureUpdatedSecret(store *MockStorage, existing *models.SecretNode) *mode
 // ClearExpiration removes an existing expiry; a nil Expiration with no clear flag
 // leaves it untouched (the distinction that was previously impossible to express).
 func TestUpdateSecret_ClearExpiration(t *testing.T) {
+	// No deferred ResetForTesting here: TestMain owns this package's i18n
+	// lifecycle (see sharing_integration_simple_test.go's note).
 	require.NoError(t, i18n.InitializeForTesting())
-	defer i18n.ResetForTesting()
 	exp := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	t.Run("clear removes the expiration", func(t *testing.T) {
