@@ -76,51 +76,54 @@ import (
 // proxy-side wire types exactly) ---
 
 type machineIdentityWire struct {
-	ID             uint       `json:"id"`
-	ProjectID      uint       `json:"project_id"`
-	Name           string     `json:"name"`
-	IdentityType   string     `json:"identity_type"`
-	State          string     `json:"state"`
-	Description    string     `json:"description"`
-	CreatedBy      uint       `json:"created_by"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	LastSeenAt     *time.Time `json:"last_seen_at"`
-	RevokedAt      *time.Time `json:"revoked_at"`
-	Classification string     `json:"classification"`
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	Name                       string     `json:"name"`
+	IdentityType               string     `json:"identity_type"`
+	State                      string     `json:"state"`
+	Description                string     `json:"description"`
+	CreatedBy                  uint       `json:"created_by"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	UpdatedAt                  time.Time  `json:"updated_at"`
+	LastSeenAt                 *time.Time `json:"last_seen_at"`
+	RevokedAt                  *time.Time `json:"revoked_at"`
+	Classification             string     `json:"classification"`
+	CreatedByMachineIdentityID uint       `json:"created_by_machine_identity_id,omitempty"` // #1573 machine-caller attribution; mirrors models.MachineIdentity
 }
 
 func newMachineIdentityWire(m *models.MachineIdentity) machineIdentityWire {
 	return machineIdentityWire{
-		ID:             m.ID,
-		ProjectID:      m.ProjectID,
-		Name:           m.Name,
-		IdentityType:   m.IdentityType,
-		State:          m.State,
-		Description:    m.Description,
-		CreatedBy:      m.CreatedBy,
-		CreatedAt:      m.CreatedAt,
-		UpdatedAt:      m.UpdatedAt,
-		LastSeenAt:     m.LastSeenAt,
-		RevokedAt:      m.RevokedAt,
-		Classification: m.Classification,
+		ID:                         m.ID,
+		ProjectID:                  m.ProjectID,
+		Name:                       m.Name,
+		IdentityType:               m.IdentityType,
+		State:                      m.State,
+		Description:                m.Description,
+		CreatedBy:                  m.CreatedBy,
+		CreatedAt:                  m.CreatedAt,
+		UpdatedAt:                  m.UpdatedAt,
+		LastSeenAt:                 m.LastSeenAt,
+		RevokedAt:                  m.RevokedAt,
+		Classification:             m.Classification,
+		CreatedByMachineIdentityID: m.CreatedByMachineIdentityID,
 	}
 }
 
 func (w machineIdentityWire) toModel() *models.MachineIdentity {
 	return &models.MachineIdentity{
-		ID:             w.ID,
-		ProjectID:      w.ProjectID,
-		Name:           w.Name,
-		IdentityType:   w.IdentityType,
-		State:          w.State,
-		Description:    w.Description,
-		CreatedBy:      w.CreatedBy,
-		CreatedAt:      w.CreatedAt,
-		UpdatedAt:      w.UpdatedAt,
-		LastSeenAt:     w.LastSeenAt,
-		RevokedAt:      w.RevokedAt,
-		Classification: w.Classification,
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		Name:                       w.Name,
+		IdentityType:               w.IdentityType,
+		State:                      w.State,
+		Description:                w.Description,
+		CreatedBy:                  w.CreatedBy,
+		CreatedAt:                  w.CreatedAt,
+		UpdatedAt:                  w.UpdatedAt,
+		LastSeenAt:                 w.LastSeenAt,
+		RevokedAt:                  w.RevokedAt,
+		Classification:             w.Classification,
+		CreatedByMachineIdentityID: w.CreatedByMachineIdentityID,
 	}
 }
 

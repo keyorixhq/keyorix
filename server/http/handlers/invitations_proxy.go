@@ -50,54 +50,57 @@ import (
 // fallback (the same #496 class of gap: models.ProjectInvitation carries no json
 // tags of its own).
 type invitationProxyWire struct {
-	ID                     uint       `json:"id"`
-	ProjectID              uint       `json:"project_id"`
-	Email                  string     `json:"email"`
-	Role                   string     `json:"role"`
-	State                  string     `json:"state"`
-	InvitedBy              uint       `json:"invited_by"`
-	ValidationModeAtInvite string     `json:"validation_mode_at_invite"`
-	SystemRole             string     `json:"system_role"`
-	AssignmentsJSON        string     `json:"assignments_json"`
-	ExpiresAt              *time.Time `json:"expires_at"`
-	CreatedAt              time.Time  `json:"created_at"`
-	AcceptedAt             *time.Time `json:"accepted_at"`
-	RevokedAt              *time.Time `json:"revoked_at"`
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	Email                      string     `json:"email"`
+	Role                       string     `json:"role"`
+	State                      string     `json:"state"`
+	InvitedBy                  uint       `json:"invited_by"`
+	ValidationModeAtInvite     string     `json:"validation_mode_at_invite"`
+	SystemRole                 string     `json:"system_role"`
+	AssignmentsJSON            string     `json:"assignments_json"`
+	ExpiresAt                  *time.Time `json:"expires_at"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	AcceptedAt                 *time.Time `json:"accepted_at"`
+	RevokedAt                  *time.Time `json:"revoked_at"`
+	InvitedByMachineIdentityID uint       `json:"invited_by_machine_identity_id,omitempty"` // #1573 machine-caller attribution; mirrors models.ProjectInvitation
 }
 
 func newInvitationProxyWire(inv *models.ProjectInvitation) invitationProxyWire {
 	return invitationProxyWire{
-		ID:                     inv.ID,
-		ProjectID:              inv.ProjectID,
-		Email:                  inv.Email,
-		Role:                   inv.Role,
-		State:                  inv.State,
-		InvitedBy:              inv.InvitedBy,
-		ValidationModeAtInvite: inv.ValidationModeAtInvite,
-		SystemRole:             inv.SystemRole,
-		AssignmentsJSON:        inv.AssignmentsJSON,
-		ExpiresAt:              inv.ExpiresAt,
-		CreatedAt:              inv.CreatedAt,
-		AcceptedAt:             inv.AcceptedAt,
-		RevokedAt:              inv.RevokedAt,
+		ID:                         inv.ID,
+		ProjectID:                  inv.ProjectID,
+		Email:                      inv.Email,
+		Role:                       inv.Role,
+		State:                      inv.State,
+		InvitedBy:                  inv.InvitedBy,
+		ValidationModeAtInvite:     inv.ValidationModeAtInvite,
+		SystemRole:                 inv.SystemRole,
+		AssignmentsJSON:            inv.AssignmentsJSON,
+		ExpiresAt:                  inv.ExpiresAt,
+		CreatedAt:                  inv.CreatedAt,
+		AcceptedAt:                 inv.AcceptedAt,
+		RevokedAt:                  inv.RevokedAt,
+		InvitedByMachineIdentityID: inv.InvitedByMachineIdentityID,
 	}
 }
 
 func (w invitationProxyWire) toModel() *models.ProjectInvitation {
 	return &models.ProjectInvitation{
-		ID:                     w.ID,
-		ProjectID:              w.ProjectID,
-		Email:                  w.Email,
-		Role:                   w.Role,
-		State:                  w.State,
-		InvitedBy:              w.InvitedBy,
-		ValidationModeAtInvite: w.ValidationModeAtInvite,
-		SystemRole:             w.SystemRole,
-		AssignmentsJSON:        w.AssignmentsJSON,
-		ExpiresAt:              w.ExpiresAt,
-		CreatedAt:              w.CreatedAt,
-		AcceptedAt:             w.AcceptedAt,
-		RevokedAt:              w.RevokedAt,
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		Email:                      w.Email,
+		Role:                       w.Role,
+		State:                      w.State,
+		InvitedBy:                  w.InvitedBy,
+		ValidationModeAtInvite:     w.ValidationModeAtInvite,
+		SystemRole:                 w.SystemRole,
+		AssignmentsJSON:            w.AssignmentsJSON,
+		ExpiresAt:                  w.ExpiresAt,
+		CreatedAt:                  w.CreatedAt,
+		AcceptedAt:                 w.AcceptedAt,
+		RevokedAt:                  w.RevokedAt,
+		InvitedByMachineIdentityID: w.InvitedByMachineIdentityID,
 	}
 }
 

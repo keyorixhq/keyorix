@@ -66,45 +66,48 @@ import (
 // case-insensitively identical to its Go name. See remote_users.go's
 // userWireResponse comment for the full explanation.
 type membershipWire struct {
-	ID          uint       `json:"id"`
-	ProjectID   uint       `json:"project_id"`
-	UserID      uint       `json:"user_id"`
-	Role        string     `json:"role"`
-	State       string     `json:"state"`
-	InvitedBy   uint       `json:"invited_by"`
-	InvitedAt   time.Time  `json:"invited_at"`
-	ActivatedAt *time.Time `json:"activated_at"`
-	RevokedAt   *time.Time `json:"revoked_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	UserID                     uint       `json:"user_id"`
+	Role                       string     `json:"role"`
+	State                      string     `json:"state"`
+	InvitedBy                  uint       `json:"invited_by"`
+	InvitedAt                  time.Time  `json:"invited_at"`
+	ActivatedAt                *time.Time `json:"activated_at"`
+	RevokedAt                  *time.Time `json:"revoked_at"`
+	UpdatedAt                  time.Time  `json:"updated_at"`
+	InvitedByMachineIdentityID uint       `json:"invited_by_machine_identity_id,omitempty"` // #1573 machine-caller attribution; mirrors models.ProjectMembership
 }
 
 func newMembershipWire(m *models.ProjectMembership) membershipWire {
 	return membershipWire{
-		ID:          m.ID,
-		ProjectID:   m.ProjectID,
-		UserID:      m.UserID,
-		Role:        m.Role,
-		State:       m.State,
-		InvitedBy:   m.InvitedBy,
-		InvitedAt:   m.InvitedAt,
-		ActivatedAt: m.ActivatedAt,
-		RevokedAt:   m.RevokedAt,
-		UpdatedAt:   m.UpdatedAt,
+		ID:                         m.ID,
+		ProjectID:                  m.ProjectID,
+		UserID:                     m.UserID,
+		Role:                       m.Role,
+		State:                      m.State,
+		InvitedBy:                  m.InvitedBy,
+		InvitedAt:                  m.InvitedAt,
+		ActivatedAt:                m.ActivatedAt,
+		RevokedAt:                  m.RevokedAt,
+		UpdatedAt:                  m.UpdatedAt,
+		InvitedByMachineIdentityID: m.InvitedByMachineIdentityID,
 	}
 }
 
 func (w membershipWire) toModel() *models.ProjectMembership {
 	return &models.ProjectMembership{
-		ID:          w.ID,
-		ProjectID:   w.ProjectID,
-		UserID:      w.UserID,
-		Role:        w.Role,
-		State:       w.State,
-		InvitedBy:   w.InvitedBy,
-		InvitedAt:   w.InvitedAt,
-		ActivatedAt: w.ActivatedAt,
-		RevokedAt:   w.RevokedAt,
-		UpdatedAt:   w.UpdatedAt,
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		UserID:                     w.UserID,
+		Role:                       w.Role,
+		State:                      w.State,
+		InvitedBy:                  w.InvitedBy,
+		InvitedAt:                  w.InvitedAt,
+		ActivatedAt:                w.ActivatedAt,
+		RevokedAt:                  w.RevokedAt,
+		UpdatedAt:                  w.UpdatedAt,
+		InvitedByMachineIdentityID: w.InvitedByMachineIdentityID,
 	}
 }
 

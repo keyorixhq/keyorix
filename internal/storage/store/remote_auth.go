@@ -373,17 +373,18 @@ func (rs *RemoteStorage) CountSetupTokensSince(ctx context.Context, purpose, ema
 // an internal system-to-system wire format gated on system.read/system.write, the
 // same tier that already round-trips full user/secret/invitation records).
 type setupTokenWire struct {
-	ID            uint       `json:"id"`
-	TokenHash     string     `json:"token_hash"`
-	Purpose       string     `json:"purpose"`
-	SubjectUserID *uint      `json:"subject_user_id"`
-	SubjectEmail  string     `json:"subject_email"`
-	InvitationID  *uint      `json:"invitation_id"`
-	State         string     `json:"state"`
-	ExpiresAt     time.Time  `json:"expires_at"`
-	CreatedBy     uint       `json:"created_by"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ConsumedAt    *time.Time `json:"consumed_at"`
+	ID                         uint       `json:"id"`
+	TokenHash                  string     `json:"token_hash"`
+	Purpose                    string     `json:"purpose"`
+	SubjectUserID              *uint      `json:"subject_user_id"`
+	SubjectEmail               string     `json:"subject_email"`
+	InvitationID               *uint      `json:"invitation_id"`
+	State                      string     `json:"state"`
+	ExpiresAt                  time.Time  `json:"expires_at"`
+	CreatedBy                  uint       `json:"created_by"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	ConsumedAt                 *time.Time `json:"consumed_at"`
+	CreatedByMachineIdentityID uint       `json:"created_by_machine_identity_id,omitempty"` // #1573 machine-caller attribution; mirrors models.SetupToken
 }
 
 // newSetupTokenWire builds the CreateSetupToken request body. Every timestamp is
@@ -401,33 +402,35 @@ func newSetupTokenWire(t *models.SetupToken) setupTokenWire {
 		consumedAt = &utc
 	}
 	return setupTokenWire{
-		ID:            t.ID,
-		TokenHash:     t.TokenHash,
-		Purpose:       t.Purpose,
-		SubjectUserID: t.SubjectUserID,
-		SubjectEmail:  t.SubjectEmail,
-		InvitationID:  t.InvitationID,
-		State:         t.State,
-		ExpiresAt:     t.ExpiresAt.UTC(),
-		CreatedBy:     t.CreatedBy,
-		CreatedAt:     t.CreatedAt.UTC(),
-		ConsumedAt:    consumedAt,
+		ID:                         t.ID,
+		TokenHash:                  t.TokenHash,
+		Purpose:                    t.Purpose,
+		SubjectUserID:              t.SubjectUserID,
+		SubjectEmail:               t.SubjectEmail,
+		InvitationID:               t.InvitationID,
+		State:                      t.State,
+		ExpiresAt:                  t.ExpiresAt.UTC(),
+		CreatedBy:                  t.CreatedBy,
+		CreatedAt:                  t.CreatedAt.UTC(),
+		ConsumedAt:                 consumedAt,
+		CreatedByMachineIdentityID: t.CreatedByMachineIdentityID,
 	}
 }
 
 func (w setupTokenWire) toModel() *models.SetupToken {
 	return &models.SetupToken{
-		ID:            w.ID,
-		TokenHash:     w.TokenHash,
-		Purpose:       w.Purpose,
-		SubjectUserID: w.SubjectUserID,
-		SubjectEmail:  w.SubjectEmail,
-		InvitationID:  w.InvitationID,
-		State:         w.State,
-		ExpiresAt:     w.ExpiresAt,
-		CreatedBy:     w.CreatedBy,
-		CreatedAt:     w.CreatedAt,
-		ConsumedAt:    w.ConsumedAt,
+		ID:                         w.ID,
+		TokenHash:                  w.TokenHash,
+		Purpose:                    w.Purpose,
+		SubjectUserID:              w.SubjectUserID,
+		SubjectEmail:               w.SubjectEmail,
+		InvitationID:               w.InvitationID,
+		State:                      w.State,
+		ExpiresAt:                  w.ExpiresAt,
+		CreatedBy:                  w.CreatedBy,
+		CreatedAt:                  w.CreatedAt,
+		ConsumedAt:                 w.ConsumedAt,
+		CreatedByMachineIdentityID: w.CreatedByMachineIdentityID,
 	}
 }
 
