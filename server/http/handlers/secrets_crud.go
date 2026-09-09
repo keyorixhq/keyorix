@@ -561,19 +561,43 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Machine principals (ADR-030) are already authorized at the secret's scope
+	// by the route's RequireScopedSecretPermission(permSecretsDelete) gate; the
+	// per-user owner/sharing check (and its user-id requirement -- a machine
+	// caller's userCtx.UserID is always 0, see UserContext.PrincipalID's doc
+	// comment) does not apply to them, so delete directly. Found by the #1808
+	// differential conformance harness: DeleteSecret was the one CRUD handler
+	// in this file missing the isMachine split GetSecret/GetSecretByName/
+	// GetSecretValueByRef already use, so every machine-identity-authenticated
+	// delete unconditionally failed CheckSecretPermission's userID==0 guard.
+	isMachine := userCtx.MachineIdentityID != nil
+
 	// Pre-fetch name and project for audit log before the record is deleted.
 	secretName := fmt.Sprintf("id=%d", id)
 	var secretProjectID uint
-	if s, err := h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID); err == nil {
-		secretName = s.Name
-		secretProjectID = s.ProjectID
+	var prefetchErr error
+	var prefetched *models.SecretNode
+	if isMachine {
+		prefetched, prefetchErr = h.coreService.GetSecret(r.Context(), uint(id))
+	} else {
+		prefetched, prefetchErr = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+	}
+	if prefetchErr == nil {
+		secretName = prefetched.Name
+		secretProjectID = prefetched.ProjectID
 	}
 
-	if err := h.coreService.DeleteSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID); err != nil {
-		log.Printf("Error deleting secret: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+	var deleteErr error
+	if isMachine {
+		deleteErr = h.coreService.DeleteSecret(r.Context(), uint(id))
+	} else {
+		deleteErr = h.coreService.DeleteSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+	}
+	if deleteErr != nil {
+		log.Printf("Error deleting secret: %v", deleteErr)
+		if strings.Contains(deleteErr.Error(), errNotFound) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), errPermissionDenied) {
+		} else if strings.Contains(deleteErr.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to delete secret", http.StatusInternalServerError, nil)
