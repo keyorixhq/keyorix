@@ -104,6 +104,49 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
 
+### Core principle: prefer the machine-checked over the asserted
+
+**Every claim this codebase makes should have a mechanism that fails when the claim stops
+being true. A claim with no such mechanism is a comment, however carefully written.**
+
+This is a constraint, not an aesthetic. Keyorix is built and maintained by one person. A
+hand-written artefact that duplicates a truth stated somewhere else does not stay correct —
+it decays silently, and the decay is invisible until a customer or an auditor finds it. We
+have the receipts: two gRPC control gaps found by accident years apart (ADR-104), 145 of 167
+OpenAPI operations with no response schema (ADR-074), and a CI exclusion that claimed
+"auto-generated, no tests to write" in a comment nobody had checked
+(`server/proto/pb/generated_code_test.go` exists because of it).
+
+Preference order, strongest first:
+
+1. **Generate it.** One source of truth, other artefacts derived by a build step. The build
+   cannot be wrong about what it generated. First large application: ADR-105 (the proto
+   generates the HTTP surface and the OpenAPI document).
+2. **Derive and check it.** Where generation is not available, compute the fact from the
+   code and assert it: `contracttest.AssertOpenAPIResponse`, `CheckPartition` over
+   `pendingRegistry`, `adrOpenDecisionRegistry`'s premise functions, the schema-epoch
+   tripwires. Most of this codebase's guarantees live here, and that is fine.
+3. **Assert it in prose.** Acceptable only when 1 and 2 genuinely do not apply. Say so
+   explicitly — an ADR that declines to enforce something should say it is declining, so
+   the omission reads as considered rather than overlooked.
+
+**Corollary, and the part most easily skipped: a mechanism must be validated against a
+failure that actually happened, not against the one its author imagined.** Red/green plus
+mutation-kill proves a check fires on planted violations — it says nothing about whether
+those shapes occur. The RemoteStorage proxy campaign is the standing evidence: four checks,
+each red/green-validated and mutation-kill-confirmed, caught **zero of nine** real historical
+defects, and one of them actively *certified* a real bug as correct. A green check that does
+not cover what its name implies is worse than no check, because it converts an unknown into a
+false assurance. Name mechanisms for what they verify, and state in the doc comment what they
+do not.
+
+**Guard against over-applying this.** Building a generator or a framework where a hand-written
+thing would do is meta-work that feels like progress. The test: does this fact exist in more
+than one place, or will someone rely on the claim? If neither, write it by hand and move on.
+
+Related: "Ask of any mechanism: what does it silently skip, and does it say so?" below is the
+same idea applied to a mechanism already in front of you.
+
 - Check reachability and liveness before designing a fix, not just call sites. **A Go
   call graph is not a deployment path.** Before concluding a route is reachable OR
   unreachable, verify the wiring can be constructed at runtime — not just that a call
