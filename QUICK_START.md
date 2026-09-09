@@ -119,7 +119,7 @@ paths. Two things are not finished, and are labelled where you would hit them:
   progress — see [`docs/REMOTE_CLI_SETUP.md`](docs/REMOTE_CLI_SETUP.md) for what
   works today.
 - **gRPC** is a partial data-plane surface, off by default — see
-  [`docs/adr-104-grpc-scope-and-parity.md`](docs/adr-104-grpc-scope-and-parity.md).
+  [`docs/adr-105-grpc-scope-and-parity.md`](docs/adr-105-grpc-scope-and-parity.md).
 
 If something here does not work as written, that is a bug in this page and worth
 an issue — the commands are meant to be copy-pasteable.
