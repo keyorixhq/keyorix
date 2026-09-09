@@ -12,12 +12,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestMain(m *testing.M) {
 	if err := i18n.InitializeForTesting(); err != nil {
 		panic("failed to initialize i18n for tests: " + err.Error())
 	}
+	// bcrypt_cost.go's own doc comment asks for exactly this: "Production
+	// default is 12. Tests should call SetBcryptCostForTesting(bcrypt.MinCost)
+	// in TestMain to avoid slowing down the test suite." Until now only
+	// server/http/handlers did. Cost 12 is 2^8 = 256x the work of MinCost, and
+	// this package hashes on every user create, password change and SCIM
+	// provision -- plus once per failed-login test, because auth.go hashes
+	// dummyBcryptHash as a timing equaliser on the user-not-found path.
+	SetBcryptCostForTesting(bcrypt.MinCost)
 	os.Exit(m.Run())
 }
 
