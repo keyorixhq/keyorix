@@ -126,7 +126,7 @@ func runFix(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  1. Fill in the value in %s\n", fixEnvFile)
 	fmt.Printf("  2. Add %s to .gitignore\n", fixEnvFile)
 	fmt.Printf("  3. Store in Keyorix: keyorix secret create %s --value <value>\n", strings.ToLower(keyName))
-	fmt.Printf("  4. Run with injection: keyorix run --env production -- your-app\n")
+	fmt.Printf("  4. Run with injection: keyorix run --env production --var %s=%s -- your-app\n", envVarName, strings.ToLower(keyName))
 
 	return nil
 }

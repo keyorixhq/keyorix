@@ -72,12 +72,16 @@ keyorix connect http://localhost:8080 --username admin --password yourpassword
 
 ```bash
 keyorix secret create --name db-password --value supersecret
-keyorix run --env production -- node app.js
-keyorix run --env production -- flask run
-keyorix run --env production -- ./myapp
+keyorix run --env production --var DATABASE_URL=db-password -- node app.js
+keyorix run --env production --var DATABASE_URL=db-password -- flask run
+keyorix run --env production --var DATABASE_URL=db-password -- ./myapp
 ```
 
-Secrets are injected as environment variables. `db-password` becomes `DB_PASSWORD`.
+Secrets are injected as environment variables under the name YOU choose with
+`--var NAME=secret-ref` (repeatable). The old behavior — auto-deriving the env
+var name from the secret's own name (`db-password` becoming `DB_PASSWORD`) — is
+still available via the deprecated `--derive-names` flag, but is no longer the
+default: it let whoever names a secret also choose the env var it becomes.
 
 ---
 

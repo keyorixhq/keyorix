@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	helpInjectAtRuntime = "Inject at runtime: keyorix run --env production -- your-app"
+	helpInjectAtRuntime = "Inject at runtime: keyorix run --env production --var NAME=secret-ref -- your-app"
 	helpStoreAndInject  = "Store in Keyorix and inject at runtime"
 )
 
@@ -158,7 +158,7 @@ func runExplain(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  - Never hardcode credentials in source code\n")
 		fmt.Printf("  - Move to environment variable\n")
 		fmt.Printf("  - Store in Keyorix: keyorix secret create %s --value <value>\n", strings.ToLower(args[0]))
-		fmt.Printf("  - Inject at runtime: keyorix run --env production -- your-app\n\n")
+		fmt.Printf("  - Inject at runtime: keyorix run --env production --var %s=%s -- your-app\n\n", strings.ToUpper(args[0]), strings.ToLower(args[0]))
 		fmt.Printf("Next:\n")
 		fmt.Printf("  keyorix secret fix %s\n", args[0])
 		return nil

@@ -6,6 +6,26 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Changed
+- **BREAKING: `keyorix run` no longer injects secrets by default (#1816)** —
+  every invocation must now pass `--var NAME=secret-ref` (recommended,
+  repeatable — you choose the env var name for each secret) or the deprecated
+  `--derive-names` (restores the old behavior: every secret in the project +
+  environment is injected, with the env var name auto-derived from the
+  secret's own name). Previously, whoever could **name** a project secret
+  also controlled which env var it became in the launched process — including
+  reserved ones like `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` — not just its
+  value; see #1813 for the live PoC this was found with. If you have scripts,
+  CI jobs, or Dockerfiles that call `keyorix run` with no `--var`/`--derive-names`
+  flag, they will now fail fast with a clear error naming both options —
+  update them to `--var` (preferred) or add `--derive-names` to keep the old
+  behavior for now. Collision precedence also changed for the deprecated
+  `--derive-names` path only: a derived secret name no longer overrides a
+  value already present in the inherited environment (the inherited value
+  wins instead) — a second, independent guard alongside the existing
+  reserved-name filter (#1813). `--var`'s explicit names still override the
+  inherited environment on collision, since that's the operator's expressed
+  intent. See `keyorix run --help` and
+  https://github.com/keyorixhq/keyorix/issues/1816 for the full reasoning.
 - **BREAKING: `keyorix status` and `keyorix ping` now exit non-zero when the
   configured target is unhealthy or unreachable** — previously both commands
   always exited 0 regardless of what they found, reporting failure only via

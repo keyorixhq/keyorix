@@ -356,7 +356,7 @@ func runRemoteInit() error { // NOSONAR -- cognitive complexity 16, suppress go:
 	fmt.Printf("\nNext steps:\n")
 	fmt.Printf("  keyorix connect --server %s\n", server)
 	fmt.Printf("  keyorix secret create my-first-secret --value \"hello\"\n")
-	fmt.Printf("  keyorix run --env production -- your-app\n")
+	fmt.Printf("  keyorix run --env production --var MY_FIRST_SECRET=my-first-secret -- your-app\n")
 
 	if initAdminPassword == "admin" {
 		// Deliberately doesn't interpolate initAdminPassword: it's already known to be
