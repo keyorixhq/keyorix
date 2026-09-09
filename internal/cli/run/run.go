@@ -359,27 +359,27 @@ func setEnvKey(result map[string]string, envKeySources map[string]string, name, 
 //
 // dangerousEnvPrefixes: any env key starting with one of these is dropped.
 //   - LD_      the ELF/Mach-O dynamic linker's whole tunable surface (LD_PRELOAD,
-//              LD_LIBRARY_PATH, LD_AUDIT, ...) — linker behavior, not app config.
+//     LD_LIBRARY_PATH, LD_AUDIT, ...) — linker behavior, not app config.
 //   - DYLD_    macOS dyld's equivalent of LD_ (DYLD_INSERT_LIBRARIES,
-//              DYLD_LIBRARY_PATH, ...) — the exact family the live PoC used.
+//     DYLD_LIBRARY_PATH, ...) — the exact family the live PoC used.
 //   - NODE_    Node.js process-wide behavior flags (NODE_OPTIONS, NODE_PATH, ...).
-//              Deliberate tradeoff: this also blocks the legitimate NODE_ENV: a
-//              project secret writer controlling arbitrary NODE_OPTIONS content
-//              outweighs a launched Node app not getting NODE_ENV from a secret
-//              (operators can still set NODE_ENV as an ordinary shell/CI env var —
-//              `keyorix run` inherits the parent environment unchanged; only
-//              secret-derived keys are filtered here).
+//     Deliberate tradeoff: this also blocks the legitimate NODE_ENV: a
+//     project secret writer controlling arbitrary NODE_OPTIONS content
+//     outweighs a launched Node app not getting NODE_ENV from a secret
+//     (operators can still set NODE_ENV as an ordinary shell/CI env var —
+//     `keyorix run` inherits the parent environment unchanged; only
+//     secret-derived keys are filtered here).
 //   - PYTHON   CPython interpreter startup/path control (PYTHONPATH,
-//              PYTHONSTARTUP, PYTHONHOME, ...). No trailing '_': some real names
-//              (PYTHONDONTWRITEBYTECODE) don't have one after PYTHON.
+//     PYTHONSTARTUP, PYTHONHOME, ...). No trailing '_': some real names
+//     (PYTHONDONTWRITEBYTECODE) don't have one after PYTHON.
 //   - PERL5    Perl 5's interpreter option/library-path family (PERL5OPT,
-//              PERL5LIB). No trailing '_', matching Perl's own naming.
+//     PERL5LIB). No trailing '_', matching Perl's own naming.
 //   - BASH_    bash's own startup-file control (BASH_ENV and siblings).
 //   - GCONV_   glibc's character-conversion module loader (GCONV_PATH) — a
-//              second, less-known arbitrary-code-loading primitive alongside
-//              LD_PRELOAD.
+//     second, less-known arbitrary-code-loading primitive alongside
+//     LD_PRELOAD.
 //   - MALLOC_  glibc/macOS malloc tunables (MALLOC_CHECK_, MALLOC_CONF, ...),
-//              usable for heap-exploitation primitives.
+//     usable for heap-exploitation primitives.
 var dangerousEnvPrefixes = []string{
 	"LD_", "DYLD_", "NODE_", "PYTHON", "PERL5", "BASH_", "GCONV_", "MALLOC_",
 }
@@ -387,12 +387,12 @@ var dangerousEnvPrefixes = []string{
 // dangerousEnvExact names variables that control shell/process behavior directly
 // but don't belong to any linker/interpreter prefix family above:
 //   - IFS    shell field-splitting; corrupting it can turn plain arguments into
-//            separate words/code.
+//     separate words/code.
 //   - ENV    sh's (non-bash) startup-file equivalent of BASH_ENV.
 //   - HOME   many tools (git, ssh, npm, ...) resolve config/credentials relative
-//            to HOME; redirecting it can hijack that resolution.
+//     to HOME; redirecting it can hijack that resolution.
 //   - SHELL  some tools shell out via `$SHELL -c ...` rather than a fixed
-//            interpreter.
+//     interpreter.
 //   - PATH   executable resolution order for the whole child process tree.
 //
 // RUBYOPT and GIT_SSH_COMMAND (in the old exact list) are still covered: neither
