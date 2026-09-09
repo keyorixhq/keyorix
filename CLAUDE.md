@@ -112,7 +112,7 @@ being true. A claim with no such mechanism is a comment, however carefully writt
 This is a constraint, not an aesthetic. Keyorix is built and maintained by one person. A
 hand-written artefact that duplicates a truth stated somewhere else does not stay correct —
 it decays silently, and the decay is invisible until a customer or an auditor finds it. We
-have the receipts: two gRPC control gaps found by accident years apart (ADR-104), 145 of 167
+have the receipts: two gRPC control gaps found by accident years apart (ADR-105), 145 of 167
 OpenAPI operations with no response schema (ADR-074), and a CI exclusion that claimed
 "auto-generated, no tests to write" in a comment nobody had checked
 (`server/proto/pb/generated_code_test.go` exists because of it).
@@ -120,7 +120,7 @@ OpenAPI operations with no response schema (ADR-074), and a CI exclusion that cl
 Preference order, strongest first:
 
 1. **Generate it.** One source of truth, other artefacts derived by a build step. The build
-   cannot be wrong about what it generated. First large application: ADR-105 (the proto
+   cannot be wrong about what it generated. First large application: ADR-106 (the proto
    generates the HTTP surface and the OpenAPI document).
 2. **Derive and check it.** Where generation is not available, compute the fact from the
    code and assert it: `contracttest.AssertOpenAPIResponse`, `CheckPartition` over

@@ -1,4 +1,4 @@
-# ADR-104: gRPC scope — a partial data-plane surface, with parity as a planned project
+# ADR-105: gRPC scope — a partial data-plane surface, with parity as a planned project
 
 ## Status
 
@@ -19,7 +19,7 @@ This ADR authorizes only the documentation and field-number reservations that
 ship with it.
 
 > **SUPERSEDED IN PART, 2026-09-09 (same day), by
-> `docs/adr-105-proto-first-api-definition.md`.** After a survey of ten
+> `docs/adr-106-proto-first-api-definition.md`.** After a survey of ten
 > secrets-management products found that nobody maintains gRPC/HTTP parity by hand — and
 > that the only two products with parity generate one transport from the other — the
 > owner chose the proto-first route. **"Phasing" below (phases 1-4) is withdrawn.**
@@ -28,7 +28,7 @@ ship with it.
 > What survives, and is still accurate: everything in "Context" (the measured gap and
 > the verified enforcement chain), "Decision" items 1-2 (the documentation and the
 > field-number reservations, both shipped), item 3's deliberate HTTP-only exclusions,
-> and item 4's open question. Item 4 in particular is **not** resolved by ADR-105:
+> and item 4's open question. Item 4 in particular is **not** resolved by ADR-106:
 > generation does not answer what a second factor means for a workload identity.
 
 ## Context
@@ -189,13 +189,13 @@ is the option `claude/2026-09-09-grpc-parity-market-evidence.md` found nobody in
 market chose: it carries the cost of proto-first generation without its payoff, and
 leaves two hand-written surfaces to keep in step forever.
 
-Superseded by `docs/adr-105-proto-first-api-definition.md`. Under that decision the proto
+Superseded by `docs/adr-106-proto-first-api-definition.md`. Under that decision the proto
 is the single source of truth, HTTP and OpenAPI are generated from it, and gRPC parity is
 a property of the build rather than a backlog.
 
 **The reservation in §2 still matters, and matters more.** `CreateSecretRequest`'s
 `reserved 11 to 20` holds the numbers that `description` and `classification` will occupy
-when the secrets area migrates. Under ADR-105 those fields arrive as part of a generated
+when the secrets area migrates. Under ADR-106 those fields arrive as part of a generated
 surface rather than as a hand-written phase-1 task, but the field numbers are spent the
 same way and can never be reused.
 

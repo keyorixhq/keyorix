@@ -1,4 +1,4 @@
-# ADR-105: The proto becomes the single source of truth; HTTP and OpenAPI are generated
+# ADR-106: The proto becomes the single source of truth; HTTP and OpenAPI are generated
 
 ## Status
 
@@ -14,7 +14,7 @@ see §3, which argues that ADR-074 rejected a *different* alternative than the o
 **ADR-074 Decisions 2 onward stand unchanged** and become load-bearing for this migration: its
 contract-test harness is the equivalence check that makes a staged migration safe (§5).
 
-**Supersedes `docs/adr-104-grpc-scope-and-parity.md` phases 1-4.** Under this decision gRPC/HTTP
+**Supersedes `docs/adr-105-grpc-scope-and-parity.md` phases 1-4.** Under this decision gRPC/HTTP
 parity stops being a project: it is a build output.
 
 ## Context
@@ -27,7 +27,7 @@ parity stops being a project: it is a build output.
 | `server/proto/keyorix.proto` | 13 services, 86 RPCs | by hand |
 | `server/http/handlers/openapi.yaml` | 126 paths, 167 operations | by hand |
 
-Each is a separate statement of what the API is, and nothing forces them to agree. ADR-104 records
+Each is a separate statement of what the API is, and nothing forces them to agree. ADR-105 records
 what that costs on the proto side: two control gaps found by accident, years apart
 (`server/grpc/services/secret_service.go:166`, and the missing `classification`/`description`
 fields).
@@ -78,7 +78,7 @@ listener** — customers only ever speak HTTP/JSON.
 4. **The gRPC port stays unexposed by default** (`server.grpc.enabled: false`, unchanged). Adopting
    proto-first is about having one definition, not about shipping a second public transport. If a
    customer ever needs gRPC, it becomes a config flag rather than a project.
-5. **gRPC/HTTP parity is therefore not a work item.** It is a property of the build. ADR-104's
+5. **gRPC/HTTP parity is therefore not a work item.** It is a property of the build. ADR-105's
    phases 1-4 are withdrawn; its Phase 0 documentation stands and remains accurate for as long as
    the migration is incomplete.
 
@@ -167,15 +167,15 @@ to preserve.
 - `buf lint`'s deferred exceptions (`PACKAGE_VERSION_SUFFIX`, `PACKAGE_DIRECTORY_MATCH`) come due:
   a customer-facing generated API should live at `keyorix/v1/`, and moving it changes import paths.
   Decide this before the first migrated batch, not during.
-- ADR-104's ledger-and-gate design (§5 there) becomes unnecessary *for gRPC*, since generation
+- ADR-105's ledger-and-gate design (§5 there) becomes unnecessary *for gRPC*, since generation
   guarantees what the ledger would have checked. The same reasoning does not extend to anything
   still hand-written during the transition.
-- Until the migration completes, the codebase carries both styles. ADR-104's Phase 0 documentation
+- Until the migration completes, the codebase carries both styles. ADR-105's Phase 0 documentation
   is what tells operators the truth in the meantime.
 
 ## Related
 
 - `docs/adr-074-openapi-contract-test-harness.md` — Decision 1 superseded; harness retained
-- `docs/adr-104-grpc-scope-and-parity.md` — phases 1-4 withdrawn
+- `docs/adr-105-grpc-scope-and-parity.md` — phases 1-4 withdrawn
 - `docs/adr-096-anti-enumeration-403-for-both.md` — risk 1
 - `claude/2026-09-09-grpc-parity-market-evidence.md` — the survey behind §"The market evidence"

@@ -77,7 +77,7 @@ server:
       burst: 100
   grpc:
     # Partial surface, off by default. HTTP is the complete interface; enable this
-    # only if you need it, and read docs/adr-104-grpc-scope-and-parity.md first —
+    # only if you need it, and read docs/adr-105-grpc-scope-and-parity.md first —
     # governance controls such as classification cannot be set over gRPC.
     enabled: false
     port: "9090"

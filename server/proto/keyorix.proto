@@ -19,7 +19,7 @@ import "google/protobuf/empty.proto";
 // of them, so objects created here default to the least-governed state.
 //
 // Capability parity with HTTP is planned. Before adding an RPC, read
-// docs/adr-104-grpc-scope-and-parity.md — some HTTP capabilities are
+// docs/adr-105-grpc-scope-and-parity.md — some HTTP capabilities are
 // deliberately excluded from this surface and must not be ported.
 // ---------------------------------------------------------------------------
 
@@ -253,7 +253,7 @@ message CreateSecretRequest {
   // same project/environment. 0 or absent means root level.
   optional uint32 parent_id = 10;
 
-  // Held for the planned HTTP-parity governance fields (ADR-104 phase 1):
+  // Held for the planned HTTP-parity governance fields (ADR-105 phase 1):
   //   11 = description
   //   12 = classification
   // 13-20 are held for the remaining phase-1 governance fields so unrelated

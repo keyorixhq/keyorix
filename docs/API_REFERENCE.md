@@ -424,7 +424,7 @@ object created there lands in the least-governed state available. **Provision
 over HTTP if your deployment has compliance requirements.**
 
 Capability parity with HTTP is a planned project. See
-[ADR-104](./adr-104-grpc-scope-and-parity.md) for the scope, the capabilities
+[ADR-105](./adr-105-grpc-scope-and-parity.md) for the scope, the capabilities
 deliberately excluded from gRPC, and the phasing.
 
 ### Example gRPC Usage

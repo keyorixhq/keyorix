@@ -77,7 +77,7 @@ Complete documentation for the production-ready Keyorix secret management system
 - **Performance**: Sub-millisecond response times
 - **Security**: AES-256-GCM encryption validated
 - **Languages**: 5 languages supported
-- **API**: HTTP complete; gRPC partial (data plane only — see ADR-104)
+- **API**: HTTP complete; gRPC partial (data plane only — see ADR-105)
 
 ### Current Metrics
 - **Secrets Managed**: 14+ in testing

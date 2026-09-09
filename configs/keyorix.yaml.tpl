@@ -74,7 +74,7 @@ server:
     #
     # Capability parity with HTTP is a planned project; the scope, the deliberate
     # HTTP-only exclusions, and the phasing are in
-    # docs/adr-104-grpc-scope-and-parity.md.
+    # docs/adr-105-grpc-scope-and-parity.md.
     enabled: false
     port: "9090"
     protocol_versions: ["1.0"]

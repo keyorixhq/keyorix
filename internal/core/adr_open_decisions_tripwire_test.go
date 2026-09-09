@@ -105,19 +105,19 @@ var adrOpenDecisionRegistry = []adrOpenDecision{
 			"(the 2026-09-07 review's own words) into 'forgotten.'",
 	},
 	{
-		adr: "ADR-104",
+		adr: "ADR-105",
 		decision: "gRPC's machine-appropriate step-up primitive: MFA step-up has no coherent " +
 			"translation for a workload identity ('prompt for a TOTP' is not a second factor " +
 			"for a machine), and its absence is currently the only thing making gRPC " +
-			"fail-closed on `restricted` secrets. docs/adr-104-grpc-scope-and-parity.md §4 " +
+			"fail-closed on `restricted` secrets. docs/adr-105-grpc-scope-and-parity.md §4 " +
 			"states the question and declines to answer it. The answer determines whether " +
 			"`restricted` is reachable over gRPC at all, and it must be settled BEFORE " +
 			"governance fields reach the gRPC write path -- otherwise that change decides " +
 			"it implicitly, which is how the two prior gRPC control gaps happened. " +
-			"ADR-105 (proto-first generation) does NOT resolve this: generating both " +
+			"ADR-106 (proto-first generation) does NOT resolve this: generating both " +
 			"transports from one definition says nothing about what a second factor means " +
 			"for a workload identity.",
-		premise:    adr104Premise,
+		premise:    adr105Premise,
 		openedDate: "2026-09-09",
 		threshold:  180 * 24 * time.Hour,
 		reasoning: "180 days, deliberately longer than ADR-102's 30: there is no live exposure " +
@@ -131,14 +131,14 @@ var adrOpenDecisionRegistry = []adrOpenDecision{
 	},
 }
 
-// TestADR104_GRPCStepUpPrimitiveStillOpen is the enforcing test named in
-// docs/adr-104-grpc-scope-and-parity.md's own Status section.
-func TestADR104_GRPCStepUpPrimitiveStillOpen(t *testing.T) {
+// TestADR105_GRPCStepUpPrimitiveStillOpen is the enforcing test named in
+// docs/adr-105-grpc-scope-and-parity.md's own Status section.
+func TestADR105_GRPCStepUpPrimitiveStillOpen(t *testing.T) {
 	t.Parallel()
-	checkADROpenDecisionNotStale(t, "ADR-104")
+	checkADROpenDecisionNotStale(t, "ADR-105")
 }
 
-// adr104Premise answers "is ADR-104 §4 still an open question in code today?"
+// adr105Premise answers "is ADR-105 §4 still an open question in code today?"
 // by checking whether CreateSecretRequest still reserves the field-number
 // block earmarked for the governance fields (11 = description,
 // 12 = classification, 13-20 held for the rest).
@@ -151,7 +151,7 @@ func TestADR104_GRPCStepUpPrimitiveStillOpen(t *testing.T) {
 // observably -- you cannot add `classification = 12` without removing the
 // reservation first, because protoc will not compile it otherwise.
 //
-// This holds unchanged under ADR-105 (proto-first generation). Whether those
+// This holds unchanged under ADR-106 (proto-first generation). Whether those
 // fields arrive as a hand-written RPC change or as part of a generated
 // surface, they still spend field numbers 11 and 12, and they still make
 // `restricted` secrets writable over a transport with no step-up. The
@@ -160,7 +160,7 @@ func TestADR104_GRPCStepUpPrimitiveStillOpen(t *testing.T) {
 // Reads the .proto source rather than the generated descriptor because
 // reserved ranges are a source-level compile-time constraint; that is where
 // the fact lives, and where the next person will be editing.
-func adr104Premise() (stillOpen bool, detail string) {
+func adr105Premise() (stillOpen bool, detail string) {
 	const protoPath = "../../server/proto/keyorix.proto"
 	b, err := os.ReadFile(protoPath)
 	if err != nil {
@@ -183,7 +183,7 @@ func adr104Premise() (stillOpen bool, detail string) {
 		return true, "CreateSecretRequest still reserves fields 11-20 -- governance fields have not reached gRPC"
 	}
 	return false, "CreateSecretRequest no longer reserves fields 11-20: governance fields " +
-		"are reaching the gRPC write path, so ADR-104 §4 (the machine step-up primitive) " +
+		"are reaching the gRPC write path, so ADR-105 §4 (the machine step-up primitive) " +
 		"must be decided and the ADR's Status updated now, not after"
 }
 
