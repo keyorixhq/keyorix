@@ -18,6 +18,19 @@ build it. No RPC in this document is approved for implementation.
 This ADR authorizes only the documentation and field-number reservations that
 ship with it.
 
+> **SUPERSEDED IN PART, 2026-09-09 (same day), by
+> `docs/adr-105-proto-first-api-definition.md`.** After a survey of ten
+> secrets-management products found that nobody maintains gRPC/HTTP parity by hand — and
+> that the only two products with parity generate one transport from the other — the
+> owner chose the proto-first route. **"Phasing" below (phases 1-4) is withdrawn.**
+> Parity stops being a project and becomes a build output.
+>
+> What survives, and is still accurate: everything in "Context" (the measured gap and
+> the verified enforcement chain), "Decision" items 1-2 (the documentation and the
+> field-number reservations, both shipped), item 3's deliberate HTTP-only exclusions,
+> and item 4's open question. Item 4 in particular is **not** resolved by ADR-105:
+> generation does not answer what a second factor means for a workload identity.
+
 ## Context
 
 An audit on 2026-09-09 compared the two transports:
@@ -169,17 +182,27 @@ tier. A differential harness must run on every PR or it is decorative, so it has
 to be sized against that ceiling deliberately. Table-driven comparison over a
 shared in-process core should be cheap; that must be verified, not assumed.
 
-## Phasing
+## Phasing — WITHDRAWN
 
-| phase | content | gate |
-|---|---|---|
-| **0** | This ADR. Documentation + field-number reservations. | — |
-| **1** | Make a gRPC-created object governable: `description`, `classification`, a `ClassifySecret` RPC mirroring the existing `ClassifyMachineIdentity`/`ClassifyMachineToken`/`ClassifyConfig`, folder CRUD, ownership, access schedule, retention override. | §4 decided; §5 ledger + gate in place |
-| **2** | Lifecycle and operations: templates, rotation policy writes, bulk operations, version comments/diff, expiring/extend, suspend. | phase 1 complete |
-| **3** | Governance control plane: access reviews, access requests, SoD, legal hold, risk exceptions, permission baseline, anomaly config, notification channels, read quota. Ask honestly whether each belongs on a data-plane transport — several are human-workflow surfaces whose only real client is the web UI, and may legitimately end as `http-only` rows. | phase 2 complete |
-| **4** | Identity, pending §4: PATs, machine-identity auth paths, and whatever the machine-appropriate step-up primitive turns out to be. | §4 decided |
+Phases 1-4 described adding ~65 capability areas to gRPC by hand, gated by a ledger. That
+is the option `claude/2026-09-09-grpc-parity-market-evidence.md` found nobody in this
+market chose: it carries the cost of proto-first generation without its payoff, and
+leaves two hand-written surfaces to keep in step forever.
 
-All phase-1 proto changes are additive and wire-compatible.
+Superseded by `docs/adr-105-proto-first-api-definition.md`. Under that decision the proto
+is the single source of truth, HTTP and OpenAPI are generated from it, and gRPC parity is
+a property of the build rather than a backlog.
+
+**The reservation in §2 still matters, and matters more.** `CreateSecretRequest`'s
+`reserved 11 to 20` holds the numbers that `description` and `classification` will occupy
+when the secrets area migrates. Under ADR-105 those fields arrive as part of a generated
+surface rather than as a hand-written phase-1 task, but the field numbers are spent the
+same way and can never be reused.
+
+**§5's ledger and CI gate are no longer needed for gRPC**, because generation guarantees
+what the ledger would have checked. The reasoning behind them is not wasted: it applies
+unchanged to anything still hand-written during the transition, and ADR-074's
+`pendingRegistry` already implements the same three-state idea for response schemas.
 
 ## Consequences
 

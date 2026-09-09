@@ -112,8 +112,11 @@ var adrOpenDecisionRegistry = []adrOpenDecision{
 			"fail-closed on `restricted` secrets. docs/adr-104-grpc-scope-and-parity.md §4 " +
 			"states the question and declines to answer it. The answer determines whether " +
 			"`restricted` is reachable over gRPC at all, and it must be settled BEFORE " +
-			"phase 1 adds governance fields to the gRPC write path -- otherwise phase 1 " +
-			"decides it implicitly, which is how the two prior gRPC control gaps happened.",
+			"governance fields reach the gRPC write path -- otherwise that change decides " +
+			"it implicitly, which is how the two prior gRPC control gaps happened. " +
+			"ADR-105 (proto-first generation) does NOT resolve this: generating both " +
+			"transports from one definition says nothing about what a second factor means " +
+			"for a workload identity.",
 		premise:    adr104Premise,
 		openedDate: "2026-09-09",
 		threshold:  180 * 24 * time.Hour,
@@ -122,7 +125,8 @@ var adrOpenDecisionRegistry = []adrOpenDecision{
 			"value, no default-true anywhere in code) and the gap is fail-closed -- a gRPC " +
 			"client cannot read a restricted secret rather than reading it unguarded. So the " +
 			"deadline is not protecting against an open hole; it exists so the question does " +
-			"not get answered by accident, by whoever picks up phase 1 first. The premise " +
+			"not get answered by accident, by whoever first moves the secrets area onto the " +
+			"generated surface. The premise " +
 			"check below is the real guard and fires on the day that happens, whatever the age.",
 	},
 }
@@ -136,17 +140,22 @@ func TestADR104_GRPCStepUpPrimitiveStillOpen(t *testing.T) {
 
 // adr104Premise answers "is ADR-104 §4 still an open question in code today?"
 // by checking whether CreateSecretRequest still reserves the field-number
-// block that phase 1 is earmarked to spend (11 = description,
+// block earmarked for the governance fields (11 = description,
 // 12 = classification, 13-20 held for the rest).
 //
 // Why this is the right premise rather than, say, searching for a step-up
 // RPC: the failure this entry exists to prevent is not "nobody ever built
-// step-up." It is "phase 1 shipped governance fields onto the gRPC write
-// path while the step-up question was still unanswered, and thereby answered
-// it by default." The reservation disappearing IS that event, precisely and
+// step-up." It is "governance fields reached the gRPC write path while the
+// step-up question was still unanswered, and thereby answered it by
+// default." The reservation disappearing IS that event, precisely and
 // observably -- you cannot add `classification = 12` without removing the
-// reservation first, because protoc will not compile it otherwise. So the
-// moment someone starts phase 1, this fires and points them at §4.
+// reservation first, because protoc will not compile it otherwise.
+//
+// This holds unchanged under ADR-105 (proto-first generation). Whether those
+// fields arrive as a hand-written RPC change or as part of a generated
+// surface, they still spend field numbers 11 and 12, and they still make
+// `restricted` secrets writable over a transport with no step-up. The
+// premise tracks the event, not the mechanism that causes it.
 //
 // Reads the .proto source rather than the generated descriptor because
 // reserved ranges are a source-level compile-time constraint; that is where
@@ -171,10 +180,10 @@ func adr104Premise() (stillOpen bool, detail string) {
 		return true, "could not delimit CreateSecretRequest; treating the decision as still open"
 	}
 	if strings.Contains(src[i:i+end], "reserved 11 to 20;") {
-		return true, "CreateSecretRequest still reserves fields 11-20 -- phase 1 has not started"
+		return true, "CreateSecretRequest still reserves fields 11-20 -- governance fields have not reached gRPC"
 	}
-	return false, "CreateSecretRequest no longer reserves fields 11-20: phase 1 governance fields " +
-		"are being added to the gRPC write path, so ADR-104 §4 (the machine step-up primitive) " +
+	return false, "CreateSecretRequest no longer reserves fields 11-20: governance fields " +
+		"are reaching the gRPC write path, so ADR-104 §4 (the machine step-up primitive) " +
 		"must be decided and the ADR's Status updated now, not after"
 }
 
