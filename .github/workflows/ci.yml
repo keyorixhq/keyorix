@@ -314,6 +314,17 @@ jobs:
       - name: Verify every ADR conformance claim names a passing test
         run: ./scripts/check-adr-conformance.sh
 
+      - name: Self-test the review-coverage guard (must be able to go red both ways)
+        run: ./scripts/check-review-coverage.sh --self-test
+
+      # Scope is derived from `go list ./...` at run time, never hand-enumerated
+      # -- see docs/review-coverage.tsv's own header for why (a hand-maintained
+      # package list is the exact failure mode this exists to prevent). Fails
+      # if any package go list reports has no row, or if any row names a
+      # package that no longer exists.
+      - name: Verify every Go package has an adversarial-review coverage row
+        run: ./scripts/check-review-coverage.sh
+
       # Informational only -- never fails this job (the script itself always
       # exits 0, and continue-on-error is set as a second, belt-and-suspenders
       # layer in case a future edit ever changes that). See the script's own
