@@ -50,7 +50,31 @@ server:
       burst: 20
 
   grpc:
-    # Enable gRPC server
+    # gRPC server — PARTIAL SURFACE, WORK IN PROGRESS. Prefer HTTP.
+    #
+    # gRPC is a data-plane interface (13 services, 86 RPCs): secrets, users, roles,
+    # groups, projects, machine identities, leases, break-glass, and audit/compliance
+    # reads. HTTP is the complete interface and the only feature-complete one.
+    #
+    # Governance and identity capabilities are HTTP-only today. Among them:
+    # classification and description on secrets, MFA and step-up, SSO/SAML/SCIM,
+    # WebAuthn, personal access tokens, access-review campaigns, access requests,
+    # segregation of duties, legal hold, risk exceptions, secret templates, bulk
+    # operations, ownership, access schedules, and retention override.
+    #
+    # This does NOT weaken enforcement. Authorization, audit, and the classification
+    # read gate live in core and apply to every transport, so gRPC cannot bypass a
+    # control that HTTP enforces. Secrets classified `restricted` are simply
+    # unreadable over gRPC when step-up is required, because gRPC has no step-up —
+    # that is fail-closed by design.
+    #
+    # The real limitation is that some controls cannot be *set* over gRPC, so an
+    # object created here lands in the least-governed state available. If your
+    # deployment has compliance requirements, provision over HTTP.
+    #
+    # Capability parity with HTTP is a planned project; the scope, the deliberate
+    # HTTP-only exclusions, and the phasing are in
+    # docs/adr-104-grpc-scope-and-parity.md.
     enabled: false
     port: "9090"
     protocol_versions: ["1.0"]

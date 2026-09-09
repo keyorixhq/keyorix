@@ -57,6 +57,8 @@ package core
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +104,78 @@ var adrOpenDecisionRegistry = []adrOpenDecision{
 			"own Context section) doesn't quietly age from '2 days old, worth catching now' " +
 			"(the 2026-09-07 review's own words) into 'forgotten.'",
 	},
+	{
+		adr: "ADR-104",
+		decision: "gRPC's machine-appropriate step-up primitive: MFA step-up has no coherent " +
+			"translation for a workload identity ('prompt for a TOTP' is not a second factor " +
+			"for a machine), and its absence is currently the only thing making gRPC " +
+			"fail-closed on `restricted` secrets. docs/adr-104-grpc-scope-and-parity.md §4 " +
+			"states the question and declines to answer it. The answer determines whether " +
+			"`restricted` is reachable over gRPC at all, and it must be settled BEFORE " +
+			"phase 1 adds governance fields to the gRPC write path -- otherwise phase 1 " +
+			"decides it implicitly, which is how the two prior gRPC control gaps happened.",
+		premise:    adr104Premise,
+		openedDate: "2026-09-09",
+		threshold:  180 * 24 * time.Hour,
+		reasoning: "180 days, deliberately longer than ADR-102's 30: there is no live exposure " +
+			"to age against here. gRPC is off by default (server.grpc.enabled: false, Go's zero " +
+			"value, no default-true anywhere in code) and the gap is fail-closed -- a gRPC " +
+			"client cannot read a restricted secret rather than reading it unguarded. So the " +
+			"deadline is not protecting against an open hole; it exists so the question does " +
+			"not get answered by accident, by whoever picks up phase 1 first. The premise " +
+			"check below is the real guard and fires on the day that happens, whatever the age.",
+	},
+}
+
+// TestADR104_GRPCStepUpPrimitiveStillOpen is the enforcing test named in
+// docs/adr-104-grpc-scope-and-parity.md's own Status section.
+func TestADR104_GRPCStepUpPrimitiveStillOpen(t *testing.T) {
+	t.Parallel()
+	checkADROpenDecisionNotStale(t, "ADR-104")
+}
+
+// adr104Premise answers "is ADR-104 §4 still an open question in code today?"
+// by checking whether CreateSecretRequest still reserves the field-number
+// block that phase 1 is earmarked to spend (11 = description,
+// 12 = classification, 13-20 held for the rest).
+//
+// Why this is the right premise rather than, say, searching for a step-up
+// RPC: the failure this entry exists to prevent is not "nobody ever built
+// step-up." It is "phase 1 shipped governance fields onto the gRPC write
+// path while the step-up question was still unanswered, and thereby answered
+// it by default." The reservation disappearing IS that event, precisely and
+// observably -- you cannot add `classification = 12` without removing the
+// reservation first, because protoc will not compile it otherwise. So the
+// moment someone starts phase 1, this fires and points them at §4.
+//
+// Reads the .proto source rather than the generated descriptor because
+// reserved ranges are a source-level compile-time constraint; that is where
+// the fact lives, and where the next person will be editing.
+func adr104Premise() (stillOpen bool, detail string) {
+	const protoPath = "../../server/proto/keyorix.proto"
+	b, err := os.ReadFile(protoPath)
+	if err != nil {
+		// Cannot read the file: report the decision as still open rather
+		// than silently reporting it resolved. A premise that fails safe in
+		// the "already resolved" direction would remove this entry's guard
+		// entirely -- exactly ADR-084's original mistake.
+		return true, fmt.Sprintf("could not read %s (%v); treating the decision as still open", protoPath, err)
+	}
+	src := string(b)
+	i := strings.Index(src, "message CreateSecretRequest {")
+	if i < 0 {
+		return true, "CreateSecretRequest not found in the proto; treating the decision as still open"
+	}
+	end := strings.Index(src[i:], "\n}")
+	if end < 0 {
+		return true, "could not delimit CreateSecretRequest; treating the decision as still open"
+	}
+	if strings.Contains(src[i:i+end], "reserved 11 to 20;") {
+		return true, "CreateSecretRequest still reserves fields 11-20 -- phase 1 has not started"
+	}
+	return false, "CreateSecretRequest no longer reserves fields 11-20: phase 1 governance fields " +
+		"are being added to the gRPC write path, so ADR-104 §4 (the machine step-up primitive) " +
+		"must be decided and the ADR's Status updated now, not after"
 }
 
 // TestADR102_SystemWriteBlastRadiusStillOpen is the enforcing test named in

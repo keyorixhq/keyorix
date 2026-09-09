@@ -7,6 +7,22 @@ option go_package = "github.com/keyorixhq/keyorix/server/proto/pb";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
 
+// ---------------------------------------------------------------------------
+// SCOPE: this is a PARTIAL, data-plane API. HTTP is the complete interface.
+//
+// Governance and identity capabilities are HTTP-only today — classification and
+// description on secrets, MFA/step-up, SSO/SAML/SCIM, WebAuthn, personal access
+// tokens, access reviews, access requests, segregation of duties, legal hold,
+// risk exceptions, and more. Enforcement is unaffected: authorization, audit and
+// the classification read gate live in core and apply to every transport, so this
+// surface cannot bypass a control HTTP enforces. What it cannot do is *set* some
+// of them, so objects created here default to the least-governed state.
+//
+// Capability parity with HTTP is planned. Before adding an RPC, read
+// docs/adr-104-grpc-scope-and-parity.md — some HTTP capabilities are
+// deliberately excluded from this surface and must not be ported.
+// ---------------------------------------------------------------------------
+
 // Secret service for managing secrets
 service SecretService {
   // Create a new secret
@@ -236,6 +252,15 @@ message CreateSecretRequest {
   // The parent must exist, be a folder (is_secret=false), and belong to the
   // same project/environment. 0 or absent means root level.
   optional uint32 parent_id = 10;
+
+  // Held for the planned HTTP-parity governance fields (ADR-104 phase 1):
+  //   11 = description
+  //   12 = classification
+  // 13-20 are held for the remaining phase-1 governance fields so unrelated
+  // work cannot spend them first. Protobuf field numbers can never be reused
+  // once assigned, so un-reserve a number here only when adding the field it
+  // is earmarked for. Adding these later is wire-compatible; renumbering is not.
+  reserved 11 to 20;
 }
 
 message GetSecretRequest {

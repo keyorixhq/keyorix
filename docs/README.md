@@ -24,7 +24,7 @@ Complete documentation for the production-ready Keyorix secret management system
 - **[DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md)** - Production deployment
 
 ### API Documentation
-- **[API_REFERENCE.md](./API_REFERENCE.md)** - Complete REST and gRPC API reference
+- **[API_REFERENCE.md](./API_REFERENCE.md)** - REST API reference (complete) and gRPC (partial surface, work in progress)
 - **[OpenAPI Spec](../server/http/handlers/openapi.yaml)** - Machine-readable API specification (served at `/openapi.yaml`)
 - **Swagger UI** - Interactive API documentation at `/swagger/`
 
@@ -77,7 +77,7 @@ Complete documentation for the production-ready Keyorix secret management system
 - **Performance**: Sub-millisecond response times
 - **Security**: AES-256-GCM encryption validated
 - **Languages**: 5 languages supported
-- **API**: Complete HTTP/gRPC endpoints
+- **API**: HTTP complete; gRPC partial (data plane only — see ADR-104)
 
 ### Current Metrics
 - **Secrets Managed**: 14+ in testing
