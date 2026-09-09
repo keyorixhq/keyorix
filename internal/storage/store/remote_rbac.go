@@ -34,26 +34,23 @@ import (
 // from the raw name it receives (#1642: never trust a client-supplied folded
 // value), so there is nothing normalization-specific for this client-side
 // call to do beyond matching the new typed signature.
-func (rs *RemoteStorage) CreateRole(ctx context.Context, name identity.FoldedName, description string) (*models.Role, error) {
-	role := &models.Role{Name: name.Display(), Description: description}
-	resp, err := rs.client.Post(ctx, "/api/v1/roles", role)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create role: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create role failed: %s", resp.Error.Error())
-	}
-	var result models.Role
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+func (rs *RemoteStorage) CreateRole(_ context.Context, _ identity.FoldedName, _ string) (*models.Role, error) {
+	// Not implementable over the remote API as the storage interface stands.
+	//
+	// POST /api/v1/roles binds handlers.CreateRoleRequest, whose `permissions`
+	// field carries `validate:"required,min=1"` (#169 resolves and authorizes
+	// every requested permission BEFORE creating anything). storage.Storage's
+	// CreateRole signature has no permissions parameter, so this method cannot
+	// construct a body the server will accept -- it previously POSTed a bare
+	// models.Role and got HTTP 400 on every single call.
+	//
+	// Failing loudly here is the honest behaviour and matches the other 197
+	// unsupported remote methods. Making it work needs an interface change
+	// (permissions in the CreateRole signature), not a wire fix, and that is a
+	// design decision rather than a bug fix.
+	return nil, remoteUnsupported("CreateRole")
 }
 
-// SetRoleBypassesPermissionChecks is a server-internal, bootstrap-only
-// primitive (ADR-084). ADR-083 makes this unreachable in practice:
-// storage.type: remote can never back a server process, and BootstrapSystem
-// (the only caller) only ever runs inside one.
 func (rs *RemoteStorage) SetRoleBypassesPermissionChecks(_ context.Context, _ uint, _ bool) error {
 	return remoteUnsupported("SetRoleBypassesPermissionChecks")
 }
@@ -68,11 +65,16 @@ func (rs *RemoteStorage) GetRole(ctx context.Context, id uint) (*models.Role, er
 	if !resp.Success {
 		return nil, fmt.Errorf("get role failed: %s", resp.Error.Error())
 	}
-	var result models.Role
+	var result struct {
+		Role *models.Role `json:"role"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	if result.Role == nil {
+		return nil, fmt.Errorf("GetRole: server response contained no role object")
+	}
+	return result.Role, nil
 }
 
 // GetRoleByName retrieves a role by name via remote API.
@@ -110,11 +112,16 @@ func (rs *RemoteStorage) UpdateRole(ctx context.Context, role *models.Role) (*mo
 	if !resp.Success {
 		return nil, fmt.Errorf("update role failed: %s", resp.Error.Error())
 	}
-	var result models.Role
+	var result struct {
+		Role *models.Role `json:"role"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	if result.Role == nil {
+		return nil, fmt.Errorf("UpdateRole: server response contained no role object")
+	}
+	return result.Role, nil
 }
 
 // DeleteRole deletes a role via remote API.
@@ -139,11 +146,17 @@ func (rs *RemoteStorage) ListRoles(ctx context.Context) ([]*models.Role, error) 
 	if !resp.Success {
 		return nil, fmt.Errorf("list roles failed: %s", resp.Error.Error())
 	}
-	var result []*models.Role
+	// The server wraps this as {"roles": [...]}. Note it projects each role
+	// through handlers.apiRole, which carries only ID and Name -- Description and
+	// the permission set come back empty. That is a server-side shape, not a bug
+	// here; a caller needing the full role must fetch it by ID.
+	var result struct {
+		Roles []*models.Role `json:"roles"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Roles, nil
 }
 
 // --- RBAC assignment ---
@@ -310,11 +323,13 @@ func (rs *RemoteStorage) GetUserRoles(ctx context.Context, userID uint) ([]*mode
 	if !resp.Success {
 		return nil, fmt.Errorf("get user roles failed: %s", resp.Error.Error())
 	}
-	var result []*models.Role
+	var result struct {
+		Roles []*models.Role `json:"roles"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Roles, nil
 }
 
 // ListAllUserRoleGrants is not supported in remote storage. The permission
@@ -343,11 +358,16 @@ func (rs *RemoteStorage) GetUserPermissions(ctx context.Context, userID uint) ([
 	if !resp.Success {
 		return nil, fmt.Errorf("get user permissions failed: %s", resp.Error.Error())
 	}
-	var result []*storage.Permission
+	// The server wraps this as {"permissions": [...]} and projects each row
+	// through handlers.apiPermission, which omits ID -- every returned Permission
+	// has ID 0. Name/Resource/Action are authoritative.
+	var result struct {
+		Permissions []*storage.Permission `json:"permissions"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Permissions, nil
 }
 
 // GetUserGroupPermissions is not supported in remote storage. SoD conflict
@@ -587,11 +607,13 @@ func (rs *RemoteStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mo
 	if !resp.Success {
 		return nil, fmt.Errorf("get group roles failed: %s", resp.Error.Error())
 	}
-	var result []*models.Role
+	var result struct {
+		Roles []*models.Role `json:"roles"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Roles, nil
 }
 
 // ListGroupRoleAssignments proxies onto GET

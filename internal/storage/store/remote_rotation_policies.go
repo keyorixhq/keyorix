@@ -12,8 +12,65 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// models.RotationPolicy carries no json tags, so posting it directly serialized
+// every field in Go's default PascalCase -- "IntervalDays", not "interval_days".
+// encoding/json's fallback match is case-INsensitive but not
+// separator-insensitive, so "IntervalDays" never matched the server's
+// `json:"interval_days"`. Every multi-word field arrived as its zero value, and
+// interval_days (validate:"required,min=1") then failed validation: create and
+// update were rejected on every single call.
+//
+// These two types are the request bodies the server actually binds (see
+// server/http/handlers/rotation_policies_handler.go). They deliberately mirror
+// only what each endpoint accepts -- create takes the scope fields, update does
+// not and takes is_active instead.
+
+type rotationPolicyCreateWire struct {
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Scope           string `json:"scope"`
+	ProjectID       *uint  `json:"project_id"`
+	EnvironmentID   *uint  `json:"environment_id"`
+	IntervalDays    int    `json:"interval_days"`
+	AlertDaysBefore int    `json:"alert_days_before"`
+	NotifyOnBreach  bool   `json:"notify_on_breach"`
+}
+
+func newRotationPolicyCreateWire(p *models.RotationPolicy) rotationPolicyCreateWire {
+	return rotationPolicyCreateWire{
+		Name:            p.Name,
+		Description:     p.Description,
+		Scope:           p.Scope,
+		ProjectID:       p.ProjectID,
+		EnvironmentID:   p.EnvironmentID,
+		IntervalDays:    p.IntervalDays,
+		AlertDaysBefore: p.AlertDaysBefore,
+		NotifyOnBreach:  p.NotifyOnBreach,
+	}
+}
+
+type rotationPolicyUpdateWire struct {
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	IntervalDays    int    `json:"interval_days"`
+	AlertDaysBefore int    `json:"alert_days_before"`
+	NotifyOnBreach  bool   `json:"notify_on_breach"`
+	IsActive        bool   `json:"is_active"`
+}
+
+func newRotationPolicyUpdateWire(p *models.RotationPolicy) rotationPolicyUpdateWire {
+	return rotationPolicyUpdateWire{
+		Name:            p.Name,
+		Description:     p.Description,
+		IntervalDays:    p.IntervalDays,
+		AlertDaysBefore: p.AlertDaysBefore,
+		NotifyOnBreach:  p.NotifyOnBreach,
+		IsActive:        p.IsActive,
+	}
+}
+
 func (rs *RemoteStorage) CreateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error {
-	resp, err := rs.client.Post(ctx, "/api/v1/rotation-policies", p)
+	resp, err := rs.client.Post(ctx, "/api/v1/rotation-policies", newRotationPolicyCreateWire(p))
 	if err != nil {
 		return fmt.Errorf("failed to create rotation policy: %w", err)
 	}
@@ -76,7 +133,7 @@ func (rs *RemoteStorage) ListRotationPolicies(ctx context.Context, projectID *ui
 }
 
 func (rs *RemoteStorage) UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error {
-	resp, err := rs.client.Put(ctx, fmt.Sprintf("/api/v1/rotation-policies/%d", p.ID), p)
+	resp, err := rs.client.Put(ctx, fmt.Sprintf("/api/v1/rotation-policies/%d", p.ID), newRotationPolicyUpdateWire(p))
 	if err != nil {
 		return fmt.Errorf("failed to update rotation policy: %w", err)
 	}

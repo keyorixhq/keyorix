@@ -528,11 +528,13 @@ func (rs *RemoteStorage) ListSecretVersions(ctx context.Context, secretID uint) 
 	if !resp.Success {
 		return nil, fmt.Errorf("list secret versions failed: %s", resp.Error.Error())
 	}
-	var result []*models.SecretVersion
+	var result struct {
+		Versions []*models.SecretVersion `json:"versions"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Versions, nil
 }
 
 // GetSecretVersions is an alias for ListSecretVersions, satisfying the interface.

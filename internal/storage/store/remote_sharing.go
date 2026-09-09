@@ -35,9 +35,35 @@ func (rs *RemoteStorage) GetShareRecord(_ context.Context, _ uint) (*models.Shar
 }
 
 // UpdateShareRecord updates an existing share record via remote API.
+// shareUpdateWire is the PUT /api/v1/shares/{id} body the server binds
+// (server/http/handlers/shares_crud.go). models.ShareRecord carries no json
+// tags, so sending it directly serialized "ExpiresAt" in Go's default
+// PascalCase. encoding/json's fallback match is case-insensitive but not
+// separator-insensitive, so "ExpiresAt" never matched `json:"expires_at"` and a
+// share's expiry could never be set, extended or shortened over remote mode --
+// silently, since "Permission" DID match `json:"permission"` case-insensitively
+// and the call therefore succeeded.
+//
+// ClearExpiry carries the intent a nil ExpiresAt cannot: without it the server
+// leaves an existing expiry untouched, so a caller could never make a
+// time-bound share permanent again.
+type shareUpdateWire struct {
+	Permission  string     `json:"permission"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	ClearExpiry bool       `json:"clear_expiry"`
+}
+
+func newShareUpdateWire(s *models.ShareRecord) shareUpdateWire {
+	return shareUpdateWire{
+		Permission:  s.Permission,
+		ExpiresAt:   s.ExpiresAt,
+		ClearExpiry: s.ExpiresAt == nil,
+	}
+}
+
 func (rs *RemoteStorage) UpdateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/shares/%d", share.ID)
-	resp, err := rs.client.Put(ctx, path, share)
+	resp, err := rs.client.Put(ctx, path, newShareUpdateWire(share))
 	if err != nil {
 		return nil, fmt.Errorf("failed to update share record: %w", err)
 	}
@@ -74,11 +100,13 @@ func (rs *RemoteStorage) ListSharesBySecret(ctx context.Context, secretID uint) 
 	if !resp.Success {
 		return nil, fmt.Errorf("list shares by secret failed: %s", resp.Error.Error())
 	}
-	var result []*models.ShareRecord
+	var result struct {
+		Shares []*models.ShareRecord `json:"shares"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Shares, nil
 }
 
 // ListSharesBySecretIDs is the batch form of ListSharesBySecret. There is no bulk
@@ -169,11 +197,13 @@ func (rs *RemoteStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([
 	if !resp.Success {
 		return nil, fmt.Errorf("list shares by group failed: %s", resp.Error.Error())
 	}
-	var result []*models.ShareRecord
+	var result struct {
+		Shares []*models.ShareRecord `json:"shares"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Shares, nil
 }
 
 // ListSharedSecrets: #1511/G80 deletion pass — GET

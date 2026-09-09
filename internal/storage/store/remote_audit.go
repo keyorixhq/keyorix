@@ -62,7 +62,11 @@ func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.Audit
 		return nil, 0, fmt.Errorf("get audit logs failed: %s", resp.Error.Error())
 	}
 	var result struct {
-		Events []*models.AuditEvent `json:"events"`
+		// The server sends {"logs": [...], "total": N} (auditHandler.GetAuditLogs,
+		// server/http/handlers/audit.go). Reading "events" here matched nothing while
+		// "total" matched, so every remote caller got a correct-looking count beside an
+		// empty list -- the worst possible shape for an audit query.
+		Events []*models.AuditEvent `json:"logs"`
 		Total  int64                `json:"total"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
