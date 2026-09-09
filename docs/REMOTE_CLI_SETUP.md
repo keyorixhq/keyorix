@@ -1,6 +1,45 @@
 # Remote CLI Setup Guide
 
-This guide explains how to configure the Keyorix CLI to work with remote servers, enabling team collaboration and enterprise deployment.
+> ## ⚠️ Remote mode is WORK IN PROGRESS — not yet a supported deployment
+>
+> **Roughly half of the CLI's storage operations are not implemented over remote
+> mode.** Derived by counting, not estimated: of **426** `RemoteStorage` methods,
+> **197 (46%)** return `ErrRemoteUnsupported`. Local mode
+> (`storage.type: local`) is the complete, supported path today.
+>
+> Unsupported operations fail **loudly**, with an explicit error rather than a
+> silent wrong answer. There are known exceptions to that — a set of wire-format
+> defects that currently return empty or zero-valued results with `err=nil`,
+> found by a conformance-test campaign and being fixed. **Until those land, do
+> not treat a successful-looking empty result from remote mode as authoritative.**
+> The affected calls include role and permission listings, share listings, secret
+> version listings, rotation-policy writes, and audit-log retrieval.
+>
+> **The audit examples further down this document do not work yet.**
+> `remote_audit.go` implements 3 of 28 methods, and `GetAuditLogs` is one of the
+> known-broken calls — it returns a correct-looking total with an empty event
+> list. Do not build a nightly tamper check or a SIEM pull on remote mode yet.
+>
+> ### What works today, by area
+>
+> | | area |
+> |---|---|
+> | **Complete** | invitations, project memberships, legal hold, login attempts, risk exceptions, segregation of duties, access activity |
+> | **Mostly complete** | machine identities (26/27), RBAC (47/63), users (25/38), access-review campaigns (10/11) |
+> | **Substantially incomplete** | secrets (13/31), MFA (7/17), sharing (8/12), dynamic secrets (7/12), stats (2/7), secret ACLs (1/7), **audit (3/28)** |
+> | **Not implemented at all** | compliance, notification channels, secret templates, bulk access, alert escalation, anomaly config, hygiene counts, version comments, secret schedules, retention override, read quota, billing, usage |
+>
+> The authoritative, machine-checked status is the conformance suite in
+> `internal/storage/store/` — that is derived from the code and cannot go stale;
+> this table is a summary of it and can. If the two disagree, believe the tests.
+>
+> **Use local mode for anything that matters.** Remote mode is safe to
+> evaluate — it cannot corrupt a server, and it fails closed on permission
+> checks — but it is not ready to run a team on.
+
+This guide explains how to configure the Keyorix CLI to work with remote servers.
+Remote mode is the intended path for team collaboration and enterprise
+deployment; see the status notice above for how far along it is.
 
 ## Overview
 

@@ -105,7 +105,10 @@ storage:
 ```
 
 `type: remote` points the CLI at a Keyorix server over the API; see the remote
-section of the client config. Remote TLS verification is **on by default** —
+section of the client config. **It is work in progress:** 197 of 426
+`RemoteStorage` methods (46%) return `ErrRemoteUnsupported`, and audit retrieval
+in particular is 3-of-28 implemented. Use `type: local` for anything that
+matters — see `docs/REMOTE_CLI_SETUP.md` for the per-area status. Remote TLS verification is **on by default** —
 an omitted `tls_verify` does not disable certificate checks.
 
 **`type: remote` is a CLI/client mode only.** It cannot back a running Keyorix
