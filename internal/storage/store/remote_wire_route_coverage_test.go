@@ -960,7 +960,6 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// above, which is exactly why this campaign's own past attempts stopped at
 	// literal/Sprintf/local-var and never reached this category.
 	"remote_audit.go:117":   helperReturnEntry("buildAuditFilterPath(filter)"),
-	"remote_audit.go:167":   helperReturnEntry("buildRBACAuditFilterPath(filter)"),
 	"remote_secrets.go:436": helperReturnEntry("buildSecretFilterPath(filter)"),
 	"remote_users.go:514":   helperReturnEntry("buildUserFilterPath(filter)"),
 

@@ -3,7 +3,7 @@
 > ## ⚠️ Remote mode is WORK IN PROGRESS — not yet a supported deployment
 >
 > **Roughly half of the CLI's storage operations are not implemented over remote
-> mode.** Derived by counting, not estimated: of **427** `RemoteStorage` methods,
+> mode.** Derived by counting, not estimated: of **426** `RemoteStorage` methods,
 > **200 (46%)** return `ErrRemoteUnsupported`. Local mode
 > (`storage.type: local`) is the complete, supported path today.
 >
@@ -16,11 +16,11 @@
 > matching every other supported operation.
 >
 > **The audit examples further down this document are limited, not broken.**
-> `remote_audit.go` implements 3 of 28 methods — `GetAuditLogs` is one of
+> `remote_audit.go` implements 2 of 27 methods — `GetAuditLogs` is one of
 > them, and now returns its actual event list rather than a correct-looking
 > total with an empty one. The other 25 audit methods remain unsupported. Do
 > not build a nightly tamper check or a SIEM pull on remote mode's audit
-> surface until more of that 28 is implemented.
+> surface until more of that 27 is implemented.
 >
 > ### What works today, by area
 >
@@ -28,7 +28,7 @@
 > |---|---|
 > | **Complete** | invitations, project memberships, legal hold, login attempts, risk exceptions, segregation of duties, access activity |
 > | **Mostly complete** | machine identities (26/27), RBAC (46/63), users (25/38), access-review campaigns (10/11) |
-> | **Substantially incomplete** | secrets (13/31), MFA (7/17), sharing (8/12), dynamic secrets (7/12), stats (2/7), secret ACLs (1/7), **audit (3/28)** |
+> | **Substantially incomplete** | secrets (13/31), MFA (7/17), sharing (8/12), dynamic secrets (7/12), stats (2/7), secret ACLs (1/7), **audit (2/27)** |
 > | **Not implemented at all** | compliance, notification channels, secret templates, bulk access, alert escalation, anomaly config, hygiene counts, version comments, secret schedules, retention override, read quota, billing, usage |
 >
 > The authoritative, machine-checked status is the conformance suite in
