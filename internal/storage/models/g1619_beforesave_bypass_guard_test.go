@@ -48,6 +48,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,12 +61,80 @@ import (
 type bypassSite struct {
 	File      string
 	Line      int
+	Func      string
 	ModelType string
 	Field     string
 	Method    string
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// enclosingFuncNameG1619 names the function a call site sits in, qualified by
+// receiver type for methods so that `(*T).setup` and `(*U).setup` do not
+// collide. This, not the line number, is half of an allowlist key — see
+// beforeSaveBypassAllowlistG1619.
+func enclosingFuncNameG1619(fn *ast.FuncDecl) string {
+	name := fn.Name.Name
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return name
+	}
+	var buf strings.Builder
+	switch t := fn.Recv.List[0].Type.(type) {
+	case *ast.StarExpr:
+		if id, ok := t.X.(*ast.Ident); ok {
+			buf.WriteString("(*" + id.Name + ").")
+		}
+	case *ast.Ident:
+		buf.WriteString(t.Name + ".")
+	}
+	return buf.String() + name
+}
+
+// allowlistKeysG1619 turns the discovered call sites into their allowlist
+// keys: `<repo-relative file>::<enclosing func>::<Model>.<Field>#<ordinal>`.
+//
+// The ordinal disambiguates repeated raw writes to the SAME field inside the
+// SAME function — two of them exist today in
+// TestListShares_ExcludeExpiredIncludeActive — and is assigned in source
+// order within that group. It is the only part of the key that line positions
+// influence, and only as an ordering, never as a value.
+//
+// Keys deliberately do NOT contain line numbers. #1825 and #1838 were both
+// spent repinning this allowlist after an unrelated edit shifted lines in a
+// file it points at: in #1838's case a three-line insertion in a *different*
+// package moved two entries and turned a green branch red for a reason that
+// had nothing to do with what the branch changed. A key that changes when
+// code moves but not when it changes is measuring the wrong thing. This one
+// survives insertions, deletions and gofmt, and only moves when the call site
+// genuinely moves to another function or starts writing another field —
+// which is precisely when the recorded reasoning deserves re-reading. See
+// #1840.
+func allowlistKeysG1619(root string, sites []bypassSite) map[string]bypassSite {
+	rel := func(f string) string {
+		r, err := filepath.Rel(root, f)
+		if err != nil {
+			return f
+		}
+		return filepath.ToSlash(r)
+	}
+
+	ordered := append([]bypassSite(nil), sites...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].File != ordered[j].File {
+			return ordered[i].File < ordered[j].File
+		}
+		return ordered[i].Line < ordered[j].Line
+	})
+
+	seen := map[string]int{}
+	out := make(map[string]bypassSite, len(ordered))
+	for _, site := range ordered {
+		group := rel(site.File) + "::" + site.Func + "::" + site.ModelType + "." + site.Field
+		seen[group]++
+		out[group+"#"+itoa(seen[group])] = site
+	}
+	return out
+}
 
 // beforeSaveHookedFields derives, from models.go's own AST, a map of model
 // type name -> set of Go field names that model's own hook (BeforeSave,
@@ -336,7 +405,7 @@ func scanFileForBypassesG1619(fset *token.FileSet, file *ast.File, hooked map[st
 					if match {
 						pos := fset.Position(call.Pos())
 						sites = append(sites, bypassSite{
-							File: pos.Filename, Line: pos.Line,
+							File: pos.Filename, Line: pos.Line, Func: enclosingFuncNameG1619(fn),
 							ModelType: modelType, Field: goField, Method: sel.Sel.Name,
 						})
 					}
@@ -348,56 +417,59 @@ func scanFileForBypassesG1619(fset *token.FileSet, file *ast.File, hooked map[st
 	return sites
 }
 
-// beforeSaveBypassAllowlistG1619 is the file:line-pinned registry of raw
-// writes to a hooked column that #1619's sweep examined and found benign —
-// each entry's value is a receipt of the reasoning, not just a pass. A raw
-// write found here that is NOT in this allowlist fails the test; an allowlist
-// entry with no matching call site (moved, deleted, or the fixture rewritten
-// to route through the hook) also fails it — this registry must track the
-// live set exactly, in both directions, the same discipline as
+// beforeSaveBypassAllowlistG1619 is the registry of raw writes to a hooked
+// column that #1619's sweep examined and found benign — each entry's value is
+// a receipt of the reasoning, not just a pass. A raw write found by the sweep
+// that is NOT in this allowlist fails the test; an allowlist entry with no
+// matching call site (moved to another function, deleted, or the fixture
+// rewritten to route through the hook) also fails it — this registry must
+// track the live set exactly, in both directions, the same discipline as
 // remote_wire_route_coverage_test.go's knownUnresolvedWireCalls.
+//
+// Keys are `<repo-relative file>::<enclosing func>::<Model>.<Field>#<ordinal>`
+// and contain NO line numbers, deliberately — see allowlistKeysG1619 and
+// #1840 for why. The ordinal only ever appears where one function raw-writes
+// the same field more than once.
 var beforeSaveBypassAllowlistG1619 = map[string]string{
-	"internal/storage/store/local_sharing_test.go:325": "ShareRecord.ExpiresAt — #1619's original known case " +
-		"(TestListShares_ExcludeExpiredIncludeActive), fixed pre-#1619 in #1606: `past` is time.Now().UTC().Add(...), " +
-		"already canonical, so BeforeSave's normalization would be a no-op; the raw write is a deliberate " +
-		"\"simulate a not-yet-swept expiry\" fixture technique, commented in place as such.",
-	"internal/storage/store/local_sharing_test.go:340": "ShareRecord.ExpiresAt — second occurrence in the same " +
-		"test (expiredGroup), same `past` value, same reasoning as line 325.",
-	"internal/storage/store/rotation_risk_batch_test.go:107": "ShareRecord.ExpiresAt — same pattern as " +
-		"local_sharing_test.go, `past := time.Now().UTC().Add(-time.Hour)`, already canonical, commented in place " +
-		"citing local_sharing_test.go's fuller reasoning.",
-	"server/middleware/g18_cache_hit_revocation_test.go:101": "PersonalAccessToken.ExpiresAt — `past := " +
+	"internal/storage/store/local_sharing_test.go::TestListShares_ExcludeExpiredIncludeActive::ShareRecord.ExpiresAt#1": "ShareRecord.ExpiresAt — #1619's original known case, fixed pre-#1619 in #1606: `past` is " +
+		"time.Now().UTC().Add(...), already canonical, so BeforeSave's normalization would be a no-op; the raw " +
+		"write is a deliberate \"simulate a not-yet-swept expiry\" fixture technique, commented in place as such.",
+	"internal/storage/store/local_sharing_test.go::TestListShares_ExcludeExpiredIncludeActive::ShareRecord.ExpiresAt#2": "ShareRecord.ExpiresAt — second occurrence in the same test (expiredGroup), same `past` value, same " +
+		"reasoning as #1 above.",
+	"internal/storage/store/rotation_risk_batch_test.go::TestListSharesBySecretIDs::ShareRecord.ExpiresAt#1": "ShareRecord.ExpiresAt — same pattern as local_sharing_test.go, " +
+		"`past := time.Now().UTC().Add(-time.Hour)`, already canonical, commented in place citing " +
+		"local_sharing_test.go's fuller reasoning.",
+	"server/middleware/g18_cache_hit_revocation_test.go::TestAuthentication_PATExpiredAfterCache_DeniedOnCacheHit::PersonalAccessToken.ExpiresAt#1": "PersonalAccessToken.ExpiresAt — `past := " +
 		"time.Now().Add(-time.Hour)` is NOT pre-normalized, but this is still benign: the read path " +
 		"(ValidatePATToken -> IsPATExpired) fetches this one row by hash (GetPersonalAccessTokenByHash, not a " +
 		"range query) and compares via Go's Location-independent now.After(*pat.ExpiresAt) " +
 		"(pat_expiry_enforce.go) — never a SQLite string range comparison, so BeforeSave's UTC normalization " +
 		"has nothing to protect on this read path regardless of what Location the raw write left in place.",
-	"internal/storage/store/stale_accounts_test.go:38": "User.CreatedAt — `createdAt` is derived from " +
+	"internal/storage/store/stale_accounts_test.go::TestListUsersInStateBefore::User.CreatedAt#1": "User.CreatedAt — `createdAt` is derived from " +
 		"`now := time.Now().UTC()` two lines above the mk() helper, already canonical, so BeforeSave's " +
 		"normalization would be a no-op. (This model's OWN read path, ListUsersInStateBefore, IS a real SQL " +
 		"range query — unlike the PAT case above, this one is benign because the value is canonical, not " +
 		"because the query is immune.)",
-	"internal/core/break_glass_external_test.go:413": "UserRole.ExpiresAt — the value is " +
-		"`time.Now().UTC().Add(-time.Hour)`, already canonical. This test (TestBreakGlass_ExpiredGrantDeniesAuthorization) " +
-		"deliberately exercises the real SQL-range-query path (Authorize -> GetUserRoleIDsAt's expires_at filter, " +
-		"per its own doc comment) — protected because the value is canonical, not because the read path is immune.",
-	"internal/core/break_glass_external_test.go:515": "UserRole.ExpiresAt — `past := " +
+	"internal/core/break_glass_external_test.go::TestBreakGlass_ExpiredGrantDeniesAuthorization::UserRole.ExpiresAt#1": "UserRole.ExpiresAt — the value is " +
+		"`time.Now().UTC().Add(-time.Hour)`, already canonical. This test deliberately exercises the real " +
+		"SQL-range-query path (Authorize -> GetUserRoleIDsAt's expires_at filter, per its own doc comment) — " +
+		"protected because the value is canonical, not because the read path is immune.",
+	"internal/core/break_glass_external_test.go::TestActivateBreakGlass_ReactivatesAfterNaturalExpiry::UserRole.ExpiresAt#1": "UserRole.ExpiresAt — `past := " +
 		"time.Now().UTC().Add(-time.Minute)` (declared a few lines above, shared with the " +
 		"BreakGlassActivation.ExpiresAt entry below), already canonical (#1653: this test previously used a " +
 		"non-UTC `past`, which this same reopening fixed — see this file's own comment immediately above the " +
-		"declaration). This test (TestActivateBreakGlass_ReactivatesAfterNaturalExpiry) never exercises " +
-		"GetUserRoleIDsAt's SQL range query against this row: the only downstream check that reads it is " +
-		"assignUserRole's existing-row guard (local_rbac.go), a single-row fetch by composite key compared via " +
-		"Go's Location-independent existing.ExpiresAt.After(time.Now()) — doubly protected, both because the " +
-		"value is canonical and because the read path is immune.",
-	"internal/core/break_glass_external_test.go:518": "BreakGlassActivation.ExpiresAt — same " +
+		"declaration). This test never exercises GetUserRoleIDsAt's SQL range query against this row: the only " +
+		"downstream check that reads it is assignUserRole's existing-row guard (local_rbac.go), a single-row " +
+		"fetch by composite key compared via Go's Location-independent existing.ExpiresAt.After(time.Now()) — " +
+		"doubly protected, both because the value is canonical and because the read path is immune.",
+	"internal/core/break_glass_external_test.go::TestActivateBreakGlass_ReactivatesAfterNaturalExpiry::BreakGlassActivation.ExpiresAt#1": "BreakGlassActivation.ExpiresAt — same " +
 		"`past := time.Now().UTC().Add(-time.Minute)` as the UserRole.ExpiresAt entry immediately above (one " +
-		"variable, two raw writes in TestActivateBreakGlass_ReactivatesAfterNaturalExpiry), already canonical. " +
-		"#1653 reopened added a real SQL range-query read path for this exact column " +
-		"(ReconcileExpiredBreakGlassActivation, local_break_glass.go: `WHERE ... expires_at <= ?`, called from " +
-		"ActivateBreakGlass) — this site is exactly the one that motivated adding ExpiresAt to " +
-		"BreakGlassActivation.BeforeSave's normalization in the first place; protected because the value is " +
-		"canonical, not because this read path is immune (it is not).",
+		"variable, two raw writes in the same test), already canonical. #1653 reopened added a real SQL " +
+		"range-query read path for this exact column (ReconcileExpiredBreakGlassActivation, " +
+		"local_break_glass.go: `WHERE ... expires_at <= ?`, called from ActivateBreakGlass) — this site is " +
+		"exactly the one that motivated adding ExpiresAt to BreakGlassActivation.BeforeSave's normalization in " +
+		"the first place; protected because the value is canonical, not because this read path is immune (it " +
+		"is not).",
 }
 
 // TestBeforeSaveBypassGuard_NoUnrecognizedRawWritesToHookedColumns is #1619's
@@ -437,32 +509,37 @@ func TestBeforeSaveBypassGuard_NoUnrecognizedRawWritesToHookedColumns(t *testing
 	})
 	require.NoError(t, err)
 
-	rel := func(f string) string {
-		r, err := filepath.Rel(root, f)
-		if err != nil {
-			return f
-		}
-		return filepath.ToSlash(r)
-	}
+	live := allowlistKeysG1619(root, found)
+	require.NotEmpty(t, live, "sanity: the sweep found no raw writes to hooked columns at all — either the "+
+		"scan broke or every fixture was fixed; if it is genuinely the latter, empty the allowlist "+
+		"deliberately rather than letting this guard pass vacuously")
 
-	seen := map[string]bool{}
-	for _, site := range found {
-		key := rel(site.File) + ":" + itoa(site.Line)
-		seen[key] = true
+	keys := make([]string, 0, len(live))
+	for key := range live {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
 		if _, ok := beforeSaveBypassAllowlistG1619[key]; ok {
 			continue
 		}
+		site := live[key]
 		t.Errorf("unallowlisted BeforeSave bypass: %s writes %s.%s via %s, bypassing its BeforeSave hook — "+
 			"either route the write through Save()/Create() so the hook runs, or add a reasoned entry to "+
 			"beforeSaveBypassAllowlistG1619 in g1619_beforesave_bypass_guard_test.go explaining why the raw "+
-			"write is safe (value already canonical, or the read path never range-queries this column in SQL)",
-			key, site.ModelType, site.Field, site.Method)
+			"write is safe (value already canonical, or the read path never range-queries this column in SQL).\n"+
+			"    the call site is currently at %s:%d",
+			key, site.ModelType, site.Field, site.Method, site.File, site.Line)
 	}
+
 	for key, reason := range beforeSaveBypassAllowlistG1619 {
-		if !seen[key] {
-			t.Errorf("stale allowlist entry %s (%s): no matching raw-write call site found — "+
-				"the fixture was likely fixed to route through the hook (good, remove this entry) or moved "+
-				"(update the key)", key, reason)
+		if _, ok := live[key]; !ok {
+			t.Errorf("stale allowlist entry %s (%s): no matching raw-write call site found — the fixture was "+
+				"likely fixed to route through the hook (good, remove this entry), moved to another function, "+
+				"or now writes a different field. Note that this key is NOT line-pinned, so an ordinary edit "+
+				"above the call site cannot have caused this; something about the site itself changed.",
+				key, reason)
 		}
 	}
 }
@@ -494,4 +571,84 @@ func poison(db *gorm.DB, id uint, past time.Time) error {
 	require.Equal(t, "ShareRecord", sites[0].ModelType)
 	require.Equal(t, "ExpiresAt", sites[0].Field)
 	require.Equal(t, "Update", sites[0].Method)
+}
+
+// TestBeforeSaveBypassGuard_KeysSurviveLineDrift is #1840's own proof, and
+// the reason this file no longer keys its allowlist on file:line.
+//
+// Twice — #1825 and #1838 — a branch that changed nothing about any raw write
+// still turned this guard red, because an insertion elsewhere shifted the
+// lines the allowlist pointed at. #1838's case is the clearest: a three-line
+// change in a different package moved two entries, and the fix was to edit
+// two numbers in this file so that CI would agree the branch had not broken
+// anything. A key that changes when code MOVES but not when it CHANGES is
+// measuring position, not meaning, and every such repin is a chance to
+// rubber-stamp a real regression as "just line drift".
+//
+// So: scan one synthetic file, then scan the same source with lines inserted
+// above the call sites, and assert the keys are byte-identical. The test also
+// asserts the reported line numbers really did move — otherwise it would pass
+// trivially on a day the drift failed to happen, which is the vacuity failure
+// mode for a test whose whole subject is drift.
+func TestBeforeSaveBypassGuard_KeysSurviveLineDrift(t *testing.T) {
+	const body = `package examplepkg
+
+import "github.com/keyorixhq/keyorix/internal/storage/models"
+
+func TestSomethingExpiring(db *gorm.DB, id uint, past time.Time) error {
+	if err := db.Model(&models.ShareRecord{}).Where("id = ?", id).Update("expires_at", past).Error; err != nil {
+		return err
+	}
+	return db.Model(&models.ShareRecord{}).Where("id = ?", id+1).Update("expires_at", past).Error
+}
+`
+	// Anything at all above the call sites: a new import, a new helper, a
+	// license header, a gofmt reflow. The guard must not care which.
+	const drift = "// one\n// two\n// three\n// four\n// five\n"
+
+	scan := func(src string) (map[string]bypassSite, []int) {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "drift_example_test.go", src, 0)
+		require.NoError(t, err)
+		hooked := beforeSaveHookedFields(t, fset)
+		sites := scanFileForBypassesG1619(fset, file, hooked)
+		require.Len(t, sites, 2, "fixture must produce exactly the two raw writes it contains")
+		lines := make([]int, 0, len(sites))
+		for _, s := range sites {
+			lines = append(lines, s.Line)
+		}
+		sort.Ints(lines)
+		// root "" makes filepath.Rel fall back to the bare filename, which is
+		// what the synthetic parse used — the real sweep passes a real root.
+		return allowlistKeysG1619("", sites), lines
+	}
+
+	before, beforeLines := scan(body)
+	after, afterLines := scan(drift + body)
+
+	require.NotEqual(t, beforeLines, afterLines,
+		"the fixture did not actually drift, so this test proved nothing about drift immunity; "+
+			"the inserted lines must sit above the call sites")
+
+	beforeKeys := keysOfG1619(before)
+	afterKeys := keysOfG1619(after)
+	require.Equal(t, beforeKeys, afterKeys,
+		"allowlist keys changed when the call sites merely moved down the file — the keys have become "+
+			"position-dependent again, which is exactly what #1840 removed. Fix allowlistKeysG1619, not "+
+			"this assertion, and do not repin beforeSaveBypassAllowlistG1619 to make CI green")
+
+	// The two writes are the same model+field in the same function, so they
+	// must be distinguished by ordinal and nothing else.
+	require.Len(t, beforeKeys, 2, "two raw writes to the same field in one function must produce two keys")
+	require.Contains(t, beforeKeys[0], "#1")
+	require.Contains(t, beforeKeys[1], "#2")
+}
+
+func keysOfG1619(m map[string]bypassSite) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
