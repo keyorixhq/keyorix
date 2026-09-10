@@ -100,6 +100,23 @@ func looksLikeErrorArg(e ast.Expr) (string, bool) {
 		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Error" {
 			return "direct .Error() call", true
 		}
+	case *ast.BinaryExpr:
+		// `log.Println("connect failed: " + err.Error())` is the same defect
+		// wearing a string concatenation. Before this, the scanner only
+		// examined each argument's top-level shape, so an error hidden one
+		// operand deep was invisible to it -- the guard would have passed on
+		// its own motivating defect written this way. Recursing keeps the
+		// match just as narrow (an operand still has to be an err-ish
+		// identifier or a .Error() call to be flagged) while closing the
+		// shape. Confirmed against the scanned files at the time of the
+		// change: no existing log.Printf/log.Println there concatenates at
+		// all, so this widened nothing in practice and flagged nothing new.
+		if desc, flagged := looksLikeErrorArg(v.X); flagged {
+			return desc + " inside a concatenation", true
+		}
+		if desc, flagged := looksLikeErrorArg(v.Y); flagged {
+			return desc + " inside a concatenation", true
+		}
 	}
 	return "", false
 }
@@ -181,5 +198,76 @@ func TestNoUnsanitizedDriverErrorReachesLog(t *testing.T) {
 		t.Errorf("%s:%d: log call argument (%s) looks like an unsanitized error -- "+
 			"wrap it with dynamic.SanitizeErrorMessage(...) before logging (Group 1: raw driver/backend "+
 			"errors must never reach a log call verbatim)", f.file, f.line, f.desc)
+	}
+}
+
+// TestLogRedactionScannerDetectsUnsanitizedArgs is this guard's red-proof.
+//
+// TestNoUnsanitizedDriverErrorReachesLog asserts that today's call sites are
+// clean. That says nothing about whether the scanner still works: this guard
+// is explicitly shape-based rather than type-aware (see the file header), so
+// it is exactly the kind of check that can quietly stop matching — a renamed
+// sanitizer, a change to how the "err"-ish identifier heuristic works, or a
+// selector walk that stops resolving — and keep reporting the package clean.
+//
+// The fixture carries both a violation and its sanctioned counterpart, so the
+// test fails if the scanner stops detecting AND if it starts over-detecting.
+func TestLogRedactionScannerDetectsUnsanitizedArgs(t *testing.T) {
+	// Parsed, never compiled.
+	const src = `package fixture
+
+import "log"
+
+// The pre-fix shape: a raw driver error formatted straight into the log,
+// where a DSN credential fragment can ride along.
+func bareErrIdent(err error) { log.Printf("connect failed: %v", err) }
+
+// The same defect through the other recognized shape.
+func directErrorCall(err error) { log.Println("connect failed:", err.Error()) }
+
+// And the same defect hidden one operand deep in a concatenation, which the
+// scanner missed until this test was written.
+func concatenatedError(err error) { log.Println("connect failed: " + err.Error()) }
+
+// The sanctioned shape, which must NOT be flagged.
+func sanitized(err error) { log.Printf("connect failed: %v", SanitizeErrorMessage(err)) }
+
+// Not a log call at all, and must not be flagged.
+func notALogCall(err error) { fmt.Printf("connect failed: %v", err) }
+`
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "log_redaction_fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the synthetic fixture: %v", err)
+	}
+
+	found := findUnsanitizedLogCalls(fset, file, "log_redaction_fixture.go")
+
+	descs := map[string]bool{}
+	for _, f := range found {
+		descs[f.desc] = true
+	}
+
+	if !descs["bare identifier %q"] {
+		t.Errorf("the scanner must flag a bare err identifier passed to log.Printf; got %v\n"+
+			"That is the exact shape the pre-fix call sites used, so a scanner that no longer "+
+			"recognizes it would have passed on the original defect.", found)
+	}
+	if !descs["direct .Error() call"] {
+		t.Errorf("the scanner must flag a direct .Error() call passed to log.Println; got %v", found)
+	}
+
+	// Over-detection is the other failure mode, and the more insidious one:
+	// a guard that flags the sanctioned shape gets allowlisted into silence.
+	if !descs["direct .Error() call inside a concatenation"] {
+		t.Errorf("the scanner must flag an .Error() call hidden inside a string concatenation; got %v\n"+
+			"This shape slipped through until this red-proof was written: the scanner examined only each "+
+			"argument's top-level form, so the guard would have passed on its own motivating defect if "+
+			"someone had written it with a `+`.", found)
+	}
+	if len(found) != 3 {
+		t.Errorf("the scanner flagged %d argument(s), want exactly 3 — it must not flag the "+
+			"SanitizeErrorMessage-wrapped call or the non-log fmt.Printf: %v", len(found), found)
 	}
 }

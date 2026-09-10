@@ -307,3 +307,84 @@ func findUnguardedDriverConstructionAnyFunc(file *ast.File) []string {
 	})
 	return found
 }
+
+// TestEgressScannerDetectsUnguardedConstruction is this guard's red-proof.
+//
+// TestNoUnguardedEgress above asserts that today's code is clean. That is a
+// statement about the code, not about the scanner: if egressIdentSel stopped
+// resolving selectors, or driverConstructionSelectors were emptied by a bad
+// merge, the guard would keep passing and would keep reporting the codebase
+// safe while checking nothing. The file header claims the guard was "verified
+// RED against the pre-2b code" — true, and a one-time manual observation that
+// no longer runs. This makes it run.
+//
+// Both halves matter. Detecting the planted violations proves the scanner
+// still fires; NOT flagging the guarded control proves it fires for the right
+// reason rather than on every driver construction it sees.
+func TestEgressScannerDetectsUnguardedConstruction(t *testing.T) {
+	// Parsed, never compiled: undefined identifiers are fine, and deliberate —
+	// this fixture must not be buildable, or someone will eventually "fix" it.
+	const src = `package fixture
+
+import (
+	"net"
+	"net/http"
+)
+
+// unguardedMongo is the exact pre-2b shape: a driver connect in a function
+// with no netutil reference anywhere in its body.
+func unguardedMongo(ctx context.Context) {
+	_, _ = mongo.Connect(ctx, options.Client().ApplyURI(uri))
+}
+
+// unguardedHTTPClient is the SIEM forwarder's pre-fix shape.
+func unguardedHTTPClient() *http.Client {
+	return &http.Client{Timeout: 10}
+}
+
+// guardedRedis is the sanctioned shape and must NOT be reported.
+func guardedRedis() {
+	d := netutil.Dialer{Guard: netutil.NewGuard()}
+	_ = redis.NewClient(&redis.Options{Dialer: d.DialContext})
+}
+
+func rawDialCall()    { _, _ = net.Dial("tcp", "example.com:80") }
+func rawDialerLiteral() { d := net.Dialer{Timeout: 5}; _ = d }
+`
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "egress_fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the synthetic fixture: %v", err)
+	}
+
+	rawDials := findForbiddenRawDial(file)
+	if len(rawDials) != 2 {
+		t.Errorf("findForbiddenRawDial must flag both the net.Dial call and the net.Dialer literal, got %d: %v\n"+
+			"The scanner has stopped detecting raw dials, so TestNoUnguardedEgress is now green for a reason "+
+			"that has nothing to do with the code being safe.", len(rawDials), rawDials)
+	}
+
+	issues := findUnguardedDriverConstruction(file)
+	got := map[string]string{}
+	for _, i := range issues {
+		got[i.call] = i.reason
+	}
+
+	for _, want := range []string{"mongo.Connect(...)", "http.Client{...}"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("findUnguardedDriverConstruction must flag %s in a function with no netutil reference; got %v\n"+
+				"This is the check that caught the real pre-2b gap. If it no longer fires here, it would no "+
+				"longer fire there either.", want, issues)
+		}
+	}
+
+	// The other half of the proof: the guarded control must come back clean,
+	// or the guard is just "any driver construction is an issue" and would
+	// have to be silenced the first time someone wires netutil correctly.
+	if reason, flagged := got["redis.NewClient(...)"]; flagged {
+		t.Errorf("findUnguardedDriverConstruction flagged the CORRECTLY guarded redis.NewClient (%s) — the "+
+			"scanner is no longer distinguishing guarded from unguarded construction, so every future "+
+			"correct call site will be reported as a violation", reason)
+	}
+}
