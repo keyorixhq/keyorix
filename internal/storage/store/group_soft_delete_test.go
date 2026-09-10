@@ -20,6 +20,9 @@ func newGroupSoftDeleteStore(t *testing.T) *LocalStorage {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Role{},
 		&models.ShareRecord{}, &models.SecretNode{}, &models.User{},

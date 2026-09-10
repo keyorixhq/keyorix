@@ -17,6 +17,9 @@ func newRestoreTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	// #370: DeleteSecret revokes ShareRecord rows in the same transaction as the
 	// secret's own soft-delete; SecretACL rows are revoked in the same transaction too (CWE-284).
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.ShareRecord{}, &models.SecretACL{}, &models.DynamicSecretConfig{}))

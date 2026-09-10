@@ -18,6 +18,9 @@ func newSetRetentionOverrideStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
 	return NewLocalStorage(db)
 }
@@ -60,11 +63,12 @@ func TestSetRetentionOverride_ClearsField(t *testing.T) {
 func TestSetRetentionOverride_ClosedDB_ReturnsError(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
 	ls := NewLocalStorage(db)
 
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
 
 	err = ls.SetRetentionOverride(context.Background(), 1, 30)

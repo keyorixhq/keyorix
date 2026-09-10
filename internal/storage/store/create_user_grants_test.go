@@ -17,6 +17,9 @@ func newUserGrantStore(t *testing.T) (*LocalStorage, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.UserRole{}))
 	return NewLocalStorage(db), db
 }

@@ -18,6 +18,9 @@ func newMachineCredTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}, &models.Role{},
 		&models.Project{}, &models.Environment{},
@@ -58,6 +61,9 @@ func TestMachineCredentialLifecycle(t *testing.T) {
 func TestOIDCBindingResolution(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityOIDCBinding{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()

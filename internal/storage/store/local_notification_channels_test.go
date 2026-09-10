@@ -16,6 +16,9 @@ func newNotificationChannelTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	return NewLocalStorage(db)
 }
@@ -145,6 +148,9 @@ func TestGetNotificationChannelByName_DBError(t *testing.T) {
 	// Open a DB without the required table to provoke a real DB error.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No AutoMigrate — the table doesn't exist, causing a "no such table" error.
 
@@ -160,6 +166,9 @@ func TestGetNotificationChannel_DBError(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No AutoMigrate — table missing.
 
@@ -202,6 +211,9 @@ func TestUpdateNotificationRetryPolicy_DBError(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No AutoMigrate — table missing.
 
@@ -216,6 +228,9 @@ func TestListNotificationChannels_DBError(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No AutoMigrate — the notification_channels table does not exist.
 
@@ -231,6 +246,9 @@ func TestCreateNotificationChannel_DBError(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No AutoMigrate — the notification_channels table does not exist.
 
@@ -247,6 +265,9 @@ func TestUpdateNotificationChannel_DBError(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No AutoMigrate — the notification_channels table does not exist.
 
@@ -268,6 +289,9 @@ func TestDeleteNotificationChannel_DBError(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No AutoMigrate — the notification_channels table does not exist.
 

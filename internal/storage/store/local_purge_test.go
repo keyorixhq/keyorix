@@ -17,6 +17,9 @@ func newPurgeTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Project{}, &models.Environment{},
 		&models.UserRole{}, &models.GroupRole{}, &models.Group{}, &models.UserGroup{}, &models.ShareRecord{},
 		&models.PersonalAccessToken{}, &models.Session{}, &models.SecretACL{}))
@@ -221,6 +224,9 @@ func TestPurgeDeletedUsersBefore_NothingToPurge(t *testing.T) {
 func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}, &models.SecretACL{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -261,6 +267,9 @@ func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
 func TestPurgeDeletedSecretsBefore_CascadesSecretACL(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}, &models.SecretACL{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -294,6 +303,9 @@ func TestPurgeDeletedSecretsBefore_CascadesSecretACL(t *testing.T) {
 func TestPurgeDeletedSecretsBefore_RespectsRetentionOverride(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}, &models.SecretACL{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()

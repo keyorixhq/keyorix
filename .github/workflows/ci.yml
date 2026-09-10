@@ -657,6 +657,9 @@ jobs:
           # shard by test name rather than by package.
           run_filter=""
           pkgs=$(pkgs_for_leg "$leg")
+          # Empty for every leg except storage-store-N (below) -- see that
+          # case arm for why this one package gets it and the others don't.
+          shuffle_flag=""
 
           case "$leg" in
             handlers-1|handlers-2)
@@ -686,6 +689,25 @@ jobs:
               shard=${leg#storage-store-}
               run_filter=$(run_filter_for_shard "$pkgs" "$shard" 2)
               pkgs=./internal/storage/store
+              # fix/store-test-isolation-shuffle: this package's tests used
+              # to depend on execution order without anyone checking for it
+              # -- a bare ":memory:" SQLite DSN's unbounded connection pool
+              # could silently open a second, never-migrated phantom
+              # connection under concurrent load (fixed package-wide via
+              # sqlDB.SetMaxOpenConns(1); see
+              # local_memdb_pool_isolation_test.go for the deterministic
+              # mechanism proof). -shuffle=on makes order-dependence a
+              # standing, continuously-checked property instead of
+              # something that can return silently: Go reorders every run
+              # and prints the seed on failure, so a red run stays
+              # reproducible with no extra plumbing here. Scoped to this
+              # package only, not repo-wide -- a broader rollout is a
+              # separate, deliberately unstarted change (see this fix's own
+              # commit message for why: enabling it elsewhere may surface
+              # other packages' latent order dependencies, and those need
+              # their own investigation, not a blanket flag flip bundled
+              # into this one).
+              shuffle_flag="-shuffle=on"
               ;;
           esac
           # $pkgs is deliberately unquoted below: it holds a space-separated
@@ -705,7 +727,7 @@ jobs:
           # above). If someone proposes enabling Go's test cache here, that's
           # the trade being proposed, whether or not the proposal names it.
           # shellcheck disable=SC2086
-          go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       # This job is the ONLY one with a Postgres service container (see this
       # job's own KEYORIX_TEST_PG_DSN comment above), so it is the only place

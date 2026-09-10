@@ -29,6 +29,9 @@ func newBrokenDB(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	return NewLocalStorage(db)
 }
 
@@ -42,6 +45,9 @@ func newBrokenDB(t *testing.T) *LocalStorage {
 func TestLastUserActivityByEventTypes_SkipsZeroUserID(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -87,6 +93,9 @@ func TestLastUserActivityByEventTypes_SkipsZeroUserID(t *testing.T) {
 func TestCreateAnomalyAlert_ZeroDetectedAt(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AnomalyAlert{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -123,6 +132,9 @@ func TestListUnalertedAnomalyAlerts_BrokenDB(t *testing.T) {
 func TestGetAuditLogs_NilFilter(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
 	ls := NewLocalStorage(db)
 
@@ -138,6 +150,9 @@ func TestGetAuditLogs_NilFilter(t *testing.T) {
 func TestGetAuditLogs_AllFilterFields(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -174,6 +189,9 @@ func TestGetAuditLogs_AllFilterFields(t *testing.T) {
 func TestGetAuditLogs_ProjectIDFilter(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
 	ls := NewLocalStorage(db)
 
@@ -190,6 +208,9 @@ func TestGetAuditLogs_ProjectIDFilter(t *testing.T) {
 func TestGetAuditLogs_LargePageSize(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
 	ls := NewLocalStorage(db)
 
@@ -209,6 +230,9 @@ func TestGetAuditLogs_LargePageSize(t *testing.T) {
 func TestMostAccessedSecrets_NilProjectID(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}, &models.SecretNode{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -223,6 +247,9 @@ func TestMostAccessedSecrets_NilProjectID(t *testing.T) {
 func TestMostAccessedSecrets_ZeroLimit(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}, &models.SecretNode{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -241,6 +268,9 @@ func TestMostAccessedSecrets_ZeroLimit(t *testing.T) {
 func TestUnusedSecrets_NilProjectID(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}, &models.SecretNode{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -261,6 +291,9 @@ func TestUnusedSecrets_NilProjectID(t *testing.T) {
 func TestPrincipalSecretFirstSeen_SkipsNilFirstSeen(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -452,6 +485,9 @@ func TestAuditEntryHashByID_BrokenDB(t *testing.T) {
 func TestWithAuditCheckpointLock_FnSuccess(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	called := false

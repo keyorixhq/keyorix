@@ -27,6 +27,9 @@ func newS17Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}

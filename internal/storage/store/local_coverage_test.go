@@ -72,6 +72,9 @@ func newDepOnlyBrokenStore(t *testing.T) *LocalStorage {
 	// No AutoMigrate → all table-touching queries fail.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	return NewLocalStorage(db)
 }
 
