@@ -51,6 +51,66 @@ func (rs *RemoteStorage) CountImpersonatedActions(_ context.Context, _, _ uint, 
 	return 0, remoteUnsupported("CountImpersonatedActions")
 }
 
+// auditLogEntryWire mirrors the ACTUAL response shape of GET /api/v1/audit/logs
+// (AuditHandler.GetAuditLogs's AuditLogEntry, server/http/handlers/audit.go) --
+// a UI-oriented projection of models.AuditEvent, not the row itself.
+// models.AuditEvent has no json tags at all, so unmarshaling the response
+// directly into it (the previous behaviour) matched fields only where the
+// server's snake_case key happened to equal the Go field name case-
+// insensitively: ID/Description/Impersonation survived, but EventType
+// ("event_type"), EventTime ("timestamp" -- not even the same name), and
+// ActorType ("actor_type") all silently zeroed. Combined with the separate
+// "logs"-vs-"events" envelope-key bug (fixed above), every remote audit query
+// used to return a correct-looking total beside an EMPTY list; now that the
+// envelope is fixed, this second bug would have kept returning a full list of
+// near-empty event shells instead.
+//
+// AuditLogEntry resolves the acting user to a username string (Actor) rather
+// than exposing the raw UserID, and never carries UserID/ProjectID/
+// SecretNodeID/IPAddress/Success/the ADR-029 hash-chain fields (PrevHash/
+// EntryHash) at all -- GET /api/v1/audit/export (ExportAuditLogs ->
+// AuditExportEntry) is the full-fidelity alternative that does carry them.
+// Those fields are left at their zero value on the returned *models.AuditEvent
+// below: not a wire bug fixable by tagging, a genuine capability gap of this
+// endpoint. Pointing GetAuditLogs at /audit/export instead is a larger design
+// change (different filter support, cursor- not page-based pagination, no
+// total count) tracked separately, not fixed here.
+type auditLogEntryWire struct {
+	ID          uint            `json:"id"`
+	EventType   string          `json:"event_type"`
+	Actor       string          `json:"actor"`
+	ActorType   string          `json:"actor_type"`
+	Description string          `json:"description"`
+	Timestamp   time.Time       `json:"timestamp"`
+	Diff        json.RawMessage `json:"diff,omitempty"`
+	// Impersonation attribution is resolved to usernames server-side (see
+	// AuditLogEntry's own doc comment) -- models.AuditEvent.ImpersonatedBy/
+	// ActingAs are raw *uint IDs, so ImpersonatedBy/ActingAs below cannot be
+	// reconstructed from this response and are intentionally dropped, not
+	// mapped. Only the Impersonation boolean survives onto the returned event.
+	Impersonation  bool   `json:"impersonation,omitempty"`
+	ImpersonatedBy string `json:"impersonated_by,omitempty"`
+	ActingAs       string `json:"acting_as,omitempty"`
+}
+
+// toAuditEvent converts the wire entry to a models.AuditEvent, populating only
+// the fields AuditLogEntry actually carries -- see auditLogEntryWire's doc
+// comment for exactly which fields are structurally unavailable here.
+func (e auditLogEntryWire) toAuditEvent() *models.AuditEvent {
+	ev := &models.AuditEvent{
+		ID:            e.ID,
+		EventType:     e.EventType,
+		Description:   e.Description,
+		EventTime:     e.Timestamp,
+		ActorType:     e.ActorType,
+		Impersonation: e.Impersonation,
+	}
+	if len(e.Diff) > 0 {
+		ev.Diff = string(e.Diff)
+	}
+	return ev
+}
+
 // GetAuditLogs retrieves audit events with optional filtering via remote API.
 func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
 	path := buildAuditFilterPath(filter)
@@ -66,13 +126,17 @@ func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.Audit
 		// server/http/handlers/audit.go). Reading "events" here matched nothing while
 		// "total" matched, so every remote caller got a correct-looking count beside an
 		// empty list -- the worst possible shape for an audit query.
-		Events []*models.AuditEvent `json:"logs"`
-		Total  int64                `json:"total"`
+		Logs  []auditLogEntryWire `json:"logs"`
+		Total int64               `json:"total"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result.Events, result.Total, nil
+	events := make([]*models.AuditEvent, len(result.Logs))
+	for i, e := range result.Logs {
+		events[i] = e.toAuditEvent()
+	}
+	return events, result.Total, nil
 }
 
 // buildAuditFilterPath constructs the GET /api/v1/audit/logs query string.
