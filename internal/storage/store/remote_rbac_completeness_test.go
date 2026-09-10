@@ -8,6 +8,15 @@ package store
 
 func init() {
 	addRemoteUnsupported(map[string]remoteUnsupportedEntry{
+		"CreateRole": {statusIntentional,
+			"POST /api/v1/roles binds handlers.CreateRoleRequest, whose `permissions` field " +
+				"carries `validate:\"required,min=1\"` (#169 resolves and authorizes every " +
+				"requested permission BEFORE creating anything). storage.Storage's CreateRole " +
+				"signature has no permissions parameter, so RemoteStorage cannot construct a body " +
+				"the server will accept -- it previously POSTed a bare models.Role and got HTTP " +
+				"400 on every single call. Making it work needs an interface change (permissions " +
+				"in the CreateRole signature), not a wire fix, and that is a design decision " +
+				"rather than a bug fix."},
 		"ListAllGroupRoleGrants": {statusIntentional,
 			"#G25: the group-grant counterpart to ListAllUserRoleGrants (already " +
 				"allowlisted above with the same reasoning) — a raw, unscoped grant-table " +

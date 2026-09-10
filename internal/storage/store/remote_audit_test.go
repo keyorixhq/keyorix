@@ -70,7 +70,7 @@ func TestRemoteStorage_GetAuditLogs_NilFilter(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/audit/logs", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
-			"events": []map[string]interface{}{
+			"logs": []map[string]interface{}{
 				{"EventType": "secret.read", "ActorType": "user"},
 			},
 			"total": 1,
@@ -92,8 +92,10 @@ func TestRemoteStorage_GetAuditLogs_WithFilter(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/audit/logs", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
-			"events": []map[string]interface{}{},
-			"total":  int64(0),
+			"logs": []map[string]interface{}{
+				{"EventType": "secret.read", "ActorType": "user"},
+			},
+			"total": 1,
 		}))
 	}))
 	defer srv.Close()
@@ -109,8 +111,8 @@ func TestRemoteStorage_GetAuditLogs_WithFilter(t *testing.T) {
 	}
 	events, total, err := rs.GetAuditLogs(context.Background(), filter)
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), total)
-	assert.Len(t, events, 0)
+	assert.Equal(t, int64(1), total)
+	assert.Len(t, events, 1)
 }
 
 // --- GetRBACAuditLogs ---

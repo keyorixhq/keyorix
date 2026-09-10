@@ -107,9 +107,9 @@ func TestRemoteStorage_ListSharesBySecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/secrets/10/shares", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"shares": []map[string]interface{}{
 			shareRecordData(1, 10, 2, 3),
-		}))
+		}}))
 	}))
 	defer srv.Close()
 
@@ -129,9 +129,9 @@ func TestRemoteStorage_ListSharesBySecretIDs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		assert.Equal(t, http.MethodGet, r.Method)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"shares": []map[string]interface{}{
 			shareRecordData(uint(callCount), uint(callCount*10), 2, 3),
-		}))
+		}}))
 	}))
 	defer srv.Close()
 
@@ -205,9 +205,9 @@ func TestRemoteStorage_ListSharesByGroup(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/groups/5/shares", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"shares": []map[string]interface{}{
 			shareRecordData(2, 10, 2, 5),
-		}))
+		}}))
 	}))
 	defer srv.Close()
 

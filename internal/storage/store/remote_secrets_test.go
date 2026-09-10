@@ -302,10 +302,10 @@ func TestRemoteStorage_ListSecretVersions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/secrets/42/versions", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"versions": []map[string]interface{}{
 			{"ID": 100, "SecretNodeID": 42, "VersionNumber": 1, "ReadCount": 0},
 			{"ID": 200, "SecretNodeID": 42, "VersionNumber": 2, "ReadCount": 1},
-		}))
+		}}))
 	}))
 	defer srv.Close()
 
@@ -357,9 +357,9 @@ func TestRemoteStorage_GetSecretVersions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/secrets/42/versions", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"versions": []map[string]interface{}{
 			{"ID": 100, "SecretNodeID": 42, "VersionNumber": 1, "ReadCount": 0},
-		}))
+		}}))
 	}))
 	defer srv.Close()
 

@@ -4,28 +4,30 @@
 >
 > **Roughly half of the CLI's storage operations are not implemented over remote
 > mode.** Derived by counting, not estimated: of **427** `RemoteStorage` methods,
-> **199 (46%)** return `ErrRemoteUnsupported`. Local mode
+> **200 (46%)** return `ErrRemoteUnsupported`. Local mode
 > (`storage.type: local`) is the complete, supported path today.
 >
 > Unsupported operations fail **loudly**, with an explicit error rather than a
-> silent wrong answer. There are known exceptions to that — a set of wire-format
-> defects that currently return empty or zero-valued results with `err=nil`,
-> found by a conformance-test campaign and being fixed. **Until those land, do
-> not treat a successful-looking empty result from remote mode as authoritative.**
-> The affected calls include role and permission listings, share listings, secret
-> version listings, rotation-policy writes, and audit-log retrieval.
+> silent wrong answer. A conformance-test campaign previously found a set of
+> wire-format defects that returned empty or zero-valued results with
+> `err=nil` instead — role and permission listings, share listings, secret
+> version listings, rotation-policy writes, and audit-log retrieval. All are
+> now fixed: each affected call either round-trips correctly or fails loudly,
+> matching every other supported operation.
 >
-> **The audit examples further down this document do not work yet.**
-> `remote_audit.go` implements 3 of 28 methods, and `GetAuditLogs` is one of the
-> known-broken calls — it returns a correct-looking total with an empty event
-> list. Do not build a nightly tamper check or a SIEM pull on remote mode yet.
+> **The audit examples further down this document are limited, not broken.**
+> `remote_audit.go` implements 3 of 28 methods — `GetAuditLogs` is one of
+> them, and now returns its actual event list rather than a correct-looking
+> total with an empty one. The other 25 audit methods remain unsupported. Do
+> not build a nightly tamper check or a SIEM pull on remote mode's audit
+> surface until more of that 28 is implemented.
 >
 > ### What works today, by area
 >
 > | | area |
 > |---|---|
 > | **Complete** | invitations, project memberships, legal hold, login attempts, risk exceptions, segregation of duties, access activity |
-> | **Mostly complete** | machine identities (26/27), RBAC (47/63), users (25/38), access-review campaigns (10/11) |
+> | **Mostly complete** | machine identities (26/27), RBAC (46/63), users (25/38), access-review campaigns (10/11) |
 > | **Substantially incomplete** | secrets (13/31), MFA (7/17), sharing (8/12), dynamic secrets (7/12), stats (2/7), secret ACLs (1/7), **audit (3/28)** |
 > | **Not implemented at all** | compliance, notification channels, secret templates, bulk access, alert escalation, anomaly config, hygiene counts, version comments, secret schedules, retention override, read quota, billing, usage |
 >

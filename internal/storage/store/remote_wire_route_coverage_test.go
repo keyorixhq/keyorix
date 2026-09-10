@@ -945,7 +945,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// real, scoped tool enhancement (resolve the literal prefix, represent the
 	// escaped segment as a wildcard "*" the way normalizeChiPath already does
 	// for a chi {param}), just a different one than the query-string case.
-	"remote_rbac.go:499":  pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
+	"remote_rbac.go:519":  pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
 	"remote_users.go:988": pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
 
 	// Category: the ENTIRE path is a bare call to a locally-defined helper
@@ -960,7 +960,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// above, which is exactly why this campaign's own past attempts stopped at
 	// literal/Sprintf/local-var and never reached this category.
 	"remote_audit.go:57":    helperReturnEntry("buildAuditFilterPath(filter)"),
-	"remote_audit.go:99":    helperReturnEntry("buildRBACAuditFilterPath(filter)"),
+	"remote_audit.go:103":   helperReturnEntry("buildRBACAuditFilterPath(filter)"),
 	"remote_secrets.go:436": helperReturnEntry("buildSecretFilterPath(filter)"),
 	"remote_users.go:514":   helperReturnEntry("buildUserFilterPath(filter)"),
 
