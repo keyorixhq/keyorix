@@ -8,7 +8,7 @@
 //   - remote_webauthn.go:AdvanceWebAuthnCredentialCounter (66.7%)
 //   - remote_sharing.go:CheckSharePermission/DeleteExpiredShareRecords (70.0%)
 //   - remote_sso.go:CreateSSOLoginState/ConsumeSSOLoginState (70.0%)
-//   - remote_audit.go:GetAuditLogs/GetRBACAuditLogs (70.0%)
+//   - remote_audit.go:GetAuditLogs (70.0%)
 //   - remote_webauthn.go:CreateWebAuthnCredential/CreateWebAuthnSession (70.0%)
 //   - remote_users.go:toModel/decodeUserResponse (75.0%) via DeletedAt branch
 //
@@ -318,26 +318,6 @@ func TestRemoteCov_GetAuditLogs_Error(t *testing.T) {
 	_, _, err = rs.GetAuditLogs(context.Background(), filter)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "get audit logs failed")
-}
-
-func TestRemoteCov_GetRBACAuditLogs_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiNotOK("INTERNAL", "db error"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	action := "role.assign"
-	filter := &corestorage.RBACAuditFilter{
-		Action:   &action,
-		Page:     1,
-		PageSize: 10,
-	}
-	_, _, err = rs.GetRBACAuditLogs(context.Background(), filter)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "get RBAC audit logs failed")
 }
 
 // ─── remote_webauthn.go ─────────────────────────────────────────────────────

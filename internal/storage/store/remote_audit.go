@@ -2,7 +2,7 @@
 //
 // Covers: LogAuditEvent, CreateSecretAccessLog (no-op), GetAuditLogs,
 //
-//	GetRBACAuditLogs, ListSecretAccessLogs (unsupported),
+//	ListSecretAccessLogs (unsupported),
 //	CreateAnomalyAlert, ListAnomalyAlerts, AcknowledgeAnomalyAlert.
 //
 // Access logging and anomaly detection are handled server-side in remote mode;
@@ -159,42 +159,6 @@ func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	params.addString("resource_type", filter.ResourceType)
 	params.addPage(filter.Page, filter.PageSize)
 	return apiAuditLogsPath + params.String()
-}
-
-// GetRBACAuditLogs retrieves RBAC audit logs with optional filtering via remote API.
-func (rs *RemoteStorage) GetRBACAuditLogs(ctx context.Context, filter *storage.RBACAuditFilter) ([]*storage.RBACAuditLog, int64, error) {
-	path := buildRBACAuditFilterPath(filter)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to get RBAC audit logs: %w", err)
-	}
-	if !resp.Success {
-		return nil, 0, fmt.Errorf("get RBAC audit logs failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Logs  []*storage.RBACAuditLog `json:"logs"`
-		Total int64                   `json:"total"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Logs, result.Total, nil
-}
-
-// buildRBACAuditFilterPath constructs the GET /api/v1/audit/rbac-logs query string.
-func buildRBACAuditFilterPath(filter *storage.RBACAuditFilter) string {
-	if filter == nil {
-		return apiAuditRBACLogsPath
-	}
-	params := newQueryBuilder()
-	params.addUint("user_id", filter.UserID)
-	params.addString("action", filter.Action)
-	params.addString("target_type", filter.TargetType)
-	params.addUint("target_id", filter.TargetID)
-	params.addTime("start_time", filter.StartTime)
-	params.addTime("end_time", filter.EndTime)
-	params.addPage(filter.Page, filter.PageSize)
-	return apiAuditRBACLogsPath + params.String()
 }
 
 // ListSecretAccessLogs is not available in remote mode; server handles access logs.

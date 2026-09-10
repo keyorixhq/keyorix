@@ -1462,14 +1462,6 @@ func (m *MockStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFil
 	return args.Get(0).([]*models.AuditEvent), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockStorage) GetRBACAuditLogs(ctx context.Context, filter *storage.RBACAuditFilter) ([]*storage.RBACAuditLog, int64, error) {
-	args := m.Called(ctx, filter)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]*storage.RBACAuditLog), args.Get(1).(int64), args.Error(2)
-}
-
 // Session Management
 
 func (m *MockStorage) CreateSession(ctx context.Context, session *models.Session) (*models.Session, error) {

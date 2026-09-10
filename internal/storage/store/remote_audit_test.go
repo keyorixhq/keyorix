@@ -115,63 +115,6 @@ func TestRemoteStorage_GetAuditLogs_WithFilter(t *testing.T) {
 	assert.Len(t, events, 1)
 }
 
-// --- GetRBACAuditLogs ---
-
-func TestRemoteStorage_GetRBACAuditLogs_NilFilter(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/audit/rbac-logs", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"logs": []map[string]interface{}{
-				{
-					"id":      1,
-					"action":  "role.assign",
-					"success": true,
-				},
-			},
-			"total": 1,
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	logs, total, err := rs.GetRBACAuditLogs(context.Background(), nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
-	assert.Len(t, logs, 1)
-	assert.Equal(t, "role.assign", logs[0].Action)
-}
-
-func TestRemoteStorage_GetRBACAuditLogs_WithFilter(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/audit/rbac-logs", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"logs":  []map[string]interface{}{},
-			"total": int64(0),
-		}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	action := "role.assign"
-	targetType := "project"
-	filter := &corestorage.RBACAuditFilter{
-		Action:     &action,
-		TargetType: &targetType,
-		Page:       1,
-		PageSize:   10,
-	}
-	logs, total, err := rs.GetRBACAuditLogs(context.Background(), filter)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), total)
-	assert.Len(t, logs, 0)
-}
-
 // --- ListSecretAccessLogs (unsupported) ---
 
 func TestRemoteStorage_ListSecretAccessLogs_Unsupported(t *testing.T) {

@@ -3,8 +3,6 @@ package store
 const (
 	// apiAuditLogsPath is the server's GET /api/v1/audit/logs route (GetAuditLogs).
 	apiAuditLogsPath = "/api/v1/audit/logs"
-	// apiAuditRBACLogsPath is the server's GET /api/v1/audit/rbac-logs route (GetRBACAuditLogs).
-	apiAuditRBACLogsPath = "/api/v1/audit/rbac-logs"
 	// apiAuditIngestPath is the system-write proxy route that persists a
 	// single AuditEvent from a remote-storage follower (#r122-A).
 	apiAuditIngestPath       = "/api/v1/system/audit/event"

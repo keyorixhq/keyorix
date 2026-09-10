@@ -2,7 +2,7 @@
 //
 // Covers: LogAuditEvent, CreateSecretAccessLog, ListSecretAccessLogs,
 //
-//	GetAuditLogs, GetRBACAuditLogs,
+//	GetAuditLogs,
 //	CreateAnomalyAlert, ListAnomalyAlerts, AcknowledgeAnomalyAlert.
 //
 // All operations use direct GORM queries.
@@ -497,11 +497,6 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		return nil, 0, fmt.Errorf("failed to get audit logs: %w", err)
 	}
 	return events, total, nil
-}
-
-// GetRBACAuditLogs is not yet implemented; returns empty results.
-func (ls *LocalStorage) GetRBACAuditLogs(_ context.Context, _ *storage.RBACAuditFilter) ([]*storage.RBACAuditLog, int64, error) {
-	return nil, 0, nil
 }
 
 // GetSecretReadCounts aggregates "secret.read" audit events for the given secret
