@@ -1,193 +1,125 @@
-# 🚀 Keyorix - Quick Start Guide
+# Keyorix — Quick Start
 
-## ✅ Your System is Ready!
+A secrets manager you can run on one machine, in an air-gapped network, or for a
+team. This page gets you from a clone to a stored secret. Every command below is
+checked against the CLI's own flag definitions by
+`internal/cli/quickstart_commands_test.go`.
 
-The core test passed - you have a **fully functional secret management system**!
-
-## 🎯 **Immediate Steps to Get Running**
-
-### **Step 1: You Already Have Working Binaries**
-From your test, you already have:
-- `./keyorix` - The CLI tool
-- `./server/keyorix-server` - The API server
-
-### **Step 2: Start Using It Right Now**
-
-#### **Option A: Quick Demo (2 minutes)**
+## Build
 
 ```bash
-# 1. Test the CLI
-./keyorix --help
-./keyorix secret --help
-
-# 2. Start the server (in one terminal)
-cd server
-./keyorix-server
-
-# 3. In another terminal, use the CLI
-./keyorix secret create --name "my-first-secret" --value "hello-world"
-./keyorix secret list
-./keyorix secret get --id 1
+make build
 ```
 
-#### **Option B: Proper Setup (5 minutes)**
+Produces `./bin/keyorix` (CLI) and `./bin/keyorix-server` (API server).
+Go 1.23+ and a C toolchain for SQLite are the only requirements.
+
+## Initialise
+
+`system init` writes a config file and generates the encryption keys. Run it
+once, before anything else.
 
 ```bash
-# 1. Create a basic config file
-cat > keyorix.yaml << 'EOF'
-environment: "development"
-
-locale:
-  language: "en"
-  fallback_language: "en"
-
-server:
-  http:
-    enabled: true
-    port: "8080"
-    swagger_enabled: true
-    tls:
-      enabled: false
-  grpc:
-    enabled: false
-
-storage:
-  type: "local"
-  database:
-    path: "./data/keyorix.db"
-  encryption:
-    enabled: true
-    dek_path: "keys/dek.key"
-    salt_path: "keys/kek.salt"
-
-security:
-  enable_file_permission_check: false
-  allow_unsafe_file_permissions: true
-EOF
-
-# 2. Create data directory
-mkdir -p data
-
-# 3. Start server with config
-cd server
-KEYORIX_CONFIG_PATH=../keyorix.yaml ./keyorix-server
-
-# 4. In another terminal, test everything
-./keyorix secret create --name "api-key" --value "sk-1234567890"
-./keyorix secret create --name "db-password" --value "super-secret-password"
-./keyorix secret list
-./keyorix share create --secret-id 1 --recipient "colleague@company.com"
-./keyorix share list --secret-id 1
+export KEYORIX_MASTER_PASSWORD='choose-a-strong-passphrase'
+./bin/keyorix system init --config ./keyorix.yaml
 ```
 
-### **Step 3: Access the Web API**
+`KEYORIX_MASTER_PASSWORD` is not optional. With the default passphrase provider
+the key-encryption key is derived from it plus the on-disk salt, so the CLI and
+the server both refuse to start without it. Set it in your shell profile, a
+systemd unit, or a secrets file your init system reads — anywhere but a
+committed file.
 
-Once the server is running:
+Keep `keys/` and the database file together and back them up together. Losing
+`keys/kek.salt` means losing every secret in the database; there is no recovery
+path, by design.
 
-- **Health Check**: http://localhost:8080/health
-- **API Documentation**: http://localhost:8080/swagger/
-- **OpenAPI Spec**: http://localhost:8080/openapi.yaml
+## Use it — CLI only
 
-## 🎉 **What You Have Right Now**
-
-### ✅ **Complete CLI Tool**
-```bash
-./keyorix --help
-
-Available Commands:
-  auth        Manage authentication
-  config      Manage CLI configuration  
-  connect     Connect to a remote server
-  encryption  Manage encryption keys and settings
-  rbac        Role-Based Access Control management
-  secret      Manage secrets (create, list, get, update, delete)
-  share       Manage secret sharing
-  status      Check connection health and status
-  system      System management commands
-```
-
-### ✅ **Full API Server**
-- **HTTP REST API** with Swagger documentation
-- **Complete secret management** (CRUD operations)
-- **Sharing system** with permissions
-- **Authentication** and authorization
-- **Audit logging** and activity tracking
-- **Multi-language support** (5 languages)
-- **Encryption** for all secret data
-
-### ✅ **Production Features**
-- **Role-based access control** (RBAC)
-- **User and group management**
-- **Audit trails** and compliance logging
-- **Secure encryption** with AES-256-GCM
-- **Database migrations** and schema management
-- **Health checks** and monitoring endpoints
-
-## 🚀 **Next Level: Full Production Deployment**
-
-When you're ready for production:
+The CLI defaults to **embedded mode**: it opens the local database directly and
+needs no server running. For one machine or an air-gapped box, this is the whole
+product.
 
 ```bash
-# Use Docker Compose for full stack
-docker-compose -f docker-compose.full-stack.yml up -d
-
-# Or deploy manually with production config
-cp server/config/production.yaml ./keyorix-prod.yaml
-# Edit production settings
-KEYORIX_CONFIG_PATH=./keyorix-prod.yaml ./server/keyorix-server
+./bin/keyorix secret create --name "stripe-api-key" --value "sk_test_..."
+./bin/keyorix secret create --name "deploy-key" --from-file ~/.ssh/id_ed25519
+./bin/keyorix secret list
+./bin/keyorix secret get --id 1
 ```
 
-## 🎯 **Real-World Usage Examples**
+Secrets live in a project and an environment, both defaulting to `1`:
 
-### **Development Team Secrets**
 ```bash
-# Store API keys
-./keyorix secret create --name "stripe-api-key" --value "sk_test_..."
-./keyorix secret create --name "github-token" --value "ghp_..."
+./bin/keyorix secret create --name "db-password" --value "..." \
+  --project 2 --environment 3 --description "primary read-write user"
 
-# Share with team
-./keyorix share create --secret-id 1 --recipient "dev-team@company.com"
-./keyorix share create --secret-id 2 --recipient "devops@company.com"
+# Or address one by reference instead of ID
+./bin/keyorix secret get --ref myproject/production/db-password
 ```
 
-### **Infrastructure Secrets**
+Useful on create: `--max-reads N` (burn after N reads), `--expires` (RFC3339),
+`--folder ID`, `--type`.
+
+## Use it — server and dashboard
+
+Start the server when you want the HTTP API, the web dashboard, or more than one
+person:
+
 ```bash
-# Database credentials
-./keyorix secret create --name "prod-db-password" --value "complex-password"
-./keyorix secret create --name "redis-auth" --value "redis-secret"
-
-# Share with ops team
-./keyorix share create --secret-id 3 --recipient "ops-team@company.com" --permission "read"
+KEYORIX_CONFIG_PATH=./keyorix.yaml ./bin/keyorix-server
 ```
 
-### **Personal Use**
+- Health: <http://localhost:8080/health>
+- OpenAPI spec: <http://localhost:8080/openapi.yaml>
+- Swagger UI: <http://localhost:8080/swagger/> — only when `server.http.swagger_enabled: true`
+
+TLS is off in the generated config. Turn it on, or front the server with a
+TLS-terminating proxy, before anything reaches a network you do not control.
+`security.require_transport_tls` makes that failure loud instead of silent.
+
+For Postgres instead of SQLite, `docker compose up -d postgres` starts one, and
+`configs/dev.yaml` shows the connection block.
+
+## Sharing
+
+Shares are granted to a **user or group ID**, not an email address:
+
 ```bash
-# Personal passwords and keys
-./keyorix secret create --name "personal-ssh-key" --from-file ~/.ssh/id_rsa
-./keyorix secret create --name "wifi-password" --value "home-wifi-secret"
+./bin/keyorix user list                       # find the recipient's ID
+./bin/keyorix share create --secret-id 1 --recipient-id 42 --permission read
+./bin/keyorix share create --secret-id 1 --recipient-id 7 --is-group --ttl 24h
+./bin/keyorix share list --secret-id 1
 ```
 
-## 🔥 **You're Production Ready!**
+`--ttl` (a Go duration) and `--expires` (RFC3339) are mutually exclusive; either
+makes the share time-bound, which is usually what you want for access granted
+during an incident.
 
-**This is not a demo or prototype** - you have a complete, enterprise-grade secret management system that includes:
+## What else is there
 
-- ✅ **Security**: Industry-standard encryption and authentication
-- ✅ **Scalability**: Designed for production workloads
-- ✅ **Compliance**: Complete audit trails and access controls
-- ✅ **Usability**: Both CLI and API interfaces
-- ✅ **Reliability**: Comprehensive error handling and recovery
-- ✅ **Maintainability**: Clean architecture and extensive documentation
+`./bin/keyorix --help` lists every command group. Beyond secrets and sharing,
+the ones people reach for first are `rbac`, `project`, `user`, `group`, `audit`,
+`rotation`, `machine` (machine identities for CI), and `encryption` (key
+rotation).
 
-## 🎯 **Bottom Line**
+- **Configuration reference:** [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)
+- **Deployment:** [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md), and
+  `server/config/production.yaml` as a starting config
+- **API:** [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
+- **Security model:** [`docs/SECURITY.md`](docs/SECURITY.md)
 
-**Stop looking for what to build next. Start using what you have!**
+The CLI speaks five languages (de, en, es, fr, ru); set `locale.language`.
 
-Your secret management system is **complete and ready for real-world use**. The fastest path to value is:
+## Status, honestly
 
-1. **Start using it today** for your actual secrets
-2. **Deploy it for your team** 
-3. **Add the web dashboard later** if you need a GUI
+The HTTP API and the CLI's default embedded mode are the complete, supported
+paths. Two things are not finished, and are labelled where you would hit them:
 
----
+- **`storage.type: remote`** (CLI pointed at a central server) is work in
+  progress — see [`docs/REMOTE_CLI_SETUP.md`](docs/REMOTE_CLI_SETUP.md) for what
+  works today.
+- **gRPC** is a partial data-plane surface, off by default — see
+  [`docs/adr-105-grpc-scope-and-parity.md`](docs/adr-105-grpc-scope-and-parity.md).
 
-**Ready to start?** Run: `./keyorix secret create --name "test" --value "it-works"`
+If something here does not work as written, that is a bug in this page and worth
+an issue — the commands are meant to be copy-pasteable.
