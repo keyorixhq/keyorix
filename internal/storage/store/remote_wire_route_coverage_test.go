@@ -959,8 +959,8 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// struct fields) — real, scoped, but more work than the BinaryExpr cases
 	// above, which is exactly why this campaign's own past attempts stopped at
 	// literal/Sprintf/local-var and never reached this category.
-	"remote_audit.go:57":    helperReturnEntry("buildAuditFilterPath(filter)"),
-	"remote_audit.go:103":   helperReturnEntry("buildRBACAuditFilterPath(filter)"),
+	"remote_audit.go:117":   helperReturnEntry("buildAuditFilterPath(filter)"),
+	"remote_audit.go:167":   helperReturnEntry("buildRBACAuditFilterPath(filter)"),
 	"remote_secrets.go:436": helperReturnEntry("buildSecretFilterPath(filter)"),
 	"remote_users.go:514":   helperReturnEntry("buildUserFilterPath(filter)"),
 
