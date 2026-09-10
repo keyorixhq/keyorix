@@ -49,45 +49,46 @@
 // route, have neither gate (confirmed by reading each handler) and are driven
 // directly by h.rs.
 //
-// # A found (not fixed) wire-fidelity defect: UpdateShareRecord can never change ExpiresAt
+// # A found-and-fixed wire-fidelity defect: UpdateShareRecord's ExpiresAt
 //
 // models.ShareRecord carries no json tags at all, so RemoteStorage.UpdateShareRecord
-// marshals it with bare Go field names ("Permission", "ExpiresAt", ...). The server's
-// UpdateSharePermission handler (shares_crud.go) decodes into a DTO tagged
+// used to marshal it with bare Go field names ("Permission", "ExpiresAt", ...). The
+// server's UpdateSharePermission handler (shares_crud.go) decodes into a DTO tagged
 // `json:"permission"` / `json:"expires_at"`. encoding/json's case-insensitive
 // decode fallback only saves single-word fields (Permission/permission, verified
 // empirically to round-trip) — "ExpiresAt" is not a case-insensitive match for
 // "expires_at" (they differ by more than case: one has an underscore), so a
-// caller's ExpiresAt change is silently dropped on every call, landing at
-// whatever the row's current value already was. TestConformance_UpdateShareRecord
-// pins this AS a found defect (a failing-if-fixed assertion, with a comment
-// explaining exactly why) rather than papering over it — this file only adds
-// tests, per the task brief, so it is reported here rather than patched.
+// caller's ExpiresAt change was silently dropped on every call, landing at
+// whatever the row's current value already was. This file originally pinned the
+// defect with a failing-if-fixed assertion; fix/remote-envelope-shapes added
+// remote_sharing.go's shareUpdateWire (a properly json-tagged request struct) to
+// close it, so TestConformance_UpdateShareRecord now asserts the fixed behavior
+// instead.
 //
-// # More found (not fixed) defects: bare-slice vs enveloped-object responses
+// # More found-and-fixed defects: bare-slice vs enveloped-object responses
 //
 // RemoteStorage.ListSharesByGroup, ListSharesBySecret (and its batch caller
 // ListSharesBySecretIDs, which loops it), and ListSecretVersions (and its alias
-// GetSecretVersions) each decode their HTTP response body directly into a bare
+// GetSecretVersions) used to decode their HTTP response body directly into a bare
 // Go slice (`var result []*models.ShareRecord` / `[]*models.SecretVersion`), but
 // the real server wraps every one of those responses in an envelope object
 // (`{"shares": [...]}` / `{"versions": [...]}`) — confirmed by reading both the
 // RemoteStorage decode call and the exact handler `sendSuccess` call on the
 // other end of each route. json.Unmarshal of a JSON object into a Go slice
 // always errors, so these FIVE RemoteStorage entry points (four distinct
-// methods, one of them doubly-named) are unconditionally broken against a real
-// server: every call fails, success or not, non-empty or empty result alike —
-// not an edge case this harness had to construct, the ONLY case. All are
-// cross-checked against sibling methods that DO unwrap the same kind of
+// methods, one of them doubly-named) were unconditionally broken against a real
+// server: every call failed, success or not, non-empty or empty result alike —
+// not an edge case this harness had to construct, the ONLY case. All were
+// cross-checked against sibling methods that DID unwrap the same kind of
 // envelope correctly (ListSharesByOwner/ListSharesByUser use
-// `struct{ Shares []*models.ShareRecord }`), so each is a genuine one-off
-// omission, not a repo-wide convention gap. TestConformance_ListSharesByGroup /
+// `struct{ Shares []*models.ShareRecord }`), confirming each was a genuine
+// one-off omission, not a repo-wide convention gap. fix/remote-envelope-shapes
+// closed all five by decoding into the same enveloped-struct shape; this file
+// originally pinned the broken behavior with a require.Error assertion and a
+// comment explaining exactly why, and TestConformance_ListSharesByGroup /
 // TestConformance_ListSharesBySecret / TestConformance_ListSharesBySecretIDs /
-// TestConformance_GetSecretVersions / TestConformance_ListSecretVersions each
-// pin the CURRENT (broken) behavior with a require.Error assertion and a comment
-// explaining exactly why, rather than silently working around it — this file
-// only adds tests, per the task brief, so these are reported here rather than
-// patched.
+// TestConformance_GetSecretVersions / TestConformance_ListSecretVersions now
+// assert the fixed behavior instead.
 package http
 
 import (
@@ -251,28 +252,22 @@ func TestConformance_ListSharesBySecret(t *testing.T) {
 		Type: "password", OwnerID: remoteOwner.ID,
 	})
 	require.NoError(t, err)
-	_, err = h.ls.CreateShareRecord(ctx, &models.ShareRecord{
+	remoteShare, err := h.ls.CreateShareRecord(ctx, &models.ShareRecord{
 		SecretID: remoteSecret.ID, OwnerID: remoteOwner.ID, RecipientID: recipient.ID, Permission: "read",
 	})
 	require.NoError(t, err)
 
-	// FOUND DEFECT (same class as ListSharesByGroup/GetSecretVersions -- see the
-	// package doc): GET /api/v1/secrets/{id}/shares (ListSecretShares) also wraps
-	// its response as {"shares": [...]}, but RemoteStorage.ListSharesBySecret
-	// decodes straight into a bare `[]*models.ShareRecord`. Unconditionally
-	// broken against a real server for every call, confirmed here with a genuine
-	// live owner (the authorization gate passes -- the 200 response body itself
-	// is what fails to parse). Not fixed here, per the task brief -- pinned.
-	_, err = rsAsOwner.ListSharesBySecret(ctx, remoteSecret.ID)
-	require.Error(t, err,
-		"FOUND DEFECT: RemoteStorage.ListSharesBySecret must currently fail on ANY call, even for a genuine "+
-			"live owner -- it decodes the server's {\"shares\": [...]} envelope directly into a bare slice, "+
-			"which json.Unmarshal always rejects")
-	assert.Contains(t, err.Error(), "failed to parse response")
+	// Fixed (same class as ListSharesByGroup/GetSecretVersions -- see the package
+	// doc): GET /api/v1/secrets/{id}/shares (ListSecretShares) wraps its response
+	// as {"shares": [...]}; RemoteStorage.ListSharesBySecret now decodes into
+	// that envelope instead of a bare `[]*models.ShareRecord`.
+	remoteShares, err := rsAsOwner.ListSharesBySecret(ctx, remoteSecret.ID)
+	require.NoError(t, err, "RemoteStorage.ListSharesBySecret must succeed for the share's genuine live owner")
+	require.Len(t, remoteShares, 1)
+	assertFieldExhaustiveEqual(t, "RemoteStorage.ListSharesBySecret vs local baseline shape", remoteShare, remoteShares[0], map[string]bool{})
 
-	// Negative (still pinning the same defect): a secret with no shares gets the
-	// identical envelope shape server-side, so it fails to parse too, not a
-	// clean empty list.
+	// Negative: a secret with no shares must round-trip as a clean empty list,
+	// not a parse failure -- the same envelope shape applies either way.
 	emptySecret, err := h.ls.CreateSecret(ctx, &models.SecretNode{
 		Name: "conformance-lss-empty", ProjectID: h.projectID, EnvironmentID: h.environmentID, Type: "password", OwnerID: remoteOwner.ID,
 	})
@@ -280,8 +275,9 @@ func TestConformance_ListSharesBySecret(t *testing.T) {
 	emptyLocal, err := h.ls.ListSharesBySecret(ctx, emptySecret.ID)
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	_, err = rsAsOwner.ListSharesBySecret(ctx, emptySecret.ID)
-	assert.Error(t, err, "the same envelope-vs-bare-slice mismatch fails an empty-result call too")
+	emptyRemote, err := rsAsOwner.ListSharesBySecret(ctx, emptySecret.ID)
+	require.NoError(t, err)
+	assert.Empty(t, emptyRemote)
 }
 
 // --- ListSharesBySecretIDs ---
@@ -313,22 +309,13 @@ func TestConformance_ListSharesBySecretIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, localResult, 1)
 
-	// FOUND DEFECT (transitively, from ListSharesBySecret's own bug -- see the
-	// package doc and TestConformance_ListSharesBySecret): RemoteStorage.
+	// Fixed (transitively, from ListSharesBySecret's own fix -- see the package
+	// doc and TestConformance_ListSharesBySecret): RemoteStorage.
 	// ListSharesBySecretIDs loops rs.ListSharesBySecret once per ID, so it
-	// inherits the identical bare-slice-vs-{"shares":[...]}-envelope mismatch
-	// and fails on the FIRST id in any non-empty batch, regardless of ownership
-	// -- confirmed here with a genuine live owner of every secret in the batch,
-	// so the failure is the parse bug, not an authorization gate. This also
-	// means the #407 "fail the whole batch on an unauthorized id" contract
-	// documented in remote_sharing.go cannot currently be distinguished from
-	// this parse bug by an external caller -- both surface as the same opaque
-	// error today. Not fixed here, per the task brief -- pinned.
-	_, err = rsAsOwner.ListSharesBySecretIDs(ctx, ids)
-	require.Error(t, err,
-		"FOUND DEFECT: RemoteStorage.ListSharesBySecretIDs must currently fail for ANY non-empty batch, even "+
-			"one the caller owns entirely -- it inherits ListSharesBySecret's bare-slice-vs-envelope parse bug")
-	assert.Contains(t, err.Error(), "failed to parse response")
+	// inherits that method's envelope fix too.
+	remoteResult, err := rsAsOwner.ListSharesBySecretIDs(ctx, ids)
+	require.NoError(t, err, "RemoteStorage.ListSharesBySecretIDs must succeed for a caller owning every secret in the batch")
+	require.Len(t, remoteResult, 1)
 
 	// Negative: empty input is a genuine no-op on both paths -- RemoteStorage's
 	// loop makes zero HTTP calls for an empty id list, so it never reaches the
@@ -364,41 +351,25 @@ func TestConformance_ListSharesByGroup(t *testing.T) {
 	require.Len(t, localOut, 1)
 	_ = share
 
-	// FOUND DEFECT: RemoteStorage.ListSharesByGroup is unconditionally broken
-	// against a real server, for every call, success or not. GET
-	// /api/v1/groups/{id}/shares (shares_query.go's ListGroupShares) wraps its
-	// response as {"shares": [...]} --
-	//
-	//	h.sendSuccess(w, map[string]interface{}{"shares": shares}, "")
-	//
-	// -- but RemoteStorage.ListSharesByGroup (remote_sharing.go) decodes
-	// resp.Data straight into a bare `var result []*models.ShareRecord`, never
-	// unwrapping the "shares" envelope key. json.Unmarshal of a JSON OBJECT into
-	// a Go SLICE always fails, regardless of content, so this method 100% fails
-	// every real call, non-empty or empty alike -- not an edge case, the ONLY
-	// case. Confirmed directly against the real router below (not a mock), and
-	// cross-checked against every sibling in this file: ListSharesByOwner/
-	// ListSharesByUser correctly decode into `struct{ Shares []*models.ShareRecord
-	// }`, so this is a genuine one-off omission in ListSharesByGroup specifically,
-	// not a wrapping convention this repo lacks. Not fixed here (this file adds
-	// tests only, no production changes) -- pinned so a future fix flips this
-	// from red to green rather than a silent regression going unnoticed.
-	_, err = h.rs.ListSharesByGroup(ctx, group.ID)
-	require.Error(t, err,
-		"FOUND DEFECT: RemoteStorage.ListSharesByGroup must currently fail on ANY call -- it decodes the server's "+
-			"{\"shares\": [...]} envelope directly into a bare slice, which json.Unmarshal always rejects")
-	assert.Contains(t, err.Error(), "failed to parse response")
+	// Fixed: GET /api/v1/groups/{id}/shares (shares_query.go's ListGroupShares)
+	// wraps its response as {"shares": [...]}; RemoteStorage.ListSharesByGroup
+	// now decodes into that envelope instead of a bare `[]*models.ShareRecord`,
+	// matching how ListSharesByOwner/ListSharesByUser already did below.
+	remoteOut, err := h.rs.ListSharesByGroup(ctx, group.ID)
+	require.NoError(t, err, "RemoteStorage.ListSharesByGroup must succeed via the /system proxy route")
+	require.Len(t, remoteOut, 1)
+	assertFieldExhaustiveEqual(t, "ListSharesByGroup (RemoteStorage vs LocalStorage, same row)", share, remoteOut[0], map[string]bool{})
 
-	// Negative (still pinning the same defect): even a group with zero shares
-	// gets the identical envelope shape server-side, so it 500s/fails to parse
-	// too, not a clean empty list.
+	// Negative: even a group with zero shares must round-trip as a clean empty
+	// list, not a parse failure -- the same envelope shape applies either way.
 	emptyGroup, err := h.upstreamCore.CreateGroup(ctx, h.adminUserID, &core.CreateGroupRequest{Name: "conformance-lsbg-empty"})
 	require.NoError(t, err)
 	emptyLocal, err := h.ls.ListSharesByGroup(ctx, emptyGroup.ID)
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	_, err = h.rs.ListSharesByGroup(ctx, emptyGroup.ID)
-	assert.Error(t, err, "the same envelope-vs-bare-slice mismatch fails an empty-result call too")
+	emptyRemote, err := h.rs.ListSharesByGroup(ctx, emptyGroup.ID)
+	require.NoError(t, err)
+	assert.Empty(t, emptyRemote)
 }
 
 // --- ListSharesByOwner ---
@@ -525,20 +496,16 @@ func TestConformance_UpdateShareRecord(t *testing.T) {
 		"the Permission change must land server-side -- ShareRecord.Permission has no json tag, so its bare Go "+
 			"field name round-trips case-insensitively onto the handler's `permission` json tag")
 
-	// FOUND DEFECT (see package doc): ExpiresAt can never change through this
-	// wire path. Pinning the CURRENT (buggy) behavior deliberately -- this
-	// assertion should start failing, not be deleted, the day someone fixes the
-	// key-name mismatch.
+	// Fixed (see remote_sharing.go's shareUpdateWire): ExpiresAt now round-trips.
+	// UpdateShareRecord used to marshal the bare *models.ShareRecord directly
+	// ("ExpiresAt", no json tag), which never matched the handler's
+	// `json:"expires_at"` reqBody field -- silently dropped on every call.
+	// newShareUpdateWire sends a properly-tagged request body instead.
 	persisted, err := h.ls.GetShareRecord(ctx, remoteShare.ID)
 	require.NoError(t, err)
-	assert.Nil(t, persisted.ExpiresAt,
-		"FOUND DEFECT: RemoteStorage.UpdateShareRecord cannot change ExpiresAt at all. ShareRecord carries no "+
-			"json tags, so marshaling it sends the bare Go field name \"ExpiresAt\"; the handler's reqBody expects "+
-			"the JSON key \"expires_at\". encoding/json's case-insensitive fallback does not bridge an "+
-			"underscore difference (confirmed empirically), so this field is silently dropped on every call and "+
-			"the share's ExpiresAt never changes from whatever it already was (nil here, since the share was "+
-			"created with none) -- not fixed in this file (tests only, no production changes), just pinned so a "+
-			"future fix flips this from red to green instead of a silent regression going unnoticed.")
+	require.NotNil(t, persisted.ExpiresAt, "ExpiresAt must now persist through RemoteStorage.UpdateShareRecord")
+	assert.True(t, newExpiry.Equal(*persisted.ExpiresAt))
+	assert.Equal(t, "write", remoteUpdated.Permission, "remote result must match the persisted state")
 
 	// Negative: updating a nonexistent share ID fails on both paths.
 	_, err = h.ls.UpdateShareRecord(ctx, &models.ShareRecord{ID: 9999999, Permission: "read"})
@@ -808,22 +775,21 @@ func TestConformance_GetSecretVersions(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, localOut, 2)
 
-	_, err = rsAsUser.GetSecretVersions(ctx, secretID)
-	require.Error(t, err,
-		"FOUND DEFECT: RemoteStorage.GetSecretVersions must currently fail on ANY call -- it decodes the "+
-			"server's {\"versions\": [...]} envelope directly into a bare slice, which json.Unmarshal always rejects")
-	assert.Contains(t, err.Error(), "failed to parse response")
+	remoteOut, err := rsAsUser.GetSecretVersions(ctx, secretID)
+	require.NoError(t, err, "RemoteStorage.GetSecretVersions must succeed: it now decodes the server's "+
+		"{\"versions\": [...]} envelope instead of a bare slice")
+	require.Len(t, remoteOut, 2)
 
-	// Negative (still pinning the same defect): a secret with no versions gets
-	// the identical envelope shape server-side, so it fails to parse too, not
-	// a clean empty list.
+	// Negative: a secret with no versions must round-trip as a clean empty
+	// list, not a parse failure -- the same envelope shape applies either way.
 	emptySecret, err := h.ls.CreateSecret(ctx, &models.SecretNode{Name: "conformance-gsv-empty", ProjectID: h.projectID, EnvironmentID: h.environmentID, Type: "password"})
 	require.NoError(t, err)
 	emptyLocal, err := h.ls.GetSecretVersions(ctx, emptySecret.ID)
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	_, err = rsAsUser.GetSecretVersions(ctx, emptySecret.ID)
-	assert.Error(t, err, "the same envelope-vs-bare-slice mismatch fails an empty-result call too")
+	emptyRemote, err := rsAsUser.GetSecretVersions(ctx, emptySecret.ID)
+	require.NoError(t, err)
+	assert.Empty(t, emptyRemote)
 }
 
 func TestConformance_ListSecretVersions(t *testing.T) {
@@ -841,12 +807,11 @@ func TestConformance_ListSecretVersions(t *testing.T) {
 	// identical call GetSecretVersions makes (a literal alias -- see
 	// remote_secrets.go); LocalStorage has no separate ListSecretVersions
 	// method at all. This test exercises that entry point by name, distinct
-	// from TestConformance_GetSecretVersions above, and hits the SAME found
-	// defect since it's a straight passthrough to GetSecretVersions.
-	_, err = rsAsUser.ListSecretVersions(ctx, secretID)
-	require.Error(t, err,
-		"FOUND DEFECT: RemoteStorage.ListSecretVersions must currently fail on ANY call, same envelope mismatch as GetSecretVersions")
-	assert.Contains(t, err.Error(), "failed to parse response")
+	// from TestConformance_GetSecretVersions above, and shares the SAME fix
+	// since it's a straight passthrough to GetSecretVersions.
+	remoteOut, err := rsAsUser.ListSecretVersions(ctx, secretID)
+	require.NoError(t, err, "RemoteStorage.ListSecretVersions must succeed, same envelope fix as GetSecretVersions")
+	require.Len(t, remoteOut, 2)
 }
 
 // --- ListSecrets ---

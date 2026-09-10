@@ -16,7 +16,6 @@ import (
 	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -464,36 +463,12 @@ func TestRemoteCov_ListEnvironmentsByProject_BadJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemoteCov_CreateRole_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiNotOK("DUPLICATE", "role already exists"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	adminName, ferr := identity.NewFoldedName("admin")
-	require.NoError(t, ferr)
-	_, err = rs.CreateRole(context.Background(), adminName, "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "create role failed")
-}
-
-func TestRemoteCov_CreateRole_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK("not-a-role-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	testName, ferr := identity.NewFoldedName("test")
-	require.NoError(t, ferr)
-	_, err = rs.CreateRole(context.Background(), testName, "")
-	assert.Error(t, err)
-}
+// TestRemoteCov_CreateRole_APIError and TestRemoteCov_CreateRole_BadJSON were
+// removed: CreateRole no longer makes a network call at all (unconditional
+// remoteUnsupported — see remote_rbac.go's doc comment), so neither the
+// API-error-response decode path nor the bad-JSON decode path they existed to
+// cover is reachable through it anymore. See
+// TestRemoteStorage_CreateRole_Unsupported in remote_rbac_test.go.
 
 func TestRemoteCov_ListConnectRefGrants_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

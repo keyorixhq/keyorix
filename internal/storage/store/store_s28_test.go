@@ -109,7 +109,6 @@ import (
 	"gorm.io/gorm"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -163,17 +162,11 @@ func newS28Remote(t *testing.T, serverURL string) *store.RemoteStorage {
 // remote_rbac.go — error paths
 // ---------------------------------------------------------------------------
 
-func TestRemoteStorage_S28_CreateRole_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiErrResp("INTERNAL_ERROR", "server error"))
-	}))
-	defer srv.Close()
-	rs := newS28Remote(t, srv.URL)
-	adminName, ferr := identity.NewFoldedName("admin")
-	require.NoError(t, ferr)
-	_, err := rs.CreateRole(context.Background(), adminName, "")
-	assert.Error(t, err)
-}
+// TestRemoteStorage_S28_CreateRole_APIError was removed: CreateRole no longer
+// makes a network call at all (unconditional remoteUnsupported — see
+// remote_rbac.go's doc comment), so the API-error decode path this test
+// existed to cover is unreachable through it. See
+// TestRemoteStorage_CreateRole_Unsupported in remote_rbac_test.go.
 
 func TestRemoteStorage_S28_GetRole_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -18,30 +18,28 @@ import (
 
 // --- Roles ---
 
-func TestRemoteStorage_CreateRole(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/v1/roles", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"id": 1, "name": "admin", "description": "Admin role"}))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+// TestRemoteStorage_CreateRole_Unsupported: RemoteStorage cannot construct a
+// body the server will accept (storage.Storage's CreateRole signature has no
+// permissions parameter, and POST /api/v1/roles requires min=1) — see
+// remote_rbac.go's CreateRole doc comment and its allowlist entry in
+// remote_rbac_completeness_test.go. No network call happens, so unlike
+// AssignRole/RemoveRole above this doesn't even need a listener.
+func TestRemoteStorage_CreateRole_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
 	adminName, err := identity.NewFoldedName("admin")
 	require.NoError(t, err)
-	role, err := rs.CreateRole(context.Background(), adminName, "")
-	require.NoError(t, err)
-	assert.Equal(t, uint(1), role.ID)
-	assert.Equal(t, "admin", role.Name)
+	_, err = rs.CreateRole(context.Background(), adminName, "")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+		"expected ErrRemoteUnsupported, got %v", err)
 }
 
 func TestRemoteStorage_GetRole(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/roles/5", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"id": 5, "name": "editor", "description": "Editor role"}))
+		_, _ = w.Write(apiOK(map[string]interface{}{"role": map[string]interface{}{"id": 5, "name": "editor", "description": "Editor role"}}))
 	}))
 	defer srv.Close()
 
@@ -76,7 +74,7 @@ func TestRemoteStorage_UpdateRole(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
 		assert.Equal(t, "/api/v1/roles/3", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"id": 3, "name": "updated", "description": "Updated"}))
+		_, _ = w.Write(apiOK(map[string]interface{}{"role": map[string]interface{}{"id": 3, "name": "updated", "description": "Updated"}}))
 	}))
 	defer srv.Close()
 
@@ -108,10 +106,10 @@ func TestRemoteStorage_ListRoles(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/roles", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"roles": []map[string]interface{}{
 			{"id": 1, "name": "admin", "description": "Admin"},
 			{"id": 2, "name": "viewer", "description": "Viewer"},
-		}))
+		}}))
 	}))
 	defer srv.Close()
 
@@ -239,9 +237,9 @@ func TestRemoteStorage_GetUserRoles(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/users/12/roles", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"roles": []map[string]interface{}{
 			{"id": 1, "name": "admin", "description": "Admin"},
-		}))
+		}}))
 	}))
 	defer srv.Close()
 
@@ -258,9 +256,9 @@ func TestRemoteStorage_GetUserPermissions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/users/12/permissions", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"permissions": []map[string]interface{}{
 			{"id": 1, "name": "secrets.read", "resource": "secrets", "action": "read"},
-		}))
+		}}))
 	}))
 	defer srv.Close()
 
@@ -426,9 +424,9 @@ func TestRemoteStorage_GetGroupRoles(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/groups/8/roles", r.URL.Path)
-		_, _ = w.Write(apiOK([]map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{"roles": []map[string]interface{}{
 			{"id": 1, "name": "admin", "description": "Admin"},
-		}))
+		}}))
 	}))
 	defer srv.Close()
 

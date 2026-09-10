@@ -16,28 +16,17 @@ import (
 	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// --- CreateRole ---
-
-func TestRemoteStorage_CreateRole_TransportError_GroupD(t *testing.T) {
-	srv := httptest.NewServer(errHandler(http.StatusNotFound, "NOT_FOUND", "boom"))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	name, err := identity.NewFoldedName("admin")
-	require.NoError(t, err)
-	_, err = rs.CreateRole(context.Background(), name, "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create role")
-}
+// TestRemoteStorage_CreateRole_TransportError_GroupD was removed: CreateRole
+// no longer makes a network call at all (unconditional remoteUnsupported —
+// see remote_rbac.go's doc comment), so the transport-error branch this file
+// exists to cover is unreachable through it. See
+// TestRemoteStorage_CreateRole_Unsupported in remote_rbac_test.go.
 
 // --- GetRole ---
 
