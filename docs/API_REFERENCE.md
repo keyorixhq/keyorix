@@ -390,19 +390,57 @@ X-RateLimit-Remaining: 95
 X-RateLimit-Reset: 1696780800
 ```
 
-## 🔌 **gRPC API**
+## 🔌 **gRPC API** — partial surface, work in progress
 
-For high-performance integrations, Keyorix also provides gRPC endpoints:
+> **The HTTP API above is the complete one.** gRPC is a data-plane interface
+> covering a subset of it, disabled by default, and still under development.
+> Use HTTP unless you specifically need gRPC.
 
-- **Port**: 9090 (default)
-- **Services**: SecretService, ShareService, SystemService
-- **Protocol Buffers**: Available in `/proto` directory
+- **Port**: 9090 (default), `server.grpc.enabled: false` by default
+- **Services**: 13 services / 86 RPCs — SecretService, ShareService, UserService,
+  RoleService, GroupService, ProjectService, AuditService, SystemService,
+  BreakGlassService, MachineIdentityService, DynamicSecretService,
+  ComplianceService, ConnectService
+- **Protocol Buffers**: `server/proto/keyorix.proto`
+
+### What gRPC does not cover
+
+Governance and identity capabilities are HTTP-only today:
+
+| area | HTTP-only capabilities |
+|---|---|
+| Identity & auth | MFA, step-up, WebAuthn, SSO, SAML, SCIM, personal access tokens, sessions |
+| Governance | access-review campaigns, access requests, segregation of duties, legal hold, risk exceptions, permission baseline, anomaly configuration, notification channels, read quota |
+| Secret lifecycle | **classification**, **description**, folder CRUD, templates, rotation policies (write), retention override, bulk operations, ownership, access schedule, version comments/diff |
+
+**Enforcement is not affected by this.** Authorization, audit, and the
+classification read gate are implemented in core, not in the HTTP handler layer,
+so every transport inherits them and gRPC cannot bypass a control HTTP enforces.
+Secrets classified `restricted` are unreadable over gRPC when step-up is
+required, because gRPC has no step-up — fail-closed by design.
+
+The practical consequence is that some controls cannot be *set* over gRPC, so an
+object created there lands in the least-governed state available. **Provision
+over HTTP if your deployment has compliance requirements.**
+
+Capability parity with HTTP is a planned project. See
+[ADR-105](./adr-105-grpc-scope-and-parity.md) for the scope, the capabilities
+deliberately excluded from gRPC, and the phasing.
 
 ### Example gRPC Usage
 ```go
-conn, err := grpc.Dial("localhost:9090", grpc.WithInsecure())
-client := pb.NewSecretServiceClient(conn)
+// Use real transport credentials — this connection carries secret material.
+creds, err := credentials.NewClientTLSFromFile("certs/ca.crt", "")
+if err != nil {
+    return err
+}
+conn, err := grpc.NewClient("localhost:9090", grpc.WithTransportCredentials(creds))
+if err != nil {
+    return err
+}
+defer conn.Close()
 
+client := pb.NewSecretServiceClient(conn)
 response, err := client.ListSecrets(ctx, &pb.ListSecretsRequest{
     Limit: 10,
     Offset: 0,
