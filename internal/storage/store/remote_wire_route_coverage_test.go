@@ -24,6 +24,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -1031,3 +1032,91 @@ func constRefEntry(constRef string) wireCallExclusion {
 // entries for the per-method DEAD evidence. A future genuinely-new gap gets a
 // fresh entry here, triaged the same way, not by resurrecting these.
 var knownMissingRoutes = map[routeKey]bool{}
+
+// TestRemoteWireScannerDetectsCallsAndRoutes is this guard's red-proof.
+//
+// TestRemoteStorageWireCalls_HaveMatchingRoute compares two derived sets: the
+// wire calls this package makes, and the routes the server registers. If
+// either derivation quietly returns less than it should, the comparison finds
+// no mismatches and the guard reports full coverage — and "no unmatched calls"
+// is exactly what a broken extractor and a correct codebase both look like.
+//
+// That failure mode is not theoretical for this particular guard. The client
+// mode it covers shipped ten methods that decoded the wrong response envelope
+// and returned empty results (#1831, #1832, #1835, #1836) — defects that lived
+// behind a green test suite. The extractors deserve a standing check of their
+// own.
+func TestRemoteWireScannerDetectsCallsAndRoutes(t *testing.T) {
+	dir := t.TempDir()
+
+	// Parsed, never compiled. Three shapes: a literal path, a path built via
+	// fmt.Sprintf and held in a local, and one built by concatenation that the
+	// extractor is expected to find but NOT resolve.
+	const src = `package store
+
+func (rs *RemoteStorage) ListThings(ctx context.Context) error {
+	return rs.client.Get(ctx, "/api/v1/things", nil)
+}
+
+func (rs *RemoteStorage) GetThing(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/things/%d", id)
+	return rs.client.Get(ctx, path, nil)
+}
+
+func (rs *RemoteStorage) MoveThing(ctx context.Context, suffix string) error {
+	return rs.client.Post(ctx, "/api/v1/things/"+suffix, nil, nil)
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "remote_fixture.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+
+	calls := extractWireCalls(t, dir)
+	if len(calls) != 3 {
+		t.Fatalf("extractWireCalls found %d call(s) in a fixture containing exactly 3 rs.client calls: %+v\n"+
+			"If the call extractor stops finding call sites, the coverage comparison has nothing to compare "+
+			"and TestRemoteStorageWireCalls_HaveMatchingRoute passes while checking nothing.", len(calls), calls)
+	}
+
+	resolved := map[string]string{} // method -> normalized path
+	unresolved := map[string]bool{}
+	for _, c := range calls {
+		if c.Resolved {
+			resolved[c.Method] = c.Path
+		} else {
+			unresolved[c.Method] = true
+		}
+	}
+
+	// A literal path must resolve verbatim.
+	if got := resolved["GET"]; got == "" {
+		t.Errorf("no GET call resolved to a path; resolved=%v unresolved=%v", resolved, unresolved)
+	}
+
+	// The Sprintf-through-a-local shape must resolve AND have its parameter
+	// collapsed, or client paths would never compare equal to chi patterns and
+	// every parameterised route would look uncovered.
+	var sawCollapsed bool
+	for _, c := range calls {
+		if c.Resolved && strings.Contains(c.Path, "/api/v1/things/") && strings.Contains(c.Path, "*") {
+			sawCollapsed = true
+		}
+		if c.Resolved && strings.Contains(c.Path, "%d") {
+			t.Errorf("a resolved path still contains a raw Sprintf verb (%q) — normalization has stopped "+
+				"collapsing parameters, so no client path will ever match a chi route pattern", c.Path)
+		}
+	}
+	if !sawCollapsed {
+		t.Errorf("the fmt.Sprintf path assigned to a local was not resolved and collapsed to a wildcard; "+
+			"calls=%+v\nBoth halves matter: local-variable tracking, and parameter collapsing.", calls)
+	}
+
+	// And the shape the extractor is documented as unable to resolve must be
+	// reported as found-but-unresolved, not dropped. Silently dropping it is
+	// how a real uncovered call site disappears from the population.
+	if !unresolved["POST"] {
+		t.Errorf("the concatenation-built path was not reported as an unresolved call; unresolved=%v\n"+
+			"An unresolvable path must still surface as a call site — dropping it removes a real wire "+
+			"call from the coverage population entirely.", unresolved)
+	}
+}
