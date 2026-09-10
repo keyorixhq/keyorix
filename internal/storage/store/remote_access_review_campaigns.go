@@ -43,48 +43,54 @@ import (
 // accessReviewCampaignWire mirrors accessReviewCampaignProxyWire in
 // server/http/handlers/access_review_campaigns_proxy.go exactly.
 type accessReviewCampaignWire struct {
-	ID               uint       `json:"id"`
-	ProjectID        uint       `json:"project_id"`
-	Name             string     `json:"name"`
-	State            string     `json:"state"`
-	CreatedBy        uint       `json:"created_by"`
-	CreatedAt        time.Time  `json:"created_at"`
-	ClosedBy         uint       `json:"closed_by,omitempty"`
-	ClosedAt         *time.Time `json:"closed_at,omitempty"`
-	Degraded         bool       `json:"degraded"`
-	DegradedReasons  []string   `json:"degraded_reasons,omitempty"`
-	ForcedIncomplete bool       `json:"forced_incomplete"`
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	Name                       string     `json:"name"`
+	State                      string     `json:"state"`
+	CreatedBy                  uint       `json:"created_by"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	ClosedBy                   uint       `json:"closed_by,omitempty"`
+	ClosedAt                   *time.Time `json:"closed_at,omitempty"`
+	Degraded                   bool       `json:"degraded"`
+	DegradedReasons            []string   `json:"degraded_reasons,omitempty"`
+	ForcedIncomplete           bool       `json:"forced_incomplete"`
+	CreatedByMachineIdentityID uint       `json:"created_by_machine_identity_id,omitempty"` // #1573 machine-caller attribution; mirrors models.AccessReviewCampaign
+	ClosedByMachineIdentityID  uint       `json:"closed_by_machine_identity_id,omitempty"`  // #1573 machine-caller attribution; mirrors models.AccessReviewCampaign
 }
 
 func newAccessReviewCampaignWire(c *models.AccessReviewCampaign) accessReviewCampaignWire {
 	return accessReviewCampaignWire{
-		ID:               c.ID,
-		ProjectID:        c.ProjectID,
-		Name:             c.Name,
-		State:            c.State,
-		CreatedBy:        c.CreatedBy,
-		CreatedAt:        c.CreatedAt,
-		ClosedBy:         c.ClosedBy,
-		ClosedAt:         c.ClosedAt,
-		Degraded:         c.Degraded,
-		DegradedReasons:  c.DegradedReasons,
-		ForcedIncomplete: c.ForcedIncomplete,
+		ID:                         c.ID,
+		ProjectID:                  c.ProjectID,
+		Name:                       c.Name,
+		State:                      c.State,
+		CreatedBy:                  c.CreatedBy,
+		CreatedAt:                  c.CreatedAt,
+		ClosedBy:                   c.ClosedBy,
+		ClosedAt:                   c.ClosedAt,
+		Degraded:                   c.Degraded,
+		DegradedReasons:            c.DegradedReasons,
+		ForcedIncomplete:           c.ForcedIncomplete,
+		CreatedByMachineIdentityID: c.CreatedByMachineIdentityID,
+		ClosedByMachineIdentityID:  c.ClosedByMachineIdentityID,
 	}
 }
 
 func (w accessReviewCampaignWire) toModel() *models.AccessReviewCampaign {
 	return &models.AccessReviewCampaign{
-		ID:               w.ID,
-		ProjectID:        w.ProjectID,
-		Name:             w.Name,
-		State:            w.State,
-		CreatedBy:        w.CreatedBy,
-		CreatedAt:        w.CreatedAt,
-		ClosedBy:         w.ClosedBy,
-		ClosedAt:         w.ClosedAt,
-		Degraded:         w.Degraded,
-		DegradedReasons:  w.DegradedReasons,
-		ForcedIncomplete: w.ForcedIncomplete,
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		Name:                       w.Name,
+		State:                      w.State,
+		CreatedBy:                  w.CreatedBy,
+		CreatedAt:                  w.CreatedAt,
+		ClosedBy:                   w.ClosedBy,
+		ClosedAt:                   w.ClosedAt,
+		Degraded:                   w.Degraded,
+		DegradedReasons:            w.DegradedReasons,
+		ForcedIncomplete:           w.ForcedIncomplete,
+		CreatedByMachineIdentityID: w.CreatedByMachineIdentityID,
+		ClosedByMachineIdentityID:  w.ClosedByMachineIdentityID,
 	}
 }
 

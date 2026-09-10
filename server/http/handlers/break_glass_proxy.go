@@ -68,48 +68,51 @@ import (
 // invitationProxyWire's reasoning — every field is named explicitly here rather
 // than relying on a direct marshal of the model.
 type breakGlassActivationProxyWire struct {
-	ID            uint       `json:"id"`
-	ProjectID     uint       `json:"project_id"`
-	UserID        uint       `json:"user_id"`
-	RoleID        uint       `json:"role_id"`
-	RoleName      string     `json:"role_name"`
-	Justification string     `json:"justification"`
-	State         string     `json:"state"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	RevokedBy     uint       `json:"revoked_by,omitempty"`
-	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	UserID                     uint       `json:"user_id"`
+	RoleID                     uint       `json:"role_id"`
+	RoleName                   string     `json:"role_name"`
+	Justification              string     `json:"justification"`
+	State                      string     `json:"state"`
+	ExpiresAt                  *time.Time `json:"expires_at,omitempty"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	RevokedBy                  uint       `json:"revoked_by,omitempty"`
+	RevokedAt                  *time.Time `json:"revoked_at,omitempty"`
+	RevokedByMachineIdentityID uint       `json:"revoked_by_machine_identity_id,omitempty"` // #1573 machine-caller attribution; mirrors models.BreakGlassActivation
 }
 
 func newBreakGlassActivationProxyWire(a *models.BreakGlassActivation) breakGlassActivationProxyWire {
 	return breakGlassActivationProxyWire{
-		ID:            a.ID,
-		ProjectID:     a.ProjectID,
-		UserID:        a.UserID,
-		RoleID:        a.RoleID,
-		RoleName:      a.RoleName,
-		Justification: a.Justification,
-		State:         a.State,
-		ExpiresAt:     a.ExpiresAt,
-		CreatedAt:     a.CreatedAt,
-		RevokedBy:     a.RevokedBy,
-		RevokedAt:     a.RevokedAt,
+		ID:                         a.ID,
+		ProjectID:                  a.ProjectID,
+		UserID:                     a.UserID,
+		RoleID:                     a.RoleID,
+		RoleName:                   a.RoleName,
+		Justification:              a.Justification,
+		State:                      a.State,
+		ExpiresAt:                  a.ExpiresAt,
+		CreatedAt:                  a.CreatedAt,
+		RevokedBy:                  a.RevokedBy,
+		RevokedAt:                  a.RevokedAt,
+		RevokedByMachineIdentityID: a.RevokedByMachineIdentityID,
 	}
 }
 
 func (w breakGlassActivationProxyWire) toModel() *models.BreakGlassActivation {
 	return &models.BreakGlassActivation{
-		ID:            w.ID,
-		ProjectID:     w.ProjectID,
-		UserID:        w.UserID,
-		RoleID:        w.RoleID,
-		RoleName:      w.RoleName,
-		Justification: w.Justification,
-		State:         w.State,
-		ExpiresAt:     w.ExpiresAt,
-		CreatedAt:     w.CreatedAt,
-		RevokedBy:     w.RevokedBy,
-		RevokedAt:     w.RevokedAt,
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		UserID:                     w.UserID,
+		RoleID:                     w.RoleID,
+		RoleName:                   w.RoleName,
+		Justification:              w.Justification,
+		State:                      w.State,
+		ExpiresAt:                  w.ExpiresAt,
+		CreatedAt:                  w.CreatedAt,
+		RevokedBy:                  w.RevokedBy,
+		RevokedAt:                  w.RevokedAt,
+		RevokedByMachineIdentityID: w.RevokedByMachineIdentityID,
 	}
 }
 
