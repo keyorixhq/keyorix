@@ -1288,7 +1288,6 @@ type Storage interface {
 	ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.AnomalyAlert, error)
 	MarkAnomalyAlertAlerted(ctx context.Context, id uint) error
 	GetAuditLogs(ctx context.Context, filter *AuditFilter) ([]*models.AuditEvent, int64, error)
-	GetRBACAuditLogs(ctx context.Context, filter *RBACAuditFilter) ([]*RBACAuditLog, int64, error)
 	// AuditRetentionStats returns the total audit event count and the oldest /
 	// newest event timestamps. Keyorix never purges audit events, so these raw
 	// aggregates let an operator demonstrate how far back the trail reaches
@@ -1862,18 +1861,6 @@ type AuditFilter struct {
 	ResourceType *string
 }
 
-// RBACAuditFilter defines filtering options for RBAC audit log queries
-type RBACAuditFilter struct {
-	UserID     *uint
-	Action     *string
-	TargetType *string
-	TargetID   *uint
-	StartTime  *time.Time
-	EndTime    *time.Time
-	Page       int
-	PageSize   int
-}
-
 // Scope identifies the project/environment a role assignment or an
 // authorization check applies to. It uses a 0 = global/unspecified sentinel,
 // matching the stored user_roles/group_roles columns:
@@ -1903,21 +1890,6 @@ type Permission struct {
 	Description string `json:"description"`
 	Resource    string `json:"resource"`
 	Action      string `json:"action"`
-}
-
-// RBACAuditLog represents an RBAC audit log entry
-type RBACAuditLog struct {
-	ID         uint      `json:"id"`
-	UserID     *uint     `json:"user_id"`
-	Username   string    `json:"username"`
-	Action     string    `json:"action"`
-	TargetType string    `json:"target_type"`
-	TargetID   *uint     `json:"target_id"`
-	TargetName string    `json:"target_name"`
-	Details    string    `json:"details"`
-	IPAddress  string    `json:"ip_address"`
-	Success    bool      `json:"success"`
-	Timestamp  time.Time `json:"timestamp"`
 }
 
 // ProjectUsageStat is one row in a usage report, aggregating all metrics for

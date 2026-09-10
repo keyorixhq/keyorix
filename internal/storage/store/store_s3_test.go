@@ -735,17 +735,6 @@ func TestCountUnusedSecretsByProject(t *testing.T) {
 	assert.Equal(t, 0, counts[2])
 }
 
-func TestGetRBACAuditLogs(t *testing.T) {
-	ctx := context.Background()
-	ls := newAuditStore(t)
-
-	// GetRBACAuditLogs is a stub; must return empty results, not an error.
-	logs, total, err := ls.GetRBACAuditLogs(ctx, nil)
-	require.NoError(t, err)
-	assert.Zero(t, total)
-	assert.Nil(t, logs)
-}
-
 func TestListUnalertedAnomalyAlerts(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "unalerted_alerts", &models.AnomalyAlert{})

@@ -1,14 +1,16 @@
 // remote_storage_conformance_tranche4_misc_test.go — issue #1808, tranche 4.
 //
-// Covers 26 of the 27 assigned methods, spanning eight source files:
-// remote_risk_exceptions.go, remote_notifications.go,
+// Covers 25 of the 26 assigned methods (storage.Storage.GetRBACAuditLogs, the
+// 27th, was removed outright as dead code — see fix/remove-dead-rbac-audit-
+// storage-path — rather than covered or left uncovered), spanning seven
+// source files: remote_risk_exceptions.go, remote_notifications.go,
 // remote_access_activity.go, remote_sod.go, remote_legal_hold.go,
 // remote_break_glass.go (the two read-only survivors,
-// GetBreakGlassActivation/ListBreakGlassActivations), remote_audit.go
-// (GetRBACAuditLogs only), and remote_stats.go (HealthCheck).
+// GetBreakGlassActivation/ListBreakGlassActivations), and remote_stats.go
+// (HealthCheck).
 //
 // GetAuditLogs is deliberately NOT covered — see the comment where its test
-// would otherwise sit (just above TestConformance_GetRBACAuditLogs) for why:
+// would otherwise sit for why:
 // building it surfaced a genuine, live wire-shape defect (RemoteStorage.
 // GetAuditLogs silently returns an empty event list with a correct-looking
 // total, against its own real, currently-registered route) that this file's
@@ -1108,47 +1110,14 @@ func TestConformance_ListBreakGlassActivations(t *testing.T) {
 // probably a dedicated non-human-facing wire DTO/route) before a
 // TestConformance_GetAuditLogs can be added truthfully.
 //
-// GetRBACAuditLogs below has the SAME class of route (it also resolves to a
-// human-facing DashboardHandler.GetRBACAuditLogs, whose per-entry shape --
-// "actor_user_id" instead of "user_id", "created_at" instead of "timestamp",
-// no username/target_name/ip_address/success at all -- doesn't match
-// storage.RBACAuditLog's json tags either), but its top-level envelope key
-// ("logs") DOES happen to match what remote_audit.go's GetRBACAuditLogs
-// decodes for, and LocalStorage.GetRBACAuditLogs is itself an unimplemented
-// stub that always returns empty regardless of filter -- so unlike
-// GetAuditLogs, there is no nonzero local baseline available to make this
-// harness's own comparison actually notice the per-entry field-name
-// mismatch. See that test's own comment for what it can and cannot prove.
-
-// --- GetRBACAuditLogs ---
-
-func TestConformance_GetRBACAuditLogs(t *testing.T) {
-	h := newConformanceHarness(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	uid := h.adminUserID
-	action := "role.assigned"
-	targetType := "role"
-	var targetID uint = 1
-	// A realistic filter+pagination payload, not a bare empty-params call --
-	// same #1808 rationale as GetAuditLogs above.
-	filter := &coreStorage.RBACAuditFilter{
-		UserID: &uid, Action: &action, TargetType: &targetType, TargetID: &targetID,
-		StartTime: timePtr(now.Add(-time.Hour)), EndTime: timePtr(now.Add(time.Hour)), Page: 1, PageSize: 10,
-	}
-	// LocalStorage.GetRBACAuditLogs is explicitly "not yet implemented" (its
-	// own doc comment) -- it always returns (nil, 0, nil) regardless of
-	// filter, on both backends (the server proxies onto the SAME LocalStorage
-	// method). The point of this test is #1808's own callout: prove the real
-	// route exists and accepts a realistic filter without 404ing, not to
-	// exercise filtering logic that doesn't exist yet.
-	localLogs, localTotal, err := h.ls.GetRBACAuditLogs(ctx, filter)
-	require.NoError(t, err)
-	remoteLogs, remoteTotal, err := h.rs.GetRBACAuditLogs(ctx, filter)
-	require.NoError(t, err, "GetRBACAuditLogs must succeed against the real router with a realistic filter")
-	assert.Equal(t, localTotal, remoteTotal)
-	assert.Equal(t, len(localLogs), len(remoteLogs))
-}
+// storage.Storage.GetRBACAuditLogs (and its LocalStorage/RemoteStorage
+// implementations) used to sit here — removed outright as dead code (no
+// production caller; see fix/remove-dead-rbac-audit-storage-path) rather than
+// covered by a conformance test. The LIVE RBAC audit trail is
+// core.KeyorixCore.ListRBACAuditLogs, reached via the real
+// GET /api/v1/audit/rbac-logs route (AuditHandler.GetRBACAuditLogs) and the
+// gRPC AuditService.GetRBACAuditLogs — both already exercised by their own
+// handler/service test suites, unaffected by this removal.
 
 // ============================================================================
 // remote_stats.go

@@ -350,32 +350,6 @@ func TestRemoteStorage_GetAuditLogs_DecodeError_S1(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
 
-func TestRemoteStorage_GetRBACAuditLogs_TransportError_S1(t *testing.T) {
-	srv := httptest.NewServer(errHandler(http.StatusBadRequest, "INTERNAL", "boom"))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.GetRBACAuditLogs(context.Background(), nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get RBAC audit logs")
-}
-
-func TestRemoteStorage_GetRBACAuditLogs_DecodeError_S1(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(apiOK("not-an-object"))
-	}))
-	defer srv.Close()
-
-	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
-	require.NoError(t, err)
-
-	_, _, err = rs.GetRBACAuditLogs(context.Background(), nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse response")
-}
-
 // ============================================================================
 // remote_auth.go
 // ============================================================================
