@@ -3,8 +3,8 @@
 > ## ⚠️ Remote mode is WORK IN PROGRESS — not yet a supported deployment
 >
 > **Roughly half of the CLI's storage operations are not implemented over remote
-> mode.** Derived by counting, not estimated: of **426** `RemoteStorage` methods,
-> **197 (46%)** return `ErrRemoteUnsupported`. Local mode
+> mode.** Derived by counting, not estimated: of **427** `RemoteStorage` methods,
+> **199 (46%)** return `ErrRemoteUnsupported`. Local mode
 > (`storage.type: local`) is the complete, supported path today.
 >
 > Unsupported operations fail **loudly**, with an explicit error rather than a
