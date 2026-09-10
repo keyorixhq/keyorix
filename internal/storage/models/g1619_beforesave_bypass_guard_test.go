@@ -363,7 +363,7 @@ var beforeSaveBypassAllowlistG1619 = map[string]string{
 		"\"simulate a not-yet-swept expiry\" fixture technique, commented in place as such.",
 	"internal/storage/store/local_sharing_test.go:340": "ShareRecord.ExpiresAt — second occurrence in the same " +
 		"test (expiredGroup), same `past` value, same reasoning as line 325.",
-	"internal/storage/store/rotation_risk_batch_test.go:104": "ShareRecord.ExpiresAt — same pattern as " +
+	"internal/storage/store/rotation_risk_batch_test.go:107": "ShareRecord.ExpiresAt — same pattern as " +
 		"local_sharing_test.go, `past := time.Now().UTC().Add(-time.Hour)`, already canonical, commented in place " +
 		"citing local_sharing_test.go's fuller reasoning.",
 	"server/middleware/g18_cache_hit_revocation_test.go:101": "PersonalAccessToken.ExpiresAt — `past := " +
@@ -372,7 +372,7 @@ var beforeSaveBypassAllowlistG1619 = map[string]string{
 		"range query) and compares via Go's Location-independent now.After(*pat.ExpiresAt) " +
 		"(pat_expiry_enforce.go) — never a SQLite string range comparison, so BeforeSave's UTC normalization " +
 		"has nothing to protect on this read path regardless of what Location the raw write left in place.",
-	"internal/storage/store/stale_accounts_test.go:35": "User.CreatedAt — `createdAt` is derived from " +
+	"internal/storage/store/stale_accounts_test.go:38": "User.CreatedAt — `createdAt` is derived from " +
 		"`now := time.Now().UTC()` two lines above the mk() helper, already canonical, so BeforeSave's " +
 		"normalization would be a no-op. (This model's OWN read path, ListUsersInStateBefore, IS a real SQL " +
 		"range query — unlike the PAT case above, this one is benign because the value is canonical, not " +
