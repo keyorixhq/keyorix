@@ -1,7 +1,17 @@
-// remote_storage_conformance_population_test.go — #1808 tranche selection and
-// reporting: derives (a) every real (non-stub) *RemoteStorage method and
-// (b) which of those already have a TestConformance_ test, both mechanically,
-// so "what's left" is never a hand-maintained list.
+// remote_storage_conformance_population_test.go — #1808 tranche selection,
+// reporting, AND (as of the gate added to close #1808) enforcement: derives
+// (a) every real (non-stub) *RemoteStorage method and (b) which of those
+// already have a TestConformance_ test, both mechanically, so "what's left"
+// is never a hand-maintained list, then fails the build when an uncovered
+// method has no declared exclusion. See TestConformanceCoverageIsCompleteOrDeclared.
+//
+// What this gate does NOT verify: that a TestConformance_ test exists for a
+// method says nothing about whether it is a GOOD test, or which of #1808's
+// seven defect classes it actually exercises. A green run here must not be
+// read as "all seven defect classes are covered for this method" — only that
+// some conformance test naming it exists. Defect-class coverage is a
+// per-method judgment call made when the test is written, not something this
+// mechanical AST scan can check.
 //
 // Why this duplicates internal/storage/store's AST-scan logic instead of
 // importing it: Go test files (_test.go) are never importable across package
@@ -28,6 +38,7 @@
 package http
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -355,5 +366,62 @@ func TestReportConformancePopulation(t *testing.T) {
 	if len(staleNames) > 0 {
 		t.Errorf("%d TestConformance_* test(s) name a method that is not a real (non-stub, exported) "+
 			"*RemoteStorage method — stale test, renamed method, or a typo: %v", len(staleNames), staleNames)
+	}
+}
+
+// conformanceCoverageExclusions: real (non-stub) RemoteStorage methods deliberately
+// without a TestConformance_ test, each with a written reason.
+//
+// EMPTY, and it started empty — #1808 reached 0 uncovered before this gate was added,
+// which is the only moment a registry like this can begin with nothing to argue about.
+// An entry here is a considered exception, not a backlog item: adding one should feel
+// like a decision, and the reason should be something a reviewer can disagree with.
+var conformanceCoverageExclusions = map[string]string{}
+
+// TestConformanceCoverageIsCompleteOrDeclared is #1808's closing gate. Coverage was
+// complete when #1808 closed; this is what keeps it that way. A newly added real proxy
+// method fails here until it either gets a TestConformance_ test or an explicit,
+// reasoned exclusion.
+func TestConformanceCoverageIsCompleteOrDeclared(t *testing.T) {
+	t.Parallel()
+	real := conformancePopRealProxyMethods(t)
+	covered := conformancePopCoveredMethods(t)
+
+	if len(real) == 0 {
+		t.Fatal("derived 0 real RemoteStorage methods — the scan has stopped working and " +
+			"this gate is now vacuous; fix the scan, not this test")
+	}
+
+	var undeclared []string
+	for name := range real {
+		if covered[name] {
+			continue
+		}
+		if _, ok := conformanceCoverageExclusions[name]; !ok {
+			undeclared = append(undeclared,
+				fmt.Sprintf("%s (%s:%d)", name, real[name].File, real[name].Line))
+		}
+	}
+	sort.Strings(undeclared)
+	if len(undeclared) > 0 {
+		t.Errorf("%d real (non-stub) RemoteStorage method(s) have no TestConformance_ test "+
+			"and no declared exclusion:\n  %s\n\n#1808 closed at 0 uncovered. Either write "+
+			"the conformance test, or add an entry to conformanceCoverageExclusions with a "+
+			"reason. Do not delete or skip this check to get green.",
+			len(undeclared), strings.Join(undeclared, "\n  "))
+	}
+
+	// The reverse, so exclusions cannot rot — same shape as ADR-074's CheckPartition.
+	for name, reason := range conformanceCoverageExclusions {
+		if _, isReal := real[name]; !isReal {
+			t.Errorf("conformanceCoverageExclusions names %q, which is not a real "+
+				"(non-stub, exported) RemoteStorage method — it was renamed, deleted, or "+
+				"became a stub. Remove the entry.", name)
+			continue
+		}
+		if covered[name] {
+			t.Errorf("conformanceCoverageExclusions still excludes %s (%q), but it now HAS "+
+				"a TestConformance_ test — remove the entry.", name, reason)
+		}
 	}
 }
