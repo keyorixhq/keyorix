@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/keyorixhq/keyorix/configs"
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
@@ -142,16 +143,11 @@ func generateConfigFile() error {
 		return nil
 	}
 
-	templateData, err := securefiles.SafeReadFile(".", "keyorix_template.yaml")
-	if err != nil {
-		return fmt.Errorf("failed to read template file: %w", err)
-	}
-
 	if err := os.MkdirAll(filepath.Dir(configPath), 0750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	if err := securefiles.SecureWriteFileSync(".", configPath, templateData, 0600); err != nil {
+	if err := securefiles.SecureWriteFileSync(".", configPath, configs.DefaultConfigTemplate, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

@@ -8,23 +8,24 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/configs"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// minimalTemplate is a minimal keyorix_template.yaml content for tests that
-// need generateConfigFile to succeed.
+// minimalTemplate is a minimal keyorix.yaml content for tests that need to
+// pre-seed a config file directly (the real config template is embedded, so
+// generateConfigFile no longer reads anything from cwd).
 const minimalTemplate = "storage:\n  type: local\n  database:\n    path: ./secrets.db\n"
 
-// setupInitDir creates a temp dir with:
-//   - keyorix_template.yaml (so generateConfigFile can read it)
-//   - cwd set to the temp dir
+// setupInitDir creates a temp dir and sets cwd to it. generateConfigFile's
+// template is embedded (go:embed), so this no longer needs to write anything
+// -- it exists to keep call sites that predate the embed unchanged.
 func setupInitDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Chdir(dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix_template.yaml"), []byte(minimalTemplate), 0600))
 	return dir
 }
 
@@ -78,25 +79,6 @@ func TestGenerateConfigFile_AlreadyExists_NoForce(t *testing.T) {
 	assert.Equal(t, "existing: content\n", string(data))
 }
 
-// TestGenerateConfigFile_TemplateNotFound exercises the error branch when the
-// template file is missing.
-func TestGenerateConfigFile_TemplateNotFound(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir) // no keyorix_template.yaml here
-
-	restore := saveInitFlags(t)
-	defer restore()
-	configPath = filepath.Join(dir, "new-config.yaml")
-	force = true // force so the "already exists" short-circuit is skipped
-
-	out := captureStdout(t, func() {
-		err := generateConfigFile()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to read template file")
-	})
-	assert.Contains(t, out, "Generating config file")
-}
-
 // TestGenerateConfigFile_CreatesFile verifies the happy path: with a template
 // present and force=false (or no pre-existing file), the config file is written.
 // configPath must be relative to cwd because SecureWriteFileSync uses "." as base.
@@ -138,8 +120,8 @@ func TestGenerateConfigFile_Force_Overwrites(t *testing.T) {
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
-	// The template content should have replaced the old content.
-	assert.Equal(t, minimalTemplate, string(data))
+	// The embedded template content should have replaced the old content.
+	assert.Equal(t, string(configs.DefaultConfigTemplate), string(data))
 }
 
 // ──────────────────────────── initializeEncryption ───────────────────────────

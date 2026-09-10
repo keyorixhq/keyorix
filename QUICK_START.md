@@ -40,14 +40,25 @@ The CLI defaults to **embedded mode**: it opens the local database directly and
 needs no server running. For one machine or an air-gapped box, this is the whole
 product.
 
+`system init` only writes config and sets up encryption/database/logging — it
+does not create a project. Secrets live in a project and an environment, so
+create one first (this seeds three default environments — development,
+staging, production — as IDs 1/2/3):
+
+```bash
+./bin/keyorix project create --name "my-project"
+```
+
 ```bash
 ./bin/keyorix secret create --name "stripe-api-key" --value "sk_test_..."
 ./bin/keyorix secret create --name "deploy-key" --from-file ~/.ssh/id_ed25519
 ./bin/keyorix secret list
-./bin/keyorix secret get --id 1
+./bin/keyorix secret get --id 1               # metadata only
+./bin/keyorix secret get --id 1 --show-value  # decrypted value
 ```
 
-Secrets live in a project and an environment, both defaulting to `1`:
+New secrets default to project `1`, environment `1` (the project and its first
+environment created above):
 
 ```bash
 ./bin/keyorix secret create --name "db-password" --value "..." \

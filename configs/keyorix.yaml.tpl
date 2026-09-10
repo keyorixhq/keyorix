@@ -115,9 +115,11 @@ storage:
   encryption:
     # Enable envelope encryption
     enabled: true
-    # Use Key Encryption Key (KEK) and Data Encryption Key (DEK)
-    use_kek: true
-    kek_path: "keys/kek.key"
+    # DEK (Data Encryption Key), wrapped with a passphrase-derived KEK by
+    # default. See key_provider (internal/config/config.go's KeyProviderConfig
+    # doc comment, ADR-038/ADR-041) to source the KEK from a file, env var,
+    # exec command, Shamir shares, a host TPM, or a cloud KMS instead of a
+    # passphrase -- omitted here to keep the default behaviour unchanged.
     dek_path: "keys/dek.key"
     salt_path: "keys/kek.salt"
 
@@ -189,15 +191,6 @@ audit:
     # Skip TLS verification for self-signed SIEM endpoints (not recommended).
     insecure_skip_verify: false
 
-logging:
-  # Enable logging
-  enabled: true
-  # Log level: debug, info, warn, error
-  level: "info"
-  # Path to log file
-  file: "keyorix.log"
-  # Log format
-  log_format: "text"  
 membership:
   # Project membership onboarding (ADR-022). validation_mode controls how a new
   # invite onboards into a project:

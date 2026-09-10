@@ -960,6 +960,33 @@ jobs:
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
 
+  # Executes the documented QUICK_START.md "CLI only" flow (system init ->
+  # project create -> secret create/list/get) against a real built binary, in
+  # an isolated HOME/cwd -- scripts/smoke.sh's own header explains why this
+  # exists alongside internal/cli/quickstart_commands_test.go, which only
+  # proves the commands and flags exist, not that they work. A broken
+  # `system init` (reading its config template from the wrong path) shipped
+  # past that test undetected; this is the gate that would have caught it.
+  # One job, not a matrix: `make smoke` builds the CLI itself and the whole
+  # run takes seconds, so it isn't worth sharding or reusing another job's
+  # build artifact.
+  smoke:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      - name: Smoke test (executes QUICK_START.md's CLI flow end to end)
+        run: make smoke
+
   # The Kubernetes operator is a separate Go module (operator/) so its
   # controller-runtime/client-go dependency tree stays out of the server/CLI build.
   # It is therefore not covered by the root `go ./...` jobs above; gate it here.

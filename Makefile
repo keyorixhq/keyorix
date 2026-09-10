@@ -14,7 +14,7 @@ TRUST_LICENSE_KEYS?=
 # deterministic per source revision, so release builds stay reproducible (no build date).
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)"
 
-.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate
+.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -175,6 +175,13 @@ _sbom-generate:
 		dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json \
 		dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json \
 		dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json
+
+# smoke: executes the documented QUICK_START.md flow (system init -> project
+# create -> secret create/list/get) against a freshly built binary, in an
+# isolated HOME/cwd -- see scripts/smoke.sh's own header for why this exists
+# alongside internal/cli/quickstart_commands_test.go, not instead of it.
+smoke: build-cli
+	@./scripts/smoke.sh
 
 clean:
 	rm -rf $(BUILD_DIR) dist/
