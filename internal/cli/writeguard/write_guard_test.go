@@ -57,12 +57,12 @@ import (
 // citing "needs a streaming/non-exclusive write," re-check against SecureOpenBeneath
 // first; it may already fit, the same way it did for all four sites removed here.
 var allowlist = map[string]string{
-	"internal/cli/system/init.go:172": "creates an empty (0-byte) placeholder file for the local sqlite DB path purely " +
+	"internal/cli/system/init.go:168": "creates an empty (0-byte) placeholder file for the local sqlite DB path purely " +
 		"to make first-boot vs. already-initialized unambiguous -- no data is written by " +
 		"this call. Already uses O_EXCL for an atomic, idempotent existence check " +
 		"(err == nil or IsExist are both treated as success).",
-	"internal/cli/system/init.go:202": "creates an empty (0-byte) placeholder file for the local log path, same " +
-		"idempotent-existence-check shape as init.go:172 -- no data is written by this call. " +
+	"internal/cli/system/init.go:198": "creates an empty (0-byte) placeholder file for the local log path, same " +
+		"idempotent-existence-check shape as init.go:168 -- no data is written by this call. " +
 		"Already uses O_EXCL.",
 }
 

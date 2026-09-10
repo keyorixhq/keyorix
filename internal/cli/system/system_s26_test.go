@@ -50,17 +50,22 @@ func TestRefuseInitRedirect(t *testing.T) {
 
 // ──────────────────────────── runInit wrapped-error branches ───────────────
 
-// TestRunInit_GenerateConfigFileErrorPropagates exercises init.go:101-103: when
-// generateConfigFile fails (no template file present, and the config doesn't
-// already exist so the "already exists" skip can't short-circuit first),
-// runInit must wrap and return that error rather than continuing.
+// TestRunInit_GenerateConfigFileErrorPropagates exercises init.go:101-103:
+// when generateConfigFile fails, runInit must wrap and return that error
+// rather than continuing. Since the config template is embedded (go:embed),
+// generateConfigFile can no longer fail on a missing template -- the only
+// remaining failure mode is the config directory itself being uncreatable,
+// so configPath's parent path component is an existing regular file.
 func TestRunInit_GenerateConfigFileErrorPropagates(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir) // deliberately no keyorix_template.yaml here
+	t.Chdir(dir)
+
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0600))
 
 	restore := saveInitFlags(t)
 	defer restore()
-	configPath = "keyorix.yaml"
+	configPath = filepath.Join("blocker", "sub", "keyorix.yaml")
 	force = true
 	initAll = true
 	initServer = ""
@@ -71,13 +76,14 @@ func TestRunInit_GenerateConfigFileErrorPropagates(t *testing.T) {
 }
 
 // TestRunInit_ConfigLoadErrorPropagates exercises init.go:106-108: the
-// template is written successfully but contains a field config.Load's
-// KnownFields(true) decoder rejects, so config.Load fails on the freshly
-// generated file and runInit must wrap that error.
+// config template is embedded and always valid, so to reach config.Load's
+// error branch the target configPath must already exist (generateConfigFile
+// then takes the "already exists, skip" branch, preserving whatever is
+// there) containing a field config.Load's KnownFields(true) decoder rejects.
 func TestRunInit_ConfigLoadErrorPropagates(t *testing.T) {
 	dir := t.TempDir()
-	badTemplate := "storage:\n  type: local\n  totally_unrecognized_field: true\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix_template.yaml"), []byte(badTemplate), 0600))
+	badConfig := "storage:\n  type: local\n  totally_unrecognized_field: true\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(badConfig), 0600))
 	t.Chdir(dir)
 
 	restore := saveInitFlags(t)
@@ -94,16 +100,18 @@ func TestRunInit_ConfigLoadErrorPropagates(t *testing.T) {
 
 // TestRunInit_InitializeEncryptionErrorPropagates exercises init.go:111-113
 // (and, inside initializeEncryption itself, the DEK-dir MkdirAll failure
-// branch): the generated config's dek_path/salt_path sit under a path
-// component that's already an existing regular file, so MkdirAll fails with
-// ENOTDIR and runInit must wrap that error.
+// branch): configPath is pre-written directly (force=false takes the
+// "already exists" skip in generateConfigFile, so the embedded template
+// never overwrites it) with dek_path/salt_path under a path component that's
+// already an existing regular file, so MkdirAll fails with ENOTDIR and
+// runInit must wrap that error.
 func TestRunInit_InitializeEncryptionErrorPropagates(t *testing.T) {
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0600))
 
-	template := fmt.Sprintf("storage:\n  type: local\n  encryption:\n    dek_path: %s/dek.bin\n    salt_path: %s/salt.bin\n", blocker, blocker)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix_template.yaml"), []byte(template), 0600))
+	cfgContent := fmt.Sprintf("storage:\n  type: local\n  encryption:\n    dek_path: %s/dek.bin\n    salt_path: %s/salt.bin\n", blocker, blocker)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(cfgContent), 0600))
 	t.Chdir(dir)
 
 	restore := saveInitFlags(t)
@@ -132,10 +140,12 @@ func TestRunInit_InitializeEncryptionErrorPropagates(t *testing.T) {
 // initializeDatabase is ever reached -- initializeDatabase's own check is
 // still in place as defense-in-depth for a hand-constructed *config.Config
 // that didn't go through Load(), but is no longer what this test exercises.
+// configPath is pre-written directly (force=false preserves it, since the
+// embedded template is always valid and would otherwise never trigger this).
 func TestRunInit_DatabasePathTraversal_RejectedAtConfigLoad(t *testing.T) {
 	dir := t.TempDir()
-	template := "storage:\n  type: local\n  database:\n    path: ../escapes.db\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix_template.yaml"), []byte(template), 0600))
+	cfgContent := "storage:\n  type: local\n  database:\n    path: ../escapes.db\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(cfgContent), 0600))
 	t.Chdir(dir)
 
 	restore := saveInitFlags(t)
