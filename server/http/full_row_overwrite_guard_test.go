@@ -156,6 +156,7 @@ func TestNoUnfetchedStructIntoFullRowOverwrite(t *testing.T) {
 
 	flaggedFuncs := map[string]bool{}
 	var flagged []string
+	var filesScanned int
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -167,6 +168,7 @@ func TestNoUnfetchedStructIntoFullRowOverwrite(t *testing.T) {
 			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 				continue
 			}
+			filesScanned++
 			f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 			if err != nil {
 				t.Fatalf("parsing %s: %v", name, err)
@@ -189,6 +191,11 @@ func TestNoUnfetchedStructIntoFullRowOverwrite(t *testing.T) {
 				}
 			}
 		}
+	}
+	if filesScanned == 0 {
+		t.Fatal("scanned 0 .go files across server/http/handlers, server/grpc/services, and " +
+			"internal/core — this guard is now vacuous and is no longer checking anything; " +
+			"fix the scan, not this assertion")
 	}
 	sort.Strings(flagged)
 	if len(flagged) > 0 {

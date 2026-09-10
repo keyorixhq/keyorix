@@ -49,13 +49,49 @@ func TestMigrateDatabase_AccountStateCallsAbortOnError(t *testing.T) {
 		t.Fatal("could not find migrateDatabase's declaration in factory.go")
 	}
 
-	for _, target := range []string{"backfillBlankAccountState", "guardAccountStateValid"} {
+	targets := []string{"backfillBlankAccountState", "guardAccountStateValid"}
+	var calledAtAll int
+	for _, target := range targets {
+		if bodyCallsFunction(migrateDatabaseDecl.Body, target) {
+			calledAtAll++
+		}
 		if !callAbortsOnError(migrateDatabaseDecl, target) {
 			t.Errorf("migrateDatabase's call to %s(...) must be wired as "+
 				"`if err := %s(db); err != nil { return ... }` -- a failure here must abort "+
 				"migrateDatabase, not be logged/ignored and continued past", target, target)
 		}
 	}
+	// Distinct from the per-target abort-shape check above: if NEITHER target is
+	// even called anywhere in migrateDatabase's body, the two t.Errorf calls above
+	// would still fire (so this specific scenario isn't actually silent) -- but this
+	// makes the "both were found at all" signal explicit and independently
+	// verifiable, rather than inferred from the abort-shape check's own failure
+	// message, which is worded for "wrong shape," not "absent entirely."
+	if calledAtAll == 0 {
+		t.Fatal("neither backfillBlankAccountState nor guardAccountStateValid is called " +
+			"anywhere in migrateDatabase's body — this guard is now vacuous and is no longer " +
+			"checking anything; fix the scan, not this assertion")
+	}
+}
+
+// bodyCallsFunction reports whether body contains a call expression to a
+// bare (unqualified) function named target, anywhere -- regardless of
+// whether that call is wired to abort on error. Weaker than
+// callAbortsOnError on purpose: it answers "is this even still called,"
+// independent of "is it called correctly."
+func bodyCallsFunction(body *ast.BlockStmt, target string) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == target {
+			found = true
+		}
+		return true
+	})
+	return found
 }
 
 // callAbortsOnError reports whether fd's body contains an if-statement of the
