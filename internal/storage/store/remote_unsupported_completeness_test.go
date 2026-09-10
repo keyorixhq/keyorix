@@ -108,6 +108,11 @@ func remoteStorageStubSourceFiles(t *testing.T) []string {
 			files = append(files, name)
 		}
 	}
+	if len(files) == 0 {
+		t.Fatal("found 0 remote_*.go/entry.go source files in internal/storage/store — this " +
+			"guard is now vacuous and is no longer checking anything; fix the scan, not this " +
+			"assertion")
+	}
 	sort.Strings(files)
 	return files
 }
@@ -170,6 +175,10 @@ func actualRemoteUnsupportedStubs(t *testing.T) map[string]bool {
 				rsMethods[fn.Name.Name] = true
 			}
 		}
+	}
+	if len(rsMethods) == 0 {
+		t.Fatal("found 0 *RemoteStorage methods across the stub-source files — this guard is " +
+			"now vacuous and is no longer checking anything; fix the scan, not this assertion")
 	}
 
 	visiting := map[string]bool{}

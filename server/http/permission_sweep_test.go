@@ -181,6 +181,11 @@ func scanRouterForSystemReadOnlyGates(t *testing.T, routerGoPath string) map[str
 func TestNoUnjustifiedSystemReadOnlyGates(t *testing.T) {
 	routerGoPath := filepath.Join(permissionSweepRepoRoot(t), "server", "http", "router.go")
 	found := scanRouterForSystemReadOnlyGates(t, routerGoPath)
+	if len(found) == 0 {
+		t.Fatal("found 0 RequirePermission(permSystemRead)/RequireScopedPermission(permSystemRead, " +
+			"...) call sites in router.go — this guard is now vacuous and is no longer checking " +
+			"anything; fix the scan, not this assertion")
+	}
 
 	var unallowed []string
 	for key, s := range found {
@@ -757,6 +762,10 @@ func scanRouterForUngatedRoutes(t *testing.T, routerGoPath string) map[string]un
 func TestNoUngatedRoutes(t *testing.T) {
 	routerGoPath := filepath.Join(permissionSweepRepoRoot(t), "server", "http", "router.go")
 	found := scanRouterForUngatedRoutes(t, routerGoPath)
+	if len(found) == 0 {
+		t.Fatal("found 0 route-registration call sites in NewRouter — this guard is now " +
+			"vacuous and is no longer checking anything; fix the scan, not this assertion")
+	}
 
 	var unallowed []string
 	for key, u := range found {

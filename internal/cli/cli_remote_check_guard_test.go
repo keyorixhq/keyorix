@@ -79,6 +79,11 @@ func TestCLICommandsCheckRemoteBeforeLocalStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walking %s: %v", root, err)
 	}
+	if len(seen) == 0 {
+		t.Fatal("found 0 internal/cli files calling InitializeCoreService/InitializeStorage — " +
+			"this guard is now vacuous and is no longer checking anything; fix the scan, not " +
+			"this assertion")
+	}
 
 	sort.Strings(flagged)
 	if len(flagged) > 0 {

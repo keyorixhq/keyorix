@@ -224,11 +224,13 @@ func TestG81_NoUntrackedRangeQueriedTimeColumns(t *testing.T) {
 	}
 
 	fset := token.NewFileSet()
+	var scanned int
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
+		scanned++
 		path := filepath.Join(".", name)
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -265,5 +267,9 @@ func TestG81_NoUntrackedRangeQueriedTimeColumns(t *testing.T) {
 			}
 			return true
 		})
+	}
+	if scanned == 0 {
+		t.Fatal("scanned 0 non-test .go files in the package directory — this guard is now " +
+			"vacuous and is no longer checking anything; fix the scan, not this assertion")
 	}
 }

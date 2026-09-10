@@ -184,6 +184,11 @@ func findAllSites(t *testing.T, repo string) map[string]site {
 // second scan root; GREEN after each was fixed.
 func TestNoUnprotectedSensitiveFileWrites(t *testing.T) {
 	found := findAllSites(t, repoRoot(t))
+	if len(found) == 0 {
+		t.Fatal("found 0 os.Create/os.OpenFile/os.WriteFile call sites across scanRoots — " +
+			"this guard is now vacuous and is no longer checking anything; fix the scan, not " +
+			"this assertion")
+	}
 
 	var unallowed []string
 	for key, s := range found {
