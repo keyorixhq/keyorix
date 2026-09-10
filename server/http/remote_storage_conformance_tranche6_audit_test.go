@@ -38,14 +38,22 @@ func TestConformance_GetAuditLogs(t *testing.T) {
 		}))
 	}
 
-	base := time.Now().UTC().Add(-time.Hour)
+	// StartTime is set a second before the first seeded event, not equal to it:
+	// an inclusive range filter's boundary condition (event_time >= StartTime)
+	// depends on SQLite comparing two independently-formatted TEXT timestamps,
+	// and asserting exact-boundary inclusion makes the test's own premise
+	// fragile to formatting precision, not just the behavior under test. A
+	// one-second margin still proves the filter includes events "at or after"
+	// StartTime without relying on exact string equality at the boundary.
+	event1Time := time.Now().UTC().Add(-time.Hour)
+	base := event1Time.Add(-time.Second)
 	action := "conformance.tranche6.audit.marker"
-	seed(action, "conformance tranche6 event 1", base)
-	seed(action, "conformance tranche6 event 2", base.Add(time.Minute))
+	seed(action, "conformance tranche6 event 1", event1Time)
+	seed(action, "conformance tranche6 event 2", event1Time.Add(time.Minute))
 	// A distractor event with a different action, in range, to prove the
 	// Action filter is actually applied server-side (not just "return
 	// everything and trust the caller").
-	seed("conformance.tranche6.audit.distractor", "should not match", base.Add(2*time.Minute))
+	seed("conformance.tranche6.audit.distractor", "should not match", event1Time.Add(2*time.Minute))
 
 	filter := &corestorage.AuditFilter{
 		Action:    &action,
