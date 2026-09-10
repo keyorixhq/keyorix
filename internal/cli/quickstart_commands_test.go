@@ -16,7 +16,10 @@
 // Scope, stated so a green run is not read as more than it is: this verifies
 // that commands and flags EXIST. It does not run them, does not check flag
 // values or argument counts, and says nothing about whether the surrounding
-// prose is true.
+// prose is true. scripts/smoke.sh is the executing counterpart: it runs the
+// documented system init -> project create -> secret create/list/get flow
+// against a real built binary. Neither mechanism is sufficient alone -- this
+// one proves the commands exist, smoke.sh proves they work.
 //
 // See CLAUDE.md, "Core principle: prefer the machine-checked over the asserted."
 package cli
