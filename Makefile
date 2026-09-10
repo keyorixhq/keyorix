@@ -31,7 +31,14 @@ proto-lint:
 
 # Regenerate server/proto/pb/*.pb.go from server/proto/keyorix.proto. Runs
 # proto-deps first so a fresh checkout works; needs the Go bin dir on PATH.
+#
+# The rm is what buf.gen.yaml's `clean:` used to do, narrowed to the files
+# this target actually owns. buf's own clean wipes the whole output directory,
+# which meant every `make proto` deleted server/proto/pb/generated_code_test.go
+# -- the hand-written guard asserting this package contains only generated
+# code. See buf.gen.yaml for the full note.
 proto: proto-deps
+	rm -f server/proto/pb/*.pb.go
 	PATH="$$(go env GOPATH)/bin:$$PATH" buf generate
 
 build: build-cli build-server

@@ -28,10 +28,14 @@
 package pb
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // generatedCodeHeaderMarkers are the exact header lines Go's own protoc
@@ -103,4 +107,155 @@ func TestEveryFileIsGenerated(t *testing.T) {
 			"scripts/ci-test-legs.sh and let this package run in CI like any other.",
 			len(missing), headerScanLines, missing)
 	}
+}
+
+// TestBufGenerateWillNotDeleteHandWrittenFiles is the guard for the defect
+// that this file was itself the victim of.
+//
+// buf's `clean: true` deletes the entire contents of every plugin `out:`
+// directory before generating — not only the files the plugins are about to
+// write. server/proto/pb is a plugin output directory that also holds this
+// hand-written file, so from #1541 (which added it) until 2026-09-10 every
+// `make proto` silently deleted TestEveryFileIsGenerated. Nobody noticed
+// because nobody ran `make proto` in that window; the drift that finally
+// prompted a regeneration (the `reserved 11 to 20` block on
+// CreateSecretRequest, ADR-105 phase 0) is what surfaced it.
+//
+// The repair was to set `clean: false` and have the Makefile remove
+// server/proto/pb/*.pb.go explicitly instead. That repair is a line in a YAML
+// file, which is exactly the kind of thing that gets reverted by someone
+// reasonably assuming clean-before-generate is good hygiene. So it is checked
+// here rather than explained in a comment and hoped for: if `clean` is true
+// and any plugin output directory contains a .go file without a generated
+// header, this fails and names the file that would be destroyed.
+func TestBufGenerateWillNotDeleteHandWrittenFiles(t *testing.T) {
+	root, err := repoRootForBufConfig()
+	if err != nil {
+		t.Fatalf("locating buf.gen.yaml: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, "buf.gen.yaml"))
+	if err != nil {
+		t.Fatalf("reading buf.gen.yaml: %v", err)
+	}
+
+	var cfg struct {
+		Clean   bool `yaml:"clean"`
+		Plugins []struct {
+			Out string `yaml:"out"`
+		} `yaml:"plugins"`
+	}
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("parsing buf.gen.yaml: %v", err)
+	}
+
+	if len(cfg.Plugins) == 0 {
+		t.Fatal("buf.gen.yaml declares no plugins — either the file moved, its schema changed, or the " +
+			"parse silently failed; this guard is now vacuous, so fix the parse, not this assertion")
+	}
+
+	outDirs := map[string]bool{}
+	for _, p := range cfg.Plugins {
+		if p.Out != "" {
+			outDirs[filepath.Clean(p.Out)] = true
+		}
+	}
+	if len(outDirs) == 0 {
+		t.Fatal("buf.gen.yaml declares plugins but none with an `out:` directory — this guard has nothing " +
+			"to check and is vacuous; fix the parse, not this assertion")
+	}
+
+	// This file lives in a plugin output directory; that is the whole reason
+	// the guard exists. If it ever stops being true, the guard has quietly
+	// stopped guarding the thing it was written for.
+	const selfDir = "server/proto/pb"
+	if !outDirs[selfDir] {
+		t.Fatalf("%s is no longer a buf plugin output directory (out dirs: %v) — this guard was written "+
+			"because this package is BOTH generated into and hand-written in. If the layout changed, "+
+			"re-point or retire this test deliberately rather than letting it pass vacuously",
+			selfDir, keysOf(outDirs))
+	}
+
+	if !cfg.Clean {
+		return // the safe configuration; nothing to report
+	}
+
+	var atRisk []string
+	for dir := range outDirs {
+		entries, err := os.ReadDir(filepath.Join(root, dir))
+		if err != nil {
+			t.Fatalf("reading plugin output dir %s: %v", dir, err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".go") {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(root, dir, name))
+			if err != nil {
+				t.Fatalf("reading %s/%s: %v", dir, name, err)
+			}
+			if !hasGeneratedHeader(b) {
+				atRisk = append(atRisk, filepath.ToSlash(filepath.Join(dir, name)))
+			}
+		}
+	}
+
+	if len(atRisk) > 0 {
+		t.Errorf("buf.gen.yaml sets `clean: true`, which deletes the entire contents of every plugin "+
+			"output directory before generating. %d hand-written file(s) sit in those directories and "+
+			"would be destroyed by the next `make proto`: %v\n"+
+			"This is not hypothetical: it is what happened to this very file between #1541 and "+
+			"2026-09-10. Either set `clean: false` (the Makefile's `proto` target removes "+
+			"server/proto/pb/*.pb.go explicitly, which is the property clean was wanted for), or move "+
+			"the hand-written file(s) out of the generated output directory.",
+			len(atRisk), atRisk)
+	}
+}
+
+// hasGeneratedHeader reports whether b carries a standard Go generated-code
+// header in its first few lines — the same window and prefix
+// TestEveryFileIsGenerated uses, kept in one place so the two checks cannot
+// drift apart and disagree about what "generated" means.
+func hasGeneratedHeader(b []byte) bool {
+	const headerScanLines = 5
+	lines := strings.SplitN(string(b), "\n", headerScanLines+1)
+	if len(lines) > headerScanLines {
+		lines = lines[:headerScanLines]
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(line, generatedCodeHeaderPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// repoRootForBufConfig walks up from the test's working directory until it
+// finds buf.gen.yaml, so this test does not hardcode its own depth below the
+// repository root.
+func repoRootForBufConfig() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "buf.gen.yaml")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no buf.gen.yaml found in any parent of the test working directory")
+		}
+		dir = parent
+	}
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

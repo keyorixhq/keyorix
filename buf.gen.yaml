@@ -1,5 +1,22 @@
 version: v2
-clean: true
+
+# clean: false, deliberately. buf's `clean: true` deletes the ENTIRE contents
+# of every plugin `out:` directory before generating, not just the files it is
+# about to write. server/proto/pb holds one hand-written file —
+# generated_code_test.go, #1541's guard that every other .go file in the
+# package really is generated — and `clean: true` silently deleted it on every
+# `make proto`. Found 2026-09-10, when `make proto` was run for the first time
+# since #1541 landed: the guard that protects this package from hand-written
+# code was itself the casualty of regenerating it.
+#
+# The Makefile's `proto` target removes server/proto/pb/*.pb.go explicitly
+# instead, which is the actual property `clean` was wanted for (no stale
+# generated output when an RPC or message is renamed or deleted) without the
+# collateral damage. TestBufGenerateWillNotDeleteHandWrittenFiles in
+# server/proto/pb/generated_code_test.go fails if this is ever set back to
+# true while a hand-written file sits in an output directory.
+clean: false
+
 plugins:
   - local: protoc-gen-go
     out: server/proto/pb

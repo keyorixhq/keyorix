@@ -10714,7 +10714,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x05value\x18\x03 \x01(\tR\x05value\x12%\n" +
 	"\x0eversion_number\x18\x04 \x01(\rR\rversionNumber\x12\x1d\n" +
 	"\n" +
-	"read_count\x18\x05 \x01(\rR\treadCount\"\xe5\x03\n" +
+	"read_count\x18\x05 \x01(\rR\treadCount\"\xeb\x03\n" +
 	"\x13CreateSecretRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x1d\n" +
@@ -10737,7 +10737,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"_max_readsB\r\n" +
 	"\v_expirationB\f\n" +
 	"\n" +
-	"_parent_id\"G\n" +
+	"_parent_idJ\x04\b\v\x10\x15\"G\n" +
 	"\x10GetSecretRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12#\n" +
 	"\rinclude_value\x18\x02 \x01(\bR\fincludeValue\"\xe6\x02\n" +
