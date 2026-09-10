@@ -45,6 +45,7 @@ cmd/keyorix-mcp	full-adversarial	baseline-2026-08-07, two independent passes (ba
 cmd/root	targeted	baseline-2026-08-07/baseline/cmd-root-findings.json, mini-batch 8 (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/cmd-root-findings.json — full 14-line file read, confirmed dead code via repo-wide grep for "RootCmd"/"cmd/root" (zero hits outside the file itself); real CLI entrypoint is internal/cli's own root command	-
 cmd/system	full-adversarial	baseline-2026-08-07/baseline/cmd-system-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/cmd-system-findings.json — 1 HIGH (fixfileperm.go:21 unvalidated salt/DEK paths -> confused-deputy chmod/chown of arbitrary files) + 2 lower findings	-
 cmd/validate-translations	full-adversarial	baseline-2026-08-07/baseline/cmd-validate-translations-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/cmd-validate-translations-findings.json — 1 MEDIUM finding (double base-dir join breaks every real invocation), confirmed by agent actually running the tool	-
+configs	none	-	new PR #1839 (system init first-run fix); single exported []byte var (DefaultConfigTemplate) populated by a go:embed directive, zero logic beyond the embed itself, guarded against an empty/corrupt embed by configs/embed_test.go	pending
 examples/new-architecture	none	-	-	example
 examples/secret_crud	none	-	-	example
 examples/system_init	none	-	-	example
