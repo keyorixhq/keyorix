@@ -41,9 +41,30 @@ import (
 //
 // IF EXISTS makes firing both unconditionally safe: whichever handle doesn't
 // share the live connection just no-ops on an empty/already-gone table.
+//
+// db's own call is bounded by a short timeout, not run unbounded: every
+// :memory: DB constructor in this package (including this file's own
+// newPartialSecretsDB) now calls sqlDB.SetMaxOpenConns(1), closing the
+// separate defect where an anonymous ":memory:" DSN's UNLIMITED pool could
+// silently open a second, never-migrated phantom connection under
+// concurrent access (see TestMemDBConnectionPool_* in
+// local_memdb_pool_isolation_test.go for the mechanism and #1835/#1836's
+// real CI failures this closes). With the pool capped at 1, if tx is
+// genuinely holding the only connection when this callback fires (the
+// normal case: fires mid-transaction), a plain, unbounded db.Exec would
+// block forever waiting for a connection tx will never release from inside
+// its own callback chain — a real, first-run-observed deadlock (10 tests
+// stuck 25m: TestRestoreProject_FinalProjectUpdateFails and 9 others using
+// this same helper family), not a theoretical one. The timeout preserves
+// this call's original purpose exactly: if db shares tx's connection, the
+// deadline fires and this is a correct no-op (tx.Exec above already did the
+// real drop); if db really is a distinct, already-free connection, the drop
+// still completes immediately, well inside the timeout.
 func dropTableBothHandles(tx, db *gorm.DB, tableName string) {
 	tx.Exec("DROP TABLE IF EXISTS " + tableName)
-	db.Exec("DROP TABLE IF EXISTS " + tableName)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	db.WithContext(ctx).Exec("DROP TABLE IF EXISTS " + tableName)
 }
 
 // dropTableAfterQueries registers a one-shot callback on db that drops
@@ -126,6 +147,9 @@ func newPartialSecretsDB(t *testing.T, models ...any) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	if len(models) > 0 {
 		require.NoError(t, db.AutoMigrate(models...))
 	}

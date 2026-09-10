@@ -16,6 +16,9 @@ func newSecretTemplateTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretTemplate{}))
 	return NewLocalStorage(db)
 }
@@ -68,6 +71,9 @@ func TestGetSecretTemplate_DBError(t *testing.T) {
 	// No AutoMigrate — provoke a real "no such table" error.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	_, err = ls.GetSecretTemplate(ctx, 1)
@@ -102,6 +108,9 @@ func TestGetSecretTemplateByName_DBError(t *testing.T) {
 	ctx := context.Background()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	_, err = ls.GetSecretTemplateByName(ctx, "any")
@@ -168,6 +177,9 @@ func TestListSecretTemplates_DBError(t *testing.T) {
 	ctx := context.Background()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	_, err = ls.ListSecretTemplates(ctx)

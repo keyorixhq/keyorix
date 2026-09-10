@@ -25,6 +25,9 @@ import (
 func TestRotateSession_SingleCallerWins(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.Session{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -60,6 +63,9 @@ func TestRotateSession_SingleCallerWins(t *testing.T) {
 func TestRotateSession_LoserGetsNoSession(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.Session{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
@@ -135,6 +141,9 @@ func TestConcurrency_RotateSession_OnlyOneWinnerPerToken(t *testing.T) {
 func TestDeleteSessionsByFamily_RevokesWholeLineage(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.Session{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()

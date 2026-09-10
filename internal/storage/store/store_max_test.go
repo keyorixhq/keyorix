@@ -755,6 +755,9 @@ func TestCreateAccessReviewCampaign_ErrorPath(t *testing.T) {
 	// DB without the table → should fail.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateAccessReviewCampaign(context.Background(), &models.AccessReviewCampaign{})
 	require.Error(t, err)
@@ -978,6 +981,9 @@ func TestAuditEntryHashByID_NotFound(t *testing.T) {
 func TestWithAuditCheckpointLock_FnError(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	sentinel := fmt.Errorf("lock-fn-error")
@@ -992,6 +998,9 @@ func TestWithAuditCheckpointLock_FnError(t *testing.T) {
 func TestLogAuditEvent_MissingTable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	// No migration → AuditEvent table absent → should return an error.
@@ -1467,6 +1476,9 @@ func newInvStore(t *testing.T) *LocalStorage {
 func TestCreateProjectInvitation_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateProjectInvitation(context.Background(), &models.ProjectInvitation{})
 	require.Error(t, err)
@@ -1505,6 +1517,9 @@ func TestListProjectInvitations_Empty(t *testing.T) {
 func TestCreateAccessRequest_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateAccessRequest(context.Background(), &models.AccessRequest{})
 	require.Error(t, err)
@@ -1543,6 +1558,9 @@ func TestListAccessRequests_Empty(t *testing.T) {
 func TestCreateAccessRequestApproval_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	err = ls.CreateAccessRequestApproval(context.Background(), &models.AccessRequestApproval{})
 	require.Error(t, err)
@@ -1569,6 +1587,9 @@ func newRiskExcStore(t *testing.T) *LocalStorage {
 func TestCreateRiskException_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateRiskException(context.Background(), &models.RiskException{})
 	require.Error(t, err)
@@ -1626,6 +1647,9 @@ func newSoDStoreMax(t *testing.T) *LocalStorage {
 func TestCreateSoDPolicy_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateSoDPolicy(context.Background(), &models.SoDPolicy{})
 	require.Error(t, err)
@@ -1659,6 +1683,9 @@ func newSSOStoreMax(t *testing.T) *LocalStorage {
 func TestCreateSSOLoginState_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	err = ls.CreateSSOLoginState(context.Background(), &models.SSOLoginState{})
 	require.Error(t, err)
@@ -1699,6 +1726,9 @@ func newSecDepStore(t *testing.T) *LocalStorage {
 func TestCreateSecretDependency_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateSecretDependency(context.Background(), &models.SecretDependency{})
 	require.Error(t, err)
@@ -1742,6 +1772,9 @@ func newMachIDStore(t *testing.T) *LocalStorage {
 func TestCreateMachineIdentity_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateMachineIdentity(context.Background(), &models.MachineIdentity{})
 	require.Error(t, err)
@@ -1795,6 +1828,9 @@ func newMachCredStoreMax(t *testing.T) *LocalStorage {
 func TestCreateMachineIdentityCredential_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateMachineIdentityCredential(context.Background(), &models.MachineIdentityCredential{})
 	require.Error(t, err)
@@ -1804,6 +1840,9 @@ func TestCreateMachineIdentityCredential_Error(t *testing.T) {
 func TestUpdateMachineIdentityCredential_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	err = ls.UpdateMachineIdentityCredential(context.Background(), &models.MachineIdentityCredential{})
 	require.Error(t, err)
@@ -1967,6 +2006,9 @@ func newDynStore(t *testing.T) *LocalStorage {
 func TestCreateDynamicSecretConfig_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateDynamicSecretConfig(context.Background(), &models.DynamicSecretConfig{})
 	require.Error(t, err)
@@ -1984,6 +2026,9 @@ func TestListDynamicSecretConfigs_Empty(t *testing.T) {
 func TestCreateDynamicSecretLease_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateDynamicSecretLease(context.Background(), &models.DynamicSecretLease{})
 	require.Error(t, err)
@@ -2017,6 +2062,9 @@ func TestUpdateLegalHold_UpsertPath(t *testing.T) {
 func TestCreateLegalHold_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateLegalHold(context.Background(), &models.LegalHold{})
 	require.Error(t, err)
@@ -2035,6 +2083,9 @@ func newBGStoreMax(t *testing.T) *LocalStorage {
 func TestCreateBreakGlassActivation_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	_, err = ls.CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{})
 	require.Error(t, err)
@@ -2124,6 +2175,9 @@ func TestQueryBuilder_AddUintNonNil(t *testing.T) {
 func TestCountByClassification_BadTable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	// No tables migrated → countByClassification should return an error.
 	_, err = countByClassification(context.Background(), ls.db, &models.SecretNode{})

@@ -17,6 +17,9 @@ func newAnomalyTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AnomalyAlert{}))
 	return NewLocalStorage(db)
 }
@@ -112,6 +115,9 @@ func TestPrincipalSecretFirstSeen_ReturnsEarliestPerPair(t *testing.T) {
 	ctx := context.Background()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}))
 	ls := NewLocalStorage(db)
 
@@ -154,6 +160,9 @@ func TestListSecretAccessLogs_CapsRowCount(t *testing.T) {
 	ctx := context.Background()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}))
 	ls := NewLocalStorage(db)
 

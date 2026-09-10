@@ -126,6 +126,9 @@ func seedShareFixture(t *testing.T, ls *LocalStorage) (ownerID, recipientID, sec
 func TestWithSchedulerLock_S29_FnErrorPropagates(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	want := assert.AnError
@@ -148,6 +151,9 @@ func TestWithSchedulerLock_S29_FnErrorPropagates(t *testing.T) {
 func TestWithAuditCheckpointLock_S29_FnError(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 
 	want := assert.AnError
@@ -161,6 +167,9 @@ func TestWithAuditCheckpointLock_S29_FnError(t *testing.T) {
 func TestWithAuditCheckpointLock_S29_Serializes(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 

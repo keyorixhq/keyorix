@@ -25,6 +25,9 @@ func newACLStore(t *testing.T) (*LocalStorage, uint) {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretACL{}))
 
 	// Seed one secret so the store tests don't need a FK violation guard.
@@ -151,6 +154,9 @@ func TestLocalACL_ListOnlyOwnSecret(t *testing.T) {
 	// Insert a second secret.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretACL{}))
 
 	// Grant on secretID; don't grant on secret 9999.
