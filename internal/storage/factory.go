@@ -1924,9 +1924,47 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 // NFC+case-fold output, #1642 — so "Admin"/"admin" can't coexist as two
 // indistinguishable roles in an access review. Idempotent; works on both
 // SQLite and Postgres.
+// dropLegacyGormUniqueTagArtifact removes the uniqueness artifact GORM's plain
+// `unique` struct tag left behind, whichever form the dialect gave it.
+//
+// This distinction is the whole reason the function exists. On SQLite -- the
+// dev and test backend, and therefore the only one CI ever migrates -- a
+// `unique` tag produces a plain index, and DROP INDEX removes it. On Postgres
+// it produces a UNIQUE CONSTRAINT that *owns* an index of the same name, and
+// Postgres refuses to drop that index directly:
+//
+//	ERROR: cannot drop index uni_roles_name because constraint uni_roles_name
+//	on table roles requires it (SQLSTATE 2BP01)
+//
+// which aborted migrateDatabase and stopped the server booting. Found on the
+// DAST rig's real Postgres volume, 2026-09-11, immediately behind the missing
+// folded columns -- the second Postgres-only, upgrade-only defect in the same
+// migration, both invisible to a SQLite test suite.
+//
+// Constraint first, then index: DROP CONSTRAINT removes the owned index with
+// it, so the DROP INDEX that follows is a no-op on Postgres and does the real
+// work on SQLite. Both are IF EXISTS, so this is idempotent either way. The
+// table and constraint names are passed as whole literal statements by the
+// callers rather than built here, keeping the no-runtime-built-identifier
+// discipline the surrounding code follows deliberately.
+func dropLegacyUniqueConstraint(db *gorm.DB, alterStmt string) error {
+	if db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	if err := db.Exec(alterStmt).Error; err != nil {
+		return fmt.Errorf("migration failed (%s): %w", alterStmt, err)
+	}
+	return nil
+}
+
 func ensureRoleNameIndex(db *gorm.DB) error {
 	// Drop the unique constraint/index GORM's original `unique` tag on Name
 	// created. GORM names a plain `unique` tag's index uni_<table>_<column>.
+	// On Postgres that name belongs to a CONSTRAINT, which DROP INDEX alone
+	// cannot remove -- see dropLegacyUniqueConstraint above.
+	if err := dropLegacyUniqueConstraint(db, "ALTER TABLE roles DROP CONSTRAINT IF EXISTS uni_roles_name"); err != nil {
+		return err
+	}
 	if err := db.Exec("DROP INDEX IF EXISTS uni_roles_name").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy roles name index: %w", err)
 	}
@@ -2088,6 +2126,9 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	// into individual literal statements (no runtime-built identifier) rather
 	// than looping over a slice, so this can't even shape-match a
 	// string-formatted-query finding.
+	if err := dropLegacyUniqueConstraint(db, "ALTER TABLE groups DROP CONSTRAINT IF EXISTS uni_groups_name"); err != nil {
+		return err
+	}
 	if err := db.Exec("DROP INDEX IF EXISTS uni_groups_name").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy groups name index %q: %w", "uni_groups_name", err)
 	}
@@ -2189,6 +2230,9 @@ func ensureUserNameIndex(db *gorm.DB) error {
 	// shape-match a string-formatted-query finding.
 	if err := db.Exec("DROP INDEX IF EXISTS idx_users_username").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy users username index %q: %w", "idx_users_username", err)
+	}
+	if err := dropLegacyUniqueConstraint(db, "ALTER TABLE users DROP CONSTRAINT IF EXISTS uni_users_username"); err != nil {
+		return err
 	}
 	if err := db.Exec("DROP INDEX IF EXISTS uni_users_username").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy users username index %q: %w", "uni_users_username", err)
