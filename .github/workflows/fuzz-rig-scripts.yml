@@ -25,7 +25,10 @@ jobs:
           persist-credentials: false
 
       - name: shellcheck
-        run: shellcheck scripts/fuzzing/runlog.sh scripts/fuzzing/runlog_test.sh scripts/fuzzing/run-rotation.sh scripts/fuzzing/notify-on-crash.sh
+        run: shellcheck scripts/fuzzing/runlog.sh scripts/fuzzing/runlog_test.sh scripts/fuzzing/run-rotation.sh scripts/fuzzing/notify-on-crash.sh scripts/fuzzing/sync-corpus.sh scripts/fuzzing/sync-corpus_test.sh
 
       - name: runlog tests
         run: bash scripts/fuzzing/runlog_test.sh
+
+      - name: sync-corpus tests
+        run: bash scripts/fuzzing/sync-corpus_test.sh
