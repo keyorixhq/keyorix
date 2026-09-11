@@ -1,0 +1,31 @@
+name: Fuzz rig scripts
+
+# scripts/fuzzing/ only ever runs on the self-hosted fuzz box, so nothing else
+# in CI exercises it — and ci.yml's fuzz-targets job is skipped on exactly the
+# diffs that touch only these scripts (go_unaffected). This runs the run-log
+# library's tests (fake go/gh, no network, a few seconds) whenever they could
+# have changed.
+on:
+  pull_request:
+    paths: ['scripts/fuzzing/**', '.github/workflows/fuzz-rig-scripts.yml']
+  push:
+    branches: [main]
+    paths: ['scripts/fuzzing/**', '.github/workflows/fuzz-rig-scripts.yml']
+
+permissions: {}
+
+jobs:
+  runlog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck scripts/fuzzing/runlog.sh scripts/fuzzing/runlog_test.sh scripts/fuzzing/run-rotation.sh scripts/fuzzing/notify-on-crash.sh
+
+      - name: runlog tests
+        run: bash scripts/fuzzing/runlog_test.sh

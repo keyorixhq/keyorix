@@ -38,7 +38,9 @@ trap cleanup_ntfy_curl_cfg EXIT
 
 cd "$KEYORIX_REPO"
 
-fail_line="$(grep -m1 -E 'FAIL|panic:' "$LOGFILE" || true)"
+# zgrep: run-rotation.sh hands over the run's log already gzipped by runlog.sh
+# (zgrep reads an uncompressed file just as well).
+fail_line="$(zgrep -m1 -E 'FAIL|panic:' "$LOGFILE" || true)"
 fail_hash="$(printf '%s' "${fail_line:-unknown}" | sha256sum | cut -c1-16)"
 marker="$NOTIFIED_STATE_DIR/notified-$FUNC-$fail_hash"
 
@@ -63,7 +65,7 @@ if ! git ls-tree -r --name-only "origin/$FUZZ_CORPUS_BRANCH" 2>/dev/null | grep 
   exit 0
 fi
 
-summary="$(grep -m8 -E 'FAIL|panic:|--- FAIL|Fatalf|\.go:[0-9]+' "$LOGFILE" | head -c 1500 || true)"
+summary="$(zgrep -m8 -E 'FAIL|panic:|--- FAIL|Fatalf|\.go:[0-9]+' "$LOGFILE" | head -c 1500 || true)"
 
 # ntfy.sh push notification (optional — skip if NTFY_TOPIC is unset or empty)
 if [[ -n "${NTFY_TOPIC:-}" ]]; then
