@@ -454,7 +454,22 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 			return prevHash, headID, started, true
 		}
 		if computeAuditEntryHash(e, e.PrevHash) != e.EntryHash {
-			brokenChain(result, e.ID, "entry_hash does not match the event contents (event modified)")
+			// Deliberately does NOT assert tampering. This branch fires whenever
+			// the stored hash disagrees with the recomputed one, and there are
+			// two ways to get there: the event really was modified, or the row
+			// was hashed under the pre-2026-08-16 encoding (#1452 replaced the
+			// NUL-delimited derivation with a length-prefixed one) and has not
+			// been through MigrateAuditChainEncoding yet. This code cannot tell
+			// them apart -- no legacy hash function is retained, so there is
+			// nothing to test the row against -- and on an upgraded install the
+			// second cause is the overwhelmingly likely one, reached simply by
+			// deploying. Saying "event modified" there told an operator, and the
+			// Compliance page's "Audit chain verified: No", that someone had
+			// tampered with the audit log. Observed on a real database on
+			// 2026-09-11 whose every event predates the encoding change.
+			brokenChain(result, e.ID, "entry_hash does not match the event contents — the event was modified, "+
+				"or this row's hash predates the 2026-08-16 audit-hash encoding change and the one-time "+
+				"chain re-encoding (POST /api/v1/audit/migrate-chain-encoding) has not been run")
 			return prevHash, headID, started, true
 		}
 		prevHash = e.EntryHash
