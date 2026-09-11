@@ -360,7 +360,15 @@ func TestRFC3161_Anchor_NestedMalformedResponse_RecoversFromPanic(t *testing.T) 
 		_, anchorErr = client.Anchor(context.Background(), []byte("anchor message"))
 	})
 	require.Error(t, anchorErr)
-	assert.Contains(t, anchorErr.Error(), "parser panic")
+	// The strict-DER framing guard (derframing.go) now rejects this embedded
+	// token before it reaches digitorus/pkcs7's reader at all: `30 02 ff 30` is a
+	// SEQUENCE whose 2 content bytes are a truncated high-tag-number element. So
+	// the failure surfaces as a framing rejection rather than the decoder's
+	// recovered panic — a strictly earlier and cheaper rejection of the same
+	// input. Anchor's recover() stays in place as a backstop for any panic on an
+	// input that passes framing; the point this test still guards is that a
+	// malformed TSA response never crashes the process.
+	assert.Contains(t, anchorErr.Error(), "not well-formed DER")
 }
 
 // TestRFC3161_Anchor_NilContext confirms Anchor surfaces

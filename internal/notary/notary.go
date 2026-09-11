@@ -60,6 +60,15 @@ func VerifyReceipt(roots *x509.CertPool, message, token []byte) (_ time.Time, er
 	if len(token) == 0 {
 		return time.Time{}, fmt.Errorf("notary: empty receipt token")
 	}
+	// Reject the token unless it is strict, well-framed DER BEFORE handing it to
+	// digitorus's BER decoder. That decoder is lax about nesting boundaries, and
+	// a ~130-byte malformed token (indefinite-length, or definite-length children
+	// that overrun their parent) makes it allocate gigabytes and OOM the process
+	// (found by the fuzz rig; see derframing.go). RFC 3161 §2.4.2 requires the
+	// token to be DER anyway, so nothing legitimate is rejected here.
+	if err := validateDERFraming(token); err != nil {
+		return time.Time{}, err
+	}
 	// digitorus/pkcs7 panics on certain malformed BER inputs instead of returning
 	// an error (index out of range in ber.go:readObject, found by fuzz rig).
 	// Convert any such panic to an error so VerifyReceipt never panics itself.
