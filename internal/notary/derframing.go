@@ -2,30 +2,26 @@ package notary
 
 import "fmt"
 
-// A malformed RFC 3161 token can make digitorus/pkcs7's BER decoder allocate
-// enormous amounts of memory: its ber2der pass is lax about nesting boundaries,
-// so a ~130-byte input with either indefinite-length form or definite-length
-// children that overrun their parent gets re-parsed and re-encoded until it
-// balloons. Measured on internal/crypto's sibling parser: 131 bytes -> 1.8 GB,
-// and every extra nested unit roughly doubles it (147 bytes -> 28 GB, OOM). A
-// byte-size cap alone cannot separate the bomb (130 bytes) from a legitimate
-// token (several KB), because the cost is driven by nesting, not length.
+// A malformed RFC 3161 token can drive the CMS/BER decoder into pathological
+// memory allocation: certain nesting shapes cause the input to be re-parsed and
+// re-encoded until it balloons far beyond its own byte size. A size cap cannot
+// separate such an input from a legitimate token, because the cost is driven by
+// nesting structure, not length.
 //
 // A genuine TimeStampToken is DER: definite-length, and every child exactly
-// tiles its parent's content. Both bomb shapes violate that — indefinite form
-// is not DER at all, and the overlapping-definite shape has a child whose
-// declared length runs past its parent. So validating strict DER framing before
-// the token reaches the lax decoder rejects both classes while accepting every
+// tiles its parent's content. The pathological shapes violate that — indefinite
+// length is not DER at all, and the overlapping-definite shape has a child whose
+// declared length runs past its parent. Validating strict DER framing before the
+// token reaches the decoder rejects those shapes while accepting every
 // well-formed token. This walks only the tag/length headers (never the content
-// bytes) and allocates nothing, so it is itself immune to the same attack.
+// bytes) and allocates nothing, so it is itself immune to the same problem.
 //
-// Rejecting indefinite-length form is not just a heuristic here: RFC 3161
-// §2.4.2 requires the TimeStampToken to be DER-encoded, and DER forbids the
-// indefinite form, so a spec-compliant TSA never emits it.
+// Rejecting indefinite-length form is not just a heuristic: RFC 3161 §2.4.2
+// requires the TimeStampToken to be DER-encoded, and DER forbids the indefinite
+// form, so a spec-compliant TSA never emits it.
 //
-// Limits are generous for a real token — a SignedData with an embedded 2048-bit
-// signing cert measures depth 17 / 100 nodes — and far below what a doubling
-// bomb needs to reach gigabytes.
+// The limits below are generous for a real token — a SignedData with an embedded
+// 2048-bit signing cert sits well within them.
 const (
 	maxDERDepth = 32
 	maxDERNodes = 8192
