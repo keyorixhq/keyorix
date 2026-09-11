@@ -1756,9 +1756,25 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// On an existing install AutoMigrate never runs, so this ADD COLUMN
 		// step -- mirroring the groups.DeletedAt AddColumn immediately above
 		// this comment block -- is what actually has to add it here.
-		if m := db.Migrator(); !m.HasColumn(&models.Role{}, "NameFolded") {
-			if err := m.AddColumn(&models.Role{}, "NameFolded"); err != nil {
-				return fmt.Errorf("failed to add roles.name_folded column: %w", err)
+		// Literal DDL, not Migrator.AddColumn. models.Role tags NameFolded
+		// "not null", and GORM renders that straight into the ALTER with no
+		// DEFAULT -- which every engine rejects against a table that already
+		// has rows:
+		//
+		//   SQLite:   Cannot add a NOT NULL column with default value NULL
+		//   Postgres: column "name_folded" of relation "roles" contains null values
+		//
+		// so #1642's roles guard only ever worked on an EMPTY roles table. It
+		// went unnoticed because the one real database this was reproduced on
+		// happened to have roles=0; any install with the seeded admin/operator/
+		// viewer roles would have hit it. Caught by
+		// TestMigrateDatabase_PreFoldedColumnsUpgrade, whose fixture inserts a
+		// role -- the synthetic case was stronger than the real one here.
+		// DEFAULT '' also matches what backfillFoldedColumn selects on, so the
+		// backfill immediately below still picks every pre-existing row up.
+		if !columnExists(db, "roles", "name_folded") {
+			if err := exec("ALTER TABLE roles ADD COLUMN name_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
 			}
 		}
 		if err := ensureRoleNameIndex(db); err != nil {
