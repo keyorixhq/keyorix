@@ -139,6 +139,15 @@ func (r *RFC3161) Anchor(ctx context.Context, message []byte) (_ *Receipt, err e
 		return nil, fmt.Errorf("rfc3161: read response: %w", err)
 	}
 
+	// Same decoder-amplification guard as VerifyReceipt (see derframing.go): the
+	// TSA response is fed to digitorus's lax BER decoder, so a hostile/compromised
+	// TSA could return a ~150-byte body that makes it allocate gigabytes and OOM
+	// the process anchoring a checkpoint. A spec-compliant RFC 3161 response is
+	// DER, so requiring strict framing first rejects the bomb without rejecting a
+	// real TSA. (The recover() above only catches a panic — not an OOM.)
+	if err := validateDERFraming(body); err != nil {
+		return nil, fmt.Errorf("rfc3161: TSA response is not well-formed DER: %w", err)
+	}
 	// ParseResponse validates the PKI status and the token's signature structure.
 	ts, err := timestamp.ParseResponse(body)
 	if err != nil {
