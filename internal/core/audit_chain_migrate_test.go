@@ -7,30 +7,63 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+// relegacyChain rewrites EVERY chained event in the database so it carries a
+// GENUINE pre-#1452 hash, in id order, seeded from the first chained row's own
+// stored prev_hash (genesis normally, the anchor value after a retention purge)
+// so the chain linkage stays intact. Whole-database, because that is the real
+// scenario: an install that predates the encoding change has no current-encoded
+// rows at all.
+//
+// The fixture this replaces wrote the literal string "legacy-"+hash[:16] — not
+// a hash under any encoding this code has ever used. Every migration test built
+// on it therefore proved only that MigrateAuditChainEncoding overwrites
+// arbitrary bytes, which is precisely the unconditional-overwrite behaviour
+// that let it re-hash a tampered row as readily as a stale one: the tests
+// asserted the defect as the expectation. With real legacy hashes these tests
+// exercise the upgrade the function exists for, and pass the pre-flight check
+// that now refuses rows matching neither encoding.
+func relegacyChain(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	var events []models.AuditEvent
+	require.NoError(t, db.Order("id ASC").Find(&events).Error)
+
+	var prev string
+	started := false
+	for i := range events {
+		e := events[i]
+		if e.EntryHash == "" {
+			continue // leading unchained (pre-ADR-029) rows, as the real walker skips them
+		}
+		if !started {
+			prev = e.PrevHash // genesis normally; the anchor value after a purge
+			started = true
+		}
+		e.PrevHash = prev
+		entry := store.ComputeAuditEntryHashPre1452(&e, prev)
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("id = ?", e.ID).
+			Updates(map[string]interface{}{"prev_hash": prev, "entry_hash": entry}).Error)
+		prev = entry
+	}
+	require.True(t, started, "fixture must contain at least one chained event to re-encode")
+}
 
 func TestMigrateAuditChainEncoding_Core_AppliesAndVerifiesAfterward(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	c, db, fixed := newReanchorTestCore(t)
 
-	e1 := logChainedEvent(t, c, "secret.read", fixed.AddDate(0, 0, -3))
-	e2 := logChainedEvent(t, c, "secret.updated", fixed.AddDate(0, 0, -2))
-	e3 := logChainedEvent(t, c, "secret.deleted", fixed.AddDate(0, 0, -1))
+	logChainedEvent(t, c, "secret.read", fixed.AddDate(0, 0, -3))
+	logChainedEvent(t, c, "secret.updated", fixed.AddDate(0, 0, -2))
+	logChainedEvent(t, c, "secret.deleted", fixed.AddDate(0, 0, -1))
 
-	// Simulate a legacy-encoded pre-existing chain by rewriting the stored
-	// hashes directly, matching the storage-layer test's approach.
-	require.NoError(t, db.Model(&models.AuditEvent{}).Where("id = ?", e1.ID).
-		Updates(map[string]interface{}{"entry_hash": "legacy-" + e1.EntryHash[:16]}).Error)
-	var reload2, reload3 models.AuditEvent
-	require.NoError(t, db.First(&reload2, e2.ID).Error)
-	require.NoError(t, db.First(&reload3, e3.ID).Error)
-	require.NoError(t, db.Model(&models.AuditEvent{}).Where("id = ?", e2.ID).
-		Updates(map[string]interface{}{"prev_hash": "legacy-" + e1.EntryHash[:16], "entry_hash": "legacy-" + e2.EntryHash[:16]}).Error)
-	require.NoError(t, db.Model(&models.AuditEvent{}).Where("id = ?", e3.ID).
-		Updates(map[string]interface{}{"prev_hash": "legacy-" + e2.EntryHash[:16], "entry_hash": "legacy-" + e3.EntryHash[:16]}).Error)
+	// Genuine pre-#1452 hashes — see relegacyChain.
+	relegacyChain(t, db)
 
 	v, err := c.VerifyAuditChain(ctx)
 	require.NoError(t, err)
@@ -59,8 +92,7 @@ func TestMigrateAuditChainEncoding_Core_DryRunPersistsNothing(t *testing.T) {
 	c, db, fixed := newReanchorTestCore(t)
 
 	e1 := logChainedEvent(t, c, "secret.read", fixed.AddDate(0, 0, -1))
-	require.NoError(t, db.Model(&models.AuditEvent{}).Where("id = ?", e1.ID).
-		Updates(map[string]interface{}{"entry_hash": "legacy-" + e1.EntryHash[:16]}).Error)
+	relegacyChain(t, db)
 
 	var before models.AuditEvent
 	require.NoError(t, db.First(&before, e1.ID).Error)
@@ -109,8 +141,7 @@ func TestMigrateAuditChainEncoding_Core_ReSignsAnchorAfterPurge(t *testing.T) {
 	// must stay untouched, since it represents an already-purged predecessor).
 	var earliest models.AuditEvent
 	require.NoError(t, db.Where("event_type != ?", "system.audit_purge").Order("id ASC").First(&earliest).Error)
-	require.NoError(t, db.Model(&models.AuditEvent{}).Where("id = ?", earliest.ID).
-		Updates(map[string]interface{}{"entry_hash": "legacy-" + earliest.EntryHash[:16]}).Error)
+	relegacyChain(t, db)
 
 	v2, err := c.VerifyAuditChain(ctx)
 	require.NoError(t, err)
