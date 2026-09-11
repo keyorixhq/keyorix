@@ -64,28 +64,26 @@ var expectedSweptFields = map[modelField]bool{
 	{"DynamicSecretLease", "CredentialEnc"}: true,
 }
 
-// TestSweepCompleteness_EveryEncryptedModelFieldHasASweep is the regression test
-// described above.
-func TestSweepCompleteness_EveryEncryptedModelFieldHasASweep(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed — cannot locate internal/storage/models relative to this test file")
-	}
-	modelsDir := filepath.Join(filepath.Dir(thisFile), "..", "storage", "models")
-
-	entries, err := os.ReadDir(modelsDir)
+// discoverEncryptedModelFields parses every non-test .go file in dir and
+// returns every struct field matching the DEK-encrypted naming convention
+// (see looksLikeEncryptedFieldName): type []byte, name "Encrypted*" or
+// "*Enc" — the actual, current set of DEK-encrypted-looking model fields,
+// derived from source rather than hand-maintained.
+func discoverEncryptedModelFields(t *testing.T, dir string) map[modelField]bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("failed to read %s: %v", modelsDir, err)
+		t.Fatalf("failed to read %s: %v", dir, err)
 	}
 	var goFiles []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		goFiles = append(goFiles, filepath.Join(modelsDir, e.Name()))
+		goFiles = append(goFiles, filepath.Join(dir, e.Name()))
 	}
 	if len(goFiles) == 0 {
-		t.Fatalf("no .go files found under %s — did the models package move?", modelsDir)
+		t.Fatalf("no .go files found under %s — did the models package move?", dir)
 	}
 
 	fset := token.NewFileSet()
@@ -117,7 +115,19 @@ func TestSweepCompleteness_EveryEncryptedModelFieldHasASweep(t *testing.T) {
 			return true
 		})
 	}
+	return discovered
+}
 
+// TestSweepCompleteness_EveryEncryptedModelFieldHasASweep is the regression test
+// described above.
+func TestSweepCompleteness_EveryEncryptedModelFieldHasASweep(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed — cannot locate internal/storage/models relative to this test file")
+	}
+	modelsDir := filepath.Join(filepath.Dir(thisFile), "..", "storage", "models")
+
+	discovered := discoverEncryptedModelFields(t, modelsDir)
 	if len(discovered) == 0 {
 		t.Fatal("discovered zero Encrypted*/*Enc []byte fields in internal/storage/models — the AST walk is almost certainly broken (models.go alone has several), not that encryption was removed")
 	}
