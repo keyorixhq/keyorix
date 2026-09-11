@@ -277,6 +277,71 @@ func extractRangeQueriedColumns(t *testing.T, dir string) []g81RangeQueriedColum
 	return found
 }
 
+// TestG81ScannerDetectsRangeQueriedColumns is this guard's red-proof.
+//
+// TestG81_NoUntrackedRangeQueriedTimeColumns filters extractRangeQueriedColumns'
+// output through g81TimeLikeColumn — but the interesting, easy-to-quietly-break
+// part is upstream of that: the regex match against a bind placeholder, and
+// the alias-stripping that turns "t.expires_at" into "expires_at" so it can
+// be looked up in g81MaintainedFields at all. g81TimeLikeColumn itself is a
+// name-suffix check with nothing structural to prove — testing it would be
+// the vacuous-check trap this campaign exists to avoid; this test only
+// exercises extractRangeQueriedColumns.
+func TestG81ScannerDetectsRangeQueriedColumns(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed, never compiled: undefined identifiers (db, cutoff) are fine and
+	// deliberate.
+	const src = `package fixture
+
+func rangeQuery() {
+	db.Where("expires_at >= ?", cutoff)
+}
+
+func aliasedRangeQuery() {
+	db.Where("t.created_at <= ?", cutoff)
+}
+
+func equalityQuery() {
+	db.Where("status = ?", "active")
+}
+
+func literalComparisonQuery() {
+	db.Where("count > 0")
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "fixture.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+
+	cols := extractRangeQueriedColumns(t, dir)
+	found := map[string]bool{}
+	for _, c := range cols {
+		found[c.Column] = true
+	}
+
+	if !found["expires_at"] {
+		t.Errorf("extractRangeQueriedColumns must find \"expires_at\" from a >= bind-placeholder comparison; "+
+			"got %v", cols)
+	}
+	if !found["created_at"] {
+		t.Errorf("extractRangeQueriedColumns must find \"created_at\" from an ALIASED (t.created_at) <= "+
+			"bind-placeholder comparison, with the alias stripped — if alias-stripping regresses, every "+
+			"aliased range query silently stops matching anything in g81MaintainedFields, got %v", cols)
+	}
+	if found["status"] {
+		t.Errorf("extractRangeQueriedColumns matched a plain equality (status = ?) as a range comparison; "+
+			"got %v", cols)
+	}
+	if found["count"] {
+		t.Errorf("extractRangeQueriedColumns matched a literal comparison (count > 0, not a bind "+
+			"placeholder) as a range query; got %v", cols)
+	}
+	if len(cols) != 2 {
+		t.Errorf("expected exactly 2 range-queried columns (equality and literal-comparison queries must "+
+			"contribute nothing), got %d: %v", len(cols), cols)
+	}
+}
+
 // TestG81_NoUntrackedRangeQueriedTimeColumns is the AST freshness check:
 // collect every column name that appears in a range comparison against a
 // bind placeholder anywhere in this package, and assert each time-like one
