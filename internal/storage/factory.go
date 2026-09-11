@@ -1209,6 +1209,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	mfaSecretExists := tableExists(db, "mfa_secrets")
 	mfaRecoveryExists := tableExists(db, "mfa_recovery_codes")
 	mfaChallengeExists := tableExists(db, "mfa_challenges")
+	mfaStepUpGrantExists := tableExists(db, "mfa_step_up_grants")
 	dynConfigExists := tableExists(db, "dynamic_secret_configs")
 	dynLeaseExists := tableExists(db, "dynamic_secret_leases")
 	webauthnCredExists := tableExists(db, "web_authn_credentials")
@@ -1261,6 +1262,35 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !mfaChallengeExists {
 		if err := db.AutoMigrate(&models.MFAChallenge{}); err != nil {
 			return fmt.Errorf("failed to migrate mfa_challenges table: %w", err)
+		}
+	}
+	// mfa_step_up_grants. store-mfa-002 found that MFAStepUpGrant "was never
+	// migrated anywhere" and fixed it by adding the model to the bulk
+	// AutoMigrate list -- which sits AFTER `if projectsExists { return nil }`,
+	// so the fix only ever reached fresh installs. The original finding was
+	// that the table did not exist on any database; it still does not exist on
+	// any UPGRADED one. Same shape as #1642's folded columns: a fresh-DB-only
+	// remedy for an every-install problem.
+	//
+	// Consequence on an upgraded install, confirmed against the DAST rig's real
+	// Postgres volume (2026-09-11), where this table is the only one of the
+	// fresh-path models absent:
+	//
+	//   Create/GetActiveMFAStepUpGrant and PruneMFAStepUpGrants all fail with
+	//   "relation \"mfa_step_up_grants\" does not exist", so the
+	//   mfa_stepup_grant_prune scheduler errors every cycle, and -- with
+	//   classification.restricted_requires_mfa_step_up enabled --
+	//   checkRestrictedMFAGate turns that error into
+	//   "secret %q is restricted: could not verify MFA step-up: ...".
+	//
+	// That gate fails CLOSED, so this is not a bypass: restricted secrets
+	// become unreadable rather than readable without a second factor. It is
+	// still a total functional break of the protection tier meant for the most
+	// sensitive secrets, and unrecoverable in place, since minting a grant
+	// needs the same missing table.
+	if !mfaStepUpGrantExists {
+		if err := db.AutoMigrate(&models.MFAStepUpGrant{}); err != nil {
+			return fmt.Errorf("failed to migrate mfa_step_up_grants table: %w", err)
 		}
 	}
 

@@ -102,3 +102,50 @@ func TestMigrateDatabase_PreFoldedColumnsUpgrade(t *testing.T) {
 	require.NoError(t, db.Raw(`SELECT name_folded FROM groups WHERE id = 1`).Scan(&folded).Error)
 	require.NotEmpty(t, folded, "groups.name_folded must be backfilled for pre-existing rows, not left empty")
 }
+
+// TestMigrateDatabase_RecreatesMFAStepUpGrantsOnUpgrade covers the other half
+// of the same root cause: not a column added without an existing-DB step, but
+// a whole TABLE.
+//
+// store-mfa-002 found that MFAStepUpGrant "was never migrated anywhere" and
+// fixed it by adding the model to the bulk AutoMigrate list. That list sits
+// after `if projectsExists { return nil }`, so the remedy only ever reached
+// fresh installs -- the original finding was that the table existed on no
+// database, and afterwards it still existed on no UPGRADED one. Exactly the
+// shape of #1642's folded columns.
+//
+// The fixture drops the table from an already-migrated database rather than
+// hand-building an old schema, because that is precisely what an older
+// database IS from this code's point of view: everything else present,
+// this one table absent.
+func TestMigrateDatabase_RecreatesMFAStepUpGrantsOnUpgrade(t *testing.T) {
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "stepup.db"))
+	require.NoError(t, err)
+	f := &DefaultStorageFactory{}
+
+	require.NoError(t, f.migrateDatabase(db), "initial fresh migration")
+	require.True(t, tableExists(db, "mfa_step_up_grants"),
+		"sanity: a fresh install must have this table, or the rest of this test proves nothing")
+
+	require.NoError(t, db.Exec("DROP TABLE mfa_step_up_grants").Error)
+	require.False(t, tableExists(db, "mfa_step_up_grants"))
+
+	// projects still exists, so this second run takes the existing-DB path --
+	// the one a real upgrade takes.
+	require.True(t, tableExists(db, "projects"),
+		"the fixture must still look like an initialised database, or migrateDatabase takes the fresh path")
+	require.NoError(t, f.migrateDatabase(db), "the upgrade path must run cleanly")
+
+	require.True(t, tableExists(db, "mfa_step_up_grants"),
+		"mfa_step_up_grants must be created on the existing-DB path. Without it, an upgraded install "+
+			"cannot mint or read a step-up grant: the prune scheduler errors every cycle, and with "+
+			"classification.restricted_requires_mfa_step_up enabled, checkRestrictedMFAGate turns the "+
+			"missing-relation error into a permanent read failure on every restricted secret. It fails "+
+			"closed, so this is lost availability rather than a bypass -- but it is a total break of the "+
+			"tier meant for the most sensitive secrets, and unrecoverable in place, since minting a grant "+
+			"needs the same missing table.")
+
+	// Re-running must stay clean: the guard is an existence check, so a third
+	// pass has to be a no-op rather than a duplicate-table error.
+	require.NoError(t, f.migrateDatabase(db), "migrateDatabase must be idempotent across repeated upgrades")
+}
