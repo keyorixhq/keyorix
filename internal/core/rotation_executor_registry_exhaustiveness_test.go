@@ -22,6 +22,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -70,7 +71,7 @@ var knownRotationExecutorConstructors = map[string]func(name string) rotation.Ex
 // does not know about -- the guard against a silently-missed future backend.
 func TestRotationExecutorRegistry_NoUncoveredConstructor(t *testing.T) {
 	t.Parallel()
-	discovered := discoverRotationExecutorConstructors(t)
+	discovered := discoverRotationExecutorConstructors(t, "../rotation")
 	if len(discovered) == 0 {
 		t.Fatal("found zero New*Executor constructors in internal/rotation -- the discovery logic itself is broken")
 	}
@@ -122,8 +123,8 @@ func TestRotationExecutorRegistry_AllKnownConstructorsRegisterAndResolve(t *test
 	}
 }
 
-// discoverRotationExecutorConstructors parses every non-test .go file in
-// internal/rotation and returns the name of each exported top-level function matching
+// discoverRotationExecutorConstructors parses every non-test .go file in dir
+// and returns the name of each exported top-level function matching
 // `New*Executor` (e.g. NewAWSIAMExecutor) -- the actual, current set of rotation
 // backend constructors, derived from source rather than hand-maintained, so this
 // enumeration can't silently go stale as backends are added or renamed.
@@ -131,9 +132,8 @@ func TestRotationExecutorRegistry_AllKnownConstructorsRegisterAndResolve(t *test
 // Reads the directory and parses each file individually (rather than go/parser's
 // ParseDir, deprecated since Go 1.25) so this stays simple dependency-free source
 // inspection, matching account_state_exhaustiveness_guard_test.go's per-file idiom.
-func discoverRotationExecutorConstructors(t *testing.T) []string {
+func discoverRotationExecutorConstructors(t *testing.T, dir string) []string {
 	t.Helper()
-	const dir = "../rotation"
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("reading %s: %v", dir, err)
@@ -166,4 +166,64 @@ func discoverRotationExecutorConstructors(t *testing.T) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// TestRotationExecutorScannerDetectsConstructors is this guard's red-proof.
+//
+// TestRotationExecutorRegistry_NoUncoveredConstructor's own zero-result Fatal
+// only catches a total collapse of discoverRotationExecutorConstructors. A
+// narrower break -- the exported-name check, the New/Executor prefix/suffix
+// check, or the receiver-nil check that excludes methods -- would silently
+// under- or over-report instead, and knownRotationExecutorConstructors would
+// be compared against a partial or noisy set with no signal that anything
+// was wrong.
+func TestRotationExecutorScannerDetectsConstructors(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed, never compiled: undefined identifiers (rotation, Manager) are
+	// fine and deliberate.
+	const src = `package rotation
+
+// NewFooExecutor is a real constructor and must be found.
+func NewFooExecutor(name string) rotation.Executor { return nil }
+
+// newBarExecutor is unexported and must not be found.
+func newBarExecutor(name string) rotation.Executor { return nil }
+
+// NewBazExecutor has a receiver -- it's a method, not a constructor, and
+// must not be found even though its name matches the New*Executor shape.
+func (m *Manager) NewBazExecutor(name string) rotation.Executor { return nil }
+
+// NewQux is exported and New-prefixed but doesn't end in Executor, and must
+// not be found.
+func NewQux(name string) rotation.Executor { return nil }
+`
+	if err := os.WriteFile(filepath.Join(dir, "rotation_backend.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+	// A _test.go file declaring an otherwise-matching constructor must be
+	// excluded entirely -- discoverRotationExecutorConstructors only scans
+	// non-test files, matching every real internal/rotation file.
+	const testSrc = `package rotation
+
+func NewShouldNotAppearExecutor(name string) rotation.Executor { return nil }
+`
+	if err := os.WriteFile(filepath.Join(dir, "rotation_backend_test.go"), []byte(testSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic test-file fixture: %v", err)
+	}
+
+	discovered := discoverRotationExecutorConstructors(t, dir)
+
+	found := map[string]bool{}
+	for _, name := range discovered {
+		found[name] = true
+	}
+
+	if !found["NewFooExecutor"] {
+		t.Errorf("discoverRotationExecutorConstructors must find NewFooExecutor; got %v", discovered)
+	}
+	if len(discovered) != 1 {
+		t.Errorf("expected exactly 1 discovered constructor (newBarExecutor unexported, NewBazExecutor a "+
+			"method, NewQux wrong suffix, NewShouldNotAppearExecutor in a _test.go file must all be excluded), "+
+			"got %d: %v", len(discovered), discovered)
+	}
 }

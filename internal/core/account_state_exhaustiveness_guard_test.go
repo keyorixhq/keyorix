@@ -129,3 +129,93 @@ func accountLoginBlockedSwitchCaseIdents(f *ast.File) map[string]bool {
 	}
 	return idents
 }
+
+// TestAccountStateExhaustivenessScannerDetectsAMissingCase is this guard's
+// red-proof.
+//
+// TestAccountLoginBlocked_ExhaustsStateRegistry asserts that every ADR-025
+// account state is currently listed in AccountLoginBlocked's switch. Both of
+// its inputs are derived by AST walks that can silently return nothing:
+// accountStateConstants filters on a "Account" name prefix and a basic-literal
+// value, and accountLoginBlockedSwitchCaseIdents returns nil outright if it
+// cannot find the function or its switch. A nil-versus-empty mistake, a
+// renamed function, or a switch refactored into an if/else chain all produce
+// "no missing states" — the same answer as being correct.
+//
+// This is the guard whose entire purpose is to make one specific accident
+// impossible: a new account state added without a corresponding case, silently
+// falling through to the default. It should be able to show that it would
+// still notice.
+func TestAccountStateExhaustivenessScannerDetectsAMissingCase(t *testing.T) {
+	// Parsed, never compiled. AccountSuspended is deliberately absent from the
+	// switch — that omission is the defect being planted.
+	const src = `package fixture
+
+const (
+	AccountActive    = "active"
+	AccountSuspended = "suspended"
+	AccountLocked    = "locked"
+
+	// Not a state: no "Account" prefix, and must not be collected.
+	DefaultTimeout = "30s"
+)
+
+func AccountLoginBlocked(state string) bool {
+	switch state {
+	case AccountActive:
+		return false
+	case AccountLocked:
+		return true
+	default:
+		return true
+	}
+}
+`
+
+	f, err := parser.ParseFile(token.NewFileSet(), "account_state_fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the synthetic fixture: %v", err)
+	}
+
+	states := accountStateConstants(f)
+	got := map[string]bool{}
+	for _, s := range states {
+		got[s] = true
+	}
+
+	for _, want := range []string{"AccountActive", "AccountSuspended", "AccountLocked"} {
+		if !got[want] {
+			t.Errorf("accountStateConstants missed %s — if the constant scan stops finding states, the "+
+				"exhaustiveness check has nothing to be exhaustive over and passes trivially. Found: %v",
+				want, states)
+		}
+	}
+	if got["DefaultTimeout"] {
+		t.Errorf("accountStateConstants collected DefaultTimeout, which is not an account state — the "+
+			"prefix filter has stopped discriminating, and the guard will start demanding switch cases "+
+			"for unrelated constants. Found: %v", states)
+	}
+
+	cases := accountLoginBlockedSwitchCaseIdents(f)
+	if cases == nil {
+		t.Fatal("accountLoginBlockedSwitchCaseIdents returned nil for a fixture that plainly contains " +
+			"AccountLoginBlocked with a switch — the function or switch lookup has broken, and a nil " +
+			"result reads downstream as 'no cases', which is indistinguishable from a real finding")
+	}
+	if !cases["AccountActive"] || !cases["AccountLocked"] {
+		t.Errorf("the switch-case scan missed a case that is plainly present: %v", cases)
+	}
+
+	// The verdict: exactly the planted omission, and nothing else.
+	var missing []string
+	for _, s := range states {
+		if !cases[s] {
+			missing = append(missing, s)
+		}
+	}
+	if len(missing) != 1 || missing[0] != "AccountSuspended" {
+		t.Errorf("the guard's own comparison must report exactly the one state deliberately left out of "+
+			"the fixture's switch (AccountSuspended); got %v. This is the accident the guard exists to "+
+			"prevent — a new state falling through to default without anyone deciding it should.", missing)
+	}
+}

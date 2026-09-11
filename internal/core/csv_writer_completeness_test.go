@@ -218,6 +218,78 @@ func bodyCallsSelectorFunction(body *ast.BlockStmt, pkg, fn string) bool {
 	return found
 }
 
+// TestCSVWriterScannerDetectsSafetyEncoding is this guard's red-proof.
+//
+// TestCSVWriters_EncodeAgainstFormulaInjection asserts today's CSV writers are
+// clean. That is a claim about the repo, not the scanner: bodyOrCalleesCallSafetyEncoder
+// combines two independent AST walks (bodyCallsFunctionNamed, and the one-hop
+// calledLocalFunctions indirection), and either one going quietly wrong reads
+// as "no violation" — indistinguishable from a genuinely safe writer. The
+// property that matters most is the transitive one: a writer that encodes via
+// a same-file helper (rowToCSV, per this file's own doc comment) must still
+// be recognized as safe, or the one-hop indirection this helper exists for is
+// dead code that happens to return the right answer today by coincidence.
+func TestCSVWriterScannerDetectsSafetyEncoding(t *testing.T) {
+	// Parsed, never compiled: undefined identifiers (Row, x, w, etc.) are
+	// fine and deliberate.
+	const src = `package fixture
+
+// writesDirect calls csvSafe inline — the simple case.
+func writesDirect() {
+	_ = csvSafe(x)
+}
+
+// writesViaHelper never calls csvSafe/CSVSafe itself; it delegates row
+// encoding to a same-file helper, exactly the shape this file's own doc
+// comment describes as needing the one-hop check.
+func writesViaHelper() {
+	_ = rowToCSV(row)
+}
+
+func rowToCSV(row Row) string {
+	return CSVSafe(row.Name)
+}
+
+// writesNothing is the planted violation: a CSV writer whose body, and whose
+// callees, never touch csvSafe/CSVSafe at all.
+func writesNothing() {
+	fmt.Fprintln(w, row.Name)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "csv_fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the synthetic fixture: %v", err)
+	}
+
+	funcsByName := map[string]*ast.FuncDecl{}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+			funcsByName[fn.Name.Name] = fn
+		}
+	}
+
+	if got := bodyOrCalleesCallSafetyEncoder(funcsByName["writesDirect"].Body, funcsByName); !got {
+		t.Error("bodyOrCalleesCallSafetyEncoder must report true for a function that calls csvSafe inline")
+	}
+
+	if got := bodyOrCalleesCallSafetyEncoder(funcsByName["writesViaHelper"].Body, funcsByName); !got {
+		t.Error("bodyOrCalleesCallSafetyEncoder must report true for a function that delegates encoding to a " +
+			"same-file helper one hop away — if this regresses, TestCSVWriters_EncodeAgainstFormulaInjection " +
+			"would flag every writer that uses the one-hop helper pattern this file's own doc comment describes, " +
+			"or (if the false-negative direction breaks instead) silently stop catching the ones that don't")
+	}
+
+	// The planted violation: a writer whose body and callees never reach a
+	// safety encoder must be reported false, or the scanner cannot ever find
+	// a real unencoded CSV writer — it would report every writer as safe
+	// regardless of what it actually does.
+	if got := bodyOrCalleesCallSafetyEncoder(funcsByName["writesNothing"].Body, funcsByName); got {
+		t.Error("bodyOrCalleesCallSafetyEncoder reported true for a function that never calls csvSafe/CSVSafe, " +
+			"directly or via a callee — the scanner would no longer be able to find a real formula-injection gap")
+	}
+}
+
 // bodyCallsFunctionNamed reports whether body contains a call expression
 // whose function is exactly name -- either a bare identifier (csvSafe(...))
 // or a selector whose final name matches (common.CSVSafe(...)) -- anywhere

@@ -140,3 +140,99 @@ func normalizeCLIPath(path string) string {
 	}
 	return path[idx:]
 }
+
+// TestCLIRemoteCheckScannerDetectsMissingRemoteCheck is this guard's
+// red-proof.
+//
+// TestCLICommandsCheckRemoteBeforeLocalStorage already refuses to run vacuously
+// on an empty scan — it fails if it finds zero files calling the local
+// initializers. That closes one failure mode and not the interesting one:
+// fileHasCall could stop resolving selector expressions entirely and the guard
+// would still find plenty of files, still flag none of them, and still report
+// every CLI command correctly guarded. `seen` would be empty in that case, so
+// the vacuity check does catch that particular break — but not a narrower one,
+// such as fileHasCall matching the local initializers while quietly failing to
+// match NewRemoteClient/ResolveRemote, which flips the guard from "no
+// violations" to "everything is a violation" or the reverse depending on which
+// side breaks.
+//
+// The defect this guards is not hypothetical: ~25 files and 28 commands were
+// found operating on a stray local SQLite file while `keyorix connect`'s remote
+// config sat unread. The allowlist is empty because every one of them was a
+// bug. A guard defending an empty allowlist should be able to prove it still
+// sees.
+func TestCLIRemoteCheckScannerDetectsMissingRemoteCheck(t *testing.T) {
+	// Parsed, never compiled.
+	const unguarded = `package fixture
+
+func runCommand(cmd *cobra.Command, args []string) error {
+	core, err := common.InitializeCoreService(cfg)
+	if err != nil {
+		return err
+	}
+	return core.DoThing()
+}
+`
+	const guarded = `package fixture
+
+func runCommand(cmd *cobra.Command, args []string) error {
+	if remote, err := common.NewRemoteClient(cfg); err == nil && remote != nil {
+		return remote.DoThing()
+	}
+	core, err := common.InitializeCoreService(cfg)
+	if err != nil {
+		return err
+	}
+	return core.DoThing()
+}
+`
+	// A renamed import alias must still match: fileHasCall deliberately keys on
+	// the selector alone, and that intent is easy to "tidy away" later.
+	const aliased = `package fixture
+
+func runCommand(cmd *cobra.Command, args []string) error {
+	if remote, err := cli.ResolveRemote(cfg); err == nil && remote != nil {
+		return remote.DoThing()
+	}
+	return helpers.InitializeStorage(cfg)
+}
+`
+
+	parse := func(name, src string) *ast.File {
+		f, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+		if err != nil {
+			t.Fatalf("parsing the %s fixture: %v", name, err)
+		}
+		return f
+	}
+
+	uf := parse("unguarded", unguarded)
+	gf := parse("guarded", guarded)
+	af := parse("aliased", aliased)
+
+	// The local-storage side: if this stops matching, every file drops out of
+	// the population and the guard reports a clean CLI it never looked at.
+	if !fileHasCall(uf, "InitializeCoreService") {
+		t.Error("fileHasCall no longer detects common.InitializeCoreService — the population this guard " +
+			"scans would collapse to nothing")
+	}
+	if !fileHasCall(af, "InitializeStorage") {
+		t.Error("fileHasCall no longer detects InitializeStorage through a renamed import alias")
+	}
+
+	// The remote-check side: if this stops matching, every correctly-guarded
+	// command starts being reported as a violation, and the pressure is to
+	// grow the (deliberately empty) allowlist rather than fix the scanner.
+	if !fileHasCall(gf, "NewRemoteClient") {
+		t.Error("fileHasCall no longer detects common.NewRemoteClient")
+	}
+	if !fileHasCall(af, "ResolveRemote") {
+		t.Error("fileHasCall no longer detects ResolveRemote through a renamed import alias")
+	}
+
+	// And the verdict the guard actually renders, on both fixtures.
+	if fileHasCall(uf, "NewRemoteClient") || fileHasCall(uf, "ResolveRemote") {
+		t.Error("the unguarded fixture contains no remote check, but fileHasCall claims it does — the " +
+			"scanner is matching something other than call selectors, so nothing it reports means anything")
+	}
+}

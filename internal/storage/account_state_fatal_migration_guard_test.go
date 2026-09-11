@@ -136,3 +136,84 @@ func callAbortsOnError(fd *ast.FuncDecl, target string) bool {
 	})
 	return found
 }
+
+// TestAccountStateMigrationScannerDetectsSwallowedErrors is this guard's
+// red-proof.
+//
+// TestMigrateDatabase_AccountStateCallsAbortOnError asserts that today's
+// factory.go is wired correctly. It cannot tell you whether callAbortsOnError
+// would notice if factory.go stopped being wired correctly — and that
+// distinction is the whole point of the guard, because the defect it exists
+// to catch (an error logged and continued past rather than returned) looks
+// exactly like working code.
+//
+// So: three functions, one correct and two defective in the two ways this
+// actually goes wrong in practice, run through the real matcher.
+func TestAccountStateMigrationScannerDetectsSwallowedErrors(t *testing.T) {
+	// Parsed, never compiled.
+	const src = `package fixture
+
+func aborts(db *gorm.DB) error {
+	if err := guardAccountStateValid(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func swallowsWithLog(db *gorm.DB) error {
+	if err := guardAccountStateValid(db); err != nil {
+		log.Printf("account state guard failed: %v", err)
+	}
+	return nil
+}
+
+func neverChecks(db *gorm.DB) error {
+	guardAccountStateValid(db)
+	return nil
+}
+`
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "migration_fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the synthetic fixture: %v", err)
+	}
+
+	funcs := map[string]*ast.FuncDecl{}
+	for _, decl := range file.Decls {
+		if fd, ok := decl.(*ast.FuncDecl); ok {
+			funcs[fd.Name.Name] = fd
+		}
+	}
+	for _, want := range []string{"aborts", "swallowsWithLog", "neverChecks"} {
+		if funcs[want] == nil {
+			t.Fatalf("fixture is missing %s — the parse silently produced nothing to check", want)
+		}
+	}
+
+	const target = "guardAccountStateValid"
+
+	// bodyCallsFunction is the "is it called at all" half. All three call it;
+	// if this stops being true the second half below is meaningless.
+	for name, fd := range funcs {
+		if !bodyCallsFunction(fd.Body, target) {
+			t.Errorf("bodyCallsFunction failed to see the %s call in %s() — the call-detection half of "+
+				"this guard has stopped working, which would make the abort check vacuous", target, name)
+		}
+	}
+
+	// callAbortsOnError is the half that carries the actual invariant.
+	if !callAbortsOnError(funcs["aborts"], target) {
+		t.Errorf("callAbortsOnError must recognize the correct `if err := %s(db); err != nil { return err }` "+
+			"shape. It does not, so the guard would now fail against correct code — and the natural way to "+
+			"make CI green again is to weaken the guard.", target)
+	}
+	if callAbortsOnError(funcs["swallowsWithLog"], target) {
+		t.Errorf("callAbortsOnError accepted a call whose error is logged and then continued past. That is " +
+			"precisely the defect this guard exists to catch: migrateDatabase would report success while the " +
+			"schema invariant silently did not hold.")
+	}
+	if callAbortsOnError(funcs["neverChecks"], target) {
+		t.Errorf("callAbortsOnError accepted a call whose error is never checked at all")
+	}
+}

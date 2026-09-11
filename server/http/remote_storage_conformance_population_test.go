@@ -250,6 +250,93 @@ func conformancePopReceiverMethods(t *testing.T, dir, receiver string) map[strin
 	return out
 }
 
+// TestConformancePopulationScannerDetectsRealAndStubMethods is this guard's
+// red-proof.
+//
+// TestReportConformancePopulation and TestConformanceCoverageIsCompleteOrDeclared
+// both build on conformancePopRealProxyMethods, which is
+// conformancePopReceiverMethods (every *RemoteStorage method) minus
+// conformancePopActualRemoteUnsupportedStubs (the ones that never reach
+// rs.client). Either half going quietly wrong reads as "no methods to
+// cover" or "fewer methods to cover" — not as an error, since #1808's own
+// denominator is derived, not asserted. Proving only that
+// conformancePopReceiverMethods finds methods would leave the stub/real
+// split — the half of the derivation that determines what actually counts
+// toward coverage — unverified.
+func TestConformancePopulationScannerDetectsRealAndStubMethods(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed, never compiled: undefined identifiers (context, ErrRemoteUnsupported)
+	// are fine and deliberate.
+	//
+	// Split across two files, matching the real directory's own shape
+	// (LocalStorage and RemoteStorage methods live in separate local_*.go /
+	// remote_*.go files, never the same file) — NOT an arbitrary choice: a
+	// first version of this fixture put both receivers' same-named GetThing
+	// in one file, and conformancePopActualRemoteUnsupportedStubs' funcs map
+	// (keyed on bare function name, built across every scanned file) silently
+	// let the second declaration overwrite the first, making *RemoteStorage's
+	// real GetThing get walked as LocalStorage's body instead and report as a
+	// stub. That collision cannot occur in the real directory because
+	// conformancePopStubSourceFiles only ever parses "remote_"-prefixed files
+	// and entry.go — LocalStorage's own file is never in that set. Splitting
+	// the fixture the same way is what actually exercises the guard rather
+	// than a same-file collision the guard was never asked to survive.
+	const remoteSrc = `package storeish
+
+// GetThing is a real proxy method: it reaches rs.client directly.
+func (rs *RemoteStorage) GetThing(ctx context.Context) error {
+	return rs.client.Get(ctx, "/api/v1/things", nil)
+}
+
+// DeleteThing is stub-shaped: it never reaches rs.client at all.
+func (rs *RemoteStorage) DeleteThing(ctx context.Context) error {
+	return ErrRemoteUnsupported
+}
+`
+	// LocalStorage's own GetThing shares a method name with *RemoteStorage's
+	// but must not leak into either scan — it isn't a *RemoteStorage method,
+	// and this file doesn't match conformancePopStubSourceFiles' "remote_"/
+	// entry.go filter at all.
+	const localSrc = `package storeish
+
+func (ls *LocalStorage) GetThing(ctx context.Context) error {
+	return nil
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "remote_fixture.go"), []byte(remoteSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic remote fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "local_fixture.go"), []byte(localSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic local fixture: %v", err)
+	}
+
+	methods := conformancePopReceiverMethods(t, dir, "*RemoteStorage")
+	if _, ok := methods["GetThing"]; !ok {
+		t.Errorf("conformancePopReceiverMethods must find *RemoteStorage.GetThing; got %v", methods)
+	}
+	if _, ok := methods["DeleteThing"]; !ok {
+		t.Errorf("conformancePopReceiverMethods must find *RemoteStorage.DeleteThing; got %v", methods)
+	}
+	if len(methods) != 2 {
+		t.Errorf("expected exactly 2 *RemoteStorage methods — LocalStorage's own GetThing must not leak in "+
+			"via name alone; got %d: %v", len(methods), methods)
+	}
+
+	// The other half of the derivation: which of those methods are stubs.
+	stubs := conformancePopActualRemoteUnsupportedStubs(t, dir)
+	if !stubs["DeleteThing"] {
+		t.Error("conformancePopActualRemoteUnsupportedStubs must classify DeleteThing as a stub — it never " +
+			"reaches rs.client anywhere in its body. If this regresses, a genuinely unimplemented method " +
+			"counts toward #1808's coverage denominator and TestConformanceCoverageIsCompleteOrDeclared " +
+			"demands a TestConformance_ test for something that can never make a real request.")
+	}
+	if stubs["GetThing"] {
+		t.Error("conformancePopActualRemoteUnsupportedStubs classified GetThing as a stub, but it calls " +
+			"rs.client.Get directly — if this regresses, a genuinely real proxy method is silently excluded " +
+			"from #1808's coverage denominator and can ship with no TestConformance_ test at all.")
+	}
+}
+
 // conformancePopExported mirrors internal/storage/store's exported.
 func conformancePopExported(name string) bool {
 	return len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'

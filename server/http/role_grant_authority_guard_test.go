@@ -56,7 +56,7 @@ var directStorageWriteRe = regexp.MustCompile(`\.Storage\(\)\.(Create|Update)[A-
 // the exact shape #1578/#1582 fixed.
 func persistsRoleGrantDirectly(t *testing.T, handlerName string) bool {
 	t.Helper()
-	text := handlerBodyText(t, handlerName)
+	text := handlerBodyText(t, handlersDir, handlerName)
 	return roleFieldRe.MatchString(text) && directStorageWriteRe.MatchString(text)
 }
 
@@ -73,7 +73,7 @@ func persistsRoleGrantDirectly(t *testing.T, handlerName string) bool {
 // detected as having a check.
 func callsRequireAuthorityForRole(t *testing.T, handlerName string) bool {
 	t.Helper()
-	body := handlerBodyText(t, handlerName)
+	body := handlerBodyText(t, handlersDir, handlerName)
 	return strings.Contains(body, "RequireAuthorityForRole(") ||
 		strings.Contains(body, "RequireGranterHoldsRolePermissions(")
 }

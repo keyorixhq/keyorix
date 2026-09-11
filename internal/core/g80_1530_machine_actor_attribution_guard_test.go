@@ -76,9 +76,8 @@ func repoRootG1626() string {
 // (service.go's own funnel implementation is the one legitimate direct
 // caller of the storage interface method), returning "path:func" keys
 // relative to the repo root.
-func findDirectLogAuditEventCallers(t *testing.T) map[string]bool {
+func findDirectLogAuditEventCallers(t *testing.T, root string) map[string]bool {
 	t.Helper()
-	root := repoRootG1626()
 	found := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -128,13 +127,81 @@ func findDirectLogAuditEventCallers(t *testing.T) map[string]bool {
 	return found
 }
 
+// TestDirectLogAuditEventCallersScannerDetectsBypass is this guard's
+// red-proof.
+//
+// TestDirectLogAuditEventCallersAreSafe has no total-collapse tripwire at
+// all (unlike several sibling guards in this campaign) -- if
+// logAuditEventFuncRe stopped matching, or the emitAudit exclusion or the
+// "//"-comment skip became too permissive, actual would just come back
+// smaller or noisier, and the allowlist comparison would report either
+// nothing (a false "all safe") or unrelated staleness, never "the scanner
+// broke."
+func TestDirectLogAuditEventCallersScannerDetectsBypass(t *testing.T) {
+	root := t.TempDir()
+	// Line-scanned as plain text (findDirectLogAuditEventCallers is a
+	// substring scanner, not go/ast), so this fixture is never compiled
+	// either way -- undefined identifiers (storage, ev, ctx's type) are fine
+	// and deliberate.
+	const src = `package fixture
+
+// emitAudit is the funnel itself -- its own LogAuditEvent call must never
+// be reported as a bypass.
+func emitAudit(ctx context.Context) {
+	storage.LogAuditEvent(ctx, ev)
+}
+
+// directBypass is the planted violation: a direct call outside emitAudit.
+func directBypass(ctx context.Context) {
+	storage.LogAuditEvent(ctx, ev)
+}
+
+// commentedOut's call is text inside a comment and must not be reported.
+func commentedOut(ctx context.Context) {
+	// storage.LogAuditEvent(ctx, ev)
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "fixture.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+	// A _test.go file with an otherwise-matching bypass must be excluded —
+	// the scanner only walks non-test files, matching every real caller site.
+	const testSrc = `package fixture
+
+func shouldNotAppear(ctx context.Context) {
+	storage.LogAuditEvent(ctx, ev)
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "fixture_test.go"), []byte(testSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic test-file fixture: %v", err)
+	}
+
+	found := findDirectLogAuditEventCallers(t, root)
+
+	if !found["fixture.go:directBypass"] {
+		t.Errorf("findDirectLogAuditEventCallers must find fixture.go:directBypass; got %v", found)
+	}
+	if found["fixture.go:emitAudit"] {
+		t.Errorf("findDirectLogAuditEventCallers reported emitAudit's own call as a bypass — the funnel "+
+			"exclusion has stopped working, got %v", found)
+	}
+	if found["fixture.go:commentedOut"] {
+		t.Errorf("findDirectLogAuditEventCallers reported a commented-out call — the \"//\" skip has "+
+			"stopped working, got %v", found)
+	}
+	if len(found) != 1 {
+		t.Errorf("expected exactly 1 direct caller (fixture_test.go's shouldNotAppear must be excluded), "+
+			"got %d: %v", len(found), found)
+	}
+}
+
 // TestDirectLogAuditEventCallersAreSafe is #1530's guard: every direct
 // storage.LogAuditEvent caller (bypassing emitAudit's MachineIdentityID
 // stamp) must be in auditAttributionAllowlist with a reason, or the test
 // fails -- a new bypass site is exactly how this gap would reappear.
 func TestDirectLogAuditEventCallersAreSafe(t *testing.T) {
 	t.Parallel()
-	actual := findDirectLogAuditEventCallers(t)
+	actual := findDirectLogAuditEventCallers(t, repoRootG1626())
 
 	var unjustified []string
 	for key := range actual {

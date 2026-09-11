@@ -92,11 +92,11 @@ func addRemoteUnsupported(entries map[string]remoteUnsupportedEntry) {
 // diffing against this slice) whenever a new remote_*.go-adjacent file is
 // added. This is the one acknowledged residual blind spot; see the package
 // doc note below for why it can't be closed further within this test.
-func remoteStorageStubSourceFiles(t *testing.T) []string {
+func remoteStorageStubSourceFiles(t *testing.T, dir string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(".")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("reading internal/storage/store: %v", err)
+		t.Fatalf("reading %s: %v", dir, err)
 	}
 	var files []string
 	for _, e := range entries {
@@ -150,7 +150,7 @@ func remoteStorageStubSourceFiles(t *testing.T) []string {
 // statement uses (or doesn't — a silent `return nil` matches too), MUST have
 // an allowlist entry or this test fails: there is no third state where a
 // method is neither classified nor caught.
-func actualRemoteUnsupportedStubs(t *testing.T) map[string]bool {
+func actualRemoteUnsupportedStubs(t *testing.T, dir string) map[string]bool {
 	t.Helper()
 	fset := token.NewFileSet()
 	// funcs holds every top-level func/method declared in the stub-source
@@ -160,8 +160,8 @@ func actualRemoteUnsupportedStubs(t *testing.T) map[string]bool {
 	funcs := map[string]*ast.FuncDecl{}
 	rsMethods := map[string]bool{}
 
-	for _, name := range remoteStorageStubSourceFiles(t) {
-		file, err := parser.ParseFile(fset, filepath.Join(".", name), nil, 0)
+	for _, name := range remoteStorageStubSourceFiles(t, dir) {
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 		if err != nil {
 			t.Fatalf("parsing %s: %v", name, err)
 		}
@@ -257,6 +257,69 @@ func exprString(e ast.Expr) string {
 	}
 }
 
+// TestRemoteUnsupportedStubsScannerDetectsTransitiveReach is this guard's
+// red-proof.
+//
+// TestRemoteUnsupportedStubsAreAllowlisted's own zero-result Fatals (in
+// remoteStorageStubSourceFiles and here) only catch a total collapse. This
+// file's own doc comment names the property most likely to break silently:
+// reachesClient must follow a call through a package-level helper function
+// (postRetentionBeforeCountResp is the real example named above), not just
+// through another *RemoteStorage method — several real, fully-functional
+// proxy methods delegate exactly this way. If that CallExpr/*ast.Ident branch
+// regressed, such a method would look stub-shaped and TestRemoteUnsupportedStubsAreAllowlisted
+// would demand a (false) allowlist entry for a method that works fine.
+func TestRemoteUnsupportedStubsScannerDetectsTransitiveReach(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed, never compiled: undefined identifiers (context, errUnsupportedRemote)
+	// are fine and deliberate. Named "remote_fixture.go" so
+	// remoteStorageStubSourceFiles' own "remote_"-prefix filter picks it up,
+	// matching every real stub-source file in this package.
+	const src = `package storeish
+
+// GetThing reaches client directly -- a real proxy method.
+func (rs *RemoteStorage) GetThing(ctx context.Context) error {
+	return rs.client.Get(ctx, "/api/v1/things", nil)
+}
+
+// DeleteThing never reaches client at all -- the planted stub.
+func (rs *RemoteStorage) DeleteThing(ctx context.Context) error {
+	return errUnsupportedRemote
+}
+
+// PostThing is a real proxy method too, but only reaches client indirectly,
+// through a package-level helper function rather than another method call --
+// the exact postRetentionBeforeCountResp shape this file's own doc comment
+// names.
+func (rs *RemoteStorage) PostThing(ctx context.Context) error {
+	return postHelper(ctx, rs, "/api/v1/things")
+}
+
+func postHelper(ctx context.Context, rs *RemoteStorage, path string) error {
+	return rs.client.Post(ctx, path, nil, nil)
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "remote_fixture.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+
+	stubs := actualRemoteUnsupportedStubs(t, dir)
+
+	if !stubs["DeleteThing"] {
+		t.Error("actualRemoteUnsupportedStubs must classify DeleteThing as a stub — it never reaches " +
+			"client anywhere in its body")
+	}
+	if stubs["GetThing"] {
+		t.Error("actualRemoteUnsupportedStubs classified GetThing as a stub, but it calls rs.client.Get directly")
+	}
+	if stubs["PostThing"] {
+		t.Error("actualRemoteUnsupportedStubs classified PostThing as a stub, but it reaches rs.client.Post " +
+			"transitively through the package-level helper postHelper — if this regresses, every real proxy " +
+			"method that delegates to a free-function helper (postRetentionBeforeCountResp's real shape) " +
+			"would be misclassified as an unimplemented stub and demand a false allowlist entry")
+	}
+}
+
 // TestRemoteUnsupportedStubsAreAllowlisted is the completeness guard: every
 // structurally-stub RemoteStorage method (actualRemoteUnsupportedStubs —
 // never reaches the network, by any means, regardless of what error text or
@@ -276,7 +339,7 @@ func exprString(e ast.Expr) string {
 //     "known gap" entries that no longer reflect reality — remove the entry in
 //     the same PR that lands the fix.
 func TestRemoteUnsupportedStubsAreAllowlisted(t *testing.T) {
-	actual := actualRemoteUnsupportedStubs(t)
+	actual := actualRemoteUnsupportedStubs(t, ".")
 
 	var missingFromAllowlist []string // real stub, no allowlist entry — a new/forgotten gap
 	for name := range actual {

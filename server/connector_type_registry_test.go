@@ -185,3 +185,91 @@ func discoverConnectorTypeSwitchCases(t *testing.T, file *ast.File) map[string]b
 	})
 	return discovered
 }
+
+// TestConnectorTypeRegistryScannerDetectsSwitchCases is this guard's
+// red-proof.
+//
+// TestConnectorTypeRegistry_SwitchMatchesKnownTypes asserts today's switch
+// matches connect.KnownTypes. That is a claim about main.go, not about the
+// walk. discoverConnectorTypeSwitchCases's own zero-case Fatal only catches a
+// TOTAL collapse (the switch vanishing, or the cn.Type tag match breaking
+// outright). A narrower break — the string-literal extraction losing one
+// case, or the tag/selector match becoming too permissive and picking up an
+// unrelated switch on a same-named field — would neither hit zero nor look
+// wrong. It would silently under- or over-report, and the parity test above
+// would compare connect.KnownTypes against whatever partial set survived.
+func TestConnectorTypeRegistryScannerDetectsSwitchCases(t *testing.T) {
+	// Parsed, never compiled: undefined identifiers (Connector, connectVault,
+	// log, etc.) are fine and deliberate — this fixture must not be
+	// buildable, or someone will eventually "fix" it into a real file.
+	const src = `package fixture
+
+func wireConnector(cn *Connector) {
+	switch cn.Type {
+	case "vault":
+		connectVault(cn)
+	case "aws-secrets-manager":
+		connectAWS(cn)
+	default:
+		log.Fatalf("unknown type")
+	}
+}
+
+// wireOther's switch shares the selector name "Type" but not the "cn"
+// receiver — it must contribute nothing, or the walk is matching on the
+// selector name alone rather than the specific cn.Type shape it documents.
+func wireOther(other *Other) {
+	switch other.Type {
+	case "should-not-appear":
+		doOther()
+	}
+}
+
+// wireStatus shares the "cn" receiver but switches on a different field —
+// mirrors server/main.go's real second switch, "b.Type" at a DIFFERENT
+// receiver, but tests the field-name half of the same selectivity
+// requirement from the "cn" side: this must contribute nothing either, or
+// the walk is matching on the receiver name alone.
+func wireStatus(cn *Connector) {
+	switch cn.Status {
+	case "should-not-appear-2":
+		doStatus()
+	}
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "connector_fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the synthetic fixture: %v", err)
+	}
+
+	discovered := discoverConnectorTypeSwitchCases(t, file)
+
+	for _, want := range []string{"vault", "aws-secrets-manager"} {
+		if !discovered[want] {
+			t.Errorf("discoverConnectorTypeSwitchCases must find case %q on the cn.Type switch; got %v\n"+
+				"If this stops firing, TestConnectorTypeRegistry_SwitchMatchesKnownTypes compares "+
+				"connect.KnownTypes against an incomplete set and can silently miss a real drift.", want, discovered)
+		}
+	}
+	if len(discovered) != 2 {
+		t.Errorf("expected exactly 2 discovered cases (the default clause must not contribute), got %d: %v",
+			len(discovered), discovered)
+	}
+
+	// The other half of the proof: a switch that shares only the field name
+	// ("other.Type") or only the receiver name ("cn.Status") must not leak
+	// into the result, or the scanner over-reports and every future
+	// genuinely-missing case gets masked by noise from unrelated switches.
+	// server/main.go has exactly this shape for real — a second switch on
+	// "b.Type" a few hundred lines below the Connect-wiring one.
+	if discovered["should-not-appear"] {
+		t.Errorf("discoverConnectorTypeSwitchCases picked up a case from an unrelated other.Type switch — "+
+			"it is no longer scoped to the specific cn.Type shape it documents, got %v", discovered)
+	}
+	if discovered["should-not-appear-2"] {
+		t.Errorf("discoverConnectorTypeSwitchCases picked up a case from cn.Status (same receiver, different "+
+			"field) — it is matching on the receiver name alone rather than the specific cn.Type shape, got %v",
+			discovered)
+	}
+}

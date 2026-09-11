@@ -392,3 +392,84 @@ func minInt(a, b int) int {
 	}
 	return b
 }
+
+// TestFullRowOverwriteScannerDetectsUnfetchedStructs is this guard's
+// red-proof.
+//
+// TestNoUnfetchedStructIntoFullRowOverwrite asserts that no handler in the
+// repository currently commits the defect. That is a claim about the handlers,
+// and it is the claim that stays green either way: if unfetchedStructOverwriteCalls
+// stopped resolving `X.Storage().Method(...)`, or fullRowOverwriteMethods were
+// trimmed in a merge, the sweep would find nothing and report the codebase
+// clean — which is the same output as actually being clean.
+//
+// The defect this guards is not data loss. It is account takeover: the
+// confirmed instance zeroed PasswordHash and AccountState on a struct built
+// from a request body. A guard for that should not be trusted on the strength
+// of never having been seen fail.
+//
+// The fixture is deliberately shaped as the three cases that decide the
+// verdict: an unfetched literal, an unfetched local, and a fetch-first call
+// that must come back clean.
+func TestFullRowOverwriteScannerDetectsUnfetchedStructs(t *testing.T) {
+	// Parsed, never compiled.
+	const src = `package fixture
+
+// unsafeLiteral is the confirmed defect shape: a struct literal built from a
+// request body, passed straight into a full-row overwrite.
+func (h *Fixture) unsafeLiteral(ctx context.Context, id uint) {
+	_ = h.core.Storage().UpdateAccessRequest(ctx, &models.AccessRequest{ID: id, Status: "approved"})
+}
+
+// unsafeLocal is the same defect one variable removed, which is how it
+// usually actually looks in a handler.
+func (h *Fixture) unsafeLocal(ctx context.Context, id uint) {
+	req := &models.AccessRequest{ID: id, Status: "approved"}
+	_ = h.core.Storage().UpdateAccessRequest(ctx, req)
+}
+
+// safeFetchFirst is the sanctioned shape and must NOT be reported.
+func (h *Fixture) safeFetchFirst(ctx context.Context, id uint) {
+	existing := h.core.Storage().GetAccessRequest(ctx, id)
+	existing.Status = "approved"
+	_ = h.core.Storage().UpdateAccessRequest(ctx, existing)
+}
+`
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "overwrite_fixture.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the synthetic fixture: %v", err)
+	}
+
+	// Guard the guard's own premise: if UpdateAccessRequest ever stops being a
+	// full-row-overwrite method, this fixture silently stops testing anything.
+	if !fullRowOverwriteMethods["UpdateAccessRequest"] {
+		t.Fatal("this fixture is built on UpdateAccessRequest, which is no longer in " +
+			"fullRowOverwriteMethods — repoint the fixture at a method that still is, rather than " +
+			"letting it pass without exercising the detector")
+	}
+
+	byFunc := map[string][]overwriteFinding{}
+	for _, decl := range file.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		byFunc[fd.Name.Name] = unfetchedStructOverwriteCalls(fd)
+	}
+
+	if len(byFunc["unsafeLiteral"]) == 0 {
+		t.Error("the scanner must flag a struct literal passed directly into a full-row overwrite — " +
+			"this is the exact shape of the confirmed PasswordHash/AccountState zeroing defect")
+	}
+	if len(byFunc["unsafeLocal"]) == 0 {
+		t.Error("the scanner must flag a local variable assigned from a struct literal and then passed " +
+			"into a full-row overwrite — the same defect, written the way handlers usually write it")
+	}
+	if n := len(byFunc["safeFetchFirst"]); n != 0 {
+		t.Errorf("the scanner flagged the fetch-first call site (%d finding(s): %v). That is the "+
+			"sanctioned shape; a guard that reports it is a guard that gets allowlisted into silence.",
+			n, byFunc["safeFetchFirst"])
+	}
+}

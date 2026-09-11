@@ -64,28 +64,26 @@ var expectedSweptFields = map[modelField]bool{
 	{"DynamicSecretLease", "CredentialEnc"}: true,
 }
 
-// TestSweepCompleteness_EveryEncryptedModelFieldHasASweep is the regression test
-// described above.
-func TestSweepCompleteness_EveryEncryptedModelFieldHasASweep(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed — cannot locate internal/storage/models relative to this test file")
-	}
-	modelsDir := filepath.Join(filepath.Dir(thisFile), "..", "storage", "models")
-
-	entries, err := os.ReadDir(modelsDir)
+// discoverEncryptedModelFields parses every non-test .go file in dir and
+// returns every struct field matching the DEK-encrypted naming convention
+// (see looksLikeEncryptedFieldName): type []byte, name "Encrypted*" or
+// "*Enc" — the actual, current set of DEK-encrypted-looking model fields,
+// derived from source rather than hand-maintained.
+func discoverEncryptedModelFields(t *testing.T, dir string) map[modelField]bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("failed to read %s: %v", modelsDir, err)
+		t.Fatalf("failed to read %s: %v", dir, err)
 	}
 	var goFiles []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		goFiles = append(goFiles, filepath.Join(modelsDir, e.Name()))
+		goFiles = append(goFiles, filepath.Join(dir, e.Name()))
 	}
 	if len(goFiles) == 0 {
-		t.Fatalf("no .go files found under %s — did the models package move?", modelsDir)
+		t.Fatalf("no .go files found under %s — did the models package move?", dir)
 	}
 
 	fset := token.NewFileSet()
@@ -117,7 +115,78 @@ func TestSweepCompleteness_EveryEncryptedModelFieldHasASweep(t *testing.T) {
 			return true
 		})
 	}
+	return discovered
+}
 
+// TestEncryptedModelFieldScannerDetectsNamingConvention is this guard's
+// red-proof.
+//
+// TestSweepCompleteness_EveryEncryptedModelFieldHasASweep's own zero-result
+// Fatal only catches a total collapse of discoverEncryptedModelFields. This
+// guard exists specifically because of #422 — a DEK-rotation sweep gap that
+// caused permanent, irrecoverable data loss — so the value here is the
+// struct-field scan itself, not isByteSliceType or looksLikeEncryptedFieldName
+// individually (those are simple, low-value checks to test in isolation; the
+// interesting behavior is discoverEncryptedModelFields correctly combining
+// them across every struct in a file). A real fixture: a model with a
+// SomethingEnc []byte field, alongside fields that must NOT be swept up —
+// wrong type, wrong name convention.
+func TestEncryptedModelFieldScannerDetectsNamingConvention(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed, never compiled: undefined identifiers are fine and deliberate.
+	const src = `package models
+
+type FooModel struct {
+	ID int
+
+	// SecretEnc is a real DEK-encrypted field, mirroring MFASecret.SecretEnc.
+	SecretEnc []byte
+
+	// EncryptedBar is a real DEK-encrypted field, mirroring the "Encrypted*" convention.
+	EncryptedBar []byte
+
+	// PlainBytes is []byte but follows no naming convention -- must not be found.
+	PlainBytes []byte
+
+	// NameEnc follows the naming convention but isn't []byte -- must not be found.
+	NameEnc string
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "foo_model.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+
+	discovered := discoverEncryptedModelFields(t, dir)
+
+	if !discovered[modelField{"FooModel", "SecretEnc"}] {
+		t.Errorf("discoverEncryptedModelFields must find FooModel.SecretEnc; got %v", discovered)
+	}
+	if !discovered[modelField{"FooModel", "EncryptedBar"}] {
+		t.Errorf("discoverEncryptedModelFields must find FooModel.EncryptedBar; got %v", discovered)
+	}
+	if discovered[modelField{"FooModel", "PlainBytes"}] {
+		t.Errorf("discoverEncryptedModelFields found PlainBytes, a []byte field with no naming-convention "+
+			"match — the scanner is no longer discriminating by name, got %v", discovered)
+	}
+	if discovered[modelField{"FooModel", "NameEnc"}] {
+		t.Errorf("discoverEncryptedModelFields found NameEnc, a string field (not []byte) — the scanner is "+
+			"no longer discriminating by type, got %v", discovered)
+	}
+	if len(discovered) != 2 {
+		t.Errorf("expected exactly 2 discovered fields, got %d: %v", len(discovered), discovered)
+	}
+}
+
+// TestSweepCompleteness_EveryEncryptedModelFieldHasASweep is the regression test
+// described above.
+func TestSweepCompleteness_EveryEncryptedModelFieldHasASweep(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed — cannot locate internal/storage/models relative to this test file")
+	}
+	modelsDir := filepath.Join(filepath.Dir(thisFile), "..", "storage", "models")
+
+	discovered := discoverEncryptedModelFields(t, modelsDir)
 	if len(discovered) == 0 {
 		t.Fatal("discovered zero Encrypted*/*Enc []byte fields in internal/storage/models — the AST walk is almost certainly broken (models.go alone has several), not that encryption was removed")
 	}

@@ -206,32 +206,40 @@ func g81TimeLikeColumn(col string) bool {
 	return strings.HasSuffix(col, "_at") || strings.HasSuffix(col, "_time") || strings.HasSuffix(col, "_date")
 }
 
-// TestG81_NoUntrackedRangeQueriedTimeColumns is the AST freshness check: parse
-// every non-test .go file in this package, collect every column name that
-// appears in a range comparison against a bind placeholder, and assert each
-// time-like one is accounted for in g81MaintainedFields. Fails with the
-// offending file:line so a new range query on a new column can't silently
-// skip this bug class.
-func TestG81_NoUntrackedRangeQueriedTimeColumns(t *testing.T) {
-	known := make(map[string]bool, len(g81MaintainedFields))
-	for _, f := range g81MaintainedFields {
-		known[f.Column] = true
-	}
+// g81RangeQueriedColumn records one alias-stripped column name found in a
+// range comparison against a bind placeholder, with its source location and
+// the raw string literal it was found in (for error context) — regardless of
+// whether the column looks time-like; callers filter that separately via
+// g81TimeLikeColumn.
+type g81RangeQueriedColumn struct {
+	Column string
+	File   string
+	Line   int
+	Raw    string
+}
 
-	entries, err := os.ReadDir(".")
+// extractRangeQueriedColumns parses every non-test .go file in dir and
+// returns every g81RangeQueriedColumn found. Fails the test outright if dir
+// contains zero non-test .go files — the same "this guard is now vacuous"
+// tripwire TestG81_NoUntrackedRangeQueriedTimeColumns always had, moved here
+// since this is now the function that does the scanning.
+func extractRangeQueriedColumns(t *testing.T, dir string) []g81RangeQueriedColumn {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("failed to list package directory: %v", err)
+		t.Fatalf("failed to list %s: %v", dir, err)
 	}
 
 	fset := token.NewFileSet()
 	var scanned int
+	var found []g81RangeQueriedColumn
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		scanned++
-		path := filepath.Join(".", name)
+		path := filepath.Join(dir, name)
 		src, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("failed to read %s: %v", path, err)
@@ -254,16 +262,10 @@ func TestG81_NoUntrackedRangeQueriedTimeColumns(t *testing.T) {
 				if idx := strings.LastIndex(col, "."); idx != -1 {
 					col = col[idx+1:]
 				}
-				if !g81TimeLikeColumn(col) {
-					continue
-				}
-				if !known[col] {
-					pos := fset.Position(lit.Pos())
-					t.Errorf("%s:%d: range query on untracked time-like column %q (in %q) — "+
-						"add a g81FieldEntry to g81_guard_test.go recording which model this is, "+
-						"whether it has a BeforeSave hook, and why (or why not)",
-						pos.Filename, pos.Line, col, s)
-				}
+				pos := fset.Position(lit.Pos())
+				found = append(found, g81RangeQueriedColumn{
+					Column: col, File: pos.Filename, Line: pos.Line, Raw: s,
+				})
 			}
 			return true
 		})
@@ -271,5 +273,96 @@ func TestG81_NoUntrackedRangeQueriedTimeColumns(t *testing.T) {
 	if scanned == 0 {
 		t.Fatal("scanned 0 non-test .go files in the package directory — this guard is now " +
 			"vacuous and is no longer checking anything; fix the scan, not this assertion")
+	}
+	return found
+}
+
+// TestG81ScannerDetectsRangeQueriedColumns is this guard's red-proof.
+//
+// TestG81_NoUntrackedRangeQueriedTimeColumns filters extractRangeQueriedColumns'
+// output through g81TimeLikeColumn — but the interesting, easy-to-quietly-break
+// part is upstream of that: the regex match against a bind placeholder, and
+// the alias-stripping that turns "t.expires_at" into "expires_at" so it can
+// be looked up in g81MaintainedFields at all. g81TimeLikeColumn itself is a
+// name-suffix check with nothing structural to prove — testing it would be
+// the vacuous-check trap this campaign exists to avoid; this test only
+// exercises extractRangeQueriedColumns.
+func TestG81ScannerDetectsRangeQueriedColumns(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed, never compiled: undefined identifiers (db, cutoff) are fine and
+	// deliberate.
+	const src = `package fixture
+
+func rangeQuery() {
+	db.Where("expires_at >= ?", cutoff)
+}
+
+func aliasedRangeQuery() {
+	db.Where("t.created_at <= ?", cutoff)
+}
+
+func equalityQuery() {
+	db.Where("status = ?", "active")
+}
+
+func literalComparisonQuery() {
+	db.Where("count > 0")
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "fixture.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+
+	cols := extractRangeQueriedColumns(t, dir)
+	found := map[string]bool{}
+	for _, c := range cols {
+		found[c.Column] = true
+	}
+
+	if !found["expires_at"] {
+		t.Errorf("extractRangeQueriedColumns must find \"expires_at\" from a >= bind-placeholder comparison; "+
+			"got %v", cols)
+	}
+	if !found["created_at"] {
+		t.Errorf("extractRangeQueriedColumns must find \"created_at\" from an ALIASED (t.created_at) <= "+
+			"bind-placeholder comparison, with the alias stripped — if alias-stripping regresses, every "+
+			"aliased range query silently stops matching anything in g81MaintainedFields, got %v", cols)
+	}
+	if found["status"] {
+		t.Errorf("extractRangeQueriedColumns matched a plain equality (status = ?) as a range comparison; "+
+			"got %v", cols)
+	}
+	if found["count"] {
+		t.Errorf("extractRangeQueriedColumns matched a literal comparison (count > 0, not a bind "+
+			"placeholder) as a range query; got %v", cols)
+	}
+	if len(cols) != 2 {
+		t.Errorf("expected exactly 2 range-queried columns (equality and literal-comparison queries must "+
+			"contribute nothing), got %d: %v", len(cols), cols)
+	}
+}
+
+// TestG81_NoUntrackedRangeQueriedTimeColumns is the AST freshness check:
+// collect every column name that appears in a range comparison against a
+// bind placeholder anywhere in this package, and assert each time-like one
+// is accounted for in g81MaintainedFields. Fails with the offending
+// file:line so a new range query on a new column can't silently skip this
+// bug class.
+func TestG81_NoUntrackedRangeQueriedTimeColumns(t *testing.T) {
+	known := make(map[string]bool, len(g81MaintainedFields))
+	for _, f := range g81MaintainedFields {
+		known[f.Column] = true
+	}
+
+	for _, c := range extractRangeQueriedColumns(t, ".") {
+		if !g81TimeLikeColumn(c.Column) {
+			continue
+		}
+		if !known[c.Column] {
+			t.Errorf("%s:%d: range query on untracked time-like column %q (in %q) — "+
+				"add a g81FieldEntry to g81_guard_test.go recording which model this is, "+
+				"whether it has a BeforeSave hook, and why (or why not)",
+				c.File, c.Line, c.Column, c.Raw)
+		}
 	}
 }
