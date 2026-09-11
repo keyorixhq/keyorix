@@ -28,6 +28,15 @@ mkdir -p "$NOTIFIED_STATE_DIR"
 
 cd "$KEYORIX_REPO"
 
+# Per-run logs under $FUZZ_LOG_DIR (default $NOTIFIED_STATE_DIR/logs), gzipped
+# and never overwritten, and a GitHub tracking-issue copy of every failing
+# run's log — see the header of runlog.sh for why. Sourced once, at startup.
+# shellcheck source=scripts/fuzzing/runlog.sh
+source "$SCRIPT_DIR/runlog.sh"
+
+# Flush failing-run logs a previous process queued but could not post.
+runlog_post_pending
+
 while true; do
   while IFS='|' read -r pkg func duration; do
     [[ -z "$pkg" ]] && continue
@@ -39,20 +48,26 @@ while true; do
     git reset --hard origin/main --quiet
 
     echo "=== $(date -u +%FT%TZ) fuzzing $func in ./$pkg for $duration ==="
-    logfile="$NOTIFIED_STATE_DIR/last-$func.log"
+    runlog_start "$func" "./$pkg" "$duration"
 
     set +e
     go test "./$pkg" -run="^${func}\$" -fuzz="^${func}\$" -fuzztime="$duration" \
-      >"$logfile" 2>&1
+      >>"$RUNLOG" 2>&1
     status=$?
     set -e
+
+    # Seal and queue the log BEFORE sync-corpus.sh and notify-on-crash.sh,
+    # which talk to GitHub under this script's `set -e`: if either of them
+    # takes the loop down, the log must already be safe (and queued).
+    runlog_finish "$status"
 
     "$SCRIPT_DIR/sync-corpus.sh" "$func" "$status"
 
     if [[ "$status" -ne 0 ]]; then
-      echo "=== $(date -u +%FT%TZ) $func FAILED (exit $status) ==="
-      "$SCRIPT_DIR/notify-on-crash.sh" "$func" "$pkg" "$logfile"
+      echo "=== $(date -u +%FT%TZ) $func FAILED (exit $status) — log: $RUNLOG_FINAL ==="
+      "$SCRIPT_DIR/notify-on-crash.sh" "$func" "$pkg" "$RUNLOG_FINAL"
     fi
+    runlog_post_pending
   done <"$SCRIPT_DIR/targets.conf"
 
   echo "=== $(date -u +%FT%TZ) rotation cycle complete, looping ==="

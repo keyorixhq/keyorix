@@ -20,6 +20,9 @@ long-lived infrastructure — a small home-lab VM/LXC is a good fit.
   "interesting" input the fuzzer found) gets committed and pushed to a
   dedicated `fuzz-corpus` branch automatically — review/merge what's
   interesting from there.
+- A log of every run, gzipped and never overwritten or pruned, plus a copy of
+  every *failing* run's log on a GitHub tracking issue — see
+  [Run logs](#run-logs).
 
 ## Resource limits
 
@@ -86,6 +89,9 @@ one at a time, not concurrently).
        access tokens → Fine-grained tokens**, scoped to this repo, with:
        - **Contents: Read** (to check branch state)
        - **Pull requests: Read and write** (to open/comment on crash-report PRs)
+       - **Issues: Read and write** (to post failing-run logs to the tracking
+         issue — see [Run logs](#run-logs); without it they stay queued on
+         the box)
 
        Store it and add it to `config.env` (systemd `EnvironmentFile=` does not
        expand shell syntax, so paste the token value literally):
@@ -101,6 +107,7 @@ one at a time, not concurrently).
      level):** Create one PAT with both scopes and use it for everything:
      - **Contents: Read and write** (for `git push`)
      - **Pull requests: Read and write** (for `gh pr create`/`gh pr list`)
+     - **Issues: Read and write** (for the failing-run log tracking issue)
 
      Store it and wire it up for both `git push` and `gh`:
      ```
@@ -171,7 +178,7 @@ one at a time, not concurrently).
    this container's kernel namespace doesn't support. If you see that, this
    silently breaks BOTH `journalctl` for every service on the box AND swallows
    `keyorix-fuzz.service`'s own progress echoes (though the underlying `go
-   test` output still lands in real log files under `$NOTIFIED_STATE_DIR`, so
+   test` output still lands in real log files under `$NOTIFIED_STATE_DIR/logs`, so
    fuzzing itself isn't affected — only visibility is). Fix with a drop-in
    that clears the directive, then restart both journald and the fuzz service
    so its output gets captured from the start:
@@ -194,11 +201,17 @@ one at a time, not concurrently).
 
 ## Day-to-day
 
-- **Crash notification arrives** → SSH in, `cat
-  /opt/keyorix-fuzz/state/last-<FuzzName>.log` for the full failure, or check
+- **Crash notification arrives** → the failing run's log is already on the
+  `fuzz rig: failing-run logs` issue (or queued to be). For the whole log, SSH
+  in and `zless /opt/keyorix-fuzz/state/logs/<FuzzName>/latest.log.gz`; or check
   the `fuzz-corpus` branch for the exact new failing-input file (it's a small
   Go-syntax file under `testdata/fuzz/<FuzzName>/`). Reproduce locally with
   `go test -run=<FuzzName>/<hash> ./<package>` once you've pulled that branch.
+- **A comment on the tracking issue with no crash PR** → a run exited non-zero
+  and notify-on-crash.sh found no reproducer on `fuzz-corpus`, so it stayed
+  silent. Read the log in the comment: a timeout, an out-of-memory kill, a
+  build failure — or a real crash whose reproducer never made it to
+  `fuzz-corpus`.
 - **No heartbeat today** → the service or the box is down; check
   `systemctl status keyorix-fuzz.service` / whether the LXC itself is up.
 - **`gh` notification failed** → check `journalctl -u keyorix-fuzz.service -n 50`
@@ -215,6 +228,48 @@ one at a time, not concurrently).
 - **Widening coverage** → add a line to `targets.conf`; no script changes
   needed. The service picks it up on its next full rotation cycle restart
   (`systemctl restart keyorix-fuzz.service` to pick it up immediately).
+
+## Run logs
+
+Every run of every target gets its own log file, and none is ever overwritten
+or pruned (`runlog.sh`, sourced by `run-rotation.sh`). Until 2026-09 each run
+went to `$NOTIFIED_STATE_DIR/last-<FuzzName>.log`, which the same target's next
+run replaced: on the VCD rig `FuzzCombineKEK` exited 1 about 15 times in
+September and `FuzzVerifyReceipt` about 20 times in July–August, and none of
+those runs' output survived to be read.
+
+```
+$FUZZ_LOG_DIR/                 default $NOTIFIED_STATE_DIR/logs (already in the unit's ReadWritePaths)
+  <FuzzName>/
+    20260911T101636Z_6c2ac753ab12_4711_exit0.log.gz   start time, commit, pid, exit status
+    20260911T134001Z_6c2ac753ab12_4711_exit1.log.gz
+    latest.log.gz -> newest finished run
+  .pending-post/               failing runs not yet copied to GitHub
+  .tracking-issue              number of the GitHub issue they go to
+```
+
+Each log starts and ends with `# key: value` lines — host, target, package,
+full commit, Go version, fuzztime, start, finish, duration, exit status — so a
+log still makes sense once it's been copied somewhere else. The `fuzz: elapsed`
+progress lines that make up most of a log compress very well; a year of
+continuous fuzzing is on the order of 100 MB.
+
+**The box itself is not "forever"** — the VCD tenant is temporary — so every
+run that exits non-zero is *also* posted as a comment on one tracking issue in
+this repo, titled `fuzz rig: failing-run logs` (created on first use): the
+log's header, the first `FAIL`/`panic:` line with the same hash
+notify-on-crash.sh uses for its `notified-<FuzzName>-<hash>` marker, and the
+log's last 50 KB with the progress lines removed. That includes the runs
+notify-on-crash.sh treats as "infra failure" and stays silent about.
+
+Posting is queued. If GitHub can't be reached, or `GH_TOKEN` lacks the Issues
+permission, the log stays in `.pending-post/` and is retried after each later
+target, up to 5 at a time, and once when the service starts. A queue that isn't
+draining shows in `journalctl -u keyorix-fuzz.service` as
+`runlog: ... still queued`. Set `FUZZ_POST_FAILURES=0` in `config.env` to keep
+logs on the box only. To start a fresh tracking issue, close the old one and
+delete `$FUZZ_LOG_DIR/.tracking-issue`. If you point `FUZZ_LOG_DIR` outside
+`$NOTIFIED_STATE_DIR`, add it to `ReadWritePaths=` in the unit too.
 
 ## Design notes
 
