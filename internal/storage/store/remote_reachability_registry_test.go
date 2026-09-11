@@ -322,7 +322,7 @@ var remoteReachabilityRegistry = map[string]reachabilityEntry{
 // population, same "subject first" convention.
 func TestRemoteUnsupportedStubsHaveReachabilityVerdicts(t *testing.T) {
 	total := remoteStorageMethods(t)
-	actual := actualRemoteUnsupportedStubs(t)
+	actual := actualRemoteUnsupportedStubs(t, ".")
 	proxies := realProxyMethods(t)
 
 	// Denominator computed at runtime, not hand-copied into this comment —

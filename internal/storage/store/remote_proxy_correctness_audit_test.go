@@ -184,7 +184,7 @@ func localStorageMethods(t *testing.T) map[string]methodInfo {
 // fails loudly instead, the moment a new file needs adding to that list.
 func TestPopulationMatchesStubScannerFileList(t *testing.T) {
 	allowed := map[string]bool{}
-	for _, f := range remoteStorageStubSourceFiles(t) {
+	for _, f := range remoteStorageStubSourceFiles(t, ".") {
 		allowed[f] = true
 	}
 	var outside []string
@@ -221,7 +221,7 @@ func exported(name string) bool {
 func realProxyMethods(t *testing.T) map[string]methodInfo {
 	t.Helper()
 	all := remoteStorageMethods(t)
-	stubs := actualRemoteUnsupportedStubs(t)
+	stubs := actualRemoteUnsupportedStubs(t, ".")
 
 	out := map[string]methodInfo{}
 	for name, info := range all {
@@ -242,7 +242,7 @@ func realProxyMethods(t *testing.T) map[string]methodInfo {
 // passes — it is a report, not a gate; run with `-v` to see it.
 func TestReportRemoteStorageProxyPopulation(t *testing.T) {
 	all := remoteStorageMethods(t)
-	stubs := actualRemoteUnsupportedStubs(t)
+	stubs := actualRemoteUnsupportedStubs(t, ".")
 	unexportedHelpers := map[string]methodInfo{}
 	for name, info := range all {
 		if !exported(name) {

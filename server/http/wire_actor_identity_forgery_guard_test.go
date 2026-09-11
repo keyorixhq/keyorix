@@ -47,6 +47,10 @@ var actorShapedFieldNames = []string{
 	"InvitedBy", "ResolvedBy", "CreatedBy", "DecidedBy", "ApproverID", "RevokedBy",
 }
 
+// handlersDir is the real server/http/handlers directory, relative to this
+// package — what every real handlerBodyText caller passes today.
+var handlersDir = filepath.Join("..", "..", "server", "http", "handlers")
+
 // actorFieldReadRe matches `body.<ActorField>` for each name above, used to
 // scan a handler's raw source text (comments included, filtered separately —
 // see actorFieldReads).
@@ -65,11 +69,10 @@ var actorFieldReadRes = func() []*regexp.Regexp {
 // returns the joined text instead of extracted call names, since this guard
 // needs to inspect the surrounding characters around each match (is it a
 // read or a write?), not just detect a call name.
-func handlerBodyText(t *testing.T, handlerName string) string {
+func handlerBodyText(t *testing.T, dir, handlerName string) string {
 	t.Helper()
 	funcRe := regexp.MustCompile(`^func \([a-zA-Z]+ \*[A-Za-z]+\) ` + regexp.QuoteMeta(handlerName) + `\(`)
 
-	dir := filepath.Join("..", "..", "server", "http", "handlers")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("reading server/http/handlers: %v", err)
@@ -86,15 +89,27 @@ func handlerBodyText(t *testing.T, handlerName string) string {
 		}
 		inFunc := false
 		depth := 0
+		sawOpenBrace := false
 		for _, line := range strings.Split(string(b), "\n") {
 			if !inFunc && funcRe.MatchString(line) {
 				inFunc = true
+				sawOpenBrace = false
 			}
 			if inFunc {
 				depth += strings.Count(line, "{") - strings.Count(line, "}")
+				if strings.Contains(line, "{") {
+					sawOpenBrace = true
+				}
 				out.WriteString(line)
 				out.WriteByte('\n')
-				if depth <= 0 {
+				// Require having actually seen the body's opening brace before
+				// depth<=0 can close capture -- a signature that wraps onto
+				// multiple lines (the parameter list, not the "func (recv
+				// *Type) Name(" prefix, which gofmt always keeps on the
+				// funcRe-matched line) nets zero braces on that first matched
+				// line, and closing on THAT would stop capture before the
+				// body -- and any actor-field read in it -- was ever seen.
+				if sawOpenBrace && depth <= 0 {
 					inFunc = false
 				}
 			}
@@ -116,7 +131,7 @@ func handlerBodyText(t *testing.T, handlerName string) string {
 // `body.toModel()` picking it up implicitly) is flagged as a live read.
 func actorFieldReads(t *testing.T, handlerName string) []string {
 	t.Helper()
-	text := handlerBodyText(t, handlerName)
+	text := handlerBodyText(t, handlersDir, handlerName)
 	var found []string
 	seen := map[string]bool{}
 	for _, line := range strings.Split(text, "\n") {
@@ -129,6 +144,103 @@ func actorFieldReads(t *testing.T, handlerName string) []string {
 				rest := strings.TrimLeft(line[loc[1]:], " \t")
 				if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") {
 					continue // overwritten before use -- the fix pattern, not a read
+				}
+				if !seen[name] {
+					seen[name] = true
+					found = append(found, name)
+				}
+			}
+		}
+	}
+	sort.Strings(found)
+	return found
+}
+
+// TestActorFieldReadsScannerDetectsWireForgery is this guard's red-proof.
+//
+// TestNoUnjustifiedActorIdentityForgery has no total-collapse tripwire at
+// all — if actorFieldReadRes stopped matching, or the "=" overwrite check or
+// the "//"-comment skip became too permissive, actorFieldReads would just
+// come back empty or noisy for every handler, and the allowlist comparison
+// would report either universal silence (a false "all safe") or unrelated
+// staleness.
+//
+// This is a regexp/line-scanner, not an AST walk (the file header says so
+// directly), and a regexp scanner fails differently than an AST one:
+// reformatting alone can defeat it. Proven, not assumed, against a real
+// defect this test found while being written: a handler whose signature
+// spans multiple lines (the parameter list wrapped onto its own lines,
+// rather than "func (recv *Type) Name(args) {" all on one line) used to
+// vanish from handlerBodyText's capture entirely. depth tracking started on
+// the funcRe-matched line and closed the moment that line's own brace count
+// netted to zero — true for a split signature, since the opening "{" lands
+// on a later line — stopping capture before the body, and any actor-field
+// read in it, was ever seen. Confirmed red before the fix (this test failed
+// exactly this way on first write); handlerBodyText now also requires having
+// actually seen the opening brace before depth<=0 can close capture, closing
+// the gap in the same change that found it rather than leaving it as a
+// documented-but-open blind spot.
+func TestActorFieldReadsScannerDetectsWireForgery(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed as plain text (this guard is regexp-based, not go/ast — see the
+	// file header), so this fixture is never compiled either way —
+	// undefined identifiers are fine and deliberate.
+	const src = `package handlers
+
+func (h *Handler) NormalProxy(w http.ResponseWriter, r *http.Request) {
+	_ = body.ResolvedBy
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "fixture_handlers.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing the synthetic fixture: %v", err)
+	}
+
+	if got := actorFieldReadsAgainst(t, dir, "NormalProxy"); len(got) != 1 || got[0] != "ResolvedBy" {
+		t.Errorf("actorFieldReads must find ResolvedBy in a normally-formatted single-line-signature "+
+			"handler; got %v — if this regresses, the guard cannot ever fire, on any handler shape", got)
+	}
+
+	// The two-line-signature probe: does the scanner survive a signature
+	// whose opening "{" is not on the same line funcRe matched? Before the
+	// sawOpenBrace fix above, this returned empty — the exact silent-miss
+	// this red-proof exists to catch.
+	const splitSrc = `package handlers
+
+func (h *Handler) SplitSignatureProxy(
+	w http.ResponseWriter, r *http.Request,
+) {
+	_ = body.ResolvedBy
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "fixture_split_handlers.go"), []byte(splitSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic split-signature fixture: %v", err)
+	}
+	if got := actorFieldReadsAgainst(t, dir, "SplitSignatureProxy"); len(got) != 1 || got[0] != "ResolvedBy" {
+		t.Errorf("actorFieldReads must find ResolvedBy in a handler whose signature spans multiple lines, "+
+			"same as the single-line case above; got %v — a regression here silently exempts every "+
+			"multi-line-signature handler from this guard entirely", got)
+	}
+}
+
+// actorFieldReadsAgainst is actorFieldReads with an injectable handlers
+// directory, for the red-proof above — actorFieldReads itself always scans
+// handlersDir (the real one), so this fixture needs its own copy of just the
+// text-extraction step to point at a temp dir instead.
+func actorFieldReadsAgainst(t *testing.T, dir, handlerName string) []string {
+	t.Helper()
+	text := handlerBodyText(t, dir, handlerName)
+	var found []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		for i, re := range actorFieldReadRes {
+			name := actorShapedFieldNames[i]
+			for _, loc := range re.FindAllStringIndex(line, -1) {
+				rest := strings.TrimLeft(line[loc[1]:], " \t")
+				if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") {
+					continue
 				}
 				if !seen[name] {
 					seen[name] = true

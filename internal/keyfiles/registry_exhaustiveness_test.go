@@ -51,9 +51,8 @@ var constructorFuncRe = regexp.MustCompile(`(?m)^func (New\w+)\(`)
 // FILE (internal/crypto's one-constructor-per-provider-file layout makes this
 // a reliable proxy for "this provider's constructor returns a value that
 // writes key material").
-func writerConstructors(t *testing.T) map[string]bool {
+func writerConstructors(t *testing.T, dir string) map[string]bool {
 	t.Helper()
-	dir := filepath.Join(repoRoot(t), "internal", "crypto")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read %s: %v", dir, err)
@@ -78,6 +77,82 @@ func writerConstructors(t *testing.T) map[string]bool {
 		}
 	}
 	return result
+}
+
+// TestWriterConstructorsScannerDetectsWritingProviders is this guard's
+// red-proof.
+//
+// TestSourceScan_WriteCapableProviderTypesMatchRegistry's own zero-result
+// Fatal only catches a total collapse of writerConstructors. A narrower
+// break -- the SecureWriteFileSync/SecureWriteFile substring check, or
+// constructorFuncRe itself -- would silently under- or over-report instead,
+// and writeCapableProviderTypes would be compared against a partial or noisy
+// derived set with nothing to signal the mismatch is the scanner's fault,
+// not registry.go's.
+func TestWriterConstructorsScannerDetectsWritingProviders(t *testing.T) {
+	dir := t.TempDir()
+	// Parsed as plain text (writerConstructors is a substring + regexp
+	// scanner, not go/ast), so this fixture is never compiled either way —
+	// undefined identifiers are fine and deliberate.
+	const writerSrc = `package crypto
+
+// NewFooProvider is a real writer: its file calls SecureWriteFileSync.
+func NewFooProvider(path string) *FooProvider {
+	return &FooProvider{path: path}
+}
+
+func (p *FooProvider) Save() error {
+	return SecureWriteFileSync(p.path, nil, 0600)
+}
+`
+	const nonWriterSrc = `package crypto
+
+// NewBarProvider's file never calls SecureWriteFileSync/SecureWriteFile —
+// it must not be reported as a writer constructor.
+func NewBarProvider(path string) *BarProvider {
+	return &BarProvider{path: path}
+}
+`
+	// A _test.go file with an otherwise-matching writer shape must be
+	// excluded entirely — writerConstructors only scans non-test files,
+	// matching every real internal/crypto provider file.
+	const testFileSrc = `package crypto
+
+func NewShouldNotAppearProvider(path string) *ShouldNotAppearProvider {
+	return &ShouldNotAppearProvider{path: path}
+}
+
+func (p *ShouldNotAppearProvider) Save() error {
+	return SecureWriteFileSync(p.path, nil, 0600)
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "writer_provider.go"), []byte(writerSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic writer fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "nonwriter_provider.go"), []byte(nonWriterSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic non-writer fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "writer_provider_test.go"), []byte(testFileSrc), 0o600); err != nil {
+		t.Fatalf("writing the synthetic test-file fixture: %v", err)
+	}
+
+	writers := writerConstructors(t, dir)
+
+	if !writers["NewFooProvider"] {
+		t.Errorf("writerConstructors must find NewFooProvider — its file calls SecureWriteFileSync; got %v", writers)
+	}
+	if writers["NewBarProvider"] {
+		t.Errorf("writerConstructors reported NewBarProvider as a writer, but its file never calls "+
+			"SecureWriteFileSync/SecureWriteFile — if this regresses, TestSourceScan_WriteCapableProviderTypesMatchRegistry "+
+			"can derive a provider type as write-capable when it never writes anything, got %v", writers)
+	}
+	if writers["NewShouldNotAppearProvider"] {
+		t.Errorf("writerConstructors picked up a constructor from a _test.go file — it must only scan "+
+			"non-test files, got %v", writers)
+	}
+	if len(writers) != 1 {
+		t.Errorf("expected exactly 1 writer constructor, got %d: %v", len(writers), writers)
+	}
 }
 
 // buildSingleProviderCaseDispatch parses internal/encryption/service.go's
@@ -140,7 +215,7 @@ func buildSingleProviderCaseDispatch(t *testing.T) map[string]map[string]bool {
 }
 
 func TestSourceScan_WriteCapableProviderTypesMatchRegistry(t *testing.T) {
-	writers := writerConstructors(t)
+	writers := writerConstructors(t, filepath.Join(repoRoot(t), "internal", "crypto"))
 	if len(writers) == 0 {
 		t.Fatal("source scan found zero writer constructors in internal/crypto -- the scan itself is broken (password/tpm/kms providers are known writers), not that none exist")
 	}
