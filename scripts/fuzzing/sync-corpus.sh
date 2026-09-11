@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Copies any new/changed files under testdata/fuzz/ from the main fuzzing
-# clone into a SEPARATE git worktree checked out on the fuzz-corpus branch,
-# then commits + pushes from there.
+# Copies any new/changed crash reproducers under **every** testdata/fuzz/ in the
+# main fuzzing clone into a SEPARATE git worktree checked out on the fuzz-corpus
+# branch, then commits + pushes from there.
 #
-# Deliberately does not touch git branches in $KEYORIX_REPO itself — that
-# clone stays on main throughout a run (run-rotation.sh resets it to
-# origin/main once per cycle), so results land on a distinct branch without
-# ever disturbing the checkout the fuzzer is actively running against.
+# Deliberately does not touch git branches in $KEYORIX_REPO itself — that clone
+# stays on main throughout a run (run-rotation.sh resets it to origin/main), so
+# results land on a distinct branch without ever disturbing the checkout the
+# fuzzer is actively running against.
 #
-# Safe to call after every rotation cycle regardless of outcome: it's a no-op
-# when there's nothing new under testdata/fuzz/.
+# Safe to call after every target regardless of outcome: a no-op when there is
+# nothing new under any testdata/fuzz/.
 set -euo pipefail
 
 FUNC="${1:?fuzz func name}"
@@ -19,27 +19,36 @@ STATUS="${2:-0}"
 : "${FUZZ_CORPUS_WORKTREE:?set FUZZ_CORPUS_WORKTREE to a git worktree checked out on the fuzz-corpus branch}"
 : "${FUZZ_CORPUS_BRANCH:=fuzz-corpus}"
 
-mkdir -p "$FUZZ_CORPUS_WORKTREE/testdata/fuzz"
+# Go's fuzz engine writes a crash reproducer into the *package's own*
+# testdata/fuzz/<FuncName>/ — e.g. internal/notary/testdata/fuzz/FuzzVerifyReceipt/
+# — NOT a single repo-root testdata/fuzz/. The previous version of this script
+# rsynced only "$KEYORIX_REPO/testdata/fuzz/" (the repo root), which for this
+# module never exists, so every crash reproducer this rig ever found was
+# silently dropped: the fuzz-corpus branch sat at an empty commit for months and
+# notify-on-crash.sh then classified every real crash as "infra failure, no
+# reproducer on the branch". That is the root cause of keyorixhq/keyorix#1243
+# and #1248 being wrongly closed. Discover the dirs across the whole tree
+# instead (matching CI/discover, and dashdiag's sibling script which already
+# globs '*/testdata/fuzz/*').
+#
+# Non-crashing "new interesting" corpus stays in the local build cache
+# ($GOCACHE/fuzz) and is never written into the tree, so anything found here is
+# by construction a real failing input worth a human's attention.
+cd "$KEYORIX_REPO"
+mapfile -t fuzz_dirs < <(find . -type d -path '*/testdata/fuzz' -not -path './.git/*' -printf '%P\n' | sort)
+if [[ ${#fuzz_dirs[@]} -eq 0 ]]; then
+  exit 0 # no target has produced a reproducer yet — the normal common case
+fi
 
-# Go's fuzz engine only ever creates testdata/fuzz/<FuncName>/ when a target
-# actually CRASHES — never for ordinary coverage-expanding exploration (that
-# non-crashing "new interesting" corpus stays in the local build cache,
-# $GOCACHE/fuzz, and is never written into the source tree). So on any target
-# that hasn't crashed yet, $KEYORIX_REPO/testdata/fuzz doesn't exist at all —
-# this is the normal, expected common case, not an error. Without this guard,
-# rsync's sender failed with "No such file or directory" (exit 23), and
-# because run-rotation.sh calls this script with `set -e` active, that
-# non-zero exit killed the ENTIRE run-rotation.sh process — which systemd's
-# Restart=always then restarted from the top of targets.conf, re-fuzzing the
-# FIRST target instead of advancing to the next one. Confirmed live: the rig
-# had been stuck re-fuzzing target #1 in a 3-hour crash/restart loop since
-# deployment, having never once reached a second target or a corpus commit.
-[[ -d "$KEYORIX_REPO/testdata/fuzz" ]] || exit 0
-
-rsync -a --update "$KEYORIX_REPO/testdata/fuzz/" "$FUZZ_CORPUS_WORKTREE/testdata/fuzz/"
+mkdir -p "$FUZZ_CORPUS_WORKTREE"
+# -R/--relative recreates each source's full relative path under the worktree,
+# so internal/notary/testdata/fuzz/... lands at the same path on the branch and,
+# once merged to main, becomes seed corpus for that package. --update never
+# overwrites a corpus file already on the branch with an older copy.
+rsync -aR --update "${fuzz_dirs[@]}" "$FUZZ_CORPUS_WORKTREE/"
 
 cd "$FUZZ_CORPUS_WORKTREE"
-git add testdata/fuzz/
+git add -- '*/testdata/fuzz/*' 'testdata/fuzz/*' 2>/dev/null || git add -A
 
 if git diff --cached --quiet; then
   exit 0
