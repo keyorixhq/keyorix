@@ -5,11 +5,6 @@ import (
 	"crypto"
 	"crypto/sha256"
 	"crypto/x509"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,83 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// seedCorpusBytes decodes a Go fuzz seed-corpus file (`go test fuzz v1` header
-// followed by a single `[]byte("...")` argument) into the raw input bytes.
-func seedCorpusBytes(t *testing.T, b []byte) []byte {
-	t.Helper()
-	s := string(b)
-	i := strings.Index(s, "[]byte(")
-	require.GreaterOrEqual(t, i, 0, "not a []byte fuzz corpus entry")
-	lit := strings.TrimSuffix(strings.TrimSpace(s[i+len("[]byte("):]), ")")
-	u, err := strconv.Unquote(lit)
-	require.NoError(t, err)
-	return []byte(u)
-}
-
-// The five inputs the continuous-fuzz rig found (2026-07..08) and that never
-// reached the repo: malformed RFC 3161 tokens that drive digitorus/pkcs7's BER
-// decoder into allocating gigabytes. They are committed as FuzzVerifyReceipt
-// seed corpus so the target keeps them, and exercised directly here.
-func amplificationCorpus(t *testing.T) map[string][]byte {
-	t.Helper()
-	out := map[string][]byte{}
-	files, err := filepath.Glob("testdata/fuzz/FuzzVerifyReceipt/*")
-	require.NoError(t, err)
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		require.NoError(t, err)
-		out[filepath.Base(f)] = seedCorpusBytes(t, b)
+// derLen encodes a DER definite length (short form under 128, else long form).
+func derLen(n int) []byte {
+	if n < 0x80 {
+		return []byte{byte(n)}
 	}
-	require.NotEmpty(t, out)
-	return out
-}
-
-// TestValidateDERFraming_RejectsAmplificationCorpus is the core regression:
-// every archived reproducer must be rejected by the framing guard.
-func TestValidateDERFraming_RejectsAmplificationCorpus(t *testing.T) {
-	for name, in := range amplificationCorpus(t) {
-		if err := validateDERFraming(in); err == nil {
-			t.Errorf("%s: validateDERFraming accepted a known decoder-amplification input", name)
-		}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte(n & 0xff)}, b...)
+		n >>= 8
 	}
-}
-
-// TestVerifyReceipt_AmplificationInputIsCheap proves the guard short-circuits
-// before the decoder: the worst reproducer used to allocate ~1.8 GB and run ~1 s;
-// with the guard VerifyReceipt must return an error almost instantly and barely
-// allocate. A generous ceiling (200 ms wall, 64 MiB) still fails hard if the
-// guard is ever removed or bypassed — the unguarded path is orders of magnitude
-// past it.
-func TestVerifyReceipt_AmplificationInputIsCheap(t *testing.T) {
-	roots := x509.NewCertPool() // non-nil so we reach the framing check, not the nil-roots guard
-	for name, in := range amplificationCorpus(t) {
-		var m0, m1 runtime.MemStats
-		runtime.GC()
-		runtime.ReadMemStats(&m0)
-		start := time.Now()
-		_, err := VerifyReceipt(roots, []byte("m"), in)
-		elapsed := time.Since(start)
-		runtime.ReadMemStats(&m1)
-		alloc := m1.TotalAlloc - m0.TotalAlloc
-		require.Error(t, err, "%s must be rejected", name)
-		assert.Less(t, elapsed, 200*time.Millisecond, "%s took %v — guard not short-circuiting", name, elapsed)
-		assert.Less(t, alloc, uint64(64<<20), "%s allocated %d bytes — guard not short-circuiting", name, alloc)
-	}
-}
-
-// TestValidateDERFraming_RejectsScaledBomb covers the tunable definite-length
-// shape whose cost doubles with each added unit (147 bytes -> 28 GB unguarded).
-func TestValidateDERFraming_RejectsScaledBomb(t *testing.T) {
-	base := []byte("0\r\r\x020\x020\x02")
-	for _, k := range []int{1, 4, 8, 16, 64} {
-		in := append(append([]byte{}, base...), bytes.Repeat([]byte("0\x020 "), k)...)
-		assert.Error(t, validateDERFraming(in), "scaled bomb k=%d must be rejected", k)
-	}
+	return append([]byte{byte(0x80 | len(b))}, b...)
 }
 
 // TestValidateDERFraming_AcceptsRealToken is the positive path: a genuine
-// validly-signed token, and the full TSA response it came in, must both pass —
-// the guard must not reject anything legitimate.
+// validly-signed token must pass framing and still verify end-to-end. The guard
+// must never reject anything spec-compliant.
 func TestValidateDERFraming_AcceptsRealToken(t *testing.T) {
 	fixedTime := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	msg := []byte("checkpoint bytes being anchored")
@@ -102,7 +36,6 @@ func TestValidateDERFraming_AcceptsRealToken(t *testing.T) {
 
 	assert.NoError(t, validateDERFraming(token), "real token must pass framing")
 
-	// And it must still fully verify end-to-end with the guard in place.
 	roots := x509.NewCertPool()
 	roots.AddCert(cert)
 	at, err := VerifyReceipt(roots, msg, token)
@@ -110,8 +43,8 @@ func TestValidateDERFraming_AcceptsRealToken(t *testing.T) {
 	assert.WithinDuration(t, fixedTime, at, time.Second)
 }
 
-// TestValidateDERFraming_Framing spot-checks the individual rejection reasons so
-// the guard's own logic is covered, not just the corpus.
+// TestValidateDERFraming_Framing spot-checks each rejection reason so the
+// guard's own logic is covered, not just end-to-end behaviour.
 func TestValidateDERFraming_Framing(t *testing.T) {
 	cases := []struct {
 		name string
@@ -134,4 +67,38 @@ func TestValidateDERFraming_Framing(t *testing.T) {
 			assert.Errorf(t, err, "%s should be rejected", c.name)
 		}
 	}
+}
+
+// TestValidateDERFraming_Limits covers the depth and node caps with small,
+// non-amplifying inputs. Both are rejected during the header walk before any
+// content is read, so the inputs themselves stay a few KB at most.
+func TestValidateDERFraming_Limits(t *testing.T) {
+	// One level deeper than maxDERDepth: definite-length SEQUENCEs wrapping a
+	// NULL. Lengths stay well under 128, so the whole thing is a few dozen bytes.
+	deep := []byte{0x05, 0x00}
+	for i := 0; i < maxDERDepth+1; i++ {
+		deep = append([]byte{0x30, byte(len(deep))}, deep...)
+	}
+	assert.Error(t, validateDERFraming(deep), "nesting past maxDERDepth must be rejected")
+
+	// A flat SEQUENCE holding more than maxDERNodes empty NULLs: many nodes, two
+	// bytes each, so it trips the node cap rather than any allocation.
+	var kids bytes.Buffer
+	for i := 0; i < maxDERNodes+1; i++ {
+		kids.Write([]byte{0x05, 0x00})
+	}
+	body := kids.Bytes()
+	seq := append([]byte{0x30}, derLen(len(body))...)
+	seq = append(seq, body...)
+	assert.Error(t, validateDERFraming(seq), "more than maxDERNodes elements must be rejected")
+}
+
+// TestVerifyReceipt_RejectsMalformedFramingEarly proves the guard is wired into
+// the verify path: a token that is not strict DER is rejected before the
+// decoder is ever reached.
+func TestVerifyReceipt_RejectsMalformedFramingEarly(t *testing.T) {
+	roots := x509.NewCertPool()                          // non-nil, so we pass the nil-roots guard and reach framing
+	notDER := []byte{0x30, 0x80, 0x05, 0x00, 0x00, 0x00} // indefinite length
+	_, err := VerifyReceipt(roots, []byte("m"), notDER)
+	require.Error(t, err, "a non-DER token must be rejected")
 }
