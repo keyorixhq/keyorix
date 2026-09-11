@@ -1644,6 +1644,31 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 				return fmt.Errorf("failed to add groups.deleted_at column: %w", err)
 			}
 		}
+		// groups.name_folded (#1642) has exactly the same existing-DB problem
+		// roles.name_folded had, and was missed because the reasoning stopped at
+		// the wrong question. #1642's own note reads groups.name_folded as safe
+		// because ensureGroupNameIndex is "called from both here AND the fresh-DB
+		// tail" -- true, and irrelevant: ensureGroupNameIndex calls
+		// backfillFoldedColumn, which only backfills and indexes an EXISTING
+		// column and never ALTER TABLE ADD COLUMN it. The call site existed; the
+		// column did not. On any database created before #1642, migrateDatabase
+		// returns early (projectsExists) so AutoMigrate never adds it, and the
+		// backfill's own SELECT is what fails:
+		//
+		//   failed to read groups for name_folded backfill:
+		//   ERROR: column "name_folded" does not exist (SQLSTATE 42703)
+		//
+		// which aborts migrateDatabase and, through CreateStorage ->
+		// server/main.go's log.Fatalf, prevents the server from booting at all.
+		// Found by running v0.92.0 against the DAST rig's real Postgres volume,
+		// 2026-09-11. Literal DDL rather than Migrator.AddColumn because the
+		// model tags this column `not null`, and Postgres rejects ADD COLUMN ...
+		// NOT NULL without a DEFAULT on a table that already has rows.
+		if !columnExists(db, "groups", "name_folded") {
+			if err := exec("ALTER TABLE groups ADD COLUMN name_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
 		if err := ensureGroupNameIndex(db); err != nil {
 			return err
 		}
@@ -1669,6 +1694,25 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	// so a SCIM-deprovisioned username can be re-provisioned. Additive + idempotent; the
 	// full AutoMigrate below covers fresh DBs.
 	if tableExists(db, "users") {
+		// users.username_folded and users.email_folded (#1642) -- the same
+		// missing-column shape as groups.name_folded above and roles.name_folded
+		// below. ensureUserNameIndex/ensureUserEmailIndex each call
+		// backfillFoldedColumn, which reads the folded column before anything has
+		// created it. groups fails first on a pre-#1642 database, so these two
+		// were still queued behind it when the groups failure was found;
+		// confirmed absent on the same real database (information_schema showed
+		// no *_folded column on users at all). Fixing only the column that
+		// happens to error first would have moved the crash one line down.
+		if !columnExists(db, "users", "username_folded") {
+			if err := exec("ALTER TABLE users ADD COLUMN username_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
+		if !columnExists(db, "users", "email_folded") {
+			if err := exec("ALTER TABLE users ADD COLUMN email_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
 		if err := ensureUserNameIndex(db); err != nil {
 			return err
 		}
