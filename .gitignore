@@ -197,6 +197,20 @@ temp/
 # local MCP config (contains credentials)
 .claude/mcp.json
 
+# The whole Claude Code state directory, not just mcp.json. Only the credential
+# file was ignored, so .claude/ itself has been showing up as untracked in
+# `git status` in every clone, in every session, indefinitely -- noise that
+# trains people to skim past a dirty tree instead of reading it. Nothing under
+# here is source.
+.claude/
+
+# Ad-hoc output directories agent sessions write into at the repo root.
+Claude outputs/
+
+# Runtime lock written beside the DEK when a server starts inside a checkout
+# (seen in review clones). An artifact of running the thing, never source.
+dek.lock
+
 data_key
 certs/
 
