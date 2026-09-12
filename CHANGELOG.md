@@ -5,6 +5,26 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+## v0.92.1 — 2026-09-12
+
+### Security
+- **RFC 3161 timestamp tokens are now validated as strict DER before decoding.**
+  A malformed timestamp token (or TSA response) could previously drive the
+  CMS/BER decoding path into excessive memory allocation on the notary verify
+  path (audit-checkpoint anchoring and receipt verification). Keyorix now
+  rejects any token that is not well-formed, definite-length DER — with bounded
+  nesting depth and node count — before it reaches the decoder, closing that
+  denial-of-service vector while still accepting every spec-compliant token
+  (RFC 3161 §2.4.2 requires DER). (#1848)
+
+### Fixed
+- **Keyorix v0.92.0 could not start against an existing PostgreSQL database.**
+  A migrations/audit startup ordering problem prevented boot against a
+  pre-existing Postgres schema; upgrades against an existing database now boot
+  cleanly. (#1850)
+- Dependency updates: Go module patch group (#1855), npm patch group (#1858),
+  and `sigs.k8s.io/controller-runtime` 0.24.1 → 0.25.0 (#1853).
+
 ## v0.92.0 — 2026-09-10
 
 > **Scope note.** `v0.88.0` through `v0.91.0` were tagged without changelog
