@@ -1,8 +1,14 @@
+//go:build !lean
+
 // awsiam.go — the AWS IAM rotation executor (ADR-047), a GENERATE-upstream backend: it
 // rotates an IAM user's access key by minting a fresh key pair (the cloud generates the
 // value — Keyorix does not supply it) and removing the user's prior keys, then returns
 // the new credential as JSON for Keyorix to store. Credentials come from the ambient
 // AWS identity chain, never from Keyorix config.
+//
+// A `lean` build (see awsiam_lean.go) compiles this file out to drop
+// aws-sdk-go-v2/service/iam from the binary (~2.5MB of the ~7.2MB AWS SDK
+// footprint) for the air-gapped/lightweight release variant.
 package rotation
 
 import (

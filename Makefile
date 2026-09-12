@@ -1,5 +1,11 @@
 BINARY_CLI=keyorix
 BINARY_SERVER=keyorix-server
+# Lightweight/air-gapped release variant (-tags lean): drops
+# aws-sdk-go-v2/service/{iam,s3} (see internal/rotation/awsiam_lean.go,
+# internal/evidencesink/objectstore_lean.go) for installs that don't use the
+# AWS IAM rotation backend or the S3-compatible evidence sink. Linux only —
+# this variant targets air-gapped production servers, not local dev on macOS.
+BINARY_SERVER_LEAN=$(BINARY_SERVER)-lean
 BUILD_DIR=./bin
 VERSION?=dev
 GIT_COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -57,7 +63,7 @@ build-server:
 # `//go:embed all:dist` bakes in whatever is physically on disk at compile
 # time) and each restore the placeholder themselves, exactly once, after
 # their own last build that needs the real thing. Restoring here instead
-# would run in the middle of release's 8 cross-compiles (Make prerequisites
+# would run in the middle of release's 10 cross-compiles (Make prerequisites
 # complete in full before the depending target's own recipe starts), leaving
 # every one of them with a placeholder index.html paired with the real
 # hashed JS/CSS bundles copied in below -- a broken, inconsistent embed.
@@ -108,13 +114,14 @@ dev: install-cli
 # Depends on populate-webui-dist, not build-ui: build-ui's own recipe ends by
 # restoring server/webui/dist/index.html to the committed placeholder, and
 # Make prerequisites run to completion before this recipe starts — depending
-# on build-ui here would mean every one of the 8 `go build`s below embeds a
+# on build-ui here would mean every one of the 10 `go build`s below embeds a
 # placeholder index.html alongside the real hashed JS/CSS bundles
 # populate-webui-dist copies in, since nothing would rebuild dist/ in
-# between. The 4 server (not CLI) builds are the ones that actually embed
-# it (server/webui/embed.go), but populating once up front is simplest and
-# harmless for the 4 CLI builds. The placeholder is restored once, at the
-# very end, after every build that needs the real dist/ has already run.
+# between. The 6 server-family builds (4 full + 2 lean) are the ones that
+# actually embed it (server/webui/embed.go), but populating once up front is
+# simplest and harmless for the 4 CLI builds. The placeholder is restored
+# once, at the very end, after every build that needs the real dist/ has
+# already run.
 release: populate-webui-dist
 	@echo "→ Cross-compiling $(VERSION)"
 	@mkdir -p dist
@@ -126,6 +133,8 @@ release: populate-webui-dist
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -tags lean $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_amd64 ./server
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -tags lean $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_arm64 ./server
 	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
@@ -170,18 +179,25 @@ _sbom-generate:
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  .
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json .
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json .
-	@echo "→ Linking frontend SBOM into the four server Go SBOMs (ADR-073)"
+	@echo "→ Generating per-binary Go CycloneDX SBOMs for the lean release variant"
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-tags=lean cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER_LEAN)_linux_amd64_sbom.cdx.json .
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOFLAGS=-tags=lean cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER_LEAN)_linux_arm64_sbom.cdx.json .
+	@echo "→ Linking frontend SBOM into the six server Go SBOMs (ADR-073)"
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json  dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
-	@echo "→ Verifying frontend SBOM hash matches all four server SBOM links (ADR-073 decision #5)"
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER_LEAN)_linux_amd64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER_LEAN)_linux_arm64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	@echo "→ Verifying frontend SBOM hash matches all six server SBOM links (ADR-073 decision #5)"
 	node scripts/verify-sbom-links.mjs \
 		dist/$(BINARY_SERVER)_frontend_sbom.cdx.json \
 		dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json \
 		dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json \
 		dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json \
-		dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json
+		dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json \
+		dist/$(BINARY_SERVER_LEAN)_linux_amd64_sbom.cdx.json \
+		dist/$(BINARY_SERVER_LEAN)_linux_arm64_sbom.cdx.json
 
 # smoke: executes the documented QUICK_START.md flow (system init -> project
 # create -> secret create/list/get) against a freshly built binary, in an
