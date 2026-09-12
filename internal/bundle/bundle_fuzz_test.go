@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/trust"
 )
 
@@ -35,7 +36,6 @@ func FuzzBundleVerify(f *testing.F) {
 	})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		// Must never panic.
-		_, _ = Verify(bytes.NewReader(data), reg)
+		fuzzutil.Guard(t.Fatalf, "bundle.Verify", func() { _, _ = Verify(bytes.NewReader(data), reg) })
 	})
 }

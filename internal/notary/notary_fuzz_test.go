@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzVerifyReceipt feeds arbitrary bytes as an RFC 3161 TimeStampToken into
@@ -32,8 +34,7 @@ func FuzzVerifyReceipt(f *testing.F) {
 	f.Add([]byte{0x30, 0x10, 0x00})
 
 	f.Fuzz(func(t *testing.T, token []byte) {
-		// Must never panic.
-		_, _ = VerifyReceipt(roots, message, token)
+		fuzzutil.Guard(t.Fatalf, "VerifyReceipt", func() { _, _ = VerifyReceipt(roots, message, token) })
 	})
 }
 
@@ -62,7 +63,6 @@ func FuzzRFC3161Anchor(f *testing.F) {
 		if err != nil {
 			t.Fatalf("unexpected NewRFC3161 error for loopback test server URL: %v", err)
 		}
-		// Must never panic.
-		_, _ = r.Anchor(context.Background(), []byte("fuzz anchor message"))
+		fuzzutil.Guard(t.Fatalf, "RFC3161.Anchor", func() { _, _ = r.Anchor(context.Background(), []byte("fuzz anchor message")) })
 	})
 }
