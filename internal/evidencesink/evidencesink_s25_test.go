@@ -1,6 +1,9 @@
 // evidencesink_s25_test.go — additional coverage: refuseRedirect, newWebhook
-// InsecureSkipVerify, validateEndpoint http+allowPrivateNetwork, post via
-// roundTripper mock (no network listener needed), and NewObjectStore success path.
+// InsecureSkipVerify, validateEndpoint http+allowPrivateNetwork, and post via
+// roundTripper mock (no network listener needed). The NewObjectStore success-path
+// tests that used to live here moved to objectstore_s25_test.go (!lean-tagged,
+// since they assert a real S3-backed NewObjectStore succeeds — untrue of the lean
+// stub) so this file's webhook coverage isn't dropped from `-tags lean` runs too.
 package evidencesink
 
 import (
@@ -274,65 +277,4 @@ func TestPost_InvalidEndpointError(t *testing.T) {
 	// that is a permanent (non-retryable) error in post.
 	err := wh.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), "")
 	require.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// NewObjectStore — test the valid construction branches.
-// ---------------------------------------------------------------------------
-
-// TestNewObjectStore_ValidMinimalConfig tests a minimal valid config (bucket only).
-// AWS credential loading still succeeds even without real credentials because the
-// SDK only resolves them lazily on the first actual API call, not at LoadDefaultConfig.
-func TestNewObjectStore_ValidMinimalConfig(t *testing.T) {
-	ctx := context.Background()
-	o, err := NewObjectStore(ctx, ObjectStoreConfig{Bucket: "my-bucket"})
-	require.NoError(t, err)
-	require.NotNil(t, o)
-	assert.Equal(t, "objectstore:my-bucket/", o.Target())
-}
-
-// TestNewObjectStore_WithRegionAndEndpoint exercises the loadOpts path and the
-// custom-endpoint / path-style option branches.
-func TestNewObjectStore_WithRegionAndEndpoint(t *testing.T) {
-	ctx := context.Background()
-	o, err := NewObjectStore(ctx, ObjectStoreConfig{
-		Bucket:       "minio-bucket",
-		Prefix:       "evidence",
-		Region:       "us-east-1",
-		Endpoint:     "http://localhost:9000",
-		UsePathStyle: true,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, o)
-	assert.Equal(t, "objectstore:minio-bucket/evidence/", o.Target())
-}
-
-// TestNewObjectStore_WithLockGovernanceAndLegalHold exercises object-lock and
-// legal-hold construction including the Region branch.
-func TestNewObjectStore_WithLockGovernanceAndLegalHold(t *testing.T) {
-	ctx := context.Background()
-	o, err := NewObjectStore(ctx, ObjectStoreConfig{
-		Bucket:         "bkt",
-		LockMode:       "governance",
-		LockRetainDays: 30,
-		LegalHold:      true,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, o)
-	target := o.Target()
-	assert.Contains(t, target, "lock:governance")
-	assert.Contains(t, target, "legal-hold")
-}
-
-// TestNewObjectStore_WithComplianceLock exercises the compliance lock mode path.
-func TestNewObjectStore_WithComplianceLock(t *testing.T) {
-	ctx := context.Background()
-	o, err := NewObjectStore(ctx, ObjectStoreConfig{
-		Bucket:         "bkt",
-		LockMode:       "compliance",
-		LockRetainDays: 90,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, o)
-	assert.Contains(t, o.Target(), "lock:compliance")
 }
