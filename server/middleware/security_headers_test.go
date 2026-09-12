@@ -23,6 +23,7 @@ func TestSecurityHeaders_AlwaysSet(t *testing.T) {
 	assert.Equal(t, "nosniff", hdr.Get("X-Content-Type-Options"))
 	assert.Equal(t, "DENY", hdr.Get("X-Frame-Options"))
 	assert.Equal(t, "no-referrer", hdr.Get("Referrer-Policy"))
+	assert.Equal(t, "none", hdr.Get("X-Permitted-Cross-Domain-Policies"))
 	// HSTS is NOT sent over plain HTTP (TLS terminated elsewhere or not at all).
 	assert.Empty(t, hdr.Get("Strict-Transport-Security"))
 }

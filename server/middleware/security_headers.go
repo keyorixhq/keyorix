@@ -39,6 +39,9 @@ const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 
 //     CORS; together with COOP this enables cross-origin isolation in the browser.
 //   - Cross-Origin-Opener-Policy: same-origin — isolates the browsing context group so
 //     cross-origin documents cannot share the same context (closes window.opener leaks).
+//   - X-Permitted-Cross-Domain-Policies: none — no Adobe cross-domain policy file is
+//     honored (a legacy Flash/PDF data-exfiltration channel); also a header web security
+//     scanners expect to see set.
 //
 // HSTS is sent only when this process terminates TLS (tlsEnabled); deployments that
 // terminate TLS at a proxy add HSTS there, and sending it over plain HTTP is wrong.
@@ -58,6 +61,7 @@ func SecurityHeaders(tlsEnabled bool) func(http.Handler) http.Handler {
 			h.Set("Cross-Origin-Embedder-Policy", "require-corp")
 			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
+			h.Set("X-Permitted-Cross-Domain-Policies", "none")
 			if tlsEnabled {
 				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 			}

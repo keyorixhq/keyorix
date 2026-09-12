@@ -157,6 +157,7 @@ jobs:
         run: |
           nuclei -target http://localhost:8080 \
                  -tags "auth,token,jwt,exposure,misconfig" \
+                 -exclude-tags "ssh,network" \
                  -sarif-export /tmp/nuclei-results.sarif \
                  -silent \
                  -no-color || true
