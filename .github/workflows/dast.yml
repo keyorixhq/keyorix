@@ -155,9 +155,24 @@ jobs:
 
       - name: Run Nuclei (unauthenticated surface)
         run: |
+          # -exclude-matchers targets one named matcher inside a template (as
+          # opposed to -exclude-id, which drops the whole template) -- every
+          # other http-missing-security-headers check (CSP, X-Frame-Options,
+          # X-Content-Type-Options, Referrer-Policy, Permissions-Policy,
+          # X-Permitted-Cross-Domain-Policies, the three Cross-Origin-* headers)
+          # stays active. Alert #825: this DAST job runs the server with
+          # tls.enabled=false (an ephemeral plaintext target, see "Write DAST
+          # config" above), so Strict-Transport-Security is correctly never
+          # sent -- RFC 6797 says a browser MUST ignore HSTS received over
+          # plain HTTP, and server/middleware/security_headers.go only sets it
+          # when tlsEnabled, which server/middleware/security_headers_test.go's
+          # TestSecurityHeaders_HSTSOnlyWithTLS already proves both ways. This
+          # scanner has no way to know that; without the exclusion it flags a
+          # permanent false positive that no code change here can fix.
           nuclei -target http://localhost:8080 \
                  -tags "auth,token,jwt,exposure,misconfig" \
                  -exclude-tags "ssh,network" \
+                 -exclude-matchers "http-missing-security-headers:strict-transport-security" \
                  -sarif-export /tmp/nuclei-results.sarif \
                  -silent \
                  -no-color || true
