@@ -6,7 +6,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -o /out/keyorix-operator ./cmd
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/keyorix-operator ./cmd
 
 # Runtime stage — distroless static, non-root. The operator reaches the Keyorix server
 # over HTTPS (ca-certificates baked into the static base) and the Kubernetes API via the

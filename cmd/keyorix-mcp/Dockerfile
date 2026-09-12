@@ -7,7 +7,7 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build \
-    -ldflags "-X main.version=${VERSION}" \
+    -ldflags "-s -w -X main.version=${VERSION}" \
     -trimpath -o /out/keyorix-mcp ./cmd/keyorix-mcp
 
 # Runtime stage — distroless static, non-root (no shell, no package manager). The MCP
