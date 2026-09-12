@@ -16,6 +16,8 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
+
 	// nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used
 	// Used only for retry-backoff jitter (see the #nosec G404 at its call site below), never
 	// for a security-sensitive value such as a token, key, or ID.
@@ -343,6 +345,22 @@ func (ls *LocalStorage) MigrateAuditChainEncoding(ctx context.Context, dryRun bo
 			}
 		}
 
+		// Pre-flight, inside the same transaction and before a single row is
+		// rewritten. Without it this operation recomputed and overwrote every
+		// entry_hash/prev_hash unconditionally, which on a tampered database
+		// re-hashed the tampered row exactly like a stale one and left the chain
+		// verifying afterwards -- an evidence-erasing write on the one dataset
+		// that exists to be evidence. The only trace was the migration event this
+		// function appends, which says a migration ran, not what it covered up.
+		//
+		// Refusing here costs nothing in the legitimate case (the chain is
+		// intact, just old-encoded) and is the difference between "we detected
+		// tampering" and "we destroyed the proof of it" in the case that matters.
+		// The transaction rolls back, so a refusal leaves the database untouched.
+		if err := refuseIfAuditChainBroken(tx, anchor); err != nil {
+			return err
+		}
+
 		prevHash := auditGenesisHash
 		started := false
 		var lastID uint
@@ -429,6 +447,92 @@ func (ls *LocalStorage) MigrateAuditChainEncoding(ctx context.Context, dryRun bo
 	return result, nil
 }
 
+// refuseIfAuditChainBroken walks the stored chain before MigrateAuditChainEncoding
+// rewrites it, and returns an error if any chained row is inconsistent under BOTH
+// the current and the pre-#1452 encodings, or if the chain linkage itself is
+// broken.
+//
+// The two checks catch different things and both matter:
+//
+//   - content: a row whose stored entry_hash matches neither encoding's
+//     derivation from its own fields. Its contents changed after it was written.
+//   - linkage: a row whose prev_hash does not equal the preceding row's stored
+//     entry_hash. A row was inserted, deleted, or reordered -- which re-encoding
+//     would silently repair by rewriting prev_hash down the whole chain.
+//
+// Mixed encodings are explicitly fine (see auditEntryHashMatchesAnyKnownEncoding):
+// a deployment that upgraded and took traffic before migrating has honest rows in
+// both formats, and refusing that would push operators toward a force flag.
+func refuseIfAuditChainBroken(tx *gorm.DB, anchor *storage.AuditChainAnchor) error {
+	prevHash := auditGenesisHash
+	started := false
+	firstBatch := true
+	var lastID uint
+
+	for {
+		var batch []*models.AuditEvent
+		if err := tx.
+			Where("id > ?", lastID).
+			Order("id ASC").
+			Limit(auditChainVerifyBatch).
+			Find(&batch).Error; err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		if firstBatch {
+			firstBatch = false
+			// Same applicability rule the rewrite loop below uses: seed from the
+			// retention anchor only when the first chained row carries a
+			// non-genesis prev_hash, i.e. a prior purge really did move the
+			// chain start.
+			for _, e := range batch {
+				if e.EntryHash == "" {
+					continue
+				}
+				if anchor != nil && e.PrevHash != auditGenesisHash {
+					prevHash = anchor.PrevHash
+				}
+				break
+			}
+		}
+
+		for _, e := range batch {
+			if !started {
+				if e.EntryHash == "" {
+					continue // leading unchained (pre-ADR-029) rows
+				}
+				started = true
+			}
+			if e.EntryHash == "" {
+				return fmt.Errorf("refusing to re-encode the audit chain: event %d has no entry_hash, so "+
+					"chain data was removed after it was written. Re-encoding would rewrite the chain around "+
+					"this gap and produce a chain that verifies. Investigate before migrating", e.ID)
+			}
+			if e.PrevHash != prevHash {
+				return fmt.Errorf("refusing to re-encode the audit chain: event %d's prev_hash does not link "+
+					"to the preceding event, so a row was inserted, deleted, or reordered. Re-encoding "+
+					"rewrites prev_hash for every row and would repair this break invisibly. Investigate "+
+					"before migrating", e.ID)
+			}
+			if !auditEntryHashMatchesAnyKnownEncoding(e) {
+				return fmt.Errorf("refusing to re-encode the audit chain: event %d's entry_hash matches "+
+					"neither the current encoding nor the pre-#1452 one, so its contents changed after it "+
+					"was written -- this is not a stale encoding. Re-encoding would re-hash the modified "+
+					"contents and leave the chain verifying, destroying the evidence. Investigate before "+
+					"migrating", e.ID)
+			}
+			prevHash = e.EntryHash
+		}
+
+		lastID = batch[len(batch)-1].ID
+		if len(batch) < auditChainVerifyBatch {
+			return nil
+		}
+	}
+}
+
 // errAuditMigrationDryRun is a sentinel used to force MigrateAuditChainEncoding's
 // transaction to roll back after computing (but never persisting) its result.
 var errAuditMigrationDryRun = errors.New("audit chain migration dry run")
@@ -454,7 +558,31 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 			return prevHash, headID, started, true
 		}
 		if computeAuditEntryHash(e, e.PrevHash) != e.EntryHash {
-			brokenChain(result, e.ID, "entry_hash does not match the event contents (event modified)")
+			// Two different findings share this branch, and saying the wrong one
+			// on a compliance screen is not a cosmetic problem. The stored hash
+			// can disagree with the recomputed one because the event really was
+			// modified, or because the row was hashed under the pre-2026-08-16
+			// encoding (#1452 replaced the NUL-delimited derivation with a
+			// length-prefixed one) and has not been through
+			// MigrateAuditChainEncoding yet. On an upgraded install the second
+			// is reached by doing nothing but deploying.
+			//
+			// Until the frozen legacy encoder existed there was no way to tell
+			// them apart, and this said "event modified" for both -- telling an
+			// operator, and the Compliance page's "Audit chain verified" tile,
+			// that someone had tampered with their audit log after an ordinary
+			// upgrade. Now the row is tested against the old encoding and the
+			// two are reported as what they are.
+			if ComputeAuditEntryHashPre1452(e, e.PrevHash) == e.EntryHash {
+				brokenChain(result, e.ID, "this row's entry_hash is valid under the pre-#1452 audit-hash "+
+					"encoding but not the current one — the chain has not been re-encoded since the "+
+					"2026-08-16 format change. This is an un-migrated upgrade, NOT evidence of tampering: "+
+					"run the one-time re-encoding (POST /api/v1/audit/migrate-chain-encoding), which "+
+					"refuses if it finds a row that matches neither encoding")
+				return prevHash, headID, started, true
+			}
+			brokenChain(result, e.ID, "entry_hash matches neither the current encoding nor the pre-#1452 "+
+				"one, so this event's contents changed after it was written (event modified)")
 			return prevHash, headID, started, true
 		}
 		prevHash = e.EntryHash

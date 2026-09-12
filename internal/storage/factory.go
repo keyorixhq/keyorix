@@ -1209,6 +1209,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	mfaSecretExists := tableExists(db, "mfa_secrets")
 	mfaRecoveryExists := tableExists(db, "mfa_recovery_codes")
 	mfaChallengeExists := tableExists(db, "mfa_challenges")
+	mfaStepUpGrantExists := tableExists(db, "mfa_step_up_grants")
 	dynConfigExists := tableExists(db, "dynamic_secret_configs")
 	dynLeaseExists := tableExists(db, "dynamic_secret_leases")
 	webauthnCredExists := tableExists(db, "web_authn_credentials")
@@ -1261,6 +1262,35 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !mfaChallengeExists {
 		if err := db.AutoMigrate(&models.MFAChallenge{}); err != nil {
 			return fmt.Errorf("failed to migrate mfa_challenges table: %w", err)
+		}
+	}
+	// mfa_step_up_grants. store-mfa-002 found that MFAStepUpGrant "was never
+	// migrated anywhere" and fixed it by adding the model to the bulk
+	// AutoMigrate list -- which sits AFTER `if projectsExists { return nil }`,
+	// so the fix only ever reached fresh installs. The original finding was
+	// that the table did not exist on any database; it still does not exist on
+	// any UPGRADED one. Same shape as #1642's folded columns: a fresh-DB-only
+	// remedy for an every-install problem.
+	//
+	// Consequence on an upgraded install, confirmed against the DAST rig's real
+	// Postgres volume (2026-09-11), where this table is the only one of the
+	// fresh-path models absent:
+	//
+	//   Create/GetActiveMFAStepUpGrant and PruneMFAStepUpGrants all fail with
+	//   "relation \"mfa_step_up_grants\" does not exist", so the
+	//   mfa_stepup_grant_prune scheduler errors every cycle, and -- with
+	//   classification.restricted_requires_mfa_step_up enabled --
+	//   checkRestrictedMFAGate turns that error into
+	//   "secret %q is restricted: could not verify MFA step-up: ...".
+	//
+	// That gate fails CLOSED, so this is not a bypass: restricted secrets
+	// become unreadable rather than readable without a second factor. It is
+	// still a total functional break of the protection tier meant for the most
+	// sensitive secrets, and unrecoverable in place, since minting a grant
+	// needs the same missing table.
+	if !mfaStepUpGrantExists {
+		if err := db.AutoMigrate(&models.MFAStepUpGrant{}); err != nil {
+			return fmt.Errorf("failed to migrate mfa_step_up_grants table: %w", err)
 		}
 	}
 
@@ -1644,6 +1674,31 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 				return fmt.Errorf("failed to add groups.deleted_at column: %w", err)
 			}
 		}
+		// groups.name_folded (#1642) has exactly the same existing-DB problem
+		// roles.name_folded had, and was missed because the reasoning stopped at
+		// the wrong question. #1642's own note reads groups.name_folded as safe
+		// because ensureGroupNameIndex is "called from both here AND the fresh-DB
+		// tail" -- true, and irrelevant: ensureGroupNameIndex calls
+		// backfillFoldedColumn, which only backfills and indexes an EXISTING
+		// column and never ALTER TABLE ADD COLUMN it. The call site existed; the
+		// column did not. On any database created before #1642, migrateDatabase
+		// returns early (projectsExists) so AutoMigrate never adds it, and the
+		// backfill's own SELECT is what fails:
+		//
+		//   failed to read groups for name_folded backfill:
+		//   ERROR: column "name_folded" does not exist (SQLSTATE 42703)
+		//
+		// which aborts migrateDatabase and, through CreateStorage ->
+		// server/main.go's log.Fatalf, prevents the server from booting at all.
+		// Found by running v0.92.0 against the DAST rig's real Postgres volume,
+		// 2026-09-11. Literal DDL rather than Migrator.AddColumn because the
+		// model tags this column `not null`, and Postgres rejects ADD COLUMN ...
+		// NOT NULL without a DEFAULT on a table that already has rows.
+		if !columnExists(db, "groups", "name_folded") {
+			if err := exec("ALTER TABLE groups ADD COLUMN name_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
 		if err := ensureGroupNameIndex(db); err != nil {
 			return err
 		}
@@ -1669,6 +1724,25 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	// so a SCIM-deprovisioned username can be re-provisioned. Additive + idempotent; the
 	// full AutoMigrate below covers fresh DBs.
 	if tableExists(db, "users") {
+		// users.username_folded and users.email_folded (#1642) -- the same
+		// missing-column shape as groups.name_folded above and roles.name_folded
+		// below. ensureUserNameIndex/ensureUserEmailIndex each call
+		// backfillFoldedColumn, which reads the folded column before anything has
+		// created it. groups fails first on a pre-#1642 database, so these two
+		// were still queued behind it when the groups failure was found;
+		// confirmed absent on the same real database (information_schema showed
+		// no *_folded column on users at all). Fixing only the column that
+		// happens to error first would have moved the crash one line down.
+		if !columnExists(db, "users", "username_folded") {
+			if err := exec("ALTER TABLE users ADD COLUMN username_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
+		if !columnExists(db, "users", "email_folded") {
+			if err := exec("ALTER TABLE users ADD COLUMN email_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
 		if err := ensureUserNameIndex(db); err != nil {
 			return err
 		}
@@ -1712,9 +1786,25 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// On an existing install AutoMigrate never runs, so this ADD COLUMN
 		// step -- mirroring the groups.DeletedAt AddColumn immediately above
 		// this comment block -- is what actually has to add it here.
-		if m := db.Migrator(); !m.HasColumn(&models.Role{}, "NameFolded") {
-			if err := m.AddColumn(&models.Role{}, "NameFolded"); err != nil {
-				return fmt.Errorf("failed to add roles.name_folded column: %w", err)
+		// Literal DDL, not Migrator.AddColumn. models.Role tags NameFolded
+		// "not null", and GORM renders that straight into the ALTER with no
+		// DEFAULT -- which every engine rejects against a table that already
+		// has rows:
+		//
+		//   SQLite:   Cannot add a NOT NULL column with default value NULL
+		//   Postgres: column "name_folded" of relation "roles" contains null values
+		//
+		// so #1642's roles guard only ever worked on an EMPTY roles table. It
+		// went unnoticed because the one real database this was reproduced on
+		// happened to have roles=0; any install with the seeded admin/operator/
+		// viewer roles would have hit it. Caught by
+		// TestMigrateDatabase_PreFoldedColumnsUpgrade, whose fixture inserts a
+		// role -- the synthetic case was stronger than the real one here.
+		// DEFAULT '' also matches what backfillFoldedColumn selects on, so the
+		// backfill immediately below still picks every pre-existing row up.
+		if !columnExists(db, "roles", "name_folded") {
+			if err := exec("ALTER TABLE roles ADD COLUMN name_folded TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
 			}
 		}
 		if err := ensureRoleNameIndex(db); err != nil {
@@ -1880,9 +1970,47 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 // NFC+case-fold output, #1642 — so "Admin"/"admin" can't coexist as two
 // indistinguishable roles in an access review. Idempotent; works on both
 // SQLite and Postgres.
+// dropLegacyGormUniqueTagArtifact removes the uniqueness artifact GORM's plain
+// `unique` struct tag left behind, whichever form the dialect gave it.
+//
+// This distinction is the whole reason the function exists. On SQLite -- the
+// dev and test backend, and therefore the only one CI ever migrates -- a
+// `unique` tag produces a plain index, and DROP INDEX removes it. On Postgres
+// it produces a UNIQUE CONSTRAINT that *owns* an index of the same name, and
+// Postgres refuses to drop that index directly:
+//
+//	ERROR: cannot drop index uni_roles_name because constraint uni_roles_name
+//	on table roles requires it (SQLSTATE 2BP01)
+//
+// which aborted migrateDatabase and stopped the server booting. Found on the
+// DAST rig's real Postgres volume, 2026-09-11, immediately behind the missing
+// folded columns -- the second Postgres-only, upgrade-only defect in the same
+// migration, both invisible to a SQLite test suite.
+//
+// Constraint first, then index: DROP CONSTRAINT removes the owned index with
+// it, so the DROP INDEX that follows is a no-op on Postgres and does the real
+// work on SQLite. Both are IF EXISTS, so this is idempotent either way. The
+// table and constraint names are passed as whole literal statements by the
+// callers rather than built here, keeping the no-runtime-built-identifier
+// discipline the surrounding code follows deliberately.
+func dropLegacyUniqueConstraint(db *gorm.DB, alterStmt string) error {
+	if db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	if err := db.Exec(alterStmt).Error; err != nil {
+		return fmt.Errorf("migration failed (%s): %w", alterStmt, err)
+	}
+	return nil
+}
+
 func ensureRoleNameIndex(db *gorm.DB) error {
 	// Drop the unique constraint/index GORM's original `unique` tag on Name
 	// created. GORM names a plain `unique` tag's index uni_<table>_<column>.
+	// On Postgres that name belongs to a CONSTRAINT, which DROP INDEX alone
+	// cannot remove -- see dropLegacyUniqueConstraint above.
+	if err := dropLegacyUniqueConstraint(db, "ALTER TABLE roles DROP CONSTRAINT IF EXISTS uni_roles_name"); err != nil {
+		return err
+	}
 	if err := db.Exec("DROP INDEX IF EXISTS uni_roles_name").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy roles name index: %w", err)
 	}
@@ -2044,6 +2172,9 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	// into individual literal statements (no runtime-built identifier) rather
 	// than looping over a slice, so this can't even shape-match a
 	// string-formatted-query finding.
+	if err := dropLegacyUniqueConstraint(db, "ALTER TABLE groups DROP CONSTRAINT IF EXISTS uni_groups_name"); err != nil {
+		return err
+	}
 	if err := db.Exec("DROP INDEX IF EXISTS uni_groups_name").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy groups name index %q: %w", "uni_groups_name", err)
 	}
@@ -2145,6 +2276,9 @@ func ensureUserNameIndex(db *gorm.DB) error {
 	// shape-match a string-formatted-query finding.
 	if err := db.Exec("DROP INDEX IF EXISTS idx_users_username").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy users username index %q: %w", "idx_users_username", err)
+	}
+	if err := dropLegacyUniqueConstraint(db, "ALTER TABLE users DROP CONSTRAINT IF EXISTS uni_users_username"); err != nil {
+		return err
 	}
 	if err := db.Exec("DROP INDEX IF EXISTS uni_users_username").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy users username index %q: %w", "uni_users_username", err)

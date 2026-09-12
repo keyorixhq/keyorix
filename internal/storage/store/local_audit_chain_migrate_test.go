@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,10 +19,18 @@ import (
 func appendLegacyEncodedEvent(t *testing.T, ls *LocalStorage, desc string, at time.Time, prevHash string) *models.AuditEvent {
 	t.Helper()
 	e := appendEvent(t, ls, "secret.read", desc, at)
-	legacyEntryHash := "legacy-" + e.EntryHash[:16]
+	// A REAL pre-#1452 hash, derived by the frozen legacy encoder, not a
+	// placeholder. This used to be `"legacy-" + e.EntryHash[:16]` -- a literal
+	// string that is not a hash under any encoding this code has ever used. Every
+	// test below therefore proved only that MigrateAuditChainEncoding overwrites
+	// arbitrary bytes, which was precisely the unconditional-overwrite behaviour
+	// that let it re-hash a tampered row as readily as a stale one. The fixture
+	// asserted the defect as the expectation. With a genuine legacy hash the same
+	// tests now exercise the real upgrade these functions exist for.
+	e.PrevHash = prevHash
+	legacyEntryHash := ComputeAuditEntryHashPre1452(e, prevHash)
 	require.NoError(t, ls.db.Model(&models.AuditEvent{}).Where("id = ?", e.ID).
 		Updates(map[string]interface{}{"prev_hash": prevHash, "entry_hash": legacyEntryHash}).Error)
-	e.PrevHash = prevHash
 	e.EntryHash = legacyEntryHash
 	return e
 }
@@ -176,4 +185,81 @@ func TestMigrateAuditChainEncoding_AlreadyCurrentEncodingIsIdempotent(t *testing
 	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
 	assert.True(t, v.Valid, "re-migrating already-current rows must not break the chain: %s", v.Reason)
+}
+
+// TestMigrateAuditChainEncoding_RefusesToLaunderATamperedRow is the protection
+// this operation was missing.
+//
+// Before the pre-flight check, MigrateAuditChainEncoding recomputed and
+// overwrote every row's entry_hash/prev_hash unconditionally. Run on a database
+// where someone had edited an audit event, it re-hashed the edited contents
+// like any other row and the chain verified cleanly afterwards. The only
+// residue was the migration event the function appends, which records that a
+// migration happened, not what it erased.
+//
+// That is an evidence-destroying write on the one dataset whose entire purpose
+// is evidence, reachable through a documented maintenance procedure an operator
+// is told to run after upgrading — and the operator would have every reason to
+// believe the resulting green chain meant their audit log was intact.
+func TestMigrateAuditChainEncoding_RefusesToLaunderATamperedRow(t *testing.T) {
+	ls := newAuditChainTestStore(t)
+	base := time.Now().UTC()
+
+	e1 := appendLegacyEncodedEvent(t, ls, "first", base, auditGenesisHash)
+	e2 := appendLegacyEncodedEvent(t, ls, "second", base.Add(time.Second), e1.EntryHash)
+	_ = appendLegacyEncodedEvent(t, ls, "third", base.Add(2*time.Second), e2.EntryHash)
+
+	// Tamper: change an event's contents and leave its hash alone — exactly what
+	// a direct database edit looks like. The row now matches neither encoding.
+	require.NoError(t, ls.db.Model(&models.AuditEvent{}).Where("id = ?", e2.ID).
+		Update("description", "second (quietly edited)").Error)
+
+	var before []models.AuditEvent
+	require.NoError(t, ls.db.Order("id ASC").Find(&before).Error)
+
+	_, err := ls.MigrateAuditChainEncoding(context.Background(), false, nil)
+	require.Error(t, err, "a tampered row must stop the migration, not be re-hashed into a valid chain")
+	assert.Contains(t, err.Error(), "matches neither the current encoding nor the pre-#1452 one")
+	assert.Contains(t, err.Error(), "destroying the evidence")
+
+	// The refusal must leave the database exactly as it was: the whole point is
+	// that nothing is rewritten, so a forensic copy taken afterwards is still
+	// the original.
+	var after []models.AuditEvent
+	require.NoError(t, ls.db.Order("id ASC").Find(&after).Error)
+	require.Len(t, after, len(before))
+	for i := range before {
+		assert.Equal(t, before[i].EntryHash, after[i].EntryHash,
+			"event %d's entry_hash must be untouched after a refused migration", before[i].ID)
+		assert.Equal(t, before[i].PrevHash, after[i].PrevHash,
+			"event %d's prev_hash must be untouched after a refused migration", before[i].ID)
+	}
+
+	// A dry run must refuse identically. An operator checking "what would this
+	// do?" before committing must be told about the tampering, not handed a
+	// clean preview of the laundering.
+	_, err = ls.MigrateAuditChainEncoding(context.Background(), true, nil)
+	require.Error(t, err, "dry run must surface the same refusal")
+}
+
+// TestMigrateAuditChainEncoding_RefusesABrokenLink covers the other way
+// re-encoding could repair evidence invisibly: the row contents are all
+// self-consistent, but a row was removed, so prev_hash no longer links. Because
+// the migration rewrites prev_hash for every row as it walks, it would have
+// closed that gap and produced a chain that verifies with a row missing.
+func TestMigrateAuditChainEncoding_RefusesABrokenLink(t *testing.T) {
+	ls := newAuditChainTestStore(t)
+	base := time.Now().UTC()
+
+	e1 := appendLegacyEncodedEvent(t, ls, "first", base, auditGenesisHash)
+	e2 := appendLegacyEncodedEvent(t, ls, "second", base.Add(time.Second), e1.EntryHash)
+	e3 := appendLegacyEncodedEvent(t, ls, "third", base.Add(2*time.Second), e2.EntryHash)
+
+	// Delete the middle event. e3 still points at e2's hash, which is now gone.
+	require.NoError(t, ls.db.Where("id = ?", e2.ID).Delete(&models.AuditEvent{}).Error)
+
+	_, err := ls.MigrateAuditChainEncoding(context.Background(), false, nil)
+	require.Error(t, err, "a deleted row must stop the migration")
+	assert.Contains(t, err.Error(), "inserted, deleted, or reordered")
+	assert.Contains(t, err.Error(), fmt.Sprintf("event %d", e3.ID))
 }
