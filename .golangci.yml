@@ -1,7 +1,14 @@
 version: "2"
 
 run:
-  timeout: 5m
+  # Widened from 5m (2026-09): a 17-way simultaneous Go dependency bump
+  # (dependabot's go-patch-minor group) invalidated the lint cache and pushed
+  # a real, zero-issue run to 5m58s -- golangci-lint exits 4 ("Timeout
+  # exceeded") on a slow-but-clean run exactly like a genuinely hung one, so
+  # this was a false-negative CI failure, not a real lint violation. Widened
+  # generously rather than tuned to the observed run, per this repo's own
+  # "timeouts detect hangs, they don't enforce speed" standing practice.
+  timeout: 12m
   tests: true
 
 linters:
