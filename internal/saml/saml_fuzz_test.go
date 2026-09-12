@@ -2,6 +2,8 @@ package saml
 
 import (
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // minimalIDPMetadata is a structurally valid SAML IdP metadata document with no signing
@@ -33,7 +35,6 @@ func FuzzSAMLMetadata(f *testing.F) {
 			SPEntityID:     "https://keyorix.internal/saml/fuzz/metadata",
 			ACSURL:         "https://keyorix.internal/auth/saml/fuzz/acs",
 		}
-		// Must never panic.
-		_, _ = NewProvider(cfg)
+		fuzzutil.Guard(t.Fatalf, "saml.NewProvider", func() { _, _ = NewProvider(cfg) })
 	})
 }
