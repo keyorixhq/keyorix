@@ -162,6 +162,15 @@ jobs:
                  -silent \
                  -no-color || true
 
+      - name: Normalize SARIF executionSuccessful
+        run: |
+          # nuclei v3.3.9 hardcodes invocations[].executionSuccessful=false in
+          # its SARIF output even on a clean scan, which GitHub renders as
+          # "tool exited with errors". Force it true so a successful scan
+          # doesn't falsely alarm.
+          jq '(.runs[].invocations[]?.executionSuccessful) = true' /tmp/nuclei-results.sarif > /tmp/nuclei-results.sarif.tmp
+          mv /tmp/nuclei-results.sarif.tmp /tmp/nuclei-results.sarif
+
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         if: always()
