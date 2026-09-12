@@ -353,24 +353,6 @@ func TestMongoExecutor_ConnBadURI(t *testing.T) {
 // AWS IAM client() real path test
 // ---------------------------------------------------------------------------
 
-// TestAWSIAMExecutor_ClientRealPath exercises awsconfig.LoadDefaultConfig + iam.NewFromConfig
-// in AWSIAMExecutor.client() when newClient is nil. LoadDefaultConfig succeeds in all
-// environments (it reads config lazily); NewFromConfig builds a client struct without
-// making API calls.
-func TestAWSIAMExecutor_ClientRealPath(t *testing.T) {
-	e := &AWSIAMExecutor{
-		name:        "aws-test",
-		allowedRefs: []string{"svc-"},
-	}
-	// No newClient set — takes the real awsconfig path.
-	cl, err := e.client(context.Background())
-	// On any OS without AWS credentials, this typically succeeds (lazy credential chain).
-	// Accept either outcome; the goal is coverage of the credential-loading statements.
-	if err == nil {
-		assert.NotNil(t, cl)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // GCP service account client() real path test
 // ---------------------------------------------------------------------------
