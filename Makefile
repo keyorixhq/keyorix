@@ -12,7 +12,14 @@ TRUST_LICENSE_KEYS?=
 # Inject the build identity into both the CLI (internal/cli.version) and the shared
 # internal/version package (read by the server's /health + /system/info). Commit is
 # deterministic per source revision, so release builds stay reproducible (no build date).
-LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)"
+VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
+LDFLAGS=-ldflags "$(VERSION_LDFLAGS)"
+# RELEASE_LDFLAGS additionally strips the symbol table + DWARF debug info (-s -w):
+# ~92MB -> ~62MB for keyorix-server. Only the `release` target uses this — build-cli/
+# build-server/build-ui/dev keep full symbols (plain LDFLAGS) for local debugging.
+# Stripping does NOT remove pclntab, so panic stack traces still show function names;
+# only an attached debugger (dlv) loses symbols, an acceptable release-binary tradeoff.
+RELEASE_LDFLAGS=-ldflags "-s -w $(VERSION_LDFLAGS)"
 
 .PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke
 
@@ -118,14 +125,14 @@ dev: install-cli
 release: populate-webui-dist
 	@echo "→ Cross-compiling $(VERSION)"
 	@mkdir -p dist
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_amd64    .
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_arm64    .
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_amd64   .
-	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_arm64   .
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_amd64  ./server
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
-	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_amd64    .
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_arm64    .
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_amd64   .
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_arm64   .
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_amd64  ./server
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
 	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true

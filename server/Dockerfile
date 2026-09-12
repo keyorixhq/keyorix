@@ -11,6 +11,7 @@ COPY . .
 ARG VERSION=dev
 ARG GIT_COMMIT=none
 RUN set -- \
+    "-s -w" \
     "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" && \
