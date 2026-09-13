@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzOIDCVerifierVerify fuzzes OIDCVerifier.Verify, the JWT parsing entry point
@@ -125,7 +127,13 @@ func FuzzOIDCVerifierVerify(f *testing.F) {
 	f.Add("a.b.c.d") // wrong number of dot-separated segments
 
 	f.Fuzz(func(t *testing.T, raw string) {
-		issuer, subject, verr := v.Verify(context.Background(), raw)
+		var issuer, subject string
+		var verr error
+		// Guard bounds the per-input wall clock (hang / amplification), consistent
+		// with the notary targets; the assertions run in the test goroutine after.
+		fuzzutil.Guard(t.Fatalf, "OIDCVerifier.Verify", func() {
+			issuer, subject, verr = v.Verify(context.Background(), raw)
+		})
 		if verr != nil {
 			if issuer != "" || subject != "" {
 				t.Fatalf("Verify returned an error but a non-empty issuer/subject: issuer=%q subject=%q err=%v raw=%q", issuer, subject, verr, raw)
