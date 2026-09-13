@@ -1,0 +1,72 @@
+# Lightweight regression fuzzing: on each PR, run native `go test -fuzz` briefly
+# on the fuzz targets in the packages the PR changed, seeded from committed
+# testdata/fuzz corpus. Deliberately NOT ClusterFuzzLite/libFuzzer — keyorix is
+# pure-Go (memory-safe, CGO-free), so the libFuzzer+sanitizer path adds cost
+# without benefit here. See claude/2026-09-13-fuzzing-tooling-decisions.md.
+# Deep/continuous fuzzing lives on the dedicated rigs, not in CI.
+name: fuzz-changed
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  FUZZTIME: 90s   # per fuzz target
+jobs:
+  fuzz-changed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Determine changed packages that have fuzz targets
+        id: pkgs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+          pkgs=""
+          while IFS= read -r d; do
+            [ -n "$d" ] || continue
+            if go test -list '^Fuzz' "./$d" 2>/dev/null | grep -q '^Fuzz'; then
+              pkgs="$pkgs ./$d"
+            fi
+          done < <(git diff --name-only "$base"...HEAD -- '*.go' | xargs -r -n1 dirname | sort -u)
+          pkgs="$(echo "$pkgs" | xargs || true)"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+          if [ -z "$pkgs" ]; then
+            echo "No changed packages with fuzz targets — nothing to fuzz."
+          else
+            echo "Will fuzz: $pkgs"
+          fi
+      - name: Restore fuzz corpus cache
+        if: steps.pkgs.outputs.pkgs != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ runner.os }}-
+      - name: Fuzz changed packages
+        if: steps.pkgs.outputs.pkgs != ''
+        env:
+          PKGS: ${{ steps.pkgs.outputs.pkgs }}
+        run: |
+          set -euo pipefail
+          for pkg in $PKGS; do
+            while IFS= read -r fn; do
+              echo "::group::fuzz $fn ($pkg) for $FUZZTIME"
+              go test "$pkg" -run='^$' -fuzz="^${fn}$" -fuzztime="$FUZZTIME"
+              echo "::endgroup::"
+            done < <(go test -list '^Fuzz' "$pkg" | grep '^Fuzz')
+          done
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashers
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
