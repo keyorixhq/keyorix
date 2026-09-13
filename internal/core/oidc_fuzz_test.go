@@ -40,12 +40,19 @@ func FuzzOIDCVerifierVerify(f *testing.F) {
 		f.Fatal(err)
 	}
 
+	// trustedKeySigned records every token this harness signs with the trusted
+	// key. The fuzzer never holds that private key, so this is the sound set of
+	// tokens that may legitimately verify — used by the rejection invariant below.
+	trustedKeySigned := map[string]bool{}
 	sign := func(signKey *rsa.PrivateKey, kid string, claims jwt.MapClaims) string {
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = kid
 		s, serr := tok.SignedString(signKey)
 		if serr != nil {
 			f.Fatal(serr)
+		}
+		if signKey == key {
+			trustedKeySigned[s] = true
 		}
 		return s
 	}
@@ -92,6 +99,14 @@ func FuzzOIDCVerifierVerify(f *testing.F) {
 		f.Add(hs)
 	}
 
+	// alg:none (unsigned) — must be rejected. Not signed with the trusted key, so
+	// the rejection invariant flags it immediately if Verify ever accepts it.
+	noneTok := jwt.NewWithClaims(jwt.SigningMethodNone, base())
+	noneTok.Header["kid"] = "kid-1"
+	if ns, nerr := noneTok.SignedString(jwt.UnsafeAllowNoneSignatureType); nerr == nil {
+		f.Add(ns)
+	}
+
 	noIat := base()
 	delete(noIat, "iat")
 	f.Add(sign(key, "kid-1", noIat))
@@ -119,6 +134,16 @@ func FuzzOIDCVerifierVerify(f *testing.F) {
 		}
 		if issuer == "" || subject == "" {
 			t.Fatalf("Verify returned success (nil error) with an empty issuer/subject: issuer=%q subject=%q raw=%q", issuer, subject, raw)
+		}
+		// Rejection invariant (signature-bypass detection). The fuzzer never holds
+		// the trusted private key, so the only tokens that may legitimately verify
+		// are ones this harness signed with it. A success on any other input means a
+		// signature was accepted that we never produced — alg:none, HMAC/alg
+		// confusion, a stripped or unchecked signature, or a kid/issuer trick.
+		// Claim-level rejections (exp/aud/iss) are covered by TestOIDCVerify_*;
+		// trustedKeySigned is the sound superset here, so this yields no false positives.
+		if !trustedKeySigned[raw] {
+			t.Fatalf("SIGNATURE BYPASS: Verify accepted a token the harness never signed with the trusted key: issuer=%q subject=%q raw=%q", issuer, subject, raw)
 		}
 	})
 }
