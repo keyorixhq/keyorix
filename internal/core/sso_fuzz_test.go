@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzVerifyIDToken fuzzes KeyorixCore.verifyIDToken, the interactive-SSO login
@@ -108,7 +110,13 @@ func FuzzVerifyIDToken(f *testing.F) {
 	f.Add("a.b.c.d")
 
 	f.Fuzz(func(t *testing.T, raw string) {
-		sub, _, _, _, verr := c.verifyIDToken(context.Background(), p, nonce, raw)
+		var sub string
+		var verr error
+		// Guard bounds the per-input wall clock (hang / amplification), consistent
+		// with OIDCVerifierVerify and the notary targets; assertions run after.
+		fuzzutil.Guard(t.Fatalf, "verifyIDToken", func() {
+			sub, _, _, _, verr = c.verifyIDToken(context.Background(), p, nonce, raw)
+		})
 		if verr != nil {
 			if sub != "" {
 				t.Fatalf("verifyIDToken returned an error but a non-empty subject: sub=%q err=%v raw=%q", sub, verr, raw)
