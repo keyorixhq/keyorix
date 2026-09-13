@@ -1,3 +1,5 @@
+//go:build !lean
+
 // objectstore.go — an S3-compatible object-storage evidence target. Each scheduled
 // run uploads the pack (and, when signed, its detached HMAC signature) to a bucket,
 // so evidence survives the node without a mounted volume and lands in immutable /
@@ -10,6 +12,12 @@
 // is WORM-protected — it cannot be overwritten or deleted before it expires. The
 // bucket itself must have Object Lock enabled (a create-time bucket property an
 // operator sets); this sets the per-object retention on write.
+//
+// A `lean` build (see objectstore_lean.go) compiles this file out to drop
+// aws-sdk-go-v2/service/s3 from the binary (~2.2MB of the ~7.2MB AWS SDK
+// footprint) for the air-gapped/lightweight release variant. ObjectStoreConfig
+// itself lives in objectstore_config.go, untagged, so both variants share one
+// definition.
 package evidencesink
 
 import (
@@ -28,29 +36,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
-
-// ObjectStoreConfig configures the S3-compatible object-storage target. Credentials
-// are NOT taken here — they resolve via the standard AWS chain (AWS_ACCESS_KEY_ID /
-// AWS_SECRET_ACCESS_KEY env vars, shared config, or instance/workload identity).
-type ObjectStoreConfig struct {
-	Bucket       string // required — destination bucket
-	Prefix       string // optional key prefix, e.g. "keyorix/evidence/"
-	Region       string // bucket region (any value for some S3-compatible stores)
-	Endpoint     string // optional custom endpoint for S3-compatible stores (MinIO/R2/…)
-	UsePathStyle bool   // path-style addressing — required by MinIO and some gateways
-
-	// LockMode opts into S3 Object Lock retention on each uploaded object: ""
-	// (off), "governance", or "compliance". The bucket must have Object Lock enabled.
-	LockMode string
-	// LockRetainDays is the retention period in days applied from upload time.
-	// Required (> 0) when LockMode is set.
-	LockRetainDays int
-	// LegalHold places an S3 Object Lock legal hold on each uploaded object — an
-	// indefinite hold (no expiry) that blocks deletion/overwrite until a principal
-	// with s3:PutObjectLegalHold explicitly clears it. Independent of LockMode; the
-	// bucket must have Object Lock enabled.
-	LegalHold bool
-}
 
 // s3PutAPI is the slice of the S3 client the sink uses — an interface seam so the
 // delivery logic is unit-tested with a fake and the SDK stays inside this adapter.
