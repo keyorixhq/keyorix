@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzParse fuzzes parse (render.go), the hand-rolled byte-index parser for
@@ -54,7 +56,10 @@ func FuzzParse(f *testing.F) {
 		// surfaces as a fuzz timeout/hang rather than a clean failure — this
 		// still catches it (see task instructions to prove empirically with a
 		// real -fuzztime burst rather than by code inspection alone).
-		segments, distinct, err := parse(tmpl)
+		var segments []segment
+		var distinct []string
+		var err error
+		fuzzutil.Guard(t.Fatalf, "secrettemplate.parse", func() { segments, distinct, err = parse(tmpl) })
 
 		if err != nil {
 			return

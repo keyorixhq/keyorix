@@ -3,6 +3,8 @@ package rotation
 import (
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzMySQLQuoteString fuzzes quoteMySQLString (mysql.go) — hand-rolled SQL
@@ -78,7 +80,8 @@ func FuzzMySQLQuoteString(f *testing.F) {
 	f.Add(strings.Repeat(`\'`, 100))
 
 	f.Fuzz(func(t *testing.T, s string) {
-		quoted := quoteMySQLString(s)
+		var quoted string
+		fuzzutil.Guard(t.Fatalf, "quoteMySQLString", func() { quoted = quoteMySQLString(s) })
 		got, ok := decodeMySQLQuoted(quoted)
 		if !ok {
 			t.Fatalf("quoteMySQLString(%q) = %q is not quote-wrapped", s, quoted)

@@ -3,6 +3,8 @@ package encryption
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzDecrypt feeds arbitrary JSON-encoded EncryptedData blobs into Decrypt and
@@ -47,13 +49,15 @@ func FuzzDecrypt(f *testing.F) {
 	f.Add([]byte(""))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		ed, err := DeserializeEncryptedData(data)
-		if err != nil {
-			return // invalid JSON — expected
-		}
-		_, _ = svc.Decrypt(ed)
-		_, _ = svc.DecryptWithAAD(ed, SecretAAD(1, 2, 3))
-		_, _ = svc.DecryptWithAAD(ed, nil)
+		fuzzutil.Guard(t.Fatalf, "Decrypt", func() {
+			ed, err := DeserializeEncryptedData(data)
+			if err != nil {
+				return // invalid JSON — expected
+			}
+			_, _ = svc.Decrypt(ed)
+			_, _ = svc.DecryptWithAAD(ed, SecretAAD(1, 2, 3))
+			_, _ = svc.DecryptWithAAD(ed, nil)
+		})
 	})
 }
 
@@ -85,10 +89,12 @@ func FuzzDecryptChunked(f *testing.F) {
 	f.Add([]byte("[{},{}]"))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var chunks []*EncryptedData
-		if err := json.Unmarshal(data, &chunks); err != nil {
-			return
-		}
-		_, _ = svc.DecryptChunked(chunks)
+		fuzzutil.Guard(t.Fatalf, "DecryptChunked", func() {
+			var chunks []*EncryptedData
+			if err := json.Unmarshal(data, &chunks); err != nil {
+				return
+			}
+			_, _ = svc.DecryptChunked(chunks)
+		})
 	})
 }

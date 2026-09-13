@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,19 +83,24 @@ func FuzzCombineKEK(f *testing.F) {
 	f.Add(append([]byte{}, forged...))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		thirdShare, derr := decodeShare(data)
-		if derr != nil {
-			// Too short to be any kind of share (decodeShare's only failure mode) —
-			// nothing meaningful to combine, and decodeShare itself must not panic
-			// getting here, which the fuzz harness already enforces.
-			return
-		}
-		attackerShares := append(append([][]byte{}, genuine...), thirdShare)
-		kek, cerr := combineKEK(attackerShares, commitment)
-		if cerr != nil {
-			return
-		}
-		if !hmac.Equal(CommitKEK(kek), commitment) {
+		var kek []byte
+		var reconstructed bool
+		fuzzutil.Guard(t.Fatalf, "combineKEK", func() {
+			thirdShare, derr := decodeShare(data)
+			if derr != nil {
+				// Too short to be any kind of share (decodeShare's only failure
+				// mode) — nothing meaningful to combine, and decodeShare itself
+				// must not panic getting here, which the harness already enforces.
+				return
+			}
+			attackerShares := append(append([][]byte{}, genuine...), thirdShare)
+			k, cerr := combineKEK(attackerShares, commitment)
+			if cerr != nil {
+				return
+			}
+			kek, reconstructed = k, true
+		})
+		if reconstructed && !hmac.Equal(CommitKEK(kek), commitment) {
 			t.Fatalf("combineKEK returned success (no error) for a reconstructed KEK that fails its own HMAC commitment check — commitment bypass; data=%x kek=%x", data, kek)
 		}
 	})
