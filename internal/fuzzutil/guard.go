@@ -6,8 +6,11 @@ package fuzzutil
 
 import "time"
 
-// GuardTimeout is the per-input wall-clock budget for a guarded call.
-const GuardTimeout = 3 * time.Second
+// GuardTimeout is the per-input wall-clock budget for a guarded call. It is scaled
+// up under the race detector (guardTimeoutScale, set in guard_race.go): -race
+// instruments every memory access and slows execution ~10-20x, so the native 3s
+// budget would false-trip on ordinary inputs during a `go test -race` pass.
+var GuardTimeout = 3 * time.Second * time.Duration(guardTimeoutScale)
 
 // Guard runs fn with a wall-clock deadline. If fn exceeds GuardTimeout — a hang,
 // or a memory-amplification/decompression bomb that would otherwise balloon
