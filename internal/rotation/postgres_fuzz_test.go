@@ -3,6 +3,8 @@ package rotation
 import (
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzPostgresQuoting fuzzes quoteIdentifier and quoteLiteral (postgres.go) —
@@ -69,7 +71,11 @@ func FuzzPostgresQuoting(f *testing.F) {
 	f.Add(strings.Repeat(`'`, 200))
 
 	f.Fuzz(func(t *testing.T, s string) {
-		idQuoted := quoteIdentifier(s)
+		var idQuoted, litQuoted string
+		fuzzutil.Guard(t.Fatalf, "postgres.quote", func() {
+			idQuoted = quoteIdentifier(s)
+			litQuoted = quoteLiteral(s)
+		})
 		idGot, ok := decodePGQuoted(idQuoted, '"')
 		if !ok {
 			t.Fatalf("quoteIdentifier(%q) = %q is not delimiter-wrapped", s, idQuoted)
@@ -84,7 +90,6 @@ func FuzzPostgresQuoting(f *testing.F) {
 		// wrapping-strip check or leave a stray '"' after un-doubling that
 		// wouldn't match the original s).
 
-		litQuoted := quoteLiteral(s)
 		litGot, ok := decodePGQuoted(litQuoted, '\'')
 		if !ok {
 			t.Fatalf("quoteLiteral(%q) = %q is not delimiter-wrapped", s, litQuoted)

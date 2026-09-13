@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // FuzzAzureGenerateUpstreamRef fuzzes the ref interpolated into the Microsoft
@@ -40,7 +42,8 @@ func FuzzAzureGenerateUpstreamRef(f *testing.F) {
 		fake := &fakeAzure{newSecret: "n3w-secret"}
 		e := azureWith(fake, "app-") // prefix allowlist an attacker might try to defeat
 
-		_, err := e.GenerateUpstream(context.Background(), ref)
+		var err error
+		fuzzutil.Guard(t.Fatalf, "GenerateUpstream", func() { _, err = e.GenerateUpstream(context.Background(), ref) })
 
 		if strings.ContainsAny(ref, "/?#%") {
 			if err == nil {
