@@ -5,11 +5,27 @@ import (
 	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
+
+// openFDCount returns the number of open file descriptors for this process on
+// Linux (the rigs), or -1 elsewhere (macOS dev has no /proc), where the caller
+// skips the fd-leak check. Reading /proc/self/fd opens and closes one dir handle,
+// negligible against the leak ceiling.
+func openFDCount() int {
+	if runtime.GOOS != "linux" {
+		return -1
+	}
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return -1
+	}
+	return len(entries)
+}
 
 // FuzzVerifyReceipt feeds arbitrary bytes as an RFC 3161 TimeStampToken into
 // VerifyReceipt. The fuzz target is the two external ASN.1/DER parsers inside:
@@ -81,6 +97,12 @@ func FuzzRFC3161Anchor(f *testing.F) {
 		// brief connection-teardown goroutines don't cause flaky failures.
 		if n := runtime.NumGoroutine(); n > 1000 {
 			t.Fatalf("goroutine leak: %d goroutines after RFC3161.Anchor (expected O(10))", n)
+		}
+		// fd-leak tripwire (Linux rigs; skipped on macOS dev). Same rationale as the
+		// goroutine check: a per-input descriptor leak (unclosed conn/listener)
+		// accumulates across the worker's inputs and crosses this generous ceiling.
+		if fd := openFDCount(); fd > 1000 {
+			t.Fatalf("fd leak: %d open descriptors after RFC3161.Anchor (expected O(10))", fd)
 		}
 	})
 }
