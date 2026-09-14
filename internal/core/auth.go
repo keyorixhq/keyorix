@@ -634,6 +634,32 @@ func (c *KeyorixCore) SessionStillLive(ctx context.Context, sessionID uint) (boo
 	return true, nil
 }
 
+// SessionEffectiveExpiry returns the earliest of a session's idle-expiry (ExpiresAt)
+// and absolute-expiry (AbsoluteExpiresAt), or nil when the session has neither or
+// cannot be resolved. The auth middleware calls this on the SLOW validation path only
+// (once per token-cache fill) to CLAMP the positive cache entry's lifetime to the
+// session's own — so an expired session cannot keep authenticating on a cache hit for
+// the remainder of the cache's validTokenTTL window. Unlike PAT/machine tokens, whose
+// expiry the middleware re-checks on every cache hit, the session cache-hit path only
+// re-checks account state; clamping forces a slow-path re-validation (which DOES check
+// session expiry) exactly at the session's expiry instead (F-TOK-1, 2026-09-14 review).
+func (c *KeyorixCore) SessionEffectiveExpiry(ctx context.Context, token string) *time.Time {
+	session, err := c.storage.GetSession(ctx, token)
+	if err != nil {
+		return nil
+	}
+	var earliest *time.Time
+	for _, t := range []*time.Time{session.ExpiresAt, session.AbsoluteExpiresAt} {
+		if t == nil {
+			continue
+		}
+		if earliest == nil || t.Before(*earliest) {
+			earliest = t
+		}
+	}
+	return earliest
+}
+
 // AccountStillUsable reports whether userID's account is still active and not
 // login-blocked (ADR-025) — the same account-state gate ValidateSessionToken's
 // slow path already applies, factored out so the auth middleware's cache-hit
