@@ -245,26 +245,28 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	return c.storage.GetGroup(ctx, groupID)
 }
 
-// scimGroupConfersAdmin reports whether membership in groupID grants an admin role, so
-// the SCIM group-sync paths can refuse to add members to it. Fails CLOSED (treats the
-// group as admin-bearing) on a lookup error — either GetGroupRoles' own, or a genuine
-// roleSetContainsAdmin resolution error (#G17-style: a lookup failure must not be
-// indistinguishable from a legitimate negative result) — so an inability to verify
-// never opens the privilege grant.
+// scimGroupConfersAdmin reports whether membership in groupID grants an escalation-tier
+// role, so the SCIM group-sync paths (and the SSO group-membership path, sso.go) can refuse
+// to add members to it. "Escalation-tier" is the shared idpAutoGrantOfRoleIsEscalation
+// predicate: a canonical admin role, an admin-bypass role, OR a role carrying roles.assign
+// (the role-granting primitive — a self-service group member who obtains it becomes a
+// privilege pump). This is the SAME backstop the SSO GroupRoleMap path now uses; the two
+// were inconsistent before (SCIM: bypass flag only; SSO: admin name only) and both missed
+// the roles.assign case. Fails CLOSED (treats the group as escalation-bearing) on a
+// GetGroupRoles lookup error — and idpAutoGrantOfRoleIsEscalation itself fails closed on a
+// per-role resolution error (#G17-style: a lookup failure must not be indistinguishable
+// from a legitimate negative result) — so an inability to verify never opens the grant.
 func (c *KeyorixCore) scimGroupConfersAdmin(ctx context.Context, groupID uint) bool {
 	roles, err := c.storage.GetGroupRoles(ctx, groupID)
 	if err != nil {
 		return true
 	}
-	ids := make([]uint, 0, len(roles))
 	for _, r := range roles {
-		ids = append(ids, r.ID)
+		if c.idpAutoGrantOfRoleIsEscalation(ctx, r.ID, r.Name) {
+			return true
+		}
 	}
-	containsAdmin, err := c.roleSetContainsAdmin(ctx, ids)
-	if err != nil {
-		return true
-	}
-	return containsAdmin
+	return false
 }
 
 func buildSCIMMemberMaps(memberIDs []uint, current []*models.User) (want, have map[uint]bool) {

@@ -393,6 +393,48 @@ func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) 
 	return c.storage.RoleSetBypassesPermissionChecks(ctx, roleIDs)
 }
 
+// idpAutoGrantOfRoleIsEscalation reports whether an IdP-DRIVEN automatic grant of this
+// role (SSO GroupRoleMap reconciliation, or SCIM/SSO group-membership conferral) must be
+// REFUSED, because a self-service IdP group would otherwise become a path to
+// administrative or self-propagating privilege. IdP-driven auto-grants deliberately skip
+// the normal grant-ceiling (the logging-in user cannot pre-hold the role's permissions on
+// their first SSO login — sso.go's reconcileSSORoles), so this predicate is the only
+// backstop; before this it was inconsistent across the two surfaces (SSO checked the admin
+// role NAME, SCIM checked the admin-bypass FLAG), and neither caught a custom role that
+// bundled the role-granting primitive under a non-canonical name. It blocks a role that:
+//   - carries the admin-bypass flag (RoleSetBypassesPermissionChecks), or
+//   - is one of the canonical admin roles by name (isAdminRoleName), or
+//   - grants roles.assign — the role-granting primitive. A holder of roles.assign can grant
+//     roles onward (bounded by its own held permissions), so conferring it on anyone who can
+//     join a self-service IdP group turns that group into a privilege pump regardless of the
+//     role's name. This is the one permission whose self-service conferral is itself an
+//     escalation vector.
+//
+// It deliberately does NOT block ordinary privileged roles (secrets read/write, system
+// config, etc.): an admin who maps an IdP group to such a role is expressing intent, the
+// same as granting it directly, and blocking those would break legitimate IdP-group→role
+// configuration — the friction this product exists to avoid. Fails CLOSED on any lookup
+// error (an inability to verify must never open the auto-grant), matching scimGroupConfersAdmin.
+func (c *KeyorixCore) idpAutoGrantOfRoleIsEscalation(ctx context.Context, roleID uint, roleName string) bool {
+	if isAdminRoleName(roleName) {
+		return true
+	}
+	bypass, err := c.roleSetContainsAdmin(ctx, []uint{roleID})
+	if err != nil || bypass {
+		return true
+	}
+	perms, err := c.storage.GetRolePermissions(ctx, roleID)
+	if err != nil {
+		return true // fail closed: cannot verify → refuse the auto-grant
+	}
+	for _, p := range perms {
+		if p.Name == permRolesAssign {
+			return true
+		}
+	}
+	return false
+}
+
 // requireGlobalAdminToReinstateAdminRoles refuses to reinstate roleIDs unless
 // actorID is themselves a global admin, but ONLY when roleIDs actually contains an
 // admin-tier role — a non-admin role set passes untouched. Restoring a soft-deleted
