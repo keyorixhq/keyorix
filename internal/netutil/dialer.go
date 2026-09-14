@@ -200,3 +200,47 @@ func IsPrivateOrLinkLocal(ip net.IP) bool {
 	}
 	return false
 }
+
+// linkLocalCIDRs is the narrow subset of privateNetworkCIDRs that IsLinkLocal
+// refuses: IPv4/IPv6 link-local only. This is deliberately much smaller than the
+// full private-range set — it exists for egress to operator-configured OIDC
+// issuers (JWKS fetch, discovery), where an RFC-1918/on-prem target is a
+// FIRST-CLASS legitimate deployment (keyorix is on-prem/air-gapped first, so the
+// IdP frequently lives on an internal 10.x/192.168.x segment) and http-on-loopback
+// is a supported dev shape — but the cloud instance-metadata endpoint
+// (169.254.169.254, shared by AWS/GCP/Azure) must never be reachable via a
+// misconfigured or compromised issuer/jwks_uri. IsPrivateOrLinkLocal is therefore
+// too broad for this seam; IsLinkLocal is the right-sized guard.
+//
+// The one metadata surface intentionally NOT covered here is AWS's IPv6 IMDS
+// (fd00:ec2::254, inside fc00::/7 unique-local): blocking all of fc00::/7 would
+// break legitimate on-prem IPv6 ULA issuers, and the IPv4 169.254.169.254 endpoint
+// is reachable on every cloud that offers IMDS, so the residual is negligible for
+// keyorix's deployment profile. Documented here rather than silently omitted.
+var linkLocalCIDRs = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range []string{ // NOSONAR -- SSRF-guard blocklist ranges themselves (IPv4/IPv6 link-local), not a live endpoint
+		"169.254.0.0/16", // NOSONAR -- IPv4 link-local / cloud IMDS (AWS/GCP/Azure 169.254.169.254)
+		"fe80::/10",      // IPv6 link-local
+	} {
+		if _, n, _ := net.ParseCIDR(cidr); n != nil {
+			nets = append(nets, n)
+		}
+	}
+	return nets
+}()
+
+// IsLinkLocal reports whether ip is in an IPv4 or IPv6 link-local range — the
+// narrow SSRF-target check for egress to operator-configured OIDC issuers (JWKS
+// fetch and discovery), where RFC-1918/on-prem targets are legitimate but the
+// cloud instance-metadata endpoint (169.254.169.254) must never be reached via a
+// misconfigured or compromised issuer. See linkLocalCIDRs for why this is
+// deliberately narrower than IsPrivateOrLinkLocal.
+func IsLinkLocal(ip net.IP) bool {
+	for _, cidr := range linkLocalCIDRs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
