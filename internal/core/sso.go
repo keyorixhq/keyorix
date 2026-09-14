@@ -781,11 +781,17 @@ type ssoRoleCounters struct {
 func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *models.Role, role string, desired, current map[string]bool, counts *ssoRoleCounters) {
 	switch {
 	case desired[role] && !current[role]:
-		// Refuse to grant an admin-tier role from an IdP group mapping (#96) —
-		// GroupRoleMap is configured once by an admin, but IdP group membership is
-		// frequently self-service, so a mapping intended for a routine role must not
-		// double as a path to global admin for anyone who can join the group.
-		if isAdminRoleName(role) {
+		// Refuse to auto-grant an escalation-conferring role from an IdP group mapping
+		// (#96) — GroupRoleMap is configured once by an admin, but IdP group membership is
+		// frequently self-service, so a mapping intended for a routine role must not double
+		// as a path to admin (or to the role-granting primitive) for anyone who can join the
+		// group. The predicate blocks the canonical admin roles, any admin-bypass role, AND
+		// any role carrying roles.assign (a self-propagating privilege pump); it deliberately
+		// permits ordinary privileged roles, which are the admin's legitimate intent. This is
+		// the SAME backstop the SCIM group-membership path uses (scimGroupConfersAdmin) — the
+		// two were inconsistent before (name vs bypass-flag) and both missed the roles.assign
+		// case. See idpAutoGrantOfRoleIsEscalation (authz.go).
+		if c.idpAutoGrantOfRoleIsEscalation(ctx, r.ID, role) {
 			counts.blocked++
 			return
 		}

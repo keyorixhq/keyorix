@@ -526,7 +526,7 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Group{}, &models.UserGroup{},
-		&models.GroupRole{}, &models.Role{}, &models.AuditEvent{}))
+		&models.GroupRole{}, &models.Role{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{}))
 	ls := store.NewLocalStorage(db)
 	c := NewKeyorixCore(ls)
 	ctx := context.Background()
@@ -572,6 +572,12 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError)
 		store.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError)
 		store.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
+		// The IdP-auto-grant escalation backstop (idpAutoGrantOfRoleIsEscalation) now
+		// checks the mapped role's bypass flag and permissions before granting.
+		// secrets_writer (id 10) is an ordinary role — no bypass, no roles.assign — so it
+		// is NOT an escalation and must still be granted.
+		store.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{10}).Return(false, nil)
+		store.On("GetRolePermissions", mock.Anything, uint(10)).Return([]*models.Permission{{Name: "secrets.write"}}, nil)
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -635,7 +641,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{}, &models.AuditEvent{}, &models.SoDPolicy{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{}, &models.AuditEvent{}, &models.SoDPolicy{}, &models.Permission{}, &models.RolePermission{}))
 	ls := store.NewLocalStorage(db)
 	c := NewKeyorixCore(ls)
 	ctx := context.Background()
