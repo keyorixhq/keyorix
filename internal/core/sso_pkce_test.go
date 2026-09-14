@@ -71,7 +71,7 @@ func TestCompleteSSO_ReplaysPKCEVerifierOnExchange(t *testing.T) {
 		_ = r.ParseForm()
 		gotVerifier = r.Form.Get("code_verifier")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)))
+		fmt.Fprintf(w, `{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
 	}))
 	defer ts.Close()
 	p.OAuth.Endpoint.TokenURL = ts.URL
@@ -110,7 +110,7 @@ func TestCompleteSSO_OmitsVerifierForPrePKCEState(t *testing.T) {
 		_ = r.ParseForm()
 		_, sawVerifierField = r.Form["code_verifier"]
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)))
+		fmt.Fprintf(w, `{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
 	}))
 	defer ts.Close()
 	p.OAuth.Endpoint.TokenURL = ts.URL
