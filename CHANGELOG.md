@@ -5,6 +5,60 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+## v0.93.0 — 2026-09-14
+
+### Security
+- **Human SSO logins now use PKCE (RFC 7636, S256).** The OIDC
+  authorization-code flow generates a per-login code verifier, sends its S256
+  challenge on the authorization request, and replays the verifier on token
+  exchange — defense-in-depth against authorization-code interception, on top
+  of the existing confidential-client and single-use login-state protections.
+  A login already in flight when you upgrade completes normally. (#1875)
+- **SSO/OIDC/WebAuthn trust-seam hardening.** OIDC JWKS and discovery fetches
+  are now guarded against resolving to link-local addresses (e.g. cloud
+  instance-metadata endpoints); `allow_idp_initiated` is rejected at config
+  validation, since Keyorix has no SAML replay cache to make it safe; a
+  human-SSO provider's client ID can no longer double as a machine-federation
+  audience on the same issuer; and WebAuthn relying-party origins are
+  validated at startup. No auth bypass was found in the affected code — this
+  closes narrow defense-in-depth gaps from an adversarial review. (#1874)
+- **IdP-driven role auto-grants (SSO group mapping, SCIM) are now gated on the
+  granted role's actual permissions, not its name.** The SSO and SCIM paths
+  previously checked for an admin role by name or bypass flag; a custom role
+  bundling the role-assignment permission under a non-canonical name could
+  turn a self-service IdP group into an unchecked privilege path. Both paths
+  now derive the ceiling from the role's real permission tier. (#1876)
+- **The KEK-derivation PBKDF2 iteration count is now a single source of
+  truth.** It previously lived as two independent `600000` literals with
+  asymmetric guards; raising one without the other would have made
+  `rotate-kek` fail closed with a confusing "old passphrase incorrect" error.
+  No data-loss or exposure risk existed, but the two values can no longer
+  drift apart. (#1877)
+- **A session's positive auth-cache entry can no longer outlive the session
+  itself.** The cache TTL was a flat 30 seconds regardless of the session's
+  own expiry, so a session that expired server-side could keep authenticating
+  on cache hits for up to 30 seconds afterward (revoke/logout/suspend were
+  already immediate). The cache entry is now clamped to the session's own
+  expiry. (#1878)
+- DAST/security-header fixes: added the missing
+  `X-Permitted-Cross-Domain-Policies: none` header and scoped the DAST scan to
+  the web app instead of the CI runner host (#1860); normalized nuclei's SARIF
+  `executionSuccessful` field so a clean scan no longer reports as a tool
+  error in GitHub Code Scanning (#1862); and excluded the HSTS matcher from
+  the plaintext DAST scan, since Keyorix correctly omits HSTS when TLS isn't
+  terminated (#1863).
+
+### Changed
+- **New `lean` build tag drops the AWS IAM/S3 SDK footprint (~14% smaller
+  binary) for installs that don't use the `aws-iam` rotation backend or the
+  S3-compatible evidence sink.** Both features fail loudly, rather than
+  silently, if a lean binary is deployed against a config that still names
+  them. (#1865)
+- **Release binaries and container images are now built with `-s -w`
+  (stripped symbols/DWARF), shrinking `keyorix-server` from ~92MB to ~62MB.**
+  Version/commit metadata injected via ldflags is unaffected; local
+  `make build-*`/`make dev` builds keep full symbols for debugging. (#1864)
+
 ## v0.92.1 — 2026-09-12
 
 ### Security
