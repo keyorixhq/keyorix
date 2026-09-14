@@ -224,6 +224,17 @@ func cacheSetValidated(key string, userCtx *UserContext, validatedAt time.Time, 
 	pruneLocked()
 }
 
+// clampCacheExpiry returns the earlier of base (the normal validTokenTTL window) and
+// sessionExpiry when sessionExpiry is non-nil and sooner — so a session's positive
+// auth-cache entry can never outlive the session itself (F-TOK-1). A nil sessionExpiry
+// (a non-session token, or a session with no expiry set) leaves base unchanged.
+func clampCacheExpiry(base time.Time, sessionExpiry *time.Time) time.Time {
+	if sessionExpiry != nil && sessionExpiry.Before(base) {
+		return *sessionExpiry
+	}
+	return base
+}
+
 // pruneLocked drops expired entries (at most once per minute) and hard-caps the cache so
 // a flood of distinct bearers can't grow it unbounded. Caller MUST hold tokenCacheMu.
 func pruneLocked() {
@@ -320,15 +331,29 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve impersonation once, on the slow path, so it is cached with
-	// the identity. PATs and machine tokens are never impersonation
-	// sessions (prefix check).
-	if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) && !looksLikeJWT(token) {
+	// Session tokens (not PAT / machine / OIDC-JWT — same prefix check as
+	// impersonation resolution below) get extra slow-path handling.
+	isSessionToken := coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) && !looksLikeJWT(token)
+
+	// Resolve impersonation once, on the slow path, so it is cached with the identity.
+	if isSessionToken {
 		userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
 	}
 
+	// F-TOK-1: clamp the positive cache entry to the session's own expiry. The session
+	// cache-hit branch (serveAuthCacheHit) re-checks only account state, NOT the session's
+	// ExpiresAt/AbsoluteExpiresAt — unlike the PAT/machine branches, which re-check expiry
+	// on every hit. Without this clamp an expired session would keep authenticating on cache
+	// hits for the rest of validTokenTTL. Clamping makes the entry expire with the session,
+	// forcing a slow-path re-validation (which DOES reject an expired session) at that point.
+	// Resolved on the slow path only — no per-hit cost. (2026-09-14 review.)
+	cacheExpiry := time.Now().Add(validTokenTTL)
+	if isSessionToken {
+		cacheExpiry = clampCacheExpiry(cacheExpiry, coreService.SessionEffectiveExpiry(r.Context(), token))
+	}
+
 	// Cache the positive result (race-safe: dropped if revoked mid-validation).
-	cacheSetValidated(key, userCtx, validatedAt, time.Now().Add(validTokenTTL))
+	cacheSetValidated(key, userCtx, validatedAt, cacheExpiry)
 
 	if !tokenNetworkAllowed(r, userCtx) {
 		forbiddenResponse(w, "token not permitted from this network")
