@@ -202,13 +202,20 @@ type LegalHold struct {
 // returned id_token's nonce to this browser and proving the callback's state was the
 // one we issued. Expires within minutes.
 type SSOLoginState struct {
-	ID        uint      `gorm:"primaryKey"`
-	State     string    `gorm:"uniqueIndex;not null"` // random CSRF token; the lookup key
-	Nonce     string    `gorm:"not null"`             // bound into the requested id_token
-	Provider  string    `gorm:"not null"`
-	ReturnTo  string    // optional in-app path to land on after login
-	ExpiresAt time.Time `gorm:"index"`
-	CreatedAt time.Time
+	ID       uint   `gorm:"primaryKey"`
+	State    string `gorm:"uniqueIndex;not null"` // random CSRF token; the lookup key
+	Nonce    string `gorm:"not null"`             // bound into the requested id_token
+	Provider string `gorm:"not null"`
+	ReturnTo string // optional in-app path to land on after login
+	// CodeVerifier is the PKCE (RFC 7636) code_verifier for an OIDC authorization-code
+	// login. BeginSSO generates it, sends only its S256 challenge to the IdP, and
+	// stores the verifier here (server-side, never in the browser); CompleteSSO
+	// replays it on the token exchange so an intercepted authorization code cannot be
+	// redeemed without it. Empty for SAML logins and for OIDC state rows created before
+	// PKCE was added (CompleteSSO then omits the verifier, preserving the prior flow).
+	CodeVerifier string
+	ExpiresAt    time.Time `gorm:"index"`
+	CreatedAt    time.Time
 }
 
 // SchedulerLockLease is a TTL-bounded distributed-mutex row backing

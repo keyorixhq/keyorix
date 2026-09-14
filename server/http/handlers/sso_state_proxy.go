@@ -48,36 +48,39 @@ import (
 // system.read/system.write, the same tier that already round-trips full
 // user/secret/invitation records.
 type ssoLoginStateProxyWire struct {
-	ID        uint      `json:"id"`
-	State     string    `json:"state"`
-	Nonce     string    `json:"nonce"`
-	Provider  string    `json:"provider"`
-	ReturnTo  string    `json:"return_to"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           uint      `json:"id"`
+	State        string    `json:"state"`
+	Nonce        string    `json:"nonce"`
+	Provider     string    `json:"provider"`
+	ReturnTo     string    `json:"return_to"`
+	CodeVerifier string    `json:"code_verifier"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func newSSOLoginStateProxyWire(s *models.SSOLoginState) ssoLoginStateProxyWire {
 	return ssoLoginStateProxyWire{
-		ID:        s.ID,
-		State:     s.State,
-		Nonce:     s.Nonce,
-		Provider:  s.Provider,
-		ReturnTo:  s.ReturnTo,
-		ExpiresAt: s.ExpiresAt,
-		CreatedAt: s.CreatedAt,
+		ID:           s.ID,
+		State:        s.State,
+		Nonce:        s.Nonce,
+		Provider:     s.Provider,
+		ReturnTo:     s.ReturnTo,
+		CodeVerifier: s.CodeVerifier,
+		ExpiresAt:    s.ExpiresAt,
+		CreatedAt:    s.CreatedAt,
 	}
 }
 
 func (w ssoLoginStateProxyWire) toModel() *models.SSOLoginState {
 	return &models.SSOLoginState{
-		ID:        w.ID,
-		State:     w.State,
-		Nonce:     w.Nonce,
-		Provider:  w.Provider,
-		ReturnTo:  w.ReturnTo,
-		ExpiresAt: w.ExpiresAt,
-		CreatedAt: w.CreatedAt,
+		ID:           w.ID,
+		State:        w.State,
+		Nonce:        w.Nonce,
+		Provider:     w.Provider,
+		ReturnTo:     w.ReturnTo,
+		CodeVerifier: w.CodeVerifier,
+		ExpiresAt:    w.ExpiresAt,
+		CreatedAt:    w.CreatedAt,
 	}
 }
 
