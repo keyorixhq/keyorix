@@ -51,6 +51,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/hardening"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/license"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
@@ -2267,6 +2268,23 @@ type oidcDiscovery struct {
 // maxDiscoveryBytes caps the discovery document we read into memory.
 const maxDiscoveryBytes = 1 << 20 // 1 MiB
 
+// oidcDiscoveryTransport guards the SSO OIDC-discovery fetch the same way
+// jwksEgressTransport guards the JWKS fetch (F2, adversarial-review 2026-09-14):
+// clone http.DefaultTransport (preserving proxy-from-environment and pooling, the
+// prior behaviour) and re-validate every direct-dial target against
+// netutil.IsLinkLocal, so a misconfigured or compromised issuer whose
+// /.well-known/openid-configuration resolves to the cloud instance-metadata
+// endpoint (169.254.169.254) can never be dialed. Link-local-only by design:
+// RFC-1918/on-prem and loopback issuers stay reachable (requireSecureOrLoopback
+// already permits http on loopback for dev), which is keyorix's primary
+// deployment shape. When an egress proxy is configured the dial targets the proxy
+// rather than the issuer — accepted, same as the JWKS client.
+var oidcDiscoveryTransport = func() *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = (&netutil.Dialer{Disallow: netutil.IsLinkLocal}).DialContext
+	return tr
+}()
+
 // discoverOIDC fetches an issuer's /.well-known/openid-configuration and validates
 // it. The issuer must use https (http only for loopback) so the document — which
 // names the jwks_uri that ultimately supplies the token-signing keys — is not
@@ -2286,6 +2304,7 @@ func discoverOIDC(issuer string) (*oidcDiscovery, error) {
 	u := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
 	client := &http.Client{
 		Timeout:       10 * time.Second,
+		Transport:     oidcDiscoveryTransport,
 		CheckRedirect: noDiscoveryCrossOriginRedirect,
 	}
 	resp, err := client.Get(u) // #nosec G107 -- issuer is operator-configured and https-validated above

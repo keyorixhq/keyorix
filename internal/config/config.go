@@ -2162,6 +2162,18 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return err
 	}
 
+	if err := validateSSOIDPInitiated(c.SSO); err != nil {
+		return err
+	}
+
+	if err := validateSSOAudienceIsolation(c); err != nil {
+		return err
+	}
+
+	if err := validateWebAuthnRP(c.WebAuthn); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2375,6 +2387,138 @@ func validateAllowedOrigins(origins []string) error {
 		}
 	}
 	return nil
+}
+
+// validateSSOIDPInitiated (F3, adversarial-review 2026-09-14) refuses any SAML
+// provider that sets allow_idp_initiated. keyorix's SAML replay protection rests
+// entirely on the single-use RelayState row CompleteSAML consumes on the ACS;
+// there is no assertion-ID / NotOnOrAfter replay cache. An IdP-initiated response
+// carries no InResponseTo and no RelayState to bind, so it has no replay defence
+// at all — CompleteSAML already fails such a response closed today, which makes
+// the option DEAD, not merely risky. A dead security toggle an operator can set
+// to "true" and believe is in effect is worse than no toggle: reject it loud at
+// boot so the misconfiguration surfaces as a config error rather than a false
+// sense of security (and a latent trap for whoever might one day wire IdP-initiated
+// up without noticing the missing replay cache). If IdP-initiated is ever genuinely
+// implemented, add the assertion-ID + NotOnOrAfter replay cache first, then lift
+// this check. Aggregates every offending provider into one error, mirroring the
+// connect validators.
+func validateSSOIDPInitiated(sso SSOConfig) error {
+	var offending []string
+	for _, p := range sso.Providers {
+		if p.SAML != nil && p.SAML.AllowIDPInitiated {
+			offending = append(offending, p.Name)
+		}
+	}
+	if len(offending) > 0 {
+		return fmt.Errorf("sso: provider(s) set allow_idp_initiated, which is not supported — keyorix has no SAML assertion-replay cache, so an IdP-initiated response (no InResponseTo / RelayState) has no replay protection and is refused at the ACS regardless; remove allow_idp_initiated: %s", strings.Join(offending, ", "))
+	}
+	return nil
+}
+
+// validateSSOAudienceIsolation (F4, adversarial-review 2026-09-14) closes a
+// cross-seam token-confusion gap between the two independent OIDC trust seams:
+// human SSO (cfg.SSO.Providers) and machine-identity federation (cfg.OIDC.Issuers).
+// A human-SSO provider's client_id must not ALSO be a trusted machine-federation
+// audience for the SAME issuer. If it were, one id_token minted by that issuer for
+// the human SSO client would satisfy the machine seam too (identical iss, and aud
+// contains the shared client_id) — a token issued for one trust boundary replaying
+// into the other, authenticating a browser SSO login as a machine identity. The
+// machine seam enforces an exact issuer match, so the confusion is only reachable
+// when the issuers coincide; that is exactly the condition checked here (guard the
+// condition, not the conclusion). Only OIDC-type SSO providers are considered
+// (SAML providers mint no OIDC id_token). No-op when machine federation is disabled.
+func validateSSOAudienceIsolation(c *Config) error {
+	if !c.OIDC.Enabled {
+		return nil
+	}
+	var collisions []string
+	for _, p := range c.SSO.Providers {
+		if p.Type == "saml" || p.Issuer == "" || p.ClientID == "" {
+			continue
+		}
+		providerIssuer := strings.TrimRight(p.Issuer, "/")
+		for _, iss := range c.OIDC.Issuers {
+			if strings.TrimRight(iss.Issuer, "/") != providerIssuer {
+				continue
+			}
+			for _, aud := range iss.Audiences {
+				if aud == p.ClientID {
+					collisions = append(collisions, fmt.Sprintf("sso provider %q client_id is also a machine-federation audience on oidc issuer %q (issuer %q)", p.Name, iss.Name, providerIssuer))
+				}
+			}
+		}
+	}
+	if len(collisions) > 0 {
+		return fmt.Errorf("cross-seam audience collision — a human-SSO id_token would also authenticate as a machine identity: %s; use a distinct client_id per trust seam and remove the sso client_id from the machine-federation issuer's audiences", strings.Join(collisions, "; "))
+	}
+	return nil
+}
+
+// validateWebAuthnRP (F5, adversarial-review 2026-09-14) is a fail-loud startup
+// sanity check on the WebAuthn relying-party config. The go-webauthn library
+// enforces the real origin/RP-ID match per ceremony at runtime; without this
+// check a misconfigured rp_origins (plaintext http, or a host that is not rp_id
+// nor a subdomain of it) makes EVERY passkey ceremony fail at runtime with an
+// opaque library error, instead of a clear config error at boot. Rules follow
+// WebAuthn L3 effective-domain semantics:
+//   - each rp_origin must parse to a URL with a host;
+//   - scheme must be https, except http is allowed only for a loopback host
+//     (localhost / 127.0.0.1 / ::1) for local development;
+//   - the origin host must equal rp_id or be a subdomain of rp_id — a passkey is
+//     scoped to the rp_id registrable domain, so an origin outside it can never
+//     satisfy the ceremony.
+//
+// This is config hygiene, not the security boundary itself (the library remains
+// the authority per ceremony); it exists so the misconfiguration is caught once,
+// at boot, rather than per failed login.
+func validateWebAuthnRP(wc WebAuthnConfig) error {
+	if !wc.Enabled {
+		return nil
+	}
+	if wc.RPID == "" {
+		return fmt.Errorf("webauthn is enabled but rp_id is not set")
+	}
+	if len(wc.RPOrigins) == 0 {
+		return fmt.Errorf("webauthn is enabled but no rp_origins are configured")
+	}
+	rpID := strings.ToLower(wc.RPID)
+	for _, o := range wc.RPOrigins {
+		u, err := url.Parse(o)
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("webauthn rp_origin %q is not a valid origin URL (expected scheme://host[:port], e.g. https://app.example.com)", o)
+		}
+		host := strings.ToLower(u.Hostname())
+		loopback := isLoopbackConfigHost(host)
+		switch u.Scheme {
+		case "https":
+			// ok
+		case "http":
+			if !loopback {
+				return fmt.Errorf("webauthn rp_origin %q must use https (http is allowed only for a loopback host)", o)
+			}
+		default:
+			return fmt.Errorf("webauthn rp_origin %q must use https (http is allowed only for a loopback host)", o)
+		}
+		if !loopback && host != rpID && !strings.HasSuffix(host, "."+rpID) {
+			return fmt.Errorf("webauthn rp_origin %q host %q must equal rp_id %q or be a subdomain of it", o, host, rpID)
+		}
+	}
+	return nil
+}
+
+// isLoopbackConfigHost reports whether host is a loopback hostname/literal, for
+// the http-only-on-loopback dev exception in validateWebAuthnRP. Kept as a plain
+// string check (no net import) — the set of loopback spellings a browser origin
+// can carry is small and fixed, and this is a config-hygiene check, not a network
+// guard.
+func isLoopbackConfigHost(host string) bool {
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 // Save saves the configuration to a YAML file. Mirrors Load's path handling:

@@ -24,7 +24,28 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
+
+// jwksEgressTransport is the shared HTTP transport for the JWKS fetcher. It
+// clones http.DefaultTransport (preserving proxy-from-environment, connection
+// pooling, and HTTP/2 — the JWKS client used DefaultTransport before this, so an
+// enterprise fetching JWKS through an egress proxy keeps working) and overrides
+// only DialContext to re-validate every direct-dial target against
+// netutil.IsLinkLocal. A misconfigured or compromised issuer whose jwks_uri
+// resolves to the cloud instance-metadata endpoint (169.254.169.254) can never be
+// dialed — defence in depth behind validateJWKSScheme + noCrossOriginRedirect
+// (F2, adversarial-review 2026-09-14). The guard is deliberately link-local-only:
+// RFC-1918/on-prem and loopback IdPs stay reachable, which is keyorix's primary
+// deployment shape. When an egress proxy IS configured the dial targets the proxy
+// (so the guard sees the proxy IP, not the eventual target) — accepted, since the
+// no-proxy path is the one this guard is for.
+var jwksEgressTransport = func() *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = (&netutil.Dialer{Disallow: netutil.IsLinkLocal}).DialContext
+	return tr
+}()
 
 // jwksCacheTTL bounds how long a fetched key set is trusted before a refetch.
 const jwksCacheTTL = 1 * time.Hour
@@ -128,6 +149,7 @@ func NewHTTPJWKSResolver(jwksURIs map[string]string) (*HTTPJWKSResolver, error) 
 		jwksURIs: jwksURIs,
 		client: &http.Client{
 			Timeout:       10 * time.Second,
+			Transport:     jwksEgressTransport,
 			CheckRedirect: noCrossOriginRedirect,
 		},
 		cache:            map[string]*jwksEntry{},
