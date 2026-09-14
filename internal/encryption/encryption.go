@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/pbkdf2"
+
+	"github.com/keyorixhq/keyorix/internal/crypto"
 )
 
 const (
@@ -105,13 +107,14 @@ func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 }
 
 // DefaultKEKIterations is the PBKDF2-HMAC-SHA256 iteration count GenerateKEK falls
-// back to when the caller passes 0. 600,000 matches OWASP's current (2023+)
-// recommended minimum for PBKDF2-HMAC-SHA256 and the value already used explicitly by
-// the legacy passphrase KEK-derivation path (KeyManager.deriveKEK) — this constant
-// keeps the two in sync instead of drifting apart. The prior fallback (100,000) was a
-// materially weaker default from an older OWASP guideline generation, worth roughly
-// 6x less brute-force resistance.
-const DefaultKEKIterations = 600000
+// back to when the caller passes 0. It is DEFINED AS crypto.PBKDF2Iterations — the single
+// source of truth for the KEK-derivation work factor — so the value GenerateKEK /
+// RotateKEKPassphrase derive with can never drift from the value the passphrase provider
+// used to wrap the on-disk DEK (a drift would make rotate-kek derive a non-matching KEK: a
+// fail-closed break). Do not replace this with a bare literal; that reintroduces the
+// two-independent-constants hazard F-ENC-1 closed (2026-09-14 review). 600,000 matches
+// OWASP's current PBKDF2-HMAC-SHA256 minimum; the prior fallback (100,000) was ~6x weaker.
+const DefaultKEKIterations = crypto.PBKDF2Iterations
 
 // GenerateKEK generates a new Key Encryption Key using PBKDF2. iterations == 0 uses
 // DefaultKEKIterations.

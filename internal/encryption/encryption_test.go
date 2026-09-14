@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/pbkdf2"
+
+	"github.com/keyorixhq/keyorix/internal/crypto"
 )
 
 const testKeyVersion = "test-v1"
@@ -21,6 +23,15 @@ func TestGenerateKEK_DefaultIterationsMeetsOWASPMinimum(t *testing.T) {
 	const owaspMinimum = 600000
 	if DefaultKEKIterations < owaspMinimum {
 		t.Fatalf("DefaultKEKIterations = %d, want >= %d (OWASP PBKDF2-HMAC-SHA256 minimum)", DefaultKEKIterations, owaspMinimum)
+	}
+	// F-ENC-1: DefaultKEKIterations and the passphrase provider's work factor MUST be
+	// the same value — the provider wrapped the on-disk DEK at crypto.PBKDF2Iterations,
+	// and GenerateKEK/RotateKEKPassphrase must re-derive the SAME KEK to unwrap it. They
+	// are unified (DefaultKEKIterations is defined AS crypto.PBKDF2Iterations); this
+	// assertion is the machine-check that a future edit re-literalizing either one can't
+	// silently let them drift apart (a drift is a fail-closed rotate-kek break).
+	if DefaultKEKIterations != crypto.PBKDF2Iterations {
+		t.Fatalf("DefaultKEKIterations = %d must equal crypto.PBKDF2Iterations = %d — the KEK-derivation work factor must be a single source of truth", DefaultKEKIterations, crypto.PBKDF2Iterations)
 	}
 
 	password, salt := "correct horse battery staple", []byte("0123456789abcdef")

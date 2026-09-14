@@ -12,10 +12,16 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// pbkdf2Iterations is the PBKDF2-SHA256 work factor. This value MUST match the
-// historical KEK derivation (encryption.GenerateKEK used 600000) so an existing
-// wrapped DEK still unwraps — changing it would orphan all encrypted data.
-const pbkdf2Iterations = 600000
+// PBKDF2Iterations is the PBKDF2-SHA256 work factor and the SINGLE SOURCE OF TRUTH
+// for the KEK-derivation iteration count across the codebase: encryption.DefaultKEKIterations
+// is defined AS this constant, so the passphrase provider (which wrapped the on-disk DEK) and
+// GenerateKEK / RotateKEKPassphrase (which must re-derive the SAME KEK to unwrap it) can never
+// drift apart. Before this was unified they were two independent literals guarded asymmetrically
+// (an exact value here, a floor `>= 600000` on the other), so raising one would have made
+// rotate-kek derive a non-matching KEK (a fail-closed break — F-ENC-1, 2026-09-14 review).
+// Changing this value orphans every existing wrapped DEK, so it must only ever change alongside
+// a KEK re-wrap migration. 600000 matches OWASP's current PBKDF2-HMAC-SHA256 minimum.
+const PBKDF2Iterations = 600000
 
 // saltSize is the KEK-salt length in bytes (must match the historical 32).
 const saltSize = 32
@@ -48,7 +54,7 @@ func (p *PasswordKeyProvider) KEK() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pbkdf2.Key([]byte(p.passphrase), salt, pbkdf2Iterations, KEKSize, sha256.New), nil
+	return pbkdf2.Key([]byte(p.passphrase), salt, PBKDF2Iterations, KEKSize, sha256.New), nil
 }
 
 // ensureSalt mirrors the historical KeyManager.ensureSaltExists exactly: read the
