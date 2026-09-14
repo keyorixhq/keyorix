@@ -150,17 +150,29 @@ func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo strin
 	if err != nil {
 		return "", err
 	}
+	// PKCE (RFC 7636): generate a code_verifier, persist it with the login state
+	// (server-side only), and send just its S256 challenge to the IdP. CompleteSSO
+	// replays the verifier on the token exchange, so an authorization code
+	// intercepted between the IdP redirect and the callback cannot be redeemed
+	// without the verifier this browser's login state holds. This is defence in
+	// depth on top of the confidential-client secret and the single-use state row —
+	// the OAuth 2.1 / OIDC baseline (F1, adversarial-review 2026-09-14).
+	verifier := oauth2.GenerateVerifier()
 	if err := c.storage.CreateSSOLoginState(ctx, &models.SSOLoginState{
-		State:     state,
-		Nonce:     nonce,
-		Provider:  providerName,
-		ReturnTo:  sanitizeReturnTo(returnTo),
-		ExpiresAt: c.now().Add(ssoStateTTL),
-		CreatedAt: c.now(),
+		State:        state,
+		Nonce:        nonce,
+		Provider:     providerName,
+		ReturnTo:     sanitizeReturnTo(returnTo),
+		CodeVerifier: verifier,
+		ExpiresAt:    c.now().Add(ssoStateTTL),
+		CreatedAt:    c.now(),
 	}); err != nil {
 		return "", err
 	}
-	return p.OAuth.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce)), nil
+	return p.OAuth.AuthCodeURL(state,
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.S256ChallengeOption(verifier),
+	), nil
 }
 
 // validateSSOLoginState consumes and validates the stored login state for a
@@ -192,7 +204,17 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", err
 	}
 
-	tok, err := p.OAuth.Exchange(ctx, code)
+	// Replay the PKCE code_verifier stored at BeginSSO so the IdP binds this
+	// exchange to the challenge it saw on the auth request (RFC 7636). Only sent
+	// when the state row carries a verifier: a row created before PKCE was added
+	// (an in-flight login across an upgrade) has none, and sending an empty
+	// verifier against an auth request that carried no challenge would needlessly
+	// risk rejection — omitting it preserves the pre-PKCE flow for those.
+	exchangeOpts := []oauth2.AuthCodeOption{}
+	if st.CodeVerifier != "" {
+		exchangeOpts = append(exchangeOpts, oauth2.VerifierOption(st.CodeVerifier))
+	}
+	tok, err := p.OAuth.Exchange(ctx, code, exchangeOpts...)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("authorization-code exchange failed: %w", err)
 	}

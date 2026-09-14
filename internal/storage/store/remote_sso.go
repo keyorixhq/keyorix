@@ -40,13 +40,14 @@ import (
 // on system.read/system.write, the same tier that already round-trips full
 // user/secret/invitation records.
 type ssoLoginStateWire struct {
-	ID        uint      `json:"id"`
-	State     string    `json:"state"`
-	Nonce     string    `json:"nonce"`
-	Provider  string    `json:"provider"`
-	ReturnTo  string    `json:"return_to"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           uint      `json:"id"`
+	State        string    `json:"state"`
+	Nonce        string    `json:"nonce"`
+	Provider     string    `json:"provider"`
+	ReturnTo     string    `json:"return_to"`
+	CodeVerifier string    `json:"code_verifier"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // newSSOLoginStateWire builds the CreateSSOLoginState request body. Timestamps
@@ -57,25 +58,27 @@ type ssoLoginStateWire struct {
 // sort incorrectly against a UTC-formatted comparison threshold.
 func newSSOLoginStateWire(s *models.SSOLoginState) ssoLoginStateWire {
 	return ssoLoginStateWire{
-		ID:        s.ID,
-		State:     s.State,
-		Nonce:     s.Nonce,
-		Provider:  s.Provider,
-		ReturnTo:  s.ReturnTo,
-		ExpiresAt: s.ExpiresAt.UTC(),
-		CreatedAt: s.CreatedAt.UTC(),
+		ID:           s.ID,
+		State:        s.State,
+		Nonce:        s.Nonce,
+		Provider:     s.Provider,
+		ReturnTo:     s.ReturnTo,
+		CodeVerifier: s.CodeVerifier,
+		ExpiresAt:    s.ExpiresAt.UTC(),
+		CreatedAt:    s.CreatedAt.UTC(),
 	}
 }
 
 func (w ssoLoginStateWire) toModel() *models.SSOLoginState {
 	return &models.SSOLoginState{
-		ID:        w.ID,
-		State:     w.State,
-		Nonce:     w.Nonce,
-		Provider:  w.Provider,
-		ReturnTo:  w.ReturnTo,
-		ExpiresAt: w.ExpiresAt,
-		CreatedAt: w.CreatedAt,
+		ID:           w.ID,
+		State:        w.State,
+		Nonce:        w.Nonce,
+		Provider:     w.Provider,
+		ReturnTo:     w.ReturnTo,
+		CodeVerifier: w.CodeVerifier,
+		ExpiresAt:    w.ExpiresAt,
+		CreatedAt:    w.CreatedAt,
 	}
 }
 
