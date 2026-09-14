@@ -1045,10 +1045,11 @@ jobs:
           [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           gosec -severity medium -exclude-generated ./...
 
-  # scripts/fuzzing/targets.conf is a hand-maintained list consumed by the
-  # self-hosted continuous-fuzzing rig (scripts/fuzzing/README.md) -- it has
-  # NO automated link to what `func FuzzXxx` targets actually exist in the
-  # tree. A sibling project hit exactly this failure mode for months with no
+  # scripts/fuzzing/targets.conf is the hand-maintained canonical list of this
+  # repo's fuzz targets (scripts/fuzzing/README.md) -- it has NO automated link
+  # to what `func FuzzXxx` targets actually exist in the tree. (The rig itself
+  # discovers targets dynamically via the fuzz-harness runner; this list is the
+  # human cross-check.) A sibling project hit exactly this failure mode for months with no
   # signal anything was wrong: an identical hand-maintained list silently
   # missed 18 of 44 real fuzz functions. This job closes that gap by diffing
   # the list of FuzzXxx functions `go test -list` finds in the tree (ground
@@ -1056,8 +1057,8 @@ jobs:
   #   - a real FuzzXxx exists but isn't declared -- it would silently never
   #     get continuously fuzzed (the sibling-project failure mode above).
   #   - targets.conf declares a FuzzXxx that no longer exists -- a stale
-  #     entry (e.g. after a rename/removal) that run-rotation.sh would fail
-  #     to run every cycle.
+  #     entry (e.g. after a rename/removal) that no longer matches any target
+  #     in the tree.
   # Also skipped on web_only PRs: every target here is a Go `func FuzzXxx` in
   # internal/** (or operator/**), and `go test -list` output for those
   # packages cannot change from a diff that only touches web/ -- ADR-070
