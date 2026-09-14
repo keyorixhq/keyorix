@@ -4,6 +4,11 @@
 # pure-Go (memory-safe, CGO-free), so the libFuzzer+sanitizer path adds cost
 # without benefit here. See claude/2026-09-13-fuzzing-tooling-decisions.md.
 # Deep/continuous fuzzing lives on the dedicated rigs, not in CI.
+#
+# Churn gate: a *.go change fuzzes the changed packages' targets; a go.mod/go.sum
+# change (a dependency bump) fuzzes EVERY fuzz-target package — a dep bump changes
+# third-party parser behavior without touching any *.go in the target's package,
+# and those parsers are exactly what the targets exist to catch.
 name: fuzz-changed
 on:
   pull_request:
@@ -28,13 +33,33 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
+
+          # A dependency bump (go.mod/go.sum) changes third-party parser behavior
+          # without touching any *.go in the target's own package — exactly the
+          # churn these targets exist to catch. So on a dep change, fuzz every
+          # package that declares a fuzz target, not just the changed .go dirs.
+          dep_changed=0
+          if git diff --name-only "$base"...HEAD | grep -qE '^(go\.mod|go\.sum)$'; then
+            dep_changed=1
+            echo "go.mod/go.sum changed — dependency churn: fuzzing ALL fuzz-target packages."
+          fi
+
+          if [ "$dep_changed" = 1 ]; then
+            changed_dirs="$(git ls-files -- '*_test.go' | xargs -r grep -lE '^func Fuzz' \
+              | xargs -r -n1 dirname | sort -u)"
+          else
+            changed_dirs="$(git diff --name-only "$base"...HEAD -- '*.go' \
+              | xargs -r -n1 dirname | sort -u)"
+          fi
+
           pkgs=""
           while IFS= read -r d; do
             [ -n "$d" ] || continue
+            d="${d#./}"
             if go test -list '^Fuzz' "./$d" 2>/dev/null | grep -q '^Fuzz'; then
               pkgs="$pkgs ./$d"
             fi
-          done < <(git diff --name-only "$base"...HEAD -- '*.go' | xargs -r -n1 dirname | sort -u)
+          done < <(printf '%s\n' "$changed_dirs")
           pkgs="$(echo "$pkgs" | xargs || true)"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
           if [ -z "$pkgs" ]; then
