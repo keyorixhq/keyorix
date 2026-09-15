@@ -316,9 +316,7 @@ export const ProjectsListPage: React.FC = () => {
     // user opens a project, and is hidden while searching.
     const recent = search.trim()
         ? []
-        : mruIds
-              .map((id) => projects.find((p) => p.id === id && !p.deleted))
-              .filter((p): p is Project => Boolean(p));
+        : mruIds.map((id) => projects.find((p) => p.id === id && !p.deleted)).filter((p): p is Project => Boolean(p));
 
     const recentIds = new Set(recent.map((p) => p.id));
     const nonRecent = filtered.filter((p) => !recentIds.has(p.id));
