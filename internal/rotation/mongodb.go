@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 const mongoOpTimeout = 10 * time.Second
@@ -49,9 +49,7 @@ func (e *MongoExecutor) conn(ctx context.Context) (mongoConn, error) {
 	if e.newConn != nil {
 		return e.newConn(ctx, e.dsn)
 	}
-	cctx, cancel := context.WithTimeout(ctx, mongoOpTimeout)
-	defer cancel()
-	client, err := mongo.Connect(cctx, options.Client().ApplyURI(e.dsn))
+	client, err := mongo.Connect(options.Client().ApplyURI(e.dsn))
 	if err != nil {
 		return nil, fmt.Errorf("mongodb: connect: %w", err)
 	}

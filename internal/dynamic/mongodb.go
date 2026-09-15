@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
@@ -226,7 +226,7 @@ func connectMongo(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 	if !allowPrivateNetwork {
 		opts = opts.SetDialer(guard.Dial)
 	}
-	client, err := mongo.Connect(connectCtx, opts)
+	client, err := mongo.Connect(opts)
 	if err != nil {
 		return nil, fmt.Errorf("invalid mongodb admin URI: %w", err)
 	}

@@ -145,14 +145,14 @@ var srvLookup = net.DefaultResolver.LookupSRV
 // The MongoDB Go driver performs this exact SRV lookup internally, for a
 // mongodb+srv:// URI, deep inside options.Client().ApplyURI — before any
 // caller-supplied Dialer is ever invoked. Confirmed by reading the driver
-// source (go.mongodb.org/mongo-driver@v1.17.9): connstring.Parse's parser
+// source (go.mongodb.org/mongo-driver/v2@v2.9.1): connstring.Parse's parser
 // hardcodes dnsResolver to dns.DefaultResolver (x/mongo/driver/connstring/
-// connstring.go:100), with no exported hook to override it, so a caller has
+// connstring.go:99), with no exported hook to override it, so a caller has
 // no visibility into, or control over, which hostnames that internal step
 // discovers. The actual per-server TCP dial for every server the driver ever
 // connects to — SRV-discovered or not — DOES still funnel through whatever
-// Dialer IS configured (x/mongo/driver/topology/connection.go:
-// c.config.dialer.DialContext(dialCtx, c.addr.Network(), c.addr.String()),
+// Dialer IS configured (x/mongo/driver/topology/connection.go:265,
+// c.config.dialer.DialContext(ctx, c.addr.Network(), c.addr.String()),
 // wired unconditionally from ClientOptions.Dialer regardless of discovery
 // mode per x/mongo/driver/topology/topology_options.go), so g.Dial's own
 // dial-time re-validation remains the authoritative, DNS-rebinding-safe

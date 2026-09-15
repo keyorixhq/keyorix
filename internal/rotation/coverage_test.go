@@ -32,8 +32,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	iamv1 "google.golang.org/api/iam/v1"
 	gooption "google.golang.org/api/option"
 )
@@ -232,7 +232,6 @@ func newUnreachableMongoClient(t *testing.T) *mongo.Client {
 	t.Helper()
 	timeout := 50 * time.Millisecond
 	client, err := mongo.Connect(
-		context.Background(),
 		options.Client().
 			ApplyURI("mongodb://127.0.0.1:1").
 			SetServerSelectionTimeout(timeout),
