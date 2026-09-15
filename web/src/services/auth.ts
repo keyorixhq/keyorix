@@ -10,6 +10,7 @@ import {
     ProfileImpersonation,
 } from '../types';
 import { API_ENDPOINTS } from '../constants';
+import { generateId } from '../utils';
 import { getEnvConfig } from '../utils';
 import { getCsrfToken, CSRF_HEADER_NAME, CSRF_PROTECTED_METHODS } from '../utils/auth';
 
@@ -36,7 +37,7 @@ authApi.interceptors.request.use((requestConfig) => {
         }
     }
     // Consistent request ID for log correlation (matches apiClient).
-    requestConfig.headers['X-Request-ID'] = `req_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+    requestConfig.headers['X-Request-ID'] = `req_${Date.now()}_${generateId().slice(0, 8)}`;
     return requestConfig;
 });
 

@@ -75,6 +75,8 @@ const { mockGetEnvConfig } = vi.hoisted(() => ({
 
 vi.mock('../../utils', () => ({
     getEnvConfig: mockGetEnvConfig,
+    // client.ts stamps X-Request-ID via generateId() (utils); provide a v4-shaped stub.
+    generateId: () => 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
 }));
 
 import type { AxiosError } from 'axios';
