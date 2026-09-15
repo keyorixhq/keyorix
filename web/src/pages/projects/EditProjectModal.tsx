@@ -51,12 +51,10 @@ export const EditProjectModal: React.FC<EditProjectModalProps> = ({ project, onC
         <div
             className="fixed inset-0 z-50 flex items-center justify-center"
             style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-            onClick={onClose}
         >
             <div
                 className="w-full max-w-md rounded-xl p-6 shadow-2xl"
                 style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)' }}
-                onClick={(e) => e.stopPropagation()}
             >
                 <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                     Edit project
