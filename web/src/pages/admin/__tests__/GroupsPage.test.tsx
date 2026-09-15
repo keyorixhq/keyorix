@@ -97,13 +97,13 @@ describe('GroupsPage — groups list', () => {
     });
 
     it('shows an empty state when there are no groups', () => {
-        state.groups.data = { data: [] };
+        state.groups.data = { groups: [] };
         render(<GroupsPage />);
         expect(screen.getByText('No groups yet. Create one to get started.')).toBeInTheDocument();
     });
 
     it('renders group rows with name, description, member count, and assigned roles', () => {
-        state.groups.data = { data: [platformGroup, securityGroup] };
+        state.groups.data = { groups: [platformGroup, securityGroup] };
         state.groupRolesByGroupId[1] = [adminRole];
         render(<GroupsPage />);
 
@@ -122,7 +122,7 @@ describe('GroupsPage — groups list', () => {
     });
 
     it('shows "None" when the per-row roles query has not resolved yet', () => {
-        state.groups.data = { data: [platformGroup] };
+        state.groups.data = { groups: [platformGroup] };
         state.groupRolesUndefinedIds.add(1);
         render(<GroupsPage />);
         const row = within(screen.getAllByRole('row')[1]!);
@@ -130,7 +130,7 @@ describe('GroupsPage — groups list', () => {
     });
 
     it('swaps the row action buttons to their hover colors on mouse enter and back on leave', () => {
-        state.groups.data = { data: [platformGroup] };
+        state.groups.data = { groups: [platformGroup] };
         render(<GroupsPage />);
 
         const manageRolesButton = screen.getByTitle('Manage roles');
@@ -161,7 +161,7 @@ describe('GroupsPage — groups list', () => {
 
 describe('GroupsPage — create group', () => {
     beforeEach(() => {
-        state.groups.data = { data: [platformGroup] };
+        state.groups.data = { groups: [platformGroup] };
     });
 
     it('disables Create until a name is entered, then submits the payload', () => {
@@ -227,7 +227,7 @@ describe('GroupsPage — create group', () => {
 
 describe('GroupsPage — edit group', () => {
     beforeEach(() => {
-        state.groups.data = { data: [platformGroup] };
+        state.groups.data = { groups: [platformGroup] };
     });
 
     it('prefills the form from the selected group and submits an update', () => {
@@ -287,7 +287,7 @@ describe('GroupsPage — edit group', () => {
 
 describe('GroupsPage — delete group', () => {
     beforeEach(() => {
-        state.groups.data = { data: [platformGroup] };
+        state.groups.data = { groups: [platformGroup] };
     });
 
     it('shows a confirmation naming the group and calls delete on confirm', () => {
@@ -345,7 +345,7 @@ describe('GroupsPage — delete group', () => {
 
 describe('GroupsPage — manage roles', () => {
     beforeEach(() => {
-        state.groups.data = { data: [platformGroup] };
+        state.groups.data = { groups: [platformGroup] };
     });
 
     it('shows a loading spinner while roles are loading', () => {
@@ -453,7 +453,7 @@ describe('GroupsPage — manage roles', () => {
 
 describe('GroupsPage — shared secrets', () => {
     beforeEach(() => {
-        state.groups.data = { data: [platformGroup] };
+        state.groups.data = { groups: [platformGroup] };
     });
 
     it('shows a loading spinner while shared secrets load', () => {

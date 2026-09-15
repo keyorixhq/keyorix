@@ -139,11 +139,18 @@ export const GroupsPage: React.FC = () => {
     const { data: groupRolesData } = useGroupRoles(manageGroupId);
     const createMutation = useCreateGroup();
     const updateMutation = useUpdateGroup();
+
+    // Surface the server's actual validation message (e.g. the identifier-charset
+    // rule) instead of a generic "please try again", which hides why the save failed.
+    const errMsg = (e: unknown, fallback: string): string => {
+        const r = e as { response?: { data?: { message?: string } } };
+        return r?.response?.data?.message?.trim() || fallback;
+    };
     const deleteMutation = useDeleteGroup();
     const assignMutation = useAssignRoleToGroup();
     const removeMutation = useRemoveRoleFromGroup();
 
-    const groups = (groupsData?.data ?? []) as Group[];
+    const groups = (groupsData?.groups ?? []) as Group[];
     const assignedRoleIds = new Set((groupRolesData?.roles ?? []).map((r) => r.id));
     // Per-grant expiry (ISO) by role id, for the time-bound badge on assigned roles.
     const roleExpiryById = new Map(
@@ -169,13 +176,16 @@ export const GroupsPage: React.FC = () => {
     };
 
     const handleCreate = () => {
-        if (!formData.name.trim()) return;
-        createMutation.mutate(formData, { onSuccess: () => setCreateOpen(false) });
+        const body = { name: formData.name.trim(), description: formData.description.trim() };
+        if (!body.name) return;
+        createMutation.mutate(body, { onSuccess: () => setCreateOpen(false) });
     };
 
     const handleUpdate = () => {
-        if (!editGroup || !formData.name.trim()) return;
-        updateMutation.mutate({ id: editGroup.id, body: formData }, { onSuccess: () => setEditGroup(null) });
+        if (!editGroup) return;
+        const body = { name: formData.name.trim(), description: formData.description.trim() };
+        if (!body.name) return;
+        updateMutation.mutate({ id: editGroup.id, body }, { onSuccess: () => setEditGroup(null) });
     };
 
     const handleDelete = () => {
@@ -334,7 +344,9 @@ export const GroupsPage: React.FC = () => {
                         />
                     </div>
                     {createMutation.isError && (
-                        <p className="text-sm text-red-600">Failed to create group. Please try again.</p>
+                        <p className="text-sm text-red-600">
+                            {errMsg(createMutation.error, 'Failed to create group. Please try again.')}
+                        </p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setCreateOpen(false)}>
@@ -381,7 +393,9 @@ export const GroupsPage: React.FC = () => {
                         />
                     </div>
                     {updateMutation.isError && (
-                        <p className="text-sm text-red-600">Failed to update group. Please try again.</p>
+                        <p className="text-sm text-red-600">
+                            {errMsg(updateMutation.error, 'Failed to update group. Please try again.')}
+                        </p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setEditGroup(null)}>
