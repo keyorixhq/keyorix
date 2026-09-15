@@ -95,11 +95,12 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 // sanitized the same way before it is ever added to that list, closing off a
 // config-driven path-traversal into chmod/chown of an unintended file.
 func SafeFilePermPath(label, path string) (string, error) {
-	clean := filepath.Clean(path)
-	if strings.Contains(clean, "..") {
-		return "", fmt.Errorf("%s path is unsafe (contains '..'): %s", label, path)
-	}
-	return clean, nil
+	// Single source of truth for the path-safety rule. This used to be a
+	// byte-identical copy of keyfiles.SafePath; two independent copies of a
+	// traversal guard drift, and then one gets a fix the other doesn't, so it
+	// delegates. Behaviour (cleaned path, ".."-substring rejection, identical
+	// error text) is unchanged.
+	return keyfiles.SafePath(label, path)
 }
 
 func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
