@@ -85,3 +85,4 @@ secret-delete-machine-actor-001	./server/http	TestConformance_DeleteSecret	defau
 #   fast-path itself remains and is now DOCUMENTED as the local-CLI path. A documented
 #   exception is a claim, not a fact -- 3 of 13 were false last time. It belongs in the
 #   documented-exception sweep, not in this ledger, until a test settles it.
+saml-response-epilogue-001	./internal/saml	TestParseResponse_RejectsXMLEpilogue	default-ci	37af62a7	-	ParseResponse accepted a validly-signed response with bytes appended after its root element (XML epilogue) unrejected by either our own XML-DSig path or crewjam/saml's internal xrv.Validate (token-round-trip check, not document-structure check); found by the new FuzzParseResponse harness (#1889) on day one, fixed same PR via validatePostedResponseHasNoEpilogue
