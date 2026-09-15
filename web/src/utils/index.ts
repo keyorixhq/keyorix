@@ -134,7 +134,25 @@ export function generateSecret(): string {
  * Generates a random ID
  */
 export function generateId(): string {
-    return crypto.randomUUID();
+    // crypto.randomUUID() is exposed only in a *secure context* (HTTPS or
+    // localhost). Over plain HTTP on a LAN IP — the first thing an on-prem /
+    // air-gapped operator hits before configuring TLS — it is undefined and
+    // throws. Fall back to a getRandomValues()-based UUIDv4 (getRandomValues is
+    // available in insecure contexts too) so the app keeps working.
+    const c: Crypto | undefined = globalThis.crypto;
+    if (typeof c?.randomUUID === 'function') {
+        return c.randomUUID();
+    }
+    if (typeof c?.getRandomValues === 'function') {
+        const bytes = c.getRandomValues(new Uint8Array(16));
+        bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40; // version 4
+        bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // variant 10xx
+        const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+        return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
+    }
+    // Last resort (no Web Crypto at all — should never happen in a browser).
+    // These ids are only used for request correlation / DOM ids, never security.
+    return `id-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
 /**

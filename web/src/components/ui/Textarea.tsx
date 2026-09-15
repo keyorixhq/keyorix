@@ -1,5 +1,6 @@
 import React from 'react';
 import { clsx } from 'clsx';
+import { generateId } from '../../utils';
 
 export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
     label?: string;
@@ -11,7 +12,7 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     ({ className, label, error, helperText, fullWidth = true, resize = 'vertical', id, rows = 3, ...props }, ref) => {
-        const textareaId = id || `textarea-${crypto.randomUUID().slice(0, 8)}`;
+        const textareaId = id || `textarea-${generateId().slice(0, 8)}`;
         const hasError = Boolean(error);
 
         const baseTextareaClasses = [

@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import { useAuthStore, shouldRefreshToken, isTokenExpired } from '../store/authStore';
-import { getEnvConfig } from '../utils';
+import { getEnvConfig, generateId } from '../utils';
 import { getCsrfToken, CSRF_HEADER_NAME, CSRF_PROTECTED_METHODS } from '../utils/auth';
 
 const config = getEnvConfig();
@@ -62,7 +62,7 @@ apiClient.interceptors.request.use(
             }
         }
 
-        interceptorConfig.headers['X-Request-ID'] = `req_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+        interceptorConfig.headers['X-Request-ID'] = `req_${Date.now()}_${generateId().slice(0, 8)}`;
 
         return interceptorConfig;
     },
