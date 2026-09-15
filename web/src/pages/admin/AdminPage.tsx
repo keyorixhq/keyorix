@@ -1429,14 +1429,6 @@ export const AdminPage: React.FC = () => {
                     />
                 )}
 
-                <StaleAccountsSection />
-                <PATHygieneSection />
-                <MachineTokenHygieneSection />
-                <DeploymentHygieneSection />
-                <OrgNameConformanceSection />
-                <OrgInventoryExport />
-                <MaintenanceSection />
-
                 <InactiveFilterBanner
                     show={filterInactive}
                     isDark={isDark}
@@ -1465,6 +1457,19 @@ export const AdminPage: React.FC = () => {
                 />
 
                 {userListContent}
+
+                <div className="mt-12 pt-8 border-t border-base space-y-6">
+                    <h2 className="text-sm font-semibold uppercase tracking-widest text-base-muted">
+                        Organization &amp; compliance tooling
+                    </h2>
+                    <StaleAccountsSection />
+                    <PATHygieneSection />
+                    <MachineTokenHygieneSection />
+                    <DeploymentHygieneSection />
+                    <OrgNameConformanceSection />
+                    <OrgInventoryExport />
+                    <MaintenanceSection />
+                </div>
             </div>
 
             <Modal isOpen={activeModal?.type === 'create'} onClose={closeModal} title="Create User" size="md">
