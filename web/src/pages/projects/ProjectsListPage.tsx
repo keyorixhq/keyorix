@@ -15,6 +15,7 @@ import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import type { Project } from '../../services/projects';
 import { EditProjectModal } from './EditProjectModal';
+import { useProjectMruStore } from '../../store';
 import { formatRelativeTime, formatDate } from '../../utils';
 
 // ── Create Project Modal ─────────────────────────────────────────────────────
@@ -265,6 +266,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDelet
 export const ProjectsListPage: React.FC = () => {
     const [showDeleted, setShowDeleted] = useState(false);
     const { data: projects = [], isLoading, isError } = useProjects(showDeleted);
+    const mruIds = useProjectMruStore((s) => s.recentIds);
     const deleteProject = useDeleteProject();
     const restoreProject = useRestoreProject();
     const [search, setSearch] = useState('');
@@ -307,10 +309,16 @@ export const ProjectsListPage: React.FC = () => {
           )
         : projects;
 
-    const recent = [...projects]
-        .filter((p) => !p.deleted)
-        .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
-        .slice(0, 5);
+    // "Recent" = projects the user has actually opened (client MRU, ADR-018),
+    // most-recent first. Previously this was the 5 most-recently-*updated*
+    // projects, which made almost every project "recent" and left the "All
+    // Projects" section showing just the leftovers. It stays empty until the
+    // user opens a project, and is hidden while searching.
+    const recent = search.trim()
+        ? []
+        : mruIds
+              .map((id) => projects.find((p) => p.id === id && !p.deleted))
+              .filter((p): p is Project => Boolean(p));
 
     const recentIds = new Set(recent.map((p) => p.id));
     const nonRecent = filtered.filter((p) => !recentIds.has(p.id));
