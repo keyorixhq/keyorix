@@ -7,6 +7,9 @@ import { useUIStore } from '../../../store/uiStore';
 const useAuditLog = vi.fn();
 const useAnomalyAlerts = vi.fn();
 const acknowledgeMutate = vi.fn();
+const useRoles = vi.fn();
+const useGroups = vi.fn();
+const apiClientGet = vi.fn();
 
 vi.mock('../../../features/audit', () => ({
     useAuditLog: (...args: any[]) => useAuditLog(...args),
@@ -15,6 +18,15 @@ vi.mock('../../../features/audit', () => ({
 vi.mock('../../../features/dashboard', () => ({
     useAnomalyAlerts: (...args: any[]) => useAnomalyAlerts(...args),
     useAcknowledgeAnomaly: () => ({ mutate: acknowledgeMutate }),
+}));
+
+vi.mock('../../../features/admin', () => ({
+    useRoles: (...args: any[]) => useRoles(...args),
+    useGroups: (...args: any[]) => useGroups(...args),
+}));
+
+vi.mock('../../../services/client', () => ({
+    apiClient: { get: (...args: any[]) => apiClientGet(...args) },
 }));
 
 const entries = [
@@ -36,7 +48,7 @@ const entries = [
     },
     {
         id: 3,
-        event_type: 'rbac.role.assigned',
+        event_type: 'role.assigned',
         actor: 'ci-bot',
         actor_type: 'machine_identity',
         description: 'Assigned role admin',
@@ -70,6 +82,9 @@ beforeEach(() => {
     vi.clearAllMocks();
     mockAuditLog();
     mockAnomalies();
+    useRoles.mockReturnValue({ data: [] });
+    useGroups.mockReturnValue({ data: { groups: [], total: 0 } });
+    apiClientGet.mockResolvedValue({ data: { data: { users: [] } } });
     window.history.pushState({}, '', '/');
 });
 
@@ -222,6 +237,85 @@ describe('AuditLogPage — RBAC tab', () => {
         expect(screen.getByText('Access governance events')).toBeInTheDocument();
         expect(screen.getByText('ci-bot')).toBeInTheDocument();
         expect(screen.queryByText('alice')).not.toBeInTheDocument();
+    });
+
+    it('resolves role/group/user ids to names in RBAC descriptions, leaving unresolved ids untouched', async () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    {
+                        id: 1,
+                        event_type: 'role.removed',
+                        actor: 'admin',
+                        actor_type: 'user',
+                        description: 'role 9 removed from user 7',
+                        timestamp: '2026-01-15T10:00:00Z',
+                    },
+                    {
+                        id: 2,
+                        event_type: 'group.member_added',
+                        actor: 'admin',
+                        actor_type: 'user',
+                        description: 'user 7 added to group 3',
+                        timestamp: '2026-01-16T10:00:00Z',
+                    },
+                    {
+                        id: 3,
+                        event_type: 'role.assigned',
+                        actor: 'admin',
+                        actor_type: 'user',
+                        description: 'role 999 assigned to user 7',
+                        timestamp: '2026-01-17T10:00:00Z',
+                    },
+                ],
+                total: 3,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        useRoles.mockReturnValue({ data: [{ id: 9, name: 'project_viewer' }] });
+        useGroups.mockReturnValue({ data: { groups: [{ id: 3, name: 'platform-team' }], total: 1 } });
+        apiClientGet.mockResolvedValue({
+            data: { data: { users: [{ id: 7, displayName: 'Frank OBrien', email: 'frank@example.com' }] } },
+        });
+
+        render(<AuditLogPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'RBAC Events' }));
+
+        expect(await screen.findByText('project_viewer removed from Frank OBrien')).toBeInTheDocument();
+        expect(screen.getByText('Frank OBrien added to platform-team')).toBeInTheDocument();
+        // id 999 has no matching role — the raw token is left untouched, not blanked.
+        expect(screen.getByText('role 999 assigned to Frank OBrien')).toBeInTheDocument();
+    });
+
+    it('does not rewrite ids in non-RBAC event descriptions', () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    {
+                        id: 1,
+                        event_type: 'secret.read',
+                        actor: 'bob',
+                        actor_type: 'user',
+                        description: 'read secret 9 in project 7',
+                        timestamp: '2026-01-15T10:00:00Z',
+                    },
+                ],
+                total: 1,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        useRoles.mockReturnValue({ data: [{ id: 9, name: 'project_viewer' }] });
+
+        render(<AuditLogPage />);
+        expect(screen.getByText('read secret 9 in project 7')).toBeInTheDocument();
     });
 });
 
@@ -544,7 +638,7 @@ describe('AuditLogPage — RBAC tab with multiple event types', () => {
                 data: [
                     {
                         id: 1,
-                        event_type: 'rbac.role.assigned',
+                        event_type: 'role.assigned',
                         actor: 'ci-bot',
                         actor_type: 'machine_identity',
                         description: 'Assigned role admin',
@@ -552,7 +646,7 @@ describe('AuditLogPage — RBAC tab with multiple event types', () => {
                     },
                     {
                         id: 2,
-                        event_type: 'rbac.permission.granted',
+                        event_type: 'permission.assigned',
                         actor: 'auditor',
                         actor_type: 'user',
                         description: 'Granted permission',

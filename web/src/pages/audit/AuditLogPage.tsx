@@ -3,9 +3,12 @@ import { useSearchParams } from 'react-router';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
 import { Alert } from '../../components/ui/Alert';
+import { useQuery } from '@tanstack/react-query';
 import { useAuditLog, AuditLogEntry } from '../../features/audit';
 import { useAnomalyAlerts, useAcknowledgeAnomaly } from '../../features/dashboard';
-import { AnomalyAlert } from '../../types';
+import { useRoles, useGroups } from '../../features/admin';
+import { apiClient } from '../../services/client';
+import { AnomalyAlert, User } from '../../types';
 import { humanizeAlertType } from '../../utils/anomaly';
 
 // ─── Event badge ─────────────────────────────────────────────────────────────
@@ -86,51 +89,72 @@ const EVENT_STYLES: Record<
         lightBg: '#ffedd5',
         lightColor: '#9a3412',
     },
-    // RBAC — roles
-    'rbac.role.created': {
+    // RBAC — roles (keys match the backend event types in internal/core/audit.go)
+    'role.created': {
         label: 'Role Created',
         darkBg: 'rgba(99,102,241,0.15)',
         darkColor: '#818cf8',
         lightBg: '#e0e7ff',
         lightColor: '#3730a3',
     },
-    'rbac.role.updated': {
+    'role.updated': {
         label: 'Role Updated',
         darkBg: 'rgba(99,102,241,0.15)',
         darkColor: '#818cf8',
         lightBg: '#e0e7ff',
         lightColor: '#3730a3',
     },
-    'rbac.role.deleted': {
+    'role.deleted': {
         label: 'Role Deleted',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
         lightColor: '#991b1b',
     },
-    'rbac.role.assigned': {
+    'role.assigned': {
         label: 'Role Assigned',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
-    'rbac.role.removed': {
+    'role.removed': {
         label: 'Role Removed',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
         lightColor: '#991b1b',
     },
+    'role.expired': {
+        label: 'Role Expired',
+        darkBg: 'rgba(251,146,60,0.15)',
+        darkColor: '#fb923c',
+        lightBg: '#ffedd5',
+        lightColor: '#9a3412',
+    },
+    'role.group_assigned': {
+        label: 'Role Assigned to Group',
+        darkBg: 'rgba(16,185,129,0.15)',
+        darkColor: '#34d399',
+        lightBg: '#dcfce7',
+        lightColor: '#166534',
+    },
+    'role.group_removed': {
+        label: 'Role Removed from Group',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
+    },
     // RBAC — permissions
-    'rbac.permission.granted': {
+    'permission.assigned': {
         label: 'Permission Granted',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
-    'rbac.permission.revoked': {
+    'permission.removed': {
         label: 'Permission Revoked',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
@@ -138,35 +162,42 @@ const EVENT_STYLES: Record<
         lightColor: '#991b1b',
     },
     // RBAC — groups
-    'rbac.group.created': {
+    'group.created': {
         label: 'Group Created',
         darkBg: 'rgba(168,85,247,0.15)',
         darkColor: '#c084fc',
         lightBg: '#f3e8ff',
         lightColor: '#6b21a8',
     },
-    'rbac.group.updated': {
+    'group.updated': {
         label: 'Group Updated',
         darkBg: 'rgba(168,85,247,0.15)',
         darkColor: '#c084fc',
         lightBg: '#f3e8ff',
         lightColor: '#6b21a8',
     },
-    'rbac.group.deleted': {
+    'group.deleted': {
         label: 'Group Deleted',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
         lightColor: '#991b1b',
     },
-    'rbac.group.member.added': {
+    'group.restored': {
+        label: 'Group Restored',
+        darkBg: 'rgba(168,85,247,0.15)',
+        darkColor: '#c084fc',
+        lightBg: '#f3e8ff',
+        lightColor: '#6b21a8',
+    },
+    'group.member_added': {
         label: 'Added to Group',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
-    'rbac.group.member.removed': {
+    'group.member_removed': {
         label: 'Removed from Group',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
@@ -174,6 +205,12 @@ const EVENT_STYLES: Record<
         lightColor: '#991b1b',
     },
 };
+
+// RBAC event families, matching the backend's role.* / group.* / permission.*
+// audit event types (internal/core/audit.go, groups.go). Used to populate the
+// "RBAC Events" tab; the backend does not prefix these with "rbac.".
+const RBAC_EVENT_PREFIXES = ['role.', 'group.', 'permission.'];
+const isRbacEvent = (eventType: string): boolean => RBAC_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix));
 
 function eventLabel(eventType: string): string {
     return EVENT_STYLES[eventType]?.label ?? eventType;
@@ -908,7 +945,7 @@ const TabToggle: React.FC<TabToggleProps> = ({ activeTab, openCount, onChange })
                 >
                     {label}
                     {badge != null && badge > 0 && (
-                        <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold leading-none">
+                        <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-semibold leading-none">
                             {badge}
                         </span>
                     )}
@@ -947,7 +984,7 @@ const UrlFilterBanner: React.FC<UrlFilterBannerProps> = ({ urlFilter }) => {
     );
 };
 
-const GovernanceBanner: React.FC = () => (
+const InfoBanner: React.FC<{ title: string; description: string }> = ({ title, description }) => (
     <div className="flex items-start gap-3 p-4 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950/20 dark:border-indigo-900/30">
         <svg className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -958,14 +995,31 @@ const GovernanceBanner: React.FC = () => (
             />
         </svg>
         <div>
-            <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Access governance events</p>
-            <p className="text-xs text-indigo-600/70 dark:text-indigo-400/70 mt-0.5">
-                Shows only role assignments, permission changes, and group membership events. Required for NIS2 Article
-                21 access control audit trails.
-            </p>
+            <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">{title}</p>
+            <p className="text-xs text-indigo-600/70 dark:text-indigo-400/70 mt-0.5">{description}</p>
         </div>
     </div>
 );
+
+// One explanatory banner per tab, so every view states what it shows and why
+// it matters for compliance — not just the RBAC tab.
+const TAB_BANNERS: Record<ActiveTab, { title: string; description: string }> = {
+    audit: {
+        title: 'Complete activity record',
+        description:
+            'Every secret access, authentication, configuration, and system event, in tamper-evident order — the full chain behind the RBAC and anomaly views. Supports ISO 27001 A.8.15 event logging.',
+    },
+    rbac: {
+        title: 'Access governance events',
+        description:
+            'Shows only role assignments, permission changes, and group membership events. Required for NIS2 Article 21 access control audit trails.',
+    },
+    anomalies: {
+        title: 'Behavioral anomaly detection',
+        description:
+            'Flags unusual secret access — off-hours reads, new source IPs, and access spikes — for review and acknowledgement. Supports NIS2 Article 21 incident detection.',
+    },
+};
 
 interface PageData {
     page?: number;
@@ -1038,6 +1092,22 @@ export const AuditLogPage: React.FC = () => {
     const { data, isLoading, error } = useAuditLog({ page, pageSize: 100 });
     const { data: anomalyData, isLoading: anomalyLoading } = useAnomalyAlerts(false);
     const acknowledgeAnomaly = useAcknowledgeAnomaly();
+
+    // Lookups to turn the raw IDs in RBAC audit descriptions ("role 9 removed
+    // from user 7") into names at display time — the stored descriptions are
+    // part of the tamper-evident chain and must not be rewritten at the source.
+    const { data: rbacRoles } = useRoles();
+    const { data: rbacGroups } = useGroups();
+    const { data: rbacUsers = [] } = useQuery<User[]>({
+        queryKey: ['audit-user-map'],
+        queryFn: async () => {
+            const res = await apiClient.get('/api/v1/users', { params: { page_size: 100 } });
+            const payload = res.data?.data ?? res.data ?? {};
+            return (payload.users ?? payload.data ?? []) as User[];
+        },
+        staleTime: 5 * 60 * 1000,
+    });
+
     const { theme } = useUIStore();
     const isDark =
         theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1066,13 +1136,30 @@ export const AuditLogPage: React.FC = () => {
         [urlFilter, actorFilter, eventTypeFilter, actorTypeFilter, dateFrom, dateTo]
     );
 
-    const auditEntries = applyFilters(allEntries);
-    const rbacEntries = applyFilters(allEntries.filter((e) => e.event_type.startsWith('rbac.')));
+    const userById = new Map<number, string>();
+    rbacUsers.forEach((u) => userById.set(u.id, u.displayName || u.email || u.username));
+    const roleById = new Map<number, string>();
+    (rbacRoles ?? []).forEach((r) => roleById.set(r.id, r.name));
+    const groupById = new Map<number, string>();
+    (rbacGroups?.groups ?? []).forEach((g: { id: number; name: string }) => groupById.set(g.id, g.name));
+
+    // Rewrite "role N" / "group N" / "user N" tokens to names, RBAC events only,
+    // leaving the token untouched when the id can't be resolved.
+    const humanizeRbacDescription = (desc: string): string =>
+        desc
+            .replace(/\brole (\d+)\b/g, (m: string, id: string) => roleById.get(Number(id)) ?? m)
+            .replace(/\bgroup (\d+)\b/g, (m: string, id: string) => groupById.get(Number(id)) ?? m)
+            .replace(/\buser (\d+)\b/g, (m: string, id: string) => userById.get(Number(id)) ?? m);
+    const resolveIds = (e: AuditLogEntry): AuditLogEntry =>
+        isRbacEvent(e.event_type) ? { ...e, description: humanizeRbacDescription(e.description) } : e;
+
+    const auditEntries = applyFilters(allEntries).map(resolveIds);
+    const rbacEntries = applyFilters(allEntries.filter((e) => isRbacEvent(e.event_type))).map(resolveIds);
 
     // Unique event types for the dropdown
     const auditTypes = Array.from(new Set(allEntries.map((e) => e.event_type))).sort((a, b) => a.localeCompare(b));
     const rbacTypes = Array.from(
-        new Set(allEntries.filter((e) => e.event_type.startsWith('rbac.')).map((e) => e.event_type))
+        new Set(allEntries.filter((e) => isRbacEvent(e.event_type)).map((e) => e.event_type))
     ).sort((a, b) => a.localeCompare(b));
 
     const activeEntries = activeTab === 'rbac' ? rbacEntries : auditEntries;
@@ -1107,6 +1194,9 @@ export const AuditLogPage: React.FC = () => {
                 {/* Tab toggle */}
                 <TabToggle activeTab={activeTab} openCount={openCount} onChange={resetPageOnTabChange} />
 
+                {/* Per-tab explanatory banner */}
+                <InfoBanner title={TAB_BANNERS[activeTab].title} description={TAB_BANNERS[activeTab].description} />
+
                 {/* ── Audit Log tab ── */}
                 {activeTab === 'audit' && (
                     <AuditTabPanel
@@ -1139,7 +1229,6 @@ export const AuditLogPage: React.FC = () => {
                 {/* ── RBAC Events tab ── */}
                 {activeTab === 'rbac' && (
                     <div className="space-y-4">
-                        <GovernanceBanner />
                         <AuditTabPanel
                             error={error}
                             filterBarProps={{

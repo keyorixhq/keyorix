@@ -7,6 +7,8 @@ import {
     TrashIcon,
     ArrowPathIcon,
     PencilSquareIcon,
+    ChevronUpIcon,
+    ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import { useProjects, useCreateProject, useDeleteProject, useRestoreProject } from '../../features/projects/api';
 import { ROUTES } from '../../constants';
@@ -15,8 +17,10 @@ import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import type { Project } from '../../services/projects';
 import { EditProjectModal } from './EditProjectModal';
-import { useProjectMruStore } from '../../store';
 import { formatRelativeTime, formatDate } from '../../utils';
+
+type SortKey = 'recent' | 'name';
+type SortDir = 'asc' | 'desc';
 
 // ── Create Project Modal ─────────────────────────────────────────────────────
 
@@ -266,7 +270,8 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDelet
 export const ProjectsListPage: React.FC = () => {
     const [showDeleted, setShowDeleted] = useState(false);
     const { data: projects = [], isLoading, isError } = useProjects(showDeleted);
-    const mruIds = useProjectMruStore((s) => s.recentIds);
+    const [sortKey, setSortKey] = useState<SortKey>('recent');
+    const [sortDir, setSortDir] = useState<SortDir>('desc');
     const deleteProject = useDeleteProject();
     const restoreProject = useRestoreProject();
     const [search, setSearch] = useState('');
@@ -309,17 +314,16 @@ export const ProjectsListPage: React.FC = () => {
           )
         : projects;
 
-    // "Recent" = projects the user has actually opened (client MRU, ADR-018),
-    // most-recent first. Previously this was the 5 most-recently-*updated*
-    // projects, which made almost every project "recent" and left the "All
-    // Projects" section showing just the leftovers. It stays empty until the
-    // user opens a project, and is hidden while searching.
-    const recent = search.trim()
-        ? []
-        : mruIds.map((id) => projects.find((p) => p.id === id && !p.deleted)).filter((p): p is Project => Boolean(p));
-
-    const recentIds = new Set(recent.map((p) => p.id));
-    const nonRecent = filtered.filter((p) => !recentIds.has(p.id));
+    // One list, sorted by the chosen key/direction. "recent" sorts by last
+    // activity (falling back to updatedAt); "name" sorts alphabetically. The
+    // direction toggle flips ascending/descending for either.
+    const sorted = [...filtered].sort((a, b) => {
+        const base =
+            sortKey === 'name'
+                ? a.name.localeCompare(b.name)
+                : (a.lastActivity ?? a.updatedAt ?? '').localeCompare(b.lastActivity ?? b.updatedAt ?? '');
+        return sortDir === 'asc' ? base : -base;
+    });
 
     return (
         <div className="p-6 max-w-4xl mx-auto">
@@ -399,43 +403,67 @@ export const ProjectsListPage: React.FC = () => {
 
             {!isLoading && !isError && (
                 <>
-                    {/* Recent — only when no search */}
-                    {!search && recent.length > 0 && (
-                        <section className="mb-8">
-                            <h2
-                                className="text-xs font-semibold uppercase tracking-wider mb-3"
-                                style={{ color: 'var(--text-muted)' }}
-                            >
-                                Recent
-                            </h2>
-                            <div className="space-y-2">
-                                {recent.map((p) => (
-                                    <ProjectRow
-                                        key={p.id}
-                                        project={p}
-                                        onEditRequest={setProjectToEdit}
-                                        onDeleteRequest={setProjectToDelete}
-                                        onRestore={handleRestore}
-                                        restoring={restoreProject.isPending && restoreProject.variables === p.id}
-                                    />
-                                ))}
-                            </div>
-                        </section>
-                    )}
-
-                    {/* All projects — only those not already shown in Recent */}
-                    {(!search ? nonRecent : filtered).length > 0 && (
-                        <section>
-                            {!search && (
-                                <h2
-                                    className="text-xs font-semibold uppercase tracking-wider mb-3"
+                    {sorted.length > 0 && (
+                        <>
+                            {/* Sort toolbar */}
+                            <div className="flex items-center justify-between mb-3">
+                                <span
+                                    className="text-xs uppercase tracking-wider"
                                     style={{ color: 'var(--text-muted)' }}
                                 >
-                                    All Projects
-                                </h2>
-                            )}
+                                    {sorted.length} project{sorted.length === 1 ? '' : 's'}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                    <span className="text-xs mr-1" style={{ color: 'var(--text-muted)' }}>
+                                        Sort
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSortKey('recent')}
+                                        className="px-2 py-1 text-xs rounded-md transition-colors"
+                                        style={
+                                            sortKey === 'recent'
+                                                ? { backgroundColor: 'var(--accent-subtle)', color: 'var(--accent)' }
+                                                : { color: 'var(--text-secondary)' }
+                                        }
+                                    >
+                                        Recent
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSortKey('name')}
+                                        className="px-2 py-1 text-xs rounded-md transition-colors"
+                                        style={
+                                            sortKey === 'name'
+                                                ? { backgroundColor: 'var(--accent-subtle)', color: 'var(--accent)' }
+                                                : { color: 'var(--text-secondary)' }
+                                        }
+                                    >
+                                        Name
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                                        className="p-1 rounded-md transition-colors"
+                                        style={{ color: 'var(--text-secondary)' }}
+                                        title={
+                                            sortDir === 'asc'
+                                                ? 'Ascending — click for descending'
+                                                : 'Descending — click for ascending'
+                                        }
+                                        aria-label="Toggle sort direction"
+                                    >
+                                        {sortDir === 'asc' ? (
+                                            <ChevronUpIcon className="h-4 w-4" />
+                                        ) : (
+                                            <ChevronDownIcon className="h-4 w-4" />
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+
                             <div className="space-y-2">
-                                {(!search ? nonRecent : filtered).map((p) => (
+                                {sorted.map((p) => (
                                     <ProjectRow
                                         key={p.id}
                                         project={p}
@@ -446,7 +474,7 @@ export const ProjectsListPage: React.FC = () => {
                                     />
                                 ))}
                             </div>
-                        </section>
+                        </>
                     )}
 
                     {/* Empty state — only when nothing at all */}

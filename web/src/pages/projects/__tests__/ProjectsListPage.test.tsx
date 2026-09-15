@@ -2,7 +2,6 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '../../../test/test-utils';
 import { ProjectsListPage } from '../ProjectsListPage';
-import { useProjectMruStore } from '../../../store';
 
 const { useProjectsMock, createMutateAsync, deleteMutate, deleteResetMock, restoreMutate, navigateMock } = vi.hoisted(
     () => ({
@@ -69,7 +68,6 @@ beforeEach(() => {
     hookState.deletePending = false;
     hookState.restorePending = false;
     hookState.restoreVariables = undefined;
-    useProjectMruStore.setState({ recentIds: [] });
     useProjectsMock.mockImplementation(() => ({
         data: hookState.projects,
         isLoading: hookState.isLoading,
@@ -108,57 +106,39 @@ describe('ProjectsListPage', () => {
         expect(useProjectsMock).toHaveBeenLastCalledWith(true);
     });
 
-    it('shows no Recent section when the MRU list is empty (fresh session)', () => {
-        hookState.projects = [makeProject({ id: 1, name: 'proj-one' }), makeProject({ id: 2, name: 'proj-two' })];
-        render(<ProjectsListPage />);
-
-        expect(screen.queryByText('Recent')).not.toBeInTheDocument();
-        const allSection = screen.getByText('All Projects').closest('section') as HTMLElement;
-        expect(within(allSection).getByText('proj-one')).toBeInTheDocument();
-        expect(within(allSection).getByText('proj-two')).toBeInTheDocument();
-    });
-
-    it('splits projects into Recent (MRU order, most-recent-first) and All Projects (the rest)', () => {
+    it('renders every project in a single list with a sort control (no Recent/All split)', () => {
         hookState.projects = [
             makeProject({ id: 1, name: 'proj-one' }),
             makeProject({ id: 2, name: 'proj-two' }),
             makeProject({ id: 3, name: 'proj-three' }),
-            makeProject({ id: 4, name: 'proj-four' }),
-            makeProject({ id: 5, name: 'proj-five' }),
-            makeProject({ id: 6, name: 'proj-six' }),
         ];
-        // Opened proj-five most recently, then proj-one — the rest were never opened.
-        useProjectMruStore.setState({ recentIds: [5, 1] });
         render(<ProjectsListPage />);
 
-        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
-        const recentRows = Array.from(recentSection.querySelectorAll('.group'));
-        expect(recentRows[0]?.textContent).toContain('proj-five');
-        expect(recentRows[1]?.textContent).toContain('proj-one');
-        expect(within(recentSection).queryByText('proj-six')).not.toBeInTheDocument();
-
-        const allSection = screen.getByText('All Projects').closest('section') as HTMLElement;
-        expect(within(allSection).getByText('proj-six')).toBeInTheDocument();
-        expect(within(allSection).queryByText('proj-one')).not.toBeInTheDocument();
-        expect(within(allSection).queryByText('proj-five')).not.toBeInTheDocument();
+        expect(screen.queryByText('All Projects')).not.toBeInTheDocument();
+        expect(screen.getByText('Sort')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Recent' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Name' })).toBeInTheDocument();
+        expect(screen.getByText('proj-one')).toBeInTheDocument();
+        expect(screen.getByText('proj-two')).toBeInTheDocument();
+        expect(screen.getByText('proj-three')).toBeInTheDocument();
     });
 
-    it('drops MRU ids that no longer match a live project, without throwing', () => {
-        hookState.projects = [makeProject({ id: 1, name: 'still-here' })];
-        // id 999 was opened once but no longer exists (deleted/never loaded).
-        useProjectMruStore.setState({ recentIds: [999, 1] });
+    it('sorts alphabetically by name, ascending after toggling direction', () => {
+        hookState.projects = [
+            makeProject({ id: 1, name: 'charlie' }),
+            makeProject({ id: 2, name: 'alpha' }),
+            makeProject({ id: 3, name: 'bravo' }),
+        ];
         render(<ProjectsListPage />);
 
-        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
-        expect(within(recentSection).getByText('still-here')).toBeInTheDocument();
-    });
+        fireEvent.click(screen.getByRole('button', { name: 'Name' }));
+        // Default direction is descending; toggle to ascending (A→Z).
+        fireEvent.click(screen.getByLabelText('Toggle sort direction'));
 
-    it('excludes a deleted project from Recent even if it is in the MRU list', () => {
-        hookState.projects = [makeProject({ id: 1, name: 'now-deleted', deleted: true })];
-        useProjectMruStore.setState({ recentIds: [1] });
-        render(<ProjectsListPage />);
-
-        expect(screen.queryByText('Recent')).not.toBeInTheDocument();
+        const rows = Array.from(document.querySelectorAll('.group'));
+        expect(rows[0]?.textContent).toContain('alpha');
+        expect(rows[1]?.textContent).toContain('bravo');
+        expect(rows[2]?.textContent).toContain('charlie');
     });
 
     it('renders secret/environment counts with correct pluralization', () => {
@@ -207,21 +187,17 @@ describe('ProjectsListPage', () => {
         expect(navigateMock).not.toHaveBeenCalled();
     });
 
-    it('filters by name and description, hides Recent/All Projects headers while searching', () => {
+    it('filters by name and description', () => {
         hookState.projects = [
             makeProject({ id: 1, name: 'alpha', description: 'first project' }),
             makeProject({ id: 2, name: 'beta', description: 'matches nothing special' }),
         ];
-        useProjectMruStore.setState({ recentIds: [1] });
         render(<ProjectsListPage />);
-        expect(screen.getByText('Recent')).toBeInTheDocument();
 
         fireEvent.change(screen.getByPlaceholderText('Search projects…'), { target: { value: 'first' } });
 
         expect(screen.getByText('alpha')).toBeInTheDocument();
         expect(screen.queryByText('beta')).not.toBeInTheDocument();
-        expect(screen.queryByText('Recent')).not.toBeInTheDocument();
-        expect(screen.queryByText('All Projects')).not.toBeInTheDocument();
     });
 
     it('shows a "no match" empty state including the search term when search finds nothing', () => {
@@ -413,18 +389,16 @@ describe('ProjectsListPage', () => {
         expect(restoreButtons[1]).not.toBeDisabled(); // deleted-two, id 12 — unaffected
     });
 
-    it('evaluates the restoring flag for non-deleted rows shown in Recent too', () => {
-        // Recent never shows a Restore button (only deleted rows do), but the `restoring`
-        // prop expression is still evaluated per-row there; exercise both outcomes.
-        hookState.projects = [makeProject({ id: 20, name: 'recent-a' }), makeProject({ id: 21, name: 'recent-b' })];
-        useProjectMruStore.setState({ recentIds: [20, 21] });
+    it('evaluates the restoring flag for non-deleted rows without throwing', () => {
+        // A pending restore for one row exercises the `restoring` prop expression on
+        // every rendered row (non-deleted rows never show a Restore button).
+        hookState.projects = [makeProject({ id: 20, name: 'row-a' }), makeProject({ id: 21, name: 'row-b' })];
         hookState.restorePending = true;
         hookState.restoreVariables = 20;
         render(<ProjectsListPage />);
 
-        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
-        expect(within(recentSection).getByText('recent-a')).toBeInTheDocument();
-        expect(within(recentSection).getByText('recent-b')).toBeInTheDocument();
+        expect(screen.getByText('row-a')).toBeInTheDocument();
+        expect(screen.getByText('row-b')).toBeInTheDocument();
     });
 
     it('shows relative last-activity time when a project has one', () => {
