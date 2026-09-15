@@ -484,24 +484,24 @@ const SecurityAlertsPanel: React.FC<SecurityAlertsPanelProps> = ({
                 .sort((a, b) => (b.DetectedAt ?? '').localeCompare(a.DetectedAt ?? ''))
                 .slice(0, MAX_SECURITY_ALERTS)
                 .map((a) => (
-                <div key={a.ID} className="flex items-start justify-between gap-2 p-3 bg-red-50 rounded-lg">
-                    <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-red-700">{humanizeAlertType(a.AlertType)}</p>
-                        <p className="text-xs text-red-600 mt-0.5 truncate">{a.SecretName}</p>
-                        <p className="text-xs text-base-muted mt-0.5">
-                            {a.AccessedBy} · {a.IPAddress}
-                        </p>
+                    <div key={a.ID} className="flex items-start justify-between gap-2 p-3 bg-red-50 rounded-lg">
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-red-700">{humanizeAlertType(a.AlertType)}</p>
+                            <p className="text-xs text-red-600 mt-0.5 truncate">{a.SecretName}</p>
+                            <p className="text-xs text-base-muted mt-0.5">
+                                {a.AccessedBy} · {a.IPAddress}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => acknowledgeAnomaly.mutate(a.ID)}
+                            className="text-xs text-base-muted hover:text-base-secondary shrink-0 mt-0.5"
+                            title="Dismiss"
+                        >
+                            ✓
+                        </button>
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => acknowledgeAnomaly.mutate(a.ID)}
-                        className="text-xs text-base-muted hover:text-base-secondary shrink-0 mt-0.5"
-                        title="Dismiss"
-                    >
-                        ✓
-                    </button>
-                </div>
-            ))}
+                ))}
             {expiring.map((s: any) => {
                 const urgentBadgeColor = s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600';
                 const expiryBadgeColor = s.expired ? 'bg-red-500/20 text-red-400' : urgentBadgeColor;
