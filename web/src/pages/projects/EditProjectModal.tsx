@@ -44,8 +44,7 @@ export const EditProjectModal: React.FC<EditProjectModalProps> = ({ project, onC
         }
     };
 
-    const unchanged =
-        name.trim() === project.name && description.trim() === (project.description ?? '');
+    const unchanged = name.trim() === project.name && description.trim() === (project.description ?? '');
 
     return (
         <div

@@ -143,13 +143,7 @@ interface ProjectRowProps {
     restoring: boolean;
 }
 
-const ProjectRow: React.FC<ProjectRowProps> = ({
-    project,
-    onEditRequest,
-    onDeleteRequest,
-    onRestore,
-    restoring,
-}) => {
+const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDeleteRequest, onRestore, restoring }) => {
     const navigate = useNavigate();
     const deleted = project.deleted;
     return (
@@ -482,9 +476,7 @@ export const ProjectsListPage: React.FC = () => {
 
             {showCreate && <CreateProjectModal onClose={() => setShowCreate(false)} />}
 
-            {projectToEdit && (
-                <EditProjectModal project={projectToEdit} onClose={() => setProjectToEdit(null)} />
-            )}
+            {projectToEdit && <EditProjectModal project={projectToEdit} onClose={() => setProjectToEdit(null)} />}
 
             {/* Delete confirmation modal */}
             <Modal isOpen={projectToDelete !== null} onClose={closeDeleteModal} title="Delete Project" size="sm">
