@@ -14,9 +14,11 @@ package saml
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -164,6 +166,81 @@ func (p *Provider) AuthnRequest(relayState string) (redirectURL, requestID strin
 // library's own error text must never reach a caller.
 var errInvalidSAMLResponse = errors.New("saml: invalid response")
 
+// validatePostedResponseHasNoEpilogue rejects a POST-binding SAMLResponse that carries
+// any byte after its root element closes (an "XML epilogue").
+//
+// FuzzParseResponse found that appending arbitrary bytes to an already-signed, valid
+// response is still accepted: neither this package's XML-DSig verification nor
+// crewjam/saml's own internal xrv.Validate call catch it, because xrv checks that each
+// XML token round-trips byte-for-byte through encode/decode — a trailing plain-text (or
+// comment) token round-trips cleanly, so it's not flagged, even though the XML spec's
+// own grammar (Misc* is only whitespace/comments/PIs after the root) makes a non-empty
+// epilogue invalid there. The appended bytes don't change the signed assertion's
+// content, but accepting a response Keyorix never itself observed turns an
+// already-used, captured SAMLResponse into an unbounded number of byte-distinct
+// "different" values, defeating any exact-response replay/dedup check downstream.
+//
+// Deliberately stricter than the XML spec: a spec-legal epilogue comment can still
+// carry arbitrary attacker bytes (anything not containing "--"), so this rejects the
+// epilogue outright — comment, PI, extra element, or non-whitespace text alike — rather
+// than allow-listing spec-legal Misc content there. No legitimate IdP response has an
+// epilogue at all.
+//
+// Mirrors crewjam/saml's own field read exactly (same form field, same encoding, same
+// artifact-binding carve-out) so this never fires on a request crewjam wouldn't itself
+// treat as a POST-binding SAMLResponse; a decode/parse failure here is left for
+// crewjam's own error path to report, not duplicated here.
+func validatePostedResponseHasNoEpilogue(r *http.Request) error {
+	if r.PostForm.Get("SAMLart") != "" {
+		return nil // artifact binding: no SAMLResponse form value involved
+	}
+	raw := r.PostForm.Get("SAMLResponse")
+	if raw == "" {
+		return nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil // let crewjam's own base64 error path report this
+	}
+	// #nosec G709 -- token-walking untrusted bytes, not deserializing into a struct;
+	// Go's encoding/xml has no DTD/external-entity expansion to exploit here, and
+	// crewjam/saml decodes these same bytes into a full Response struct regardless.
+	dec := xml.NewDecoder(bytes.NewReader(decoded))
+	depth := 0
+	sawRoot := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return nil // let crewjam's own XML error path report this
+		}
+		epilogue := depth == 0 && sawRoot
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if epilogue {
+				return errors.New("saml: response has more than one top-level XML element")
+			}
+			depth++
+			sawRoot = true
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			if epilogue && len(bytes.TrimSpace(t)) > 0 {
+				return errors.New("saml: response has content after its root element")
+			}
+		default:
+			// Comment, ProcInst, Directive: legal inside the document, but in
+			// epilogue position they're an unbounded attacker-controlled byte
+			// carrier (see doc comment) — reject unconditionally there.
+			if epilogue {
+				return errors.New("saml: response has content after its root element")
+			}
+		}
+	}
+}
+
 // ParseResponse validates the SAMLResponse on r (signature against the pinned IdP
 // certificate, audience, recipient, time window, and — for SP-initiated — InResponseTo
 // against possibleRequestIDs) via the vetted library, then maps the assertion to an
@@ -177,6 +254,10 @@ var errInvalidSAMLResponse = errors.New("saml: invalid response")
 // back verbatim. The detail is logged server-side for operators; every caller gets the
 // same fixed, generic error.
 func (p *Provider) ParseResponse(r *http.Request, possibleRequestIDs []string) (*AssertionInfo, error) {
+	if err := validatePostedResponseHasNoEpilogue(r); err != nil {
+		log.Printf("saml: provider %q: response validation failed: %v", p.name, err)
+		return nil, errInvalidSAMLResponse
+	}
 	assertion, err := p.sp.ParseResponse(r, possibleRequestIDs)
 	if err != nil {
 		var ire *csaml.InvalidResponseError
