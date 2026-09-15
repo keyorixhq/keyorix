@@ -51,12 +51,21 @@ function renderAccountsContent(
         return <Loading className="py-20" />;
     }
     if (isError) {
+        // The standalone /api/v1/service-accounts backend isn't built yet, so this
+        // fetch always fails. Show an honest "under construction" state instead of a
+        // red error. If/when the endpoint ships and returns data, the list below
+        // renders normally.
         return (
-            <Alert
-                type="error"
-                title="Failed to load service accounts"
-                message="Check that the server is running and you have admin access."
-            />
+            <div className="text-center py-20">
+                <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-amber-100 dark:bg-amber-950/30 flex items-center justify-center">
+                    <KeyIcon className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <p className="text-sm font-semibold text-base-primary">Service accounts are under construction</p>
+                <p className="text-sm text-base-muted mt-1 max-w-md mx-auto">
+                    Standalone service accounts aren&apos;t available yet. Machine identities are currently managed per
+                    project — open a project&apos;s Machine Identities to issue CI/CD tokens.
+                </p>
+            </div>
         );
     }
     if (serviceAccounts.length === 0) {
@@ -207,7 +216,7 @@ const AccountsHeader: React.FC<AccountsHeaderProps> = ({ activeTab, onNewAccount
             </p>
         </div>
         {activeTab === 'accounts' && (
-            <Button variant="default" onClick={onNewAccount}>
+            <Button variant="default" onClick={onNewAccount} disabled title="Under construction">
                 <PlusIcon className="h-4 w-4 mr-1.5" />
                 New Service Account
             </Button>

@@ -71,7 +71,7 @@ export const RoadmapPage: React.FC = () => (
                 'Secret CRUD, versioning, and rotation',
                 'AES-256-GCM envelope encryption with key rotation',
                 'Full RBAC — users, groups, roles, permissions',
-                'Service accounts and API tokens for CI/CD',
+                'Machine identities and personal access tokens for CI/CD',
                 'User role assignment backed by real DB',
                 'Two-layer audit logging (system + per-secret)',
                 'Anomaly detection (off-hours, new IP, frequency spike)',
@@ -95,7 +95,7 @@ export const RoadmapPage: React.FC = () => (
                 'RBAC audit log UI with actor / date filters and CSV export',
                 'Role creation and management UI',
                 'Compliance mapping reports (NIS2, DORA, ISO 27001, SOC 2, DORA, ENS) with per-framework scores',
-                'OIDC service account authentication UI for CI/CD (backend in Q4)',
+                'OIDC service account authentication UI for CI/CD (backend in progress)',
                 'Project switcher in sidebar header',
                 'Effective permissions panel and role legend in project Members tab',
                 'Dynamic secrets (database credentials, cloud keys)',
@@ -106,13 +106,18 @@ export const RoadmapPage: React.FC = () => (
         />
 
         <QuarterCard
+            quarter="In Progress"
+            badge="in-progress"
+            items={[
+                'Standalone service-account management UI (machine identities ship per-project today)',
+                'OIDC / Kubernetes-JWT federation backend — token-exchange endpoint (bindings + admin UI already shipped)',
+            ]}
+        />
+
+        <QuarterCard
             quarter="Q4 2026"
             badge="planned"
-            items={[
-                'Kubernetes operator (alpha)',
-                'OIDC federation backend (token exchange endpoint)',
-                'demo.keyorix.com hosted demo environment',
-            ]}
+            items={['Kubernetes operator (alpha)', 'demo.keyorix.com hosted demo environment']}
         />
 
         <QuarterCard
