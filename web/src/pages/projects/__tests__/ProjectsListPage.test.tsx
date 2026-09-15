@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '../../../test/test-utils';
 import { ProjectsListPage } from '../ProjectsListPage';
+import { useProjectMruStore } from '../../../store';
 
 const { useProjectsMock, createMutateAsync, deleteMutate, deleteResetMock, restoreMutate, navigateMock } = vi.hoisted(
     () => ({
@@ -68,6 +69,7 @@ beforeEach(() => {
     hookState.deletePending = false;
     hookState.restorePending = false;
     hookState.restoreVariables = undefined;
+    useProjectMruStore.setState({ recentIds: [] });
     useProjectsMock.mockImplementation(() => ({
         data: hookState.projects,
         isLoading: hookState.isLoading,
@@ -106,25 +108,57 @@ describe('ProjectsListPage', () => {
         expect(useProjectsMock).toHaveBeenLastCalledWith(true);
     });
 
-    it('splits projects into Recent (top 5 by updatedAt) and All Projects (the rest)', () => {
+    it('shows no Recent section when the MRU list is empty (fresh session)', () => {
+        hookState.projects = [makeProject({ id: 1, name: 'proj-one' }), makeProject({ id: 2, name: 'proj-two' })];
+        render(<ProjectsListPage />);
+
+        expect(screen.queryByText('Recent')).not.toBeInTheDocument();
+        const allSection = screen.getByText('All Projects').closest('section') as HTMLElement;
+        expect(within(allSection).getByText('proj-one')).toBeInTheDocument();
+        expect(within(allSection).getByText('proj-two')).toBeInTheDocument();
+    });
+
+    it('splits projects into Recent (MRU order, most-recent-first) and All Projects (the rest)', () => {
         hookState.projects = [
-            makeProject({ id: 1, name: 'proj-one', updatedAt: '2026-01-06T00:00:00Z' }),
-            makeProject({ id: 2, name: 'proj-two', updatedAt: '2026-01-05T00:00:00Z' }),
-            makeProject({ id: 3, name: 'proj-three', updatedAt: '2026-01-04T00:00:00Z' }),
-            makeProject({ id: 4, name: 'proj-four', updatedAt: '2026-01-03T00:00:00Z' }),
-            makeProject({ id: 5, name: 'proj-five', updatedAt: '2026-01-02T00:00:00Z' }),
-            makeProject({ id: 6, name: 'proj-six', updatedAt: '2026-01-01T00:00:00Z' }),
+            makeProject({ id: 1, name: 'proj-one' }),
+            makeProject({ id: 2, name: 'proj-two' }),
+            makeProject({ id: 3, name: 'proj-three' }),
+            makeProject({ id: 4, name: 'proj-four' }),
+            makeProject({ id: 5, name: 'proj-five' }),
+            makeProject({ id: 6, name: 'proj-six' }),
         ];
+        // Opened proj-five most recently, then proj-one — the rest were never opened.
+        useProjectMruStore.setState({ recentIds: [5, 1] });
         render(<ProjectsListPage />);
 
         const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
-        expect(within(recentSection).getByText('proj-one')).toBeInTheDocument();
-        expect(within(recentSection).getByText('proj-five')).toBeInTheDocument();
+        const recentRows = Array.from(recentSection.querySelectorAll('.group'));
+        expect(recentRows[0]?.textContent).toContain('proj-five');
+        expect(recentRows[1]?.textContent).toContain('proj-one');
         expect(within(recentSection).queryByText('proj-six')).not.toBeInTheDocument();
 
         const allSection = screen.getByText('All Projects').closest('section') as HTMLElement;
         expect(within(allSection).getByText('proj-six')).toBeInTheDocument();
         expect(within(allSection).queryByText('proj-one')).not.toBeInTheDocument();
+        expect(within(allSection).queryByText('proj-five')).not.toBeInTheDocument();
+    });
+
+    it('drops MRU ids that no longer match a live project, without throwing', () => {
+        hookState.projects = [makeProject({ id: 1, name: 'still-here' })];
+        // id 999 was opened once but no longer exists (deleted/never loaded).
+        useProjectMruStore.setState({ recentIds: [999, 1] });
+        render(<ProjectsListPage />);
+
+        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
+        expect(within(recentSection).getByText('still-here')).toBeInTheDocument();
+    });
+
+    it('excludes a deleted project from Recent even if it is in the MRU list', () => {
+        hookState.projects = [makeProject({ id: 1, name: 'now-deleted', deleted: true })];
+        useProjectMruStore.setState({ recentIds: [1] });
+        render(<ProjectsListPage />);
+
+        expect(screen.queryByText('Recent')).not.toBeInTheDocument();
     });
 
     it('renders secret/environment counts with correct pluralization', () => {
@@ -178,7 +212,9 @@ describe('ProjectsListPage', () => {
             makeProject({ id: 1, name: 'alpha', description: 'first project' }),
             makeProject({ id: 2, name: 'beta', description: 'matches nothing special' }),
         ];
+        useProjectMruStore.setState({ recentIds: [1] });
         render(<ProjectsListPage />);
+        expect(screen.getByText('Recent')).toBeInTheDocument();
 
         fireEvent.change(screen.getByPlaceholderText('Search projects…'), { target: { value: 'first' } });
 
@@ -380,16 +416,15 @@ describe('ProjectsListPage', () => {
     it('evaluates the restoring flag for non-deleted rows shown in Recent too', () => {
         // Recent never shows a Restore button (only deleted rows do), but the `restoring`
         // prop expression is still evaluated per-row there; exercise both outcomes.
-        hookState.projects = [
-            makeProject({ id: 20, name: 'recent-a', updatedAt: '2026-01-02T00:00:00Z' }),
-            makeProject({ id: 21, name: 'recent-b', updatedAt: '2026-01-01T00:00:00Z' }),
-        ];
+        hookState.projects = [makeProject({ id: 20, name: 'recent-a' }), makeProject({ id: 21, name: 'recent-b' })];
+        useProjectMruStore.setState({ recentIds: [20, 21] });
         hookState.restorePending = true;
         hookState.restoreVariables = 20;
         render(<ProjectsListPage />);
 
-        expect(screen.getByText('recent-a')).toBeInTheDocument();
-        expect(screen.getByText('recent-b')).toBeInTheDocument();
+        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
+        expect(within(recentSection).getByText('recent-a')).toBeInTheDocument();
+        expect(within(recentSection).getByText('recent-b')).toBeInTheDocument();
     });
 
     it('shows relative last-activity time when a project has one', () => {
@@ -406,33 +441,6 @@ describe('ProjectsListPage', () => {
 
         fireEvent.change(screen.getByPlaceholderText('Search projects…'), { target: { value: 'zzz-no-match' } });
         expect(screen.getByText(/No projects match/)).toBeInTheDocument();
-    });
-
-    it('sorts recent projects with a missing updatedAt to the end', () => {
-        hookState.projects = [
-            makeProject({ id: 15, name: 'has-date', updatedAt: '2026-01-01T00:00:00Z' }),
-            makeProject({ id: 16, name: 'no-date', updatedAt: undefined }),
-        ];
-        render(<ProjectsListPage />);
-
-        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
-        expect(within(recentSection).getByText('has-date')).toBeInTheDocument();
-        expect(within(recentSection).getByText('no-date')).toBeInTheDocument();
-    });
-
-    it('sorts two projects that both lack an updatedAt without throwing', () => {
-        // With exactly two recent projects, Array.prototype.sort makes a single comparator
-        // call for the pair, so both `a.updatedAt` and `b.updatedAt` are nullish in that one
-        // call — exercising the `?? ''` fallback on both sides of the comparator at once.
-        hookState.projects = [
-            makeProject({ id: 24, name: 'no-date-one', updatedAt: undefined }),
-            makeProject({ id: 25, name: 'no-date-two', updatedAt: undefined }),
-        ];
-        render(<ProjectsListPage />);
-
-        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
-        expect(within(recentSection).getByText('no-date-one')).toBeInTheDocument();
-        expect(within(recentSection).getByText('no-date-two')).toBeInTheDocument();
     });
 
     it('does not navigate on a non-Enter/Space key, and does not navigate on any key for a deleted row', () => {
