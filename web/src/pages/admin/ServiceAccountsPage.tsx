@@ -205,9 +205,10 @@ type Token = NonNullable<ReturnType<typeof useServiceAccountTokens>['data']>[num
 interface AccountsHeaderProps {
     activeTab: PageTab;
     onNewAccount: () => void;
+    isError: boolean;
 }
 
-const AccountsHeader: React.FC<AccountsHeaderProps> = ({ activeTab, onNewAccount }) => (
+const AccountsHeader: React.FC<AccountsHeaderProps> = ({ activeTab, onNewAccount, isError }) => (
     <div className="flex items-center justify-between mb-6">
         <div>
             <h1 className="text-2xl font-bold text-base-primary">Service Accounts</h1>
@@ -216,7 +217,12 @@ const AccountsHeader: React.FC<AccountsHeaderProps> = ({ activeTab, onNewAccount
             </p>
         </div>
         {activeTab === 'accounts' && (
-            <Button variant="default" onClick={onNewAccount} disabled title="Under construction">
+            <Button
+                variant="default"
+                onClick={onNewAccount}
+                disabled={isError}
+                title={isError ? 'Under construction' : undefined}
+            >
                 <PlusIcon className="h-4 w-4 mr-1.5" />
                 New Service Account
             </Button>
@@ -1040,7 +1046,7 @@ export const ServiceAccountsPage: React.FC = () => {
     return (
         <>
             <div className="max-w-6xl mx-auto px-4 py-8">
-                <AccountsHeader activeTab={activeTab} onNewAccount={openCreate} />
+                <AccountsHeader activeTab={activeTab} onNewAccount={openCreate} isError={isError} />
 
                 <TabBar activeTab={activeTab} onChange={setActiveTab} />
 

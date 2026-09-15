@@ -10,11 +10,17 @@ describe('RoadmapPage', () => {
         expect(screen.getByText("What's being built and when. Updated as priorities change.")).toBeInTheDocument();
     });
 
-    it('renders all four quarter sections as level-2 headings, in order', () => {
+    it('renders all five quarter sections as level-2 headings, in order', () => {
         render(<RoadmapPage />);
 
         const headings = screen.getAllByRole('heading', { level: 2 });
-        expect(headings.map((h) => h.textContent)).toEqual(['Now — v0.1.0', 'Q3 2026', 'Q4 2026', '2027']);
+        expect(headings.map((h) => h.textContent)).toEqual([
+            'Now — v0.1.0',
+            'Q3 2026',
+            'In Progress',
+            'Q4 2026',
+            '2027',
+        ]);
     });
 
     it('labels each quarter card with its status badge', () => {
@@ -27,6 +33,11 @@ describe('RoadmapPage', () => {
         const q3Card = screen.getByRole('heading', { level: 2, name: 'Q3 2026' }).closest('div')
             ?.parentElement as HTMLElement;
         expect(within(q3Card).getByText('Shipped')).toBeInTheDocument();
+
+        const inProgressCard = screen.getByRole('heading', { level: 2, name: 'In Progress' }).closest('div')
+            ?.parentElement as HTMLElement;
+        // Both the quarter heading and its status badge read "In Progress" here.
+        expect(within(inProgressCard).getAllByText('In Progress')).toHaveLength(2);
 
         const q4Card = screen.getByRole('heading', { level: 2, name: 'Q4 2026' }).closest('div')
             ?.parentElement as HTMLElement;
@@ -60,7 +71,7 @@ describe('RoadmapPage', () => {
             )
         ).toBeInTheDocument();
         expect(
-            screen.getByText('OIDC service account authentication UI for CI/CD (backend in Q4)')
+            screen.getByText('OIDC service account authentication UI for CI/CD (backend in progress)')
         ).toBeInTheDocument();
         expect(screen.getByText('Project switcher in sidebar header')).toBeInTheDocument();
         expect(
@@ -72,11 +83,23 @@ describe('RoadmapPage', () => {
         expect(screen.getByText('Real-time self-hosted install health status')).toBeInTheDocument();
     });
 
+    it('renders every roadmap item for the In Progress quarter', () => {
+        render(<RoadmapPage />);
+
+        expect(
+            screen.getByText('Standalone service-account management UI (machine identities ship per-project today)')
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                'OIDC / Kubernetes-JWT federation backend — token-exchange endpoint (bindings + admin UI already shipped)'
+            )
+        ).toBeInTheDocument();
+    });
+
     it('renders every roadmap item for the Q4 2026 quarter', () => {
         render(<RoadmapPage />);
 
         expect(screen.getByText('Kubernetes operator (alpha)')).toBeInTheDocument();
-        expect(screen.getByText('OIDC federation backend (token exchange endpoint)')).toBeInTheDocument();
         expect(screen.getByText('demo.keyorix.com hosted demo environment')).toBeInTheDocument();
     });
 

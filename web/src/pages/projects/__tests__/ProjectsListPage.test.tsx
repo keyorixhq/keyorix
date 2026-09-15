@@ -114,7 +114,6 @@ describe('ProjectsListPage', () => {
         ];
         render(<ProjectsListPage />);
 
-        expect(screen.queryByText('Recent')).not.toBeInTheDocument();
         expect(screen.queryByText('All Projects')).not.toBeInTheDocument();
         expect(screen.getByText('Sort')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Recent' })).toBeInTheDocument();

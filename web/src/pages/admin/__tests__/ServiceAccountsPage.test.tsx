@@ -88,11 +88,12 @@ describe('ServiceAccountsPage — list states', () => {
         expect(screen.getAllByTitle('Deactivate')).toHaveLength(1);
     });
 
-    it('shows an error state when service accounts fail to load', () => {
+    it('shows an honest "under construction" state and disables New Service Account when the list fails to load', () => {
         useServiceAccounts.mockReturnValue({ data: [], isLoading: false, isError: true });
         render(<ServiceAccountsPage />);
-        expect(screen.getByText('Failed to load service accounts')).toBeInTheDocument();
-        expect(screen.getByText('Check that the server is running and you have admin access.')).toBeInTheDocument();
+        expect(screen.getByText('Service accounts are under construction')).toBeInTheDocument();
+        expect(screen.getByText(/Machine identities are currently managed per/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /new service account/i })).toBeDisabled();
     });
 });
 
