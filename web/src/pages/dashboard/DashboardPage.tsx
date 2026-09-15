@@ -444,7 +444,14 @@ const SystemHealthPanel: React.FC<SystemHealthPanelProps> = ({ metrics, sysInfo,
     );
 };
 
+// Cap the alerts rendered inline on the dashboard. The panel is a glanceable
+// summary, not the full list — without a cap it grows with the anomaly count
+// (hundreds are normal) and overruns the layout. "View all" links to the audit
+// anomalies tab for the complete, paginated view.
+const MAX_SECURITY_ALERTS = 5;
+
 interface SecurityAlertsPanelProps {
+    navigate: (path: string) => void;
     alertCount: number;
     anomalies: AnomalyAlert[];
     expiring: any[];
@@ -452,20 +459,31 @@ interface SecurityAlertsPanelProps {
 }
 
 const SecurityAlertsPanel: React.FC<SecurityAlertsPanelProps> = ({
+    navigate,
     alertCount,
     anomalies,
     expiring,
     acknowledgeAnomaly,
 }) => (
     <div className="bg-surface border border-red-200 rounded-xl shadow-xs">
-        <div className="px-5 py-4 border-b border-red-50">
+        <div className="px-5 py-4 border-b border-red-50 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-red-700 uppercase tracking-widest flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 Security Alerts ({alertCount})
             </h2>
+            <button
+                type="button"
+                onClick={() => navigate(ROUTES.AUDIT + '?tab=anomalies')}
+                className="text-xs font-medium text-red-600 hover:text-red-700 transition-colors shrink-0"
+            >
+                View all →
+            </button>
         </div>
         <div className="p-4 space-y-2">
-            {anomalies.map((a) => (
+            {[...anomalies]
+                .sort((a, b) => (b.DetectedAt ?? '').localeCompare(a.DetectedAt ?? ''))
+                .slice(0, MAX_SECURITY_ALERTS)
+                .map((a) => (
                 <div key={a.ID} className="flex items-start justify-between gap-2 p-3 bg-red-50 rounded-lg">
                     <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-red-700">{humanizeAlertType(a.AlertType)}</p>
@@ -506,6 +524,16 @@ const SecurityAlertsPanel: React.FC<SecurityAlertsPanelProps> = ({
                     </div>
                 );
             })}
+            {anomalies.length > MAX_SECURITY_ALERTS && (
+                <button
+                    type="button"
+                    onClick={() => navigate(ROUTES.AUDIT + '?tab=anomalies')}
+                    className="w-full text-center text-xs font-medium text-red-600 hover:text-red-700 transition-colors pt-1"
+                >
+                    +{anomalies.length - MAX_SECURITY_ALERTS} more{' '}
+                    {anomalies.length - MAX_SECURITY_ALERTS === 1 ? 'alert' : 'alerts'} →
+                </button>
+            )}
         </div>
     </div>
 );
@@ -741,6 +769,7 @@ export const DashboardPage: React.FC = () => {
 
                         {alertCount > 0 && (
                             <SecurityAlertsPanel
+                                navigate={navigate}
                                 alertCount={alertCount}
                                 anomalies={anomalies}
                                 expiring={expiring}

@@ -344,6 +344,31 @@ describe('DashboardPage — security alerts panel', () => {
         fireEvent.click(screen.getByTitle('Dismiss'));
         expect(acknowledgeMutate).toHaveBeenCalledWith(7);
     });
+
+    it('caps the list at 5 most-recent anomalies and links the rest to the anomalies tab', () => {
+        // 7 anomalies, ascending DetectedAt (higher id = more recent).
+        const anomalies = Array.from({ length: 7 }, (_, i) => ({
+            ID: i + 1,
+            AlertType: 'off_hours',
+            SecretName: `secret-${i + 1}`,
+            AccessedBy: 'bob',
+            IPAddress: '1.2.3.4',
+            DetectedAt: `2026-09-15T${String(10 + i + 1).padStart(2, '0')}:00:00Z`,
+        }));
+        mockHooks({ anomalies });
+        render(<DashboardPage />);
+
+        // Only 5 alert rows render (one Dismiss button each).
+        expect(screen.getAllByTitle('Dismiss')).toHaveLength(5);
+        // The two oldest are dropped; the newest are kept.
+        expect(screen.queryByText('secret-1')).not.toBeInTheDocument();
+        expect(screen.queryByText('secret-2')).not.toBeInTheDocument();
+        expect(screen.getByText('secret-7')).toBeInTheDocument();
+
+        // The overflow footer links to the anomalies tab.
+        fireEvent.click(screen.getByText(/\+2 more/));
+        expect(navigateMock).toHaveBeenCalledWith('/audit?tab=anomalies');
+    });
 });
 
 describe('DashboardPage — audit health', () => {
