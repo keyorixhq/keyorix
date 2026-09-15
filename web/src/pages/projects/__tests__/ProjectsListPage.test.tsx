@@ -127,7 +127,7 @@ describe('ProjectsListPage', () => {
             makeProject({ id: 5, name: 'proj-five' }),
             makeProject({ id: 6, name: 'proj-six' }),
         ];
-        // Opened proj-five most recently, then proj-one; the rest were never opened.
+        // Opened proj-five most recently, then proj-one — the rest were never opened.
         useProjectMruStore.setState({ recentIds: [5, 1] });
         render(<ProjectsListPage />);
 
