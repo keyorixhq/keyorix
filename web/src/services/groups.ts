@@ -1,10 +1,13 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Recipient } from '../types';
+import { ApiResponse, Recipient } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const groupsApi = {
-    async list(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<any>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<any>>>(API_ENDPOINTS.GROUPS.LIST, {
+    // The server returns { groups: [...], total } under the ApiResponse `data`
+    // envelope — not a PaginatedResponse. Type it to match so callers read
+    // `.groups` (reading `.data` here silently yielded an empty list).
+    async list(params?: { page?: number; pageSize?: number; search?: string }): Promise<{ groups: any[]; total: number }> {
+        const response = await apiClient.get<ApiResponse<{ groups: any[]; total: number }>>(API_ENDPOINTS.GROUPS.LIST, {
             params,
         });
         return response.data.data;

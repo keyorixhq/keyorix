@@ -150,7 +150,7 @@ export const GroupsPage: React.FC = () => {
     const assignMutation = useAssignRoleToGroup();
     const removeMutation = useRemoveRoleFromGroup();
 
-    const groups = (groupsData?.data ?? []) as Group[];
+    const groups = (groupsData?.groups ?? []) as Group[];
     const assignedRoleIds = new Set((groupRolesData?.roles ?? []).map((r) => r.id));
     // Per-grant expiry (ISO) by role id, for the time-bound badge on assigned roles.
     const roleExpiryById = new Map(
