@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { projectsApi, CreateProjectPayload, AccessReviewDecision } from '../../services/projects';
+import { projectsApi, CreateProjectPayload, UpdateProjectPayload, AccessReviewDecision } from '../../services/projects';
 import { projectMembershipsApi, MembershipAction } from '../../services/projectMemberships';
 
 export const PROJECT_KEYS = {
@@ -64,6 +64,17 @@ export function useCreateProject() {
         mutationFn: (payload: CreateProjectPayload) => projectsApi.create(payload),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
+        },
+    });
+}
+
+export function useUpdateProject() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, payload }: { id: number; payload: UpdateProjectPayload }) => projectsApi.update(id, payload),
+        onSuccess: (project) => {
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.detail(project.id) });
         },
     });
 }

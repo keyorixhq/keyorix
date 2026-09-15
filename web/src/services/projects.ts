@@ -28,6 +28,11 @@ export interface CreateProjectPayload {
     description?: string | undefined;
 }
 
+export interface UpdateProjectPayload {
+    name: string;
+    description?: string | undefined;
+}
+
 export interface ProjectMember {
     userId: number;
     username: string;
@@ -318,6 +323,12 @@ export const projectsApi = {
 
     async create(payload: CreateProjectPayload): Promise<Project> {
         const response = await apiClient.post('/api/v1/projects', payload);
+        const p = response.data.data ?? response.data;
+        return normalize(p);
+    },
+
+    async update(id: number, payload: UpdateProjectPayload): Promise<Project> {
+        const response = await apiClient.put(`/api/v1/projects/${id}`, payload);
         const p = response.data.data ?? response.data;
         return normalize(p);
     },

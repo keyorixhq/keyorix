@@ -1,12 +1,20 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { PlusIcon, FolderIcon, MagnifyingGlassIcon, TrashIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import {
+    PlusIcon,
+    FolderIcon,
+    MagnifyingGlassIcon,
+    TrashIcon,
+    ArrowPathIcon,
+    PencilSquareIcon,
+} from '@heroicons/react/24/outline';
 import { useProjects, useCreateProject, useDeleteProject, useRestoreProject } from '../../features/projects/api';
 import { ROUTES } from '../../constants';
 import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import type { Project } from '../../services/projects';
+import { EditProjectModal } from './EditProjectModal';
 import { formatRelativeTime, formatDate } from '../../utils';
 
 // ── Create Project Modal ─────────────────────────────────────────────────────
@@ -129,12 +137,13 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
 
 interface ProjectRowProps {
     project: Project;
+    onEditRequest: (project: Project) => void;
     onDeleteRequest: (project: Project) => void;
     onRestore: (project: Project) => void;
     restoring: boolean;
 }
 
-const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRestore, restoring }) => {
+const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDeleteRequest, onRestore, restoring }) => {
     const navigate = useNavigate();
     const deleted = project.deleted;
     return (
@@ -219,18 +228,32 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
                         Restore
                     </button>
                 ) : (
-                    <button
-                        type="button"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteRequest(project);
-                        }}
-                        className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
-                        style={{ color: 'var(--error)' }}
-                        title="Delete project"
-                    >
-                        <TrashIcon className="h-4 w-4" />
-                    </button>
+                    <>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onEditRequest(project);
+                            }}
+                            className="p-1.5 rounded-sm transition-colors hover:bg-black/5"
+                            style={{ color: 'var(--text-muted)' }}
+                            title="Edit project"
+                        >
+                            <PencilSquareIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteRequest(project);
+                            }}
+                            className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
+                            style={{ color: 'var(--error)' }}
+                            title="Delete project"
+                        >
+                            <TrashIcon className="h-4 w-4" />
+                        </button>
+                    </>
                 )}
             </div>
         </div>
@@ -248,6 +271,7 @@ export const ProjectsListPage: React.FC = () => {
     const [searchParams] = useSearchParams();
     const [showCreate, setShowCreate] = useState(searchParams.get('new') === '1');
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+    const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState('');
     const [deleteError, setDeleteError] = useState('');
 
@@ -383,6 +407,7 @@ export const ProjectsListPage: React.FC = () => {
                                     <ProjectRow
                                         key={p.id}
                                         project={p}
+                                        onEditRequest={setProjectToEdit}
                                         onDeleteRequest={setProjectToDelete}
                                         onRestore={handleRestore}
                                         restoring={restoreProject.isPending && restoreProject.variables === p.id}
@@ -408,6 +433,7 @@ export const ProjectsListPage: React.FC = () => {
                                     <ProjectRow
                                         key={p.id}
                                         project={p}
+                                        onEditRequest={setProjectToEdit}
                                         onDeleteRequest={setProjectToDelete}
                                         onRestore={handleRestore}
                                         restoring={restoreProject.isPending && restoreProject.variables === p.id}
@@ -449,6 +475,8 @@ export const ProjectsListPage: React.FC = () => {
             )}
 
             {showCreate && <CreateProjectModal onClose={() => setShowCreate(false)} />}
+
+            {projectToEdit && <EditProjectModal project={projectToEdit} onClose={() => setProjectToEdit(null)} />}
 
             {/* Delete confirmation modal */}
             <Modal isOpen={projectToDelete !== null} onClose={closeDeleteModal} title="Delete Project" size="sm">
