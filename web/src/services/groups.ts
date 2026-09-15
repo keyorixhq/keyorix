@@ -6,7 +6,11 @@ export const groupsApi = {
     // The server returns { groups: [...], total } under the ApiResponse `data`
     // envelope — not a PaginatedResponse. Type it to match so callers read
     // `.groups` (reading `.data` here silently yielded an empty list).
-    async list(params?: { page?: number; pageSize?: number; search?: string }): Promise<{ groups: any[]; total: number }> {
+    async list(params?: {
+        page?: number;
+        pageSize?: number;
+        search?: string;
+    }): Promise<{ groups: any[]; total: number }> {
         const response = await apiClient.get<ApiResponse<{ groups: any[]; total: number }>>(API_ENDPOINTS.GROUPS.LIST, {
             params,
         });
