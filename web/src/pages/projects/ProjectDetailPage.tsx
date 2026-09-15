@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } from 'react-router';
-import { ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, FolderIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
 import { useProject } from '../../features/projects/api';
 import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
 import { ProjectActivityTab } from './ProjectActivityTab';
 import { ProjectAccessReviewTab } from './ProjectAccessReviewTab';
 import { ProjectSettingsTab } from './ProjectSettingsTab';
+import { EditProjectModal } from './EditProjectModal';
 import { ROUTES } from '../../constants';
 import { useProjectMruStore } from '../../store';
 
@@ -76,6 +77,7 @@ export const ProjectDetailPage: React.FC = () => {
     const navigate = useNavigate();
     const { data: project, isLoading, isError } = useProject(projectId);
     const recordAccess = useProjectMruStore((s) => s.recordAccess);
+    const [editing, setEditing] = useState(false);
 
     // Record this project as recently accessed once it loads (drives the
     // sidebar switcher's Recent ordering — ADR-018). Captures both
@@ -132,6 +134,20 @@ export const ProjectDetailPage: React.FC = () => {
                         </p>
                     )}
                 </div>
+                <button
+                    type="button"
+                    onClick={() => setEditing(true)}
+                    className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors shrink-0"
+                    style={{
+                        color: 'var(--text-secondary)',
+                        backgroundColor: 'var(--bg-subtle)',
+                        border: '1px solid var(--border)',
+                    }}
+                    title="Edit project"
+                >
+                    <PencilSquareIcon className="h-4 w-4" />
+                    Edit
+                </button>
             </div>
 
             <TabNav projectId={projectId} />
@@ -145,6 +161,8 @@ export const ProjectDetailPage: React.FC = () => {
                 <Route path="settings" element={<ProjectSettingsTab projectId={projectId} />} />
                 <Route path="*" element={<Navigate to={`/projects/${projectId}`} replace />} />
             </Routes>
+
+            {editing && <EditProjectModal project={project} onClose={() => setEditing(false)} />}
         </div>
     );
 };
