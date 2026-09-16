@@ -33,6 +33,36 @@ systemd unit's `ExecStart` points at `fuzz-runner.sh`.
   is the human cross-check that nothing silently drops out of coverage.
 - **`race-pass.sh`** — runs the fuzz corpus under `-race` (needs cgo; dev/CI
   only, since the rigs are `CGO_ENABLED=0`). Backs the data-race closure (#1870).
+- **`harness-acceptance.sh`** — reach-check + coverage-delta gate for *in-wall*
+  harnesses (see below).
+- **`DISCLOSURE-TRIAGE.md`** — the crash-feasibility gate a third-party-library
+  finding must pass before it becomes a disclosure or an article sentence.
+
+## Harness quality gates (beyond never-panic)
+
+A never-panic harness proves nothing about a security boundary, and an *in-wall*
+harness — one that pours the fuzzer past a signature/JSON wall by seeding from a
+valid fixture — can run millions of execs while silently **dry**, every mutation
+dying at the wall. Two gates keep that honest; both align with the published
+state of the art (OSS-Fuzz-Gen coverage metrics, QuartetFuzz's reach checks,
+FalseCrashReducer's feasibility triage).
+
+- **Reach + coverage-delta** (`harness-acceptance.sh`). For each in-wall harness
+  it measures coverage of the specific *post-wall* functions and requires it to
+  clear a floor — and, where a byte-level sibling exists, to exceed it (the code
+  the sibling can't reach is the whole point). Run on a rig/CI clone (needs a
+  working `go build`), fast/deterministic by default (seed corpus), `--fuzz Ns`
+  for a deeper measure. A `FAIL<floor` means the harness never reached its target
+  code and is effectively dry — fix the fixture/seeds before trusting it.
+
+- **Rediscovery / regression.** Every harness that encodes a *security* invariant
+  keeps a labeled reproducer of the bug class it exists to catch, plus a
+  deterministic regression test asserting the current code handles it. Exemplar:
+  the SAML XML-epilogue signature-bypass — `internal/saml/provider_epilogue_test.go`
+  (`TestParseResponse_RejectsXMLEpilogue` + `TestParseResponse_AllowsTrailingWhitespace`)
+  turns the one catch into a standing rediscovery check. For third-party findings
+  the reproducer stays private (rig `fuzz-corpus`); see the research module's own
+  `rediscovery_test.go`.
 
 ## CI layers
 
