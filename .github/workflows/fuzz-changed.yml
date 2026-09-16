@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' "$PLAN" | while IFS='|' read -r pkg fn; do
-            [ -n "$pkg" ] && [ -n "$fn" ] || continue
+            if [ -z "$pkg" ] || [ -z "$fn" ]; then continue; fi
             echo "::group::fuzz $fn ($pkg) for $FUZZTIME"
             go test "$pkg" -run='^$' -fuzz="^${fn}$" -fuzztime="$FUZZTIME"
             echo "::endgroup::"
