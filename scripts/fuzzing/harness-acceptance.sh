@@ -53,6 +53,7 @@ if [ "${1:-}" = "--fuzz" ]; then FUZZTIME="${2:?--fuzz needs a duration, e.g. 60
 # lines), so it is computed and enforced only when --fuzz is given.
 TARGETS=(
   'FuzzOIDCVerifierClaims;./internal/core;;internal/core/oidc\.go:[0-9]+:.*Verify;FuzzOIDCVerifierVerify;50'
+  'FuzzVerifyIDTokenClaims;./internal/core;;internal/core/sso\.go:[0-9]+:.*verifyIDToken;FuzzVerifyIDToken;50'
   'FuzzParseResponseContent;./internal/saml;;extractAssertion|attrMatches|attributeValues;FuzzParseResponse;1'
   'FuzzWebAuthnCredentialResponse;./server/http/handlers;github.com/go-webauthn/webauthn/protocol;ParseCredential(Creation|Request)ResponseBytes;;1'
 )
