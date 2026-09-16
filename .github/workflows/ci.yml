@@ -824,11 +824,11 @@ jobs:
           path: |
             ~/go/bin/govulncheck
             ~/go/bin/gosec
-          key: static-analysis-tools-v1.1.4-${{ env.GOSEC_VERSION }}-${{ runner.os }}
+          key: static-analysis-tools-v1.8.0-${{ env.GOSEC_VERSION }}-${{ runner.os }}
 
       - name: govulncheck
         run: |
-          [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 # NOSONAR githubactions:S8545 -- version is pinned to v1.1.4
+          [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 # NOSONAR githubactions:S8545 -- version is pinned to v1.8.0
           govulncheck ./...
 
       - name: gosec
