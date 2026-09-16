@@ -2076,10 +2076,11 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 
 	switch c.Storage.Type {
 	case "remote":
-		// remote storage uses its own connection — no local DB config required
-		if err := validateRemoteStorageNotServer(c); err != nil {
-			return err
-		}
+		// remote storage uses its own connection — no local DB config required.
+		// validateRemoteStorageNotServer always returns a non-nil error here (see
+		// its own doc comment); return it directly rather than an if-err wrapper
+		// staticcheck (correctly) flags as a tautological comparison.
+		return validateRemoteStorageNotServer(c)
 	case "postgres", "postgresql":
 		db := c.Storage.Database
 		if db.DSN == "" && (db.Host == "" || db.Name == "" || db.User == "") {

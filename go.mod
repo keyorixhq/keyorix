@@ -1,6 +1,6 @@
 module github.com/keyorixhq/keyorix
 
-go 1.26.6
+go 1.27
 
 require (
 	cloud.google.com/go/kms v1.33.0
@@ -17,8 +17,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.48.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.49.0
 	github.com/crewjam/saml v0.5.1
-	github.com/digitorus/pkcs7 v0.0.0-20230713084857-e76b763bdc49
-	github.com/digitorus/timestamp v0.0.0-20250524132541-c45532741eea
+	github.com/digitorus/pkcs7 v0.0.0-20260914070511-d678ea5ea03f
+	github.com/digitorus/timestamp v0.0.0-20260914073129-b4b58b92aa51
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.2

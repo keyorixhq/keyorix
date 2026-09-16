@@ -79,9 +79,9 @@ func printUsage() {
 }
 
 func validateTranslations(localesDir string) (*ValidationSummary, error) { // NOSONAR -- go:S3776 cognitive complexity 17; developer tool, not production service
+	cleanDir := filepath.Clean(localesDir)
 	// #nosec G703 -- localesDir is a CLI argument for internal tooling only,
 	// not exposed to untrusted user input in production.
-	cleanDir := filepath.Clean(localesDir)
 	if _, err := os.Stat(cleanDir); os.IsNotExist(err) {
 		return nil, fmt.Errorf("locales directory does not exist: %s", cleanDir)
 	}
