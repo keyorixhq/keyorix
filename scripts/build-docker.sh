@@ -142,7 +142,7 @@ fi
 
 # Build CLI Docker image
 log_info "Building CLI Docker image..."
-CLI_GO_BUILDER_IMAGE="${CLI_GO_BUILDER_IMAGE:-golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df}"
+CLI_GO_BUILDER_IMAGE="${CLI_GO_BUILDER_IMAGE:-golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125}"
 cat > Dockerfile.cli << EOF
 # Multi-stage build for CLI
 FROM ${CLI_GO_BUILDER_IMAGE} AS builder
