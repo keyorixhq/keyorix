@@ -1149,6 +1149,32 @@ jobs:
           fi
           exit $status
 
+  # Reach-check gate for in-wall fuzz harnesses. An "in-wall" harness seeds from a
+  # valid fixture to pour the fuzzer PAST a signature/JSON wall (OIDC claims, SAML
+  # assertion content, WebAuthn attestation) -- but it can run green while silently
+  # DRY, every mutation dying at the wall, exercising none of the code behind it.
+  # This runs scripts/fuzzing/harness-acceptance.sh in its fast, deterministic
+  # seed-corpus mode (no -fuzz): it measures coverage of each target's post-wall
+  # functions and fails if any falls below its floor, so a dry harness can't merge.
+  # The deeper sibling/coverage-delta comparison is rig-only (--fuzz); this is the
+  # CI-safe floor gate. Rationale: claude/2026-09-16-ai-fuzzing-best-practices-benchmark.md.
+  fuzz-reach:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      - name: Reach-check in-wall fuzz harnesses (seed corpus, floor gate)
+        run: bash scripts/fuzzing/harness-acceptance.sh
+
   # Dependency license compliance. Keyorix is dual-licensed -- the repo is
   # AGPL-3.0, but the same code is also commercially licensed to customers who
   # don't want AGPL obligations (see LICENSING.md's "Our principles"). Nothing
