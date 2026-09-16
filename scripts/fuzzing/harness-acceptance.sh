@@ -42,8 +42,17 @@ if [ "${1:-}" = "--fuzz" ]; then FUZZTIME="${2:?--fuzz needs a duration, e.g. 60
 #            attributeValues) only run once XML-DSig verifies.
 #   WebAuthn -> not behind a keyorix wall; the "wall" is the JSON envelope, and the target code
 #            is in the go-webauthn library, so we instrument that package via coverpkg.
+# NOTE on the focus regex: it is grepped against `go tool cover -func` output, whose function
+# column prints a METHOD as its bare name (`Verify`), not receiver-qualified (`OIDCVerifier.Verify`).
+# Match a method by its file path instead (the -func line carries the full path). Free functions
+# (extractAssertion, the go-webauthn ParseCredential*…) match by name directly.
+#
+# The floor is a REACH proxy — "did the fuzzer get past the wall into the target code at all",
+# not full branch coverage. The sibling/delta comparison is only meaningful under --fuzz (in
+# seed-only mode both a valid-fixture seed and the byte-level sibling's valid seed cover the same
+# lines), so it is computed and enforced only when --fuzz is given.
 TARGETS=(
-  'FuzzOIDCVerifierClaims;./internal/core;;OIDCVerifier\.Verify;FuzzOIDCVerifierVerify;85'
+  'FuzzOIDCVerifierClaims;./internal/core;;internal/core/oidc\.go:[0-9]+:.*Verify;FuzzOIDCVerifierVerify;50'
   'FuzzParseResponseContent;./internal/saml;;extractAssertion|attrMatches|attributeValues;FuzzParseResponse;1'
   'FuzzWebAuthnCredentialResponse;./server/http/handlers;github.com/go-webauthn/webauthn/protocol;ParseCredential(Creation|Request)ResponseBytes;;1'
 )
@@ -101,7 +110,10 @@ for row in "${TARGETS[@]}"; do
   [ -n "$cov" ] || cov="$pkg"
   rp="$(reach_pct "$tgt" "$pkg" "$cov" "$focus")"
   sp="n/a"; delta="n/a"
-  if [ -n "$sib" ]; then
+  # Sibling comparison only under --fuzz: in seed-only mode both harnesses' valid seeds cover
+  # the same post-wall lines, so the delta is uninformative (and can even invert, since the
+  # byte-level sibling's malformed seeds cover error paths the in-wall harness never signs).
+  if [ -n "$sib" ] && [ -n "$FUZZTIME" ]; then
     sp="$(reach_pct "$sib" "$pkg" "$cov" "$focus")"
     delta="$(awk -v a="$rp" -v b="$sp" 'BEGIN{printf "%+.1f", a-b}')"
   fi
