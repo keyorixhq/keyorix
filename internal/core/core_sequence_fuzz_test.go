@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -14,31 +15,40 @@ import (
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
-// FuzzCoreOperationSequence is a stateful, model-based fuzzer for KeyorixCore's
-// authorization: it drives a fuzzer-chosen SEQUENCE of grant / revoke / read
+// FuzzCoreOperationSequence is a stateful, model-based fuzzer for KeyorixCore: it
+// drives a fuzzer-chosen SEQUENCE of create / grant / revoke / read / rotate
 // operations, with the acting principal varied per step, against a real core over
-// an in-memory store, and checks each read against a tiny shadow model that IS the
-// oracle. This reaches the bug class a single-call harness cannot: an authorization
-// outcome that only breaks ACROSS operations — a revoke that doesn't take effect, a
-// grant that leaks, a read allowed after the role behind it was removed.
+// an in-memory store, and checks each step against a tiny shadow model that IS the
+// oracle. This reaches the bug class a single-call harness cannot: an outcome that
+// only breaks ACROSS operations — a revoke that doesn't take effect, a grant that
+// leaks, a read allowed after the role behind it was removed, or a rotation that
+// loses or corrupts the stored value.
 //
-// Phase 1 asserts the one invariant a trivially-correct model is certain of, in the
-// direction that cannot false-positive:
+// Two sound invariant families (each asserted only in the direction a
+// trivially-correct model is certain of — never "grant ⇒ must succeed"):
 //
-//	FAIL-CLOSED: if the model says principal P does NOT currently hold read on the
-//	project, GetSecretWithPermissionCheck(secret, P) MUST be denied (non-nil error).
+//	FAIL-CLOSED (authz): if the model says principal P does NOT currently hold read,
+//	GetSecretValueWithPermissionCheck(secret, P) MUST be denied — it must never
+//	return plaintext. We assert the DENY direction only; an allow can carry extra
+//	legitimate conditions.
 //
-// We assert only the DENY direction (never "grant ⇒ must succeed"): an allow can have
-// extra legitimate conditions, but a principal holding no read-granting role and
-// owning nothing must never read — same discipline as the in-wall claim harnesses.
+//	PRESERVE-DATA (integrity): after a create or a rotate, the admin (who bypasses
+//	permission checks) MUST read back exactly the value the model last wrote — the
+//	plaintext round-trips through the real encrypt→store→decrypt path. And when an
+//	authorized principal's read SUCCEEDS, the plaintext it returns must equal the
+//	model value too (integrity conditional on success, so it can't false-positive).
+//
 // The three fuzzable principals are deliberately non-admin and own no secrets (the
-// admin fixture creates and owns every secret), so the only path to read is the
-// reader role we grant/revoke — which makes the model's canRead an exact predicate.
+// admin fixture creates, owns, and rotates every secret), so the only path to read
+// is the reader role we grant/revoke — which makes the model's canRead an exact
+// predicate, and makes the admin the trusted oracle for the current value.
 //
-// The shadow model mirrors the REAL grant/revoke outcome (updated only when the core
-// call returns nil), so a revoke that returns success but leaves access intact shows
-// up as canRead=false + a read that succeeds = the invariant fires. That is the
-// highest-value bug this can catch.
+// NOTE on scope: audit-completeness is deliberately NOT asserted here. In keyorix
+// the secret.created / secret.rotated audit events are emitted by the HANDLER layer
+// (HTTP/gRPC/CLI), which carries the authenticated actor/IP/UA — core.CreateSecret /
+// core.RotateSecret do not self-audit by design. Asserting "each core mutation
+// appends an audit event" would therefore FAIL on correct code. Audit-completeness
+// belongs to a handler/service-level harness and is tracked separately.
 func FuzzCoreOperationSequence(f *testing.F) {
 	const (
 		adminRoleID  = 900
@@ -126,6 +136,7 @@ func FuzzCoreOperationSequence(f *testing.F) {
 
 	f.Add([]byte{0, 0, 1, 0, 3, 0, 2, 0, 3, 0})
 	f.Add([]byte{0, 1, 3, 1, 1, 1, 3, 4, 2, 1, 3, 4})
+	f.Add([]byte{0, 0, 4, 0, 9, 3, 0, 0, 1, 2, 3, 2}) // create, rotate, read
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
@@ -133,18 +144,41 @@ func FuzzCoreOperationSequence(f *testing.F) {
 		ctx := context.Background()
 		scope := Scope{ProjectID: projID}
 
-		// shadow model: canRead[userID] mirrors the REAL grant state (updated only on
-		// a nil-error grant/revoke); secretIDs are the admin-owned targets.
+		// shadow model:
+		//   canRead[userID] mirrors the REAL grant state (updated only on a nil-error
+		//   grant/revoke); value[secretID] is the plaintext the model last wrote via a
+		//   successful create/rotate (the admin is the trusted oracle for it).
 		canRead := map[uint]bool{}
+		value := map[uint][]byte{}
 		var secretIDs []uint
-		secretSeq := 0
+		secretSeq, rotateSeq := 0, 0
+
+		// assertAdminValue enforces PRESERVE-DATA: the admin bypasses permission checks
+		// and our secrets are unclassified with no max-reads, so a successful create or
+		// rotate MUST leave the value admin-readable and byte-identical to the model.
+		assertAdminValue := func(sid uint, want []byte) {
+			var got []byte
+			var aerr error
+			fuzzutil.Guard(t.Fatalf, "admin GetSecretValueWithPermissionCheck", func() {
+				got, aerr = c.GetSecretValueWithPermissionCheck(ctx, sid, adminUserID)
+			})
+			if aerr != nil {
+				t.Fatalf("DATA LOSS/AVAILABILITY: admin cannot read secret %d after a successful mutation: %v", sid, aerr)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("DATA CORRUPTION: secret %d admin-read=%q want=%q", sid, got, want)
+			}
+		}
 
 		step := func(op, a, b byte) {
-			switch op % 4 {
+			switch op % 5 {
 			case 0: // admin creates a secret
 				secretSeq++
-				if id, ok := createSecret(t, c, projID, envID, fmt.Sprintf("s%d", secretSeq), []byte{a, b}); ok {
+				val := []byte{a, b}
+				if id, ok := createSecret(t, c, projID, envID, fmt.Sprintf("s%d", secretSeq), val); ok {
 					secretIDs = append(secretIDs, id)
+					value[id] = val
+					assertAdminValue(id, val) // round-trip integrity on create
 				}
 			case 1: // grant reader to a principal (system actor 0 bypasses the grant ceiling)
 				u := principals[int(a)%len(principals)]
@@ -156,25 +190,52 @@ func FuzzCoreOperationSequence(f *testing.F) {
 				if err := c.RemoveUserRole(ctx, 0, u, readerRoleID, scope); err == nil {
 					canRead[u] = false
 				}
-			case 3: // a principal attempts a permission-checked read
+			case 3: // a principal attempts a permission-checked VALUE read
 				if len(secretIDs) == 0 {
 					return
 				}
 				u := principals[int(a)%len(principals)]
 				sid := secretIDs[int(b)%len(secretIDs)]
-				var got *models.SecretNode
+				var got []byte
 				var rerr error
-				fuzzutil.Guard(t.Fatalf, "GetSecretWithPermissionCheck", func() {
-					got, rerr = c.GetSecretWithPermissionCheck(ctx, sid, u)
+				fuzzutil.Guard(t.Fatalf, "GetSecretValueWithPermissionCheck", func() {
+					got, rerr = c.GetSecretValueWithPermissionCheck(ctx, sid, u)
 				})
 				if !canRead[u] {
-					// Fail-closed: no read-granting role, owns nothing → must be denied.
+					// Fail-closed: no read-granting role, owns nothing → must be denied,
+					// and must NOT leak plaintext.
 					if rerr == nil {
-						t.Fatalf("AUTHZ BYPASS: principal %d read secret %d with no read grant (canRead=false); returned %+v", u, sid, got)
+						t.Fatalf("AUTHZ BYPASS: principal %d read secret %d plaintext with no read grant (canRead=false): %q", u, sid, got)
+					}
+				} else if rerr == nil {
+					// Authorized AND succeeded → the plaintext must equal the model value
+					// (integrity through the permission path; conditional on success so an
+					// extra legitimate deny-condition can't false-positive).
+					if !bytes.Equal(got, value[sid]) {
+						t.Fatalf("INTEGRITY: principal %d read secret %d got=%q want=%q", u, sid, got, value[sid])
 					}
 				}
 				if rerr != nil && got != nil {
-					t.Fatalf("result-shape: denied read returned a non-nil secret (id=%d principal=%d): %+v", sid, u, got)
+					t.Fatalf("result-shape: denied read returned non-nil plaintext (id=%d principal=%d): %q", sid, u, got)
+				}
+			case 4: // admin rotates a secret to a fresh, distinct value
+				if len(secretIDs) == 0 {
+					return
+				}
+				sid := secretIDs[int(a)%len(secretIDs)]
+				rotateSeq++
+				// A 5-byte value keyed on rotateSeq is never equal to a 2-byte create
+				// value nor to another rotation, so RotateSecret always performs a REAL
+				// rotation (never the identical-value no-op path) — the model's value is
+				// then the unambiguous post-rotation ground truth.
+				newVal := []byte{0xAA, byte(rotateSeq >> 8), byte(rotateSeq), a, b}
+				var rerr error
+				fuzzutil.Guard(t.Fatalf, "RotateSecret", func() {
+					_, rerr = c.RotateSecret(ctx, sid, newVal, adminUserID, "fuzz-admin")
+				})
+				if rerr == nil {
+					value[sid] = newVal
+					assertAdminValue(sid, newVal) // rotation preserved data, no loss/corruption
 				}
 			}
 		}
@@ -190,10 +251,11 @@ func FuzzCoreOperationSequence(f *testing.F) {
 		if len(secretIDs) == 0 {
 			if id, ok := createSecret(t, c, projID, envID, "s-seed", []byte("v")); ok {
 				secretIDs = append(secretIDs, id)
+				value[id] = []byte("v")
 			}
 		}
 		if len(secretIDs) > 0 {
-			step(3, 0, 0) // outsider read of secret 0 — must be denied (canRead[2] false unless granted)
+			step(3, 0, 0) // outsider read of secret 0 — must be denied (canRead false unless granted)
 		}
 	})
 }
