@@ -14,11 +14,41 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	csaml "github.com/crewjam/saml"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
+
+// xmlSurvivesRoundTrip reports whether every character in s is legal XML 1.0
+// character data (encoding/xml.isInCharacterRange's exact ranges: TAB/LF/CR,
+// 0x20-0xD7FF, 0xE000-0xFFFD, 0x10000-0x10FFFF) and s contains no invalid UTF-8
+// byte sequence. encoding/xml.Marshal/EscapeText substitutes U+FFFD for
+// anything outside these ranges (and for an invalid encoding byte specifically,
+// even though its RuneError value 0xFFFD would otherwise be in-range) AT ENCODE
+// TIME -- so a string failing this check was never the value that actually got
+// signed; the assertion-building step already mangled it before signing.
+func xmlSurvivesRoundTrip(s string) bool {
+	for i, r := range s {
+		width := 1
+		if r >= utf8.RuneSelf {
+			_, width = utf8.DecodeRuneInString(s[i:])
+		}
+		if r == utf8.RuneError && width == 1 {
+			return false // invalid UTF-8 byte
+		}
+		switch {
+		case r == 0x09, r == 0x0A, r == 0x0D:
+		case r >= 0x20 && r <= 0xD7FF:
+		case r >= 0xE000 && r <= 0xFFFD:
+		case r >= 0x10000 && r <= 0x10FFFF:
+		default:
+			return false // illegal XML 1.0 character
+		}
+	}
+	return true
+}
 
 // FuzzParseResponseContent soaks Provider.ParseResponse from INSIDE the signature
 // wall. FuzzParseResponse fuzzes the raw SAMLResponse bytes and asserts the
@@ -40,9 +70,13 @@ import (
 //     accepted, the parsed Subject must equal exactly that NameID. A mismatch
 //     means content the IdP signed for one field surfaced as another identity —
 //     an assertion-extraction or attribute-confusion defect. (Restricted to a
-//     whitespace-free, non-empty NameID so XML text-normalisation can't produce a
-//     spurious inequality; other values still exercise the parser without the
-//     equality assertion.)
+//     whitespace-free, non-empty NameID consisting entirely of legal XML 1.0
+//     characters — see xmlSurvivesRoundTrip — so XML text-normalisation can't
+//     produce a spurious inequality: encoding/xml.Marshal itself substitutes
+//     U+FFFD for invalid UTF-8 AND for any character outside XML's legal range
+//     (most C0 controls) at the point the assertion is built and signed, so
+//     such a NameID was never the value that actually got signed; other values
+//     still exercise the parser without the equality assertion.)
 func FuzzParseResponseContent(f *testing.F) {
 	const idpEntityID = "https://idp.example/entity"
 	const spEntityID = "https://keyorix.internal/saml/corp/metadata"
@@ -185,10 +219,15 @@ func FuzzParseResponseContent(f *testing.F) {
 		if info == nil {
 			t.Fatalf("ParseResponse returned nil error but nil AssertionInfo")
 		}
-		// Identity round-trip. Only assert for a clean NameID so XML text handling
-		// (surrounding whitespace, empty text) can't yield a spurious mismatch; the
-		// other inputs still soak the parser above.
-		if nameID != "" && nameID == strings.TrimSpace(nameID) {
+		// Identity round-trip. Only assert for a clean, valid-UTF-8 NameID so XML
+		// text handling can't yield a spurious mismatch: whitespace normalisation
+		// and empty text are the surrounding-text case; invalid UTF-8 is a
+		// separate one — encoding/xml.Marshal (which MakeAssertion/PostBinding use
+		// to build and sign the assertion) itself substitutes U+FFFD for an
+		// invalid byte at ENCODE time, so a NameID containing one was never the
+		// value that actually got signed in the first place. The other inputs
+		// still soak the parser above.
+		if nameID != "" && nameID == strings.TrimSpace(nameID) && xmlSurvivesRoundTrip(nameID) {
 			if info.Subject != nameID {
 				t.Fatalf("IDENTITY MISMATCH: signed NameID %q but ParseResponse returned Subject %q (email=%q name=%q groups=%v)", nameID, info.Subject, info.Email, info.Name, info.Groups)
 			}
