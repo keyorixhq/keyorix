@@ -26,8 +26,8 @@ import (
 //
 // Sound: it asserts only an upper bound no correct linear-ish parser approaches.
 func FuzzDigitorusPKCS7BoundedWork(f *testing.F) {
-	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01})           // minimal DER SEQUENCE
-	f.Add([]byte("0\x81\xc400\x02\x01\xf8"))              // BER-ish prefix
+	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01}) // minimal DER SEQUENCE
+	f.Add([]byte("0\x81\xc400\x02\x01\xf8"))    // BER-ish prefix
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
