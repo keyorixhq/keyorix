@@ -1,14 +1,23 @@
 # Lightweight regression fuzzing: on each PR, run native `go test -fuzz` briefly
-# on the fuzz targets in the packages the PR changed, seeded from committed
+# on the fuzz targets the PR actually affects, seeded from committed
 # testdata/fuzz corpus. Deliberately NOT ClusterFuzzLite/libFuzzer — keyorix is
 # pure-Go (memory-safe, CGO-free), so the libFuzzer+sanitizer path adds cost
 # without benefit here. See claude/2026-09-13-fuzzing-tooling-decisions.md.
 # Deep/continuous fuzzing lives on the dedicated rigs, not in CI.
 #
-# Churn gate: a *.go change fuzzes the changed packages' targets; a go.mod/go.sum
-# change (a dependency bump) fuzzes EVERY fuzz-target package — a dep bump changes
-# third-party parser behavior without touching any *.go in the target's package,
-# and those parsers are exactly what the targets exist to catch.
+# Selection tiers (narrowest change that still covers what could have broken):
+#   - go.mod/go.sum changed (dependency churn): a dep bump changes third-party
+#     parser behavior without touching any *.go in the target's package, and
+#     those parsers are exactly what the targets exist to catch — so fuzz EVERY
+#     fuzz-target package, all targets.
+#   - any non-test *.go changed: shared production code in a package can affect
+#     any target in it — so fuzz ALL targets in each changed package.
+#   - only *_test.go changed (harness-only PR): the production code every OTHER
+#     target exercises is unchanged, so only the harnesses you touched can behave
+#     differently — fuzz ONLY the targets defined in the changed *_test.go files.
+#     This is what keeps a 3-harness PR from re-running all 16 targets in
+#     internal/core (16 x FUZZTIME, serial). Test files are package-local, so
+#     this selection is provably complete for a test-only change.
 name: fuzz-changed
 on:
   pull_request:
@@ -27,66 +36,83 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Determine changed packages that have fuzz targets
-        id: pkgs
+      - name: Determine fuzz targets to run
+        id: plan
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          set -euo pipefail
           base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
 
-          # A dependency bump (go.mod/go.sum) changes third-party parser behavior
-          # without touching any *.go in the target's own package — exactly the
-          # churn these targets exist to catch. So on a dep change, fuzz every
-          # package that declares a fuzz target, not just the changed .go dirs.
           dep_changed=0
           if git diff --name-only "$base"...HEAD | grep -qE '^(go\.mod|go\.sum)$'; then
             dep_changed=1
-            echo "go.mod/go.sum changed — dependency churn: fuzzing ALL fuzz-target packages."
+          fi
+          prod_go_changed=0
+          if git diff --name-only "$base"...HEAD -- '*.go' | grep -vE '_test\.go$' | grep -q .; then
+            prod_go_changed=1
           fi
 
+          # emit "pkg|FuncName" for every real fuzz target in a package dir ($1 = ./dir)
+          emit_all_in_pkg() {
+            go test -list '^Fuzz' "$1" 2>/dev/null | grep '^Fuzz' | while IFS= read -r fn; do
+              printf '%s|%s\n' "$1" "$fn"
+            done
+          }
+
+          plan_file="$(mktemp)"
           if [ "$dep_changed" = 1 ]; then
-            changed_dirs="$(git ls-files -- '*_test.go' | xargs -r grep -lE '^func Fuzz' \
-              | xargs -r -n1 dirname | sort -u)"
+            echo "go.mod/go.sum changed — dependency churn: fuzzing ALL fuzz-target packages."
+            git ls-files -- '*_test.go' | xargs -r grep -lE '^func Fuzz' | xargs -r -n1 dirname | sort -u \
+              | while IFS= read -r d; do emit_all_in_pkg "./${d#./}"; done >> "$plan_file"
+          elif [ "$prod_go_changed" = 1 ]; then
+            echo "Production .go changed — fuzzing ALL targets in each changed package."
+            git diff --name-only "$base"...HEAD -- '*.go' | xargs -r -n1 dirname | sort -u \
+              | while IFS= read -r d; do emit_all_in_pkg "./${d#./}"; done >> "$plan_file"
           else
-            changed_dirs="$(git diff --name-only "$base"...HEAD -- '*.go' \
-              | xargs -r -n1 dirname | sort -u)"
+            echo "Harness-only change — fuzzing ONLY the targets defined in changed *_test.go files."
+            git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*_test.go' \
+              | while IFS= read -r f; do
+                  [ -f "$f" ] || continue
+                  d="./$(dirname "$f")"
+                  # targets defined in this file, intersected with real listed targets
+                  defined="$(grep -oE '^func +Fuzz[A-Za-z0-9_]+' "$f" | awk '{print $2}' | sort -u)"
+                  [ -n "$defined" ] || continue
+                  listed="$(go test -list '^Fuzz' "$d" 2>/dev/null | grep '^Fuzz' | sort -u)"
+                  comm -12 <(printf '%s\n' "$defined") <(printf '%s\n' "$listed") \
+                    | while IFS= read -r fn; do printf '%s|%s\n' "$d" "$fn"; done
+                done >> "$plan_file"
           fi
 
-          pkgs=""
-          while IFS= read -r d; do
-            [ -n "$d" ] || continue
-            d="${d#./}"
-            if go test -list '^Fuzz' "./$d" 2>/dev/null | grep -q '^Fuzz'; then
-              pkgs="$pkgs ./$d"
-            fi
-          done < <(printf '%s\n' "$changed_dirs")
-          pkgs="$(echo "$pkgs" | xargs || true)"
-          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
-          if [ -z "$pkgs" ]; then
-            echo "No changed packages with fuzz targets — nothing to fuzz."
-          else
-            echo "Will fuzz: $pkgs"
-          fi
+          sort -u "$plan_file" -o "$plan_file"
+          count="$(grep -c . "$plan_file" || true)"
+          echo "Planned $count fuzz target(s):"
+          sed 's/^/  /' "$plan_file"
+          {
+            echo "plan<<__FUZZ_PLAN_EOF__"
+            cat "$plan_file"
+            echo "__FUZZ_PLAN_EOF__"
+          } >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Restore fuzz corpus cache
-        if: steps.pkgs.outputs.pkgs != ''
+        if: steps.plan.outputs.count != '0'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build/fuzz
           key: fuzz-corpus-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-${{ runner.os }}-
-      - name: Fuzz changed packages
-        if: steps.pkgs.outputs.pkgs != ''
+      - name: Fuzz planned targets
+        if: steps.plan.outputs.count != '0'
         env:
-          PKGS: ${{ steps.pkgs.outputs.pkgs }}
+          PLAN: ${{ steps.plan.outputs.plan }}
         run: |
           set -euo pipefail
-          for pkg in $PKGS; do
-            while IFS= read -r fn; do
-              echo "::group::fuzz $fn ($pkg) for $FUZZTIME"
-              go test "$pkg" -run='^$' -fuzz="^${fn}$" -fuzztime="$FUZZTIME"
-              echo "::endgroup::"
-            done < <(go test -list '^Fuzz' "$pkg" | grep '^Fuzz')
+          printf '%s\n' "$PLAN" | while IFS='|' read -r pkg fn; do
+            [ -n "$pkg" ] && [ -n "$fn" ] || continue
+            echo "::group::fuzz $fn ($pkg) for $FUZZTIME"
+            go test "$pkg" -run='^$' -fuzz="^${fn}$" -fuzztime="$FUZZTIME"
+            echo "::endgroup::"
           done
       - name: Upload crash reproducers
         if: failure()
