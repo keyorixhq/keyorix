@@ -72,6 +72,9 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		wipeBytes(newDEK)
 		return fmt.Errorf("failed to write pending DEK: %w", err)
 	}
+	// Crash-consistency seam (nil in prod): pending new-DEK written, DB not yet swept,
+	// active DEK still the old one. See FuzzDEKSweepCrashConsistency.
+	rotationCheckpointHook("sweep:after-write-dek-pending")
 
 	oldEncSvc, err := NewEncryptionService(km.currentDEK)
 	if err != nil {
@@ -92,6 +95,11 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
 		return fmt.Errorf("re-encryption sweep failed — old DEK remains active: %w", err)
 	}
+	// Crash-consistency seam (nil in prod): the sweep's DB transaction has COMMITTED
+	// (rows now encrypted under the new DEK), but the active on-disk DEK is STILL the old
+	// one — the pending → active rename below has not happened yet. This is the ordering
+	// window FuzzDEKSweepCrashConsistency probes for durability.
+	rotationCheckpointHook("sweep:after-sweep-commit")
 
 	activePath := filepath.Join(km.baseDir, km.dekPath)
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
@@ -100,12 +108,16 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("failed to promote pending DEK to active: %w", err)
 	}
+	// Crash-consistency seam (nil in prod): active DEK now the new one; dir fsync pending.
+	rotationCheckpointHook("sweep:after-rename-dek")
 	// Make the rename durable before deleting the old-DEK backups below — else a
 	// crash could lose the new DEK while the backups are already gone.
 	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
 		wipeBytes(newDEK)
 		return fmt.Errorf("failed to fsync key directory after promote: %w", err)
 	}
+	// Crash-consistency seam (nil in prod): on-disk rotation complete.
+	rotationCheckpointHook("sweep:after-syncdir")
 
 	wipeBytes(km.currentDEK)
 	km.currentDEK = newDEK
