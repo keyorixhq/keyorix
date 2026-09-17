@@ -47,6 +47,11 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 		return fmt.Errorf("re-wrap DEK: %s provider returned a %d-byte KEK, expected %d", newProvider.Name(), len(newKEK), crypto.KEKSize)
 	}
 
+	// Crash-consistency checkpoint (nil in production): the new provider has now
+	// persisted its own key material (e.g. a fresh salt), but the active dek.key is
+	// still wrapped under the OLD KEK. See FuzzDEKRewrapCrashConsistency.
+	rotationCheckpointHook("rewrap:after-provider-kek")
+
 	// #195: acquire the cross-process exclusive DEK lock before touching
 	// dek.key.pending at all, so this can never interleave with a concurrent
 	// RotateDEKWithSweep (or another RewrapDEK) running in a different
@@ -90,15 +95,23 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, wrapped, 0600); err != nil {
 		return fmt.Errorf("re-wrap DEK: write pending DEK: %w", err)
 	}
+	// Crash-consistency checkpoint (nil in production): the new-wrapped DEK is durably
+	// on disk as .pending, but the active dek.key is still the OLD wrapping.
+	rotationCheckpointHook("rewrap:after-write-dek-pending")
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
 	activePath := filepath.Join(km.baseDir, km.dekPath)
 	if err := os.Rename(pendingPath, activePath); err != nil {
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("re-wrap DEK: promote pending DEK to active: %w", err)
 	}
+	// Crash-consistency checkpoint (nil in production): the active dek.key is now the
+	// NEW wrapping; only the directory fsync remains.
+	rotationCheckpointHook("rewrap:after-rename-dek")
 	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
 		return fmt.Errorf("re-wrap DEK: fsync key directory after promote: %w", err)
 	}
+	// Crash-consistency checkpoint (nil in production): the rewrap is fully durable.
+	rotationCheckpointHook("rewrap:after-syncdir")
 	km.dekSnapshot = append([]byte(nil), wrapped...)
 	return nil
 }

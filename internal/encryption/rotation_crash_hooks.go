@@ -19,8 +19,9 @@
 package encryption
 
 // rotationCheckpoint, when non-nil, is invoked at each durability checkpoint during
-// KEK-passphrase rotation with a stable label (see commitNewKEKFiles). It is set
-// only by crash-consistency tests; it is nil in every production build.
+// KEK-passphrase rotation (see commitNewKEKFiles, labels "kek:...") and KEK-provider
+// migration (see RewrapDEK, labels "rewrap:...") with a stable label. It is set only by
+// crash-consistency tests; it is nil in every production build.
 var rotationCheckpoint func(label string)
 
 // rotationCheckpointHook invokes rotationCheckpoint if one is installed. A test's
