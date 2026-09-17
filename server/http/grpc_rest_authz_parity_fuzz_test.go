@@ -74,20 +74,61 @@ type paritySecret struct {
 // transports never collide and a soak never re-uses a name. atomic: fuzz workers run parallel.
 var parityCreateSeq atomic.Int64
 
+// parityMutSeq does the same for the update/delete-parity throwaway targets: each attempt
+// gets two brand-new admin-owned secrets (one per surface) with process-unique names.
+var parityMutSeq atomic.Int64
+
+// parityRESTDecision classifies an HTTP status into a clean authz DECISION or a THIRD
+// outcome: any 2xx is "allow", 401/403 is "deny", everything else (validation, not-found,
+// rate-limit, internal) is "other". A third outcome is NOT an authorization decision and
+// can legitimately differ across transports, so callers skip parity on it — that is what
+// keeps every decision-parity oracle in this file sound (no false positive).
+func parityRESTDecision(code int) string {
+	switch {
+	case code >= 200 && code < 300:
+		return "allow"
+	case code == http.StatusUnauthorized || code == http.StatusForbidden:
+		return "deny"
+	default:
+		return "other"
+	}
+}
+
+// parityGRPCDecision is the gRPC-side twin: nil error is "allow"; Unauthenticated/
+// PermissionDenied is "deny"; any other code (e.g. the invalid-token limiter's
+// ResourceExhausted, InvalidArgument, NotFound, Internal) is "other".
+func parityGRPCDecision(err error) string {
+	switch {
+	case err == nil:
+		return "allow"
+	case status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.PermissionDenied:
+		return "deny"
+	default:
+		return "other"
+	}
+}
+
 type parityWorld struct {
 	router     http.Handler
 	grpc       pb.SecretServiceClient
+	roles      pb.RoleServiceClient // RoleService, for the user-role assign/remove authz-parity check
 	db         *gorm.DB
 	c          *core.KeyorixCore
 	readerRole uint
-	writerRole uint // carries secrets.write, for the create-authz parity check
+	writerRole uint // carries secrets.write, for the create/update-authz parity check
+	assignRole uint // an EMPTY grantable role, for the user-role assign/remove authz-parity check
 	adminTok   string
+	adminID    uint // owner of the throwaway update/delete targets; also the grant actor in anchors
 	projAID    uint
 	projBID    uint
 	envAID     uint
 	envBID     uint
-	secA, secB paritySecret
-	principals []parityPrincipal
+	// granteeRestID / granteeGrpcID are throwaway users the assign/remove parity grants onto —
+	// one per surface so the two transports never fight over the same (user,role,scope) row.
+	granteeRestID uint
+	granteeGrpcID uint
+	secA, secB    paritySecret
+	principals    []parityPrincipal
 }
 
 func buildParityWorld(f *testing.F) *parityWorld {
@@ -180,6 +221,26 @@ func buildParityWorld(f *testing.F) *parityWorld {
 		f.Fatalf("seed write role-permission: %v", e)
 	}
 
+	// assignRole is an EMPTY role (no permissions), the target of the user-role
+	// assign/remove parity probe. Empty on purpose: granting it escalates nothing, so the
+	// granter-holds-the-role's-permissions guard (core) trivially passes and the ONLY gate
+	// that can deny is roles.assign at the target scope — exactly the cross-transport
+	// invariant under test (hardened in #342: REST /user-roles and gRPC RoleService both
+	// authorize roles.assign at the body/request's target scope, not a flat global union).
+	assignRole := models.Role{Name: "parity-assignable", NameFolded: "parity-assignable"}
+	if e := db.Create(&assignRole).Error; e != nil {
+		f.Fatalf("seed assignable role: %v", e)
+	}
+	mkGrantee := func(uname, email string) uint {
+		u, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: uname, Email: email, Password: "Xk7#Qp2$Rn5@Wv9!"})
+		if err != nil || u == nil {
+			f.Fatalf("create grantee %s: %v", uname, err)
+		}
+		return u.ID
+	}
+	granteeRestID := mkGrantee("parity-grantee-rest", "pgr@x.io")
+	granteeGrpcID := mkGrantee("parity-grantee-grpc", "pgg@x.io")
+
 	sA, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
 		Name: "sa", Value: []byte("VALUE-A-9f3c1"), ProjectID: pA.ID, EnvironmentID: eA.ID,
 		Type: "password", CreatedBy: "testadmin", OwnerID: admin.ID,
@@ -239,9 +300,11 @@ func buildParityWorld(f *testing.F) *parityWorld {
 	f.Cleanup(func() { _ = conn.Close() })
 
 	return &parityWorld{
-		router: r, grpc: pb.NewSecretServiceClient(conn), db: db, c: c,
-		readerRole: role.ID, writerRole: writeRole.ID, adminTok: adminSess.SessionToken,
+		router: r, grpc: pb.NewSecretServiceClient(conn), roles: pb.NewRoleServiceClient(conn), db: db, c: c,
+		readerRole: role.ID, writerRole: writeRole.ID, assignRole: assignRole.ID,
+		adminTok: adminSess.SessionToken, adminID: admin.ID,
 		projAID: pA.ID, projBID: pB.ID, envAID: eA.ID, envBID: eB.ID,
+		granteeRestID: granteeRestID, granteeGrpcID: granteeGrpcID,
 		secA:       paritySecret{ref: "proja/prod/sa", val: "VALUE-A-9f3c1", id: sA.ID, projID: pA.ID},
 		secB:       paritySecret{ref: "projb/prod/sb", val: "VALUE-B-6b28e", id: sB.ID, projID: pB.ID},
 		principals: principals,
@@ -256,6 +319,11 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 	f.Add([]byte{0, 1, 1, 2, 1, 3})
 	f.Add([]byte{3, 0, 0, 4, 3, 0}) // grant-write p0@projA, then create as p0 -> both allow
 	f.Add([]byte{4, 3, 0})          // create as ungranted p0 -> both deny
+	f.Add([]byte{5, 2, 0})          // update as admin -> both allow
+	f.Add([]byte{5, 0, 0})          // update as no-token -> both deny
+	f.Add([]byte{6, 2, 0})          // delete as admin -> both allow
+	f.Add([]byte{7, 2, 0})          // role-assign as admin -> both allow
+	f.Add([]byte{7, 3, 0})          // role-assign as principal (no roles.assign) -> both deny
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
@@ -386,25 +454,129 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 			// across transports, so it is skipped — that keeps the oracle sound (no false
 			// positive). allow = the create was authorized (2xx / gRPC OK); deny = refused by
 			// authn/authz (401,403 / Unauthenticated,PermissionDenied).
-			restDec := "other"
-			switch rrec.Code {
-			case http.StatusOK, http.StatusCreated:
-				restDec = "allow"
-			case http.StatusUnauthorized, http.StatusForbidden:
-				restDec = "deny"
-			}
-			grpcDec := "other"
-			switch {
-			case gerr == nil:
-				grpcDec = "allow"
-			case status.Code(gerr) == codes.Unauthenticated || status.Code(gerr) == codes.PermissionDenied:
-				grpcDec = "deny"
-			}
+			restDec := parityRESTDecision(rrec.Code)
+			grpcDec := parityGRPCDecision(gerr)
 			if restDec == "other" || grpcDec == "other" {
 				return
 			}
 			if restDec != grpcDec {
 				t.Fatalf("CREATE AUTHZ PARITY VIOLATION as %s in project %d: REST=%s (code=%d), gRPC=%s (err=%v) — transport-dependent write authorization",
+					tokLabel, projID, restDec, rrec.Code, grpcDec, gerr)
+			}
+		}
+
+		// mkTarget creates a fresh admin-owned secret for the mutation-parity probe (fixture
+		// setup — create-authz parity is covered by createParity above). Returns (id, name);
+		// id 0 signals a setup miss so the caller skips rather than asserts.
+		mkTarget := func(proj int, tag string) (uint, string) {
+			projID, envID := projFor(proj), envFor(proj)
+			name := fmt.Sprintf("pmp-%s-%d", tag, parityMutSeq.Add(1))
+			s, err := w.c.CreateSecret(ctx, &core.CreateSecretRequest{
+				Name: name, Value: []byte("mut-target"), ProjectID: projID, EnvironmentID: envID,
+				Type: "password", CreatedBy: "testadmin", OwnerID: w.adminID,
+			})
+			if err != nil || s == nil {
+				return 0, name
+			}
+			return s.ID, name
+		}
+
+		// mutateParity drives an UPDATE or DELETE over BOTH transports against IDENTICAL fresh
+		// admin-owned targets (one per surface) with the SAME principal token, and asserts the
+		// allow/deny decision agrees. gRPC UpdateSecret/DeleteSecret and REST PUT /{id} /
+		// DELETE /{id} each authorize the scoped secrets.write / secrets.delete check, so a
+		// divergence is a real transport-dependent write/delete authz bug. Distinct per-surface
+		// targets are required because delete/update MUTATE state — the two surfaces cannot
+		// share one secret without the first attempt confounding the second. (On-demand ROTATE
+		// is deliberately absent: gRPC SecretService has no rotate RPC — only SetSecretAutoRotate,
+		// a different operation — so there is no cross-transport rotate decision to compare.)
+		mutateParity := func(tokLabel, token, op string, proj int) {
+			restID, restName := mkTarget(proj, "rest")
+			grpcID, grpcName := mkTarget(proj, "grpc")
+			defer w.db.Exec("DELETE FROM secret_nodes WHERE name = ? OR name = ?", restName, grpcName)
+			if restID == 0 || grpcID == 0 {
+				return // fixture setup failed — nothing to compare
+			}
+
+			rrec := httptest.NewRecorder()
+			switch op {
+			case "update":
+				rreq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d", restID), strings.NewReader(`{"value":"mut-new-value"}`))
+				rreq.Header.Set("Content-Type", "application/json")
+				if token != "" {
+					rreq.Header.Set("Authorization", "Bearer "+token)
+				}
+				w.router.ServeHTTP(rrec, rreq)
+			case "delete":
+				rreq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", restID), nil)
+				if token != "" {
+					rreq.Header.Set("Authorization", "Bearer "+token)
+				}
+				w.router.ServeHTTP(rrec, rreq)
+			}
+
+			gctx := context.Background()
+			if token != "" {
+				gctx = metadata.NewOutgoingContext(gctx, metadata.Pairs("authorization", "Bearer "+token))
+			}
+			var gerr error
+			switch op {
+			case "update":
+				v := "mut-new-value"
+				_, gerr = w.grpc.UpdateSecret(gctx, &pb.UpdateSecretRequest{Id: uint32(grpcID), Value: &v})
+			case "delete":
+				_, gerr = w.grpc.DeleteSecret(gctx, &pb.DeleteSecretRequest{Id: uint32(grpcID)})
+			}
+
+			restDec := parityRESTDecision(rrec.Code)
+			grpcDec := parityGRPCDecision(gerr)
+			if restDec == "other" || grpcDec == "other" {
+				return
+			}
+			if restDec != grpcDec {
+				t.Fatalf("%s AUTHZ PARITY VIOLATION as %s in project %d: REST=%s (code=%d), gRPC=%s (err=%v) — transport-dependent authorization",
+					strings.ToUpper(op), tokLabel, projFor(proj), restDec, rrec.Code, grpcDec, gerr)
+			}
+		}
+
+		// roleAssignParity drives a user-role ASSIGN over BOTH transports — REST
+		// POST /api/v1/user-roles/ vs gRPC RoleService.AssignRole — granting the EMPTY
+		// assignRole onto each surface's own throwaway grantee at the SAME fuzzed project
+		// scope, with the SAME actor token, and asserts the allow/deny decision agrees. Both
+		// paths authorize roles.assign AT THE TARGET SCOPE (a parity hardened in #342 — the
+		// exact "not bypassable by switching transport" invariant). An empty role means the
+		// granter-holds-the-permissions guard never fires, so the scoped roles.assign gate is
+		// the only decision — and separate grantees keep the two surfaces from fighting over
+		// one (user,role,scope) row. Any created assignment is dropped afterward.
+		roleAssignParity := func(tokLabel, token string, proj int) {
+			projID := projFor(proj)
+			defer w.db.Exec("DELETE FROM user_roles WHERE role_id = ? AND user_id IN (?,?)", w.assignRole, w.granteeRestID, w.granteeGrpcID)
+
+			body := fmt.Sprintf(`{"user_id":%d,"role_id":%d,"project_id":%d}`, w.granteeRestID, w.assignRole, projID)
+			rreq := httptest.NewRequest(http.MethodPost, "/api/v1/user-roles/", strings.NewReader(body))
+			rreq.Header.Set("Content-Type", "application/json")
+			if token != "" {
+				rreq.Header.Set("Authorization", "Bearer "+token)
+			}
+			rrec := httptest.NewRecorder()
+			w.router.ServeHTTP(rrec, rreq)
+
+			gctx := context.Background()
+			if token != "" {
+				gctx = metadata.NewOutgoingContext(gctx, metadata.Pairs("authorization", "Bearer "+token))
+			}
+			pid := uint32(projID)
+			_, gerr := w.roles.AssignRole(gctx, &pb.AssignRoleRequest{
+				UserId: uint32(w.granteeGrpcID), RoleId: uint32(w.assignRole), ProjectId: &pid,
+			})
+
+			restDec := parityRESTDecision(rrec.Code)
+			grpcDec := parityGRPCDecision(gerr)
+			if restDec == "other" || grpcDec == "other" {
+				return
+			}
+			if restDec != grpcDec {
+				t.Fatalf("ROLE-ASSIGN AUTHZ PARITY VIOLATION as %s at project %d: REST=%s (code=%d), gRPC=%s (err=%v) — transport-dependent roles.assign decision",
 					tokLabel, projID, restDec, rrec.Code, grpcDec, gerr)
 			}
 		}
@@ -431,7 +603,7 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 
 		const maxSteps = 40
 		for i := 0; i+2 < len(program) && i < maxSteps*3; i += 3 {
-			switch program[i] % 5 {
+			switch program[i] % 8 {
 			case 0:
 				grant(int(program[i+1]), int(program[i+2]))
 			case 1:
@@ -441,17 +613,33 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 				readParity(label, tok, secFor(program[i+2]))
 			case 3:
 				grantWrite(int(program[i+1]), int(program[i+2]))
-			default: // 4
+			case 4:
 				label, tok := tokenFor(program[i+1], program[i+2])
 				createParity(label, tok, int(program[i+2]))
+			case 5:
+				label, tok := tokenFor(program[i+1], program[i+2])
+				mutateParity(label, tok, "update", int(program[i+2]))
+			case 6:
+				label, tok := tokenFor(program[i+1], program[i+2])
+				mutateParity(label, tok, "delete", int(program[i+2]))
+			default: // 7
+				label, tok := tokenFor(program[i+1], program[i+2])
+				roleAssignParity(label, tok, int(program[i+2]))
 			}
 		}
 		// Anchors, every iteration regardless of input:
-		readParity("admin", w.adminTok, w.secA)               // read: both allow
-		readParity("outsider", w.principals[2].token, w.secB) // read: both deny (ungranted)
-		readParity("no-token", "", w.secA)                    // read: both deny (unauthenticated)
-		createParity("admin", w.adminTok, 0)                  // create: both allow (admin has write)
-		createParity("outsider", w.principals[2].token, 0)    // create: both deny (no write grant)
-		createParity("no-token", "", 0)                       // create: both deny (unauthenticated)
+		readParity("admin", w.adminTok, w.secA)                      // read: both allow
+		readParity("outsider", w.principals[2].token, w.secB)        // read: both deny (ungranted)
+		readParity("no-token", "", w.secA)                           // read: both deny (unauthenticated)
+		createParity("admin", w.adminTok, 0)                         // create: both allow (admin has write)
+		createParity("outsider", w.principals[2].token, 0)           // create: both deny (no write grant)
+		createParity("no-token", "", 0)                              // create: both deny (unauthenticated)
+		mutateParity("admin", w.adminTok, "update", 0)               // update: both allow
+		mutateParity("no-token", "", "update", 0)                    // update: both deny (unauthenticated)
+		mutateParity("admin", w.adminTok, "delete", 0)               // delete: both allow
+		mutateParity("outsider", w.principals[2].token, "delete", 0) // delete: both deny (no delete perm)
+		roleAssignParity("admin", w.adminTok, 0)                     // assign: both allow (admin has roles.assign)
+		roleAssignParity("outsider", w.principals[2].token, 0)       // assign: both deny (no roles.assign)
+		roleAssignParity("no-token", "", 0)                          // assign: both deny (unauthenticated)
 	})
 }
