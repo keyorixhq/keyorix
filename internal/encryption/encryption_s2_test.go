@@ -40,6 +40,7 @@ func setupS2DB(t *testing.T) *gorm.DB {
 		&models.Session{},
 		&models.APIToken{},
 		&models.PasswordReset{},
+		&models.SystemMetadata{}, // DEK-rotation redo marker
 	))
 	return db
 }
@@ -782,6 +783,7 @@ func setupS2FullDB(t *testing.T) *gorm.DB {
 		&models.MFASecret{},
 		&models.DynamicSecretConfig{},
 		&models.DynamicSecretLease{},
+		&models.SystemMetadata{}, // DEK-rotation redo marker
 	))
 	return db
 }

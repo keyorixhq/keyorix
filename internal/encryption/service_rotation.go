@@ -6,12 +6,23 @@
 package encryption
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+// dekRotationPromotePendingKey is the system_metadata key of the DEK-sweep rotation redo
+// marker. It is written INSIDE the sweep's re-encryption transaction (so it becomes durable
+// atomically with the rows moving to the new DEK) and cleared once the new DEK file is
+// promoted. Its presence at startup means: the sweep committed (rows are under the NEW DEK)
+// but the dek.key.pending → dek.key promotion may not have completed — crash recovery must
+// finish it. Its value is the new key version, for the recovery log line. Not secret.
+const dekRotationPromotePendingKey = "dek_rotation.promote_pending"
 
 // RotateDEKWithSweep performs a true DEK rotation with a full re-encryption
 // sweep of all DEK-encrypted database rows (ADR-010).
@@ -40,6 +51,15 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 		return nil, fmt.Errorf("refusing to rotate: %w — stop the running server before rotating", err)
 	}
 
+	// Ensure the redo-marker table exists before the sweep transaction writes it (the marker
+	// is the crash-consistency mechanism — ADR-010). Idempotent: a no-op on a fully-migrated
+	// production DB, where system_metadata already exists (bootstrap marker, audit high-water).
+	// Keeping it here makes the rotation self-contained so the marker never depends on external
+	// migration ordering.
+	if err := db.AutoMigrate(&models.SystemMetadata{}); err != nil {
+		return nil, fmt.Errorf("ensure rotation redo-marker table: %w", err)
+	}
+
 	var sweepResult *SweepResult
 	sweepFn := func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error {
 		tx := db.Begin()
@@ -56,6 +76,21 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 		if err != nil {
 			tx.Rollback()
 			return fmt.Errorf("sweep failed: %w", err)
+		}
+		// Write-ahead redo marker (crash-consistency, ADR-010): in the SAME transaction as
+		// the row re-encryption, record that a new DEK version is committed and its on-disk
+		// promotion is pending. This commits atomically with the rows — so if we crash in the
+		// window between this commit and the dek.key.pending → dek.key rename that
+		// keyManager.RotateDEKWithSweep does next, startup recovery (RecoverInterruptedRotation)
+		// sees the marker and finishes the promotion instead of discarding the new DEK. The
+		// pending DEK file was already fsync'd (data + dir entry) before this commit, so the
+		// invariant "marker durable ⇒ new DEK durably present" always holds.
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+		}).Create(&models.SystemMetadata{Key: dekRotationPromotePendingKey, Value: newKeyVersion}).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to write DEK-rotation redo marker: %w", err)
 		}
 		if err := tx.Commit().Error; err != nil {
 			return fmt.Errorf("failed to commit sweep transaction: %w", err)
@@ -77,6 +112,14 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 
 	if err := s.keyManager.RotateDEKWithSweep(passphrase, sweepFn); err != nil {
 		return nil, fmt.Errorf("DEK rotation with sweep failed: %w", err)
+	}
+
+	// The new DEK is now the active file. Clear the redo marker so a later startup does not
+	// treat this completed rotation as interrupted. Best-effort: if it fails (or a crash
+	// lands between the rename above and here), recovery still no-ops safely — it finds the
+	// marker but no pending file (already renamed away) and just clears it then.
+	if err := db.Where("key = ?", dekRotationPromotePendingKey).Delete(&models.SystemMetadata{}).Error; err != nil {
+		log.Printf("[WARN] DEK rotation completed but failed to clear the redo marker (harmless — recovery will clear it): %v", err)
 	}
 
 	s.mu.Lock()
@@ -292,6 +335,56 @@ func (s *Service) GetKeyVersion() string {
 // Call at startup before Initialize.
 func (s *Service) CleanPendingDEK() {
 	s.keyManager.CleanPendingDEK()
+}
+
+// RecoverInterruptedRotation completes or discards an interrupted DEK-sweep rotation
+// (ADR-010) using the write-ahead redo marker in system_metadata. It MUST run at startup,
+// BEFORE Initialize (so Initialize then loads whichever DEK this settles on), while holding
+// the exclusive key lock, and it needs a DB handle for the local (sqlite/postgres) backend
+// the sweep runs against.
+//
+//   - marker PRESENT  ⇒ the sweep's transaction committed, so the DB rows are already under
+//     the NEW DEK. Promote dek.key.pending → dek.key (PromotePendingDEK is idempotent: a
+//     no-op if the rename already happened), then clear the marker. This is the fix for the
+//     crash window between the sweep commit and the file rename — without it CleanPendingDEK
+//     would discard the only copy of the new DEK and every swept row would be unrecoverable.
+//   - marker ABSENT   ⇒ no committed sweep. Any dek.key.pending is a leftover from a
+//     pre-commit crash (or an interrupted KEK-rotation/rewrap, which keep the SAME DEK), so
+//     discard it — the existing CleanPendingDEK behavior, which is correct there.
+//
+// Deterministic, no data-probing: the marker either committed with the rows or it did not.
+func (s *Service) RecoverInterruptedRotation(db *gorm.DB) error {
+	if db == nil {
+		// No local DB to consult (e.g. remote storage): fall back to the leftover-cleanup
+		// behavior. A remote backend does not run this sweep, so no marker can exist.
+		s.CleanPendingDEK()
+		return nil
+	}
+	// On a brand-new install the schema may not be migrated yet; no table ⇒ no marker.
+	if !db.Migrator().HasTable(&models.SystemMetadata{}) {
+		s.CleanPendingDEK()
+		return nil
+	}
+
+	var m models.SystemMetadata
+	err := db.Where("key = ?", dekRotationPromotePendingKey).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		s.CleanPendingDEK() // no committed rotation → discard any stray pending file
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read DEK-rotation redo marker: %w", err)
+	}
+
+	// Marker present ⇒ the sweep committed under a new DEK. Finish the promotion.
+	if err := s.keyManager.PromotePendingDEK(); err != nil {
+		return fmt.Errorf("recover interrupted DEK rotation (promote): %w", err)
+	}
+	if err := db.Where("key = ?", dekRotationPromotePendingKey).Delete(&models.SystemMetadata{}).Error; err != nil {
+		return fmt.Errorf("recover interrupted DEK rotation (clear marker): %w", err)
+	}
+	log.Printf("recovered interrupted DEK rotation: promoted pending DEK to active (new key version %s)", m.Value)
+	return nil
 }
 
 // AcquireExclusiveKeyLock takes an exclusive, non-blocking OS advisory lock on

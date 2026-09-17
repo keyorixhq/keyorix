@@ -108,6 +108,7 @@ func runSweepCrashCase(dir, pass, valPrefix string, rows int, target string) {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Session{},
 		&models.APIToken{}, &models.APIClient{}, &models.PasswordReset{},
 		&models.MFASecret{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
+		&models.SystemMetadata{}, // holds the DEK-rotation redo marker
 	} {
 		if e := db.AutoMigrate(m); e != nil {
 			panic(fmt.Sprintf("migrate: %v", e))
@@ -155,10 +156,14 @@ func runSweepCrashCase(dir, pass, valPrefix string, rows int, target string) {
 	// acquired (a real crashed process's OS-held locks are freed on exit). Best-effort.
 	svc.Shutdown()
 
-	// RECOVERY: a fresh process over the same key dir + same DB, exactly as
-	// server/main.go and the rotate CLI start up — CleanPendingDEK() then Initialize().
+	// RECOVERY: a fresh process over the same key dir + same DB, exactly as server/main.go
+	// and the rotate CLI start up — RecoverInterruptedRotation(db) (which promotes the
+	// pending DEK when the sweep's redo marker committed, else discards a stray pending),
+	// then Initialize().
 	rec := NewService(cfg, dir)
-	rec.CleanPendingDEK()
+	if e := rec.RecoverInterruptedRotation(db); e != nil {
+		panic(fmt.Sprintf("RecoverInterruptedRotation after crash %q: %v", target, e))
+	}
 	if e := rec.Initialize(pass); e != nil {
 		panic(fmt.Sprintf("recovery Initialize failed after crash %q: %v", target, e))
 	}

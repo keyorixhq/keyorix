@@ -873,9 +873,12 @@ func TestServiceRotateDEKWithSweep_TxBeginFailure_Error(t *testing.T) {
 	keyVersionBefore := svc.GetKeyVersion()
 
 	_, err := svc.RotateDEKWithSweep("g80-svc-rotate-begin-fail", g80ClosedDB(t))
+	// On a closed DB the rotation now fails at the earliest DB touch — ensuring the redo-
+	// marker table exists (ADR-010 crash-consistency) — before it ever begins the sweep
+	// transaction. Either failure point is a clean abort; the invariant that matters is that
+	// nothing is rotated: no new DEK is promoted and the key version is unchanged.
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "DEK rotation with sweep failed")
-	assert.Equal(t, keyVersionBefore, svc.GetKeyVersion(), "key version must be unchanged when the sweep transaction can't even begin")
+	assert.Equal(t, keyVersionBefore, svc.GetKeyVersion(), "key version must be unchanged when the rotation cannot touch the database")
 }
 
 // ─── sweep.go: sweepSecretVersions — empty-value skip + re-encrypt failure ────
