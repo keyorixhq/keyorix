@@ -353,7 +353,27 @@ func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*
 	if err := svc.AcquireExclusiveKeyLock(); err != nil {
 		return nil, fmt.Errorf("failed to acquire the encryption key lock: %w", err)
 	}
-	svc.CleanPendingDEK() // remove leftover .pending file from any interrupted prior rotation
+	// Recover any interrupted DEK-sweep rotation BEFORE Initialize, so Initialize loads the
+	// correct (possibly just-promoted) active DEK. Runs under the exclusive key lock acquired
+	// above. For a local backend it consults the DB's redo marker to decide whether to promote
+	// the pending DEK (a rotation that committed its re-encryption sweep but crashed before the
+	// dek.key file rename) or discard a stray pending file; for remote storage there is no
+	// local sweep, so it falls back to the leftover-cleanup behavior.
+	if cfg.Storage.Type == "remote" {
+		svc.CleanPendingDEK()
+	} else {
+		recoverDB, derr := appstorage.OpenGormDB(cfg)
+		if derr != nil {
+			return nil, fmt.Errorf("failed to open database for DEK-rotation crash recovery: %w", derr)
+		}
+		rerr := svc.RecoverInterruptedRotation(recoverDB)
+		if sqlDB, e := recoverDB.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+		if rerr != nil {
+			return nil, fmt.Errorf("DEK-rotation crash recovery failed: %w", rerr)
+		}
+	}
 	if err := svc.Initialize(passphrase); err != nil {
 		return nil, fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
 	}

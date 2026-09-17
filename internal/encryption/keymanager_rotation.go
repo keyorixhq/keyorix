@@ -72,6 +72,19 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		wipeBytes(newDEK)
 		return fmt.Errorf("failed to write pending DEK: %w", err)
 	}
+	// Make the pending file's DIRECTORY ENTRY durable before the sweep commits its redo
+	// marker (service_rotation.go). SecureWriteFileSync fsyncs the file's DATA but not the
+	// parent dir, so without this a crash could leave the marker committed while the pending
+	// file's create is not yet durably linked — and crash recovery would have nothing to
+	// promote. This closes the redo invariant "marker durable ⇒ pending DEK durably present".
+	if err := securefiles.SyncDir(filepath.Dir(filepath.Join(km.baseDir, km.dekPath))); err != nil {
+		wipeBytes(newDEK)
+		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
+		return fmt.Errorf("failed to fsync key dir after writing pending DEK: %w", err)
+	}
+	// Crash-consistency seam (nil in prod): pending new-DEK written + dir-synced, DB not yet
+	// swept, active DEK still the old one. See FuzzDEKSweepCrashConsistency.
+	rotationCheckpointHook("sweep:after-write-dek-pending")
 
 	oldEncSvc, err := NewEncryptionService(km.currentDEK)
 	if err != nil {
@@ -92,6 +105,11 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
 		return fmt.Errorf("re-encryption sweep failed — old DEK remains active: %w", err)
 	}
+	// Crash-consistency seam (nil in prod): the sweep's DB transaction has COMMITTED
+	// (rows now encrypted under the new DEK), but the active on-disk DEK is STILL the old
+	// one — the pending → active rename below has not happened yet. This is the ordering
+	// window FuzzDEKSweepCrashConsistency probes for durability.
+	rotationCheckpointHook("sweep:after-sweep-commit")
 
 	activePath := filepath.Join(km.baseDir, km.dekPath)
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
@@ -100,12 +118,16 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("failed to promote pending DEK to active: %w", err)
 	}
+	// Crash-consistency seam (nil in prod): active DEK now the new one; dir fsync pending.
+	rotationCheckpointHook("sweep:after-rename-dek")
 	// Make the rename durable before deleting the old-DEK backups below — else a
 	// crash could lose the new DEK while the backups are already gone.
 	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
 		wipeBytes(newDEK)
 		return fmt.Errorf("failed to fsync key directory after promote: %w", err)
 	}
+	// Crash-consistency seam (nil in prod): on-disk rotation complete.
+	rotationCheckpointHook("sweep:after-syncdir")
 
 	wipeBytes(km.currentDEK)
 	km.currentDEK = newDEK
@@ -132,6 +154,38 @@ func (km *KeyManager) deleteBackupFiles() {
 			log.Printf("[sweep] deleted backup DEK file: %s", f)
 		}
 	}
+}
+
+// PromotePendingDEK atomically promotes a leftover dek.key.pending to the active dek.key
+// and fsyncs the key directory. Crash recovery calls it (via Service.RecoverInterrupted
+// Rotation) to COMPLETE a DEK-sweep rotation whose DB transaction committed (rows are
+// under the new DEK) but whose pending→active rename did not happen before the crash. The
+// pending file it promotes was fsync'd — data and directory entry both — before the sweep's
+// redo marker committed, so whenever a marker says "promote", this file is present.
+//
+// A pure file rename: it does NOT touch km.currentDEK or any in-memory state, because
+// recovery runs before Initialize, which then loads the freshly-promoted active DEK. Safe
+// to call with no pending file present (no-op) — so a crash after the rename but before the
+// marker is cleared replays harmlessly.
+func (km *KeyManager) PromotePendingDEK() error {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+
+	pendingPath := filepath.Join(km.baseDir, km.dekPath+".pending")
+	activePath := filepath.Join(km.baseDir, km.dekPath)
+	if _, err := os.Stat(pendingPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil // already promoted (rename happened before the crash) — nothing to do
+		}
+		return fmt.Errorf("stat pending DEK during recovery: %w", err)
+	}
+	if err := os.Rename(pendingPath, activePath); err != nil {
+		return fmt.Errorf("promote pending DEK during recovery: %w", err)
+	}
+	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
+		return fmt.Errorf("fsync key dir after promoting pending DEK during recovery: %w", err)
+	}
+	return nil
 }
 
 // CleanPendingDEK removes a leftover dek.key.pending file from a previously

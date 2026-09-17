@@ -314,9 +314,12 @@ func rotateWithConfig(cfg *config.Config, confirm bool, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	service.CleanPendingDEK()
-	if err := service.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize encryption: %w", err)
+
+	// Hold the exclusive key lock across crash-recovery + rotation (refuses if a server is
+	// running — the #92 guard). Held for the whole operation so the recovery-promote below
+	// can never race a live server. Shutdown() releases it.
+	if err := service.AcquireExclusiveKeyLock(); err != nil {
+		return fmt.Errorf("refusing to rotate: %w — stop the running server before rotating", err)
 	}
 	defer service.Shutdown()
 
@@ -330,6 +333,17 @@ func rotateWithConfig(cfg *config.Config, confirm bool, dryRun bool) error {
 		return fmt.Errorf("failed to open database for rotation: %w", err)
 	}
 	defer closeDB(db)
+
+	// Heal any interrupted PRIOR rotation BEFORE Initialize, so Initialize loads the correct
+	// (possibly just-promoted) active DEK. If a previous rotation crashed after committing the
+	// sweep but before promoting the new DEK file, this promotes it (via the redo marker);
+	// otherwise it discards a stray pending file (the old CleanPendingDEK behavior).
+	if err := service.RecoverInterruptedRotation(db); err != nil {
+		return fmt.Errorf("DEK-rotation crash recovery failed: %w", err)
+	}
+	if err := service.Initialize(passphrase); err != nil {
+		return fmt.Errorf("failed to initialize encryption: %w", err)
+	}
 
 	fmt.Println("🔄 Rotating DEK with full re-encryption sweep...")
 	result, err := service.RotateDEKWithSweep(passphrase, db)
