@@ -33,13 +33,22 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/keyorixhq/keyorix/internal/fuzzutil"
+	"time"
 )
 
 // rotationCrash is the sentinel a simulated crash panics with, so the harness can
 // tell its own injected crash apart from a genuine panic in the code under test.
 type rotationCrash struct{ label string }
+
+// kekRotationGuardDeadline is a HANG backstop, not the shared fuzzutil 3s amplification
+// guard. A legitimate iteration seeds a KeyManager (real 600k-iteration PBKDF2), rotates the
+// KEK passphrase (more PBKDF2), then recovers by trying passphrases against the on-disk files
+// (more PBKDF2) — inherently ~1-2s, and under -fuzz coverage instrumentation on a loaded
+// continuous-fuzzing rig it brushes 3s. Its inputs are bounded (crashSel + two passphrases)
+// with no untrusted-input-driven allocation, so there is no amplification to catch on a tight
+// deadline — only a genuine hang, which this generous deadline still flags. The real PBKDF2
+// KDF stays: the KEK derivation itself is under test here. See the 2026-09-17 rig deploy note.
+const kekRotationGuardDeadline = 30 * time.Second
 
 // crashLabels are the durability checkpoints commitNewKEKFiles emits, in order.
 // Index 0 ("") means "run to completion, no crash".
@@ -73,12 +82,20 @@ func FuzzKEKRotationCrashConsistency(f *testing.F) {
 		// t.TempDir() must run on the test goroutine, not inside Guard's goroutine.
 		dir := t.TempDir()
 
-		// Inside Guard, signal any invariant violation with panic (Guard runs fn in
-		// a goroutine; the fuzzer records a panic as a reproducer). Guard's own
-		// fatalf is only for the hang case.
-		fuzzutil.Guard(t.Fatalf, "kek-rotation-crash-consistency", func() {
+		// Local hang backstop with a generous deadline (see kekRotationGuardDeadline) instead
+		// of fuzzutil.Guard's shared 3s, which is tuned for fast file/parse targets. An invariant
+		// violation inside runCrashConsistencyCase is signalled by panic (the fuzzer records it
+		// as a reproducer); this goroutine+select only catches a true hang.
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
 			runCrashConsistencyCase(dir, oldPass, newPass, target)
-		})
+		}()
+		select {
+		case <-done:
+		case <-time.After(kekRotationGuardDeadline):
+			t.Fatalf("kek-rotation-crash-consistency exceeded %s — possible hang", kekRotationGuardDeadline)
+		}
 	})
 }
 
