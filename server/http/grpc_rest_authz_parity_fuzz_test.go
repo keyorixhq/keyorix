@@ -32,14 +32,19 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -65,15 +70,22 @@ type paritySecret struct {
 	projID   uint
 }
 
+// parityCreateSeq gives every create-parity attempt a process-unique name so the two
+// transports never collide and a soak never re-uses a name. atomic: fuzz workers run parallel.
+var parityCreateSeq atomic.Int64
+
 type parityWorld struct {
 	router     http.Handler
 	grpc       pb.SecretServiceClient
 	db         *gorm.DB
 	c          *core.KeyorixCore
 	readerRole uint
+	writerRole uint // carries secrets.write, for the create-authz parity check
 	adminTok   string
 	projAID    uint
 	projBID    uint
+	envAID     uint
+	envBID     uint
 	secA, secB paritySecret
 	principals []parityPrincipal
 }
@@ -152,6 +164,22 @@ func buildParityWorld(f *testing.F) *parityWorld {
 		f.Fatalf("seed role-permission: %v", e)
 	}
 
+	// writer role carrying secrets.write, for the create-authz parity check.
+	var writePerm models.Permission
+	if e := db.Where("name = ?", "secrets.write").First(&writePerm).Error; e != nil {
+		writePerm = models.Permission{Name: "secrets.write", Resource: "secrets", Action: "write"}
+		if e2 := db.Create(&writePerm).Error; e2 != nil {
+			f.Fatalf("seed write permission: %v", e2)
+		}
+	}
+	writeRole := models.Role{Name: "parity-writer", NameFolded: "parity-writer"}
+	if e := db.Create(&writeRole).Error; e != nil {
+		f.Fatalf("seed write role: %v", e)
+	}
+	if e := db.Create(&models.RolePermission{RoleID: writeRole.ID, PermissionID: writePerm.ID}).Error; e != nil {
+		f.Fatalf("seed write role-permission: %v", e)
+	}
+
 	sA, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
 		Name: "sa", Value: []byte("VALUE-A-9f3c1"), ProjectID: pA.ID, EnvironmentID: eA.ID,
 		Type: "password", CreatedBy: "testadmin", OwnerID: admin.ID,
@@ -212,8 +240,8 @@ func buildParityWorld(f *testing.F) *parityWorld {
 
 	return &parityWorld{
 		router: r, grpc: pb.NewSecretServiceClient(conn), db: db, c: c,
-		readerRole: role.ID, adminTok: adminSess.SessionToken,
-		projAID: pA.ID, projBID: pB.ID,
+		readerRole: role.ID, writerRole: writeRole.ID, adminTok: adminSess.SessionToken,
+		projAID: pA.ID, projBID: pB.ID, envAID: eA.ID, envBID: eB.ID,
 		secA:       paritySecret{ref: "proja/prod/sa", val: "VALUE-A-9f3c1", id: sA.ID, projID: pA.ID},
 		secB:       paritySecret{ref: "projb/prod/sb", val: "VALUE-B-6b28e", id: sB.ID, projID: pB.ID},
 		principals: principals,
@@ -226,6 +254,8 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 
 	f.Add([]byte{0, 0, 0, 2, 0, 3, 2, 2, 3})
 	f.Add([]byte{0, 1, 1, 2, 1, 3})
+	f.Add([]byte{3, 0, 0, 4, 3, 0}) // grant-write p0@projA, then create as p0 -> both allow
+	f.Add([]byte{4, 3, 0})          // create as ungranted p0 -> both deny
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
@@ -253,6 +283,16 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 		revoke := func(pi, proj int) {
 			p := w.principals[pi%len(w.principals)]
 			_ = w.c.RemoveUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projFor(proj)})
+		}
+		envFor := func(sel int) uint {
+			if sel%2 == 1 {
+				return w.envBID
+			}
+			return w.envAID
+		}
+		grantWrite := func(pi, proj int) {
+			p := w.principals[pi%len(w.principals)]
+			_ = w.c.AssignUserRole(ctx, 0, p.id, w.writerRole, core.Scope{ProjectID: projFor(proj)}, false)
 		}
 
 		// restRead returns (allowed, value). allowed == the reveal endpoint returned the value.
@@ -306,6 +346,69 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 			}
 		}
 
+		// createParity drives a secret CREATE over BOTH surfaces with the same principal +
+		// project/env scope but DISTINCT names (authz is name-independent), and asserts the
+		// allow/deny decision agrees. Both surfaces authorize via AuthorizePrincipal(
+		// secrets.write, {project,env}) — REST inside the handler (the create route carries no
+		// scoped-permission middleware), gRPC in the method — so a divergence is a real
+		// transport-dependent write-authz bug. Distinct names avoid a duplicate-name confound;
+		// created rows are dropped by name so a soak stays bounded.
+		createParity := func(tokLabel, token string, proj int) {
+			projID, envID := projFor(proj), envFor(proj)
+			n := parityCreateSeq.Add(1)
+			restName := fmt.Sprintf("pcp-rest-%d", n)
+			grpcName := fmt.Sprintf("pcp-grpc-%d", n)
+
+			body := fmt.Sprintf(`{"name":%q,"value":"v","project_id":%d,"environment_id":%d,"type":"password"}`, restName, projID, envID)
+			rreq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/", strings.NewReader(body))
+			rreq.Header.Set("Content-Type", "application/json")
+			if token != "" {
+				rreq.Header.Set("Authorization", "Bearer "+token)
+			}
+			rrec := httptest.NewRecorder()
+			w.router.ServeHTTP(rrec, rreq)
+
+			gctx := context.Background()
+			if token != "" {
+				gctx = metadata.NewOutgoingContext(gctx, metadata.Pairs("authorization", "Bearer "+token))
+			}
+			_, gerr := w.grpc.CreateSecret(gctx, &pb.CreateSecretRequest{
+				Name: grpcName, Value: "v", ProjectId: uint32(projID), EnvironmentId: uint32(envID), Type: "password",
+			})
+
+			// Bounded soak: drop whatever got created (targeted by the unique names).
+			w.db.Exec("DELETE FROM secret_nodes WHERE name = ? OR name = ?", restName, grpcName)
+
+			// Classify each surface into a clean authz DECISION or a THIRD outcome, and assert
+			// parity ONLY on clean allow-vs-deny. A third outcome on either side (e.g. the gRPC
+			// invalid-token rate-limiter returning ResourceExhausted, a validation error, an
+			// internal error) is not an authorization decision and can legitimately differ
+			// across transports, so it is skipped — that keeps the oracle sound (no false
+			// positive). allow = the create was authorized (2xx / gRPC OK); deny = refused by
+			// authn/authz (401,403 / Unauthenticated,PermissionDenied).
+			restDec := "other"
+			switch rrec.Code {
+			case http.StatusOK, http.StatusCreated:
+				restDec = "allow"
+			case http.StatusUnauthorized, http.StatusForbidden:
+				restDec = "deny"
+			}
+			grpcDec := "other"
+			switch {
+			case gerr == nil:
+				grpcDec = "allow"
+			case status.Code(gerr) == codes.Unauthenticated || status.Code(gerr) == codes.PermissionDenied:
+				grpcDec = "deny"
+			}
+			if restDec == "other" || grpcDec == "other" {
+				return
+			}
+			if restDec != grpcDec {
+				t.Fatalf("CREATE AUTHZ PARITY VIOLATION as %s in project %d: REST=%s (code=%d), gRPC=%s (err=%v) — transport-dependent write authorization",
+					tokLabel, projID, restDec, rrec.Code, grpcDec, gerr)
+			}
+		}
+
 		secFor := func(sel byte) paritySecret {
 			if sel%2 == 1 {
 				return w.secB
@@ -328,19 +431,27 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 
 		const maxSteps = 40
 		for i := 0; i+2 < len(program) && i < maxSteps*3; i += 3 {
-			switch program[i] % 3 {
+			switch program[i] % 5 {
 			case 0:
 				grant(int(program[i+1]), int(program[i+2]))
 			case 1:
 				revoke(int(program[i+1]), int(program[i+2]))
-			default:
+			case 2:
 				label, tok := tokenFor(program[i+1], program[i+2])
 				readParity(label, tok, secFor(program[i+2]))
+			case 3:
+				grantWrite(int(program[i+1]), int(program[i+2]))
+			default: // 4
+				label, tok := tokenFor(program[i+1], program[i+2])
+				createParity(label, tok, int(program[i+2]))
 			}
 		}
 		// Anchors, every iteration regardless of input:
-		readParity("admin", w.adminTok, w.secA)               // both allow
-		readParity("outsider", w.principals[2].token, w.secB) // both deny (ungranted)
-		readParity("no-token", "", w.secA)                    // both deny (unauthenticated)
+		readParity("admin", w.adminTok, w.secA)               // read: both allow
+		readParity("outsider", w.principals[2].token, w.secB) // read: both deny (ungranted)
+		readParity("no-token", "", w.secA)                    // read: both deny (unauthenticated)
+		createParity("admin", w.adminTok, 0)                  // create: both allow (admin has write)
+		createParity("outsider", w.principals[2].token, 0)    // create: both deny (no write grant)
+		createParity("no-token", "", 0)                       // create: both deny (unauthenticated)
 	})
 }
