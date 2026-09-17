@@ -54,8 +54,12 @@ jobs:
           fi
 
           # emit "pkg|FuncName" for every real fuzz target in a package dir ($1 = ./dir)
+          # `grep || true`: a changed package with NO fuzz targets (e.g. a production-code
+          # fix touching server/ or a CLI pkg) makes grep match nothing and exit 1, which
+          # under `set -o pipefail` would kill the whole planning step. Tolerate it — such a
+          # package simply contributes no targets.
           emit_all_in_pkg() {
-            go test -list '^Fuzz' "$1" 2>/dev/null | grep '^Fuzz' | while IFS= read -r fn; do
+            go test -list '^Fuzz' "$1" 2>/dev/null | { grep '^Fuzz' || true; } | while IFS= read -r fn; do
               printf '%s|%s\n' "$1" "$fn"
             done
           }
