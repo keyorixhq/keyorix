@@ -39,7 +39,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 type apiFuzzPrincipal struct {
@@ -196,15 +195,16 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 	f.Fuzz(func(t *testing.T, program []byte) {
 		ctx := context.Background()
 
-		// per-iteration reset: drop fuzz-principal grants, flush the auth cache, clear model.
+		// per-iteration reset: drop fuzz-principal grants, clear the model. NO token-cache
+		// flush. middleware.InvalidateTokenCache writes a negative TOMBSTONE (it is a
+		// revocation helper, not a refresh), which denied the token for invalidTokenTTL and
+		// so silently masked every AUTHORIZED read in this harness — the positive path was
+		// never actually verified (a granted read got 401, and read() only checks integrity
+		// on a 200, so the assertion was skipped). The auth cache holds only the
+		// authenticated IDENTITY; the per-request permission check re-reads grants from the
+		// DB, so a grant/revoke is reflected on the very next read with no flush needed.
 		w.db.Exec("DELETE FROM user_roles WHERE user_id IN (?,?,?)",
 			w.principals[0].id, w.principals[1].id, w.principals[2].id)
-		for _, p := range w.principals {
-			if p.token != "" {
-				middleware.InvalidateTokenCache(p.token)
-			}
-		}
-		middleware.InvalidateTokenCache(w.adminTok)
 		canRead := map[uint]map[uint]bool{}
 		for _, p := range w.principals {
 			canRead[p.id] = map[uint]bool{w.projAID: false, w.projBID: false}
@@ -222,18 +222,12 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 			if err := w.c.AssignUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}, false); err == nil {
 				canRead[p.id][projID] = true
 			}
-			if p.token != "" {
-				middleware.InvalidateTokenCache(p.token)
-			}
 		}
 		revoke := func(pi, proj int) {
 			p := w.principals[pi%len(w.principals)]
 			projID := projFor(proj)
 			if err := w.c.RemoveUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}); err == nil {
 				canRead[p.id][projID] = false
-			}
-			if p.token != "" {
-				middleware.InvalidateTokenCache(p.token)
 			}
 		}
 		read := func(who, which, mode byte) {
