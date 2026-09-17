@@ -44,15 +44,26 @@ package encryption
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// sweepGuardDeadline is a HANG backstop, not the shared fuzzutil 3s amplification guard.
+// A legitimate iteration of this target does a full in-memory DB setup (multi-table migrate)
+// + real DEK rotation + full re-encryption sweep + recovery — inherently ~1-2s, and under
+// -fuzz coverage instrumentation on a loaded continuous-fuzzing rig it brushes 3s. Unlike its
+// file-only sibling crash-consistency targets, this one is DB-backed, and its inputs are
+// bounded (crashSel, 1-8 rows, a passphrase, a value prefix) with no untrusted-input-driven
+// allocation, so there is no amplification to catch on a tight deadline — only a genuine hang
+// (an infinite loop / real blowup), which this generous deadline still flags. See the
+// 2026-09-17 rig deploy note.
+const sweepGuardDeadline = 30 * time.Second
 
 // sweepCrashLabels are the durability checkpoints RotateDEKWithSweep emits, in order.
 // Index 0 ("") means "run to completion, no crash".
@@ -78,12 +89,23 @@ func FuzzDEKSweepCrashConsistency(f *testing.F) {
 		target := sweepCrashLabels[int(crashSel)%len(sweepCrashLabels)]
 		rows := int(nRows%8) + 1 // 1..8 seeded rows
 
-		// t.TempDir() must run on the test goroutine, not inside Guard's goroutine.
+		// t.TempDir() must run on the test goroutine, not inside the guard goroutine.
 		dir := t.TempDir()
 
-		fuzzutil.Guard(t.Fatalf, "dek-sweep-crash-consistency", func() {
+		// Local hang backstop with a generous deadline (see sweepGuardDeadline) instead of
+		// fuzzutil.Guard's shared 3s, which is tuned for fast file/parse targets. A violation
+		// inside runSweepCrashCase is signalled by panic (recovered by the testing framework
+		// as a fuzz failure); this goroutine+select only catches a true hang.
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
 			runSweepCrashCase(dir, pass, valPrefix, rows, target)
-		})
+		}()
+		select {
+		case <-done:
+		case <-time.After(sweepGuardDeadline):
+			t.Fatalf("dek-sweep-crash-consistency exceeded %s — possible hang", sweepGuardDeadline)
+		}
 	})
 }
 
@@ -94,6 +116,24 @@ type sweepSeededRow struct {
 	ver    int
 	val    string
 }
+
+// staticKEKProvider returns a fixed KEK with no PBKDF2. Crash-consistency here is about the
+// DEK-file/DB durability ordering (write-pending → sweep-commit → rename → fsync → recover),
+// NOT the KDF — so a cheap deterministic KEK is faithful to what the oracle tests and keeps
+// each iteration fast. The real derivation is 600k-iteration PBKDF2 (DefaultKEKIterations) and
+// this harness runs it ~3× per iteration (seed Initialize + rotation deriveKEK + recovery
+// Initialize); on a loaded continuous-fuzzing rig that blew past the 3s fuzzutil.Guard
+// deadline and flagged a false "possible amplification or hang" (rig deploy, 2026-09-17).
+// A static provider removes that cost and multiplies rig throughput. Both the seed and the
+// recovery Service use the SAME provider, so the promoted DEK unwraps under the same KEK.
+type staticKEKProvider struct{}
+
+func (staticKEKProvider) KEK() ([]byte, error) {
+	k := make([]byte, 32)
+	copy(k, "keyorix-dek-sweep-fuzz-static-kek")
+	return k, nil
+}
+func (staticKEKProvider) Name() string { return "test-static" }
 
 // runSweepCrashCase seeds an initialized Service + an in-memory DB of secret rows
 // (encrypted under the original DEK), runs RotateDEKWithSweep crashing at target,
@@ -117,6 +157,7 @@ func runSweepCrashCase(dir, pass, valPrefix string, rows int, target string) {
 
 	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
 	svc := NewService(cfg, dir)
+	svc.keyManager.SetKeyProvider(staticKEKProvider{}) // cheap KEK — see staticKEKProvider doc
 	if e := svc.Initialize(pass); e != nil {
 		// A fresh temp dir must always initialize; a failure here is a harness bug.
 		panic(fmt.Sprintf("seed Initialize(%q): %v", pass, e))
@@ -161,6 +202,7 @@ func runSweepCrashCase(dir, pass, valPrefix string, rows int, target string) {
 	// pending DEK when the sweep's redo marker committed, else discards a stray pending),
 	// then Initialize().
 	rec := NewService(cfg, dir)
+	rec.keyManager.SetKeyProvider(staticKEKProvider{}) // same KEK as the seed Service, so the promoted DEK unwraps
 	if e := rec.RecoverInterruptedRotation(db); e != nil {
 		panic(fmt.Sprintf("RecoverInterruptedRotation after crash %q: %v", target, e))
 	}
