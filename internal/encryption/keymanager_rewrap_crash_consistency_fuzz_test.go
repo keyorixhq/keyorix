@@ -35,10 +35,22 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
-	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
+
+// rewrapGuardDeadline is a HANG backstop, not the shared fuzzutil 3s amplification guard.
+// A legitimate iteration seeds a KeyManager (real 600k-iteration PBKDF2 under the old
+// provider), re-wraps under a second real password provider (another PBKDF2), then recovers
+// by trying up to two more providers (more PBKDF2) — inherently ~1-2s, and under -fuzz
+// coverage instrumentation on a loaded continuous-fuzzing rig it brushes 3s. Its inputs are
+// bounded (crashSel + two passphrases) with no untrusted-input-driven allocation, so there is
+// no amplification to catch on a tight deadline — only a genuine hang, which this generous
+// deadline still flags. The real password providers stay: the salt-persistence side effect and
+// the distinct-KEK confidentiality direction are under test here. See the 2026-09-17 rig
+// deploy note.
+const rewrapGuardDeadline = 30 * time.Second
 
 const (
 	rewrapDEKFile = "dek.key"
@@ -75,12 +87,20 @@ func FuzzDEKRewrapCrashConsistency(f *testing.F) {
 		// t.TempDir() must run on the test goroutine, not inside Guard's goroutine.
 		dir := t.TempDir()
 
-		// Inside Guard, signal any invariant violation with panic (Guard runs fn in a
-		// goroutine; the fuzzer records a panic as a reproducer). Guard's own fatalf is
-		// only for the hang case.
-		fuzzutil.Guard(t.Fatalf, "dek-rewrap-crash-consistency", func() {
+		// Local hang backstop with a generous deadline (see rewrapGuardDeadline) instead of
+		// fuzzutil.Guard's shared 3s, which is tuned for fast file/parse targets. An invariant
+		// violation inside runRewrapCrashCase is signalled by panic (the fuzzer records it as a
+		// reproducer); this goroutine+select only catches a true hang.
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
 			runRewrapCrashCase(dir, oldPass, newPass, target)
-		})
+		}()
+		select {
+		case <-done:
+		case <-time.After(rewrapGuardDeadline):
+			t.Fatalf("dek-rewrap-crash-consistency exceeded %s — possible hang", rewrapGuardDeadline)
+		}
 	})
 }
 
