@@ -5,6 +5,71 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+## v0.94.0 — 2026-09-17
+
+### Security
+- Bumped `digitorus/pkcs7`/`digitorus/timestamp` off a pinned 2023 commit
+  carrying two BER-parser defects found by fuzzing and disclosed to the
+  maintainer: a memory-exhaustion amplification (~130B input → ~1.8GB
+  allocation) and an unrecovered index-out-of-range panic. Both are fixed
+  upstream as of 2026-09-14. The strict-DER framing guard added in v0.92.1
+  (#1848) already shielded both timestamp-parsing paths and stays in place
+  as defence-in-depth; this removes the remaining reliance on that single
+  mitigation by dropping the vulnerable dependency itself. (#1895)
+- **A crash during DEK rotation could make every re-encrypted secret
+  permanently undecryptable.** `RotateDEKWithSweep`'s re-encryption sweep
+  commits the database under the new DEK, then renames the new key into
+  place on disk; a crash (power loss, SIGKILL, OOM) in the window between
+  that commit and the rename left the database encrypted under a key that
+  existed only as a "pending" file, which startup's cleanup unconditionally
+  deleted — total, unrecoverable loss of every secret touched by the
+  rotation. Found by a new crash-consistency fuzzer
+  (`FuzzDEKSweepCrashConsistency`) that interrupts the real rotation at
+  each durability checkpoint. Fixed with a write-ahead redo marker plus
+  recovery-on-startup (ADR-010 addendum): the marker becomes durable
+  atomically with the re-encrypted rows, and startup promotes the pending
+  key before initializing whenever the marker is present. (#1918)
+
+### Fixed
+- The login page threw `crypto.randomUUID is not a function` and blocked
+  sign-in entirely over plain HTTP — `crypto.randomUUID()` is only defined
+  in a secure context (HTTPS or localhost), which plain `http://<LAN-IP>`
+  is not. Added a `crypto.getRandomValues()`-based UUIDv4 fallback, used by
+  every caller. (#1882)
+- The admin Users page rendered seven org-wide compliance sections (stale
+  accounts, token hygiene, secret-hygiene debt, and more) above the actual
+  user list on a page titled "User Management." The user list now sits
+  directly under the header. (#1885)
+- The dashboard's Security Alerts panel rendered every open anomaly inline
+  — routinely hundreds — breaking the page layout. Capped to the 5 most
+  recent, with a link to the full paginated view. (#1883)
+- Creating a group could fail with a generic error that hid the real
+  cause: untrimmed whitespace in the name tripped the server's identifier
+  validator, and the modal never surfaced the server's actual message.
+  Separately, the groups list read the wrong field from the API response
+  and always rendered empty even when the group existed. Both fixed. (#1886)
+- The Projects page's "Recent" section was based on last-*updated* time,
+  not actual access — with a small project count this put most projects
+  under "Recent" and the rest under "All Projects," backwards from what
+  the sections imply. "Recent" is now based on the projects a user has
+  actually opened. (#1887)
+
+### Added
+- Edit/rename a project's name and description from the projects list or
+  the project page, without opening Settings. (#1884)
+- Audit page: the RBAC Events tab now matches the real role/group/
+  permission event types (it previously matched a non-existent prefix) and
+  resolves actor/target ids to names at display time. The Projects list
+  gained an explicit sort control; Service Accounts now shows an honest
+  "under construction" state instead of an error, since the standalone
+  backend isn't built yet; the roadmap page reflects current shipped
+  state. (#1888)
+
+### Changed
+- Migrated the MongoDB dynamic-secrets engine and rotation executor off
+  the deprecated `mongo-driver` v1 to v2. No behavior change; the existing
+  SRV/dialer egress guards (G48) are preserved under the new driver. (#1881)
+
 ## v0.93.0 — 2026-09-14
 
 ### Security
