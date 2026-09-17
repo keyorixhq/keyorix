@@ -151,7 +151,7 @@ Alternatively exposed as a protected admin API endpoint (operator-only, no user-
 
 - **Downtime:** the sweep holds a long-running write transaction. For large installations, this will block concurrent secret reads/writes for the duration. Acceptable at v0.x scale (hundreds of secrets). Document in operator guide. Hot-swap streaming rotation is a v2 concern.
 - **Memory pressure:** batched sweep keeps at most 500 plaintext values in memory at once. Acceptable trade-off between memory pressure and transaction duration.
-- **Failure mode:** if the server crashes mid-sweep (after `keys/dek.key.pending` is written but before rename), the pending file is orphaned. Recovery: re-run `keyorix encryption rotate --confirm`. The pending file is detected and cleaned up at startup.
+- **Failure mode:** if the server crashes mid-sweep (after `keys/dek.key.pending` is written but before rename), the pending file is orphaned. Recovery: re-run `keyorix encryption rotate --confirm`. The pending file is detected and cleaned up at startup. **⚠️ This description was incomplete and unsafe for one crash window — see "Addendum — Crash-consistency redo recovery (2026-09-17)" below.** Unconditionally discarding the pending file is only correct when the crash landed *before* the sweep transaction committed; a crash *after* the commit but before the rename left the DB re-encrypted under the new DEK while that discard threw the new DEK away, causing permanent data loss. The addendum documents the redo-marker fix.
 
 ### Not in scope for this ADR
 
@@ -259,3 +259,103 @@ The sweep itself is already covered by the unit and integration tests listed in 
 - `TestRunRotate_RejectsRemoteStorage` — with `cfg.Storage.Type == "remote"`, returns a clear error before opening any DB connection.
 
 These live in a new `encryption_test.go` next to `encryption.go` in the CLI package.
+
+---
+
+## Addendum — Crash-consistency redo recovery (2026-09-17)
+
+This addendum closes a **data-loss window** in the rotation's crash-consistency, found by a
+crash-consistency fuzzer (`FuzzDEKSweepCrashConsistency`) and fixed in PR #1918. It corrects
+the "Failure mode" bullet in *Consequences*, which described discarding the pending DEK file
+on restart as safe recovery.
+
+### The bug
+
+The algorithm (steps 5–13 above) makes two independent durable changes with **no atomicity
+or recovery bridge** between them:
+
+1. **step 12 — the sweep transaction COMMITs** (all rows now ciphertext under the *new* DEK, durable in the DB), then
+2. **step 13a — rename `dek.key.pending → dek.key`** (the *file* promotion of the new DEK).
+
+A crash (power loss / SIGKILL / OOM) **after the commit but before the rename** leaves:
+
+- DB rows: under the **new** DEK (committed).
+- active `dek.key`: still the **old** DEK (rename never ran).
+- `dek.key.pending`: the **new** DEK — the *only* copy.
+
+On restart, `CleanPendingDEK()` **unconditionally deleted** `dek.key.pending` as "a leftover
+from an interrupted rotation", discarding the only copy of the new DEK. The server then
+loaded the old DEK, under which none of the just-re-encrypted rows decrypt → **permanent,
+total loss of decryptability of every DEK-encrypted secret** (recoverable only from a
+pre-rotation DB backup). The old "re-run `encryption rotate`" advice does not recover it —
+the current active (old) DEK can no longer decrypt the new-DEK rows, so a fresh sweep can't
+read them either.
+
+The discard is only correct for a crash **before** the commit (step 12), where the rows are
+still under the old DEK and the pending file genuinely is a throwaway.
+
+### The fix — write-ahead redo marker + recovery on startup
+
+A textbook redo (write-ahead) record makes recovery deterministic. The recovery decision
+hinges on one fact — *did the sweep transaction commit?* — so that fact is recorded **inside
+the sweep transaction itself**:
+
+1. **Durable pending file first.** After writing `dek.key.pending`, `fsync` the key
+   **directory** (not just the file — `SecureWriteFileSync` synced the data but not the
+   directory entry). This guarantees the invariant *marker durable ⇒ new DEK durably present*.
+2. **Redo marker in the sweep transaction.** `sweepFn` writes a `system_metadata` row
+   `dek_rotation.promote_pending` = new key version **in the same transaction** as the row
+   re-encryption, so the marker becomes durable atomically with the rows moving to the new
+   DEK. (`system_metadata` is not DEK-encrypted, so the sweep never touches it; the marker
+   carries no secret material.)
+3. **Recovery before `Initialize`, under the exclusive key lock.**
+   `Service.RecoverInterruptedRotation(db)` replaces the bare `CleanPendingDEK()` at both
+   startup sites (`server/main.go`) and the rotate CLI:
+   - **marker present** ⇒ the sweep committed → promote `dek.key.pending` via
+     `KeyManager.PromotePendingDEK()` (an idempotent rename+fsync; a no-op if the rename
+     already happened, so a crash *after* the rename but before the marker is cleared replays
+     harmlessly), then clear the marker.
+   - **marker absent** ⇒ no committed sweep → discard any stray pending file (the original
+     `CleanPendingDEK` behavior — correct here, and also for interrupted KEK-rotation/rewrap,
+     which keep the *same* DEK).
+   No data-probing heuristics: the marker either committed with the rows or it did not.
+
+The rotation self-migrates the marker table (idempotent `AutoMigrate` of `SystemMetadata`; a
+no-op on a real DB, where the table already exists for the bootstrap marker and audit
+high-water), so the marker never depends on external migration ordering.
+
+### Why this approach (over the alternatives)
+
+- **Decrypt hot path is untouched** — still one authoritative DEK per read. Rejected a
+  dual-key / versioned-keyring read fallback (Alternative A above, "hot rotation") because for
+  a security product, expanding the read path's key set — even during a window — is new
+  attack/oracle surface and can mask integrity failures.
+- **Deterministic, auditable** — the explicit committed-or-not marker beats probing a sample
+  row to *infer* whether the sweep committed (empty tables / any sweep-gap row could
+  misclassify → data loss).
+- The old DEK is still retired promptly on completion; confidentiality and availability are
+  both preserved.
+
+### Scope
+
+Unique to `RotateDEKWithSweep` — the only rotation that re-encrypts DB rows under a **new**
+DEK, so the only one with a DB-vs-file key divergence. KEK-passphrase rotation
+(`RotateKEKPassphrase`) and provider migration (`RewrapDEK`, ADR-041) keep the **same** DEK
+(only its wrapping changes), so their pending-file crash-consistency was already sound; their
+fuzzers (`FuzzKEKRotationCrashConsistency`, `FuzzDEKRewrapCrashConsistency`) were and remain
+green, and a stray pending from them is still correctly discarded (no marker ⇒ discard).
+
+### Operator note
+
+A previous minor cost: on a **local** storage backend the server now opens a short-lived DB
+connection during encryption init (to read the redo marker), slightly earlier in startup than
+before, closed immediately after recovery. Remote storage runs no local sweep, so recovery
+falls back to the leftover-cleanup path with no DB access.
+
+### Regression test
+
+`FuzzDEKSweepCrashConsistency` (`internal/encryption/keymanager_sweep_crash_consistency_fuzz_test.go`)
+interrupts the real rotation at each durability checkpoint (`sweep:...` labels on the
+nil-in-prod `rotationCheckpoint` seam) and asserts every committed row still decrypts under
+the recovered active DEK. It passes at every crash point after the fix and goes red if the
+ordering/recovery regresses. Runs on in-memory SQLite — CI-runnable, no rig needed.
