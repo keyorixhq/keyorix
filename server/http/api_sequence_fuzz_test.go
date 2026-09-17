@@ -39,6 +39,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
 type apiFuzzPrincipal struct {
@@ -46,12 +47,18 @@ type apiFuzzPrincipal struct {
 	token string // "" if this principal could not obtain a session (treated as no-token)
 }
 
+// apiFuzzPrincipalPassword is the shared password for the non-admin fuzz principals and
+// the dedicated revocation-probe principal.
+const apiFuzzPrincipalPassword = "Xk7#Qp2$Rn5@Wv9!"
+
 type apiFuzzWorld struct {
 	router     http.Handler
 	db         *gorm.DB
 	c          *core.KeyorixCore
 	readerRole uint
 	adminTok   string
+	adminID    uint // actor for RevokeUserSessions in the revocation probe
+	revuserID  uint // dedicated principal for the token-revocation-monotonicity probe
 	projAID    uint
 	projBID    uint
 	refA, valA string
@@ -84,6 +91,11 @@ func buildAPIFuzzWorld(f *testing.F) *apiFuzzWorld {
 	}
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	// Wire the core's auth-cache invalidator to the middleware cache, exactly as real
+	// server startup does (NewRouter alone does not). Without this, RevokeUserSessions'
+	// cache eviction is a no-op in-test and a revoked token lingers in the positive cache
+	// for its TTL — so the revocation probe below must exercise the real eviction path.
+	c.SetTokenCacheInvalidator(customMiddleware.InvalidateTokenCacheByHash)
 	ls := store.NewLocalStorage(db)
 	ctx := context.Background()
 
@@ -170,6 +182,15 @@ func buildAPIFuzzWorld(f *testing.F) *apiFuzzWorld {
 		mkPrincipal("outsider", "outsider@x.io"),
 	}
 
+	// revuser is a dedicated principal for the token-revocation-monotonicity probe. It is
+	// NOT pre-logged-in: the probe mints a fresh session each time, so a revocation in one
+	// iteration never leaks a dead token into the next (the shared world is built once).
+	// RevokeUserSessions leaves the account active, so re-login always succeeds.
+	revuser, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "revuser", Email: "revuser@x.io", Password: apiFuzzPrincipalPassword})
+	if err != nil || revuser == nil {
+		f.Fatalf("create revuser: %v", err)
+	}
+
 	r, err := NewRouter(&config.Config{}, c)
 	if err != nil {
 		f.Fatalf("router: %v", err)
@@ -177,6 +198,7 @@ func buildAPIFuzzWorld(f *testing.F) *apiFuzzWorld {
 
 	return &apiFuzzWorld{
 		router: r, db: db, c: c, readerRole: role.ID, adminTok: adminSess.SessionToken,
+		adminID: admin.ID, revuserID: revuser.ID,
 		projAID: pA.ID, projBID: pB.ID,
 		refA: "proja/prod/sa", valA: "VALUE-A-9f3c1",
 		refB: "projb/prod/sb", valB: "VALUE-B-6b28e",
@@ -190,6 +212,7 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 
 	f.Add([]byte{0, 0, 0, 2, 0, 3, 2, 2, 3})
 	f.Add([]byte{0, 1, 1, 2, 1, 3})
+	f.Add([]byte{0}) // triggers the revocation-monotonicity probe (program[0]%4==0)
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
@@ -280,6 +303,48 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 			}
 		}
 
+		// revocationProbe exercises token-revocation monotonicity end-to-end against the
+		// real stack: mint a FRESH session for revuser, grant it read on A, confirm the
+		// token actually authorizes the read (positive control — otherwise the deny below
+		// is vacuous), then RevokeUserSessions and assert the SAME token is now denied.
+		// Sound: only the deny direction is asserted, and only after proving the token
+		// worked immediately before. Revocation is driven through the real core path
+		// (deletes the session + evicts the auth cache), reads over HTTP — so it verifies
+		// the actual cache-eviction, not a directly-written tombstone.
+		revocationProbe := func() {
+			sess, _, lerr := w.c.Login(ctx, &core.LoginRequest{Username: "revuser", Password: apiFuzzPrincipalPassword})
+			if lerr != nil || sess == nil {
+				return
+			}
+			tok := sess.SessionToken
+			defer w.db.Exec("DELETE FROM user_roles WHERE user_id = ?", w.revuserID) // keep the shared world clean
+			if err := w.c.AssignUserRole(ctx, 0, w.revuserID, w.readerRole, core.Scope{ProjectID: w.projAID}, false); err != nil {
+				return
+			}
+			readA := func() *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+w.refA, nil)
+				req.Header.Set("Authorization", "Bearer "+tok)
+				rec := httptest.NewRecorder()
+				w.router.ServeHTTP(rec, req)
+				return rec
+			}
+			// Positive control: the granted token must actually read A, else the deny below
+			// is vacuous and we skip the assertion (avoids a false positive).
+			if readA().Code != http.StatusOK {
+				return
+			}
+			if _, err := w.c.RevokeUserSessions(ctx, w.adminID, w.revuserID); err != nil {
+				return
+			}
+			post := readA()
+			if post.Code == http.StatusOK {
+				t.Fatalf("REVOCATION INEFFECTIVE: revuser's token still returned 200 for %q after RevokeUserSessions", w.refA)
+			}
+			if strings.Contains(post.Body.String(), w.valA) {
+				t.Fatalf("PLAINTEXT LEAK after revocation: response for %q contains the secret value\nbody=%s", w.refA, post.Body.String())
+			}
+		}
+
 		const maxSteps = 60
 		for i := 0; i+2 < len(program) && i < maxSteps*3; i += 3 {
 			switch program[i] % 3 {
@@ -294,5 +359,11 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 		// always exercise the two anchor paths regardless of input:
 		read(0, 0, 2) // admin reads A -> integrity/round-trip
 		read(2, 1, 3) // outsider (index 2, ungranted) reads B -> fail-closed
+
+		// Occasionally run the revocation-monotonicity probe. It mints a fresh session
+		// (bcrypt), so gate it (~1 in 4 inputs) to keep average throughput high.
+		if len(program) >= 1 && program[0]%4 == 0 {
+			revocationProbe()
+		}
 	})
 }
