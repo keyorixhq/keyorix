@@ -25,10 +25,13 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -51,6 +54,11 @@ type apiFuzzPrincipal struct {
 // the dedicated revocation-probe principal.
 const apiFuzzPrincipalPassword = "Xk7#Qp2$Rn5@Wv9!"
 
+// apiSeqMutSeq gives each mutation-audit-completeness probe invocation a process-unique
+// secret name so a freshly created secret carries a brand-new SecretNodeID with no prior
+// audit rows — the audit oracle then filters on (Action, ResourceID) alone, clock-free.
+var apiSeqMutSeq atomic.Int64
+
 type apiFuzzWorld struct {
 	router     http.Handler
 	db         *gorm.DB
@@ -61,6 +69,7 @@ type apiFuzzWorld struct {
 	revuserID  uint // dedicated principal for the token-revocation-monotonicity probe
 	projAID    uint
 	projBID    uint
+	envAID     uint // env of projA — target scope for the create/rotate/update/delete audit-completeness probe
 	refA, valA string
 	refB, valB string
 	principals []apiFuzzPrincipal // non-admin, own no secrets, start with no grants
@@ -199,7 +208,7 @@ func buildAPIFuzzWorld(f *testing.F) *apiFuzzWorld {
 	return &apiFuzzWorld{
 		router: r, db: db, c: c, readerRole: role.ID, adminTok: adminSess.SessionToken,
 		adminID: admin.ID, revuserID: revuser.ID,
-		projAID: pA.ID, projBID: pB.ID,
+		projAID: pA.ID, projBID: pB.ID, envAID: eA.ID,
 		refA: "proja/prod/sa", valA: "VALUE-A-9f3c1",
 		refB: "projb/prod/sb", valB: "VALUE-B-6b28e",
 		principals: principals,
@@ -213,6 +222,7 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 	f.Add([]byte{0, 0, 0, 2, 0, 3, 2, 2, 3})
 	f.Add([]byte{0, 1, 1, 2, 1, 3})
 	f.Add([]byte{0}) // triggers the revocation-monotonicity probe (program[0]%4==0)
+	f.Add([]byte{1}) // triggers the mutation/audit-completeness probe (program[0]%4==1)
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
@@ -345,6 +355,88 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 			}
 		}
 
+		// mutationProbe drives the WRITE side of the CRUD lifecycle over HTTP through the
+		// real stack — create, rotate, update, delete — as the global admin (authorized at
+		// every scope, so each call genuinely succeeds), and asserts AUDIT COMPLETENESS:
+		// every successful privileged mutation must leave its attributable audit event.
+		//
+		// Sound and clock-free. The assertion fires ONLY after the HTTP call returned its
+		// documented success code (201/200/200/204); a non-success skips it and never
+		// asserts absence — so it can only catch a mutation that SUCCEEDED yet produced NO
+		// event, i.e. a real audit-trail gap (the property NIS2/DORA compliance leans on).
+		// The secret is created fresh with a process-unique name, so its SecretNodeID is
+		// brand new and the oracle matches on (Action, ResourceID) alone — no time window to
+		// race, no confounding older events.
+		//
+		// The audit write is asynchronous: the handlers fire LogSecret*WithProject inside a
+		// goSafe goroutine on a detached context, so the row is not guaranteed present the
+		// instant ServeHTTP returns. Hence a BOUNDED POLL, not an immediate read — the poll
+		// only ever converts a slow write into a short wait, and fails solely when the event
+		// never lands within a generous deadline (a genuine drop).
+		mutationProbe := func() {
+			name := fmt.Sprintf("apiseq-mut-%d", apiSeqMutSeq.Add(1))
+			defer w.db.Exec("DELETE FROM secret_nodes WHERE name = ? AND project_id = ?", name, w.projAID)
+
+			adminReq := func(method, target, body string) *httptest.ResponseRecorder {
+				var req *http.Request
+				if body != "" {
+					req = httptest.NewRequest(method, target, strings.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+				} else {
+					req = httptest.NewRequest(method, target, nil)
+				}
+				req.Header.Set("Authorization", "Bearer "+w.adminTok)
+				rec := httptest.NewRecorder()
+				w.router.ServeHTTP(rec, req)
+				return rec
+			}
+
+			// assertAudited: the (kind, sid) event MUST appear within the deadline. The
+			// bounded poll absorbs the async detached-context audit write without ever
+			// false-positiving on a merely-slow one.
+			assertAudited := func(kind string, sid uint) {
+				deadline := time.Now().Add(10 * time.Second)
+				for {
+					res, err := w.c.SearchAuditLogs(ctx, core.AuditSearchRequest{Action: kind, ResourceID: sid, Limit: 5})
+					if err == nil && res != nil && (res.Total > 0 || len(res.Events) > 0) {
+						return
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("AUDIT COMPLETENESS: successful HTTP mutation left no %q event for secret %d (id-scoped, 10s deadline)", kind, sid)
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+
+			// CREATE — POST /api/v1/secrets/ (authz is handler-internal; admin passes).
+			createBody := fmt.Sprintf(`{"name":%q,"value":"MUT-CREATE-1","project_id":%d,"environment_id":%d,"type":"password"}`,
+				name, w.projAID, w.envAID)
+			if rec := adminReq(http.MethodPost, "/api/v1/secrets/", createBody); rec.Code != http.StatusCreated {
+				return // create didn't cleanly succeed — nothing to assert soundly
+			}
+			// Resolve the fresh secret's id by its unique name (clock- and JSON-shape-
+			// independent). Absent ⇒ skip rather than assert.
+			var node models.SecretNode
+			if e := w.db.Where("name = ? AND project_id = ?", name, w.projAID).First(&node).Error; e != nil || node.ID == 0 {
+				return
+			}
+			sid := node.ID
+			assertAudited("secret.created", sid)
+
+			// ROTATE — POST /{id}/rotate (secrets.write, route-gated; admin passes).
+			if rec := adminReq(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/rotate", sid), `{"new_value":"MUT-ROTATE-2"}`); rec.Code == http.StatusOK {
+				assertAudited("secret.rotated", sid)
+			}
+			// UPDATE — PUT /{id} (secrets.write, route-gated).
+			if rec := adminReq(http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d", sid), `{"value":"MUT-UPDATE-3"}`); rec.Code == http.StatusOK {
+				assertAudited("secret.updated", sid)
+			}
+			// DELETE — DELETE /{id} (secrets.delete, route-gated) → 204.
+			if rec := adminReq(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", sid), ""); rec.Code == http.StatusNoContent {
+				assertAudited("secret.deleted", sid)
+			}
+		}
+
 		const maxSteps = 60
 		for i := 0; i+2 < len(program) && i < maxSteps*3; i += 3 {
 			switch program[i] % 3 {
@@ -364,6 +456,13 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 		// (bcrypt), so gate it (~1 in 4 inputs) to keep average throughput high.
 		if len(program) >= 1 && program[0]%4 == 0 {
 			revocationProbe()
+		}
+
+		// Occasionally run the mutation/audit-completeness probe (~1 in 4 inputs, disjoint
+		// from the revocation gate above). It creates + rotates + updates + deletes a fresh
+		// secret over HTTP and polls the async audit write, so it is heavier — gate it too.
+		if len(program) >= 1 && program[0]%4 == 1 {
+			mutationProbe()
 		}
 	})
 }
