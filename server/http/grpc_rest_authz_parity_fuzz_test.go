@@ -78,6 +78,13 @@ var parityCreateSeq atomic.Int64
 // gets two brand-new admin-owned secrets (one per surface) with process-unique names.
 var parityMutSeq atomic.Int64
 
+// parityStateSeq names the throwaway user each account-state-gate probe mints fresh (one
+// per invocation, so parallel fuzz workers never suspend/reactivate a shared user).
+var parityStateSeq atomic.Int64
+
+// parityStatePassword is the login password for those throwaway users.
+const parityStatePassword = "Xk7#Qp2$Rn5@Wv9!"
+
 // parityRESTDecision classifies an HTTP status into a clean authz DECISION or a THIRD
 // outcome: any 2xx is "allow", 401/403 is "deny", everything else (validation, not-found,
 // rate-limit, internal) is "other". A third outcome is NOT an authorization decision and
@@ -154,6 +161,15 @@ func buildParityWorld(f *testing.F) *parityWorld {
 	}
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	// NOTE: we deliberately do NOT wire SetTokenCacheInvalidator here. The account-state gate
+	// probe relies on a suspension propagating to the REST surface — and it does so WITHOUT
+	// the proactive evictor, because the REST fast path re-checks account state on every
+	// session cache hit (serveAuthCacheHit → AccountStillUsable, the #146 hardening): a
+	// suspended user's cached identity is denied and evicted on its very next request. Wiring
+	// the proactive evictor would additionally write negative tombstones into the process-wide
+	// middleware token cache mid-run, perturbing the sibling read/create/mutate/assign probes
+	// that share that cache — an unnecessary, flake-inducing side effect for an invariant the
+	// fast-path re-check already guarantees. gRPC has no such cache and re-validates every call.
 	ls := store.NewLocalStorage(db)
 	ctx := context.Background()
 
@@ -324,6 +340,7 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 	f.Add([]byte{6, 2, 0})          // delete as admin -> both allow
 	f.Add([]byte{7, 2, 0})          // role-assign as admin -> both allow
 	f.Add([]byte{7, 3, 0})          // role-assign as principal (no roles.assign) -> both deny
+	f.Add([]byte{2})                // triggers the account-state gate probe (program[0]%4==2)
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
@@ -581,6 +598,73 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 			}
 		}
 
+		// accountStateParity exercises the ACCOUNT-STATE cross-cutting gate (P3) as a live
+		// differential: a freshly-minted user is granted read on secret A, its own fresh
+		// session is proven to read A over BOTH transports (positive control — otherwise the
+		// post-suspend assertion is vacuous), then the user is SUSPENDED and the SAME token is
+		// read again over both surfaces.
+		//
+		// Two sound assertions, neither able to false-positive:
+		//   - ABSOLUTE: a suspended account must NOT still return the secret on either surface
+		//     (a login-blocked account reading a secret is unambiguously wrong). Asserted per
+		//     surface, so it also catches the case where BOTH wrongly allow.
+		//   - PARITY: the two surfaces must AGREE (REST-allowed == gRPC-allowed) — a suspend
+		//     that lands on one transport but not the other is a transport-dependent bypass.
+		//
+		// The subtle part is the REST auth-cache: SuspendUser evicts the suspended session's
+		// cached identity through the wired invalidator (buildParityWorld), so the REST fast
+		// path re-validates on the next request and denies — matching gRPC (no cache). Without
+		// that eviction a suspended user keeps reading over REST for the positive-cache TTL
+		// while gRPC denies: exactly the #r125-H2 / #1911 auth-cache-propagation gap this
+		// differential is here to catch. Each invocation mints a NEW user so parallel fuzz
+		// workers never fight over one account's state; its grants are dropped afterward.
+		accountStateParity := func() {
+			n := parityStateSeq.Add(1)
+			uname := fmt.Sprintf("pstate-%d", n)
+			u, cerr := w.c.CreateUser(ctx, &core.CreateUserRequest{Username: uname, Email: uname + "@x.io", Password: parityStatePassword})
+			if cerr != nil || u == nil {
+				return
+			}
+			defer w.db.Exec("DELETE FROM user_roles WHERE user_id = ?", u.ID)
+			if e := w.c.AssignUserRole(ctx, 0, u.ID, w.readerRole, core.Scope{ProjectID: w.projAID}, false); e != nil {
+				return
+			}
+			sess, _, lerr := w.c.Login(ctx, &core.LoginRequest{Username: uname, Password: parityStatePassword})
+			if lerr != nil || sess == nil {
+				return
+			}
+			tok := sess.SessionToken
+
+			// Positive control: both surfaces must read A now, else the post-suspend check is
+			// vacuous and we skip it (no false positive).
+			if preR, _ := restRead(tok, w.secA.ref); !preR {
+				return
+			}
+			if preG, _ := grpcRead(tok, w.secA.id); !preG {
+				return
+			}
+
+			if e := w.c.SuspendUser(ctx, w.adminID, u.ID); e != nil {
+				return
+			}
+
+			restOK, restVal := restRead(tok, w.secA.ref)
+			grpcOK, grpcVal := grpcRead(tok, w.secA.id)
+			// ABSOLUTE: a suspended account must be denied on each surface.
+			if restOK {
+				t.Fatalf("SUSPENDED-ACCOUNT BYPASS (REST): a suspended user still read %q over REST after SuspendUser (value-present=%v) — the auth-cache did not reflect the suspension", w.secA.ref, restVal == w.secA.val)
+			}
+			if grpcOK {
+				t.Fatalf("SUSPENDED-ACCOUNT BYPASS (gRPC): a suspended user still read %q over gRPC after SuspendUser (value-present=%v)", w.secA.ref, grpcVal == w.secA.val)
+			}
+			// PARITY (kept explicit for symmetry with the other probes; the two absolute
+			// checks above already force both to deny, so this can only differ if one of them
+			// was somehow skipped).
+			if restOK != grpcOK {
+				t.Fatalf("SUSPENDED-ACCOUNT PARITY VIOLATION reading %q: REST allowed=%v, gRPC allowed=%v — transport-dependent enforcement of account suspension", w.secA.ref, restOK, grpcOK)
+			}
+		}
+
 		secFor := func(sel byte) paritySecret {
 			if sel%2 == 1 {
 				return w.secB
@@ -641,5 +725,11 @@ func FuzzGRPCRESTSecretReadAuthzParity(f *testing.F) {
 		roleAssignParity("admin", w.adminTok, 0)                     // assign: both allow (admin has roles.assign)
 		roleAssignParity("outsider", w.principals[2].token, 0)       // assign: both deny (no roles.assign)
 		roleAssignParity("no-token", "", 0)                          // assign: both deny (unauthenticated)
+
+		// Account-state gate (P3): mints a fresh user + a fresh session (bcrypt), so gate it
+		// (~1 in 4 inputs) to keep average throughput high, like the other heavy probes.
+		if len(program) >= 1 && program[0]%4 == 2 {
+			accountStateParity()
+		}
 	})
 }
