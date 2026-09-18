@@ -1,19 +1,10 @@
 package common
 
-// CSVSafe neutralizes spreadsheet formula injection (CWE-1236): a CSV cell
-// beginning with =, +, -, @, TAB, or CR is prefixed with a single quote so
-// Excel / LibreOffice / Sheets treat it as text rather than executing it as a
-// formula. Apply it to any server-supplied free-text field (actor names,
-// event descriptions, etc.) written to a CSV a CLI command emits, mirroring
-// the identical csvSafe convention already applied to the server's own CSV
-// export handlers (server/http/handlers/csv_safe.go, #148/#239).
-func CSVSafe(s string) string {
-	if s == "" {
-		return s
-	}
-	switch s[0] {
-	case '=', '+', '-', '@', '\t', '\r':
-		return "'" + s
-	}
-	return s
-}
+import "github.com/keyorixhq/keyorix/internal/csvsafe"
+
+// CSVSafe neutralises spreadsheet formula injection (CWE-1236) in a CSV cell. It delegates to the
+// shared internal/csvsafe leaf so every layer uses ONE implementation of the neutralisation logic
+// instead of carrying its own copy. Kept as a package-local name (a thin, drift-free forwarder) so
+// existing CLI callers and the csv-writer completeness guard keep the CSVSafe symbol. Apply it to
+// any server-supplied free-text field written to a CSV a CLI command emits.
+func CSVSafe(s string) string { return csvsafe.Neutralize(s) }

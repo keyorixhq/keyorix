@@ -1,21 +1,19 @@
-package handlers
+package csvsafe
 
-// FuzzCSVSafeFormulaNeutralization fuzzes csvSafe (csv_safe.go), the CWE-1236 spreadsheet
-// formula-injection neutraliser applied to every user-controlled free-text field written to a
-// CSV export an auditor opens. Two sound invariants (assert only the safe direction, so neither
-// can false-positive):
+// FuzzCSVSafeFormulaNeutralization fuzzes Neutralize, the single shared CWE-1236 spreadsheet
+// formula-injection neutraliser every CSV export layer (core, cli, http handlers) delegates to.
+// Two sound invariants (assert only the safe direction, so neither can false-positive):
 //
-//   - NO DATA LOSS: csvSafe only ever prepends a single leading quote — it never drops, reorders,
-//     or otherwise rewrites the value. (Output is exactly s or "'"+s.)
+//   - NO DATA LOSS: Neutralize only ever prepends a single leading quote — it never drops,
+//     reorders, or otherwise rewrites the value. (Output is exactly s or "'"+s.)
 //   - NO FORMULA CELL (end-to-end): the neutralised value, written through a real encoding/csv
-//     Writer and read back through a real Reader — the exact path the export takes — must never
+//     Writer and read back through a real Reader — the exact path an export takes — must never
 //     produce a cell that begins with a spreadsheet formula trigger (=, +, -, @, TAB, CR). This
-//     is the property an attacker would break to smuggle `=cmd|'/C calc'!A0`-style payloads into
-//     an auditor's spreadsheet; asserting it round-trips through encoding/csv also guards against
-//     the CSV encoding itself ever re-introducing a leading trigger.
+//     is what an attacker would break to smuggle `=cmd|'/C calc'!A0`-style payloads into an
+//     auditor's spreadsheet; round-tripping through encoding/csv also guards against the CSV
+//     encoding itself ever re-introducing a leading trigger.
 //
-// A regression + end-to-end guard on a real injection boundary. Pure function + encoding/csv, no
-// server/DB — CI-runnable.
+// Pure function + encoding/csv, no server/DB — CI-runnable.
 
 import (
 	"encoding/csv"
@@ -24,7 +22,7 @@ import (
 )
 
 // csvFormulaTriggers is the set of leading bytes a spreadsheet may execute as a formula/command,
-// mirroring csvSafe's own switch. A neutralised, round-tripped cell must begin with none of them.
+// mirroring Neutralize's own switch. A neutralised, round-tripped cell must begin with none of them.
 var csvFormulaTriggers = map[byte]bool{'=': true, '+': true, '-': true, '@': true, '\t': true, '\r': true}
 
 func FuzzCSVSafeFormulaNeutralization(f *testing.F) {
@@ -38,11 +36,11 @@ func FuzzCSVSafeFormulaNeutralization(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, s string) {
-		out := csvSafe(s)
+		out := Neutralize(s)
 
-		// Invariant 1: no data loss — csvSafe only ever prepends a single quote.
+		// Invariant 1: no data loss — Neutralize only ever prepends a single quote.
 		if out != s && out != "'"+s {
-			t.Fatalf("csvSafe altered data beyond a single leading quote: in=%q out=%q", s, out)
+			t.Fatalf("Neutralize altered data beyond a single leading quote: in=%q out=%q", s, out)
 		}
 
 		// An empty cell carries no formula-injection risk, and a single empty CSV field encodes
