@@ -1,0 +1,11 @@
+name: keyorixhq/go-manual-queries
+version: 0.1.0
+description: |
+  On-demand CodeQL queries that are deliberately NOT part of the CI code-scanning run.
+  Unlike ../go-queries (which the CodeQL workflow appends via `queries: +./.github/codeql/go-queries`
+  and which therefore produces standing code-scanning alerts), the queries here emit LEAD LISTS, not
+  defects — running them in CI would flood the security dashboard with hundreds of non-actionable
+  alerts. Run them manually against a Go database, e.g.:
+    codeql database analyze <db> .github/codeql/manual-queries --format=csv --output=out.csv
+dependencies:
+  codeql/go-all: "*"
