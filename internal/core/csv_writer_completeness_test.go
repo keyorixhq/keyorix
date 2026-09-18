@@ -88,9 +88,22 @@ func (f csvWriterFunc) String() string { return f.File + ":" + f.FuncName }
 // build output, the operator module's separate go.mod, and the web frontend
 // -- which has its own, separately-fixed #1682 CSV writer in TypeScript, out
 // of scope for a go/ast walk).
+//
+// Any dot-prefixed directory is skipped: besides .git and .scratch, a developer
+// checkout can carry nested git WORKTREES (e.g. .claude/worktrees/<branch>,
+// .claire/worktrees/<branch>) that each hold a full, STALE copy of the repo.
+// Walking those pollutes the scan with duplicate CSV writers and, worse, files
+// mid-rebase that don't parse ("expected 'package', found placeholder") -- a
+// spurious local-only failure. CI checks out a single clean tree with no such
+// dirs, so this only affects local `go test`; skipping all dot-dirs (tool/VCS
+// metadata by convention -- none hold first-party Go CSV writers) makes the walk
+// deterministic regardless of a developer's stray worktrees.
 func csvWriterSkipDir(name string) bool {
+	if strings.HasPrefix(name, ".") { // .git, .scratch, .claude/.claire worktrees, .github, ...
+		return true
+	}
 	switch name {
-	case ".git", "node_modules", "dist", ".scratch", "vendor", "operator", "web":
+	case "node_modules", "dist", "vendor", "operator", "web":
 		return true
 	}
 	return false

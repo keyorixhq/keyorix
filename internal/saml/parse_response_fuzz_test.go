@@ -42,6 +42,24 @@ import (
 //     A success (nil error, non-nil info) on any OTHER input means a signature was
 //     accepted that we never produced — an XML signature-wrapping/canonicalization
 //     bypass, an unsigned-assertion acceptance, or a stripped-signature path.
+//   - ERROR-ORACLE SANITIZATION: every failing input must return the exact fixed
+//     sentinel errInvalidSAMLResponse — never a distinguishable error whose text or
+//     type varies with the internal failure reason. The ACS body is fully
+//     attacker-controlled and unauthenticated, so any per-reason variation in the
+//     returned error is an oracle: crewjam's InvalidResponseError.PrivateErr carries
+//     XML-parse / signature / certificate internals, and — on the SAML decrypt path
+//     specifically — a CBC EncryptedAssertion has no authentication tag, so a
+//     reason-distinguishing error there is a padding oracle by construction. Keyorix
+//     configures no SP decryption key, so an EncryptedAssertion cannot decrypt at all
+//     and must fail closed through the SAME sanitized sentinel; this invariant locks
+//     that (and every other failure path) against arbitrary input. A correct
+//     ParseResponse satisfies it by construction — it returns errInvalidSAMLResponse
+//     bare on both of its error paths — so asserting identity here false-positives on
+//     nothing and catches any future path that leaks a distinguishable error.
+//     (Note: the raw xmlenc CBC cipher's own padding behaviour is NOT asserted here or
+//     anywhere — it is unauthenticated, so its padding IS an oracle by design; the
+//     mitigation is architectural, the outer XML-DSig verified before decrypt and this
+//     sanitized-error boundary, not the cipher. See FuzzXMLEncGCMIntegrity's note.)
 func FuzzParseResponse(f *testing.F) {
 	const idpEntityID = "https://idp.example/entity"
 	const spEntityID = "https://keyorix.internal/saml/corp/metadata"
@@ -156,6 +174,24 @@ func FuzzParseResponse(f *testing.F) {
 		f.Add(validResponse[:len(validResponse)-8]) // truncated
 		f.Add(validResponse + "QUFB")               // trailing garbage
 	}
+	// Fail-closed EncryptedAssertion seeds: keyorix configures no SP decryption key,
+	// so a CBC EncryptedAssertion must fail through the sanitized sentinel — never a
+	// decrypt/padding error that varies with the (unauthenticated) ciphertext. These
+	// drive the mutator onto the decrypt branch of crewjam's ParseResponse.
+	f.Add(base64.StdEncoding.EncodeToString([]byte(
+		`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">` +
+			`<saml:EncryptedAssertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">` +
+			`<xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">` +
+			`<xenc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/>` +
+			`<xenc:CipherData><xenc:CipherValue>AAAAAAAAAAAAAAAAAAAAAA==</xenc:CipherValue></xenc:CipherData>` +
+			`</xenc:EncryptedData></saml:EncryptedAssertion></samlp:Response>`)))
+	f.Add(base64.StdEncoding.EncodeToString([]byte(
+		`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">` +
+			`<saml:EncryptedAssertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">` +
+			`<xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">` +
+			`<xenc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#tripledes-cbc"/>` +
+			`<xenc:CipherData><xenc:CipherValue>Zm9vYmFyYmF6</xenc:CipherValue></xenc:CipherData>` +
+			`</xenc:EncryptedData></saml:EncryptedAssertion></samlp:Response>`)))
 
 	f.Fuzz(func(t *testing.T, samlResponse string) {
 		// Submit exactly as a real ACS handler does: form-encoded POST, ParseForm
@@ -176,6 +212,14 @@ func FuzzParseResponse(f *testing.F) {
 		if perr != nil {
 			if info != nil {
 				t.Fatalf("ParseResponse returned an error but a non-nil AssertionInfo (partial success): %+v err=%v", info, perr)
+			}
+			// ERROR-ORACLE SANITIZATION invariant: the caller must never be able to
+			// tell WHY a response failed. Every error path returns the exact same
+			// sentinel; identity equality (not errors.Is) is deliberate — a future
+			// path that wraps the sentinel with distinguishing text would satisfy
+			// errors.Is yet still leak an oracle, so we require the bare sentinel.
+			if perr != errInvalidSAMLResponse {
+				t.Fatalf("ERROR-ORACLE LEAK: ParseResponse returned a distinguishable error instead of the fixed sanitized sentinel; caller can infer the internal failure reason: %q (type %T)", perr.Error(), perr)
 			}
 			return
 		}

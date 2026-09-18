@@ -8,7 +8,7 @@
  *              chooses the invariant family. This is NOT an alert — every row is a fuzzing lead
  *              to review, emit a skeleton for, fill the oracle, and red-proof before it becomes a
  *              real target. Deliberately name-pattern based for the authz/crypto/format sinks
- *              (like this pack's other queries' isBoundingWrapperCall / isValidationCall), since
+ *              (name-pattern based, like the repo's other custom taint queries), since
  *              these guards have no single shared type to hook into.
  * @kind path-problem
  * @problem.severity recommendation
