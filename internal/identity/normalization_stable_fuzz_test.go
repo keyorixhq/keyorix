@@ -21,9 +21,9 @@ func FuzzIdentityNormalizationStable(f *testing.F) {
 		"admin", "Admin", "ADMIN", "role name", "project-x",
 		"prod_key", "PROD_KEY", "  spaced  ",
 		"café", "café", // NFC vs NFD forms of café
-		"ﬁle",                // ﬁ ligature
-		"Å", "Å",  // A + combining ring vs Å
-		"straße", "STRASSE",  // ß case-fold expansion
+		"ﬁle",     // ﬁ ligature
+		"Å", "Å", // A + combining ring vs Å
+		"straße", "STRASSE", // ß case-fold expansion
 		"a​b", "Åadmin", // zero-width space, Kelvin sign
 	} {
 		f.Add(s)
