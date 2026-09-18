@@ -454,11 +454,6 @@ func hundredCopies(c *x509.Certificate) []*x509.Certificate {
 	return out
 }
 
-// certChainWorkCeiling is a hang/blow-up backstop, not a tight performance bound —
-// mirrors FuzzDigitorusPKCS7BoundedWork's own reasoning (internal/core's sibling
-// bounded-work harness for the same underlying BER/DER parser).
-const certChainWorkCeiling = 3 * time.Second
-
 // FuzzCertChainTrustInvariant asserts VerifyReceipt's fail-closed chain-trust
 // property (package doc comment above has the full writeup): ACCEPT implies
 // crypto/x509 independently agrees, against a pool containing ONLY the configured
