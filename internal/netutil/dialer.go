@@ -193,12 +193,59 @@ var privateNetworkCIDRs = func() []*net.IPNet {
 // services, not a webhook receiver an operator might legitimately run
 // locally during testing.
 func IsPrivateOrLinkLocal(ip net.IP) bool {
+	if inPrivateCIDR(ip) {
+		return true
+	}
+	// An IPv6 address can EMBED an IPv4 target that routes to it. net.IPNet.Contains
+	// folds IPv4-MAPPED (::ffff:x) via To4, so the IPv4 CIDRs above already cover that
+	// form — but NAT64 (RFC 6052 well-known 64:ff9b::/96; e.g. 64:ff9b::a9fe:a9fe ->
+	// cloud IMDS 169.254.169.254) and deprecated IPv4-compatible (::x) are NOT folded,
+	// so a private IPv4 written in either encoding would otherwise slip past the guard.
+	// Decode the embedded IPv4 and check THAT against the same blocklist — decode, not
+	// a wholesale-prefix block, so a NAT64/compat address embedding a PUBLIC IPv4 (the
+	// legitimate egress path in an IPv6-only deployment) is still permitted.
+	if v4 := embeddedIPv4(ip); v4 != nil && inPrivateCIDR(v4) {
+		return true
+	}
+	return false
+}
+
+func inPrivateCIDR(ip net.IP) bool {
 	for _, cidr := range privateNetworkCIDRs {
 		if cidr.Contains(ip) {
 			return true
 		}
 	}
 	return false
+}
+
+// nat64WellKnownPrefix is the RFC 6052 well-known NAT64 prefix; an address inside
+// it carries its IPv4 target in the low 32 bits.
+var _, nat64WellKnownPrefix, _ = net.ParseCIDR("64:ff9b::/96")
+
+// embeddedIPv4 returns the IPv4 address carried by an IPv6 address that embeds one
+// in its low 32 bits — NAT64 well-known (64:ff9b::/96) or deprecated IPv4-compatible
+// (::/96, i.e. ::a.b.c.d) — or nil if ip carries no such embedded IPv4. IPv4-MAPPED
+// (::ffff:x) is intentionally not handled here: net.IPNet.Contains already folds it
+// via To4, so the caller's direct CIDR check covers it. The unspecified (::) and
+// loopback (::1) addresses fall in ::/96 but decode to 0.0.0.0 / 0.0.0.1, which the
+// caller's direct check (::1/128) and the IPv4 CIDRs handle correctly regardless.
+func embeddedIPv4(ip net.IP) net.IP {
+	ip16 := ip.To16()
+	if ip16 == nil || ip.To4() != nil {
+		return nil // not IPv6, or already an IPv4 form To4 handles
+	}
+	isCompat := true // ::/96 : first 12 bytes zero
+	for _, b := range ip16[:12] {
+		if b != 0 {
+			isCompat = false
+			break
+		}
+	}
+	if isCompat || nat64WellKnownPrefix.Contains(ip16) {
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	}
+	return nil
 }
 
 // linkLocalCIDRs is the narrow subset of privateNetworkCIDRs that IsLinkLocal
