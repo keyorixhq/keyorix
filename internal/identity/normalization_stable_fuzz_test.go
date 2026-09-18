@@ -24,7 +24,7 @@ func FuzzIdentityNormalizationStable(f *testing.F) {
 		"ﬁle",     // ﬁ ligature
 		"Å", "Å", // A + combining ring vs Å
 		"straße", "STRASSE", // ß case-fold expansion
-		"a​b", "Åadmin", // zero-width space, Kelvin sign
+		"a\u200bb", "Åadmin", // zero-width space, Kelvin sign
 	} {
 		f.Add(s)
 	}
