@@ -59,7 +59,14 @@ jobs:
           # under `set -o pipefail` would kill the whole planning step. Tolerate it — such a
           # package simply contributes no targets.
           emit_all_in_pkg() {
-            go test -list '^Fuzz' "$1" 2>/dev/null | { grep '^Fuzz' || true; } | while IFS= read -r fn; do
+            # Capture first so a package that cannot be listed at all -- e.g. a dir whose only
+            # .go file is `//go:build ignore` (a dev tool like scripts/fuzzing/autofuzzgen), or
+            # a genuine build error caught loudly by build-and-test/lint -- contributes nothing
+            # instead of killing this planning step under `set -o pipefail`. `local out=$(...)`
+            # would mask the failure via the `local` builtin's own status, so assign separately.
+            local out
+            out="$(go test -list '^Fuzz' "$1" 2>/dev/null)" || return 0
+            printf '%s\n' "$out" | { grep '^Fuzz' || true; } | while IFS= read -r fn; do
               printf '%s|%s\n' "$1" "$fn"
             done
           }
