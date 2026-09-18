@@ -49,16 +49,16 @@ func segContainsBySegments(p, ref string) bool {
 
 func FuzzConnectRefScoping(f *testing.F) {
 	seeds := []struct{ p1, p2, ref string }{
-		{"db/prod", "", "db/prod/pass"},              // in-scope extend
-		{"db/prod", "", "db/production-other/pass"},  // sibling over-grant hazard
-		{"db/prod", "", "db/prod"},                   // exact match
-		{"db/prod/", "", "db/prod/x"},                // trailing-slash prefix
-		{"app", "svc", "svc/token"},                  // second prefix matches
-		{"db/prod", "", "db/prod/../secret"},         // traversal via ..
-		{"db/prod", "", "db/./prod/x"},               // dot segment
-		{"", "", "anything/goes"},                    // empty allowlist = allow all
-		{"a", "", "ab"},                              // byte-prefix but not segment boundary
-		{"a/b", "", "a/bc"},                          // sibling segment
+		{"db/prod", "", "db/prod/pass"},             // in-scope extend
+		{"db/prod", "", "db/production-other/pass"}, // sibling over-grant hazard
+		{"db/prod", "", "db/prod"},                  // exact match
+		{"db/prod/", "", "db/prod/x"},               // trailing-slash prefix
+		{"app", "svc", "svc/token"},                 // second prefix matches
+		{"db/prod", "", "db/prod/../secret"},        // traversal via ..
+		{"db/prod", "", "db/./prod/x"},              // dot segment
+		{"", "", "anything/goes"},                   // empty allowlist = allow all
+		{"a", "", "ab"},                             // byte-prefix but not segment boundary
+		{"a/b", "", "a/bc"},                         // sibling segment
 	}
 	for _, s := range seeds {
 		f.Add(s.p1, s.p2, s.ref)
