@@ -66,11 +66,14 @@ type jsonDecodeCase struct {
 // set: every unauthenticated, pre-session JSON-body endpoint (auth.Login,
 // auth.PasswordReset, webauthn.FinishWebAuthnLogin — the highest-traffic bodies an
 // anonymous attacker can drive), the shared mustDecodeBody helper's own call shape
-// (helpers.go:142, the most common decode path in this codebase), and the one
-// unbounded-allocation-shape lead Step 1 found: alert_escalation.go's Update
-// decodes the WHOLE body into map[string]interface{} instead of a fixed-field
-// struct, so every attacker-supplied key becomes its own Go map entry + boxed
-// interface{} — a materially different allocation shape than the flat-struct cases.
+// (helpers.go:142, the most common decode path in this codebase), and BOTH
+// unbounded-allocation-shape leads Step 1's sweep found: alert_escalation.go's and
+// notification_channels.go's Update handlers decode the WHOLE body into
+// map[string]interface{} instead of a fixed-field struct, so every
+// attacker-supplied key becomes its own Go map entry + boxed interface{} — a
+// materially different allocation shape than the flat-struct cases. (These were
+// the only two map[string]interface{} body-decode sites found anywhere in this
+// package.)
 func jsonDecodeCases() []jsonDecodeCase {
 	return []jsonDecodeCase{
 		{
@@ -146,6 +149,19 @@ func jsonDecodeCases() []jsonDecodeCase {
 				return json.NewDecoder(r.Body).Decode(&body)
 			},
 		},
+		{
+			// PUT /api/v1/notification-channels/{id} (notification_channels.go:137) — the
+			// SECOND (and only other) map[string]interface{}-decode site found in Step 1's
+			// sweep of server/http/handlers; same unbounded-allocation shape and same
+			// global-cap-only guard as alertEscalation.Update above.
+			name:     "notificationChannel.Update(map[string]interface{})",
+			routeCap: globalBodyCap,
+			boundCap: globalBodyCap,
+			decode: func(r *http.Request) error {
+				var body map[string]interface{}
+				return json.NewDecoder(r.Body).Decode(&body)
+			},
+		},
 	}
 }
 
@@ -168,12 +184,13 @@ func boundedWorkLimit(caseName string, bodyLen int, cap int64) uint64 {
 	if cap >= 0 && int64(bounded) > cap {
 		bounded = int(cap)
 	}
-	switch caseName {
-	case "alertEscalation.Update(map[string]interface{})":
+	// Matched by shape, not by an exhaustive name list — every case whose name
+	// carries this suffix decodes into map[string]interface{} (see jsonDecodeCases)
+	// and gets the map-shaped multiplier below regardless of which route it is.
+	if strings.HasSuffix(caseName, "(map[string]interface{})") {
 		return uint64(1<<20) + uint64(bounded)*256
-	default:
-		return uint64(1<<16) + uint64(bounded)*64
 	}
+	return uint64(1<<16) + uint64(bounded)*64
 }
 
 // depthArray/depthObject build a JSON document nested to exactly depth levels:
@@ -276,7 +293,7 @@ func manyKeysObject(n int) []byte {
 // FuzzJSONDecodeBoundedWork asserts that decoding an HTTP API JSON request body —
 // the stage that runs before ANY handler logic, on every route including every
 // unauthenticated one — costs work (time, allocation) bounded by a linear function
-// of the body size actually read, for every one of the 5 real production decode
+// of the body size actually read, for every one of the 6 real production decode
 // call shapes in jsonDecodeCases: deep nesting, giant arrays/strings, and
 // many/duplicate keys must not drive CPU/alloc beyond that bound.
 //
@@ -288,10 +305,10 @@ func manyKeysObject(n int) []byte {
 //     depth (string-aware bracket counting, no dependency on encoding/json); when
 //     it is unambiguously past encoding/json's maxNestingDepth (10000 — confirmed
 //     against this repo's pinned Go 1.27 toolchain source, scanner.go), every case
-//     must return a non-nil decode error — confirms none of the 5 call sites wrap
+//     must return a non-nil decode error — confirms none of the 6 call sites wrap
 //     decode in a way that swallows that rejection (several OTHER handlers in this
 //     package do discard decode errors for an "optional body" — see catalog.go /
-//     secrets_suspend.go's `_ = json.NewDecoder(...).Decode(...)` — none of the 5
+//     secrets_suspend.go's `_ = json.NewDecoder(...).Decode(...)` — none of the 6
 //     harnessed here do). A Go stack overflow itself (unlike a panic) cannot be
 //     recovered from; it would crash the whole `go test -fuzz` process, which is
 //     itself a directly observable finding regardless of this assertion.
