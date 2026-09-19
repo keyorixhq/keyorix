@@ -127,19 +127,36 @@ package encryption
 // Then oracles (b)-(e) are checked (oracle (a) atomicity is folded into each
 // operation's own state check above, per the ambiguity classification).
 //
-// ── Known-open finding, tolerated not excluded ───────────────────────────────
+// ── FIXED: kek:rename-dek's ambiguous fault ──────────────────────────────────
 //
-// kek:rename-dek's faultRealEffectThenError case is a confirmed, filed, unfixed
-// data-loss bug (commitNewKEKFiles' error-cleanup deletes kek.salt.pending even
-// when the rename it's cleaning up after actually succeeded — see
-// docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md,
-// including the exact reachability conditions: NFS/network-filesystem rename
-// retransmission semantics, NOT a directory-fsync error, which is a separate,
-// disconnected, silently-discarded call in the same function). It stays IN the
-// decoder rather than being excluded: runKEKRotateFaultCase tolerates ONLY the
-// exact verified signature of this specific bug (see
-// isToleratedKnownOpenDataLoss) — any other seam, kind, or failure shape stays
-// fatal, so a regression or a NEW bug in the same neighborhood still surfaces.
+// kek:rename-dek's faultRealEffectThenError case WAS a confirmed, filed
+// data-loss bug (commitNewKEKFiles' error-cleanup deleted kek.salt.pending
+// even when the rename it was cleaning up after had actually succeeded) — see
+// docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md
+// for the reachability conditions (NFS/network-filesystem rename
+// retransmission semantics, NOT a directory-fsync error — that's a separate,
+// disconnected, silently-discarded call in the same function) and the fix
+// (dekRenameActuallySucceeded, keymanager_kek_rotation.go): on a rename-dek
+// error, verify the actual on-disk DEK content before any cleanup; only clean
+// up when the rename provably did not happen. This is now DETERMINISTIC, not
+// ambiguous — see expectedKEKVia and runKEKRotateFaultCase's
+// transparentRecovery handling. Red-proofed by reverting the fix (fuzzer
+// fails again at this exact seam) and restoring it (green again); not
+// committed as a permanent toggle.
+//
+// ── Known limitation: the hang-guard is not yet load-tolerant ───────────────
+//
+// faultOpGuardDeadline (30s) is a fixed wall-clock deadline, same as the
+// crash-consistency trilogy's own per-target deadlines. Under real system
+// contention (verified directly: a `-race` fuzz burst hit this deadline once
+// on a 10-core/5-user shared machine with a 15-min load average of 10.66;
+// re-running the SAME case in isolation immediately after passed in ~5.6s) a
+// deadline trip is NOT on its own evidence of a hang in the code under test —
+// it currently conflates "the operation is stuck" with "the machine is busy."
+// Treat a rig timeout here as inconclusive, not as a finding, until a
+// load-tolerant guard (e.g. adaptive to measured baseline latency, or a
+// deadline-miss retry-once-in-isolation check) lands — tracked informally as
+// "speed-fix-2," not yet a filed issue.
 //
 // ── v2 candidates (not implemented here) ─────────────────────────────────────
 //
@@ -158,6 +175,12 @@ package encryption
 //     interface with test fakes (internal/crypto/kms_provider_test.go), so this
 //     needs no new production seam — just a fault-injecting fake wired through
 //     crypto.NewKMSKeyProvider.
+//   - The SAME verify-before-cleanup treatment for kek:rename-salt's own
+//     ambiguous case (still genuinely ambiguous after this fix — see
+//     expectedKEKVia) and, for defense-in-depth, RewrapDEK's rewrap:rename-dek
+//     cleanup (not currently exploitable there — no second coupled file — but
+//     the same discipline would prevent the bug class re-appearing if that
+//     changes).
 
 import (
 	"bytes"
@@ -248,18 +271,16 @@ func decodeFault(opSel, seamSel, kindSel, shortWriteK byte) (op opID, seam strin
 		}
 		return op, s.label, s.kind, &fileFault{kind: faultShortWrite, k: int(shortWriteK), err: errInjectedFault}
 	case seamRename:
-		// kek:rename-dek's faultRealEffectThenError combination is a confirmed,
-		// live production bug (commitNewKEKFiles' error-cleanup on a rename-dek
-		// failure unconditionally deletes kek.salt.pending — correct when the
-		// rename genuinely didn't happen, but it destroys the only recovery path
-		// when the rename actually succeeded and merely reported failure), filed
-		// and NOT fixed per this campaign's rules — see
+		// kek:rename-dek's faultRealEffectThenError combination WAS a confirmed
+		// production bug (commitNewKEKFiles' error-cleanup on a rename-dek
+		// failure unconditionally deleted kek.salt.pending, destroying the only
+		// recovery path when the rename actually succeeded and merely reported
+		// failure) — now fixed (dekRenameActuallySucceeded,
+		// keymanager_kek_rotation.go); see
 		// docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md
-		// for the reachability analysis and a standalone reproduction. It stays
-		// IN the decoder (not excluded): runKEKRotateFaultCase tolerates ONLY
-		// this exact, verified failure signature (see
-		// isToleratedKnownOpenDataLoss) so the target keeps exercising the seam
-		// and would still fail loudly on any DIFFERENT or worse outcome.
+		// for the reachability analysis, reproduction, and fix description. This
+		// case is deterministic post-fix — see expectedKEKVia and
+		// runKEKRotateFaultCase's transparentRecovery handling.
 		if kindSel%2 == 0 {
 			return op, s.label, s.kind, &fileFault{kind: faultCleanError, err: errInjectedFault}
 		}
@@ -427,8 +448,8 @@ func scanForPlaintext(root string, canary []byte) []string {
 func FuzzFaultInjectedOperations(f *testing.F) {
 	// Seed one case per (operation, seam, kind) combination decodeFault can
 	// produce, including kek:rename-dek's ambiguous kind — see decodeFault's
-	// comment and isToleratedKnownOpenDataLoss: that specific case is a known,
-	// filed, tolerated finding, not excluded.
+	// comment: that case is deterministic post-fix (transparent recovery), not
+	// a tolerated finding anymore.
 	for opSel := 0; opSel < int(numOps); opSel++ {
 		seams := opSeams[opID(opSel)]
 		for seamSel := range seams {
@@ -748,10 +769,20 @@ func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, ne
 	err := km.RotateKEKPassphrase(oldPass, newPass)
 	restore()
 
-	if err == nil {
+	// FIXED behavior (docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md):
+	// kek:rename-dek's ambiguous fault (the rename actually applied despite the
+	// reported error) is now transparently absorbed by dekRenameActuallySucceeded
+	// — commitNewKEKFiles falls through and completes the rotation normally, so
+	// RotateKEKPassphrase returns nil here. This is the intended, fixed outcome,
+	// not a gap: every other (seam, kind) combination must still report an error.
+	transparentRecovery := seam == "kek:rename-dek" && ff.kind == faultRealEffectThenError
+	switch {
+	case transparentRecovery && err != nil:
+		t.Fatalf("REGRESSION: kek-rotate fault %q (kind=%v) should be transparently absorbed by the verify-before-cleanup fix (RotateKEKPassphrase should return nil), but got: %v", seam, ff.kind, err)
+	case !transparentRecovery && err == nil:
 		t.Fatalf("HARNESS/oracle-c: kek-rotate seam=%q fault did not fire — RotateKEKPassphrase returned nil error", seam)
 	}
-	if strings.Contains(err.Error(), oldPass) || strings.Contains(err.Error(), newPass) {
+	if err != nil && (strings.Contains(err.Error(), oldPass) || strings.Contains(err.Error(), newPass)) {
 		t.Fatalf("ERROR HYGIENE: kek-rotate seam=%q error leaks a passphrase: %v", seam, err)
 	}
 
@@ -763,10 +794,6 @@ func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, ne
 
 	rec, via, ok := recoverDEK(dir, oldPass, newPass)
 	if !ok {
-		if isToleratedKnownOpenDataLoss(dir, seam, ff) {
-			t.Logf("KNOWN-OPEN (%s): tolerated orphaned-DEK data loss at kek:rename-dek's ambiguous fault — kek.salt.pending confirmed deleted by the documented cleanup bug, no other recovery path exists (expected; a different signature would still fail this test)", kekRenameDekFindingRef)
-			return
-		}
 		t.Fatalf("DATA LOSS: no recovery yields the DEK after kek-rotate fault %q (kind=%v)", seam, ff.kind)
 	}
 	if !bytes.Equal(rec, dek0) {
@@ -783,48 +810,26 @@ func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, ne
 	}
 }
 
-// kekRenameDekFindingRef ties the tolerance below to its finding doc, so the
-// tolerance can't silently drift to cover a different or worse bug.
-const kekRenameDekFindingRef = "docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md"
-
-// isToleratedKnownOpenDataLoss reports whether a recoverDEK failure exactly
-// matches this ALREADY-FILED finding's signature — NOT a blanket "this seam
-// is known-flaky" allowance. All three conditions must hold:
-//  1. seam is kek:rename-dek (the ONLY seam this bug class applies to — see
-//     the finding doc's contrast with RewrapDEK's single-file cleanup, which
-//     is NOT susceptible).
-//  2. ff.kind is faultRealEffectThenError (the rename genuinely happened for
-//     real despite the reported error — the exact ambiguous case the bug
-//     needs; faultCleanError at this same seam must NOT be tolerated, since
-//     the rename never running for real is the well-behaved case that
-//     expectedKEKVia already asserts recovers via "old-passphrase").
-//  3. kek.salt.pending is CONFIRMED ABSENT on disk — the direct, checkable
-//     fingerprint of the buggy cleanup having run (it is the file that
-//     cleanup deletes). If it's still present, recoverDEK failing has some
-//     OTHER cause — a different or new bug — and must NOT be tolerated.
+// expectedKEKVia returns the recoverDEK "via" value(s) a DETERMINISTIC fault
+// at seam must produce. "old-passphrase" covers every seam before the DEK
+// rename commits (nothing has moved yet); "apply-pending-salt+*" is the
+// expected recovery for a deterministic fault at kek:rename-salt, because by
+// the time that seam runs, kek:rename-dek has ALREADY unconditionally
+// succeeded for real — the correct "unchanged" state for THIS seam is the
+// hazard window (dek.key new, kek.salt old, kek.salt.pending still present),
+// not plain old-passphrase.
 //
-// Any recoverDEK failure that doesn't match all three stays fatal.
-func isToleratedKnownOpenDataLoss(dir, seam string, ff *fileFault) bool {
-	if seam != "kek:rename-dek" || ff.kind != faultRealEffectThenError {
-		return false
-	}
-	if _, err := os.Stat(filepath.Join(dir, "kek.salt.pending")); err == nil {
-		return false // pending salt still present — not this finding's signature
-	}
-	return true
-}
-
-// expectedKEKVia returns the recoverDEK "via" value(s) a DETERMINISTIC
-// (non-ambiguous) fault at seam must produce, or skip=true for the AMBIGUOUS
-// faultRealEffectThenError kind (only availability/integrity are checked
-// then). "old-passphrase" covers every seam before the DEK rename commits
-// (nothing has moved yet); "apply-pending-salt+*" is the expected recovery
-// for a deterministic fault specifically at kek:rename-salt, because by the
-// time that seam runs, kek:rename-dek has ALREADY unconditionally succeeded
-// for real — the correct "unchanged" state for THIS seam is the hazard
-// window (dek.key new, kek.salt old, kek.salt.pending still present), not
-// plain old-passphrase.
+// kek:rename-dek's ambiguous (faultRealEffectThenError) case is no longer
+// ambiguous after the verify-before-cleanup fix: it is now DETERMINISTIC and
+// expects "new-passphrase" (the rotation completes fully, transparently —
+// see runKEKRotateFaultCase's transparentRecovery handling). kek:rename-salt's
+// ambiguous case remains genuinely ambiguous (skip=true) — no equivalent
+// verify-before-cleanup fix exists for it in this commit; a fault there can
+// still leave either the hazard window or a fully-completed rotation.
 func expectedKEKVia(seam string, ff *fileFault) (want []string, skip bool) {
+	if seam == "kek:rename-dek" && ff.kind == faultRealEffectThenError {
+		return []string{"new-passphrase"}, false
+	}
 	if ff.kind == faultRealEffectThenError {
 		return nil, true
 	}

@@ -157,9 +157,24 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 	pendingDEKFull := filepath.Join(km.baseDir, pendingDEKPath)
 	activeDEKFull := filepath.Join(km.baseDir, km.dekPath)
 	if err := durableRename(pendingDEKFull, activeDEKFull, "kek:rename-dek"); err != nil {
-		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
-		_ = os.Remove(pendingDEKFull)
-		return fmt.Errorf("rotate KEK: promote pending DEK to active: %w", err)
+		// Do not assume the rename didn't happen: an error here can be reported
+		// AFTER the rename actually applied (e.g. an NFS lost-reply/retransmit
+		// ambiguity — see docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md).
+		// Verify the ACTUAL on-disk state before deciding whether kek.salt.pending
+		// — the only recovery material for the hazard window below — is safe to
+		// delete. A prior version of this code deleted it unconditionally here,
+		// which orphaned the DEK permanently whenever the rename had, in fact,
+		// already succeeded.
+		if !dekRenameActuallySucceeded(km.baseDir, km.dekPath, newWrappedDEK) {
+			_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
+			_ = os.Remove(pendingDEKFull)
+			return fmt.Errorf("rotate KEK: promote pending DEK to active: %w", err)
+		}
+		// The rename actually applied despite the reported error: fall through
+		// and complete the rotation exactly as the success path would (same as
+		// what a genuine kek:after-rename-dek crash-recovery would reach) —
+		// kek.salt.pending must survive for the salt rename below, or for an
+		// operator to apply manually if that rename also fails.
 	}
 	// best-effort: this SyncDir's error is deliberately discarded (unlike RewrapDEK's
 	// and RotateDEKWithSweep's, whose fsync-after-rename failure IS surfaced), so a
@@ -178,4 +193,24 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 	_ = securefiles.SyncDir(filepath.Dir(activeSaltFull)) // best-effort — see the rename-dek SyncDir comment above
 	rotationCheckpointHook("kek:after-rename-salt")
 	return nil
+}
+
+// dekRenameActuallySucceeded reports whether the file at baseDir/dekPath
+// already holds exactly `want` — the bytes commitNewKEKFiles just tried to
+// promote via rename. Used only to distinguish "the rename genuinely did not
+// happen" from "the rename applied despite a reported error" before deciding
+// whether kek.salt.pending is safe to delete.
+//
+// Deliberately read-and-compare, not a size/mtime heuristic: a stat-only
+// check cannot distinguish genuinely new content from old content of
+// coincidentally the same size, and mtimes are not a reliable durability
+// signal either. A missing file, a read error, or content that doesn't match
+// byte-for-byte are all treated as "not succeeded" — this function only ever
+// returns true when the promoted bytes are unambiguously already in place.
+func dekRenameActuallySucceeded(baseDir, dekPath string, want []byte) bool {
+	got, err := securefiles.SafeReadFile(baseDir, dekPath)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(got, want)
 }
