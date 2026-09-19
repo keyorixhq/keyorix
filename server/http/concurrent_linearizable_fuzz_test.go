@@ -92,6 +92,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -428,18 +429,45 @@ type clOp struct {
 	yield     bool
 }
 
+// clGOMAXPROCSOverride, when set, pins every fuzz iteration's GOMAXPROCS to
+// exactly this value instead of letting the fuzz input pick from
+// {2, 4, runtime.NumCPU()}. This is how the Step 3 rig soak implements its own
+// external "rotate segments of ~2h through GOMAXPROCS {2, 4, nproc}" plan on a
+// SHARED box without the fuzzer's own per-iteration choice ever picking a
+// higher value than the segment currently budgets for (in particular,
+// runtime.NumCPU() on a contended rig can exceed the core budget actually
+// available to this process) — -parallel bounds worker PROCESS count; this
+// bounds per-process GOMAXPROCS the same way, from outside. Unset (local dev,
+// CI, `go test -fuzz` with no env override) preserves the original
+// fuzz-input-driven variety.
+func clGOMAXPROCSOverride() (int, bool) {
+	v := os.Getenv("KEYORIX_CL_GOMAXPROCS")
+	if v == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 func decodeCLProgram(program []byte, maxGoroutines, maxOpsPerGoroutine int) (goroutines [][]clOp, gomaxprocs int) {
 	if len(program) < 2 {
 		return nil, 2
 	}
 	g := 2 + int(program[0])%(maxGoroutines-1)
-	switch program[1] % 3 {
-	case 0:
-		gomaxprocs = 2
-	case 1:
-		gomaxprocs = 4
-	default:
-		gomaxprocs = runtime.NumCPU()
+	if override, ok := clGOMAXPROCSOverride(); ok {
+		gomaxprocs = override
+	} else {
+		switch program[1] % 3 {
+		case 0:
+			gomaxprocs = 2
+		case 1:
+			gomaxprocs = 4
+		default:
+			gomaxprocs = runtime.NumCPU()
+		}
 	}
 	goroutines = make([][]clOp, g)
 	body := program[2:]
