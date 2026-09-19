@@ -15,16 +15,23 @@ package connect
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // awsFuzzAccessKeyID/awsFuzzSecretKey are THE static credentials this target's
@@ -59,22 +66,70 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 	f.Add(500, []byte(``))
 	f.Add(200, []byte(`not json`))
 	f.Add(200, []byte(`{"SecretString":null,"SecretBinary":null}`))
+	f.Add(307, []byte(``))
+	f.Add(308, []byte(``))
 
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
 		code := clampHTTPStatus(status)
 
+		// attacker is a cross-host target for the redirect check below. Its
+		// address (127.0.0.1, loopback) is itself a netutil.IsPrivateOrLinkLocal
+		// target -- reusing that SAME predicate (not reimplementing an SSRF
+		// classification), rather than needing a real non-loopback private IP,
+		// to establish "this target is one Keyorix's own SSRF guard elsewhere
+		// would refuse to dial."
+		var attackerHits int32
+		var attackerMu sync.Mutex
+		var attackerAuthHeader string
+		attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attackerHits, 1)
+			attackerMu.Lock()
+			attackerAuthHeader = r.Header.Get("Authorization")
+			attackerMu.Unlock()
+			w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"SecretString":"ATTACKER-CONTROLLED"}`))
+		}))
+		defer attacker.Close()
+		if u, uerr := url.Parse(attacker.URL); uerr == nil {
+			if host, _, herr := net.SplitHostPort(u.Host); herr == nil {
+				if ip := net.ParseIP(host); ip != nil && !netutil.IsPrivateOrLinkLocal(ip) {
+					t.Fatalf("test bug: attacker target %q is not classified as private/link-local by netutil -- the redirect check below would be meaningless", attacker.URL)
+				}
+			}
+		}
+
+		var hits int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			// AWS's limitedRedirect (aws/transport/http/client.go) only follows
+			// 307/308 -- any other status/Location combination is refused outright
+			// by the SDK's own CheckRedirect, so only those two codes are worth
+			// testing here.
+			if code == http.StatusTemporaryRedirect || code == http.StatusPermanentRedirect {
+				w.Header().Set("Location", attacker.URL)
+			}
 			w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 			w.WriteHeader(code)
 			_, _ = w.Write(body)
 		}))
 		defer srv.Close()
 
+		// MaxAttempts=3 (not 1) so retries actually happen -- oracle (a) below
+		// needs a real retry loop to measure. A custom zero-delay Backoff
+		// bypasses aws-sdk-go-v2's own ExponentialJitterBackoff, whose
+		// throttle-classified path forces a ~1s floor regardless of any
+		// configured max -- irrelevant to what's being tested here (whether
+		// attempts are BOUNDED, not how long a real backoff would take) and
+		// would otherwise make this target too slow to fuzz.
 		cl := secretsmanager.New(secretsmanager.Options{
-			Region:           "us-east-1",
-			Credentials:      credentials.NewStaticCredentialsProvider(awsFuzzAccessKeyID, awsFuzzSecretKey, ""),
-			BaseEndpoint:     aws.String(srv.URL),
-			RetryMaxAttempts: 1,
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(awsFuzzAccessKeyID, awsFuzzSecretKey, ""),
+			BaseEndpoint: aws.String(srv.URL),
+			Retryer: retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 3
+				o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
+			}),
 		})
 
 		c := NewAWSSecretsManagerConnector("fuzz", "us-east-1", "", nil)
@@ -85,7 +140,6 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 		fuzzutil.Guard(t.Fatalf, "AWSSecretsManagerConnector.GetSecret", func() {
 			val, err = c.GetSecret(context.Background(), "fuzz/secret")
 		})
-
 		// Oracle (b): fail-closed, two ways --
 		//  1. the smithy-go awsJson1_1 deserializer routes any response outside
 		//     [200,300) to the error deserializer -- GetSecret must therefore
@@ -107,6 +161,45 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 		// returned error.
 		if err != nil && strings.Contains(err.Error(), awsFuzzAccessKeyID) {
 			t.Fatalf("LEAK: the connector's own AWS access key ID appeared in a returned error: %v", err)
+		}
+
+		// Oracle (a): bounded work, retries. MaxAttempts=3 is configured above --
+		// the fake server must never see more than that, regardless of the
+		// fuzzed status (whatever the SDK's own retry classifier decides is
+		// retryable) or a fuzzed Retry-After-shaped header the body might
+		// resemble. connectRetryCeiling is a generous margin above the
+		// configured bound, not an exact-equality check, so this stays sound
+		// even if the classifier's retryable-status set differs from a naive
+		// reading of it.
+		if h := atomic.LoadInt32(&hits); h > connectRetryCeiling {
+			t.Fatalf("RETRY STORM: fake server hit %d times for a single GetSecret call (MaxAttempts=3 configured)", h)
+		}
+
+		// Oracle (redirect): the connector never reaches a cross-host redirect
+		// target at all. Confirmed empirically, not merely by reading
+		// limitedRedirect's own source: aws-sdk-go-v2's transport/http package
+		// doc-comments its BuildableClient.Do as "Redirect (3xx) responses will
+		// not be followed, the HTTP response received will [be] returned
+		// instead" -- and a live run against this exact client construction
+		// path (the same one awssm.go's own default client() method uses)
+		// confirms it: for both 307 and 308 (the only codes limitedRedirect's
+		// switch statement would otherwise return nil/"follow" for), the
+		// deserializer received the redirect status itself as the FINAL
+		// response (attackerHits stayed 0), not the attacker's 200. So unlike
+		// the theoretical reading of limitedRedirect in isolation, the real,
+		// observed behavior is that this connector never follows a redirect at
+		// all -- a genuinely good property, asserted here as a hard regression
+		// guard. The credential check is kept as defense-in-depth: if this ever
+		// regresses (an SDK update that does start following), the credential
+		// must still never reach the attacker.
+		if h := atomic.LoadInt32(&attackerHits); h > 0 {
+			attackerMu.Lock()
+			gotAuth := attackerAuthHeader
+			attackerMu.Unlock()
+			if strings.Contains(gotAuth, awsFuzzAccessKeyID) {
+				t.Fatalf("LEAK: the connector's own AWS access key ID appeared in the Authorization header sent to a cross-host redirect target: %q", gotAuth)
+			}
+			t.Fatalf("REDIRECT FOLLOWED: connector reached a cross-host redirect target (attackerHits=%d) -- previously confirmed this never happens via this client construction path", h)
 		}
 
 		if n := runtime.NumGoroutine(); n > connectLeakCeiling {

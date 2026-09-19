@@ -35,6 +35,7 @@ import (
 	"context"
 	"net"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,16 +52,19 @@ import (
 
 // fakeSecretManagerServer answers every AccessSecretVersion call according to the
 // fuzz input: code == 0 (OK) returns payload as the secret's Data; any other code
-// returns a gRPC error with that code and msg.
+// returns a gRPC error with that code and msg. hits counts every call, for the
+// retry-bounded oracle (a).
 type fakeSecretManagerServer struct {
 	secretmanagerpb.UnimplementedSecretManagerServiceServer
 	code    codes.Code
 	msg     string
 	payload []byte
 	name    string
+	hits    int32
 }
 
 func (s *fakeSecretManagerServer) AccessSecretVersion(_ context.Context, _ *secretmanagerpb.AccessSecretVersionRequest) (*secretmanagerpb.AccessSecretVersionResponse, error) {
+	atomic.AddInt32(&s.hits, 1)
 	if s.code != codes.OK {
 		return nil, status.Error(s.code, s.msg)
 	}
@@ -85,12 +89,13 @@ func FuzzGCPSMConnectorResponse(f *testing.F) {
 		defer lis.Close()
 
 		grpcSrv := grpc.NewServer()
-		secretmanagerpb.RegisterSecretManagerServiceServer(grpcSrv, &fakeSecretManagerServer{
+		fakeSrv := &fakeSecretManagerServer{
 			code:    code,
 			msg:     msg,
 			payload: payload,
 			name:    name,
-		})
+		}
+		secretmanagerpb.RegisterSecretManagerServiceServer(grpcSrv, fakeSrv)
 		go func() { _ = grpcSrv.Serve(lis) }()
 		defer grpcSrv.Stop()
 
@@ -130,6 +135,16 @@ func FuzzGCPSMConnectorResponse(f *testing.F) {
 		}
 		if code == codes.OK && len(payload) == 0 && err == nil {
 			t.Fatalf("BYPASS: empty payload treated as a successful read, returned value %q", val)
+		}
+
+		// Oracle (a): bounded work, retries. AccessSecretVersion's own gax retry
+		// policy only retries codes.Unavailable/ResourceExhausted, with a 2s
+		// initial backoff -- well past the 500ms callCtx deadline above, so this
+		// should structurally never exceed 1 attempt for those codes either. Any
+		// code driving a real retry storm would show up here regardless of which
+		// codes gax's own policy actually covers.
+		if h := atomic.LoadInt32(&fakeSrv.hits); h > connectRetryCeiling {
+			t.Fatalf("RETRY STORM: fake gRPC service hit %d times for a single GetSecret call", h)
 		}
 
 		if n := runtime.NumGoroutine(); n > connectLeakCeiling {

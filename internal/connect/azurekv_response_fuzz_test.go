@@ -34,6 +34,14 @@ package connect
 //     this harness's oracles are stated in the "must succeed" direction). The actual
 //     fix: use a real httptest.NewTLSServer and srv.Client() as the Transport, so the
 //     request genuinely is https and the gate passes on its own merits.
+//
+// Redirect behavior was investigated separately (not as a merged assertion here):
+// confirmed this connector follows cross-host 301/302/303/307/308 redirects and
+// blindly trusts the redirected response as the secret value, with no
+// destination-host classification and no response-identity check -- see
+// docs/findings/ for the full repro. Not turned into a fuzz oracle here because
+// there is no existing check to red-proof or regress-guard; a hard assertion
+// against a confirmed-open gap would just be a permanently-red test.
 import (
 	"context"
 	"encoding/json"
@@ -41,6 +49,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,24 +99,43 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
 		code := clampHTTPStatus(status)
 
+		var hits, challengeHits int32
 		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") == "" {
+				atomic.AddInt32(&challengeHits, 1)
 				// Unauthenticated first request: elicit the challenge, same shape
-				// azsecrets' own internal.FakeChallenge test helper produces.
+				// azsecrets' own internal.FakeChallenge test helper produces. Not
+				// counted as a "hit" for the retry-bounded oracle -- this is the
+				// fixed one-time auth handshake, not a retry of the fuzzed response.
 				w.Header().Set("WWW-Authenticate", `Bearer authorization="https://fake.local/tenant" resource="https://vault.azure.net"`)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
+			atomic.AddInt32(&hits, 1)
 			w.WriteHeader(code)
 			_, _ = w.Write(body)
 		}))
 		defer srv.Close()
 
+		// MaxRetries=2 (not -1/"one try") with a small positive RetryDelay so
+		// oracle (a) below can measure a real retry loop without wall-clock cost.
+		// NOT RetryDelay: -1, despite that being policy.RetryOptions' own
+		// documented way to request "no delay between retries": confirmed by
+		// reading policy_retry.go's calcDelay directly, RetryDelay<0 gets
+		// normalized to exactly 0 by setDefaults, and calcDelay's own overflow
+		// check (`if delay < factor { delay = math.MaxInt64 }`) has a genuine
+		// false-positive there -- 0 is always < factor (>=1), so a deliberately
+		// zero delay gets misclassified as an overflow and replaced with
+		// approximately MaxInt64, which then clamps down to MaxRetryDelay
+		// (60s by default) instead of the intended ~0. This is a real bug in
+		// the vendored SDK, not a harness issue (see docs/findings/); confirmed
+		// empirically via azcore/log's EventRetryPolicy listener showing
+		// "Delay=1m0s" for a RetryDelay:-1 config on the very first retry.
 		cl, err := azsecrets.NewClient(srv.URL, fuzzAzureCred{}, &azsecrets.ClientOptions{
 			DisableChallengeResourceVerification: true,
 			ClientOptions: azcore.ClientOptions{
 				Transport: srv.Client(),
-				Retry:     policy.RetryOptions{MaxRetries: -1},
+				Retry:     policy.RetryOptions{MaxRetries: 2, RetryDelay: time.Millisecond, MaxRetryDelay: time.Millisecond},
 			},
 		})
 		if err != nil {
@@ -142,6 +170,25 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 		// sent must never appear in a returned error.
 		if err != nil && strings.Contains(err.Error(), azureFuzzBearerToken) {
 			t.Fatalf("LEAK: the connector's own bearer token appeared in a returned error: %v", err)
+		}
+
+		// Oracle (a): bounded work, retries. MaxRetries=2 is configured above --
+		// the authenticated-response path must never be hit more than that,
+		// regardless of the fuzzed status. The challenge handshake is a fixed
+		// one-time exchange (see handleChallenge's own doc comment on why a
+		// fuzzed 401-with-no-WWW-Authenticate on the SECOND request can't
+		// re-trigger it) -- it must never repeat either, whatever the fuzzed
+		// status/body is.
+		if h := atomic.LoadInt32(&hits); h > connectRetryCeiling {
+			t.Fatalf("RETRY STORM: authenticated response path hit %d times for a single GetSecret call (MaxRetries=2 configured)", h)
+		}
+		// NOT "exactly once": as with Vault's mount-info lookup, the initial
+		// unauthenticated round trip is a real network call that could itself
+		// transiently fail under fuzzing concurrency, making GetSecret return an
+		// error before the challenge completes at all -- challengeHits==0 is a
+		// legitimate outcome of that path. Only >1 (a genuine repeat) matters.
+		if ch := atomic.LoadInt32(&challengeHits); ch > 1 {
+			t.Fatalf("RETRY STORM: auth challenge handshake ran %d times for a single GetSecret call (expected at most 1)", ch)
 		}
 
 		if n := runtime.NumGoroutine(); n > connectLeakCeiling {

@@ -61,6 +61,7 @@ func FuzzVaultConnectorResponse(f *testing.F) {
 		}))
 		defer attacker.Close()
 
+		var secretGetHits int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.Path, "sys/internal/ui/mounts") {
 				v := "1"
@@ -71,6 +72,7 @@ func FuzzVaultConnectorResponse(f *testing.F) {
 				fmt.Fprintf(w, `{"data":{"path":"secret/","options":{"version":%q}}}`, v)
 				return
 			}
+			atomic.AddInt32(&secretGetHits, 1)
 			if code >= 300 && code < 400 {
 				w.Header().Set("Location", attacker.URL)
 			}
@@ -128,6 +130,23 @@ func FuzzVaultConnectorResponse(f *testing.F) {
 		// the attacker-controlled Location target must never receive a request.
 		if atomic.LoadInt32(&attackerHits) != 0 {
 			t.Fatalf("REDIRECT FOLLOWED: connector dialed the redirect target instead of refusing")
+		}
+
+		// Oracle (a): bounded work, retries. VaultConnector has no retry logic at
+		// all -- a single c.client.Do(req) call per HTTP round trip -- so the
+		// secret-GET path must be hit AT MOST once per GetSecret call, regardless
+		// of the fuzzed status/body (no Retry-After header exists in this
+		// response shape for Vault to honor or ignore in the first place). NOT
+		// "exactly once": the mount-info lookup (a separate, real network round
+		// trip GetSecret makes first) can itself transiently fail under fuzzing
+		// concurrency (confirmed by a genuine -fuzz run flake: a failing input
+		// replayed standalone passed cleanly, consistent with a load-dependent
+		// connection failure, not a deterministic bug), which correctly makes
+		// GetSecret return an error BEFORE ever attempting the secret-GET
+		// request at all -- hits==0 is a legitimate outcome of that path, not a
+		// missed attempt. Only hits>1 (an actual repeat) is a real violation.
+		if hits := atomic.LoadInt32(&secretGetHits); hits > 1 {
+			t.Fatalf("RETRY STORM: secret-GET path hit %d times for a single GetSecret call (VaultConnector has no retry logic; expected at most 1)", hits)
 		}
 
 		if n := runtime.NumGoroutine(); n > connectLeakCeiling {

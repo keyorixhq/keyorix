@@ -70,3 +70,14 @@ func connectOpenFDCount() int {
 // crossing this indicates a per-input leak accumulating across the fuzz worker's
 // inputs, not a single input's transient teardown.
 const connectLeakCeiling = 1000
+
+// connectRetryCeiling bounds how many times a single GetSecret call may hit the
+// fake backend server/service, regardless of what status/code/Retry-After it
+// sends back. Each backend's own configured retry bound is much smaller (Vault:
+// 1, no retry logic at all; AWS: RetryMaxAttempts; Azure: MaxRetries+1; GCP:
+// bounded structurally by the short context deadline, not attempt count) -- this
+// is deliberately a generous ceiling ABOVE all of them (a "no retry storm"
+// tripwire), not a precise per-backend attempt-count assertion, so it stays
+// sound even if an individual backend's own retry-classification logic (which
+// status codes are "retryable") differs from what a naive reading would predict.
+const connectRetryCeiling = 10
