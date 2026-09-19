@@ -144,34 +144,38 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 // on disk. The pending salt file allows the operator to complete the rename manually.
 func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 	pendingSaltPath := km.saltPath + ".pending"
-	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingSaltPath, newSalt, 0600); err != nil {
+	if err := durableWriteSync(km.baseDir, pendingSaltPath, newSalt, 0600, "kek:write-salt-pending"); err != nil {
 		return fmt.Errorf("rotate KEK: write pending salt: %w", err)
 	}
 	rotationCheckpointHook("kek:after-write-salt-pending")
 	pendingDEKPath := km.dekPath + ".pending"
-	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, newWrappedDEK, 0600); err != nil {
+	if err := durableWriteSync(km.baseDir, pendingDEKPath, newWrappedDEK, 0600, "kek:write-dek-pending"); err != nil {
 		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
 		return fmt.Errorf("rotate KEK: write pending DEK: %w", err)
 	}
 	rotationCheckpointHook("kek:after-write-dek-pending")
 	pendingDEKFull := filepath.Join(km.baseDir, pendingDEKPath)
 	activeDEKFull := filepath.Join(km.baseDir, km.dekPath)
-	if err := os.Rename(pendingDEKFull, activeDEKFull); err != nil {
+	if err := durableRename(pendingDEKFull, activeDEKFull, "kek:rename-dek"); err != nil {
 		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
 		_ = os.Remove(pendingDEKFull)
 		return fmt.Errorf("rotate KEK: promote pending DEK to active: %w", err)
 	}
-	_ = securefiles.SyncDir(filepath.Dir(activeDEKFull)) // best-effort
+	// best-effort: this SyncDir's error is deliberately discarded (unlike RewrapDEK's
+	// and RotateDEKWithSweep's, whose fsync-after-rename failure IS surfaced), so a
+	// fault injected here would have no fileFaultHook to attach to and no observable
+	// effect on this function's control flow — not wired to the fault seam.
+	_ = securefiles.SyncDir(filepath.Dir(activeDEKFull))
 	// Hazard window: dek.key is now the new-wrapped DEK (KEK from the NEW salt),
 	// but kek.salt on disk is still the OLD salt — recovery here needs the
 	// leftover kek.salt.pending. Crash-consistency tests interrupt exactly here.
 	rotationCheckpointHook("kek:after-rename-dek")
 	pendingSaltFull := filepath.Join(km.baseDir, pendingSaltPath)
 	activeSaltFull := filepath.Join(km.baseDir, km.saltPath)
-	if err := os.Rename(pendingSaltFull, activeSaltFull); err != nil {
+	if err := durableRename(pendingSaltFull, activeSaltFull, "kek:rename-salt"); err != nil {
 		return fmt.Errorf("rotate KEK: promote pending salt to active (DEK rename already succeeded — manually rename %s to %s to complete): %w", pendingSaltPath, km.saltPath, err)
 	}
-	_ = securefiles.SyncDir(filepath.Dir(activeSaltFull)) // best-effort
+	_ = securefiles.SyncDir(filepath.Dir(activeSaltFull)) // best-effort — see the rename-dek SyncDir comment above
 	rotationCheckpointHook("kek:after-rename-salt")
 	return nil
 }
