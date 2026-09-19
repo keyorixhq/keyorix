@@ -208,24 +208,64 @@ HTTP transport, unlike the JWKS fetcher's `jwksEgressTransport`
 (`internal/core/oidc_jwks.go`), which does use `netutil.IsLinkLocal` on its dialer
 for exactly this class of guard.
 
-**Severity: Medium** (unchanged from the earlier draft of this finding, but the
-reasoning is revised given the baseline result above). It is not "a guard gets
-bypassed by the redirect" — confirmed above, there is no guard anywhere in this
-path, operator-configured address included, and that absence is *correct* for the
-baseline case (on-prem Key Vault addresses are a legitimate, intended target). What
-makes the redirect path specifically worth flagging, even though it reuses the
-exact same unguarded dial: it's the one point where the destination stops being
-something the operator typed into their own config and becomes something an
-external, potentially hostile party (whatever answered the request) gets to choose
-— reaching `netutil`-classified private/link-local targets (confirmed above) with
-zero additional requirement beyond a single 3xx response carrying a `Location`
-header (a misconfigured reverse proxy in front of the real Key Vault, or an
-open-redirect on the real Key Vault's own infrastructure, is enough). It stops
-short of High because credentials are confirmed not to leak (limiting the blast
-radius to response-content trust and internal-network reachability, not credential
-theft) and because triggering it requires the operator's own configured Key Vault
-endpoint to actually emit a redirect, which is not the default posture of a
-healthy, uncompromised Vault.
+**Authz: who can create or modify a connector's `Address`?** Traced the full call
+graph, not just the obvious `/connect` handlers, since a generic config/settings API
+could plausibly expose `ConnectorConfig` as a sub-resource. It doesn't:
+
+- **No runtime API sets or changes `Address` at all — HTTP, gRPC, or CLI.**
+  `ConnectorConfig` (`internal/config/config.go:177-230`, `Address` at line 182) is
+  populated exactly once, from the static YAML, via `config.LoadConfig()`
+  (`server/main.go:99`), before the HTTP/gRPC servers even start;
+  `server/main.go:703` then builds each `connect.Connector` from that already-loaded
+  config. The only runtime `/connect` surfaces
+  (`server/http/handlers/connect.go`, `server/grpc/services/connect_service.go`,
+  routed at `server/http/router.go:440-447`) are `ListConnectors`/`ReadSecret`
+  (gated `connect.read`) and the ref-grants CRUD (gated `roles.read`/`roles.write`)
+  — ref-grants (ADR-045) only authorize a *role* to use an *already-configured*
+  connector by name with a ref-prefix; none of them ever touch `Address`, `Type`,
+  or `Region`. No `CreateConnector`/`UpdateConnector` exists anywhere in the repo.
+- **No config-reload/push path exists either.** `config.LoadConfig()` runs exactly
+  once, at boot; there is no SIGHUP handler, no reload endpoint, and no `keyorix
+  config apply`-style CLI command that pushes config into a running server (the
+  one CLI command with a superficially similar name, `keyorix connect <endpoint>`
+  in `internal/cli/connect/connect.go`, configures the *CLI's own* client-mode
+  target via `cliconfig.SaveCLIConfig` — an unrelated, purely-local concept that
+  doesn't touch the server's `ConnectConfig` at all).
+- **The only way to set or change `Address` is direct filesystem access to the
+  deployed `keyorix.yaml` (or the deploy pipeline that generates it), followed by
+  a server restart/redeploy.** No in-app RBAC role governs this at all — not
+  because it maps to a high-privilege role, but because there is no code path for
+  an authenticated principal to reach it through the running application,
+  regardless of role.
+
+**Severity: Low** (revised from the earlier Medium given the authz trace above —
+this is the primary driver of the revision, not a reframing of the redirect
+mechanism itself, which is unchanged and still true). The reasoning splits into two
+independent threads:
+
+1. **The baseline (an operator-configured address as an SSRF primitive) requires
+   filesystem/deploy access, a strictly HIGHER trust tier than even an in-app admin
+   role** — whoever can edit the deployed config and restart/redeploy the server
+   already has capability well beyond anything Keyorix's own RBAC could grant (this
+   is the "admin-only → Low" case from this round's own framing, made stronger:
+   it isn't merely admin-gated, it's gated by a capability admin itself doesn't
+   necessarily have). There is no "lower-privileged role" case to weigh — the trace
+   found no in-app role in this path at all, so the Medium-favoring branch of that
+   question doesn't apply.
+2. **The redirect-follow mechanism (Azure) is orthogonal to connector-config
+   privilege** — it's triggered by the *real, already-configured* backend
+   answering with a hostile redirect (a compromised Key Vault, or a MITM'd/
+   misconfigured reverse proxy in front of it), not by anyone's ability to set
+   `Address`. Its own containing factors are unchanged from the earlier draft:
+   credentials are confirmed not to leak, and it requires the operator's own
+   already-legitimate endpoint to actually emit a redirect, which is not the
+   default posture of a healthy, uncompromised Vault. On its own this thread would
+   still argue for something above Low — but it was never gated by connector-config
+   authz to begin with, so the authz trace doesn't change ITS severity; it changes
+   the OVERALL rating because the baseline thread (which the authz trace does
+   bound) was the thread actually elevating this section above a single-mechanism
+   assessment. Recorded as its own, still-live consideration — not erased by the
+   authz finding, just no longer the section's controlling factor.
 
 **Recommendation**: for Azure specifically, either (a) refuse redirects outright the
 same way Vault does (`CheckRedirect` returning a refusal), which is almost certainly
@@ -341,41 +381,69 @@ Secrets Manager value is capped at 64 KiB by AWS itself; Azure's Key Vault secre
 value has no documented AWS-style hard cap, so the right number needs a separate
 check against Azure's own documented limits before reuse.
 
-**3. Guarded dialer — flagged here as a genuine open design question, not drafted as
-settled.** The obvious move is wiring `netutil.Dialer` (the same predicate the JWKS
-fetcher already uses) into the shared client's `DialContext`, rejecting
-private/link-local targets unconditionally. **That directly contradicts §2's own
-baseline finding**: Vault's `validateConnectorURL` deliberately does NOT reject a
-private/link-local *operator-configured* address, because that's the primary
-legitimate on-prem deployment shape for this product — and once redirects are
-refused outright (component 1 above), the ONLY dial target this shared client ever
-reaches, for any of the three backends, IS the operator's own configured address
-(AWS has no configurable address at all; Azure's only other destination was the
-redirect target, now refused). A netutil-guarded dialer applied uniformly here would
-reject the operator's own legitimate Key Vault/Vault address, not just an
-attacker-chosen one — it does not distinguish the two, because after component 1
-lands there is no longer a second, untrusted destination left for it to guard
-against. Concretely: **once redirects are refused outright, a guarded dialer has
-nothing left to do that isn't already wrong to do.** This component should be
-DROPPED from the fix as literally requested, not implemented as asked — including it
-would need either a second, deliberately-different predicate (e.g., only apply the
-netutil guard to a hop that is NOT the first one to the connector's own configured
-host — meaningless once redirects don't happen) or an explicit product decision to
-accept blocking private/link-local operator addresses, which would need its own
-separate justification given `validateConnectorURL`'s doc comment already argues the
-opposite. Recorded here because the user's own phrasing of this item named it as a
-component, and silently omitting it without saying why would be exactly the kind of
-unstated scope-narrowing this campaign's rules warn against.
+**3. Guarded dialer, REVISED 2026-09-19 — narrowed to link-local only, not
+private/link-local, and now included rather than dropped.** The earlier draft of
+this section dropped this component outright because a `netutil.IsPrivateOrLinkLocal`
+guard applied uniformly would reject the operator's own legitimate on-prem
+Vault/Key Vault address, contradicting §2's baseline finding. That objection does
+NOT apply to the narrower `netutil.IsLinkLocal` predicate (169.254.0.0/16,
+`fe80::/10` — see `internal/netutil/dialer.go`'s own doc comment on why this is
+deliberately smaller than `IsPrivateOrLinkLocal`): no legitimate Vault, Azure Key
+Vault, AWS Secrets Manager, or GCP Secret Manager deployment lives at a link-local
+address, including cloud instance-metadata (169.254.169.254, shared by AWS/GCP/Azure)
+— unlike general RFC-1918 space, link-local has no on-prem-deployment legitimate use
+for any of these four backends, so guarding it costs the baseline case nothing.
+Applied at BOTH points, per this round's instruction:
 
-**What flips from report-only to a merged fuzz assertion once (1) and (2) land**
-(component 3 intentionally excluded per above):
+- **The configured `Address`, at validation time** (`validateConnectorURL` for
+  Vault, and Azure's equivalent construction path — AWS has no configurable address,
+  so this doesn't apply there): reject a literal-IP address that
+  `netutil.IsLinkLocal` flags, fast and loud, so an operator who mistypes or is
+  tricked into pointing a connector at IMDS finds out at config time, not silently
+  at first read. A *hostname* (not a literal IP) can't be fully checked here
+  without a DNS resolution at validation time, which would reintroduce exactly the
+  validate-once/dial-later gap `netutil.Dialer`'s own package doc (G48) already
+  identifies and fixes for the dial-time case below — so this registration-time
+  check is a fail-fast UX improvement for the literal-IP case, not the sole
+  enforcement.
+- **Every dial, via `netutil.Dialer{Disallow: netutil.IsLinkLocal}`** wired as the
+  shared client's `DialContext` (mirroring the JWKS fetcher's own
+  `jwksEgressTransport`, `internal/core/oidc_jwks.go`): re-validates on every
+  connection, including a *hostname*-configured address that resolves differently
+  than it did at registration time (the DNS-rebinding gap `netutil.Dialer`'s own
+  doc comment describes) — this is the enforcement that actually matters, the
+  registration-time check above is only a UX nicety on top of it. Once redirects
+  are refused outright (component 1), this is also the only dial target that
+  exists for any of the three backends, so there's no separate "redirect target"
+  case left needing a different check.
+
+**Open prerequisite this draft depends on, found while drafting**: `IsLinkLocal`,
+as currently implemented, does **not** decode NAT64 (`64:ff9b::/96`) or deprecated
+IPv4-compatible (`::a.b.c.d`) encodings of an embedded IPv4 address — confirmed by
+direct read of `internal/netutil/dialer.go`: only `IsPrivateOrLinkLocal` calls the
+`embeddedIPv4` decode step (the #1937 fix, `docs/security-closures.tsv`'s
+`ssrf-nat64-ipv4compat-001` row); `IsLinkLocal` checks the raw IP against
+`linkLocalCIDRs` only. So a NAT64- or compat-encoded IMDS target (e.g.
+`64:ff9b::a9fe:a9fe`, which embeds 169.254.169.254) would currently pass
+`IsLinkLocal` even though `IsPrivateOrLinkLocal` already correctly rejects it. This
+round's instruction asked for `IsLinkLocal` including this coverage, which does not
+exist yet — closing it is a small, additive change to `internal/netutil/dialer.go`
+itself (give `IsLinkLocal` the same `embeddedIPv4`-decode step `IsPrivateOrLinkLocal`
+already has, likely by factoring the shared "decode, then check a CIDR list" shape
+both functions want into one helper parameterized by which CIDR list), not to
+`internal/connect` — and it's a co-requisite of this draft, not a detail this draft
+can silently assume away. Recorded here rather than quietly assumed, per the same
+discipline as the two items below that stay explicitly unaffected.
+
+**What flips from report-only to a merged fuzz assertion once (1), (2), and (3) land**:
 
 | Existing report-only item | Becomes assertable how |
 |---|---|
 | §2's Azure redirect-follows-and-trusts-content gap | `FuzzAzureKVConnectorResponse` gains a redirect-refusal oracle mirroring Vault's oracle (e) — assert `attackerHits == 0` — red-proofed by temporarily reverting the `CheckRedirect` override and confirming the oracle goes red, then reverting the red-proof (never committed), same discipline already used for the 4 merged targets' other oracles. |
 | §3's AWS/Azure unbounded-decompression gzip-bomb gap | Both targets gain a bounded-response-size oracle: feed a `Content-Encoding: gzip` response whose decompressed size exceeds the configured cap and assert `GetSecret` fails closed (mirrors Vault's own existing oracle (b) fail-closed check, just with a body that decompresses past the cap instead of being structurally empty) — red-proofed by temporarily removing the `io.LimitReader` wrap. |
+| §2's baseline, IMDS/link-local slice only | **Now assertable, narrowly.** A connector configured with (or a hostname resolving to) a link-local address must be refused, at registration for a literal IP and at every dial regardless — red-proofed by temporarily swapping `netutil.IsLinkLocal` for a predicate that always returns `false`. This is new: the original draft of this section said the baseline stayed report-only on purpose; the narrowed, link-local-only guard changes that for this one slice of it. |
 | §1's no-ref-binding gap (all 4 backends) | **Unaffected by this fix** — orthogonal problem (response identity vs. transport hardening); would need each backend's own response-identity field (`ARN`/`Name`, `Secret.ID`, `AccessSecretVersionResponse.Name`) checked against the requested ref, not anything in the shared client. |
-| §2's baseline (no guard on the operator-CONFIGURED address) | **Deliberately unaffected — stays report-only, on purpose.** This fix only touches the redirect path (now refused outright) and the decompression cap; it does not add, and per the discussion above should not add, any validation of the operator's own configured `Address`. Do not read "component 3 dropped" as this baseline becoming assertable by omission — it remains an explicit, considered non-guard, not a gap this fix closes. |
+| §2's baseline, general private/RFC-1918/on-prem slice | **Still deliberately unaffected — stays report-only, on purpose.** Only the link-local slice above is now guarded; a genuinely private/on-prem address (e.g. `10.x`, `192.168.x`) remains unguarded at both registration and dial, exactly as `validateConnectorURL`'s own doc comment already argues is correct for this product's on-prem deployment shape. |
 
 ---
 
