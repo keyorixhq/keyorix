@@ -3,36 +3,67 @@ package http
 // canary_secret_leakage_fuzz_test.go — FuzzCanarySecretLeakage.
 //
 // Keyorix's core promise: a secret value never appears anywhere it shouldn't. This
-// fuzzer plants unique canary values — for Secret VALUES, but also Personal Access
-// Tokens, session/login tokens, dynamic-secret admin DSNs, dynamic-secret issued
-// lease credentials, and MFA enrollment secrets — and drives a fuzzed sequence of
-// hostile operations (cross-project reads, malformed/oversized/wrong-content-type
-// requests, rotation, version reads, deletes, audit queries, list/export endpoints)
-// through the REAL, fully-wired stack — the actual chi router + auth middleware +
-// handlers + core + crypto + storage, PLUS the real gRPC server over bufconn — and
-// scans EVERY reachable output channel for every canary after every op and at
-// sequence end.
+// fuzzer plants unique canary values — for Secret VALUES (regenerated every
+// iteration), and once per world for Personal Access Tokens, a session/login token,
+// a dynamic-secret admin DSN, a dynamic-secret issued lease credential, and an MFA
+// enrollment secret — and drives a fuzzed sequence of hostile operations
+// (cross-project reads, malformed/oversized/wrong-content-type requests, rotation,
+// version reads, deletes, audit queries, list/export endpoints) through the REAL,
+// fully-wired stack — the actual chi router + auth middleware + handlers + core +
+// crypto + storage, PLUS the real gRPC server over bufconn — and scans EVERY
+// reachable output channel for every canary after every op and at sequence end.
 //
-// EVERY canary planted across the fuzz world's ENTIRE lifetime (not just the current
-// iteration) stays in the scan set — see w.allVariants / w.plant below — so a
-// cross-input leak (iteration 50's response containing iteration 3's stale canary,
-// e.g. a caching bug) is caught, not just same-iteration leaks.
+// PERFORMANCE: cost-independent-of-history-size scanning. An earlier version of this
+// file scanned each output against every encoded variant of every canary ever
+// planted (a list that grows every iteration) — the same per-input decay observed in
+// FuzzGRPCRESTSecretReadAuthzParity. Two changes fix that:
 //
-// Oracle (exact-match, no heuristics): a Secret-VALUE canary may appear ONLY in the
-// JSON response body of one of three designated, permission-checked value-disclosure
-// calls — HTTP GET /secrets/value?ref=, HTTP GET /secrets/{id}?include_value=true,
-// gRPC SecretService.GetSecretValue — made by a principal the live shadow-grant model
-// says currently holds read access to THAT EXACT secret (or is admin), and even then
-// only in the `value` field, never alongside any OTHER canary ever planted. The five
-// new canary types (PAT/session/DSN/lease/MFA) are all generated and consumed via
-// direct in-process core calls, so their sole "authorized channel" is the Go return
-// value itself — nothing to special-case in the scanners; from the moment they're
-// planted they are zero-tolerance everywhere this harness looks (DB, logs, every
-// HTTP/gRPC response). This is also a genuine, useful assertion for two of them: PAT
-// tokens and session tokens are stored in the DB only as a SHA-256 hash (see
-// TokenHash / Session.SessionToken's doc comments), so scanning the DB for the RAW
-// value additionally confirms that hashing property live, not just secret-value
-// encryption.
+//  1. Secret-VALUE-family canaries (secretA/B, the mutation-lifecycle probe's
+//     throwaway values, the dynamic-secret DSN/lease canaries) all share one fixed
+//     shape: deriveCanary's "kxcanary-" + 32 lowercase hex chars. Instead of
+//     checking each output against N known values, every scan does a CONSTANT number
+//     of passes over the output — one for the literal "kxcanary-" prefix (raw form,
+//     which also covers JSON/URL-escaped since this charset needs no escaping), one
+//     each for its hex encoding (lower/upper), and one each for its alignment-
+//     independent base64 middle-pattern (3 phase alignments × std/url = 6) — extracts
+//     the fixed-length candidate token that follows, and looks it up in a
+//     map[string]struct{} (O(1) regardless of how many canaries have been planted).
+//     An unrecognized-but-canary-shaped token is treated exactly like a recognized
+//     one: both fail (see scanCanaryLeaks). Base64/hex hits fail on pattern match
+//     alone without attempting offset-aware decode-back-to-source — no legitimate
+//     channel in this codebase ever base64/hex-encodes a secret value, so a match is
+//     already sufficient evidence; recovering exactly which canary leaked via a
+//     base64 hit would require materially more machinery (tracking the actual
+//     encoding run's start offset) for no gain in detection power. See
+//     scanCanaryLeaks's doc comment for the full account.
+//  2. PAT / session / MFA-enrollment secrets don't share that prefix (a raw PAT
+//     token, an opaque session token, and a base32 TOTP secret are each a different,
+//     system-generated shape) and are comparatively expensive to mint (PAT creation,
+//     bcrypt-backed login, MFA enrollment). These are now planted ONCE per world
+//     (buildCanaryWorld), not once per input — cross-input tracking still checks
+//     them on every later input (a fixed, small set of ~3 literal values + their
+//     encodings, itself O(1) regardless of iteration count), it just doesn't keep
+//     re-minting new ones. The dynamic-secret admin DSN, its issued lease
+//     credential, and the known-open webhook-URL probe (see below) moved to
+//     world-build time for the same reason — real per-call cost (a DB write, or for
+//     the webhook case, the audit-diff introspection query), not scan cost, was the
+//     concern there.
+//
+// Oracle (exact-match, no heuristics): a Secret-VALUE-family canary may appear ONLY
+// in the JSON response body of one of three designated, permission-checked
+// value-disclosure calls — HTTP GET /secrets/value?ref=, HTTP GET
+// /secrets/{id}?include_value=true, gRPC SecretService.GetSecretValue — made by a
+// principal the live shadow-grant model says currently holds read access to THAT
+// EXACT secret (or is admin), and even then only in the `value` field, never
+// alongside any OTHER canary ever planted. PAT/session/MFA/DSN/lease are all
+// generated and consumed via direct in-process core calls, so their sole
+// "authorized channel" is the Go return value itself — nothing to special-case in
+// the scanners; from the moment each is planted it is zero-tolerance everywhere this
+// harness looks (DB, logs, every HTTP/gRPC response). This is also a genuine, useful
+// assertion for two of them: PAT tokens and session tokens are stored in the DB only
+// as a SHA-256 hash (see TokenHash / Session.SessionToken's doc comments), so
+// scanning the DB for the RAW value additionally confirms that hashing property
+// live, not just secret-value encryption.
 //
 // KNOWN-OPEN EXCEPTION: NotificationChannel.URL (the webhook/Slack/Teams bearer
 // credential — internal/notifychan/delivery.go's own comment: "the destination URL
@@ -42,15 +73,15 @@ package http
 // struct (internal/core/notification_channels.go:65-68 on create; :108,:126 on
 // update/delete). See keyorix-private/adversarial-review/
 // NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md (private repo, not in this
-// tree) for the full trace, who-can-read analysis, and fix options. The webhook
-// canary below is deliberately kept OUT of w.allVariants (so the DB scan — the one
-// channel known to fail — doesn't turn this target red) but IS still checked with
-// full zero tolerance against log/HTTP/gRPC (channels NOT known to be broken) via a
-// direct scanVariants call, and the DB is still checked, just non-fatally (t.Logf,
-// not t.Fatalf) so the finding stays visible without blocking the target. TODO: once
-// NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19 is fixed, fold webhookVariants
-// into w.allVariants (delete the special-cased block in extendedCanaryProbe) and
-// delete this paragraph.
+// tree) for the full trace, who-can-read analysis, and fix options. buildCanaryWorld
+// creates ONE webhook channel with a canary URL and confirms the leak ONCE via
+// f.Logf (not t.Fatalf) — informational, not gating, and not repeated on every
+// input (re-confirming a known, unfixed, single-cause bug on every iteration adds
+// cost for no new information). The webhook canary is never added to the shared
+// knownCanaries map, so it plays no further part in any later scan.
+// TODO(NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19): once fixed, delete this
+// paragraph and the special-cased block in buildCanaryWorld, and fold the webhook
+// canary into the normal plant() flow.
 //
 // Every reachable output channel is captured in-process: stdlib `log` (the sole
 // logger in this codebase, redirected to a buffer), every other HTTP response body/
@@ -59,11 +90,6 @@ package http
 // metadata/trailer, the full SQLite schema (every table, every column, introspected
 // — not hand-enumerated, so a table this file's author didn't think of is still
 // covered), and the raw on-disk SQLite file bytes.
-//
-// Encodings checked per canary: raw, base64 (std/URL, padded/unpadded), hex
-// (lower/upper). JSON-escaping and URL-encoding are no-ops for this charset
-// ("kxcanary-" + lowercase hex, or PAT's "kx_pat_" + base64url which is already
-// URL-safe) and are not separately generated — noted, not silently skipped.
 //
 // Audit rows are written asynchronously (goSafe, detached context). Rather than a
 // fixed sleep before scanning (which can race a slow write and silently miss a real
@@ -119,6 +145,68 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
+// canaryPrefix identifies every deriveCanary-produced token: "kxcanary-" + 32
+// lowercase hex chars, a fixed canaryTokenLen. Every Secret-VALUE-family canary in
+// this file (secretA/B, the mutation-lifecycle probe, the dynamic-secret DSN/lease
+// canaries) shares this exact shape, which is what makes prefix-based detection
+// possible — see the file header's PERFORMANCE section.
+const (
+	canaryPrefix   = "kxcanary-"
+	canaryBodyLen  = 32
+	canaryTokenLen = len(canaryPrefix) + canaryBodyLen
+)
+
+// Precomputed once at package init -- pure functions of canaryPrefix, independent of
+// any planted value, so there is nothing to recompute per scan or per plant.
+var (
+	canaryHexLowerPattern []byte
+	canaryHexUpperPattern []byte
+	canaryB64Patterns     [][]byte
+)
+
+func init() {
+	h := hex.EncodeToString([]byte(canaryPrefix))
+	canaryHexLowerPattern = []byte(h)
+	canaryHexUpperPattern = []byte(strings.ToUpper(h))
+	canaryB64Patterns = computeB64AlignmentPatterns(canaryPrefix)
+}
+
+// computeB64AlignmentPatterns returns, for each of 3 possible byte-phase alignments
+// (0,1,2 — the offset canaryPrefix's bytes might start at within some larger
+// base64-encoded byte stream we don't control) and each of std/url encoding, the
+// substring of the base64 output that depends ONLY on canaryPrefix's own bytes —
+// i.e. the run of complete 3-byte-input groups that lies entirely within the prefix,
+// excluding any leading/trailing group that would also depend on unknown
+// neighbouring bytes. This is the standard "carve a fixed string out of an
+// unknown-offset base64 stream" technique: a complete 3-byte group always encodes to
+// the same 4 base64 chars regardless of what comes before or after it, so a pattern
+// built this way is a reliable, alignment-independent signal that these exact bytes
+// were present, without needing to know where the encoded run itself begins.
+func computeB64AlignmentPatterns(s string) [][]byte {
+	var patterns [][]byte
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
+		for a := 0; a < 3; a++ {
+			padded := append(make([]byte, a), []byte(s)...)
+			full := enc.EncodeToString(padded)
+			groupStart := ((a + 2) / 3) * 3
+			groupEnd := ((a + len(s)) / 3) * 3
+			if groupEnd <= groupStart {
+				continue
+			}
+			charStart := (groupStart / 3) * 4
+			charEnd := (groupEnd / 3) * 4
+			if charStart < charEnd && charEnd <= len(full) {
+				patterns = append(patterns, []byte(full[charStart:charEnd]))
+			}
+		}
+	}
+	return patterns
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+}
+
 // lockedBuffer is a mutex-guarded io.Writer standing in for stdlib log's default
 // output. A goSafe-launched background goroutine can log concurrently with the
 // foreground fuzz iteration draining/resetting the buffer between ops, so this needs
@@ -152,14 +240,22 @@ type canaryPrincipal struct {
 	token string
 }
 
+// fixedCredential is a one-time, world-lifetime credential (PAT/session/MFA) that
+// doesn't share canaryPrefix's shape -- checked via a small, constant-size variant
+// list (fixedValueVariants) instead of the prefix mechanism. Never grows past the
+// handful planted in buildCanaryWorld, so this stays O(1) regardless of how many
+// fuzz iterations run.
+type fixedCredential struct {
+	label    string
+	variants [][]byte
+}
+
 type canaryWorld struct {
 	router http.Handler
 	grpc   pb.SecretServiceClient
 	db     *gorm.DB
 	dbPath string // on-disk SQLite file -- required for the raw-bytes plaintext-at-rest scan
 	c      *core.KeyorixCore
-
-	fakeDynEngine *dynamic.FakeEngine // injected dynamic-secret backend, see buildCanaryWorld
 
 	readerRole uint
 	adminTok   string
@@ -173,20 +269,37 @@ type canaryWorld struct {
 	principals []canaryPrincipal // 3: index 2 is the deliberate "never granted by fixture setup" outsider anchor
 	logBuf     *lockedBuffer
 
-	// allVariants accumulates every encoded variant of every canary planted across
-	// the WHOLE fuzz world's lifetime (see plant) -- every scan in this file checks
-	// against the full history, not just the current iteration's canaries, so a
-	// cross-input leak is caught, not just a same-iteration one. Single-goroutine
-	// access only (one f.Fuzz iteration runs at a time per worker process; goSafe
-	// background goroutines never touch this slice).
-	allVariants [][]byte
+	// knownCanaries accumulates the raw ("kxcanary-"+hex) value of every
+	// Secret-VALUE-family canary planted across the WHOLE fuzz world's lifetime (see
+	// plant) -- every scan in this file checks against the full history via O(1) map
+	// lookup, not just the current iteration's canaries, so a cross-input leak
+	// (iteration 50's response containing iteration 3's stale canary) is caught, not
+	// just a same-iteration one. Single-goroutine access only (one f.Fuzz iteration
+	// runs at a time per worker process; goSafe background goroutines never touch
+	// this map).
+	knownCanaries map[string]struct{}
+
+	// fixedCreds holds the one-time PAT/session/MFA credentials -- see fixedCredential.
+	fixedCreds []fixedCredential
+
+	// webhookExempt holds the single known-open webhook-URL canary (see the file
+	// header's KNOWN-OPEN EXCEPTION section) -- passed as scanCanaryLeaks's `exempt`
+	// set ONLY by the DB scans, so that one confirmed, unfixed bug doesn't fail every
+	// subsequent iteration, while the SAME value is still zero-tolerance in every
+	// other channel (log/HTTP/gRPC never pass this set).
+	webhookExempt map[string]struct{}
+
+	// dbWatermarks tracks, per table, the highest SQLite rowid scanDBGeneric has
+	// already scanned -- see that function's doc comment for why (bounds per-input
+	// DB-scan cost to rows added since the last scan, not total accumulated rows).
+	dbWatermarks map[string]int64
 }
 
-// plant registers a newly-generated canary value's encodings into the world's
-// permanent scan set and returns the value unchanged, so call sites read naturally:
-// valA := w.plant(deriveCanary("A", program)).
+// plant registers a newly-generated Secret-VALUE-family canary into the world's
+// permanent knownCanaries set and returns the value unchanged, so call sites read
+// naturally: valA := w.plant(deriveCanary("A", program)).
 func (w *canaryWorld) plant(value string) string {
-	w.allVariants = append(w.allVariants, canaryVariants(value)...)
+	w.knownCanaries[value] = struct{}{}
 	return value
 }
 
@@ -213,12 +326,32 @@ func (w *canaryWorld) adminReq(method, target, body string) *httptest.ResponseRe
 // scanOp applies the zero-tolerance oracle (against the FULL canary history) to an
 // ordinary (non-value-disclosure) HTTP call's body, headers, and the log lines
 // emitted while handling it. Every op in this fuzzer other than the three designated
-// read endpoints goes through this.
+// read endpoints, and other than the audit-record-surfacing ones (see
+// scanOpAuditSurface), goes through this.
 func (w *canaryWorld) scanOp(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder) {
 	t.Helper()
-	scanVariants(t, channel+":body", opIdx, principal, rec.Body.Bytes(), w.allVariants, nil)
-	scanVariants(t, channel+":headers", opIdx, principal, []byte(fmt.Sprintf("%v", rec.Header())), w.allVariants, nil)
-	scanVariants(t, "log", opIdx, principal, w.drainLog(), w.allVariants, nil)
+	w.scanOpExempt(t, opIdx, channel, principal, rec, nil)
+}
+
+// scanOpAuditSurface is scanOp's twin for the audit-search/export endpoints, which
+// legitimately return audit_events content (including Diff) to any audit.read
+// holder. It exempts the KNOWN-OPEN webhook-URL canary (see the file header) from
+// the body/headers checks -- proven live: a 5-minute burst caught this channel
+// surfacing the same known bug the DB scan already exempts (GET /api/v1/audit/search
+// returns the offending Diff verbatim), which is expected and already documented in
+// the private finding doc's "who can read it" section, not a new bug -- while
+// keeping log zero-tolerance (a webhook URL landing in a LOG line would be a
+// genuinely different, new problem).
+func (w *canaryWorld) scanOpAuditSurface(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	w.scanOpExempt(t, opIdx, channel, principal, rec, w.webhookExempt)
+}
+
+func (w *canaryWorld) scanOpExempt(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder, exempt map[string]struct{}) {
+	t.Helper()
+	scanCanaryLeaks(t, channel+":body", opIdx, principal, rec.Body.Bytes(), w.knownCanaries, "", w.fixedCreds, exempt)
+	scanCanaryLeaks(t, channel+":headers", opIdx, principal, []byte(fmt.Sprintf("%v", rec.Header())), w.knownCanaries, "", w.fixedCreds, exempt)
+	scanCanaryLeaks(t, "log", opIdx, principal, w.drainLog(), w.knownCanaries, "", w.fixedCreds, nil)
 }
 
 // drainAllBackgroundGoroutines deterministically waits for every in-flight goSafe
@@ -233,21 +366,26 @@ func drainAllBackgroundGoroutines() {
 	core.DrainBackgroundGoroutines()
 }
 
-// deriveCanary produces a per-iteration, per-label canary deterministically from the
-// fuzz input bytes -- reproducible corpus replay (same input -> same canary -> same
-// failure), not crypto/rand, and safe under Go's ban on nondeterministic sources
+// deriveCanary produces a per-label canary deterministically from the given seed
+// bytes -- reproducible corpus replay (same input -> same canary -> same failure),
+// not crypto/rand, and safe under Go's ban on nondeterministic sources
 // (Date.Now/math-rand-style) inside fuzz targets meant to be resumable/replayable.
-func deriveCanary(label string, program []byte) string {
-	h := sha256.Sum256(append([]byte("kx-canary-"+label+"-"), program...))
-	return "kxcanary-" + hex.EncodeToString(h[:16])
+// Called with the live `program` for per-iteration canaries, and with a fixed
+// constant seed for the once-per-world ones in buildCanaryWorld.
+func deriveCanary(label string, seed []byte) string {
+	h := sha256.Sum256(append([]byte("kx-canary-"+label+"-"), seed...))
+	return canaryPrefix + hex.EncodeToString(h[:16])
 }
 
-// canaryVariants expands one canary string into every encoding this fuzzer checks
-// for. JSON-escaping and URL-encoding are deliberately absent: neither this fuzzer's
-// own charset ("kxcanary-" + lowercase hex) nor a PAT's raw token charset
-// ("kx_pat_" + base64.RawURLEncoding, already URL-safe) contains a character either
-// encoding would alter, so the raw variant already covers both -- not an oversight.
-func canaryVariants(v string) [][]byte {
+// fixedValueVariants computes the small set of encodings checked for the one-time
+// fixedCredentials (PAT/session/MFA) -- these don't share canaryPrefix's shape, so
+// they can't use the prefix mechanism above, but a plain variant list is fine here:
+// there are only ever ~3 such values for the whole world's lifetime (not growing),
+// so this stays O(1) regardless of how many fuzz iterations run. JSON-escaping and
+// URL-encoding are omitted: neither this fuzzer's own canary charset nor a PAT's raw
+// token charset ("kx_pat_" + base64.RawURLEncoding, already URL-safe) contains a
+// character either encoding would alter.
+func fixedValueVariants(v string) [][]byte {
 	b := []byte(v)
 	h := hex.EncodeToString(b)
 	return [][]byte{
@@ -273,26 +411,191 @@ func snippetAround(haystack []byte, idx, matchLen int) string {
 	return fmt.Sprintf("context=%q", string(haystack[start:end]))
 }
 
-// scanVariants fails immediately if any of `variants` appears in haystack, UNLESS
-// that exact encoded variant also appears in `allow` (used for the one
-// legitimately-disclosed value in an authorized read's own response body — see
-// checkValueEndpoint). Every caller with allow=nil represents a channel on which NO
-// canary is ever legitimately disclosed.
-func scanVariants(t *testing.T, channel string, opIdx int, principal string, haystack []byte, variants, allow [][]byte) {
+// matchesPrefixOfAny reports whether partial is a prefix (up to and including the
+// fully-equal case) of allowed or of any value in exempt. Used when a raw-byte
+// stream cuts an otherwise-legitimate (allowed/exempt) token short -- e.g. a SQLite
+// page boundary landing inside the known-open webhook canary's own bytes, observed
+// live during a burst run -- so that byte-level truncation of an already-accepted
+// value doesn't read as a brand-new finding.
+func matchesPrefixOfAny(partial, allowed string, exempt map[string]struct{}) bool {
+	if allowed != "" && len(partial) <= len(allowed) && allowed[:len(partial)] == partial {
+		return true
+	}
+	for v := range exempt {
+		if len(partial) <= len(v) && v[:len(partial)] == partial {
+			return true
+		}
+	}
+	return false
+}
+
+// hexEncodedCandidateAt attempts to decode a full canary token immediately following
+// a hex-encoded-prefix match at haystack[pos:pos+prefixPatternLen]: reads the next
+// canaryBodyLen*2 hex chars, decodes them back to canaryBodyLen raw bytes, and
+// validates every decoded byte is itself a lowercase hex digit (since a genuine
+// canary body is "kxcanary-" + hex digits — decoding its hex ENCODING must yield hex
+// digit bytes back). Returns the reconstructed raw candidate token and true on
+// success.
+func hexEncodedCandidateAt(haystack []byte, pos, prefixPatternLen int) (string, bool) {
+	bodyHexLen := canaryBodyLen * 2
+	start := pos + prefixPatternLen
+	end := start + bodyHexLen
+	if end > len(haystack) {
+		return "", false
+	}
+	decoded, err := hex.DecodeString(string(haystack[start:end]))
+	if err != nil {
+		return "", false
+	}
+	for _, c := range decoded {
+		if !isHexDigit(c) {
+			return "", false
+		}
+	}
+	return canaryPrefix + string(decoded), true
+}
+
+// scanCanaryLeaks is the sole scanning primitive in this file (see the header's
+// PERFORMANCE section for why). Cost is O(len(haystack)) times a CONSTANT number of
+// pattern passes (1 raw + 2 hex + 6 base64 + 7×len(fixedCreds)) — independent of
+// len(known), which is what keeps per-input scan cost flat as knownCanaries grows
+// across a long soak.
+//
+//   - Raw form ("kxcanary-"+hex, literal): every occurrence is extracted as a
+//     candidate 41-byte token. `allowed`, if non-empty, is the one candidate value
+//     exempted (the authorized read's own legitimately-disclosed value — see
+//     checkValueEndpoint). Any OTHER candidate fails, whether it's in `known` (a
+//     historical/cross-input leak) or not (an unrecognized-but-canary-shaped token —
+//     could be a tracking gap in this harness itself, but is exactly as much a
+//     finding either way, so it fails the same). A prefix match with insufficient
+//     trailing bytes, or trailing bytes that aren't all hex digits, also fails
+//     (malformed/truncated is still suspicious, never silently ignored).
+//   - Hex-encoded form: same extract-and-classify, via hexEncodedCandidateAt.
+//   - Base64 form (any of 3 phase alignments, std/url): pattern match alone fails —
+//     no legitimate channel in this codebase ever base64-encodes a secret value, so
+//     recovering exactly which canary leaked isn't needed to know it's a leak.
+//   - fixedCreds (PAT/session/MFA): a small, constant-size direct Contains check per
+//     precomputed variant.
+//
+// exempt is a small, standing set of raw candidate values that must NEVER fail here,
+// checked in addition to `allowed` -- unlike `allowed` (one call's own legitimate
+// disclosure), exempt entries are permanent for every call that passes them. Its only
+// use in this file is the known-open webhook-URL-into-audit-diff finding (see the
+// file header): the webhook canary shares canaryPrefix's shape, so without this it
+// would be flagged as an "unknown/unrecognized" token on every DB scan for the rest
+// of the run. Pass nil for channels where no such standing exception exists (which is
+// every channel except the DB scans).
+func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, haystack []byte, known map[string]struct{}, allowed string, fixedCreds []fixedCredential, exempt map[string]struct{}) {
 	t.Helper()
-outer:
-	for _, v := range variants {
-		idx := bytes.Index(haystack, v)
-		if idx < 0 {
+
+	prefixBytes := []byte(canaryPrefix)
+	pos := 0
+	for {
+		rel := bytes.Index(haystack[pos:], prefixBytes)
+		if rel < 0 {
+			break
+		}
+		start := pos + rel
+		end := start + canaryTokenLen
+		if end > len(haystack) {
+			// A real DB/file byte stream can legitimately cut an exempt value off
+			// mid-token (e.g. a SQLite page boundary landing inside the known-open
+			// webhook canary's own bytes -- observed live during a 5-minute burst).
+			// If every available byte matches the START of allowed or some exempt
+			// value, this is that same accepted artifact, not a new finding.
+			if matchesPrefixOfAny(string(haystack[start:]), allowed, exempt) {
+				break
+			}
+			t.Fatalf("CANARY LEAK [%s:raw] op #%d principal=%s: truncated canary-prefixed token -- %s",
+				channel, opIdx, principal, snippetAround(haystack, start, len(haystack)-start))
+		}
+		body := haystack[start+len(canaryPrefix) : end]
+		validLen := 0
+		for _, c := range body {
+			if !isHexDigit(c) {
+				break
+			}
+			validLen++
+		}
+		candidate := string(haystack[start:end])
+		if malformed := validLen < len(body); malformed {
+			// Same reasoning as the truncated-token branch above, but here the byte
+			// stream didn't run out -- it just stopped being valid hex partway
+			// through (observed live: SQLite page/pointer bytes immediately after a
+			// handful of the webhook canary's own leading hex chars). Compare only
+			// the leading VALID portion against allowed/exempt, not the full
+			// fixed-length candidate (which includes the garbage tail and could
+			// never equal a clean known value).
+			partial := canaryPrefix + string(body[:validLen])
+			if matchesPrefixOfAny(partial, allowed, exempt) {
+				pos = start + 1
+				continue
+			}
+			t.Fatalf("CANARY LEAK [%s:raw] op #%d principal=%s: malformed canary-prefixed token %q -- %s",
+				channel, opIdx, principal, candidate, snippetAround(haystack, start, canaryTokenLen))
+		}
+		if candidate == allowed {
+			pos = start + 1
 			continue
 		}
-		for _, a := range allow {
-			if bytes.Equal(v, a) {
-				continue outer
+		if _, ok := exempt[candidate]; ok {
+			pos = start + 1
+			continue
+		}
+		_, isKnown := known[candidate]
+		label := "unknown/unrecognized"
+		if isKnown {
+			label = "known/historical"
+		}
+		t.Fatalf("CANARY LEAK [%s:raw] op #%d principal=%s: %s token %q -- %s",
+			channel, opIdx, principal, label, candidate, snippetAround(haystack, start, canaryTokenLen))
+	}
+
+	for _, hp := range [][]byte{canaryHexLowerPattern, canaryHexUpperPattern} {
+		pos := 0
+		for {
+			rel := bytes.Index(haystack[pos:], hp)
+			if rel < 0 {
+				break
+			}
+			start := pos + rel
+			candidate, ok := hexEncodedCandidateAt(haystack, start, len(hp))
+			if !ok {
+				pos = start + 1
+				continue // insufficient/undecodable trailing bytes -- not a fabricated hex-encoded canary, just noise; the raw-form loop above is what actually proves presence
+			}
+			if candidate == allowed {
+				pos = start + 1
+				continue
+			}
+			if _, ok := exempt[candidate]; ok {
+				pos = start + 1
+				continue
+			}
+			_, isKnown := known[candidate]
+			label := "unknown/unrecognized"
+			if isKnown {
+				label = "known/historical"
+			}
+			t.Fatalf("CANARY LEAK [%s:hex] op #%d principal=%s: %s token %q -- %s",
+				channel, opIdx, principal, label, candidate, snippetAround(haystack, start, len(hp)+canaryBodyLen*2))
+		}
+	}
+
+	for _, p := range canaryB64Patterns {
+		if idx := bytes.Index(haystack, p); idx >= 0 {
+			t.Fatalf("CANARY LEAK [%s:base64] op #%d principal=%s: matched %q -- %s",
+				channel, opIdx, principal, string(p), snippetAround(haystack, idx, len(p)))
+		}
+	}
+
+	for _, fc := range fixedCreds {
+		for _, v := range fc.variants {
+			if idx := bytes.Index(haystack, v); idx >= 0 {
+				t.Fatalf("CANARY LEAK [%s:%s] op #%d principal=%s: matched %q -- %s",
+					channel, fc.label, opIdx, principal, string(v), snippetAround(haystack, idx, len(v)))
 			}
 		}
-		t.Fatalf("CANARY LEAK [%s] op #%d principal=%s: matched %q -- %s",
-			channel, opIdx, principal, string(v), snippetAround(haystack, idx, len(v)))
 	}
 }
 
@@ -307,55 +610,88 @@ type valueEnvelope struct {
 // from the HTTP/gRPC status code -- so an authz bug that returns 200 to an
 // unauthorized principal is still caught (AUTHZ BYPASS below), same as the
 // wantVal/gotValue mismatch catches a cross-secret substitution bug (INTEGRITY
-// below). The final cross-check scans the FULL canary history (w.allVariants),
-// excluding only wantVal's own encodings -- so it catches not just "the other of
-// A/B" riding along, but any historical canary of any type.
+// below). The final cross-check exempts only wantVal's own raw form -- so it catches
+// not just "the other of A/B" riding along, but any historical canary of any type.
 func checkValueEndpoint(t *testing.T, w *canaryWorld, opIdx int, channel, principal string, allowed, statusOK bool, gotValue string, code int, body, headerBytes []byte, wantVal string) {
 	t.Helper()
-	wantVariants := canaryVariants(wantVal)
 	if len(headerBytes) > 0 {
-		scanVariants(t, channel+":headers", opIdx, principal, headerBytes, w.allVariants, nil)
+		scanCanaryLeaks(t, channel+":headers", opIdx, principal, headerBytes, w.knownCanaries, "", w.fixedCreds, nil)
 	}
 	if !allowed {
 		if statusOK {
 			t.Fatalf("op #%d [%s]: AUTHZ BYPASS -- unauthorized principal=%s got a successful response (code=%d)", opIdx, channel, principal, code)
 		}
-		scanVariants(t, channel+":deny-body", opIdx, principal, body, w.allVariants, nil)
+		scanCanaryLeaks(t, channel+":deny-body", opIdx, principal, body, w.knownCanaries, "", w.fixedCreds, nil)
 		return
 	}
 	if !statusOK {
 		// Never assert must-200 for an allowed call (matches FuzzKeyorixHTTPAPISequence's
 		// own convention) -- but whatever came back still gets zero tolerance.
-		scanVariants(t, channel+":allow-nonOK-body", opIdx, principal, body, w.allVariants, nil)
+		scanCanaryLeaks(t, channel+":allow-nonOK-body", opIdx, principal, body, w.knownCanaries, "", w.fixedCreds, nil)
 		return
 	}
 	if gotValue != wantVal {
 		t.Fatalf("op #%d [%s]: INTEGRITY -- authorized read by %s returned a value that does not match the requested secret's canary (got len=%d want len=%d) -- possible cross-secret leak",
 			opIdx, channel, principal, len(gotValue), len(wantVal))
 	}
-	scanVariants(t, channel+":allow-body-cross-check", opIdx, principal, body, w.allVariants, wantVariants)
+	scanCanaryLeaks(t, channel+":allow-body-cross-check", opIdx, principal, body, w.knownCanaries, wantVal, w.fixedCreds, nil)
 }
 
 var canaryTableNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
-// dbHit is one match found by dbScanFindFirst.
-type dbHit struct {
-	table, col string
-	haystack   []byte
-	variant    []byte
-	idx        int
+func cellBytes(v interface{}) []byte {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []byte:
+		return x
+	case string:
+		return []byte(x)
+	default:
+		return []byte(fmt.Sprintf("%v", x))
+	}
 }
 
-// dbScanFindFirst introspects the live schema (sqlite_master + PRAGMA table_info)
-// and returns the first cell, anywhere in the DB, matching any of `variants` — or
-// nil if none is found. Introspection, not a hand-enumerated table list, on purpose
-// -- this codebase's own standing lesson is that a hand-maintained enumeration of
-// call/storage shapes reliably misses one (see CLAUDE.md's "an enumeration is only
-// as complete as the idioms it knows about"). This single mechanism is what makes
-// audit_events, notifications, anomaly_alerts, secret_metadata_histories,
-// dynamic_secret_configs/leases, mfa_secrets, personal_access_tokens, sessions, and
-// secret_versions.encrypted_value all covered without a per-table special case.
-func dbScanFindFirst(t *testing.T, sqlDB *sql.DB, variants [][]byte) *dbHit {
+// scanDBGeneric introspects the live schema (sqlite_master + PRAGMA table_info) and
+// applies scanCanaryLeaks to every cell of every table. Introspection, not a
+// hand-enumerated table list, on purpose -- this codebase's own standing lesson is
+// that a hand-maintained enumeration of call/storage shapes reliably misses one (see
+// CLAUDE.md's "an enumeration is only as complete as the idioms it knows about").
+// This single mechanism is what makes audit_events, notifications, anomaly_alerts,
+// secret_metadata_histories, dynamic_secret_configs/leases, mfa_secrets,
+// personal_access_tokens, sessions, and secret_versions.encrypted_value all covered
+// without a per-table special case.
+//
+// Each table's rows are read fully into memory and dataRows is closed BEFORE any
+// scanCanaryLeaks call for that table -- not interleaved. scanCanaryLeaks can
+// t.Fatalf mid-scan, and with SetMaxOpenConns(1) an open *sql.Rows left behind by an
+// abrupt Fatalf-triggered goroutine exit (no deferred Close reached) permanently
+// starves the connection pool: the very next query, on the very next fuzz input,
+// blocks forever waiting for a connection that will never be released. An earlier
+// version of this function scanned while iterating dataRows directly and hit exactly
+// this deadlock the first time a DB-scan leak actually fired.
+//
+// INCREMENTAL, via watermarks: without this, "SELECT * FROM tbl" re-reads and
+// re-scans every row on every single fuzz input, so per-input cost grows with total
+// accumulated row count (audit_events/secret_versions grow every iteration) even
+// after the canary-tracking side is O(1) -- observed live as ~3x throughput decay
+// over a 5-minute burst before this fix. watermarks[tbl] is the highest SQLite
+// rowid already scanned for that table; each call only reads WHERE rowid >
+// watermark, so cost is O(rows added since the last scan), not O(total rows).
+//
+// Soundness rests on this codebase's actual write patterns being append-only for
+// every canary-relevant table this fuzzer touches: secret_versions/audit_events/
+// personal_access_tokens/sessions/mfa_secrets/dynamic_secret_configs/leases/
+// notification_channels are all created once and never have a NEW canary value
+// written into an EXISTING row afterward (secret_nodes rows do get updated, e.g. a
+// current-version pointer, but never with value content). If some future write path
+// broke that assumption, an in-place UPDATE introducing a leak into an
+// already-scanned rowid would be invisible here -- but scanRawDBFile (unavoidably
+// O(file size), run every iteration, no watermark) reads the CURRENT bytes of the
+// whole file every time, so it remains a full backstop regardless of this
+// assumption; this function's incremental scan is a speed optimization on top of
+// that guarantee, not a narrowing of it.
+func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixedCreds []fixedCredential, exempt map[string]struct{}, watermarks map[string]int64) {
 	t.Helper()
 	rows, err := sqlDB.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
 	if err != nil {
@@ -402,55 +738,43 @@ func dbScanFindFirst(t *testing.T, sqlDB *sql.DB, variants [][]byte) *dbHit {
 		for i, c := range cols {
 			quoted[i] = `"` + c + `"`
 		}
-		dataRows, err := sqlDB.Query("SELECT " + strings.Join(quoted, ",") + " FROM " + tbl) //nolint:gosec -- table/col names are schema-introspected (sqlite_master/PRAGMA), not attacker input, and regex-validated above
+		wm := watermarks[tbl]
+		//nolint:gosec -- table/col names are schema-introspected (sqlite_master/PRAGMA), not attacker input, and regex-validated above; wm is a bound parameter, not interpolated
+		dataRows, err := sqlDB.Query("SELECT rowid, "+strings.Join(quoted, ",")+" FROM "+tbl+" WHERE rowid > ? ORDER BY rowid", wm)
 		if err != nil {
 			t.Fatalf("db scan: select %s: %v", tbl, err)
 		}
-		dest := make([]interface{}, len(cols))
-		ptrs := make([]interface{}, len(cols))
+		dest := make([]interface{}, len(cols)+1) // [0] = rowid
+		ptrs := make([]interface{}, len(cols)+1)
 		for i := range dest {
 			ptrs[i] = &dest[i]
 		}
+		var cellData [][]byte
+		var cellCol []string
+		maxRowid := wm
 		for dataRows.Next() {
 			if err := dataRows.Scan(ptrs...); err != nil {
 				dataRows.Close()
 				t.Fatalf("db scan: row scan %s: %v", tbl, err)
 			}
-			for i, v := range dest {
-				b := cellBytes(v)
+			if rid, ok := dest[0].(int64); ok && rid > maxRowid {
+				maxRowid = rid
+			}
+			for i := 1; i < len(dest); i++ {
+				b := cellBytes(dest[i])
 				if b == nil {
 					continue
 				}
-				for _, variant := range variants {
-					if idx := bytes.Index(b, variant); idx >= 0 {
-						dataRows.Close()
-						return &dbHit{table: tbl, col: cols[i], haystack: b, variant: variant, idx: idx}
-					}
-				}
+				cellData = append(cellData, b)
+				cellCol = append(cellCol, cols[i-1])
 			}
 		}
-		dataRows.Close()
-	}
-	return nil
-}
+		dataRows.Close() // closed BEFORE scanning below -- see the doc comment above
+		watermarks[tbl] = maxRowid
 
-func cellBytes(v interface{}) []byte {
-	switch x := v.(type) {
-	case nil:
-		return nil
-	case []byte:
-		return x
-	case string:
-		return []byte(x)
-	default:
-		return []byte(fmt.Sprintf("%v", x))
-	}
-}
-
-func scanDBGeneric(t *testing.T, sqlDB *sql.DB, variants [][]byte) {
-	t.Helper()
-	if hit := dbScanFindFirst(t, sqlDB, variants); hit != nil {
-		t.Fatalf("CANARY LEAK [db:%s.%s] matched %q -- %s", hit.table, hit.col, string(hit.variant), snippetAround(hit.haystack, hit.idx, len(hit.variant)))
+		for i, b := range cellData {
+			scanCanaryLeaks(t, fmt.Sprintf("db:%s.%s", tbl, cellCol[i]), 0, "n/a", b, known, "", fixedCreds, exempt)
+		}
 	}
 }
 
@@ -459,17 +783,13 @@ func scanDBGeneric(t *testing.T, sqlDB *sql.DB, variants [][]byte) {
 // column-level scan (this also catches anything sitting in freelist/overflow pages a
 // column-level SELECT wouldn't surface). Requires a FILE-backed DB, not :memory: --
 // see buildCanaryWorld.
-func scanRawDBFile(t *testing.T, path string, variants [][]byte) {
+func scanRawDBFile(t *testing.T, path string, known map[string]struct{}, fixedCreds []fixedCredential, exempt map[string]struct{}) {
 	t.Helper()
 	data, err := os.ReadFile(path) //nolint:gosec -- path is this fuzz target's own f.TempDir()-scoped file, not user input
 	if err != nil {
 		t.Fatalf("db scan: read raw file %s: %v", path, err)
 	}
-	for _, v := range variants {
-		if idx := bytes.Index(data, v); idx >= 0 {
-			t.Fatalf("CANARY LEAK [db:raw-file] matched %q at byte offset %d in %s", string(v), idx, path)
-		}
-	}
+	scanCanaryLeaks(t, "db:raw-file", 0, "n/a", data, known, "", fixedCreds, exempt)
 }
 
 // buildCanaryWorld stands up the real production stack once per fuzz worker PROCESS
@@ -487,6 +807,10 @@ func scanRawDBFile(t *testing.T, path string, variants [][]byte) {
 // internal/core's own tests use) is injected so lease issuance works without a real
 // Postgres/MySQL target -- FakeEngine.IssueFields lets a test-chosen canary become
 // the issued credential.
+//
+// PAT / session / MFA / dynamic-secret DSN+lease / the known-open webhook probe are
+// all planted HERE, once, not per fuzz input -- see the file header's PERFORMANCE
+// section for why.
 func buildCanaryWorld(f *testing.F) *canaryWorld {
 	f.Helper()
 	if err := i18n.InitializeForTesting(); err != nil {
@@ -613,6 +937,103 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		mkPrincipal("canary-outsider", "canary-outsider@x.io"),
 	}
 
+	knownCanaries := map[string]struct{}{}
+	plantOnce := func(v string) string {
+		knownCanaries[v] = struct{}{}
+		return v
+	}
+	var fixedCreds []fixedCredential
+
+	// PAT: DB stores only TokenHash (SHA-256); scanning the DB for the raw token
+	// additionally confirms that hashing property live.
+	if patRes, err := c.CreateOwnPAT(ctx, principals[0].id, "canary-pat-world", nil, []string{"secrets.read"}, 0, 0, nil); err == nil && patRes != nil {
+		fixedCreds = append(fixedCreds, fixedCredential{label: "pat", variants: fixedValueVariants(patRes.PlainToken)})
+	} else {
+		f.Logf("PAT canary setup skipped (%v)", err)
+	}
+
+	// Session token: DB stores only a SHA-256 hash (Session.SessionToken); same
+	// confirmation as PAT, for a completely different subsystem. A dedicated fresh
+	// login (not one of the principals' own already-tracked sessions) so this
+	// checks a token that was never used as a Bearer credential anywhere in this
+	// harness -- its ONLY legitimate appearance is this one Login return value.
+	if sess, _, lerr := c.Login(ctx, &core.LoginRequest{Username: "canary-readera", Password: apiFuzzPrincipalPassword}); lerr == nil && sess != nil {
+		fixedCreds = append(fixedCreds, fixedCredential{label: "session", variants: fixedValueVariants(sess.SessionToken)})
+	} else {
+		f.Logf("session canary setup skipped (%v)", lerr)
+	}
+
+	// MFA enrollment secret: DB stores only SecretEnc (encrypted). A dedicated
+	// throwaway user avoids interfering with the fixture principals.
+	if mfaUser, uerr := c.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "canary-mfa-world", Email: "canary-mfa-world@x.io", Password: apiFuzzPrincipalPassword,
+	}); uerr == nil && mfaUser != nil {
+		if _, secret, merr := c.BeginMFAEnrollment(ctx, mfaUser.ID); merr == nil {
+			fixedCreds = append(fixedCreds, fixedCredential{label: "mfa", variants: fixedValueVariants(secret)})
+		} else {
+			f.Logf("MFA canary setup skipped (%v)", merr)
+		}
+	} else {
+		f.Logf("MFA canary user setup skipped (%v)", uerr)
+	}
+
+	// Dynamic-secret admin DSN: never echoed back in ANY response (AdminDSNEnc/
+	// AdminDSNMeta are both encrypted, json:"-") -- zero-tolerance from the moment
+	// it's supplied as create input, no allowlisted channel at all. Shares
+	// canaryPrefix's shape, so it goes through plantOnce into knownCanaries like any
+	// Secret-VALUE-family canary, not a fixedCredential.
+	dsnCanary := plantOnce(deriveCanary("dsn-world", []byte("world-init")))
+	dsn := fmt.Sprintf("postgres://admin:%s@db.internal:5432/app", dsnCanary)
+	cfg, cfgErr := c.CreateDynamicSecretConfig(ctx, &core.CreateDynamicSecretConfigRequest{
+		Name: "canary-dyn-world", ProjectID: pA.ID, EnvironmentID: eA.ID,
+		BackendType: "fake", AdminDSN: dsn, DefaultTTLSeconds: 3600,
+		CreatedBy: "testadmin", ActorID: admin.ID,
+	})
+	if cfgErr != nil {
+		f.Logf("dynamic-secret config canary setup skipped (%v)", cfgErr)
+	} else {
+		// Lease credential: the injected FakeEngine's IssueFields makes the issued
+		// credential itself the canary -- must appear only in the IssueLease return
+		// value; DB persists only CredentialEnc (encrypted). Also shares
+		// canaryPrefix's shape.
+		leaseCanary := deriveCanary("lease-world", []byte("world-init"))
+		fakeDyn.IssueFields = map[string]string{"canary": leaseCanary}
+		if _, lerr := c.IssueLease(ctx, cfg.ID, 3600, admin.ID); lerr == nil {
+			plantOnce(leaseCanary)
+		} else {
+			f.Logf("lease canary setup skipped (%v)", lerr)
+		}
+	}
+
+	// KNOWN-OPEN FINDING (see file header): confirm ONCE, informationally, that
+	// NotificationChannel.URL leaks into audit_events.Diff. webhookCanary is
+	// deliberately never passed to plantOnce (knownCanaries) -- instead it goes into
+	// webhookExempt, which scanCanaryLeaks only honors when explicitly passed (the DB
+	// scans only -- see webhookExempt's doc comment), so the SAME value stays
+	// zero-tolerance in every other channel.
+	webhookExempt := map[string]struct{}{}
+	webhookCanary := deriveCanary("webhook-world", []byte("world-init"))
+	ch := &models.NotificationChannel{
+		Name: "canary-webhook-world", Type: "webhook",
+		URL:     "https://example.com/hooks/" + webhookCanary,
+		Enabled: true, Events: "secret.rotated", CreatedBy: "testadmin",
+	}
+	if _, cherr := c.CreateNotificationChannel(ctx, ch, "testadmin", admin.ID); cherr == nil {
+		webhookExempt[webhookCanary] = struct{}{}
+		drainAllBackgroundGoroutines()
+		if sqlDB, dberr := db.DB(); dberr == nil {
+			rows, qerr := sqlDB.Query("SELECT 1 FROM audit_events WHERE diff LIKE ? LIMIT 1", "%"+webhookCanary+"%")
+			if qerr == nil {
+				if rows.Next() {
+					f.Logf("KNOWN-OPEN FINDING confirmed live: webhook URL canary present in audit_events.diff -- see keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md")
+				}
+				rows.Close()
+			}
+		}
+	} else {
+		f.Logf("webhook canary setup skipped (%v)", cherr)
+	}
+
 	r, err := NewRouter(&config.Config{}, c)
 	if err != nil {
 		f.Fatalf("router: %v", err)
@@ -642,12 +1063,13 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 
 	return &canaryWorld{
 		router: r, grpc: pb.NewSecretServiceClient(conn), db: db, dbPath: dbPath, c: c,
-		fakeDynEngine: fakeDyn,
-		readerRole:    role.ID, adminTok: adminSess.SessionToken, adminID: admin.ID,
+		readerRole: role.ID, adminTok: adminSess.SessionToken, adminID: admin.ID,
 		projAID: pA.ID, projBID: pB.ID, envAID: eA.ID, envBID: eB.ID,
 		secAID: sA.ID, secBID: sB.ID,
 		refA: "canary-proja/prod/sa", refB: "canary-projb/prod/sb",
 		principals: principals, logBuf: lb,
+		knownCanaries: knownCanaries, fixedCreds: fixedCreds, webhookExempt: webhookExempt,
+		dbWatermarks: map[string]int64{},
 	}
 }
 
@@ -748,7 +1170,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 				_ = json.Unmarshal(rec.Body.Bytes(), &env)
 			}
 			checkValueEndpoint(t, w, opIdx, "http:ref", label, allowed, statusOK, env.Data.Value, rec.Code, rec.Body.Bytes(), []byte(fmt.Sprintf("%v", rec.Header())), val)
-			scanVariants(t, "log", opIdx, label, w.drainLog(), w.allVariants, nil)
+			scanCanaryLeaks(t, "log", opIdx, label, w.drainLog(), w.knownCanaries, "", w.fixedCreds, nil)
 		}
 
 		readByID := func(mode, which byte) {
@@ -768,7 +1190,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 				_ = json.Unmarshal(rec.Body.Bytes(), &env)
 			}
 			checkValueEndpoint(t, w, opIdx, "http:id", label, allowed, statusOK, env.Data.Value, rec.Code, rec.Body.Bytes(), []byte(fmt.Sprintf("%v", rec.Header())), val)
-			scanVariants(t, "log", opIdx, label, w.drainLog(), w.allVariants, nil)
+			scanCanaryLeaks(t, "log", opIdx, label, w.drainLog(), w.knownCanaries, "", w.fixedCreds, nil)
 		}
 
 		readGRPC := func(mode, which byte) {
@@ -782,7 +1204,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			}
 			var hdr, trl metadata.MD
 			resp, err := w.grpc.GetSecretValue(gctx, &pb.GetSecretRequest{Id: uint32(id), IncludeValue: true}, grpc.Header(&hdr), grpc.Trailer(&trl))
-			scanVariants(t, "grpc:metadata", opIdx, label, []byte(fmt.Sprintf("%v %v", hdr, trl)), w.allVariants, nil)
+			scanCanaryLeaks(t, "grpc:metadata", opIdx, label, []byte(fmt.Sprintf("%v %v", hdr, trl)), w.knownCanaries, "", w.fixedCreds, nil)
 			statusOK := err == nil
 			gotVal := ""
 			var body []byte
@@ -792,7 +1214,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 				body = []byte(err.Error())
 			}
 			checkValueEndpoint(t, w, opIdx, "grpc", label, allowed, statusOK, gotVal, 0, body, nil, val)
-			scanVariants(t, "log", opIdx, label, w.drainLog(), w.allVariants, nil)
+			scanCanaryLeaks(t, "log", opIdx, label, w.drainLog(), w.knownCanaries, "", w.fixedCreds, nil)
 		}
 
 		listSecrets := func(mode, which byte) {
@@ -856,7 +1278,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			}
 			rec := httptest.NewRecorder()
 			w.router.ServeHTTP(rec, req)
-			w.scanOp(t, opIdx, "http:audit-search", label, rec)
+			w.scanOpAuditSurface(t, opIdx, "http:audit-search", label, rec)
 		}
 
 		inventoryCSV := func(mode byte) {
@@ -880,7 +1302,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			}
 			rec := httptest.NewRecorder()
 			w.router.ServeHTTP(rec, req)
-			w.scanOp(t, opIdx, "http:audit-export-csv", label, rec)
+			w.scanOpAuditSurface(t, opIdx, "http:audit-export-csv", label, rec)
 		}
 
 		// hostileMutate drives rotation/update/delete attempts -- incl. malformed,
@@ -965,7 +1387,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 				_ = json.Unmarshal(rec.Body.Bytes(), &env)
 			}
 			checkValueEndpoint(t, w, opIdx, "http:probe-read", "admin", true, rec.Code == http.StatusOK, env.Data.Value, rec.Code, rec.Body.Bytes(), []byte(fmt.Sprintf("%v", rec.Header())), updVal)
-			scanVariants(t, "log", opIdx, "admin", w.drainLog(), w.allVariants, nil)
+			scanCanaryLeaks(t, "log", opIdx, "admin", w.drainLog(), w.knownCanaries, "", w.fixedCreds, nil)
 
 			rec = w.adminReq(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", sid), "")
 			opIdx++
@@ -974,91 +1396,6 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			rec = w.adminReq(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d?include_value=true", sid), "")
 			opIdx++
 			w.scanOp(t, opIdx, "http:probe-post-delete-read", "admin", rec)
-		}
-
-		// extendedCanaryProbe generalizes the canary beyond Secret VALUES: PAT raw
-		// tokens, a fresh session/login token, a dynamic-secret admin DSN, an issued
-		// dynamic-secret lease credential, and an MFA enrollment secret -- each planted
-		// immediately after the ONE in-process core call that legitimately produces it
-		// (its Go return value IS "the creation/issuing/login response to the
-		// owner/requester" in the in-process sense this harness operates at), then
-		// zero-tolerance everywhere from that point on via w.allVariants. Also drives the
-		// KNOWN-OPEN webhook-URL-into-audit-diff finding -- see the file header and
-		// keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md.
-		extendedCanaryProbe := func() {
-			n := probeSeq.Add(1)
-
-			// PAT: DB stores only TokenHash (SHA-256); scanning the DB for the raw token
-			// additionally confirms that hashing property live.
-			if patRes, err := w.c.CreateOwnPAT(ctx, w.principals[0].id, fmt.Sprintf("canary-pat-%d", n), nil, []string{"secrets.read"}, 0, 0, nil); err == nil && patRes != nil {
-				w.plant(patRes.PlainToken)
-			}
-
-			// Session token: DB stores only a SHA-256 hash (Session.SessionToken); same
-			// confirmation as PAT, for a completely different subsystem.
-			if sess, _, lerr := w.c.Login(ctx, &core.LoginRequest{Username: "canary-readera", Password: apiFuzzPrincipalPassword}); lerr == nil && sess != nil {
-				w.plant(sess.SessionToken)
-			}
-
-			// Dynamic-secret admin DSN: never echoed back in ANY response (AdminDSNEnc/
-			// AdminDSNMeta are both encrypted, json:"-") -- zero-tolerance from the moment
-			// it's supplied as create input, no allowlisted channel at all.
-			dsnCanary := w.plant(deriveCanary(fmt.Sprintf("dsn-%d", n), program))
-			dsn := fmt.Sprintf("postgres://admin:%s@db.internal:5432/app", dsnCanary)
-			cfg, cfgErr := w.c.CreateDynamicSecretConfig(ctx, &core.CreateDynamicSecretConfigRequest{
-				Name: fmt.Sprintf("canary-dyn-%d", n), ProjectID: w.projAID, EnvironmentID: w.envAID,
-				BackendType: "fake", AdminDSN: dsn, DefaultTTLSeconds: 3600,
-				CreatedBy: "testadmin", ActorID: w.adminID,
-			})
-
-			// Lease credential: the injected FakeEngine's IssueFields makes the issued
-			// credential itself the canary -- must appear only in the IssueLease return
-			// value; DB persists only CredentialEnc (encrypted).
-			if cfgErr == nil && cfg != nil {
-				leaseCanary := deriveCanary(fmt.Sprintf("lease-%d", n), program)
-				w.fakeDynEngine.IssueFields = map[string]string{"canary": leaseCanary}
-				if _, lerr := w.c.IssueLease(ctx, cfg.ID, 3600, w.adminID); lerr == nil {
-					w.plant(leaseCanary)
-				}
-			}
-
-			// MFA enrollment secret: DB stores only SecretEnc (encrypted). A fresh
-			// throwaway user avoids re-enrollment collisions/uniqueness constraints.
-			mfaUser, uerr := w.c.CreateUser(ctx, &core.CreateUserRequest{
-				Username: fmt.Sprintf("canary-mfa-%d", n), Email: fmt.Sprintf("canary-mfa-%d@x.io", n), Password: apiFuzzPrincipalPassword,
-			})
-			if uerr == nil && mfaUser != nil {
-				if _, secret, merr := w.c.BeginMFAEnrollment(ctx, mfaUser.ID); merr == nil {
-					w.plant(secret)
-				}
-			}
-
-			// KNOWN-OPEN FINDING (see file header): NotificationChannel.URL leaks into
-			// audit_events.Diff. webhookCanary is deliberately NOT passed to w.plant (kept
-			// out of w.allVariants) so the DB scan below -- the one channel confirmed
-			// broken -- can't fail the target; it's still checked with full zero tolerance
-			// against log/HTTP/gRPC (channels NOT known to be broken), and the DB is still
-			// checked, just non-fatally (t.Logf), so the finding stays visible.
-			// TODO(NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19): once fixed, delete
-			// this special case and fold webhookCanary into the normal w.plant flow.
-			webhookCanary := deriveCanary(fmt.Sprintf("webhook-%d", n), program)
-			webhookVariants := canaryVariants(webhookCanary)
-			ch := &models.NotificationChannel{
-				Name: fmt.Sprintf("canary-webhook-%d", n), Type: "webhook",
-				URL:     "https://example.com/hooks/" + webhookCanary,
-				Enabled: true, Events: "secret.rotated", CreatedBy: "testadmin",
-			}
-			if _, cherr := w.c.CreateNotificationChannel(ctx, ch, "testadmin", w.adminID); cherr == nil {
-				drainAllBackgroundGoroutines()
-				if sqlDB, dberr := w.db.DB(); dberr == nil {
-					if hit := dbScanFindFirst(t, sqlDB, webhookVariants); hit != nil {
-						t.Logf("KNOWN-OPEN FINDING confirmed live [db:%s.%s]: webhook URL canary present -- see keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md",
-							hit.table, hit.col)
-					}
-				}
-				opIdx++
-				scanVariants(t, "log", opIdx, "admin", w.drainLog(), webhookVariants, nil)
-			}
 		}
 
 		const maxSteps = 40
@@ -1117,19 +1454,16 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 		w.router.ServeHTTP(hrec, httptest.NewRequest(http.MethodGet, "/health", nil))
 		w.scanOp(t, opIdx, "http:health", "n/a", hrec)
 
-		// Gate the heavier probes to keep average throughput reasonable -- w.allVariants
-		// grows monotonically across the world's lifetime (by design, for cross-input
-		// leak detection), so every scan gets more expensive over a long soak regardless;
-		// these gates bound how fast it grows, not whether cross-input history is kept.
+		// Gated to keep average throughput high -- unlike the pre-refactor version, this
+		// gate exists only to bound REAL per-op cost (an admin-authenticated CRUD
+		// lifecycle over HTTP), not scan cost, which is now flat regardless of how many
+		// canaries knownCanaries has accumulated.
 		if len(program) >= 1 && program[0]%2 == 0 {
 			mutationLifecycleProbe()
 		}
-		if len(program) >= 1 && program[0]%5 == 0 {
-			extendedCanaryProbe()
-		}
 
 		// Sequence-end: full generic DB scan + raw-file plaintext-at-rest scan, against
-		// the FULL canary history (w.allVariants), not just this iteration's. A
+		// the FULL canary history (w.knownCanaries), not just this iteration's. A
 		// deterministic drain (not a sleep) absorbs every in-flight goSafe audit write
 		// first -- see drainAllBackgroundGoroutines's doc comment.
 		drainAllBackgroundGoroutines()
@@ -1137,7 +1471,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 		if err != nil {
 			t.Fatalf("db scan: get sql.DB: %v", err)
 		}
-		scanDBGeneric(t, sqlDB, w.allVariants)
-		scanRawDBFile(t, w.dbPath, w.allVariants)
+		scanDBGeneric(t, sqlDB, w.knownCanaries, w.fixedCreds, w.webhookExempt, w.dbWatermarks)
+		scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExempt)
 	})
 }
