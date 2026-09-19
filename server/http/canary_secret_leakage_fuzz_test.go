@@ -79,9 +79,25 @@ package http
 // input (re-confirming a known, unfixed, single-cause bug on every iteration adds
 // cost for no new information). The webhook canary is never added to the shared
 // knownCanaries map, so it plays no further part in any later scan.
-// TODO(NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19): once fixed, delete this
-// paragraph and the special-cased block in buildCanaryWorld, and fold the webhook
-// canary into the normal plant() flow.
+// SIBLING FINDING: NotificationChannel.URL also has NO at-rest encryption at all
+// (unlike the DSN/lease/MFA credentials this same fuzzer verifies ARE encrypted) --
+// see keyorix-private/adversarial-review/
+// NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md. Once URLs are encrypted
+// at rest, the db:raw-file exemption specifically should be deleted (its plaintext
+// bytes would no longer exist to leak into the raw file at all); the other
+// channel exemptions (db:audit_events.diff, http:audit-search:body,
+// http:audit-export-csv:body) depend on the SEPARATE audit-diff finding instead and
+// have their own, independent fix.
+//
+// The webhook canary lives under its own literal prefix, webhookCanaryPrefix
+// ("kxhook-"), not canaryPrefix ("kxcanary-") -- see that const's doc comment for
+// why (it used to share canaryPrefix's shape via a reserved marker byte; the
+// separate prefix removes an entire class of raw-file ambiguity at the root
+// instead of narrowing it).
+// TODO(NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19,
+// NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19): once BOTH are fixed,
+// delete this paragraph and the special-cased block in buildCanaryWorld, and fold
+// the webhook canary into the normal plant() flow.
 //
 // Every reachable output channel is captured in-process: stdlib `log` (the sole
 // logger in this codebase, redirected to a buffer), every other HTTP response body/
@@ -454,39 +470,41 @@ func deriveCanary(label string, seed []byte) string {
 	return canaryPrefix + hex.EncodeToString(h[:16])
 }
 
-// webhookCanaryMarker is a reserved first PAYLOAD byte (the byte immediately after
-// canaryPrefix) used ONLY by the webhook canary -- see deriveMarkedCanary.
-// deriveCanary's normal output is always canaryPrefix + 32 LOWERCASE HEX digits, so
-// this specific, non-hex byte can never coincide with the corresponding byte of any
-// OTHER canary this fuzzer ever plants. That eliminates the "ambiguous between the
-// exempted value and some other live canary" case for raw-file fragment matching
-// entirely, for exactly this one exemption: a fragment whose first payload byte is
-// webhookCanaryMarker is PROVABLY this exempted value's own bytes, however corrupted
-// the rest of the fragment is (page-slack garbage, an SQLite page boundary, anything);
-// a fragment whose first payload byte is anything else -- a real hex digit OR
-// unrelated garbage -- is PROVABLY NOT this exempted value, and fails closed exactly
-// like before. Added 2026-09 after four state-dependent, non-reproducible raw-file
-// failures (all forensically confirmed as this same webhook canary, fragmented by
-// ordinary SQLite page churn down to 0-1 informative hex chars) showed the
-// probabilistic ambiguity-check alone was not a strong enough guarantee for a value
-// that legitimately needs to be exempted at all -- see
-// TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution.
+// webhookCanaryPrefix identifies the webhook canary specifically -- a DIFFERENT
+// literal marker from canaryPrefix, used ONLY by the one NotificationChannel.URL
+// canary this fuzzer ever plants (see deriveHookCanary). This removes the
+// attribution problem at its root instead of narrowing it: a "kxcanary-"-prefixed
+// fragment can NEVER be the webhook canary (the two literal strings share no bytes
+// at all), so the webhook canary's own exemptions no longer need ANY ambiguity
+// reasoning against canaryPrefix-family values, and a "kxhook-"-prefixed
+// occurrence -- complete or fragmented, since nothing else in this system ever
+// produces this literal string -- is unambiguous proof of this ONE value's own
+// bytes regardless of surrounding content. See scanWebhookCanaryLeaks.
 //
-// Known, accepted narrow gap: hexEncodedCandidateAt validates that a hex-DECODED
-// candidate's bytes are themselves all valid hex digits (since a genuine canary's
-// body IS all hex digits) -- decoding a hex-encoded copy of the webhook canary's own
-// bytes now yields a 'W' byte at that position, which fails that check, so a
-// hypothetical channel that hex-ENCODES the webhook URL (none currently does) would
-// not be caught via the hex-encoded-detection path. The literal-prefix raw scan (this
-// file's primary detection mechanism, and the one that found all four real
-// occurrences) is unaffected.
-const webhookCanaryMarker = 'W'
+// Superseded, 2026-09 (this round): an earlier version reserved a marker BYTE
+// ('W') as the webhook canary's first payload character within the SHARED
+// canaryPrefix namespace instead of giving it a separate prefix. That caught
+// every case where the marker byte itself survived SQLite page-churn
+// fragmentation, but not the case where the marker byte ITSELF got overwritten,
+// leaving zero forward-looking bytes to inspect (confirmed live: two
+// state-dependent, non-reproducible raw-file failures across two 30-minute
+// bursts, both this exact shape -- see
+// keyorix-private/adversarial-review/canary-fuzzer-state-dependent-findings/).
+// Splitting the prefix removes the collision entirely rather than narrowing it:
+// there is no longer any byte position where "kxcanary-" bytes could be mistaken
+// for -- or overwritten remnants of -- "kxhook-" bytes, so there is nothing left
+// for page-slack fragmentation to make ambiguous.
+const webhookCanaryPrefix = "kxhook-"
 
-// deriveMarkedCanary produces a canary exactly like deriveCanary, but with its first
-// payload byte forced to webhookCanaryMarker -- see that const's doc comment.
-func deriveMarkedCanary(label string, seed []byte) string {
-	base := deriveCanary(label, seed)
-	return canaryPrefix + string(rune(webhookCanaryMarker)) + base[len(canaryPrefix)+1:]
+// webhookCanaryTokenLen mirrors canaryTokenLen for webhookCanaryPrefix's shape.
+const webhookCanaryTokenLen = len(webhookCanaryPrefix) + canaryBodyLen
+
+// deriveHookCanary derives a canary exactly like deriveCanary (same SHA-256
+// construction, same reproducibility guarantee), but under webhookCanaryPrefix
+// instead of canaryPrefix.
+func deriveHookCanary(label string, seed []byte) string {
+	h := sha256.Sum256(append([]byte("kx-hook-"+label+"-"), seed...))
+	return webhookCanaryPrefix + hex.EncodeToString(h[:16])
 }
 
 // fixedValueVariants computes the small set of encodings checked for the one-time
@@ -564,12 +582,15 @@ type exemption struct {
 // full-candidate match stays a single O(1) map lookup (see exemptedFull), so this
 // does not reopen the O(history) cost this file's PERFORMANCE section fixed.
 //
-// For the webhook canary specifically, webhookCanaryMarker (see its own doc comment)
-// makes this check's OUTCOME deterministic rather than merely probabilistic: no other
-// live canary can ever share its first payload byte, so the ambiguity loop below
-// never actually finds a competing match for it in practice -- but the general
-// mechanism here still applies as written, and remains the correct machinery for any
-// FUTURE hex-shaped exemption that doesn't reserve its own marker byte.
+// The webhook canary no longer uses this machinery at all -- it lives under a
+// completely separate literal prefix (webhookCanaryPrefix, "kxhook-") that shares
+// no bytes with canaryPrefix, so a canaryPrefix-family partial can never be
+// mistaken for it, and its own exemptions (all channel-scoped, no value-ambiguity
+// question left to ask) are handled by scanWebhookCanaryLeaks instead. This
+// function remains the correct machinery for any FUTURE canaryPrefix-shaped
+// exemption -- exercised today only by
+// TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed's synthetic values, not
+// by any real exemption in this file.
 func matchesAcceptedPartial(channel, partial, allowed string, exemptions []exemption, known map[string]struct{}) bool {
 	if len(partial) < len(canaryPrefix) {
 		return false // shorter than the shared literal prefix itself carries no information at all
@@ -681,39 +702,85 @@ func hexEncodedCandidateAt(haystack []byte, pos, prefixPatternLen int) (string, 
 // exemptions is a small, standing set of (value, channel) exceptions that must
 // NEVER fail here -- checked in addition to `allowed` -- unlike `allowed` (one
 // call's own legitimate disclosure), an exemption is permanent for every call whose
-// channel matches its channelPrefix. Its only use in this file is the known-open
-// webhook-URL-into-audit-diff finding (see the file header): the webhook canary
-// shares canaryPrefix's shape, so without this it would be flagged as an
-// "unknown/unrecognized" token on every scan of an affected channel for the rest of
-// the run. A DIFFERENT canary value is never exempted just because it lands on the
-// same channel, and this SAME value is never exempted on a channel not listed. Pass
-// nil for channels where no such standing exception exists (most of them).
+// channel matches its channelPrefix. In THIS function (the canaryPrefix-family
+// scan), the exemptions list passed in is always webhookExemptions -- but since the
+// webhook canary now lives under its own separate literal prefix
+// (webhookCanaryPrefix, "kxhook-" -- see scanWebhookCanaryLeaks), none of those
+// entries' values can ever match a canaryPrefix-shaped partial or candidate here;
+// this parameter is exercised in practice only by
+// TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed's synthetic values,
+// preserved as the correct machinery for any FUTURE canaryPrefix-shaped exemption.
+// Pass nil for channels where no such standing exception exists (most of them).
 //
 // rawFileChannel is the one channel in this file that scans UNSTRUCTURED bytes
-// spanning SQLite page/B-tree-internal structure and (confirmed live, twice, during
-// burst runs) freed-page slack from a row that physically relocated -- a canary's own
-// bytes interrupted by binary garbage at an unpredictable, sometimes very short,
-// offset. This is the ONLY reason a truncated/malformed prefix match is EVER treated
-// as anything other than an immediate finding: matchesAcceptedPartial's ambiguity
-// check (see its own doc comment) can positively confirm a fragment is an
-// already-accepted value's own bytes, cut short -- and ONLY that confirmed case is
-// skipped silently, since it is definitionally the same artifact already accounted
-// for, not a new one. A fragment matchesAcceptedPartial does NOT
-// confirm -- because it is ambiguous between two or more live canaries/exemptions, or
-// because it matches none of them -- is FATAL on this channel exactly like every
-// other channel; there is no separate, broader leniency for rawFileChannel on top of
-// that check (see TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed, added
-// after a bug of exactly this shape was found: an earlier version of this file
-// downgraded EVERY unattributable fragment on this channel regardless of
-// matchesAcceptedPartial's verdict, which silently accepted genuinely ambiguous
-// fragments too). A COMPLETE, well-formed match on db:raw-file (the exemptedFull /
-// candidate==allowed paths below) was never affected by any of this -- still
-// zero-tolerance, so a real, whole leaked value sitting anywhere in the file,
-// fragmented or not, is still caught.
+// spanning SQLite page/B-tree-internal structure and freed-page slack from a row
+// that physically relocated. For the canaryPrefix family specifically, this is now
+// close to a non-event in practice: every canaryPrefix-shaped value this fuzzer
+// plants is encrypted before storage (that IS this fuzzer's core promise), so a
+// canaryPrefix-shaped fragment appearing in the raw file AT ALL -- complete or
+// truncated, zero informative bytes or many -- has no known, expected, benign
+// source anymore (unlike before this round: see webhookCanaryPrefix's doc comment
+// for why the webhook canary used to be exactly that source, and no longer is).
+// matchesAcceptedPartial's ambiguity check (see its own doc comment) remains the
+// correct machinery here regardless -- it just has nothing real left to exempt for
+// this family (see TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed for
+// synthetic coverage of it anyway). A COMPLETE, well-formed match on db:raw-file
+// (the exemptedFull / candidate==allowed paths below) was never affected by any of
+// this -- still zero-tolerance, so a real, whole leaked value sitting anywhere in
+// the file, fragmented or not, is still caught. The webhook canary's OWN raw-file
+// exemptions are handled entirely separately -- see scanWebhookCanaryLeaks.
 const rawFileChannel = "db:raw-file"
+
+// scanWebhookCanaryLeaks searches haystack for webhookCanaryPrefix ("kxhook-")
+// occurrences -- exclusively used by the ONE webhook canary this fuzzer ever plants
+// (see that const's doc comment), so ANY occurrence, complete or fragmented, is
+// unambiguous proof of this value's own bytes; there is no OTHER canary it could be,
+// so unlike scanCanaryLeaks's canaryPrefix-family logic, no ambiguity check against
+// `known` is needed at all -- channel-scoping is the only remaining question.
+// Fragment tolerance only matters in practice on rawFileChannel, which is the only
+// channel that scans unstructured bytes; every other channel only ever contains
+// complete, well-formed structured content, so this same uniform logic naturally
+// only ever sees complete matches there.
+//
+// exemptions here is assumed to describe entries all pertaining to this one webhook
+// canary (true of every current caller, which always passes w.webhookExemptions) --
+// channelPrefix alone is checked, not value, since attribution is already certain
+// by construction; a hypothetical future exemptions list mixing webhook and
+// non-webhook entries would need this function to check .value too.
+func scanWebhookCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, haystack []byte, exemptions []exemption) {
+	t.Helper()
+	prefixBytes := []byte(webhookCanaryPrefix)
+	pos := 0
+	for {
+		rel := bytes.Index(haystack[pos:], prefixBytes)
+		if rel < 0 {
+			break
+		}
+		start := pos + rel
+		exempt := false
+		for _, ex := range exemptions {
+			if strings.HasPrefix(channel, ex.channelPrefix) {
+				exempt = true
+				break
+			}
+		}
+		if exempt {
+			pos = start + 1
+			continue
+		}
+		end := start + webhookCanaryTokenLen
+		if end > len(haystack) {
+			end = len(haystack)
+		}
+		t.Fatalf("CANARY LEAK [%s:hook] op #%d principal=%s: webhook-canary-prefixed content on a non-exempted channel -- %s",
+			channel, opIdx, principal, snippetAround(haystack, start, end-start))
+	}
+}
 
 func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, haystack []byte, known map[string]struct{}, allowed string, fixedCreds []fixedCredential, exemptions []exemption) {
 	t.Helper()
+
+	scanWebhookCanaryLeaks(t, channel, opIdx, principal, haystack, exemptions)
 
 	prefixBytes := []byte(canaryPrefix)
 	pos := 0
@@ -725,24 +792,19 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 		start := pos + rel
 		end := start + canaryTokenLen
 		if end > len(haystack) {
-			// A real DB/file byte stream can legitimately cut an exempted value off
-			// mid-token (e.g. a SQLite page boundary landing inside the known-open
-			// webhook canary's own bytes -- observed live during a burst run). If every
-			// available byte matches the START of allowed or a channel-matching
-			// exemption, AND that match is unambiguous against every OTHER currently
-			// known canary (see matchesAcceptedPartial), this is that same accepted
-			// artifact, not a new finding.
+			// A real DB/file byte stream can legitimately cut a value off mid-token at
+			// an SQLite page boundary. If every available byte matches the START of
+			// allowed or a channel-matching exemption, AND that match is unambiguous
+			// against every OTHER currently known canary (see matchesAcceptedPartial),
+			// this is that same accepted artifact, not a new finding -- in practice,
+			// for the canaryPrefix family, this path is close to unreachable now (see
+			// rawFileChannel's doc comment), but the check stays sound regardless.
 			if len(haystack)-start == len(canaryPrefix) {
 				// Zero informative bytes beyond the shared literal marker itself: the
 				// file simply ended right after "kxcanary-". Every canary of this shape
-				// starts with exactly these 9 bytes, so this identifies nothing --
-				// confirmed live (2026-09, this round): a burst repeatedly hit the bare
-				// marker immediately after "https://example.com/hooks/" (the webhook
-				// canary's OWN, already-exempted URL, forensically unambiguous -- that
-				// literal URL prefix occurs nowhere else in this file), fragmented by
-				// ordinary SQLite page churn down to nothing but the marker. A complete,
-				// whole leaked value is still caught regardless -- see
-				// TestScanCanaryLeaks_ExemptedCanaryZeroInformativeFragmentDoesNotFail.
+				// starts with exactly these 9 bytes, so this identifies nothing on its
+				// own -- see TestScanCanaryLeaks_TrueZeroByteFragmentDoesNotFail. A
+				// complete, whole leaked value is still caught regardless.
 				break
 			}
 			if matchesAcceptedPartial(channel, string(haystack[start:]), allowed, exemptions, known) {
@@ -771,22 +833,23 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 		if malformed := validLen < len(body); malformed {
 			// Same reasoning as the truncated-token branch above, but here the byte
 			// stream didn't run out -- it just stopped being valid hex partway
-			// through (observed live: SQLite page/pointer bytes immediately after a
-			// handful of the webhook canary's own leading hex chars). Compare only
-			// the leading VALID portion against allowed/exemptions, not the full
-			// fixed-length candidate (which includes the garbage tail and could
-			// never equal a clean known value) -- EXCEPT when validLen==0 (the very
-			// first payload byte already isn't hex): still include exactly that one
-			// byte, whatever it is, rather than skipping the byte entirely. This is
-			// what lets webhookCanaryMarker be recognized -- see its doc comment --
-			// while a genuinely uninformative byte (neither hex nor the marker) still
-			// fails via matchesAcceptedPartial finding no match at all, not via a
-			// separate "zero bytes = always skip" carve-out.
-			informativeLen := validLen
-			if informativeLen == 0 {
-				informativeLen = 1
+			// through. Compare only the leading VALID portion against
+			// allowed/exemptions, not the full fixed-length candidate (which includes
+			// the garbage tail and could never equal a clean known value).
+			if validLen == 0 {
+				// Zero informative bytes: with the webhook canary now living under its
+				// own separate prefix (webhookCanaryPrefix, "kxhook-" -- see
+				// scanWebhookCanaryLeaks), nothing under THIS prefix has a known,
+				// expected reason to appear fragmented in plaintext at all (every
+				// canaryPrefix-shaped value this fuzzer plants is encrypted before
+				// storage). A byte immediately after the shared marker that isn't even
+				// valid hex still identifies nothing on its own, so this stays a skip
+				// rather than a guess -- matchesAcceptedPartial's ambiguity check below
+				// already handles the >=1-informative-char case correctly.
+				pos = start + 1
+				continue
 			}
-			partial := canaryPrefix + string(body[:informativeLen])
+			partial := canaryPrefix + string(body[:validLen])
 			if matchesAcceptedPartial(channel, partial, allowed, exemptions, known) {
 				pos = start + 1
 				continue
@@ -1129,78 +1192,83 @@ func TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed_Helper(t *testing.T
 // TestScanCanaryLeaks_TrueZeroByteFragmentDoesNotFail is a permanent regression
 // test for the case where the raw file ends immediately after the shared literal
 // "kxcanary-" marker with NO further bytes at all -- genuinely zero information
-// (not even whether it would have been webhookCanaryMarker or something else), so
-// this must not be treated as a leak, unrelated to any specific exemption's value.
+// (not even whether a body would have followed at all), so this must not be
+// treated as a leak, unrelated to any specific exemption's value. Unaffected by
+// webhookCanaryPrefix's introduction this round -- this case was never about the
+// webhook canary specifically.
 func TestScanCanaryLeaks_TrueZeroByteFragmentDoesNotFail(t *testing.T) {
 	known := map[string]struct{}{}
 	truncated := []byte("https://example.com/hooks/" + canaryPrefix)
 	scanCanaryLeaks(t, rawFileChannel, 0, "n/a", truncated, known, "", nil, nil)
 }
 
-// TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution is a permanent
-// regression test for webhookCanaryMarker (see its own doc comment): once a
-// fragment has AT LEAST ONE byte past the shared "kxcanary-" marker, that byte
-// deterministically proves or disproves attribution to the exempted webhook
-// canary -- webhookCanaryMarker ('W') itself, regardless of what garbage follows
-// it, is provably this value's own bytes (never fails); anything else -- a real
-// hex digit or unrelated garbage -- is provably NOT this value, and fails closed
-// exactly like before webhookCanaryMarker existed. Confirmed live (2026-09, this
-// round): four independent, state-dependent raw-file failures (see the file
-// header's REPRODUCIBILITY GATE section and
-// keyorix-private/adversarial-review/canary-fuzzer-state-dependent-findings/)
-// were all forensically confirmed as this exact webhook canary, fragmented by
-// ordinary SQLite page churn down to 0-1 informative hex chars -- this test
-// replaces relying on the general, probabilistic ambiguity check for this one
-// value with a deterministic guarantee instead.
-func TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution(t *testing.T) {
-	exemptedVal := canaryPrefix + string(rune(webhookCanaryMarker)) + strings.Repeat("a", canaryBodyLen-1)
-	known := map[string]struct{}{}
+// TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily is a permanent regression
+// test for webhookCanaryPrefix (see that const's doc comment): a "kxhook-"-prefixed
+// occurrence -- complete, malformed, or truncated -- is scanned entirely by
+// scanWebhookCanaryLeaks, never by scanCanaryLeaks's canaryPrefix-family pass,
+// because the two literal prefix strings share no bytes at all ("kxhook-" never
+// contains "kxcanary-" as a substring, and vice versa). Attribution needs no
+// ambiguity check: the prefix alone is unambiguous, since nothing else in this
+// system ever produces it, so a SPLIT "kxhook-..." fragment (unlike the pre-split
+// design) is safe to accept on an exempted channel regardless of what garbage
+// follows it, and a non-exempted channel fails via the distinct ":hook" tag, never
+// via canaryPrefix-family "unknown/unrecognized token" language.
+func TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily(t *testing.T) {
+	hookVal := webhookCanaryPrefix + strings.Repeat("a", canaryBodyLen)
 	exemptions := []exemption{
-		{value: exemptedVal, channelPrefix: rawFileChannel, reason: "test fixture"},
+		{value: hookVal, channelPrefix: rawFileChannel, reason: "test fixture"},
 	}
 
-	t.Run("marker byte -- never fails, regardless of what follows", func(t *testing.T) {
-		garbage := []byte("https://example.com/hooks/" + canaryPrefix + string(rune(webhookCanaryMarker)) +
-			string([]byte{0x00, 0x00, 0x02, 0xbd, 0x98, 0x0d}) + "more-unrelated-bytes-after")
-		scanCanaryLeaks(t, rawFileChannel, 0, "n/a", garbage, known, "", nil, exemptions)
+	t.Run("exempted channel -- split kxhook fragment never fires", func(t *testing.T) {
+		// Malformed: real page-slack shape (some hex-looking body bytes then binary
+		// garbage), on the exempted channel.
+		malformed := []byte("https://example.com/hooks/" + webhookCanaryPrefix + "a" +
+			string([]byte{0x00, 0x00, 0x02, 0xbd}) + "unrelated-garbage-after")
+		scanCanaryLeaks(t, rawFileChannel, 0, "n/a", malformed, map[string]struct{}{}, "", nil, exemptions)
 
-		truncatedAfterMarker := []byte("https://example.com/hooks/" + canaryPrefix + string(rune(webhookCanaryMarker)))
-		scanCanaryLeaks(t, rawFileChannel, 0, "n/a", truncatedAfterMarker, known, "", nil, exemptions)
+		// Truncated-at-EOF: the file ends immediately after the bare prefix.
+		truncated := []byte("https://example.com/hooks/" + webhookCanaryPrefix)
+		scanCanaryLeaks(t, rawFileChannel, 0, "n/a", truncated, map[string]struct{}{}, "", nil, exemptions)
 	})
 
-	t.Run("non-marker byte -- always fails, via subprocess isolation", func(t *testing.T) {
-		cmd := exec.Command(os.Args[0], "-test.run=TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution_NonMarkerHelper", "-test.v")
-		cmd.Env = append(os.Environ(), "CANARY_NONMARKER_HELPER=1")
+	t.Run("non-exempted channel -- fires via the hook path, not the canary path", func(t *testing.T) {
+		cmd := exec.Command(os.Args[0], "-test.run=TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily_Helper", "-test.v")
+		cmd.Env = append(os.Environ(), "CANARY_HOOK_HELPER=1")
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			t.Fatalf("expected the helper subprocess to fail closed on a non-marker fragment, but it exited 0 -- output:\n%s", out)
+			t.Fatalf("expected the helper subprocess to fail on a non-exempted kxhook occurrence, but it exited 0 -- output:\n%s", out)
 		}
-		if !strings.Contains(string(out), "CANARY LEAK") {
-			t.Fatalf("helper subprocess failed, but not with the expected CANARY LEAK message -- output:\n%s", out)
+		outStr := string(out)
+		if !strings.Contains(outStr, "CANARY LEAK") || !strings.Contains(outStr, ":hook]") {
+			t.Fatalf("expected a [...:hook] CANARY LEAK message, got:\n%s", outStr)
+		}
+		// scanWebhookCanaryLeaks's own message legitimately contains the substring
+		// "canary-prefixed" (as part of "webhook-canary-prefixed") and "kxcanary" would
+		// be too loose a check for the same reason -- check for the EXACT phrase
+		// scanCanaryLeaks's canaryPrefix-family pass uses instead ("canary-prefixed
+		// token", singular "token" -- scanWebhookCanaryLeaks says "content", never
+		// "token"), and for the literal "kxcanary-" substring, which can only appear if
+		// that OTHER pass actually matched something.
+		if strings.Contains(outStr, "canary-prefixed token") || strings.Contains(outStr, "kxcanary-") {
+			t.Fatalf("hook-prefix finding incorrectly referenced the kxcanary family -- output:\n%s", outStr)
 		}
 	})
 }
 
-// TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution_NonMarkerHelper is
-// not a real test: it only runs as the subprocess spawned by
-// TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution above -- see
-// TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed_Helper's doc comment
-// for why a case that is SUPPOSED to fail needs subprocess isolation.
-func TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution_NonMarkerHelper(t *testing.T) {
-	if os.Getenv("CANARY_NONMARKER_HELPER") != "1" {
-		t.Skip("only runs as a subprocess helper for TestScanCanaryLeaks_MarkedFragmentDeterministicAttribution")
+// TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily_Helper is not a real
+// test: it only runs as the subprocess spawned by
+// TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily above -- see
+// TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed_Helper's doc comment for
+// why a case that is SUPPOSED to fail needs subprocess isolation.
+func TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily_Helper(t *testing.T) {
+	if os.Getenv("CANARY_HOOK_HELPER") != "1" {
+		t.Skip("only runs as a subprocess helper for TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily")
 	}
-	exemptedVal := canaryPrefix + string(rune(webhookCanaryMarker)) + strings.Repeat("a", canaryBodyLen-1)
-	known := map[string]struct{}{}
-	exemptions := []exemption{
-		{value: exemptedVal, channelPrefix: rawFileChannel, reason: "test fixture"},
-	}
-	// Same garbage tail as the marker case, but the byte right after the prefix is a
-	// real hex digit ('c') instead of webhookCanaryMarker -- provably NOT the
-	// exempted value, must still fail closed.
-	nonMarker := []byte("https://example.com/hooks/" + canaryPrefix + "c" +
-		string([]byte{0x00, 0x00, 0x02, 0xbd, 0x98, 0x0d}) + "more-unrelated-bytes-after")
-	scanCanaryLeaks(t, rawFileChannel, 0, "n/a", nonMarker, known, "", nil, exemptions)
+	hookVal := webhookCanaryPrefix + strings.Repeat("a", canaryBodyLen)
+	// No exemptions at all -- this channel is not exempted, so any kxhook-
+	// occurrence here must fail closed.
+	haystack := []byte("https://example.com/hooks/" + hookVal)
+	scanCanaryLeaks(t, "http:some-unexempted-channel:body", 0, "n/a", haystack, map[string]struct{}{}, "", nil, nil)
 }
 
 // buildCanaryWorld stands up the real production stack once per fuzz worker PROCESS
@@ -1444,7 +1512,7 @@ func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
 	// instead each confirmed-affected channel gets its OWN exemption entry below (one
 	// value, one channel each -- see exemption's doc comment), so a DIFFERENT canary
 	// on the same channel, or this SAME value on an unlisted channel, both still fail.
-	webhookCanary := deriveMarkedCanary("webhook-world", []byte("world-init"))
+	webhookCanary := deriveHookCanary("webhook-world", []byte("world-init"))
 	var webhookExemptions []exemption
 	ch := &models.NotificationChannel{
 		Name: "canary-webhook-world", Type: "webhook",
