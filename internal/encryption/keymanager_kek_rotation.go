@@ -176,11 +176,15 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 		// kek.salt.pending must survive for the salt rename below, or for an
 		// operator to apply manually if that rename also fails.
 	}
-	// best-effort: this SyncDir's error is deliberately discarded (unlike RewrapDEK's
-	// and RotateDEKWithSweep's, whose fsync-after-rename failure IS surfaced), so a
-	// fault injected here would have no fileFaultHook to attach to and no observable
-	// effect on this function's control flow — not wired to the fault seam.
-	_ = securefiles.SyncDir(filepath.Dir(activeDEKFull))
+	// Surfaced, not discarded: an un-fsynced directory entry after a rename is
+	// not guaranteed durable across a power loss (the classic "rename without
+	// fsync(dir)" hazard — see
+	// docs/findings/2026-09-19-DRAFT-ISSUE-kek-rotation-syncdir-discarded.md).
+	// Fail the rotation here, before attempting the salt rename below, rather
+	// than building a second durability step on top of an unconfirmed one.
+	if err := durableSyncDir(filepath.Dir(activeDEKFull), "kek:syncdir-dek"); err != nil {
+		return fmt.Errorf("rotate KEK: fsync key directory after promoting DEK (the DEK rename itself succeeded — its durability is unconfirmed; retry rotate-kek, or manually fsync the key directory, before completing the salt rename): %w", err)
+	}
 	// Hazard window: dek.key is now the new-wrapped DEK (KEK from the NEW salt),
 	// but kek.salt on disk is still the OLD salt — recovery here needs the
 	// leftover kek.salt.pending. Crash-consistency tests interrupt exactly here.
@@ -190,7 +194,13 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 	if err := durableRename(pendingSaltFull, activeSaltFull, "kek:rename-salt"); err != nil {
 		return fmt.Errorf("rotate KEK: promote pending salt to active (DEK rename already succeeded — manually rename %s to %s to complete): %w", pendingSaltPath, km.saltPath, err)
 	}
-	_ = securefiles.SyncDir(filepath.Dir(activeSaltFull)) // best-effort — see the rename-dek SyncDir comment above
+	// Surfaced, not discarded — see the kek:syncdir-dek comment above. This is
+	// the LAST step: the rename itself already fully applied the rotation on
+	// disk, so a failure here means only its durability is unconfirmed, not
+	// that the rotation didn't happen.
+	if err := durableSyncDir(filepath.Dir(activeSaltFull), "kek:syncdir-salt"); err != nil {
+		return fmt.Errorf("rotate KEK: fsync key directory after promoting salt (the rotation itself already fully applied on disk — its durability is unconfirmed; retry to confirm): %w", err)
+	}
 	rotationCheckpointHook("kek:after-rename-salt")
 	return nil
 }

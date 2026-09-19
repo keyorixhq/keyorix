@@ -134,15 +134,17 @@ package encryption
 // even when the rename it was cleaning up after had actually succeeded) — see
 // docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md
 // for the reachability conditions (NFS/network-filesystem rename
-// retransmission semantics, NOT a directory-fsync error — that's a separate,
-// disconnected, silently-discarded call in the same function) and the fix
-// (dekRenameActuallySucceeded, keymanager_kek_rotation.go): on a rename-dek
-// error, verify the actual on-disk DEK content before any cleanup; only clean
-// up when the rename provably did not happen. This is now DETERMINISTIC, not
-// ambiguous — see expectedKEKVia and runKEKRotateFaultCase's
-// transparentRecovery handling. Red-proofed by reverting the fix (fuzzer
-// fails again at this exact seam) and restoring it (green again); not
-// committed as a permanent toggle.
+// retransmission semantics, NOT a directory-fsync error — that WAS, at the
+// time of that finding, a separate, disconnected, silently-discarded call in
+// the same function; also since fixed — see "kek:syncdir-dek/-salt" below,
+// both now checked seams, not a stale claim about current behavior) and the
+// fix (dekRenameActuallySucceeded, keymanager_kek_rotation.go): on a
+// rename-dek error, verify the actual on-disk DEK content before any
+// cleanup; only clean up when the rename provably did not happen. This is
+// now DETERMINISTIC, not ambiguous — see expectedKEKVia and
+// runKEKRotateFaultCase's transparentRecovery handling. Red-proofed by
+// reverting the fix (fuzzer fails again at this exact seam) and restoring it
+// (green again); not committed as a permanent toggle.
 //
 // ── Known limitation: the hang-guard is not yet load-tolerant ───────────────
 //
@@ -246,7 +248,7 @@ var opSeams = map[opID][]seamSpec{
 	opUpdate:    {{"sql:update-version", seamSQL}},
 	opDelete:    {{"sql:delete-node", seamSQL}, {"sql:delete-shares", seamSQL}, {"sql:delete-acls", seamSQL}},
 	opRewrap:    {{"rewrap:write-dek-pending", seamWrite}, {"rewrap:rename-dek", seamRename}, {"rewrap:syncdir", seamSync}},
-	opKEKRotate: {{"kek:write-salt-pending", seamWrite}, {"kek:write-dek-pending", seamWrite}, {"kek:rename-dek", seamRename}, {"kek:rename-salt", seamRename}},
+	opKEKRotate: {{"kek:write-salt-pending", seamWrite}, {"kek:write-dek-pending", seamWrite}, {"kek:rename-dek", seamRename}, {"kek:rename-salt", seamRename}, {"kek:syncdir-dek", seamSync}, {"kek:syncdir-salt", seamSync}},
 	opBackup:    {{"backup:write", seamWrite}},
 }
 
@@ -826,6 +828,15 @@ func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, ne
 // ambiguous case remains genuinely ambiguous (skip=true) — no equivalent
 // verify-before-cleanup fix exists for it in this commit; a fault there can
 // still leave either the hazard window or a fully-completed rotation.
+//
+// kek:syncdir-dek/-salt (seamSync, always faultCleanError — see decodeFault)
+// are DETERMINISTIC, matching the rename step immediately preceding each:
+// syncdir-dek fires right after the DEK rename already succeeded for real but
+// before the salt rename is attempted (the fix now returns an error there
+// instead of proceeding), so the state is the same hazard window
+// kek:rename-salt's own deterministic case reaches; syncdir-salt fires after
+// BOTH renames already succeeded for real, so the rotation is already fully
+// applied on disk regardless of this last fsync's outcome.
 func expectedKEKVia(seam string, ff *fileFault) (want []string, skip bool) {
 	if seam == "kek:rename-dek" && ff.kind == faultRealEffectThenError {
 		return []string{"new-passphrase"}, false
@@ -836,8 +847,10 @@ func expectedKEKVia(seam string, ff *fileFault) (want []string, skip bool) {
 	switch seam {
 	case "kek:write-salt-pending", "kek:write-dek-pending", "kek:rename-dek":
 		return []string{"old-passphrase"}, false
-	case "kek:rename-salt":
+	case "kek:rename-salt", "kek:syncdir-dek":
 		return []string{"apply-pending-salt+new-passphrase", "apply-pending-salt+old-passphrase"}, false
+	case "kek:syncdir-salt":
+		return []string{"new-passphrase", "old-passphrase"}, false
 	}
 	return nil, true
 }

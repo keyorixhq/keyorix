@@ -1,5 +1,11 @@
 # DRAFT — NOT FILED
 
+**Status: already fixed**, in the same branch/PR as this draft
+(`fix/kek-rename-dek-verify-before-cleanup`, commit checking both `SyncDir`
+errors below). Left drafted rather than deleted in case there's value in
+filing it anyway for changelog/release-note linkage (`git log`/PR history
+otherwise carries the record) — your call once you review the PR.
+
 This is a drafted GitHub issue for review before filing. It is not a
 `docs/findings/*-FINDING-*.md` (no severity/adversarial-verification claim is
 made here) — it's the enumeration the KEK-rotation rename-dek finding
@@ -81,7 +87,7 @@ So this is specifically a KEK-passphrase-rotation gap (`commitNewKEKFiles`),
 not a repo-wide pattern — the other three rotation-family functions already
 surface this exact class of error.
 
-## Suggested direction (not a commitment — for discussion)
+## Suggested direction (not a commitment — for discussion) — IMPLEMENTED
 
 Both discarded calls could simply have their errors surfaced the same way
 the four already-correct call sites do — return an error that tells the
@@ -94,6 +100,15 @@ requires the AND of "rename succeeds" + "process survives to return success"
 + "power loss before the next unrelated fsync happens to flush this
 directory anyway" — narrower and lower-probability than the rename-dek
 finding, but the same fsync-discipline class of issue.
+
+**Implemented as drafted**, in `keymanager_kek_rotation.go`'s
+`commitNewKEKFiles`: both `SyncDir` calls now check and surface their error
+(`kek:syncdir-dek` after the DEK rename, `kek:syncdir-salt` after the salt
+rename), each with a fault-injection seam test added to
+`FuzzFaultInjectedOperations`'s KEK-rotate operation catalog. Red-proofed by
+temporarily reverting both checks to discarded (`_ = ...`) — the fuzzer's new
+seam tests immediately failed (`HARNESS/oracle-c: ... fault did not fire`);
+restored — green again.
 
 ## Related
 
