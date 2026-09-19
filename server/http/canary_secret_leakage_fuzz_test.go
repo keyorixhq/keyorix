@@ -98,6 +98,45 @@ package http
 // — that this fuzzer calls to deterministically wait for every in-flight background
 // write to land before the DB/raw-file scan.
 //
+// REPRODUCIBILITY GATE: this world is long-lived and shares state across fuzz
+// iterations by design (knownCanaries, dbWatermarks, the DB itself -- see the
+// PERFORMANCE section) via the rebuild-every-N mechanism below. That means a
+// failure a -fuzz burst finds can depend on accumulated state from MANY prior
+// iterations in the same worker process, not just the one input Go saves to
+// testdata/fuzz/FuzzCanarySecretLeakage/<hash>. Before reporting ANY
+// burst-discovered failure as a finding:
+//  1. Note the saved corpus file's hash from the "Failing input written to ..."
+//     line (or the seed/# name, if it fired on a seed).
+//  2. Re-run ONLY that one input, isolated, on a fresh world:
+//     go test -run 'FuzzCanarySecretLeakage/<hash-or-seed-name>' -v
+//     (this is a fresh OS process -- buildCanaryWorld runs once, then only the
+//     named input executes, nothing else first).
+//  3. If it fails again: genuine, state-independent finding -- report normally.
+//  4. If it PASSES: state-dependent. Do NOT report it as a plain crasher (Go's
+//     corpus file only records the one input that was executing when the
+//     failure fired, not the sequence of prior iterations in that same
+//     long-lived process that built up the state it needed -- that sequence is
+//     not recoverable from the saved file alone). Instead report: (a) that it
+//     is confirmed state-dependent via this exact isolation step, (b) whatever
+//     can be determined about what state it needs (e.g. from the channel/table
+//     it fired on, or by deliberately reproducing the accumulation), and (c) if
+//     the causing sequence genuinely cannot be identified, say so explicitly
+//     rather than fabricating one. A state-dependent corpus file must not be
+//     committed as a regression entry -- go test -run FuzzXxx replays every
+//     testdata file AND every seed in one shared process, so whether such a
+//     file fails would depend on file-discovery order, making it flaky rather
+//     than a real regression check.
+// Worked example (2026-09, this round): a burst found a raw-file failure on a
+// bare "kxcanary-" fragment (zero informative trailing bytes -- pure SQLite
+// page-slack noise after the shared literal prefix) that reproduced only inside
+// a long-running burst, never when its saved corpus file was replayed alone --
+// confirmed state-dependent via this exact procedure, and NOT committed as a
+// testdata regression file for that reason. A second, synthetic check (item 2's
+// own red-proof: a second webhook canary planted at WORLD-BUILD time, not
+// accumulated) confirmed the opposite as a positive control -- that one
+// reproduces identically whether replayed inside a full run or in isolation,
+// because nothing about its failure depends on prior iterations.
+//
 // See docs/findings/ for any confirmed leak this harness's red-proofs or live runs
 // surface in the public repo, keyorix-private/adversarial-review/ for the private
 // finding above, and scripts/fuzzing/targets.conf for this target's soak tier.
@@ -116,12 +155,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time" // DIAG(rebuild-interval): temporary, see FuzzCanarySecretLeakage's diag block; revert with it
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -251,11 +292,20 @@ type fixedCredential struct {
 }
 
 type canaryWorld struct {
-	router http.Handler
-	grpc   pb.SecretServiceClient
-	db     *gorm.DB
-	dbPath string // on-disk SQLite file -- required for the raw-bytes plaintext-at-rest scan
-	c      *core.KeyorixCore
+	router  http.Handler
+	grpc    pb.SecretServiceClient
+	db      *gorm.DB
+	dbPath  string // on-disk SQLite file -- required for the raw-bytes plaintext-at-rest scan
+	tempDir string // os.MkdirTemp'd base dir holding dbPath + the encryptor's DEK/salt files -- removed by close()
+	c       *core.KeyorixCore
+
+	// grpcSrv/grpcConn back the grpc field above -- held here (not only
+	// f.Cleanup-registered at build time) so close() can release them immediately when
+	// the PERFORMANCE section's rebuild-every-N mechanism retires this world mid-run,
+	// instead of leaking one live grpc server/goroutine per rebuild for the rest of a
+	// long soak.
+	grpcSrv  *grpc.Server
+	grpcConn *grpc.ClientConn
 
 	readerRole uint
 	adminTok   string
@@ -284,10 +334,13 @@ type canaryWorld struct {
 
 	// webhookExemptions holds the standing (value, channel) exceptions for the single
 	// known-open webhook-URL canary (see the file header's KNOWN-OPEN EXCEPTION
-	// section) -- one entry per channel where the finding is confirmed to surface
-	// (db:audit_events.diff, db:raw-file, http:audit-search, http:audit-export-csv).
-	// Every other channel (log/HTTP responses not listed/gRPC) never receives this
-	// set, so the SAME value is still zero-tolerance there.
+	// section) -- one entry per EXACT channel where the finding is confirmed to
+	// surface (db:audit_events.diff, db:raw-file, db:notification_channels.url,
+	// http:audit-search:body, http:audit-export-csv:body). Each names one specific
+	// channel, never a family prefix -- http:audit-search:body does NOT also cover
+	// http:audit-search:headers, which stays zero-tolerance (the URL is never
+	// expected there). Every other channel (log/HTTP responses not listed/gRPC)
+	// never receives this set, so the SAME value is still zero-tolerance there.
 	webhookExemptions []exemption
 
 	// dbWatermarks tracks, per table, the highest SQLite rowid scanDBGeneric has
@@ -302,6 +355,29 @@ type canaryWorld struct {
 func (w *canaryWorld) plant(value string) string {
 	w.knownCanaries[value] = struct{}{}
 	return value
+}
+
+// close releases this world's live grpc server/goroutine, connection, DB handle, and
+// temp directory immediately -- called both by the rebuild-every-N mechanism (see
+// the PERFORMANCE section) when retiring a world mid-run, and once via f.Cleanup for
+// whichever world is current when the whole fuzz target's lifetime ends. Explicit
+// os.RemoveAll here (not testing.F's own end-of-run temp-dir cleanup, which
+// buildCanaryWorld deliberately does not use -- see worldBuilderTB's doc comment) is
+// what keeps a long soak's disk usage from growing by one full world's worth of
+// SQLite file per rebuild for the run's entire duration.
+func (w *canaryWorld) close() {
+	if w.grpcSrv != nil {
+		w.grpcSrv.Stop()
+	}
+	if w.grpcConn != nil {
+		_ = w.grpcConn.Close()
+	}
+	if sqlDB, err := w.db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+	if w.tempDir != "" {
+		_ = os.RemoveAll(w.tempDir)
+	}
 }
 
 func (w *canaryWorld) drainLog() []byte {
@@ -571,25 +647,27 @@ func hexEncodedCandidateAt(haystack []byte, pos, prefixPatternLen int) (string, 
 // same channel, and this SAME value is never exempted on a channel not listed. Pass
 // nil for channels where no such standing exception exists (most of them).
 //
-// rawFileChannel (below) is the one channel where a truncated/malformed prefix match
-// is informational (t.Logf) rather than fatal. This is NOT an exemption of a
-// specific value -- it applies regardless of whether the fragment matches anything
-// known. Rationale: db:raw-file is the only channel in this file that scans
-// UNSTRUCTURED bytes spanning SQLite page/B-tree-internal structure and (confirmed
-// live, twice, during burst runs) freed-page slack from a row that physically
-// relocated -- a canary's own bytes interrupted by binary garbage at an
-// unpredictable, sometimes very short, offset. No fixed length or "unambiguous
-// against the known set" heuristic can soundly attribute an arbitrarily short
-// fragment (a live burst produced one just 1 hex digit past the shared prefix,
-// genuinely ambiguous against a large known-canary population) to a specific source
-// value -- and it doesn't need to: every OTHER channel in this file only ever
-// contains well-formed, complete values (a SQL cell is never partial; an HTTP/gRPC/
-// log payload is structured text, never raw disk bytes), so a truncated/malformed
-// match there is genuinely suspicious and stays fatal. A COMPLETE, well-formed match
-// on db:raw-file (the exemptedFull / candidate==allowed paths below) is UNCHANGED --
-// still zero-tolerance -- so a real, whole leaked value sitting anywhere in the file,
-// fragmented or not, is still caught; only unattributable partial fragments are
-// downgraded to a log line.
+// rawFileChannel is the one channel in this file that scans UNSTRUCTURED bytes
+// spanning SQLite page/B-tree-internal structure and (confirmed live, twice, during
+// burst runs) freed-page slack from a row that physically relocated -- a canary's own
+// bytes interrupted by binary garbage at an unpredictable, sometimes very short,
+// offset. This is the ONLY reason a truncated/malformed prefix match is EVER treated
+// as anything other than an immediate finding: matchesAcceptedPartial's ambiguity
+// check (see its own doc comment) can positively confirm a fragment is an
+// already-accepted value's own bytes, cut short -- and ONLY that confirmed case is
+// skipped silently, since it is definitionally the same artifact already accounted
+// for, not a new one. A fragment matchesAcceptedPartial does NOT
+// confirm -- because it is ambiguous between two or more live canaries/exemptions, or
+// because it matches none of them -- is FATAL on this channel exactly like every
+// other channel; there is no separate, broader leniency for rawFileChannel on top of
+// that check (see TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed, added
+// after a bug of exactly this shape was found: an earlier version of this file
+// downgraded EVERY unattributable fragment on this channel regardless of
+// matchesAcceptedPartial's verdict, which silently accepted genuinely ambiguous
+// fragments too). A COMPLETE, well-formed match on db:raw-file (the exemptedFull /
+// candidate==allowed paths below) was never affected by any of this -- still
+// zero-tolerance, so a real, whole leaked value sitting anywhere in the file,
+// fragmented or not, is still caught.
 const rawFileChannel = "db:raw-file"
 
 func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, haystack []byte, known map[string]struct{}, allowed string, fixedCreds []fixedCredential, exemptions []exemption) {
@@ -612,14 +690,30 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 			// exemption, AND that match is unambiguous against every OTHER currently
 			// known canary (see matchesAcceptedPartial), this is that same accepted
 			// artifact, not a new finding.
+			if len(haystack)-start == len(canaryPrefix) {
+				// Zero informative bytes beyond the shared literal marker itself: the
+				// file simply ended right after "kxcanary-". Every canary of this shape
+				// starts with exactly these 9 bytes, so this identifies nothing --
+				// confirmed live (2026-09, this round): a burst repeatedly hit the bare
+				// marker immediately after "https://example.com/hooks/" (the webhook
+				// canary's OWN, already-exempted URL, forensically unambiguous -- that
+				// literal URL prefix occurs nowhere else in this file), fragmented by
+				// ordinary SQLite page churn down to nothing but the marker. A complete,
+				// whole leaked value is still caught regardless -- see
+				// TestScanCanaryLeaks_ExemptedCanaryZeroInformativeFragmentDoesNotFail.
+				break
+			}
 			if matchesAcceptedPartial(channel, string(haystack[start:]), allowed, exemptions, known) {
 				break
 			}
-			if channel == rawFileChannel {
-				t.Logf("canary-prefixed fragment (truncated at end-of-file, unattributable) on %s op #%d principal=%s -- %s -- not failing, see rawFileChannel's doc comment",
-					channel, opIdx, principal, snippetAround(haystack, start, len(haystack)-start))
-				break
-			}
+			// NOT informational even on rawFileChannel: matchesAcceptedPartial already
+			// returned false, meaning this fragment carries at least one informative
+			// byte and is either ambiguous between two or more live canaries/exemptions,
+			// or doesn't match any of them at all -- both are exactly the cases that
+			// must fail closed (see TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed).
+			// Channel-scoping is already fully handled inside matchesAcceptedPartial
+			// itself (each exemption's own channelPrefix check); there is no separate,
+			// broader leniency for this channel on top of that.
 			t.Fatalf("CANARY LEAK [%s:raw] op #%d principal=%s: truncated canary-prefixed token -- %s",
 				channel, opIdx, principal, snippetAround(haystack, start, len(haystack)-start))
 		}
@@ -640,17 +734,20 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 			// the leading VALID portion against allowed/exemptions, not the full
 			// fixed-length candidate (which includes the garbage tail and could
 			// never equal a clean known value).
+			if validLen == 0 {
+				// Zero informative bytes: see the truncated-token branch above for the
+				// full reasoning -- identifies nothing, so not a canary hit.
+				pos = start + 1
+				continue
+			}
 			partial := canaryPrefix + string(body[:validLen])
 			if matchesAcceptedPartial(channel, partial, allowed, exemptions, known) {
 				pos = start + 1
 				continue
 			}
-			if channel == rawFileChannel {
-				t.Logf("canary-prefixed fragment (malformed, unattributable) on %s op #%d principal=%s: %q -- %s -- not failing, see rawFileChannel's doc comment",
-					channel, opIdx, principal, candidate, snippetAround(haystack, start, canaryTokenLen))
-				pos = start + 1
-				continue
-			}
+			// See the truncated-token branch above: no separate rawFileChannel leniency
+			// on top of matchesAcceptedPartial's own decision -- ambiguous or unmatched
+			// fails closed regardless of channel.
 			t.Fatalf("CANARY LEAK [%s:raw] op #%d principal=%s: malformed canary-prefixed token %q -- %s",
 				channel, opIdx, principal, candidate, snippetAround(haystack, start, canaryTokenLen))
 		}
@@ -912,6 +1009,109 @@ func scanRawDBFile(t *testing.T, path string, known map[string]struct{}, fixedCr
 	scanCanaryLeaks(t, rawFileChannel, 0, "n/a", data, known, "", fixedCreds, exemptions)
 }
 
+// TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed is a permanent (always-run,
+// not a temporary scratch red-proof) regression test for the ambiguity check in
+// matchesAcceptedPartial: a truncated/malformed db:raw-file fragment that could
+// equally be the start of an EXEMPTED canary or a DIFFERENT, non-exempted, live known
+// canary must fail closed (treated as a leak), never silently attributed to the
+// exempted value just because it also matches. Real derived canaries (SHA-256
+// output) never collide on a long shared prefix by chance, so this constructs two
+// synthetic values that deliberately share one -- the same shape the live
+// page-slack/overflow-boundary scenario in matchesAcceptedPartial's doc comment
+// describes, made deterministic instead of relying on a burst run happening to hit
+// it again.
+func TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed(t *testing.T) {
+	exemptedVal := canaryPrefix + strings.Repeat("a", canaryBodyLen)
+	otherVal := canaryPrefix + strings.Repeat("a", canaryBodyLen-1) + "b"
+	known := map[string]struct{}{otherVal: {}}
+	exemptions := []exemption{
+		{value: exemptedVal, channelPrefix: rawFileChannel, reason: "test fixture: see TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed"},
+	}
+
+	// The fragment both values share: prefix + 10 hex chars, matching neither value's
+	// full 41-byte token -- shorter than canaryTokenLen, exercising the
+	// truncated/malformed path, not the full-candidate path.
+	fragment := canaryPrefix + strings.Repeat("a", 10)
+
+	// Direct unit check of the helper that actually makes the accept/reject call.
+	if matchesAcceptedPartial(rawFileChannel, fragment, "", exemptions, known) {
+		t.Fatalf("matchesAcceptedPartial incorrectly accepted fragment %q as belonging to the exempted value %q alone, "+
+			"even though it is equally a prefix of the non-exempted known canary %q -- ambiguous fragments must fail closed",
+			fragment, exemptedVal, otherVal)
+	}
+
+	// End-to-end confirmation via the real scanning path, not just the decision
+	// helper: scanCanaryLeaks itself must call t.Fatalf on this input. Run as a
+	// subprocess (the standard TestHelperProcess pattern), not a plain t.Run subtest
+	// -- Go marks a parent test failed the instant any subtest fails, with no way to
+	// un-fail it afterward, so a subtest that is SUPPOSED to fail can never be part
+	// of an always-green permanent test; a subprocess's exit code is a normal value
+	// to assert on instead.
+	cmd := exec.Command(os.Args[0], "-test.run=TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed_Helper", "-test.v")
+	cmd.Env = append(os.Environ(), "CANARY_AMBIG_HELPER=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected the helper subprocess to fail closed on an ambiguous malformed db:raw-file fragment, but it exited 0 -- output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "CANARY LEAK") {
+		t.Fatalf("helper subprocess failed, but not with the expected CANARY LEAK message -- output:\n%s", out)
+	}
+}
+
+// TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed_Helper is not a real test:
+// it only runs as the subprocess spawned by
+// TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed above, isolating
+// scanCanaryLeaks's real t.Fatalf firing into a process whose exit code the parent
+// can assert on, instead of a subtest that would fail the parent's own status.
+func TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed_Helper(t *testing.T) {
+	if os.Getenv("CANARY_AMBIG_HELPER") != "1" {
+		t.Skip("only runs as a subprocess helper for TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed")
+	}
+	exemptedVal := canaryPrefix + strings.Repeat("a", canaryBodyLen)
+	otherVal := canaryPrefix + strings.Repeat("a", canaryBodyLen-1) + "b"
+	known := map[string]struct{}{otherVal: {}}
+	exemptions := []exemption{
+		{value: exemptedVal, channelPrefix: rawFileChannel, reason: "test fixture"},
+	}
+	// Malformed body: 10 valid hex chars (the shared, ambiguous fragment), then a
+	// non-hex byte, padded to canaryBodyLen.
+	body := strings.Repeat("a", 10) + "!" + strings.Repeat("z", canaryBodyLen-11)
+	haystack := []byte("junk-before-" + canaryPrefix + body + "-junk-after")
+	scanCanaryLeaks(t, rawFileChannel, 0, "n/a", haystack, known, "", nil, exemptions)
+}
+
+// TestScanCanaryLeaks_ExemptedCanaryZeroInformativeFragmentDoesNotFail is a
+// permanent regression test for the opposite side of the ambiguity-check story
+// above: a raw-file fragment with ZERO informative bytes past the shared literal
+// "kxcanary-" marker identifies nothing at all (every canary of this shape starts
+// with exactly those 9 bytes) and must NOT be treated as a leak, on either the
+// truncated-at-EOF or the malformed path. Confirmed live (2026-09, this round): a
+// burst repeatedly hit the bare marker immediately after
+// "https://example.com/hooks/" -- the ALREADY-EXEMPTED webhook canary's own URL,
+// forensically unambiguous (that literal URL prefix occurs nowhere else in this
+// file) -- fragmented by ordinary SQLite page churn down to nothing but the marker.
+// Every occurrence was confirmed state-dependent (does not reproduce on a fresh
+// world alone -- see the file header's REPRODUCIBILITY GATE section) and NOT
+// committed as a testdata regression file for that reason; this synthetic,
+// deterministic test is what actually proves the fix, not a saved corpus file that
+// would only sometimes fail depending on how much DB churn preceded it.
+func TestScanCanaryLeaks_ExemptedCanaryZeroInformativeFragmentDoesNotFail(t *testing.T) {
+	exemptedVal := canaryPrefix + strings.Repeat("a", canaryBodyLen)
+	known := map[string]struct{}{}
+	exemptions := []exemption{
+		{value: exemptedVal, channelPrefix: rawFileChannel, reason: "test fixture"},
+	}
+
+	// Malformed path: bare marker immediately followed by non-hex garbage (SQLite
+	// page-pointer-shaped bytes, matching what was actually observed live).
+	malformed := []byte("https://example.com/hooks/" + canaryPrefix + string([]byte{0x00, 0x00, 0x02, 0xbd, 0x98, 0x0d}) + "more-unrelated-bytes-after")
+	scanCanaryLeaks(t, rawFileChannel, 0, "n/a", malformed, known, "", nil, exemptions)
+
+	// Truncated-at-EOF path: the file simply ends right after the marker.
+	truncated := []byte("https://example.com/hooks/" + canaryPrefix)
+	scanCanaryLeaks(t, rawFileChannel, 0, "n/a", truncated, known, "", nil, exemptions)
+}
+
 // buildCanaryWorld stands up the real production stack once per fuzz worker PROCESS
 // (Go's native fuzzer runs each -fuzz worker as a separate OS process; within one
 // process, f.Fuzz iterations run sequentially on one goroutine, so buildCanaryWorld's
@@ -931,22 +1131,41 @@ func scanRawDBFile(t *testing.T, path string, known map[string]struct{}, fixedCr
 // PAT / session / MFA / dynamic-secret DSN+lease / the known-open webhook probe are
 // all planted HERE, once, not per fuzz input -- see the file header's PERFORMANCE
 // section for why.
-func buildCanaryWorld(f *testing.F) *canaryWorld {
-	f.Helper()
+// worldBuilderTB is the minimal interface buildCanaryWorld needs -- satisfied by
+// both *testing.F (the initial, pre-Fuzz build) and *testing.T (a rebuild from
+// INSIDE the fuzz target; see the PERFORMANCE section's rebuild-every-N mechanism).
+// Deliberately excludes TempDir/Cleanup: Go's testing package panics if F.Helper (or
+// any other *testing.F method) is called from inside the fuzz target ("testing:
+// f.Helper was called inside the fuzz target, use t.Helper instead") -- confirmed
+// live the first time the rebuild mechanism actually ran. buildCanaryWorld manages
+// its own temp directory via os.MkdirTemp instead of TempDir() for exactly this
+// reason -- see tempDir below and canaryWorld.close().
+type worldBuilderTB interface {
+	Helper()
+	Fatalf(format string, args ...any)
+	Logf(format string, args ...any)
+}
+
+func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
+	tb.Helper()
 	if err := i18n.InitializeForTesting(); err != nil {
-		f.Fatalf("i18n: %v", err)
+		tb.Fatalf("i18n: %v", err)
 	}
 
-	dbPath := filepath.Join(f.TempDir(), "canary.db")
+	tempDir, err := os.MkdirTemp("", "canary-fuzz-world-*")
+	if err != nil {
+		tb.Fatalf("mkdir temp: %v", err)
+	}
+	dbPath := filepath.Join(tempDir, "canary.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
-		f.Fatalf("open sqlite: %v", err)
+		tb.Fatalf("open sqlite: %v", err)
 	}
 	if sqlDB, e := db.DB(); e == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
-		f.Fatalf("migrate: %v", err)
+		tb.Fatalf("migrate: %v", err)
 	}
 	for _, ix := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active ON project_memberships (project_id, user_id) WHERE state <> 'revoked'",
@@ -958,15 +1177,15 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		_ = db.Exec(ix).Error
 	}
 
-	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, f.TempDir())
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, tempDir)
 	if err := enc.Initialize("canary-fuzz-test-passphrase"); err != nil {
-		f.Fatalf("encryption init: %v", err)
+		tb.Fatalf("encryption init: %v", err)
 	}
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	c.SetSecretValueEncryptor(enc)
 	if !c.SecretValueEncryptionActive() {
-		f.Fatalf("encryption did not activate -- plaintext-at-rest check would be vacuous")
+		tb.Fatalf("encryption did not activate -- plaintext-at-rest check would be vacuous")
 	}
 	c.SetAuthEncryptor(enc) // MFA secrets + dynamic-secret admin DSNs/lease credentials
 	fakeDyn := &dynamic.FakeEngine{NativeExpiry: true}
@@ -980,47 +1199,47 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		Username: "testadmin", Email: "testadmin@example.com",
 		Password: "TestPassword123!", Token: "test-bootstrap-token",
 	}); err != nil {
-		f.Logf("bootstrap: %v (may already be initialised)", err)
+		tb.Logf("bootstrap: %v (may already be initialised)", err)
 	}
 	adminSess, _, err := c.Login(ctx, &core.LoginRequest{Username: "testadmin", Password: "TestPassword123!"})
 	if err != nil {
-		f.Fatalf("admin login: %v", err)
+		tb.Fatalf("admin login: %v", err)
 	}
 	admin, err := ls.GetUserByUsername(ctx, "testadmin")
 	if err != nil || admin == nil {
-		f.Fatalf("admin lookup: %v", err)
+		tb.Fatalf("admin lookup: %v", err)
 	}
 
 	pA, err := ls.CreateProject(ctx, &models.Project{Name: "canary-proja"})
 	if err != nil {
-		f.Fatalf("projA: %v", err)
+		tb.Fatalf("projA: %v", err)
 	}
 	eA, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: pA.ID})
 	if err != nil {
-		f.Fatalf("envA: %v", err)
+		tb.Fatalf("envA: %v", err)
 	}
 	pB, err := ls.CreateProject(ctx, &models.Project{Name: "canary-projb"})
 	if err != nil {
-		f.Fatalf("projB: %v", err)
+		tb.Fatalf("projB: %v", err)
 	}
 	eB, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: pB.ID})
 	if err != nil {
-		f.Fatalf("envB: %v", err)
+		tb.Fatalf("envB: %v", err)
 	}
 
 	var perm models.Permission
 	if e := db.Where("name = ?", "secrets.read").First(&perm).Error; e != nil {
 		perm = models.Permission{Name: "secrets.read", Resource: "secrets", Action: "read"}
 		if e2 := db.Create(&perm).Error; e2 != nil {
-			f.Fatalf("seed permission: %v", e2)
+			tb.Fatalf("seed permission: %v", e2)
 		}
 	}
 	role := models.Role{Name: "canary-fuzz-reader", NameFolded: "canary-fuzz-reader"}
 	if e := db.Create(&role).Error; e != nil {
-		f.Fatalf("seed role: %v", e)
+		tb.Fatalf("seed role: %v", e)
 	}
 	if e := db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error; e != nil {
-		f.Fatalf("seed role-permission: %v", e)
+		tb.Fatalf("seed role-permission: %v", e)
 	}
 
 	sA, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
@@ -1028,26 +1247,26 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		Type: "password", CreatedBy: "testadmin", OwnerID: admin.ID,
 	})
 	if err != nil || sA == nil {
-		f.Fatalf("secretA: %v", err)
+		tb.Fatalf("secretA: %v", err)
 	}
 	sB, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
 		Name: "sb", Value: []byte("kxcanary-initial-b"), ProjectID: pB.ID, EnvironmentID: eB.ID,
 		Type: "password", CreatedBy: "testadmin", OwnerID: admin.ID,
 	})
 	if err != nil || sB == nil {
-		f.Fatalf("secretB: %v", err)
+		tb.Fatalf("secretB: %v", err)
 	}
 
 	mkPrincipal := func(uname, email string) canaryPrincipal {
 		u, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: uname, Email: email, Password: apiFuzzPrincipalPassword})
 		if err != nil || u == nil {
-			f.Fatalf("create user %s: %v", uname, err)
+			tb.Fatalf("create user %s: %v", uname, err)
 		}
 		tok := ""
 		if sess, _, lerr := c.Login(ctx, &core.LoginRequest{Username: uname, Password: apiFuzzPrincipalPassword}); lerr == nil && sess != nil {
 			tok = sess.SessionToken
 		} else {
-			f.Logf("principal %s could not obtain a session (%v) -- treated as no-token", uname, lerr)
+			tb.Logf("principal %s could not obtain a session (%v) -- treated as no-token", uname, lerr)
 		}
 		return canaryPrincipal{id: u.ID, token: tok}
 	}
@@ -1069,7 +1288,7 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 	if patRes, err := c.CreateOwnPAT(ctx, principals[0].id, "canary-pat-world", nil, []string{"secrets.read"}, 0, 0, nil); err == nil && patRes != nil {
 		fixedCreds = append(fixedCreds, fixedCredential{label: "pat", variants: fixedValueVariants(patRes.PlainToken)})
 	} else {
-		f.Logf("PAT canary setup skipped (%v)", err)
+		tb.Logf("PAT canary setup skipped (%v)", err)
 	}
 
 	// Session token: DB stores only a SHA-256 hash (Session.SessionToken); same
@@ -1080,7 +1299,7 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 	if sess, _, lerr := c.Login(ctx, &core.LoginRequest{Username: "canary-readera", Password: apiFuzzPrincipalPassword}); lerr == nil && sess != nil {
 		fixedCreds = append(fixedCreds, fixedCredential{label: "session", variants: fixedValueVariants(sess.SessionToken)})
 	} else {
-		f.Logf("session canary setup skipped (%v)", lerr)
+		tb.Logf("session canary setup skipped (%v)", lerr)
 	}
 
 	// MFA enrollment secret: DB stores only SecretEnc (encrypted). A dedicated
@@ -1091,10 +1310,10 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		if _, secret, merr := c.BeginMFAEnrollment(ctx, mfaUser.ID); merr == nil {
 			fixedCreds = append(fixedCreds, fixedCredential{label: "mfa", variants: fixedValueVariants(secret)})
 		} else {
-			f.Logf("MFA canary setup skipped (%v)", merr)
+			tb.Logf("MFA canary setup skipped (%v)", merr)
 		}
 	} else {
-		f.Logf("MFA canary user setup skipped (%v)", uerr)
+		tb.Logf("MFA canary user setup skipped (%v)", uerr)
 	}
 
 	// Dynamic-secret admin DSN: never echoed back in ANY response (AdminDSNEnc/
@@ -1110,7 +1329,7 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		CreatedBy: "testadmin", ActorID: admin.ID,
 	})
 	if cfgErr != nil {
-		f.Logf("dynamic-secret config canary setup skipped (%v)", cfgErr)
+		tb.Logf("dynamic-secret config canary setup skipped (%v)", cfgErr)
 	} else {
 		// Lease credential: the injected FakeEngine's IssueFields makes the issued
 		// credential itself the canary -- must appear only in the IssueLease return
@@ -1121,7 +1340,7 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		if _, lerr := c.IssueLease(ctx, cfg.ID, 3600, admin.ID); lerr == nil {
 			plantOnce(leaseCanary)
 		} else {
-			f.Logf("lease canary setup skipped (%v)", lerr)
+			tb.Logf("lease canary setup skipped (%v)", lerr)
 		}
 	}
 
@@ -1146,8 +1365,8 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		webhookExemptions = []exemption{
 			{value: webhookCanary, channelPrefix: "db:audit_events.diff", reason: findingRef + ": writeConfigChangeAuditEvent json.Marshals the whole NotificationChannel struct (incl. URL) into audit_events.diff"},
 			{value: webhookCanary, channelPrefix: rawFileChannel, reason: findingRef + ": same root cause -- the diff column's bytes are part of the raw DB file"},
-			{value: webhookCanary, channelPrefix: "http:audit-search", reason: findingRef + ": GET /api/v1/audit/search returns audit_events rows including Diff verbatim to any audit.read holder"},
-			{value: webhookCanary, channelPrefix: "http:audit-export-csv", reason: findingRef + ": GET /api/v1/audit/export.csv, same exposure"},
+			{value: webhookCanary, channelPrefix: "http:audit-search:body", reason: findingRef + ": GET /api/v1/audit/search returns audit_events rows including Diff verbatim to any audit.read holder"},
+			{value: webhookCanary, channelPrefix: "http:audit-export-csv:body", reason: findingRef + ": GET /api/v1/audit/export.csv, same exposure"},
 			// DISTINCT from the audit-diff finding above (not covered by findingRef): this
 			// is the channel's OWN canonical storage column, where this fuzzer itself put
 			// it via CreateNotificationChannel -- not a duplication into a second, wrong
@@ -1164,44 +1383,56 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 			rows, qerr := sqlDB.Query("SELECT 1 FROM audit_events WHERE diff LIKE ? LIMIT 1", "%"+webhookCanary+"%")
 			if qerr == nil {
 				if rows.Next() {
-					f.Logf("KNOWN-OPEN FINDING confirmed live: webhook URL canary present in audit_events.diff -- see " + findingRef)
+					tb.Logf("KNOWN-OPEN FINDING confirmed live: webhook URL canary present in audit_events.diff -- see " + findingRef)
 				}
 				rows.Close()
 			}
 		}
 	} else {
-		f.Logf("webhook canary setup skipped (%v)", cherr)
+		tb.Logf("webhook canary setup skipped (%v)", cherr)
 	}
 
 	r, err := NewRouter(&config.Config{}, c)
 	if err != nil {
-		f.Fatalf("router: %v", err)
+		tb.Fatalf("router: %v", err)
 	}
 
 	grpcSrv, err := keyorixgrpc.NewServer(&config.Config{}, c)
 	if err != nil {
-		f.Fatalf("grpc server: %v", err)
+		tb.Fatalf("grpc server: %v", err)
 	}
 	lis := bufconn.Listen(1 << 20)
 	go func() { _ = grpcSrv.Serve(lis) }()
-	f.Cleanup(grpcSrv.Stop)
 	conn, err := grpc.NewClient(
 		"passthrough:///bufnet",
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		f.Fatalf("grpc dial: %v", err)
+		tb.Fatalf("grpc dial: %v", err)
 	}
-	f.Cleanup(func() { _ = conn.Close() })
+	// grpcSrv/conn are NOT f.Cleanup-registered here (unlike a single-world fuzz
+	// target) -- see canaryWorld.close() and the PERFORMANCE section's rebuild-every-N
+	// mechanism: a world torn down mid-run by that mechanism must release its grpc
+	// server/listener/connection immediately, not wait for f.Cleanup at the very end
+	// of the whole fuzz target's lifetime, or a long soak would accumulate one live
+	// grpc server + goroutine per rebuild for its entire run.
 
+	// Redirects stdlib log's output to THIS world's own buffer -- no restore
+	// registered here (unlike a single-world fuzz target): the rebuild-every-N
+	// mechanism calls buildCanaryWorld repeatedly from inside the fuzz target, where
+	// tb.Cleanup is unsafe to call at all (same reason TempDir is avoided above), and
+	// even a safe per-call restore would be wrong here -- it would point log output
+	// back at a STALE world's buffer the instant this rebuild's own triggering
+	// iteration ends, not stay pointed at the new one for every later iteration until
+	// the NEXT rebuild. FuzzCanarySecretLeakage captures the TRUE original once,
+	// before the first call, and restores it exactly once at the very end.
 	lb := &lockedBuffer{}
-	prevOut := log.Writer()
 	log.SetOutput(lb)
-	f.Cleanup(func() { log.SetOutput(prevOut) })
 
 	return &canaryWorld{
-		router: r, grpc: pb.NewSecretServiceClient(conn), db: db, dbPath: dbPath, c: c,
+		router: r, grpc: pb.NewSecretServiceClient(conn), db: db, dbPath: dbPath, tempDir: tempDir, c: c,
+		grpcSrv: grpcSrv, grpcConn: conn,
 		readerRole: role.ID, adminTok: adminSess.SessionToken, adminID: admin.ID,
 		projAID: pA.ID, projBID: pB.ID, envAID: eA.ID, envBID: eB.ID,
 		secAID: sA.ID, secBID: sB.ID,
@@ -1212,9 +1443,39 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 	}
 }
 
+// rebuildWorldEveryExecs bounds how many fuzz executions run against one
+// canaryWorld/DB file before it is torn down and rebuilt fresh -- see the
+// PERFORMANCE section's measurement of scanRawDBFile cost and DB file size both
+// growing within a single world's lifetime (confirmed live: a 30-minute, 10-worker
+// instrumented burst showed DB size growing from ~800KB at exec 1 to ~2.5MB by
+// roughly one minute in (~270 execs) to ~4.9MB by roughly three minutes in (~750
+// execs), with scanRawDBFile's own duration tracking the same growth, roughly
+// 3-8ms -> 60-150ms -> 100-260ms over that same span). 500 is picked from that data:
+// comfortably inside the region where growth is still modest (well before the ~700+
+// exec mark where cost had already grown ~2x from its one-minute value), while
+// staying large enough that buildCanaryWorld's own setup cost (observed under
+// ~250ms per call, from the elapsed time of every process's first logged
+// iteration) amortizes to a small fraction of a percent per execution. Go's own
+// -fuzz engine ALSO recycles whole worker processes on its own cadence (observed:
+// no single process in that same burst logged an elapsed time past ~3m17s), which
+// independently bounds worst-case growth even without this mechanism -- but that
+// behavior is an unexported Go-internal implementation detail, not a documented
+// guarantee, and does not apply at all to a long-running single process under
+// -parallel=1 or to -run mode. This mechanism is the one under this fuzzer's own
+// control.
+const rebuildWorldEveryExecs = 500
+
 func FuzzCanarySecretLeakage(f *testing.F) {
+	// Captured ONCE, before the first buildCanaryWorld call, and restored ONCE at the
+	// very end -- buildCanaryWorld itself only ever redirects log output to its
+	// CURRENT world's own buffer (see its doc comment on why it cannot safely
+	// register a per-call restore once rebuilds happen mid-fuzz).
+	prevLogOutput := log.Writer()
+	f.Cleanup(func() { log.SetOutput(prevLogOutput) })
+
 	w := buildCanaryWorld(f)
 	f.Cleanup(i18n.ResetForTesting)
+	f.Cleanup(func() { w.close() }) // closes whichever world is CURRENT when the whole fuzz target's lifetime ends -- every earlier, rebuilt-away world already closed itself, see below
 
 	f.Add([]byte{0, 0, 0, 2, 0, 3, 4, 2, 5, 9, 1, 4})
 	f.Add([]byte{2, 0, 0})
@@ -1223,8 +1484,38 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 	f.Add([]byte{})
 
 	var probeSeq atomic.Int64
+	var execsSinceRebuild int
+
+	// DIAG(rebuild-interval): TEMPORARY instrumentation to measure whether
+	// scanRawDBFile's cost and the DB file size grow across a long burst -- gated
+	// behind CANARY_DIAG_LOG so it is a zero-cost no-op for every normal run. Direct
+	// file I/O, not t.Logf: Go's fuzzing engine does not stream per-iteration Logf
+	// output during -fuzz mode (only seed-corpus subtests and failure replays show
+	// it), so this is the only way to observe per-iteration data from a live burst.
+	// Single-goroutine access only, same as knownCanaries -- see buildCanaryWorld's
+	// doc comment -- so no locking needed. Revert this whole block (import, setup,
+	// and the wrap around scanRawDBFile below) once the rebuild-interval decision is
+	// made and recorded in the commit message.
+	var diagFile *os.File
+	if diagPath := os.Getenv("CANARY_DIAG_LOG"); diagPath != "" {
+		var derr error
+		diagFile, derr = os.OpenFile(diagPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if derr != nil {
+			f.Fatalf("CANARY_DIAG_LOG open: %v", derr)
+		}
+		f.Cleanup(func() { diagFile.Close() })
+	}
+	diagBurstStart := time.Now()
+	var diagExecCount int64
 
 	f.Fuzz(func(t *testing.T, program []byte) {
+		execsSinceRebuild++
+		if execsSinceRebuild > rebuildWorldEveryExecs {
+			w.close()
+			w = buildCanaryWorld(t) // NOT f -- calling any *testing.F method mid-fuzz panics, see worldBuilderTB's doc comment
+			execsSinceRebuild = 1
+		}
+
 		ctx := context.Background()
 		opIdx := 0
 
@@ -1611,6 +1902,18 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			t.Fatalf("db scan: get sql.DB: %v", err)
 		}
 		scanDBGeneric(t, sqlDB, w.knownCanaries, w.fixedCreds, w.webhookExemptions, w.dbWatermarks)
-		scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExemptions)
+
+		diagExecCount++
+		if diagFile != nil {
+			rawScanStart := time.Now()
+			scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExemptions)
+			rawScanDur := time.Since(rawScanStart)
+			if fi, statErr := os.Stat(w.dbPath); statErr == nil {
+				fmt.Fprintf(diagFile, "pid=%d iter=%d elapsed=%s dbSizeBytes=%d rawScanDur=%s\n",
+					os.Getpid(), diagExecCount, time.Since(diagBurstStart).Round(time.Millisecond), fi.Size(), rawScanDur)
+			}
+		} else {
+			scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExemptions)
+		}
 	})
 }
