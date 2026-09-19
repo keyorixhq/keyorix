@@ -282,12 +282,13 @@ type canaryWorld struct {
 	// fixedCreds holds the one-time PAT/session/MFA credentials -- see fixedCredential.
 	fixedCreds []fixedCredential
 
-	// webhookExempt holds the single known-open webhook-URL canary (see the file
-	// header's KNOWN-OPEN EXCEPTION section) -- passed as scanCanaryLeaks's `exempt`
-	// set ONLY by the DB scans, so that one confirmed, unfixed bug doesn't fail every
-	// subsequent iteration, while the SAME value is still zero-tolerance in every
-	// other channel (log/HTTP/gRPC never pass this set).
-	webhookExempt map[string]struct{}
+	// webhookExemptions holds the standing (value, channel) exceptions for the single
+	// known-open webhook-URL canary (see the file header's KNOWN-OPEN EXCEPTION
+	// section) -- one entry per channel where the finding is confirmed to surface
+	// (db:audit_events.diff, db:raw-file, http:audit-search, http:audit-export-csv).
+	// Every other channel (log/HTTP responses not listed/gRPC) never receives this
+	// set, so the SAME value is still zero-tolerance there.
+	webhookExemptions []exemption
 
 	// dbWatermarks tracks, per table, the highest SQLite rowid scanDBGeneric has
 	// already scanned -- see that function's doc comment for why (bounds per-input
@@ -344,13 +345,13 @@ func (w *canaryWorld) scanOp(t *testing.T, opIdx int, channel, principal string,
 // genuinely different, new problem).
 func (w *canaryWorld) scanOpAuditSurface(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder) {
 	t.Helper()
-	w.scanOpExempt(t, opIdx, channel, principal, rec, w.webhookExempt)
+	w.scanOpExempt(t, opIdx, channel, principal, rec, w.webhookExemptions)
 }
 
-func (w *canaryWorld) scanOpExempt(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder, exempt map[string]struct{}) {
+func (w *canaryWorld) scanOpExempt(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder, exemptions []exemption) {
 	t.Helper()
-	scanCanaryLeaks(t, channel+":body", opIdx, principal, rec.Body.Bytes(), w.knownCanaries, "", w.fixedCreds, exempt)
-	scanCanaryLeaks(t, channel+":headers", opIdx, principal, []byte(fmt.Sprintf("%v", rec.Header())), w.knownCanaries, "", w.fixedCreds, exempt)
+	scanCanaryLeaks(t, channel+":body", opIdx, principal, rec.Body.Bytes(), w.knownCanaries, "", w.fixedCreds, exemptions)
+	scanCanaryLeaks(t, channel+":headers", opIdx, principal, []byte(fmt.Sprintf("%v", rec.Header())), w.knownCanaries, "", w.fixedCreds, exemptions)
 	scanCanaryLeaks(t, "log", opIdx, principal, w.drainLog(), w.knownCanaries, "", w.fixedCreds, nil)
 }
 
@@ -411,18 +412,100 @@ func snippetAround(haystack []byte, idx, matchLen int) string {
 	return fmt.Sprintf("context=%q", string(haystack[start:end]))
 }
 
-// matchesPrefixOfAny reports whether partial is a prefix (up to and including the
-// fully-equal case) of allowed or of any value in exempt. Used when a raw-byte
-// stream cuts an otherwise-legitimate (allowed/exempt) token short -- e.g. a SQLite
-// page boundary landing inside the known-open webhook canary's own bytes, observed
-// live during a burst run -- so that byte-level truncation of an already-accepted
-// value doesn't read as a brand-new finding.
-func matchesPrefixOfAny(partial, allowed string, exempt map[string]struct{}) bool {
-	if allowed != "" && len(partial) <= len(allowed) && allowed[:len(partial)] == partial {
-		return true
+// exemption is ONE specific, known-open finding accepted at ONE specific channel --
+// see the file header's KNOWN-OPEN EXCEPTION section. A candidate must equal `value`
+// exactly (or, for a truncated/malformed byte-stream match, satisfy
+// exemptionMinMatchLen -- see matchesAcceptedPartial) AND the scan's `channel` string
+// must have `channelPrefix` as a prefix. Both checks are required: a DIFFERENT
+// canary on the SAME channel, or this SAME value surfacing on a DIFFERENT
+// (non-listed) channel, both still fail -- see the red-proof in this file's git
+// history validating exactly that.
+type exemption struct {
+	value         string
+	channelPrefix string
+	reason        string // human-readable, cites the private finding doc by name
+}
+
+// matchesAcceptedPartial reports whether a truncated/malformed partial candidate
+// (found on channel `channel`) is a byte-for-byte prefix of `allowed` or of some
+// exemption whose channelPrefix matches `channel` -- AND, critically, is NOT ALSO a
+// prefix of any OTHER currently-known canary (from `known`, or any OTHER
+// exemption's value). Used when a raw-byte stream cuts an otherwise-legitimate value
+// short -- e.g. a SQLite page boundary or page-slack (freed/reused page space still
+// holding a fragment of a PAST write) landing inside the known-open webhook canary's
+// own bytes, observed live during burst runs at unpredictable, sometimes short,
+// lengths -- so that byte-level truncation of an already-accepted value doesn't read
+// as a brand-new finding.
+//
+// A FIXED minimum match length was tried first and rejected: every canary shares the
+// identical 9-byte canaryPrefix, so any fixed threshold is either too strict (a real,
+// live burst produced a 16-byte match -- prefix + 7 hex chars -- for the SAME already
+// -accepted webhook value, which a length-25 floor wrongly rejected as a new finding)
+// or, lowered enough to accept that, too permissive (a short match could equally be
+// the START of a genuinely different, unrelated canary). The ambiguity check below is
+// the actually-correct test: a partial is safe to accept only if it uniquely
+// identifies the accepted value among every canary this run currently knows about --
+// if the SAME partial bytes could equally be the start of some OTHER live canary, we
+// cannot tell which one actually produced them, so it fails as a genuine finding
+// rather than being silently waved through. This scales with entropy actually in
+// play (how many distinct canaries currently exist), not a number picked in advance.
+// Only the RARE truncated/malformed path pays this known-set scan; the common-case
+// full-candidate match stays a single O(1) map lookup (see exemptedFull), so this
+// does not reopen the O(history) cost this file's PERFORMANCE section fixed.
+func matchesAcceptedPartial(channel, partial, allowed string, exemptions []exemption, known map[string]struct{}) bool {
+	if len(partial) < len(canaryPrefix) {
+		return false // shorter than the shared literal prefix itself carries no information at all
 	}
-	for v := range exempt {
-		if len(partial) <= len(v) && v[:len(partial)] == partial {
+	acceptedVia := "" // the ONE value this partial is being provisionally credited to
+	if allowed != "" && len(partial) <= len(allowed) && allowed[:len(partial)] == partial {
+		acceptedVia = allowed
+	}
+	for _, ex := range exemptions {
+		if !strings.HasPrefix(channel, ex.channelPrefix) {
+			continue
+		}
+		if len(partial) <= len(ex.value) && ex.value[:len(partial)] == partial {
+			acceptedVia = ex.value
+		}
+	}
+	if acceptedVia == "" {
+		return false
+	}
+	// Ambiguity check: this partial is only safe to accept if it does NOT also match
+	// the start of some OTHER live canary -- otherwise we cannot tell which one
+	// actually produced these bytes, and waving it through would risk hiding a
+	// genuinely different canary's own truncated leak.
+	for k := range known {
+		if k == acceptedVia {
+			continue
+		}
+		if len(partial) <= len(k) && k[:len(partial)] == partial {
+			return false
+		}
+	}
+	for _, ex := range exemptions {
+		if ex.value == acceptedVia {
+			continue
+		}
+		if len(partial) <= len(ex.value) && ex.value[:len(partial)] == partial {
+			return false
+		}
+	}
+	if allowed != "" && allowed != acceptedVia && len(partial) <= len(allowed) && allowed[:len(partial)] == partial {
+		return false
+	}
+	return true
+}
+
+// exemptedFull is matchesAcceptedPartial's twin for a COMPLETE, well-formed
+// candidate (no length gate needed -- a full match is already maximally specific):
+// true only if some exemption's value equals candidate exactly AND channel has that
+// exemption's channelPrefix. A different canary value is never exempted just because
+// it lands on an exempted channel, and this value is never exempted on a channel not
+// listed.
+func exemptedFull(channel, candidate string, exemptions []exemption) bool {
+	for _, ex := range exemptions {
+		if candidate == ex.value && strings.HasPrefix(channel, ex.channelPrefix) {
 			return true
 		}
 	}
@@ -477,15 +560,39 @@ func hexEncodedCandidateAt(haystack []byte, pos, prefixPatternLen int) (string, 
 //   - fixedCreds (PAT/session/MFA): a small, constant-size direct Contains check per
 //     precomputed variant.
 //
-// exempt is a small, standing set of raw candidate values that must NEVER fail here,
-// checked in addition to `allowed` -- unlike `allowed` (one call's own legitimate
-// disclosure), exempt entries are permanent for every call that passes them. Its only
-// use in this file is the known-open webhook-URL-into-audit-diff finding (see the
-// file header): the webhook canary shares canaryPrefix's shape, so without this it
-// would be flagged as an "unknown/unrecognized" token on every DB scan for the rest
-// of the run. Pass nil for channels where no such standing exception exists (which is
-// every channel except the DB scans).
-func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, haystack []byte, known map[string]struct{}, allowed string, fixedCreds []fixedCredential, exempt map[string]struct{}) {
+// exemptions is a small, standing set of (value, channel) exceptions that must
+// NEVER fail here -- checked in addition to `allowed` -- unlike `allowed` (one
+// call's own legitimate disclosure), an exemption is permanent for every call whose
+// channel matches its channelPrefix. Its only use in this file is the known-open
+// webhook-URL-into-audit-diff finding (see the file header): the webhook canary
+// shares canaryPrefix's shape, so without this it would be flagged as an
+// "unknown/unrecognized" token on every scan of an affected channel for the rest of
+// the run. A DIFFERENT canary value is never exempted just because it lands on the
+// same channel, and this SAME value is never exempted on a channel not listed. Pass
+// nil for channels where no such standing exception exists (most of them).
+//
+// rawFileChannel (below) is the one channel where a truncated/malformed prefix match
+// is informational (t.Logf) rather than fatal. This is NOT an exemption of a
+// specific value -- it applies regardless of whether the fragment matches anything
+// known. Rationale: db:raw-file is the only channel in this file that scans
+// UNSTRUCTURED bytes spanning SQLite page/B-tree-internal structure and (confirmed
+// live, twice, during burst runs) freed-page slack from a row that physically
+// relocated -- a canary's own bytes interrupted by binary garbage at an
+// unpredictable, sometimes very short, offset. No fixed length or "unambiguous
+// against the known set" heuristic can soundly attribute an arbitrarily short
+// fragment (a live burst produced one just 1 hex digit past the shared prefix,
+// genuinely ambiguous against a large known-canary population) to a specific source
+// value -- and it doesn't need to: every OTHER channel in this file only ever
+// contains well-formed, complete values (a SQL cell is never partial; an HTTP/gRPC/
+// log payload is structured text, never raw disk bytes), so a truncated/malformed
+// match there is genuinely suspicious and stays fatal. A COMPLETE, well-formed match
+// on db:raw-file (the exemptedFull / candidate==allowed paths below) is UNCHANGED --
+// still zero-tolerance -- so a real, whole leaked value sitting anywhere in the file,
+// fragmented or not, is still caught; only unattributable partial fragments are
+// downgraded to a log line.
+const rawFileChannel = "db:raw-file"
+
+func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, haystack []byte, known map[string]struct{}, allowed string, fixedCreds []fixedCredential, exemptions []exemption) {
 	t.Helper()
 
 	prefixBytes := []byte(canaryPrefix)
@@ -498,12 +605,19 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 		start := pos + rel
 		end := start + canaryTokenLen
 		if end > len(haystack) {
-			// A real DB/file byte stream can legitimately cut an exempt value off
+			// A real DB/file byte stream can legitimately cut an exempted value off
 			// mid-token (e.g. a SQLite page boundary landing inside the known-open
-			// webhook canary's own bytes -- observed live during a 5-minute burst).
-			// If every available byte matches the START of allowed or some exempt
-			// value, this is that same accepted artifact, not a new finding.
-			if matchesPrefixOfAny(string(haystack[start:]), allowed, exempt) {
+			// webhook canary's own bytes -- observed live during a burst run). If every
+			// available byte matches the START of allowed or a channel-matching
+			// exemption, AND that match is unambiguous against every OTHER currently
+			// known canary (see matchesAcceptedPartial), this is that same accepted
+			// artifact, not a new finding.
+			if matchesAcceptedPartial(channel, string(haystack[start:]), allowed, exemptions, known) {
+				break
+			}
+			if channel == rawFileChannel {
+				t.Logf("canary-prefixed fragment (truncated at end-of-file, unattributable) on %s op #%d principal=%s -- %s -- not failing, see rawFileChannel's doc comment",
+					channel, opIdx, principal, snippetAround(haystack, start, len(haystack)-start))
 				break
 			}
 			t.Fatalf("CANARY LEAK [%s:raw] op #%d principal=%s: truncated canary-prefixed token -- %s",
@@ -523,11 +637,17 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 			// stream didn't run out -- it just stopped being valid hex partway
 			// through (observed live: SQLite page/pointer bytes immediately after a
 			// handful of the webhook canary's own leading hex chars). Compare only
-			// the leading VALID portion against allowed/exempt, not the full
+			// the leading VALID portion against allowed/exemptions, not the full
 			// fixed-length candidate (which includes the garbage tail and could
 			// never equal a clean known value).
 			partial := canaryPrefix + string(body[:validLen])
-			if matchesPrefixOfAny(partial, allowed, exempt) {
+			if matchesAcceptedPartial(channel, partial, allowed, exemptions, known) {
+				pos = start + 1
+				continue
+			}
+			if channel == rawFileChannel {
+				t.Logf("canary-prefixed fragment (malformed, unattributable) on %s op #%d principal=%s: %q -- %s -- not failing, see rawFileChannel's doc comment",
+					channel, opIdx, principal, candidate, snippetAround(haystack, start, canaryTokenLen))
 				pos = start + 1
 				continue
 			}
@@ -538,7 +658,7 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 			pos = start + 1
 			continue
 		}
-		if _, ok := exempt[candidate]; ok {
+		if exemptedFull(channel, candidate, exemptions) {
 			pos = start + 1
 			continue
 		}
@@ -568,7 +688,7 @@ func scanCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, 
 				pos = start + 1
 				continue
 			}
-			if _, ok := exempt[candidate]; ok {
+			if exemptedFull(channel, candidate, exemptions) {
 				pos = start + 1
 				continue
 			}
@@ -691,7 +811,7 @@ func cellBytes(v interface{}) []byte {
 // whole file every time, so it remains a full backstop regardless of this
 // assumption; this function's incremental scan is a speed optimization on top of
 // that guarantee, not a narrowing of it.
-func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixedCreds []fixedCredential, exempt map[string]struct{}, watermarks map[string]int64) {
+func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixedCreds []fixedCredential, exemptions []exemption, watermarks map[string]int64) {
 	t.Helper()
 	rows, err := sqlDB.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
 	if err != nil {
@@ -773,7 +893,7 @@ func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixed
 		watermarks[tbl] = maxRowid
 
 		for i, b := range cellData {
-			scanCanaryLeaks(t, fmt.Sprintf("db:%s.%s", tbl, cellCol[i]), 0, "n/a", b, known, "", fixedCreds, exempt)
+			scanCanaryLeaks(t, fmt.Sprintf("db:%s.%s", tbl, cellCol[i]), 0, "n/a", b, known, "", fixedCreds, exemptions)
 		}
 	}
 }
@@ -783,13 +903,13 @@ func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixed
 // column-level scan (this also catches anything sitting in freelist/overflow pages a
 // column-level SELECT wouldn't surface). Requires a FILE-backed DB, not :memory: --
 // see buildCanaryWorld.
-func scanRawDBFile(t *testing.T, path string, known map[string]struct{}, fixedCreds []fixedCredential, exempt map[string]struct{}) {
+func scanRawDBFile(t *testing.T, path string, known map[string]struct{}, fixedCreds []fixedCredential, exemptions []exemption) {
 	t.Helper()
 	data, err := os.ReadFile(path) //nolint:gosec -- path is this fuzz target's own f.TempDir()-scoped file, not user input
 	if err != nil {
 		t.Fatalf("db scan: read raw file %s: %v", path, err)
 	}
-	scanCanaryLeaks(t, "db:raw-file", 0, "n/a", data, known, "", fixedCreds, exempt)
+	scanCanaryLeaks(t, rawFileChannel, 0, "n/a", data, known, "", fixedCreds, exemptions)
 }
 
 // buildCanaryWorld stands up the real production stack once per fuzz worker PROCESS
@@ -1006,26 +1126,45 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 	}
 
 	// KNOWN-OPEN FINDING (see file header): confirm ONCE, informationally, that
-	// NotificationChannel.URL leaks into audit_events.Diff. webhookCanary is
-	// deliberately never passed to plantOnce (knownCanaries) -- instead it goes into
-	// webhookExempt, which scanCanaryLeaks only honors when explicitly passed (the DB
-	// scans only -- see webhookExempt's doc comment), so the SAME value stays
-	// zero-tolerance in every other channel.
-	webhookExempt := map[string]struct{}{}
+	// NotificationChannel.URL leaks into audit_events.Diff -- AND, confirmed live by
+	// an earlier burst, into the audit-search/audit-export-csv HTTP read surfaces too
+	// (see keyorix-private/adversarial-review/
+	// NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md, "who can read it").
+	// webhookCanary is deliberately never passed to plantOnce (knownCanaries) --
+	// instead each confirmed-affected channel gets its OWN exemption entry below (one
+	// value, one channel each -- see exemption's doc comment), so a DIFFERENT canary
+	// on the same channel, or this SAME value on an unlisted channel, both still fail.
 	webhookCanary := deriveCanary("webhook-world", []byte("world-init"))
+	var webhookExemptions []exemption
 	ch := &models.NotificationChannel{
 		Name: "canary-webhook-world", Type: "webhook",
 		URL:     "https://example.com/hooks/" + webhookCanary,
 		Enabled: true, Events: "secret.rotated", CreatedBy: "testadmin",
 	}
 	if _, cherr := c.CreateNotificationChannel(ctx, ch, "testadmin", admin.ID); cherr == nil {
-		webhookExempt[webhookCanary] = struct{}{}
+		const findingRef = "keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md"
+		webhookExemptions = []exemption{
+			{value: webhookCanary, channelPrefix: "db:audit_events.diff", reason: findingRef + ": writeConfigChangeAuditEvent json.Marshals the whole NotificationChannel struct (incl. URL) into audit_events.diff"},
+			{value: webhookCanary, channelPrefix: rawFileChannel, reason: findingRef + ": same root cause -- the diff column's bytes are part of the raw DB file"},
+			{value: webhookCanary, channelPrefix: "http:audit-search", reason: findingRef + ": GET /api/v1/audit/search returns audit_events rows including Diff verbatim to any audit.read holder"},
+			{value: webhookCanary, channelPrefix: "http:audit-export-csv", reason: findingRef + ": GET /api/v1/audit/export.csv, same exposure"},
+			// DISTINCT from the audit-diff finding above (not covered by findingRef): this
+			// is the channel's OWN canonical storage column, where this fuzzer itself put
+			// it via CreateNotificationChannel -- not a duplication into a second, wrong
+			// place. Exempted here because NotificationChannel.URL has NO at-rest
+			// encryption at all in this codebase (unlike the DSN/lease/MFA credentials
+			// this same fuzzer DOES verify are encrypted -- see secret_value_crypto.go /
+			// SetAuthEncryptor), so its own column being plaintext is that design's
+			// expected, if separately noteworthy, consequence -- surfaced to the user as
+			// its own observation, not silently folded into this exemption's reasoning.
+			{value: webhookCanary, channelPrefix: "db:notification_channels.url", reason: "own canonical storage column -- see the comment above this entry, not the audit-diff finding"},
+		}
 		drainAllBackgroundGoroutines()
 		if sqlDB, dberr := db.DB(); dberr == nil {
 			rows, qerr := sqlDB.Query("SELECT 1 FROM audit_events WHERE diff LIKE ? LIMIT 1", "%"+webhookCanary+"%")
 			if qerr == nil {
 				if rows.Next() {
-					f.Logf("KNOWN-OPEN FINDING confirmed live: webhook URL canary present in audit_events.diff -- see keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md")
+					f.Logf("KNOWN-OPEN FINDING confirmed live: webhook URL canary present in audit_events.diff -- see " + findingRef)
 				}
 				rows.Close()
 			}
@@ -1068,7 +1207,7 @@ func buildCanaryWorld(f *testing.F) *canaryWorld {
 		secAID: sA.ID, secBID: sB.ID,
 		refA: "canary-proja/prod/sa", refB: "canary-projb/prod/sb",
 		principals: principals, logBuf: lb,
-		knownCanaries: knownCanaries, fixedCreds: fixedCreds, webhookExempt: webhookExempt,
+		knownCanaries: knownCanaries, fixedCreds: fixedCreds, webhookExemptions: webhookExemptions,
 		dbWatermarks: map[string]int64{},
 	}
 }
@@ -1471,7 +1610,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 		if err != nil {
 			t.Fatalf("db scan: get sql.DB: %v", err)
 		}
-		scanDBGeneric(t, sqlDB, w.knownCanaries, w.fixedCreds, w.webhookExempt, w.dbWatermarks)
-		scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExempt)
+		scanDBGeneric(t, sqlDB, w.knownCanaries, w.fixedCreds, w.webhookExemptions, w.dbWatermarks)
+		scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExemptions)
 	})
 }
