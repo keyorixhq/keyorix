@@ -84,12 +84,24 @@ type patLifecycleFixtureEntry struct {
 }
 
 // buildPATLifecycleFixture creates a real KeyorixCore over a fresh in-memory
-// SQLite store, with a pinned clock, two active users, and a fixed set of real
-// PATs spanning: unrestricted, scope+project restricted, CIDR+environment
-// restricted, a combined-restriction token, an expired token, and a revoked
-// token. Mirrors FuzzCoreOperationSequence's real-store fixture pattern
+// SQLite store, with a pinned clock, two active users (one holding a real role
+// assignment), and a fixed set of real PATs spanning: unrestricted,
+// scope+project restricted, CIDR+environment restricted, a combined-restriction
+// token, an expired token, a revoked token, and a token issued from dirty
+// (blank/duplicate/bare-IP) scope and CIDR input. Mirrors
+// FuzzCoreOperationSequence's real-store fixture pattern
 // (core_sequence_fuzz_test.go), scoped down to what ValidatePATToken's path
 // touches.
+//
+// Migrating the roles/user_roles tables so GetUserRoles can succeed (needed to
+// reach ValidatePATToken's role-building success path at all) has a real
+// trade-off worth stating: GetUserRoles now never errors for an existing user
+// (Find on an empty result set is not a GORM error), so ValidatePATToken's own
+// soft-fail branch -- `if err != nil { return user, []string{}, ... }`, taken
+// when the tables didn't exist at all -- is no longer reachable from this
+// fixture. That branch is still real, documented behavior; it would need a
+// genuine storage-layer fault injected into a live query to exercise now, not
+// just table absence.
 func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixtureEntry) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -101,6 +113,7 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	}
 	if err := db.AutoMigrate(
 		&models.User{}, &models.PersonalAccessToken{}, &models.Notification{},
+		&models.Role{}, &models.UserRole{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -123,6 +136,19 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 		Email: "pat-fuzz-b@x.io", EmailFolded: "pat-fuzz-b@x.io",
 		IsActive: true, AccountState: AccountActive,
 	})
+	// A real role assignment for userA so ValidatePATToken's GetUserRoles call
+	// (pat.go) succeeds and actually builds a non-empty roleNames slice --
+	// without this, the roles/user_roles tables wouldn't exist at all and
+	// GetUserRoles would always error, which is itself a real behavior
+	// (ValidatePATToken soft-fails to an empty role list rather than denying
+	// the token) but leaves the success path that builds roleNames unexercised.
+	// userB is deliberately left with no role assignment: GetUserRoles for an
+	// existing user with zero rows still succeeds (empty slice, no error), so
+	// this also exercises the "assigned" and "unassigned but table present"
+	// cases without needing a second, more invasive test setup.
+	const fuzzRoleID uint = 900
+	mustCreate(&models.Role{ID: fuzzRoleID, Name: "fuzz-role", NameFolded: "fuzz-role"})
+	mustCreate(&models.UserRole{UserID: userA, RoleID: fuzzRoleID})
 
 	c := NewKeyorixCore(ls)
 	fixedNow := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -167,6 +193,44 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	}
 	revokedEntry.revoked = true
 	entries = append(entries, revokedEntry)
+
+	// 7. Dirty scope/CIDR input (blanks, an exact duplicate, a bare IPv4 needing
+	// /32 promotion, a bare IPv6 needing /128 promotion) -- exercises
+	// encodePATScopes' blank-skip/duplicate-skip branches and encodePATCIDRs'
+	// blank-skip/duplicate-skip/bare-IP-promotion branches, none of which the
+	// clean entries above ever reach. The expected restriction is hand-computed
+	// independently of encodePATScopes/encodePATCIDRs (not derived by calling
+	// them), same discipline as mustIssue's restriction-building above.
+	dirtyScopes := []string{"secrets.read", "  ", "secrets.read", "secrets.write", ""}
+	dirtyCIDRs := []string{"10.0.0.0/8", "  ", "10.0.0.0/8", "192.168.1.5", "::1", ""}
+	dirtyRes, err := c.CreateOwnPAT(ctx, userA, "dirty-fuzz-token", nil, dirtyScopes, 11, 0, dirtyCIDRs)
+	if err != nil {
+		t.Fatalf("CreateOwnPAT (dirty scope/CIDR): %v", err)
+	}
+	entries = append(entries, patLifecycleFixtureEntry{
+		plain: dirtyRes.PlainToken, ownerID: userA, patID: dirtyRes.Token.ID,
+		restriction: &PATRestriction{
+			Permissions:  []string{"secrets.read", "secrets.write"},
+			ProjectID:    11,
+			AllowedCIDRs: []string{"10.0.0.0/8", "192.168.1.5/32", "::1/128"},
+		},
+	})
+
+	// CreateOwnPAT must reject a malformed CIDR outright (encodePATCIDRs's
+	// ParseCIDR failure, wrapped by CreateOwnPAT's own error path). Checked by
+	// intent here rather than folded into a fixture entry, since a rejected
+	// create produces no token to add to the corpus.
+	if _, err := c.CreateOwnPAT(ctx, userA, "bad-cidr", nil, nil, 0, 0, []string{"not-a-cidr"}); err == nil {
+		t.Fatalf("CreateOwnPAT: expected an error for an unparseable CIDR, got none")
+	}
+
+	// RevokeOwnPAT must refuse to revoke a token owned by someone else, and
+	// report it as not-found (anti-enumeration) rather than revoking it or
+	// leaking that it exists under a different owner. Exercised against entry 0
+	// (owned by userA) using userB's caller id; must not actually revoke it.
+	if _, err := c.RevokeOwnPAT(ctx, userB, entries[0].patID); err == nil {
+		t.Fatalf("RevokeOwnPAT: expected an error revoking another user's token, got none")
+	}
 
 	return c, entries
 }
@@ -263,6 +327,7 @@ func FuzzPATValidateLifecycle(f *testing.F) {
 		{3, 0, 0, 0, nil},                        // exact copy of entry 3 (combined restriction) -> restriction must bind
 		{4, 0, 0, 0, nil},                        // exact copy of the expired entry -> must fail closed
 		{5, 0, 0, 0, nil},                        // exact copy of the revoked entry -> must fail closed
+		{6, 0, 0, 0, nil},                        // exact copy of entry 6 (dirty scope/CIDR input) -> normalized restriction must bind
 		{1, 1, 10, 0x20, nil},                    // single byte flip on a scoped token
 		{2, 2, 5, 0, nil},                        // truncate a CIDR-restricted token
 		{3, 3, 0, 0, []byte("XYZ")},              // extend the combined-restriction token
