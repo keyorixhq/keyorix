@@ -9,8 +9,10 @@ package connect
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 )
@@ -50,7 +52,26 @@ func (c *AzureKeyVaultConnector) client(ctx context.Context) (azSecretGetter, er
 	if err != nil {
 		return nil, fmt.Errorf("azure-key-vault: default credential: %w", err)
 	}
-	cl, err := azsecrets.NewClient(c.vaultURL, cred, nil)
+	// Transport: the shared hardened *http.Client (hardened_client.go) --
+	// connectGuardedDialer's link-local-refusing dialer, sizeCappedRoundTripper's
+	// post-decompression response-size cap, and refuseRedirect. azcore's own
+	// default HTTP client has none of these: no CheckRedirect override (so Go's
+	// stdlib default redirect-following policy applies), no size cap, and no
+	// host-classification on the dialer -- confirmed live in
+	// docs/findings/2026-09-19-FINDING-connect-response-trust-gaps.md §2/§3.
+	// azsecrets builds its OWN internal auth-challenge policy on top of whatever
+	// Transporter is supplied here, so this doesn't disturb that handshake.
+	// azureBaseTransport() replicates azcore's own default transport tuning
+	// (hardened_client.go) -- see its own doc comment for why this can't be
+	// machine-derived the way awsBaseTransport is.
+	cl, err := azsecrets.NewClient(c.vaultURL, cred, &azsecrets.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Transport: &http.Client{
+				Transport:     newConnectHardenedTransport(azureBaseTransport()),
+				CheckRedirect: refuseRedirect,
+			},
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("azure-key-vault: new client: %w", err)
 	}
@@ -63,6 +84,9 @@ func (c *AzureKeyVaultConnector) GetSecret(ctx context.Context, ref string) (str
 	}
 	if c.vaultURL == "" {
 		return "", fmt.Errorf("azure-key-vault: connector %q has no vault address configured", c.name)
+	}
+	if err := validateConnectorAddressNotLinkLocal("azure-key-vault", c.vaultURL); err != nil {
+		return "", err
 	}
 	if !prefixAllowed(c.allowedRefs, ref) {
 		return "", fmt.Errorf("azure-key-vault: ref %q is not permitted by this connector's allowed_refs", ref)

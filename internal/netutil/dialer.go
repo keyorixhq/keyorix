@@ -193,25 +193,35 @@ var privateNetworkCIDRs = func() []*net.IPNet {
 // services, not a webhook receiver an operator might legitimately run
 // locally during testing.
 func IsPrivateOrLinkLocal(ip net.IP) bool {
-	if inPrivateCIDR(ip) {
+	return matchesCIDRsWithEmbedded(ip, privateNetworkCIDRs)
+}
+
+// matchesCIDRsWithEmbedded reports whether ip itself falls in one of cidrs, OR —
+// for an IPv6 address — whether the IPv4 address it EMBEDS does. net.IPNet.Contains
+// folds IPv4-MAPPED (::ffff:x) via To4, so a direct cidrs check already covers that
+// form — but NAT64 (RFC 6052 well-known 64:ff9b::/96; e.g. 64:ff9b::a9fe:a9fe ->
+// cloud IMDS 169.254.169.254) and deprecated IPv4-compatible (::x) are NOT folded,
+// so a target written in either encoding would otherwise slip past a direct-only
+// check. Decode the embedded IPv4 and check THAT against cidrs too — decode, not a
+// wholesale-prefix block, so a NAT64/compat address embedding a PUBLIC IPv4 (the
+// legitimate egress path in an IPv6-only deployment) is still permitted. Shared by
+// IsPrivateOrLinkLocal and IsLinkLocal so both predicates get the same embedded-IPv4
+// decode coverage, each against its own cidrs list (#1937 fixed this for
+// IsPrivateOrLinkLocal only; IsLinkLocal needed the identical fix for the same
+// reason — no legitimate Connect backend, egress target, or any other caller of
+// this narrower predicate lives at a NAT64/compat-encoded link-local address either).
+func matchesCIDRsWithEmbedded(ip net.IP, cidrs []*net.IPNet) bool {
+	if inCIDRs(ip, cidrs) {
 		return true
 	}
-	// An IPv6 address can EMBED an IPv4 target that routes to it. net.IPNet.Contains
-	// folds IPv4-MAPPED (::ffff:x) via To4, so the IPv4 CIDRs above already cover that
-	// form — but NAT64 (RFC 6052 well-known 64:ff9b::/96; e.g. 64:ff9b::a9fe:a9fe ->
-	// cloud IMDS 169.254.169.254) and deprecated IPv4-compatible (::x) are NOT folded,
-	// so a private IPv4 written in either encoding would otherwise slip past the guard.
-	// Decode the embedded IPv4 and check THAT against the same blocklist — decode, not
-	// a wholesale-prefix block, so a NAT64/compat address embedding a PUBLIC IPv4 (the
-	// legitimate egress path in an IPv6-only deployment) is still permitted.
-	if v4 := embeddedIPv4(ip); v4 != nil && inPrivateCIDR(v4) {
+	if v4 := embeddedIPv4(ip); v4 != nil && inCIDRs(v4, cidrs) {
 		return true
 	}
 	return false
 }
 
-func inPrivateCIDR(ip net.IP) bool {
-	for _, cidr := range privateNetworkCIDRs {
+func inCIDRs(ip net.IP, cidrs []*net.IPNet) bool {
+	for _, cidr := range cidrs {
 		if cidr.Contains(ip) {
 			return true
 		}
@@ -277,17 +287,16 @@ var linkLocalCIDRs = func() []*net.IPNet {
 	return nets
 }()
 
-// IsLinkLocal reports whether ip is in an IPv4 or IPv6 link-local range — the
-// narrow SSRF-target check for egress to operator-configured OIDC issuers (JWKS
-// fetch and discovery), where RFC-1918/on-prem targets are legitimate but the
-// cloud instance-metadata endpoint (169.254.169.254) must never be reached via a
-// misconfigured or compromised issuer. See linkLocalCIDRs for why this is
-// deliberately narrower than IsPrivateOrLinkLocal.
+// IsLinkLocal reports whether ip is in an IPv4 or IPv6 link-local range, INCLUDING
+// a NAT64 (64:ff9b::/96) or deprecated IPv4-compatible (::x) IPv6 encoding of a
+// link-local IPv4 address (e.g. 64:ff9b::a9fe:a9fe embeds cloud IMDS
+// 169.254.169.254 — see matchesCIDRsWithEmbedded's doc comment) — the narrow
+// SSRF-target check for egress to operator-configured OIDC issuers (JWKS fetch and
+// discovery) and to Connect backend addresses (internal/connect's hardened
+// transport), where RFC-1918/on-prem targets are legitimate but the cloud
+// instance-metadata endpoint must never be reached via a misconfigured or
+// compromised target. See linkLocalCIDRs for why this is deliberately narrower
+// than IsPrivateOrLinkLocal.
 func IsLinkLocal(ip net.IP) bool {
-	for _, cidr := range linkLocalCIDRs {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return matchesCIDRsWithEmbedded(ip, linkLocalCIDRs)
 }

@@ -51,6 +51,15 @@ func NewVaultConnector(name, address, token string, allowedRefs []string) *Vault
 		allowedRefs: allowedRefs,
 		client: &http.Client{
 			Timeout: 15 * time.Second,
+			// Transport: connectGuardedDialer's link-local-refusing dialer (no
+			// legitimate Vault deployment lives at IMDS/link-local, unlike general
+			// RFC-1918/on-prem, which stays permitted) wrapped in
+			// sizeCappedRoundTripper's post-decompression response-size cap
+			// (hardened_client.go). Vault's own io.LimitReader below is kept too —
+			// this is belt-and-suspenders at the same bound, not a replacement.
+			// vaultBaseTransport() is Go's own stdlib default -- Vault never had
+			// any SDK layer or custom transport tuning to preserve here.
+			Transport: newConnectHardenedTransport(vaultBaseTransport()),
 			// Refuse to follow any redirect. Go's default redirect policy strips
 			// Authorization/Cookie/WWW-Authenticate on a cross-host hop, but
 			// X-Vault-Token is a custom header it does NOT know to strip — so a
@@ -58,9 +67,7 @@ func NewVaultConnector(name, address, token string, allowedRefs []string) *Vault
 			// attacker-controlled host would otherwise receive the live Vault
 			// token (#98). Vault's real KV-read API has no legitimate reason to
 			// redirect a GET, so refusing outright is correct, not merely safe.
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+			CheckRedirect: refuseRedirect,
 		},
 	}
 }
@@ -237,6 +244,9 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 		return "", fmt.Errorf("vault: connector address is not configured")
 	}
 	if err := validateConnectorURL(c.address); err != nil {
+		return "", err
+	}
+	if err := validateConnectorAddressNotLinkLocal("vault", c.address); err != nil {
 		return "", err
 	}
 	if c.token == "" {
