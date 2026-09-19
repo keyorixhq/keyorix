@@ -68,6 +68,15 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 	f.Add(200, []byte(`{"SecretString":null,"SecretBinary":null}`))
 	f.Add(307, []byte(``))
 	f.Add(308, []byte(``))
+	// status=1200 clamps to code=200 (1200%400==0) AND 1200%3==0 with
+	// (1200/3)%2==0, so this seed drives the accountID+matching-ARN branch on
+	// a genuine success case; status=1203 (1203%3==0, (1203/3)%2==1) drives
+	// the mismatched-account branch. Together they ensure awsRefAccountID
+	// (awssm.go) is reached by the seed corpus alone, not only by
+	// fuzzer-mutated inputs -- see clampHTTPStatus's own remap arithmetic for
+	// why these specific raw values were chosen.
+	f.Add(1200, []byte(`{"SecretString":"s3cr3t"}`))
+	f.Add(1203, []byte(`{"SecretString":"s3cr3t"}`))
 
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
 		code := clampHTTPStatus(status)
@@ -132,13 +141,33 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 			}),
 		})
 
-		c := NewAWSSecretsManagerConnector("fuzz", "us-east-1", "", nil)
+		// For ~1/3 of inputs (derived from the fuzzed status, no extra fuzz
+		// parameter needed), configure a non-empty accountID and pass an
+		// ARN-shaped ref instead of a bare name, so awsRefAccountID (awssm.go)
+		// actually runs -- with a second bit (also derived from status, not a
+		// new fuzz parameter) choosing whether the ARN's account segment
+		// matches the configured accountID or not, exercising both the
+		// early-return-not-ARN-shaped path (the default bare-name case below)
+		// and both outcomes of the match comparison at awssm.go's own
+		// "refAccount != c.accountID" check.
+		smRef := "fuzz/secret"
+		accountID := ""
+		if status%3 == 0 {
+			accountID = "123456789012"
+			if (status/3)%2 == 0 {
+				smRef = "arn:aws:secretsmanager:us-east-1:123456789012:secret:fuzz/secret-AbCdEf"
+			} else {
+				smRef = "arn:aws:secretsmanager:us-east-1:999999999999:secret:fuzz/secret-AbCdEf"
+			}
+		}
+
+		c := NewAWSSecretsManagerConnector("fuzz", "us-east-1", accountID, nil)
 		c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) { return cl, nil }
 
 		var val string
 		var err error
 		fuzzutil.Guard(t.Fatalf, "AWSSecretsManagerConnector.GetSecret", func() {
-			val, err = c.GetSecret(context.Background(), "fuzz/secret")
+			val, err = c.GetSecret(context.Background(), smRef)
 		})
 		// Oracle (b): fail-closed, two ways --
 		//  1. the smithy-go awsJson1_1 deserializer routes any response outside

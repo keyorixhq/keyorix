@@ -49,6 +49,12 @@ func FuzzVaultConnectorResponse(f *testing.F) {
 	f.Add(true, 301, []byte(``))
 	f.Add(true, 200, []byte(`{"data":{}}`))
 	f.Add(false, 80, []byte(`{"dAtA":{}}`)) // non-200 + case-insensitive JSON field match ("dAtA" -> Data)
+	// status=1200 clamps to code=200 (1200%400==0) AND 1200%3==0, so this seed
+	// drives the second-GetSecret/mount-cache-hit oracle on a genuine success
+	// case (see clampHTTPStatus's own remap arithmetic) -- ensures the
+	// cache-hit branch (vault.go:169) is reached by the seed corpus alone, not
+	// only by fuzzer-mutated inputs.
+	f.Add(true, 1200, []byte(`{"data":{"data":{"password":"s3cr3t"},"metadata":{"version":2}}}`))
 
 	f.Fuzz(func(t *testing.T, mountIsV2 bool, status int, body []byte) {
 		code := clampHTTPStatus(status)
@@ -88,6 +94,7 @@ func FuzzVaultConnectorResponse(f *testing.F) {
 		fuzzutil.Guard(t.Fatalf, "VaultConnector.GetSecret", func() {
 			val, err = c.GetSecret(context.Background(), "secret/data/fuzz")
 		})
+		hitsAfterFirst := atomic.LoadInt32(&secretGetHits)
 
 		// Oracle (b): fail-closed, two ways --
 		//  1. vault.go's GetSecret requires EXACTLY 200 (resp.StatusCode !=
@@ -145,8 +152,62 @@ func FuzzVaultConnectorResponse(f *testing.F) {
 		// GetSecret return an error BEFORE ever attempting the secret-GET
 		// request at all -- hits==0 is a legitimate outcome of that path, not a
 		// missed attempt. Only hits>1 (an actual repeat) is a real violation.
-		if hits := atomic.LoadInt32(&secretGetHits); hits > 1 {
-			t.Fatalf("RETRY STORM: secret-GET path hit %d times for a single GetSecret call (VaultConnector has no retry logic; expected at most 1)", hits)
+		if hitsAfterFirst > 1 {
+			t.Fatalf("RETRY STORM: secret-GET path hit %d times for a single GetSecret call (VaultConnector has no retry logic; expected at most 1)", hitsAfterFirst)
+		}
+
+		// For ~1/3 of inputs (derived from the fuzzed status, no extra fuzz
+		// parameter needed), issue a SECOND GetSecret on the SAME connector for
+		// the SAME ref. resolveKVMountVersion caches the KV mount version keyed
+		// by mount path (vault.go's mountVersions map) after its first,
+		// real-round-trip lookup -- a single GetSecret call per fuzz iteration
+		// can never exercise the cache-HIT branch (the `for mountPath, version
+		// := range c.mountVersions` loop that returns without a network call),
+		// only the cache-MISS/populate path. This second call is the one place
+		// in this harness that can reach it.
+		//
+		// Oracle: metamorphic, not a fresh property. The second call hits the
+		// identical fake server (same status/body) via the SAME ref, so a
+		// correct mount-version cache must make the second call agree with the
+		// first on success/failure and, when both succeed, on the decoded
+		// value -- if the cache ever bound the second call to a different
+		// mount's cached version, KV v1 vs v2 dispatch (GetSecret's own
+		// kvVersion branch) decodes the identical body differently and this is
+		// exactly the assertion it would violate.
+		//
+		// NOT asserted when the first call's own error came from the
+		// mount-info lookup itself (vault.go's "could not determine KV mount
+		// version" wrap): that specific shape means resolveKVMountVersion's
+		// real network round trip failed transiently (the same load-dependent
+		// flake already documented for oracle (a) above) BEFORE the cache was
+		// populated at all -- the second call then does its OWN fresh,
+		// independent mount-info round trip (cache still empty) and can
+		// legitimately succeed where the first didn't, which is a timing
+		// artifact, not a cache-binding bug. Whenever the first call's error
+		// (if any) is instead about the secret-GET response itself -- reached
+		// only after resolveKVMountVersion already succeeded and the cache was
+		// already populated -- the second call's cache-HIT path makes no
+		// network call at all and so cannot independently flake; the strict
+		// comparison is sound there.
+		if status%3 == 0 && !(err != nil && strings.Contains(err.Error(), "could not determine KV mount version")) {
+			var val2 string
+			var err2 error
+			fuzzutil.Guard(t.Fatalf, "VaultConnector.GetSecret (second call, mount-cache path)", func() {
+				val2, err2 = c.GetSecret(context.Background(), "secret/data/fuzz")
+			})
+			hitsAfterSecond := atomic.LoadInt32(&secretGetHits)
+			if delta := hitsAfterSecond - hitsAfterFirst; delta > 1 {
+				t.Fatalf("RETRY STORM: second GetSecret call (mount-cache path) hit secret-GET %d times, expected at most 1", delta)
+			}
+			if (err2 == nil) != (err == nil) {
+				t.Fatalf("MOUNT CACHE: second GetSecret (cache-hit path) returned a different success/failure outcome than the first for the identical ref+response (val=%q err=%v; val2=%q err2=%v)", val, err, val2, err2)
+			}
+			if err == nil && val2 != val {
+				t.Fatalf("MOUNT CACHE: second GetSecret (cache-hit path) returned a different value than the first for the identical ref+response -- mount-version cache bound to the wrong version (val=%q val2=%q)", val, val2)
+			}
+			if err2 != nil && strings.Contains(err2.Error(), vaultFuzzToken) {
+				t.Fatalf("LEAK: the connector's own Vault token appeared in a returned error (second call): %v", err2)
+			}
 		}
 
 		if n := runtime.NumGoroutine(); n > connectLeakCeiling {
