@@ -87,6 +87,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -394,6 +395,45 @@ func stringRegModelWithInit(initial string) porcupine.Model {
 	return m
 }
 
+// clHistoriesChecked / clMaxHistoryLen / clHistoryLenSum are soak-reporting
+// counters only (never used for correctness) — the Step 3 rig soak's own
+// per-segment report ("execs, histories checked, max history length") reads
+// these from the periodic and final log lines below; go test's own fuzz
+// progress output already covers execs.
+var (
+	clHistoriesChecked atomic.Int64
+	clMaxHistoryLen    atomic.Int64
+	clHistoryLenSum    atomic.Int64
+)
+
+func clRecordHistoryStat(n int) {
+	clHistoriesChecked.Add(1)
+	clHistoryLenSum.Add(int64(n))
+	for {
+		old := clMaxHistoryLen.Load()
+		if int64(n) <= old {
+			return
+		}
+		if clMaxHistoryLen.CompareAndSwap(old, int64(n)) {
+			return
+		}
+	}
+}
+
+// clLogHistoryStats emits a soak-reportable summary line. Called periodically
+// (checkLinearizable, every 2000 histories) and once at process exit
+// (FuzzConcurrentOpsLinearizable's f.Cleanup) so a segment killed at its
+// deadline still leaves a recent summary in the log, not just a final one.
+func clLogHistoryStats(tag string) {
+	n := clHistoriesChecked.Load()
+	if n == 0 {
+		return
+	}
+	sum := clHistoryLenSum.Load()
+	log.Printf("[cl-soak-stats %s] histories_checked=%d max_history_len=%d avg_history_len=%.1f",
+		tag, n, clMaxHistoryLen.Load(), float64(sum)/float64(n))
+}
+
 // checkLinearizable fails the test iff the checker conclusively finds a
 // violation. A timeout (Unknown) is logged, not failed — porcupine's own
 // documentation is explicit that Unknown must not be treated as a violation
@@ -404,6 +444,10 @@ func checkLinearizable(t *testing.T, label string, model porcupine.Model, histor
 	t.Helper()
 	if len(history) == 0 {
 		return
+	}
+	clRecordHistoryStat(len(history))
+	if n := clHistoriesChecked.Load(); n%2000 == 0 {
+		clLogHistoryStats("periodic")
 	}
 	res, info := porcupine.CheckOperationsVerbose(model, history, 5*time.Second)
 	switch res {
@@ -536,6 +580,7 @@ func FuzzConcurrentOpsLinearizable(f *testing.F) {
 	f.Add([]byte{3, 2, 0, 0, 0, 0, 1, 1, 1, 0, 2, 1, 2, 1, 0, 0, 3, 0, 1, 1, 4, 0, 1, 0})
 	f.Add([]byte{7, 0, 0, 0, 1, 0, 6, 0, 5, 0, 0, 0, 0, 0, 1, 1})
 	f.Add([]byte{})
+	f.Cleanup(func() { clLogHistoryStats("final") })
 
 	f.Fuzz(func(t *testing.T, program []byte) {
 		goroutines, gomaxprocs := decodeCLProgram(program, clMaxGoroutines, clMaxOpsPerGoroutine)
