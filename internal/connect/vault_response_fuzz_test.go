@@ -1,0 +1,140 @@
+package connect
+
+// vault_response_fuzz_test.go — FuzzVaultConnectorResponse fuzzes what a hostile
+// or broken Vault server sends back to VaultConnector.GetSecret. vault.go already
+// has extensive example-based coverage (vault_test.go, connect_s2*_test.go) for the
+// KV v1/v2 envelope shapes, soft-delete, redirect refusal, and non-200 variety --
+// this target mutates the same response surface (status/body) to explore shapes
+// those examples don't enumerate, with mechanically-checkable oracles rather than
+// example assertions.
+//
+// The KV mount-version lookup (resolveKVMountVersion, a SEPARATE round trip GetSecret
+// makes before the actual secret read) is answered with a canned, always-valid
+// response so the fuzzer's mutation budget goes toward the more interesting secret-
+// read decode path, not toward incidentally tripping the mount-version lookup's own
+// error handling on every input.
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
+)
+
+// vaultFuzzToken is THE connector's actual Vault token for this target -- not a
+// response-body canary. Oracle (d) (RULES: "the backend auth token/credential the
+// client SENT never appears in errors") is about this value, not response
+// content, and deliberately does NOT get mixed into the fuzzed response body:
+// an earlier version of this harness prefixed a canary directly onto every
+// response body, which corrupted JSON syntax on nearly every input and meant the
+// KV v1/v2 decode success path was almost never actually reached by the fuzzer --
+// body is sent to the fake server byte-for-byte as the mutator produced it.
+const vaultFuzzToken = "fuzz-vault-token-canary-x9k2"
+
+func FuzzVaultConnectorResponse(f *testing.F) {
+	f.Add(true, 200, []byte(`{"data":{"data":{"password":"s3cr3t"},"metadata":{"version":2}}}`))
+	f.Add(false, 200, []byte(`{"data":{"password":"s3cr3t"}}`))
+	f.Add(true, 200, []byte(`{"data":{"data":null,"metadata":{}}}`)) // KV v2 soft-delete
+	f.Add(false, 200, []byte(`{"data":{"data":"literal-field-collision","metadata":"also-literal"}}`))
+	f.Add(true, 403, []byte(`{"errors":["permission denied"]}`))
+	f.Add(true, 500, []byte(``))
+	f.Add(true, 200, []byte(`not json`))
+	f.Add(true, 200, []byte(`{"data":null}`))
+	f.Add(true, 301, []byte(``))
+	f.Add(true, 200, []byte(`{"data":{}}`))
+	f.Add(false, 80, []byte(`{"dAtA":{}}`)) // non-200 + case-insensitive JSON field match ("dAtA" -> Data)
+
+	f.Fuzz(func(t *testing.T, mountIsV2 bool, status int, body []byte) {
+		code := clampHTTPStatus(status)
+
+		var attackerHits int32
+		attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&attackerHits, 1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"data":{"password":"ATTACKER-CONTROLLED"}}}`))
+		}))
+		defer attacker.Close()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "sys/internal/ui/mounts") {
+				v := "1"
+				if mountIsV2 {
+					v = "2"
+				}
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintf(w, `{"data":{"path":"secret/","options":{"version":%q}}}`, v)
+				return
+			}
+			if code >= 300 && code < 400 {
+				w.Header().Set("Location", attacker.URL)
+			}
+			w.WriteHeader(code)
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+
+		c := NewVaultConnector("fuzz", srv.URL, vaultFuzzToken, nil)
+
+		var val string
+		var err error
+		fuzzutil.Guard(t.Fatalf, "VaultConnector.GetSecret", func() {
+			val, err = c.GetSecret(context.Background(), "secret/data/fuzz")
+		})
+
+		// Oracle (b): fail-closed, two ways --
+		//  1. vault.go's GetSecret requires EXACTLY 200 (resp.StatusCode !=
+		//     http.StatusOK) -- any other status must error, never be treated as a
+		//     successful read.
+		//  2. a 200 response that structurally has no usable data -- for KV v1: no
+		//     "data" envelope at all; for KV v2: "data" present but its own nested
+		//     "data" is absent or the literal JSON null (the documented soft-delete
+		//     shape) -- must ALSO error. This mirrors vault.go's GetSecret decode
+		//     logic exactly (see its own doc comments on KV v1 vs v2 dispatch and
+		//     the soft-delete null case), not an independent guess at the shape.
+		if code != http.StatusOK && err == nil {
+			t.Fatalf("BYPASS: non-200 status %d treated as success, returned value %q", code, val)
+		}
+		if code == http.StatusOK && err == nil {
+			var env struct {
+				Data json.RawMessage `json:"data"`
+			}
+			envOK := json.Unmarshal(body, &env) == nil && len(env.Data) > 0
+			hasValue := envOK
+			if envOK && mountIsV2 {
+				var kv2 struct {
+					Data json.RawMessage `json:"data"`
+				}
+				hasValue = json.Unmarshal(env.Data, &kv2) == nil && len(kv2.Data) > 0 && string(kv2.Data) != "null"
+			}
+			if !hasValue {
+				t.Fatalf("BYPASS: response has no usable data envelope (mountIsV2=%v) but GetSecret returned success with value %q", mountIsV2, val)
+			}
+		}
+
+		// Oracle (d): no credential echo. The token the connector actually sent
+		// must never appear in a returned error.
+		if err != nil && strings.Contains(err.Error(), vaultFuzzToken) {
+			t.Fatalf("LEAK: the connector's own Vault token appeared in a returned error: %v", err)
+		}
+
+		// Oracle (e): redirect refusal. VaultConnector's http.Client always refuses
+		// to follow a redirect (CheckRedirect returns http.ErrUseLastResponse) --
+		// the attacker-controlled Location target must never receive a request.
+		if atomic.LoadInt32(&attackerHits) != 0 {
+			t.Fatalf("REDIRECT FOLLOWED: connector dialed the redirect target instead of refusing")
+		}
+
+		if n := runtime.NumGoroutine(); n > connectLeakCeiling {
+			t.Fatalf("goroutine leak: %d goroutines after VaultConnector.GetSecret (expected O(10))", n)
+		}
+		if fd := connectOpenFDCount(); fd > connectLeakCeiling {
+			t.Fatalf("fd leak: %d open descriptors after VaultConnector.GetSecret (expected O(10))", fd)
+		}
+	})
+}
