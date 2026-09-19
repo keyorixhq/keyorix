@@ -35,13 +35,12 @@ package connect
 //     fix: use a real httptest.NewTLSServer and srv.Client() as the Transport, so the
 //     request genuinely is https and the gate passes on its own merits.
 //
-// Redirect behavior was investigated separately (not as a merged assertion here):
-// confirmed this connector follows cross-host 301/302/303/307/308 redirects and
-// blindly trusts the redirected response as the secret value, with no
-// destination-host classification and no response-identity check -- see
-// docs/findings/ for the full repro. Not turned into a fuzz oracle here because
-// there is no existing check to red-proof or regress-guard; a hard assertion
-// against a confirmed-open gap would just be a permanently-red test.
+// Redirect behavior: FIXED as of the hardened-client PR (hardened_client.go's
+// refuseRedirect) -- this connector used to follow cross-host 301/302/303/307/308
+// redirects and blindly trust the redirected response as the secret value (see
+// docs/findings/2026-09-19-FINDING-connect-response-trust-gaps.md §2 for the full
+// original repro). Oracle (e) below is the merged regression guard, mirroring
+// Vault's own pre-existing oracle (e).
 import (
 	"context"
 	"encoding/json"
@@ -95,9 +94,32 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 	f.Add(200, []byte(`not json`))
 	f.Add(200, []byte(`{"value":null}`))
 	f.Add(200, []byte(`{}`))
+	f.Add(301, []byte(``))
+	f.Add(302, []byte(``))
+	f.Add(303, []byte(``))
+	f.Add(307, []byte(``))
+	f.Add(308, []byte(``))
 
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
 		code := clampHTTPStatus(status)
+
+		// attacker is a cross-host redirect target -- non-TLS, "localhost" rather
+		// than its natural "127.0.0.1" so it is genuinely cross-host relative to
+		// srv's "127.0.0.1" (see the doc comment above: same-IP-different-port is
+		// NOT a valid cross-host test, Go's shouldCopyHeaderOnRedirect compares
+		// only the port-stripped hostname string). Oracle (e) below doesn't
+		// actually depend on this distinction anymore -- refuseRedirect blocks
+		// EVERY redirect, same-host or not -- but the genuinely-cross-host setup
+		// is kept so this test would still catch a future regression that only
+		// reintroduced cross-host-specific following.
+		var attackerHits int32
+		attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&attackerHits, 1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"value":"ATTACKER-CONTROLLED"}`))
+		}))
+		defer attacker.Close()
+		attackerURL := strings.Replace(attacker.URL, "127.0.0.1", "localhost", 1)
 
 		var hits, challengeHits int32
 		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +134,9 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 				return
 			}
 			atomic.AddInt32(&hits, 1)
+			if code >= 300 && code < 400 {
+				w.Header().Set("Location", attackerURL)
+			}
 			w.WriteHeader(code)
 			_, _ = w.Write(body)
 		}))
@@ -131,11 +156,21 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 		// the vendored SDK, not a harness issue (see docs/findings/); confirmed
 		// empirically via azcore/log's EventRetryPolicy listener showing
 		// "Delay=1m0s" for a RetryDelay:-1 config on the very first retry.
+		// Transport: srv.Client()'s own Transport (so the request genuinely trusts
+		// srv's self-signed TLS cert, per this file's own doc comment above on
+		// why InsecureAllowCredentialWithHTTP alone doesn't work here), wrapped in
+		// an *http.Client that ALSO sets CheckRedirect: refuseRedirect -- the
+		// actual production function under test (hardened_client.go), not a
+		// reimplementation of it, so a regression in refuseRedirect itself is
+		// what this oracle would catch.
 		cl, err := azsecrets.NewClient(srv.URL, fuzzAzureCred{}, &azsecrets.ClientOptions{
 			DisableChallengeResourceVerification: true,
 			ClientOptions: azcore.ClientOptions{
-				Transport: srv.Client(),
-				Retry:     policy.RetryOptions{MaxRetries: 2, RetryDelay: time.Millisecond, MaxRetryDelay: time.Millisecond},
+				Transport: &http.Client{
+					Transport:     srv.Client().Transport,
+					CheckRedirect: refuseRedirect,
+				},
+				Retry: policy.RetryOptions{MaxRetries: 2, RetryDelay: time.Millisecond, MaxRetryDelay: time.Millisecond},
 			},
 		})
 		if err != nil {
@@ -189,6 +224,15 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 		// legitimate outcome of that path. Only >1 (a genuine repeat) matters.
 		if ch := atomic.LoadInt32(&challengeHits); ch > 1 {
 			t.Fatalf("RETRY STORM: auth challenge handshake ran %d times for a single GetSecret call (expected at most 1)", ch)
+		}
+
+		// Oracle (e): redirect refusal (mirrors Vault's oracle (e)). The
+		// connector's client now refuses to follow any redirect (refuseRedirect,
+		// hardened_client.go) -- the attacker-controlled Location target must
+		// never receive a request. Was previously a confirmed-open gap (see this
+		// file's own header comment); now the fix's regression guard.
+		if atomic.LoadInt32(&attackerHits) != 0 {
+			t.Fatalf("REDIRECT FOLLOWED: connector dialed the redirect target instead of refusing")
 		}
 
 		if n := runtime.NumGoroutine(); n > connectLeakCeiling {

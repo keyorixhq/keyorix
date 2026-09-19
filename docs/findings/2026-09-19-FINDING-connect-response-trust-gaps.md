@@ -8,12 +8,15 @@ backends (`FuzzVaultConnectorResponse`, `FuzzAWSSMConnectorResponse`,
 regression — these are pre-existing design gaps, confirmed by direct source reading
 and, where noted, by live reproduction against the real backend SDKs.
 
-Status: **not fixed**. Per this campaign's rules, this doc documents and does not
-patch. Three independent, related gaps below (§1-3), plus confirmation that
-pagination doesn't apply (§4), a draft (not implemented) of a shared fix for §2/§3
-(§5), and a coverage-replay accounting of the 15 surviving `internal/connect`
-mutants against these 4 targets (§6). Recommend a product decision on which (if any)
-of §1-3 to close, since each has a different cost/benefit.
+Status: **§2 and §3 fixed in this PR** (branch `fix/connect-hardened-client`, off
+`test/fuzz-connect-backend-responses`) — see §5, now the implementation record
+rather than a draft. §1 (ref-binding) is **not fixed**, deliberately: it's
+orthogonal to this fix (response identity vs. transport hardening) and was already
+assessed Low/not-obviously-worth-closing on its own merits; still open for a
+separate product decision. §4 (pagination) confirms N/A, unchanged. §6 is the
+coverage-replay accounting of the 15 surviving `internal/connect` mutants against
+the 4 fuzz targets — its line-number citations were renumbered for this PR's
+changes (see §6's own note).
 
 ---
 
@@ -60,7 +63,25 @@ backends.
 
 ---
 
-## 2. Azure/AWS connector egress has no SSRF guard at all; redirect is the one path where the destination is attacker-, not operator-, controlled
+## 2. Azure/AWS connector egress has no SSRF guard at all; redirect is the one path where the destination is attacker-, not operator-, controlled — **FIXED in this PR**
+
+**Fixed**: the redirect-follow gap (Azure) and the link-local slice of the baseline
+gap (Vault + Azure) are both closed — `internal/connect/hardened_client.go`'s
+`refuseRedirect` and `validateConnectorAddressNotLinkLocal`/`connectGuardedDialer`,
+wired into all three HTTP-based backends (`vault.go`, `azurekv.go`, `awssm.go`).
+Proving tests: `FuzzAzureKVConnectorResponse`'s oracle (e)
+(`azurekv_response_fuzz_test.go`, red-proofed by temporarily removing
+`CheckRedirect: refuseRedirect` — the redirect-status seeds fail),
+`TestValidateConnectorAddressNotLinkLocal`, `TestVaultConnector_RefusesLinkLocalAddress`,
+`TestAzureKVConnector_RefusesLinkLocalAddress` (`link_local_guard_test.go`,
+red-proofed by disabling the check inside `validateConnectorAddressNotLinkLocal`).
+The general private/RFC-1918/on-prem slice of the baseline (§2's own SSRF-baseline
+finding below) is **deliberately still unguarded** — see §5's design reasoning for
+why narrowing to link-local-only, not a full private-range block, is what makes
+this fix compatible with the on-prem deployment baseline this section itself
+established. The original investigation and severity reasoning below is kept
+verbatim for the record; the **Severity** paragraph has a **Fix note** appended
+rather than being rewritten, so the historical assessment stays legible.
 
 **SSRF baseline, tested first**: is the *configured* address (`ConnectorConfig.Address`
 in `internal/config/config.go`, what an operator's YAML `address:` field sets)
@@ -267,6 +288,16 @@ independent threads:
    assessment. Recorded as its own, still-live consideration — not erased by the
    authz finding, just no longer the section's controlling factor.
 
+**Fix note, 2026-09-19**: option (a) below was implemented as-is —
+`AzureKeyVaultConnector`'s client now refuses every redirect
+(`hardened_client.go`'s `refuseRedirect`), closing thread 2 above outright rather
+than narrowing its blast radius. Thread 1 (the baseline) is now partially closed
+too, but NARROWER than either recommendation option below: link-local only
+(`validateConnectorAddressNotLinkLocal` + `connectGuardedDialer`'s
+`netutil.IsLinkLocal`), not the full `netutil.IsPrivateOrLinkLocal` option (b)
+proposed — see §5 for why link-local-only is the correct scope, not a partial
+implementation of (b).
+
 **Recommendation**: for Azure specifically, either (a) refuse redirects outright the
 same way Vault does (`CheckRedirect` returning a refusal), which is almost certainly
 correct since Key Vault's real GetSecret API has no legitimate reason to redirect a
@@ -278,9 +309,26 @@ smaller, more clearly-correct change.
 
 ---
 
-## 3. No response-size bound for AWS or Azure; Vault and GCP are bounded (one explicitly, one incidentally)
+## 3. No response-size bound for AWS or Azure; Vault and GCP are bounded (one explicitly, one incidentally) — **FIXED in this PR**
 
-Requested per-backend report:
+**Fixed**: `internal/connect/hardened_client.go`'s `sizeCappedRoundTripper` now
+caps AWS's and Azure's response body at `connectMaxResponseBytes` (reusing
+Vault's own `vaultMaxResponseBytes`, 1 MiB, as the shared bound — see §5),
+applied AFTER the transport's transparent gzip decompression, not on the wire
+bytes — the same place Vault's own `io.LimitReader` already sat, just relocated
+to the transport layer since AWS/Azure's SDKs read the response body internally
+with no connector-level interception point. Proving tests:
+`TestAWSSMConnector_ResponseSizeCap_FailsClosed`,
+`TestAzureKVConnector_ResponseSizeCap_FailsClosed`
+(`response_size_cap_test.go`), each red-proofed by temporarily removing/widening
+the cap and confirming a decompressed body exceeding it once again decodes
+successfully instead of failing closed. These use a payload just over the cap
+(not the original ~1 GiB measurement scale below) — fast enough to run every
+test invocation; the measurement question (how bad was it) stays answered by
+the numbers already recorded here, the regression-guard question (does the fix
+hold) doesn't need the original scale to answer.
+
+Requested per-backend report (pre-fix state, kept for the record):
 
 | Backend | Size-limited? | Mechanism | Keyorix's own code, or inherited? |
 |---|---|---|---|
@@ -326,13 +374,17 @@ requests could exhaust available memory on the Keyorix process. Not High because
 requires a hostile backend (not a passive misconfiguration) and the blast radius is
 availability (DoS), not confidentiality/integrity.
 
-**Recommendation**: if this is worth closing, Vault's `io.LimitReader` pattern is the
-smaller, most obviously-correct model for AWS (wrap `response.Body` before it
-reaches `json.NewDecoder`, at the connector's own client construction, not inside
-the vendored deserializer) — Azure's `io.ReadAll` is called by azcore's OWN
-`runtime.Payload()`, not `azurekv.go`, so bounding it would need a custom
-`policy.Transporter` wrapping the response body in a limited reader before azcore's
-own decode gets to it, a larger change than AWS's.
+**Recommendation** (implemented, 2026-09-19): Vault's `io.LimitReader` pattern —
+implemented for both AWS and Azure via `sizeCappedRoundTripper` wrapping
+`resp.Body`, at the connector's own client construction (`awssm.go`'s
+`HTTPClient` option, `azurekv.go`'s `azcore.ClientOptions.Transport`), not inside
+either vendor's own deserializer/`runtime.Payload()`. Azure's version needed the
+custom `policy.Transporter`-shaped wrapper this paragraph anticipated (a plain
+`*http.Client` satisfies `Transporter`, so `sizeCappedRoundTripper` didn't need
+anything azcore-specific); AWS's needed only the `HTTPClient` functional option,
+confirming the original size estimate ("Azure's is a larger change than AWS's")
+was about right in relative terms, though both landed as thin wrappers around one
+shared `hardened_client.go` component rather than two separate implementations.
 
 ---
 
@@ -346,7 +398,15 @@ the four backends as currently implemented.
 
 ---
 
-## 5. Draft fix (NOT implemented — draft only, per campaign rules): one shared hardened `http.Client` for connectors
+## 5. Implemented, 2026-09-19 (was: draft fix): one shared hardened `http.Client` for connectors
+
+**Implemented in this PR** (branch `fix/connect-hardened-client`) —
+`internal/connect/hardened_client.go`, wired into `vault.go`, `azurekv.go`, and
+`awssm.go`. The rest of this section is kept close to its original draft form
+(what follows was written BEFORE implementation, describing the design this PR
+then built) with **Landed** notes marking where the real implementation refined
+or departed from the draft — most of the design held, a few details changed once
+actually writing the code surfaced something the draft's prose didn't catch.
 
 Sketching the fix §2 and §3 both separately recommended, as one shared piece rather
 than two backend-specific patches, since AWS/Azure/Vault all accept *some* shape of
@@ -374,8 +434,19 @@ so a cap on the wire bytes wouldn't touch the decompressed size at all — the
 `io.LimitReader` has to wrap `resp.Body` in a custom `http.RoundTripper` that runs
 *after* the stdlib transport's own gzip unwrapping (i.e., wrap the `Transport`, not
 replace it: `rt.Transport.RoundTrip(req)` then `resp.Body =
-io.NopCloser(io.LimitReader(resp.Body, cap))` before returning). The cap value
-itself is a product decision, not drafted here — Vault's existing
+io.NopCloser(io.LimitReader(resp.Body, cap))` before returning).
+
+**Landed, with one correction to the sketch above**: plain `io.NopCloser` would
+silently discard the real `resp.Body.Close()`, which `net/http` needs to safely
+release the underlying connection back to its pool — `sizeCappedRoundTripper`
+(the real implementation, `hardened_client.go`) uses a small `limitedReadCloser`
+wrapper instead: `io.LimitReader` for `Read`, but `Close()` still calls through
+to the original `resp.Body.Close`. A cap-truncated body means the connection
+can't be safely reused for keep-alive afterward (the caller stopped reading
+before EOF) — an accepted, expected trade-off only for the rare/adversarial
+oversized-response case, not the common case.
+
+The cap value itself is a product decision, not drafted here — Vault's existing
 `vaultMaxResponseBytes` (1 MiB) is a reasonable starting point for AWS since a real
 Secrets Manager value is capped at 64 KiB by AWS itself; Azure's Key Vault secret
 value has no documented AWS-style hard cap, so the right number needs a separate
@@ -417,33 +488,35 @@ Applied at BOTH points, per this round's instruction:
   exists for any of the three backends, so there's no separate "redirect target"
   case left needing a different check.
 
-**Open prerequisite this draft depends on, found while drafting**: `IsLinkLocal`,
-as currently implemented, does **not** decode NAT64 (`64:ff9b::/96`) or deprecated
-IPv4-compatible (`::a.b.c.d`) encodings of an embedded IPv4 address — confirmed by
-direct read of `internal/netutil/dialer.go`: only `IsPrivateOrLinkLocal` calls the
+**Prerequisite CLOSED, 2026-09-19**: `IsLinkLocal`, before this PR, did **not**
+decode NAT64 (`64:ff9b::/96`) or deprecated IPv4-compatible (`::a.b.c.d`)
+encodings of an embedded IPv4 address — confirmed by direct read of
+`internal/netutil/dialer.go`: only `IsPrivateOrLinkLocal` called the
 `embeddedIPv4` decode step (the #1937 fix, `docs/security-closures.tsv`'s
-`ssrf-nat64-ipv4compat-001` row); `IsLinkLocal` checks the raw IP against
-`linkLocalCIDRs` only. So a NAT64- or compat-encoded IMDS target (e.g.
-`64:ff9b::a9fe:a9fe`, which embeds 169.254.169.254) would currently pass
-`IsLinkLocal` even though `IsPrivateOrLinkLocal` already correctly rejects it. This
-round's instruction asked for `IsLinkLocal` including this coverage, which does not
-exist yet — closing it is a small, additive change to `internal/netutil/dialer.go`
-itself (give `IsLinkLocal` the same `embeddedIPv4`-decode step `IsPrivateOrLinkLocal`
-already has, likely by factoring the shared "decode, then check a CIDR list" shape
-both functions want into one helper parameterized by which CIDR list), not to
-`internal/connect` — and it's a co-requisite of this draft, not a detail this draft
-can silently assume away. Recorded here rather than quietly assumed, per the same
-discipline as the two items below that stay explicitly unaffected.
+`ssrf-nat64-ipv4compat-001` row); `IsLinkLocal` checked the raw IP against
+`linkLocalCIDRs` only. A NAT64- or compat-encoded IMDS target (e.g.
+`64:ff9b::a9fe:a9fe`, which embeds 169.254.169.254) would have passed
+`IsLinkLocal` even though `IsPrivateOrLinkLocal` already correctly rejected it.
+**Fixed**: both functions now share a single `matchesCIDRsWithEmbedded` helper
+(the same decode step, parameterized by which CIDR list to check against) —
+`IsLinkLocal(ip) == matchesCIDRsWithEmbedded(ip, linkLocalCIDRs)`,
+`IsPrivateOrLinkLocal` unchanged in behavior, refactored onto the same helper.
+Proving test: `TestIsLinkLocal_IPv4EmbeddingEncodings`
+(`internal/netutil/linklocal_nat64_test.go`), red-proofed by temporarily
+reverting `IsLinkLocal` to its old direct-`linkLocalCIDRs`-only form — 3 of the
+4 reject cases failed. Reverted, never committed.
 
-**What flips from report-only to a merged fuzz assertion once (1), (2), and (3) land**:
+**What flipped from report-only to a merged assertion, LANDED 2026-09-19 (all three
+components (1)/(2)/(3) implemented — this table is now the actual closure record,
+not a forecast)**:
 
-| Existing report-only item | Becomes assertable how |
-|---|---|
-| §2's Azure redirect-follows-and-trusts-content gap | `FuzzAzureKVConnectorResponse` gains a redirect-refusal oracle mirroring Vault's oracle (e) — assert `attackerHits == 0` — red-proofed by temporarily reverting the `CheckRedirect` override and confirming the oracle goes red, then reverting the red-proof (never committed), same discipline already used for the 4 merged targets' other oracles. |
-| §3's AWS/Azure unbounded-decompression gzip-bomb gap | Both targets gain a bounded-response-size oracle: feed a `Content-Encoding: gzip` response whose decompressed size exceeds the configured cap and assert `GetSecret` fails closed (mirrors Vault's own existing oracle (b) fail-closed check, just with a body that decompresses past the cap instead of being structurally empty) — red-proofed by temporarily removing the `io.LimitReader` wrap. |
-| §2's baseline, IMDS/link-local slice only | **Now assertable, narrowly.** A connector configured with (or a hostname resolving to) a link-local address must be refused, at registration for a literal IP and at every dial regardless — red-proofed by temporarily swapping `netutil.IsLinkLocal` for a predicate that always returns `false`. This is new: the original draft of this section said the baseline stayed report-only on purpose; the narrowed, link-local-only guard changes that for this one slice of it. |
+| Formerly report-only item | Now asserted by | Red-proofed how |
+|---|---|---|
+| §2's Azure redirect-follows-and-trusts-content gap | `FuzzAzureKVConnectorResponse` oracle (e), `azurekv_response_fuzz_test.go` — asserts `attackerHits == 0` across 5 redirect-status seeds (301/302/303/307/308) | Temporarily removed `CheckRedirect: refuseRedirect` from the fuzz target's own client construction — 5 of 12 seeds failed (via oracle (b), the attacker's forged 200 response getting returned as if it were the original non-200 status — an even earlier catch than oracle (e) itself). Reverted, never committed. |
+| §3's AWS/Azure unbounded-decompression gzip-bomb gap | `TestAWSSMConnector_ResponseSizeCap_FailsClosed`, `TestAzureKVConnector_ResponseSizeCap_FailsClosed` (`response_size_cap_test.go`) — assert `GetSecret` fails closed on a decompressed body just over `connectMaxResponseBytes` | Temporarily removed the cap (AWS: `newConnectHardenedTransport` returned its base transport uncapped; Azure: `MaxBytes` set to 100x) — both tests failed (no error, oversized value returned). Reverted, never committed. |
+| §2's baseline, IMDS/link-local slice only | `TestValidateConnectorAddressNotLinkLocal` (direct, isolated function test) plus `TestVaultConnector_RefusesLinkLocalAddress`/`TestAzureKVConnector_RefusesLinkLocalAddress` (integration, confirm the check is actually wired into `GetSecret`) — 5 encodings each (raw IPv4, IPv4 IMDS, IPv6 link-local, NAT64-encoded IMDS, IPv4-compatible-encoded IMDS) | Temporarily disabled the `netutil.IsLinkLocal` check inside `validateConnectorAddressNotLinkLocal` — the direct function test failed cleanly on exactly the 5 reject cases. (The GetSecret-level integration tests turned out NOT to cleanly red-proof at that same granularity — see `link_local_guard_test.go`'s own comment: Vault's dial-time `netutil.Dialer` guard, still active, independently catches the same address with different wording, a genuine defense-in-depth finding, not a test bug.) Reverted, never committed. |
 | §1's no-ref-binding gap (all 4 backends) | **Unaffected by this fix** — orthogonal problem (response identity vs. transport hardening); would need each backend's own response-identity field (`ARN`/`Name`, `Secret.ID`, `AccessSecretVersionResponse.Name`) checked against the requested ref, not anything in the shared client. |
-| §2's baseline, general private/RFC-1918/on-prem slice | **Still deliberately unaffected — stays report-only, on purpose.** Only the link-local slice above is now guarded; a genuinely private/on-prem address (e.g. `10.x`, `192.168.x`) remains unguarded at both registration and dial, exactly as `validateConnectorURL`'s own doc comment already argues is correct for this product's on-prem deployment shape. |
+| §2's baseline, general private/RFC-1918/on-prem slice | **Still deliberately unaffected — stays report-only, on purpose.** Only the link-local slice above is now guarded; a genuinely private/on-prem address (e.g. `10.x`, `192.168.x`) remains unguarded at both registration and dial, exactly as `validateConnectorURL`'s own doc comment already argues is correct for this product's on-prem deployment shape — confirmed by `TestVaultConnector_AllowsGenuinelyPrivateAddress` (`link_local_guard_test.go`), the explicit contrast case. |
 
 ---
 
@@ -458,7 +531,19 @@ all, done by generating a per-target `-coverprofile` (`go test -run
 checking the exact line's hit count in each of the 4 profiles.
 
 11 distinct file:line locations, one row per mutant (some lines carry more than one
-mutant/operator):
+mutant/operator).
+
+**Line numbers below were RENUMBERED 2026-09-19** to match this PR's hardened-client
+changes to `vault.go`/`awssm.go`/`azurekv.go` (the fix in §2/§3/§5 below), which
+inserted production code above several of these lines — a stale citation here would
+be exactly the kind of decayed claim this repo's own engineering practices warn
+against. Verified by direct `grep`/`Read` against the current file state, not by
+arithmetic on the diff: `vault.go:169→174`, `vault.go:178→183`, `vault.go:205→210`,
+`vault.go:214→219`, `vault.go:326→334`, `vault.go:329→337`, `awssm.go:80→81`,
+`awssm.go:94→95`, `awssm.go:98→99`, `awssm.go:131→145`, `azurekv.go:54→72`. The
+mutant IDs, operators, and reachability verdicts are unchanged — only the line
+numbers moved; re-verify against a fresh checkout before trusting these numbers past
+this PR, same caveat as always for a line-anchored citation.
 
 | File:Line | Operator | Mutant ID | Reached by | Why |
 |---|---|---|---|---|
