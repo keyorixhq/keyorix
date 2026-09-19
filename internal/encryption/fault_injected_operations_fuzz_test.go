@@ -439,13 +439,19 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 	}
 	f.Add(byte(0), byte(0), byte(0), byte(0), "", "", "")
 
-	f.Fuzz(func(t *testing.T, opSel, seamSel, kindSel, shortWriteK byte, oldPass, newPass, secretVal string) {
-		if oldPass == "" {
-			oldPass = "seed-old-passphrase"
-		}
-		if newPass == "" {
-			newPass = "seed-new-passphrase"
-		}
+	f.Fuzz(func(t *testing.T, opSel, seamSel, kindSel, shortWriteK byte, oldPassIn, newPassIn, secretVal string) {
+		// Prefixed, never just the raw fuzzed string: oracle (e) below checks
+		// these passphrases for leakage via strings.Contains against error text
+		// that legitimately contains vocabulary like "ENOSPC" — a short or
+		// single-character fuzzed passphrase (e.g. "C") coincidentally collides
+		// with that vocabulary and false-positives the leak check on pure
+		// chance, not an actual leak (confirmed via a -race fuzz run: oldPass=
+		// newPass="C" tripped "ERROR HYGIENE" purely because "ENOSPC" contains a
+		// "C"). A long, distinctive prefix makes coincidental substring
+		// collision with ordinary error vocabulary vanishingly unlikely while
+		// still varying meaningfully with the fuzzer's chosen suffix.
+		oldPass := "PASSCANARY-old-" + oldPassIn
+		newPass := "PASSCANARY-new-" + newPassIn
 		canary := "FAULTCANARY-" + secretVal
 
 		done := make(chan struct{})

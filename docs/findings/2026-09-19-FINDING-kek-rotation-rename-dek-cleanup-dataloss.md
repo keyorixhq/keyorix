@@ -1,15 +1,36 @@
 # FINDING: KEK-rotation's rename-dek error cleanup can destroy the only DEK recovery path
 
-**Date:** 2026-09-19 (reachability detail added 2026-09-19, same-day review)
+**Date:** 2026-09-19 (reachability detail + severity acceptance added
+2026-09-19, same-day review)
 **Component:** `internal/encryption/keymanager_kek_rotation.go` (`commitNewKEKFiles`)
-**Status:** Unfixed (finding only, per task scope — do not fix here)
-**Severity: High.** Impact when triggered: **every secret in the vault becomes
-permanently undecryptable** — the DEK is wrapped under a KEK derived from a salt
-that no longer exists anywhere on disk, and there is no cryptographic or
-operational path back to it (see "Impact" below). Likelihood is deployment-
-dependent and narrower than "any local disk error" — see "Reachability" below
-for the precise trigger conditions, including why a directory-fsync (`SyncDir`)
-error does **not** reach this path.
+**Status:** Accepted; unfixed (finding only, per task scope — see the
+"Suggested fix" section below for a drafted, not-yet-implemented approach;
+scheduled as a separate follow-up branch, gated on explicit go-ahead)
+**Severity: High impact / Low likelihood.**
+
+- **Impact:** **every secret in the vault becomes permanently
+  undecryptable** once triggered — the DEK ends up wrapped under a KEK
+  derived from a salt that no longer exists anywhere on disk, with no
+  cryptographic or operational path back to it (see "Impact" below).
+- **Likelihood: Low**, and narrower than "any local disk error" — see
+  "Reachability" below for the precise trigger conditions, including why a
+  directory-fsync (`SyncDir`) error does **not** reach this path. The
+  dominant real trigger (NFS-style ambiguous-rename semantics) is itself
+  substantially mitigated by modern NFS implementations: **NFSv3's Duplicate
+  Request Cache (DRC) is specifically designed to catch a client's RPC retry
+  after a reply was lost and return the ORIGINAL (cached) reply instead of
+  re-executing or erroring**, which closes most of this ambiguity in
+  practice; **NFSv4.1+'s session/sequence-ID mechanism gives exactly-once
+  semantics** for the RPC itself, closing it further still. The residual,
+  non-mitigated risk is narrower yet: **NFSv3 specifically when the server's
+  DRC entry has been evicted** (a bounded-size cache — a long enough delay
+  between the client's original request and its retry, or a server restart
+  that clears the DRC, can evict the entry before the retry arrives) **or an
+  older/non-compliant NFS client or server stack** that does not implement
+  these protections correctly. Given this, the residual likelihood is
+  genuinely low, not merely "narrow" — but the impact if it does land is
+  total and irreversible, which is why this is accepted as High/Low rather
+  than downgraded outright.
 
 ## Summary
 
@@ -97,7 +118,10 @@ semantics**:
   documented to have; RENAME is not safely retryable/idempotent from the
   client's point of view (a retried RENAME of an already-renamed source
   fails with `ENOENT`, which client implementations do not uniformly
-  distinguish from "never happened").
+  distinguish from "never happened"). This is substantially mitigated in
+  practice, not merely theoretical-but-fully-open: see the severity note at
+  the top of this document for NFSv3 DRC / NFSv4.1 session mitigations and
+  the narrower residual risk window they leave.
 - The same class of ambiguity applies to any other client-server network
   filesystem with similar RPC semantics reachable as a POSIX mount — FUSE-
   backed network filesystems and various Kubernetes CSI drivers that proxy to
