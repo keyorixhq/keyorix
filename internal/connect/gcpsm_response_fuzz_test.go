@@ -86,7 +86,7 @@ func FuzzGCPSMConnectorResponse(f *testing.F) {
 		code := codes.Code(rawCode % 17) // codes.OK(0) .. codes.Unauthenticated(16)
 
 		lis := bufconn.Listen(1 << 20)
-		defer lis.Close()
+		defer func() { _ = lis.Close() }()
 
 		grpcSrv := grpc.NewServer()
 		fakeSrv := &fakeSecretManagerServer{
@@ -107,7 +107,7 @@ func FuzzGCPSMConnectorResponse(f *testing.F) {
 		if err != nil {
 			t.Fatalf("unexpected grpc.NewClient error: %v", err)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		cl, err := secretmanager.NewClient(dialCtx, option.WithGRPCConn(conn))
 		if err != nil {

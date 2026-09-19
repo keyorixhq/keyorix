@@ -75,7 +75,7 @@ func FuzzVaultConnectorResponse(f *testing.F) {
 					v = "2"
 				}
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprintf(w, `{"data":{"path":"secret/","options":{"version":%q}}}`, v)
+				_, _ = fmt.Fprintf(w, `{"data":{"path":"secret/","options":{"version":%q}}}`, v)
 				return
 			}
 			atomic.AddInt32(&secretGetHits, 1)
