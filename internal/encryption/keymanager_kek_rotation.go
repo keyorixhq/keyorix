@@ -144,34 +144,152 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 // on disk. The pending salt file allows the operator to complete the rename manually.
 func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 	pendingSaltPath := km.saltPath + ".pending"
-	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingSaltPath, newSalt, 0600); err != nil {
+	if err := durableWriteSync(km.baseDir, pendingSaltPath, newSalt, 0600, "kek:write-salt-pending"); err != nil {
 		return fmt.Errorf("rotate KEK: write pending salt: %w", err)
 	}
 	rotationCheckpointHook("kek:after-write-salt-pending")
 	pendingDEKPath := km.dekPath + ".pending"
-	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, newWrappedDEK, 0600); err != nil {
+	if err := durableWriteSync(km.baseDir, pendingDEKPath, newWrappedDEK, 0600, "kek:write-dek-pending"); err != nil {
 		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
 		return fmt.Errorf("rotate KEK: write pending DEK: %w", err)
 	}
 	rotationCheckpointHook("kek:after-write-dek-pending")
 	pendingDEKFull := filepath.Join(km.baseDir, pendingDEKPath)
 	activeDEKFull := filepath.Join(km.baseDir, km.dekPath)
-	if err := os.Rename(pendingDEKFull, activeDEKFull); err != nil {
-		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
-		_ = os.Remove(pendingDEKFull)
-		return fmt.Errorf("rotate KEK: promote pending DEK to active: %w", err)
+	if err := durableRename(pendingDEKFull, activeDEKFull, "kek:rename-dek"); err != nil {
+		// Do not assume the rename didn't happen: an error here can be reported
+		// AFTER the rename actually applied (e.g. an NFS lost-reply/retransmit
+		// ambiguity — see docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md).
+		// Verify the ACTUAL on-disk state before deciding whether kek.salt.pending
+		// — the only recovery material for the hazard window below — is safe to
+		// delete. A prior version of this code deleted it unconditionally here,
+		// which orphaned the DEK permanently whenever the rename had, in fact,
+		// already succeeded. A LATER version of this code fixed that but still
+		// treated "could not confirm the rename succeeded" (e.g. a read/stat
+		// error verifying the outcome) as equivalent to "confirmed it did not" —
+		// which is unsound whenever the SAME transient condition that made the
+		// rename report a spurious error also disrupts the verification read
+		// (the identical class of NFS blip can plausibly hit both). Classify
+		// into three outcomes instead of two, and fail-safe (delete nothing) on
+		// genuine uncertainty rather than treating uncertainty as "safe to
+		// clean up."
+		switch classifyDEKRename(km.baseDir, km.dekPath, pendingDEKFull, km.dekSnapshot, newWrappedDEK) {
+		case dekRenameNotApplied:
+			_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
+			_ = os.Remove(pendingDEKFull)
+			return fmt.Errorf("rotate KEK: promote pending DEK to active: %w", err)
+		case dekRenameUnknown:
+			return fmt.Errorf("rotate KEK: promote pending DEK to active: outcome could not be confirmed (the rename reported an error, but whether it actually applied is unknown — no pending files were removed; re-run rotate-kek, or inspect %s and %s manually before proceeding): %w", pendingDEKPath, pendingSaltPath, err)
+		case dekRenameApplied:
+			// The rename actually applied despite the reported error: fall
+			// through and complete the rotation exactly as the success path
+			// would (same as what a genuine kek:after-rename-dek crash-recovery
+			// would reach) — kek.salt.pending must survive for the salt rename
+			// below, or for an operator to apply manually if that also fails.
+		}
 	}
-	_ = securefiles.SyncDir(filepath.Dir(activeDEKFull)) // best-effort
+	// Surfaced, not discarded: an un-fsynced directory entry after a rename is
+	// not guaranteed durable across a power loss (the classic "rename without
+	// fsync(dir)" hazard — see
+	// docs/findings/2026-09-19-DRAFT-ISSUE-kek-rotation-syncdir-discarded.md).
+	// Fail the rotation here, before attempting the salt rename below, rather
+	// than building a second durability step on top of an unconfirmed one.
+	if err := durableSyncDir(filepath.Dir(activeDEKFull), "kek:syncdir-dek"); err != nil {
+		return fmt.Errorf("rotate KEK: fsync key directory after promoting DEK (the DEK rename itself succeeded — its durability is unconfirmed; retry rotate-kek, or manually fsync the key directory, before completing the salt rename): %w", err)
+	}
 	// Hazard window: dek.key is now the new-wrapped DEK (KEK from the NEW salt),
 	// but kek.salt on disk is still the OLD salt — recovery here needs the
 	// leftover kek.salt.pending. Crash-consistency tests interrupt exactly here.
 	rotationCheckpointHook("kek:after-rename-dek")
 	pendingSaltFull := filepath.Join(km.baseDir, pendingSaltPath)
 	activeSaltFull := filepath.Join(km.baseDir, km.saltPath)
-	if err := os.Rename(pendingSaltFull, activeSaltFull); err != nil {
+	if err := durableRename(pendingSaltFull, activeSaltFull, "kek:rename-salt"); err != nil {
 		return fmt.Errorf("rotate KEK: promote pending salt to active (DEK rename already succeeded — manually rename %s to %s to complete): %w", pendingSaltPath, km.saltPath, err)
 	}
-	_ = securefiles.SyncDir(filepath.Dir(activeSaltFull)) // best-effort
+	// Surfaced, not discarded — see the kek:syncdir-dek comment above. This is
+	// the LAST step: the rename itself already fully applied the rotation on
+	// disk, so a failure here means only its durability is unconfirmed, not
+	// that the rotation didn't happen.
+	if err := durableSyncDir(filepath.Dir(activeSaltFull), "kek:syncdir-salt"); err != nil {
+		return fmt.Errorf("rotate KEK: fsync key directory after promoting salt (the rotation itself already fully applied on disk — its durability is unconfirmed; retry to confirm): %w", err)
+	}
 	rotationCheckpointHook("kek:after-rename-salt")
 	return nil
+}
+
+// dekRenameOutcome classifies what a rename-dek error actually means on
+// disk, after durableRename has already reported that error. Three-way, not
+// boolean: an earlier version of this classification collapsed "confirmed
+// not applied" and "could not confirm either way" into a single false value,
+// which is unsound — the transient condition that made the rename report a
+// spurious error in the first place (e.g. an NFS lost-reply ambiguity) can
+// plausibly ALSO disrupt the verification read/stat itself, and treating
+// that as "safe to clean up" reopens the exact permanent-data-loss path this
+// whole verify-before-cleanup mechanism exists to close.
+type dekRenameOutcome int
+
+const (
+	// dekRenameNotApplied: the rename's source file still exists. A rename
+	// atomically moves its source — if it's still there, the rename
+	// definitively did not happen. Safe to clean up exactly as before this
+	// fix existed.
+	dekRenameNotApplied dekRenameOutcome = iota
+	// dekRenameApplied: the source is confirmed gone AND the active DEK file
+	// holds exactly the bytes this call tried to promote. The rename
+	// definitively did happen despite the reported error.
+	dekRenameApplied
+	// dekRenameUnknown: neither of the above could be confirmed — a stat or
+	// read error verifying the outcome, or the active content matching
+	// neither the old nor the new wrapped DEK. The caller MUST treat this as
+	// "cannot rule out success": deleting kek.salt.pending here risks
+	// exactly the data loss this fix exists to prevent, so nothing gets
+	// deleted and the caller must fail loudly instead.
+	dekRenameUnknown
+)
+
+// classifyDEKRename determines which of the three outcomes above applies.
+// pendingDEKFull is the rename's source path (baseDir/dekPath+".pending");
+// oldWrapped/newWrapped are the wrapped-DEK bytes active before/after this
+// rotation (the caller's km.dekSnapshot, and the value this call tried to
+// promote, respectively).
+//
+// Deliberately read-and-compare, not a size/mtime heuristic: a stat-only
+// check on the DESTINATION cannot distinguish genuinely new content from old
+// content of coincidentally the same size, and mtimes are not a reliable
+// durability signal either. The SOURCE check, by contrast, is a plain
+// existence stat — rename's atomicity guarantee makes that sufficient on its
+// own for the NotApplied direction, no content comparison needed.
+func classifyDEKRename(baseDir, dekPath, pendingDEKFull string, oldWrapped, newWrapped []byte) dekRenameOutcome {
+	// Test-only seam (nil in production): lets a test simulate the SAME class
+	// of transient failure that made the rename itself report a spurious
+	// error ALSO disrupting this verification — e.g. one NFS blip affecting
+	// both the RENAME and the follow-up GETATTR/READ. See
+	// FuzzFaultInjectedOperations's combined rename-dek+verification-failure
+	// case, which exists specifically to prove this path fails safe (deletes
+	// nothing) rather than fail open.
+	if fileFaultHook != nil {
+		if fileFaultHook("kek:verify-rename-dek") != nil {
+			return dekRenameUnknown
+		}
+	}
+	if _, err := os.Stat(pendingDEKFull); err == nil { // #nosec G304 -- fixed internal key-directory path
+		return dekRenameNotApplied
+	} else if !os.IsNotExist(err) {
+		return dekRenameUnknown // couldn't even confirm the source is gone
+	}
+	got, err := securefiles.SafeReadFile(baseDir, dekPath)
+	if err != nil {
+		return dekRenameUnknown
+	}
+	if bytes.Equal(got, newWrapped) {
+		return dekRenameApplied
+	}
+	if bytes.Equal(got, oldWrapped) {
+		// Source vanished but the active content is still old — inconsistent
+		// with either a genuine successful rename (would show new content) or
+		// a genuine no-op (the source would still be there); cannot be
+		// trusted either way.
+		return dekRenameUnknown
+	}
+	return dekRenameUnknown // matches neither old nor new
 }

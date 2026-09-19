@@ -1,0 +1,8 @@
+go test fuzz v1
+byte('\x04')
+byte('\x03')
+byte('\x00')
+byte('\x03')
+string("go test fuzz v1\nbyte('\\x04')\nbyte('\\x03')\nbyte('\\x00')\nbyte('\\x03')\nstring(\"old-pass\")\nstring(\"new-pass\")\nstring(\"s\\x04\\x00ret-val\")\n")
+string("new-pass")
+string("s\x04\x00ret-val")

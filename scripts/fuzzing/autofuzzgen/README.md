@@ -10,10 +10,10 @@ Versioned home for the tool that used to live in `.scratch/autofuzzgen.go` (giti
 
 ## The pieces
 
-1. **`.github/codeql/go-queries/FuzzHarnessTargets.ql`** — the selector. A taint query that lists
+1. **`.github/codeql/manual-queries/FuzzHarnessTargets.ql`** — the selector. A taint query that lists
    `source → sink` tuples where remotely-controlled input (`RemoteFlowSource`) reaches a dangerous
    sink, each tagged with a **sink kind**: `parser`, `authz`, `crypto`, `format`. The row message is
-   `FUZZ-TARGET kind=<kind> fn=<enclosing-func> …`. Runs in the existing CodeQL workflow / pack.
+   `FUZZ-TARGET kind=<kind> fn=<enclosing-func> …`. It lives in `.github/codeql/manual-queries` and is run MANUALLY — it is deliberately NOT in the CI code-scanning pack, because it emits leads, not defects (running it in CI would flood the security dashboard with hundreds of non-actionable alerts).
 
 2. **`main.go`** — the emitter. Two modes:
    - `-tuples <file.json>` (**SAST-guided, preferred**): consumes the query's tuples and emits one
@@ -35,8 +35,8 @@ Versioned home for the tool that used to live in `.scratch/autofuzzgen.go` (giti
 ## Triage loop
 
 ```
-# 1. Run the query to a target list (in the CodeQL workflow, or locally against a Go DB):
-codeql database analyze <db> .github/codeql/go-queries/FuzzHarnessTargets.ql --format=csv --output=targets.csv
+# 1. Run the query to a target list MANUALLY against a Go database (it is not part of the CI scan):
+codeql database analyze <db> .github/codeql/manual-queries/FuzzHarnessTargets.ql --format=csv --output=targets.csv
 #    …then project the result rows to the tuple JSON autofuzzgen consumes
 #    (fields: package, dir, func, sinkKind, entryParam, source, sink).
 
@@ -55,7 +55,7 @@ a generated harness is only trusted after a human red-proofs its oracle.
 
 ## Discipline
 
-- The query is versioned in-repo and runs in CI; its selection is auditable (every skeleton records
+- The query is versioned in-repo but deliberately NOT run in CI (it lists leads, not defects, so it never creates code-scanning alerts); its selection is auditable (every skeleton records
   the `source → sink` path).
 - Assert only the non-false-positing direction (deny / bounded / equality / reject), per the
   invariant-fuzzing playbook.

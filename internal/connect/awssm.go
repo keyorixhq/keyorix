@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -98,7 +99,24 @@ func (c *AWSSecretsManagerConnector) client(ctx context.Context) (smSecretGetter
 	if err != nil {
 		return nil, fmt.Errorf("aws-secrets-manager: load AWS config: %w", err)
 	}
-	return secretsmanager.NewFromConfig(cfg), nil
+	// HTTPClient: the shared hardened *http.Client (hardened_client.go),
+	// replacing the SDK's own default transport/BuildableClient outright. The
+	// SDK's default already happens not to follow redirects (confirmed live,
+	// docs/findings/2026-09-19-FINDING-connect-response-trust-gaps.md §2), but
+	// the exact internal mechanism was never fully traced -- this makes the
+	// property explicit and provable (refuseRedirect) instead of relying on an
+	// untraced SDK internal, and adds what the default genuinely lacks: the
+	// link-local-refusing dialer and the post-decompression size cap (§3).
+	// awsBaseTransport() is a REAL clone of the SDK's own default transport
+	// (hardened_client.go), via its own exported constructor -- not a
+	// hand-copied approximation, so it tracks the SDK's actual tuning
+	// (including its FIPS-mode TLS curve-preference restriction) automatically.
+	return secretsmanager.NewFromConfig(cfg, func(o *secretsmanager.Options) {
+		o.HTTPClient = &http.Client{
+			Transport:     newConnectHardenedTransport(awsBaseTransport()),
+			CheckRedirect: refuseRedirect,
+		}
+	}), nil
 }
 
 func (c *AWSSecretsManagerConnector) GetSecret(ctx context.Context, ref string) (string, error) {

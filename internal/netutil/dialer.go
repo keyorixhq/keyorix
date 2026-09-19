@@ -163,14 +163,15 @@ func (d Dialer) disallow(ip net.IP) bool {
 }
 
 // privateNetworkCIDRs is the canonical set of IP ranges IsPrivateOrLinkLocal
-// refuses. Covers RFC-1918, loopback, link-local (including cloud IMDS at
-// 169.254.169.254), shared carrier-grade NAT (RFC 6598), and IPv6
-// private/link-local equivalents.
+// refuses. Covers RFC-1918, loopback, "this network" (RFC 1122 §3.2.1.3),
+// link-local (including cloud IMDS at 169.254.169.254), shared carrier-grade
+// NAT (RFC 6598), and IPv6 private/link-local equivalents.
 var privateNetworkCIDRs = func() []*net.IPNet {
 	var nets []*net.IPNet
 	for _, cidr := range []string{ // NOSONAR -- these are the SSRF-guard blocklist ranges themselves (RFC-1918/1122/6598 + IPv6 equivalents), not a live endpoint; hardcoding them is the point of IsPrivateOrLinkLocal
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // NOSONAR -- RFC-1918
 		"127.0.0.0/8",    // loopback
+		"0.0.0.0/8",      // NOSONAR -- RFC 1122 "this network"; many kernels (Linux included) treat a connect() to 0.0.0.0 as a connect to loopback, making it a live SSRF bypass, not merely a non-routable curiosity
 		"169.254.0.0/16", // NOSONAR -- link-local / cloud IMDS
 		"100.64.0.0/10",  // NOSONAR -- shared address space (RFC 6598)
 		"::1/128",        // IPv6 loopback
@@ -193,12 +194,69 @@ var privateNetworkCIDRs = func() []*net.IPNet {
 // services, not a webhook receiver an operator might legitimately run
 // locally during testing.
 func IsPrivateOrLinkLocal(ip net.IP) bool {
-	for _, cidr := range privateNetworkCIDRs {
+	return matchesCIDRsWithEmbedded(ip, privateNetworkCIDRs)
+}
+
+// matchesCIDRsWithEmbedded reports whether ip itself falls in one of cidrs, OR —
+// for an IPv6 address — whether the IPv4 address it EMBEDS does. net.IPNet.Contains
+// folds IPv4-MAPPED (::ffff:x) via To4, so a direct cidrs check already covers that
+// form — but NAT64 (RFC 6052 well-known 64:ff9b::/96; e.g. 64:ff9b::a9fe:a9fe ->
+// cloud IMDS 169.254.169.254) and deprecated IPv4-compatible (::x) are NOT folded,
+// so a target written in either encoding would otherwise slip past a direct-only
+// check. Decode the embedded IPv4 and check THAT against cidrs too — decode, not a
+// wholesale-prefix block, so a NAT64/compat address embedding a PUBLIC IPv4 (the
+// legitimate egress path in an IPv6-only deployment) is still permitted. Shared by
+// IsPrivateOrLinkLocal and IsLinkLocal so both predicates get the same embedded-IPv4
+// decode coverage, each against its own cidrs list (#1937 fixed this for
+// IsPrivateOrLinkLocal only; IsLinkLocal needed the identical fix for the same
+// reason — no legitimate Connect backend, egress target, or any other caller of
+// this narrower predicate lives at a NAT64/compat-encoded link-local address either).
+func matchesCIDRsWithEmbedded(ip net.IP, cidrs []*net.IPNet) bool {
+	if inCIDRs(ip, cidrs) {
+		return true
+	}
+	if v4 := embeddedIPv4(ip); v4 != nil && inCIDRs(v4, cidrs) {
+		return true
+	}
+	return false
+}
+
+func inCIDRs(ip net.IP, cidrs []*net.IPNet) bool {
+	for _, cidr := range cidrs {
 		if cidr.Contains(ip) {
 			return true
 		}
 	}
 	return false
+}
+
+// nat64WellKnownPrefix is the RFC 6052 well-known NAT64 prefix; an address inside
+// it carries its IPv4 target in the low 32 bits.
+var _, nat64WellKnownPrefix, _ = net.ParseCIDR("64:ff9b::/96")
+
+// embeddedIPv4 returns the IPv4 address carried by an IPv6 address that embeds one
+// in its low 32 bits — NAT64 well-known (64:ff9b::/96) or deprecated IPv4-compatible
+// (::/96, i.e. ::a.b.c.d) — or nil if ip carries no such embedded IPv4. IPv4-MAPPED
+// (::ffff:x) is intentionally not handled here: net.IPNet.Contains already folds it
+// via To4, so the caller's direct CIDR check covers it. The unspecified (::) and
+// loopback (::1) addresses fall in ::/96 but decode to 0.0.0.0 / 0.0.0.1, which the
+// caller's direct check (::1/128) and the IPv4 CIDRs handle correctly regardless.
+func embeddedIPv4(ip net.IP) net.IP {
+	ip16 := ip.To16()
+	if ip16 == nil || ip.To4() != nil {
+		return nil // not IPv6, or already an IPv4 form To4 handles
+	}
+	isCompat := true // ::/96 : first 12 bytes zero
+	for _, b := range ip16[:12] {
+		if b != 0 {
+			isCompat = false
+			break
+		}
+	}
+	if isCompat || nat64WellKnownPrefix.Contains(ip16) {
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	}
+	return nil
 }
 
 // linkLocalCIDRs is the narrow subset of privateNetworkCIDRs that IsLinkLocal
@@ -230,17 +288,16 @@ var linkLocalCIDRs = func() []*net.IPNet {
 	return nets
 }()
 
-// IsLinkLocal reports whether ip is in an IPv4 or IPv6 link-local range — the
-// narrow SSRF-target check for egress to operator-configured OIDC issuers (JWKS
-// fetch and discovery), where RFC-1918/on-prem targets are legitimate but the
-// cloud instance-metadata endpoint (169.254.169.254) must never be reached via a
-// misconfigured or compromised issuer. See linkLocalCIDRs for why this is
-// deliberately narrower than IsPrivateOrLinkLocal.
+// IsLinkLocal reports whether ip is in an IPv4 or IPv6 link-local range, INCLUDING
+// a NAT64 (64:ff9b::/96) or deprecated IPv4-compatible (::x) IPv6 encoding of a
+// link-local IPv4 address (e.g. 64:ff9b::a9fe:a9fe embeds cloud IMDS
+// 169.254.169.254 — see matchesCIDRsWithEmbedded's doc comment) — the narrow
+// SSRF-target check for egress to operator-configured OIDC issuers (JWKS fetch and
+// discovery) and to Connect backend addresses (internal/connect's hardened
+// transport), where RFC-1918/on-prem targets are legitimate but the cloud
+// instance-metadata endpoint must never be reached via a misconfigured or
+// compromised target. See linkLocalCIDRs for why this is deliberately narrower
+// than IsPrivateOrLinkLocal.
 func IsLinkLocal(ip net.IP) bool {
-	for _, cidr := range linkLocalCIDRs {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return matchesCIDRsWithEmbedded(ip, linkLocalCIDRs)
 }

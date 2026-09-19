@@ -1,0 +1,8 @@
+go test fuzz v1
+byte('\x05')
+byte('\x00')
+byte('\x01')
+byte('Y')
+string("0")
+string("0")
+string("0")

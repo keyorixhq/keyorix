@@ -92,7 +92,7 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	// declare success. A non-durable write that is lost to a power failure after
 	// the operator retires the old KEK would orphan all ciphertext irreversibly.
 	pendingDEKPath := km.dekPath + ".pending"
-	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, wrapped, 0600); err != nil {
+	if err := durableWriteSync(km.baseDir, pendingDEKPath, wrapped, 0600, "rewrap:write-dek-pending"); err != nil {
 		return fmt.Errorf("re-wrap DEK: write pending DEK: %w", err)
 	}
 	// Crash-consistency checkpoint (nil in production): the new-wrapped DEK is durably
@@ -100,14 +100,14 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	rotationCheckpointHook("rewrap:after-write-dek-pending")
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
 	activePath := filepath.Join(km.baseDir, km.dekPath)
-	if err := os.Rename(pendingPath, activePath); err != nil {
+	if err := durableRename(pendingPath, activePath, "rewrap:rename-dek"); err != nil {
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("re-wrap DEK: promote pending DEK to active: %w", err)
 	}
 	// Crash-consistency checkpoint (nil in production): the active dek.key is now the
 	// NEW wrapping; only the directory fsync remains.
 	rotationCheckpointHook("rewrap:after-rename-dek")
-	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
+	if err := durableSyncDir(filepath.Dir(activePath), "rewrap:syncdir"); err != nil {
 		return fmt.Errorf("re-wrap DEK: fsync key directory after promote: %w", err)
 	}
 	// Crash-consistency checkpoint (nil in production): the rewrap is fully durable.

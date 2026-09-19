@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/csvsafe"
 )
 
 const (
@@ -96,23 +97,11 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind strin
 	return data, "application/json; charset=utf-8", err
 }
 
-// csvSafe neutralizes spreadsheet formula injection (CWE-1236): a CSV cell
-// beginning with =, +, -, @, TAB, or CR is prefixed with a single quote so
-// Excel / LibreOffice / Sheets treat it as text rather than executing it as a
-// formula. Duplicated locally rather than shared, matching this codebase's
-// existing per-layer convention (server/http/handlers/csv_safe.go,
-// internal/cli/common/csv_safe.go each carry their own copy) -- core must not
-// import either of those packages.
-func csvSafe(s string) string {
-	if s == "" {
-		return s
-	}
-	switch s[0] {
-	case '=', '+', '-', '@', '\t', '\r':
-		return "'" + s
-	}
-	return s
-}
+// csvSafe neutralises spreadsheet formula injection (CWE-1236) in a CSV cell. It delegates to the
+// shared internal/csvsafe leaf so every layer uses ONE implementation of the neutralisation logic
+// instead of carrying its own copy. Kept as a package-local name (a thin, drift-free forwarder) so
+// core keeps the csvSafe symbol and the csv-writer completeness guard keeps recognising it.
+func csvSafe(s string) string { return csvsafe.Neutralize(s) }
 
 func encodeCSV(rows []AccessLogExportRow) []byte {
 	var buf bytes.Buffer

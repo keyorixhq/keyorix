@@ -74,7 +74,7 @@ jobs:
           plan_file="$(mktemp)"
           if [ "$dep_changed" = 1 ]; then
             echo "go.mod/go.sum changed — dependency churn: fuzzing ALL fuzz-target packages."
-            git ls-files -- '*_test.go' | xargs -r grep -lE '^func Fuzz' | xargs -r -n1 dirname | sort -u \
+            git ls-files -- '*_test.go' | { xargs -r grep -lE '^func Fuzz' || true; } | xargs -r -n1 dirname | sort -u \
               | while IFS= read -r d; do emit_all_in_pkg "./${d#./}"; done >> "$plan_file"
           elif [ "$prod_go_changed" = 1 ]; then
             echo "Production .go changed — fuzzing ALL targets in each changed package."
@@ -87,9 +87,9 @@ jobs:
                   [ -f "$f" ] || continue
                   d="./$(dirname "$f")"
                   # targets defined in this file, intersected with real listed targets
-                  defined="$(grep -oE '^func +Fuzz[A-Za-z0-9_]+' "$f" | awk '{print $2}' | sort -u)"
+                  defined="$(grep -oE '^func +Fuzz[A-Za-z0-9_]+' "$f" | awk '{print $2}' | sort -u || true)"
                   [ -n "$defined" ] || continue
-                  listed="$(go test -list '^Fuzz' "$d" 2>/dev/null | grep '^Fuzz' | sort -u)"
+                  listed="$(go test -list '^Fuzz' "$d" 2>/dev/null | grep '^Fuzz' | sort -u || true)"
                   comm -12 <(printf '%s\n' "$defined") <(printf '%s\n' "$listed") \
                     | while IFS= read -r fn; do printf '%s|%s\n' "$d" "$fn"; done
                 done >> "$plan_file"
