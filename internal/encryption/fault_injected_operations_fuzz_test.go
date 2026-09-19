@@ -220,10 +220,11 @@ var errInjectedFault = fmt.Errorf("fault-injected-operations: simulated environm
 type seamKind int
 
 const (
-	seamWrite  seamKind = iota // file write seam: faultCleanError or faultShortWrite
-	seamRename                 // file rename seam: faultCleanError or faultRealEffectThenError
-	seamSync                   // file sync seam: faultCleanError only (always post-commit)
-	seamSQL                    // GORM callback seam: faultCleanError only
+	seamWrite    seamKind = iota // file write seam: faultCleanError or faultShortWrite
+	seamRename                   // file rename seam: faultCleanError or faultRealEffectThenError
+	seamSync                     // file sync seam: faultCleanError only (always post-commit)
+	seamSQL                      // GORM callback seam: faultCleanError only
+	seamCombined                 // two seams faulted simultaneously — see runKEKRotateFaultCase
 )
 
 type seamSpec struct {
@@ -248,7 +249,7 @@ var opSeams = map[opID][]seamSpec{
 	opUpdate:    {{"sql:update-version", seamSQL}},
 	opDelete:    {{"sql:delete-node", seamSQL}, {"sql:delete-shares", seamSQL}, {"sql:delete-acls", seamSQL}},
 	opRewrap:    {{"rewrap:write-dek-pending", seamWrite}, {"rewrap:rename-dek", seamRename}, {"rewrap:syncdir", seamSync}},
-	opKEKRotate: {{"kek:write-salt-pending", seamWrite}, {"kek:write-dek-pending", seamWrite}, {"kek:rename-dek", seamRename}, {"kek:rename-salt", seamRename}, {"kek:syncdir-dek", seamSync}, {"kek:syncdir-salt", seamSync}},
+	opKEKRotate: {{"kek:write-salt-pending", seamWrite}, {"kek:write-dek-pending", seamWrite}, {"kek:rename-dek", seamRename}, {"kek:rename-salt", seamRename}, {"kek:syncdir-dek", seamSync}, {"kek:syncdir-salt", seamSync}, {"kek:rename-dek-verify-unknown", seamCombined}},
 	opBackup:    {{"backup:write", seamWrite}},
 }
 
@@ -277,9 +278,8 @@ func decodeFault(opSel, seamSel, kindSel, shortWriteK byte) (op opID, seam strin
 		// production bug (commitNewKEKFiles' error-cleanup on a rename-dek
 		// failure unconditionally deleted kek.salt.pending, destroying the only
 		// recovery path when the rename actually succeeded and merely reported
-		// failure) — now fixed (dekRenameActuallySucceeded,
-		// keymanager_kek_rotation.go); see
-		// docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md
+		// failure) — now fixed (classifyDEKRename, keymanager_kek_rotation.go);
+		// see docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md
 		// for the reachability analysis, reproduction, and fix description. This
 		// case is deterministic post-fix — see expectedKEKVia and
 		// runKEKRotateFaultCase's transparentRecovery handling.
@@ -289,6 +289,11 @@ func decodeFault(opSel, seamSel, kindSel, shortWriteK byte) (op opID, seam strin
 		return op, s.label, s.kind, &fileFault{kind: faultRealEffectThenError, err: errInjectedFault}
 	case seamSync:
 		return op, s.label, s.kind, &fileFault{kind: faultCleanError, err: errInjectedFault}
+	case seamCombined:
+		// The returned *fileFault is unused for this seam — runKEKRotateFaultCase
+		// special-cases s.label and arms its own pair of faults via
+		// armMultiFileFault. See its doc comment.
+		return op, s.label, s.kind, nil
 	}
 	return op, s.label, s.kind, &fileFault{kind: faultCleanError, err: errInjectedFault}
 }
@@ -299,6 +304,20 @@ func armFileFault(seam string, ff *fileFault) (restore func()) {
 	fileFaultHook = func(s string) *fileFault {
 		if s == seam {
 			return ff
+		}
+		return nil
+	}
+	return func() { fileFaultHook = prev }
+}
+
+// armMultiFileFault installs a distinct fault per seam simultaneously — used
+// only by the combined rename-dek+verification-failure case below, where a
+// single armFileFault can't express "two seams fail in the same call."
+func armMultiFileFault(faults map[string]*fileFault) (restore func()) {
+	prev := fileFaultHook
+	fileFaultHook = func(s string) *fileFault {
+		if f, ok := faults[s]; ok {
+			return f
 		}
 		return nil
 	}
@@ -759,7 +778,21 @@ func containsString(list []string, s string) bool {
 
 // ── KEK rotation ──────────────────────────────────────────────────────────
 
+// kekRenameDekVerifyUnknownSeam is the combined-fault seam label: rename-dek
+// applies for real but reports an error (faultRealEffectThenError) AND the
+// classifyDEKRename verification that would otherwise detect that gets its
+// own simulated stat/read failure — the exact "same blip disrupts both"
+// scenario the tri-state fix (classifyDEKRename returning dekRenameUnknown)
+// exists to fail safe against. Handled entirely separately from the generic
+// single-fault seams below: ff is unused (always nil, see decodeFault) since
+// this needs two simultaneous faults, not one.
+const kekRenameDekVerifyUnknownSeam = "kek:rename-dek-verify-unknown"
+
 func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, newPass string) {
+	if seam == kekRenameDekVerifyUnknownSeam {
+		runKEKRotateCombinedVerifyUnknownCase(t, oldPass, newPass)
+		return
+	}
 	dir := t.TempDir()
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
 	if err := km.Initialize(oldPass); err != nil {
@@ -809,6 +842,65 @@ func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, ne
 
 	if hits := scanForPlaintext(dir, dek0); len(hits) > 0 {
 		t.Fatalf("PLAINTEXT SPILL: kek-rotate fault %q left the raw DEK bytes on disk outside key files: %v", seam, hits)
+	}
+}
+
+// runKEKRotateCombinedVerifyUnknownCase drives the combined rename-dek
+// fault: the rename applies for real but reports an error, AND the
+// verification that would otherwise detect that (classifyDEKRename) gets its
+// own simulated failure — dekRenameUnknown, not dekRenameNotApplied. Asserts
+// the fail-safe direction directly: no .pending material is removed (the
+// concrete fail-open-under-uncertainty gap this case exists to catch — a
+// prior version of the fix treated ANY verification failure as "not
+// applied," which still permitted deleting kek.salt.pending here) and the
+// DEK remains fully recoverable regardless.
+func runKEKRotateCombinedVerifyUnknownCase(t *testing.T, oldPass, newPass string) {
+	dir := t.TempDir()
+	km := NewKeyManager(dir, "dek.key", "kek.salt")
+	if err := km.Initialize(oldPass); err != nil {
+		t.Fatalf("seed Initialize(oldPass=%q): %v", oldPass, err)
+	}
+	dek0 := append([]byte(nil), km.GetDEK()...)
+
+	restore := armMultiFileFault(map[string]*fileFault{
+		"kek:rename-dek":        {kind: faultRealEffectThenError, err: errInjectedFault},
+		"kek:verify-rename-dek": {kind: faultCleanError, err: errInjectedFault},
+	})
+	err := km.RotateKEKPassphrase(oldPass, newPass)
+	restore()
+
+	if err == nil {
+		t.Fatalf("HARNESS/oracle-c: kek-rotate seam=%q fault did not fire — RotateKEKPassphrase returned nil error", kekRenameDekVerifyUnknownSeam)
+	}
+	if strings.Contains(err.Error(), oldPass) || strings.Contains(err.Error(), newPass) {
+		t.Fatalf("ERROR HYGIENE: kek-rotate seam=%q error leaks a passphrase: %v", kekRenameDekVerifyUnknownSeam, err)
+	}
+
+	// The core assertion: kek.salt.pending must survive an UNKNOWN outcome —
+	// deleting it here, on mere uncertainty, is exactly the fail-open gap
+	// this case exists to catch.
+	if _, statErr := os.Stat(filepath.Join(dir, "kek.salt.pending")); statErr != nil {
+		t.Fatalf("FAIL-SAFE VIOLATION: kek.salt.pending was removed despite an UNKNOWN rename-dek outcome (the rename applied for real, but its verification ALSO failed) — this is exactly the fail-open-under-uncertainty gap the tri-state classification exists to close: %v", statErr)
+	}
+
+	km.CleanPendingDEK()
+
+	rec, via, ok := recoverDEK(dir, oldPass, newPass)
+	if !ok {
+		t.Fatalf("DATA LOSS: no recovery yields the DEK after the combined rename-dek+verification-failure fault")
+	}
+	if !bytes.Equal(rec, dek0) {
+		t.Fatalf("DEK CORRUPTION after the combined fault via %s: recovered key != original", via)
+	}
+	// via is expected to be the hazard-window recovery (apply-pending-salt+*),
+	// since the rotation stopped at the Unknown branch without attempting the
+	// salt rename — same deterministic state as kek:rename-salt's own case.
+	if via != "apply-pending-salt+new-passphrase" && via != "apply-pending-salt+old-passphrase" {
+		t.Fatalf("unexpected recovery path after the combined fault: via=%q, want apply-pending-salt+*", via)
+	}
+
+	if hits := scanForPlaintext(dir, dek0); len(hits) > 0 {
+		t.Fatalf("PLAINTEXT SPILL: combined rename-dek+verification-failure fault left the raw DEK bytes on disk outside key files: %v", hits)
 	}
 }
 

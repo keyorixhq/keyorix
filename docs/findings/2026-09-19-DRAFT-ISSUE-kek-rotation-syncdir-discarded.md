@@ -1,12 +1,12 @@
-# DRAFT — NOT FILED
+# Filed as #1950, fixed in this PR
 
-**Status: already fixed**, in the same branch/PR as this draft
-(`fix/kek-rename-dek-verify-before-cleanup`, commit checking both `SyncDir`
-errors below). Left drafted rather than deleted in case there's value in
-filing it anyway for changelog/release-note linkage (`git log`/PR history
-otherwise carries the record) — your call once you review the PR.
+**Status: filed as GitHub issue #1950, and already fixed** in the same
+branch/PR as this draft (`fix/kek-rename-dek-verify-before-cleanup`, the
+commit checking both `SyncDir` errors — see "Suggested direction ...
+IMPLEMENTED" below). The PR description carries "Closes #1950".
 
-This is a drafted GitHub issue for review before filing. It is not a
+This was originally a drafted GitHub issue, kept here as the record of the
+enumeration below now that #1950 is filed. It is not a
 `docs/findings/*-FINDING-*.md` (no severity/adversarial-verification claim is
 made here) — it's the enumeration the KEK-rotation rename-dek finding
 surfaced while tracing `SyncDir` call sites, kept separate per that finding's
@@ -17,7 +17,7 @@ rename-dek cleanup bug — see
 
 ---
 
-**Title:** encryption: rotation discards SyncDir errors after renaming key material
+**Title (as filed, #1950):** encryption: rotation discards SyncDir errors after renaming key material
 
 **Labels:** `enhancement`, `go`, priority: low
 

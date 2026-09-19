@@ -245,61 +245,88 @@ because the case it tolerated is no longer a failure at all.
 ## Fix implemented
 
 Landed on `fix/kek-rename-dek-verify-before-cleanup` (branched off the fuzzer
-branch, ships as one PR containing both the finding and the fix).
+branch, ships as one PR containing both the finding and the fix), in two
+steps.
+
+### Step 1 (commit `121783b8`): boolean verify-before-cleanup
 
 `commitNewKEKFiles`' rename-dek error branch (`keymanager_kek_rotation.go`)
-now calls a new helper, `dekRenameActuallySucceeded(baseDir, dekPath,
-newWrappedDEK)`, before any cleanup:
+called a new helper, `dekRenameActuallySucceeded(baseDir, dekPath,
+newWrappedDEK) bool`, before any cleanup: read the actual on-disk DEK content
+and compare it byte-for-byte against `newWrappedDEK`; `true` meant "fall
+through and complete the rotation transparently, keep `kek.salt.pending`,"
+`false` meant "fall through to the original cleanup." This closed the
+original bug (unconditional deletion) but had its own gap — see Step 2.
 
-- It reads the ACTUAL on-disk content at the DEK's active path
-  (`securefiles.SafeReadFile`, not a size/mtime heuristic — a size-only check
-  could not distinguish genuinely new content from old content of
-  coincidentally the same length) and compares it byte-for-byte against
-  `newWrappedDEK` (the bytes this call just tried to promote).
-- If the file is missing, unreadable, or doesn't match — the rename genuinely
-  did not happen. Falls through to the ORIGINAL cleanup (`os.Remove` both
-  `.pending` files) and returns the original error unchanged. This is the
-  well-behaved case and is unaffected by the fix.
-- If the file's content matches `newWrappedDEK` exactly — the rename actually
-  applied despite the reported error. In this case the function does **not**
-  delete `kek.salt.pending` (the only recovery material for the resulting
-  hazard window) and does **not** treat the call as failed: it falls through
-  past the `if` block entirely and continues executing exactly as the success
-  path would — the same best-effort `SyncDir`, the same
-  `kek:after-rename-dek` checkpoint, and the same attempt to rename the salt
-  into place. If that salt rename also succeeds (the expected outcome when
-  only the DEK rename's error was spurious), `RotateKEKPassphrase` returns
-  `nil` — the rotation completes fully and transparently, with the caller
-  never seeing an error at all for what was, on disk, a fully successful
-  rotation.
+### Step 2 (this commit): tri-state classification — closes a fail-open-under-uncertainty gap
 
-Scope, as instructed: only `commitNewKEKFiles`' rename-dek branch was
-changed. `RewrapDEK`'s `rewrap:rename-dek` cleanup (not currently
-exploitable — no second coupled file) and `commitNewKEKFiles`'
-`kek:rename-salt` branch (which already handles its own failure correctly
-without deleting anything) were deliberately left unchanged — see the fuzzer
-harness's doc comment for both as noted v2/follow-up candidates.
+The boolean version conflated two different situations under `false`:
+"confirmed the rename did NOT apply" (safe to clean up) and "COULD NOT
+confirm either way — e.g. the verification's own read/stat failed" (NOT safe
+to clean up, since the very same transient condition that made the rename
+report a spurious error in the first place — an NFS blip, for instance — can
+plausibly ALSO disrupt the follow-up read used to verify it). Reviewed and
+caught before this reached main: `dekRenameActuallySucceeded` returning
+`false` on a read error meant "rename applied, reply lost, and the follow-up
+verification read ALSO fails (same blip)" still deleted `kek.salt.pending`
+and orphaned the DEK — the exact failure mode this fix exists to prevent, now
+reachable through the verification path instead of the original one.
 
-### Fuzzer changes in the same commit
+Replaced with `classifyDEKRename`, returning one of three `dekRenameOutcome`
+values instead of a bool:
 
-`internal/encryption/fault_injected_operations_fuzz_test.go`:
-`isToleratedKnownOpenDataLoss` (the known-open tolerance) is deleted.
-`kek:rename-dek`'s ambiguous (`faultRealEffectThenError`) case is now
-DETERMINISTIC, not tolerated: `RotateKEKPassphrase` is expected to return
-`nil` (transparent recovery — see `runKEKRotateFaultCase`'s
-`transparentRecovery` handling) and `recoverDEK` is expected to succeed via
-`"new-passphrase"` (see `expectedKEKVia`). Any deviation — a non-nil error
-where transparent recovery is expected, or `recoverDEK` failing at all for
-this seam — now fails the test unconditionally; there is no longer a
-tolerance path to fall back on.
+- **`dekRenameNotApplied`** — the rename's SOURCE file (`dek.key.pending`)
+  still exists. A rename atomically moves its source, so this alone is
+  sufficient and definitive: the rename did not happen. Falls through to the
+  original cleanup, unchanged from Step 1's well-behaved case.
+- **`dekRenameApplied`** — the source is confirmed gone AND the active
+  `dek.key` holds exactly `newWrappedDEK`. Definitively did happen. Falls
+  through past the cleanup and completes the rotation transparently, exactly
+  as Step 1's `true` case did.
+- **`dekRenameUnknown`** — neither could be confirmed: a stat error on the
+  source, a read error on the destination, or destination content matching
+  neither the old nor the new wrapped DEK. **Deletes nothing** (no `.pending`
+  file is removed) and returns an error telling the operator the outcome is
+  unconfirmed and to re-run `rotate-kek` or recover manually. This is the new
+  state Step 1 didn't have — previously collapsed into "not applied," which
+  is what permitted the cleanup to run.
 
-### Red-proof
+`classifyDEKRename` checks the source's existence FIRST (a plain
+existence stat, sufficient on its own for `NotApplied` — no content
+comparison needed, unlike the destination check) and only reads the
+destination's content when the source is confirmed gone.
 
-Temporarily forced `dekRenameActuallySucceeded` to always return `false`
-(reverting behavior to the original unconditional-cleanup bug) — the fuzzer's
-seed corpus immediately failed at exactly the `kek:rename-dek` ambiguous
-seam, with a `REGRESSION` message (not `DATA LOSS`, since the fuzzer's own
-oracle for this case now expects success, not tolerated failure — reverting
-the fix makes the actual outcome diverge from that expectation). Restored the
-fix — green again, full package suite (574 tests) passing. Not committed as a
-toggle.
+Scope unchanged from Step 1: only `commitNewKEKFiles`' rename-dek branch.
+`RewrapDEK`'s `rewrap:rename-dek` cleanup and `kek:rename-salt`'s own branch
+remain noted v2/follow-up candidates in the fuzzer's doc comment.
+
+### Fuzzer changes
+
+`isToleratedKnownOpenDataLoss` (the known-open tolerance) is deleted (Step
+1); `kek:rename-dek`'s ambiguous case is DETERMINISTIC (`RotateKEKPassphrase`
+returns `nil`, `recoverDEK` succeeds via `"new-passphrase"` — see
+`expectedKEKVia`, `runKEKRotateFaultCase`'s `transparentRecovery`).
+
+Step 2 adds a NEW combined-fault seam,
+`kek:rename-dek-verify-unknown` (`runKEKRotateCombinedVerifyUnknownCase`):
+arms `kek:rename-dek` with the ambiguous fault AND a second, dedicated
+`kek:verify-rename-dek` seam that `classifyDEKRename` itself checks
+(nil-in-production, same pattern) to simulate its own verification failing —
+the exact "same blip hits both" scenario above. Asserts directly: no
+`.pending` file is removed, and the DEK remains fully recoverable (via the
+hazard-window path, `apply-pending-salt+*`, since the rotation stops at the
+`Unknown` branch without attempting the salt rename).
+
+### Red-proofs
+
+- Step 1: temporarily forced `dekRenameActuallySucceeded` to always return
+  `false` — the seed corpus failed at `kek:rename-dek` with `REGRESSION`.
+  Restored — green.
+- Step 2: temporarily made the `kek:verify-rename-dek` fault path return
+  `dekRenameNotApplied` instead of `dekRenameUnknown` (simulating the OLD
+  err-collapses-to-false behavior applied to the NEW verification-failure
+  case) — the new combined-fault seed immediately failed with `FAIL-SAFE
+  VIOLATION: kek.salt.pending was removed despite an UNKNOWN rename-dek
+  outcome`. Restored — green, full package suite passing.
+
+Neither red-proof was committed as a toggle.
