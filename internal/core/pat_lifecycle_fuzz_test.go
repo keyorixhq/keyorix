@@ -177,7 +177,7 @@ func mutatePATToken(base string, kind, pos byte, payload []byte) string {
 		}
 		return base
 	case 6: // whitespace / unicode confusable wrapping
-		return "​" + base + " "
+		return "\u200b" + base + " "
 	case 7: // encoding variant: same secret bytes, padded StdEncoding instead of RawURLEncoding
 		if secret, ok := strings.CutPrefix(base, patPrefix); ok {
 			if raw, err := base64.RawURLEncoding.DecodeString(secret); err == nil {
