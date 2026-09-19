@@ -1,0 +1,6 @@
+go test fuzz v1
+string("0")
+uint16(443)
+[]byte("01\x00000")
+bool(false)
+bool(false)

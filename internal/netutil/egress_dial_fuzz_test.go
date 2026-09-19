@@ -60,6 +60,8 @@ func isRawV4Private(a, b, c, d byte) bool {
 		return true
 	case a == 127: // loopback
 		return true
+	case a == 0: // RFC 1122 "this network" -- treated as loopback by many kernels
+		return true
 	case a == 169 && b == 254: // link-local / cloud IMDS
 		return true
 	case a == 100 && b >= 64 && b <= 127: // RFC 6598 shared address space
@@ -226,7 +228,22 @@ func FuzzEgressDialEnforcement(f *testing.F) {
 		} else {
 			addr = net.JoinHostPort(host, fmt.Sprint(port))
 		}
-		hostIsLiteral := net.ParseIP(host) != nil
+		// Derived from what DialContext itself will actually split addr into,
+		// not from the raw host parameter: when malformed is set, addr is the
+		// unwrapped fuzz string, so a fuzzer-chosen host that happens to
+		// contain its own "ip:port" shape (e.g. "0.0.0.0:0") makes
+		// net.SplitHostPort succeed despite malformed's intent, and
+		// DialContext then treats the SPLIT host as the literal-IP target —
+		// not the untouched, colon-containing outer host string. Recomputing
+		// hostIsLiteral from the raw host in that case would wrongly say
+		// "not literal" and send this assertion down the rebinding-check
+		// branch for an address that was never resolved at all, producing a
+		// false REBINDING failure independent of DialContext's own behavior.
+		splitHost := host
+		if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+			splitHost = h
+		}
+		hostIsLiteral := net.ParseIP(splitHost) != nil
 
 		conn, err := d.DialContext(context.Background(), "tcp", addr)
 		_ = conn
@@ -292,8 +309,8 @@ func FuzzEgressDialEnforcement(f *testing.F) {
 			if !ipInRound(dialedIP, rounds[0]) {
 				t.Fatalf("REBINDING: dialed %s, which is not a member of the first resolved round %v — DialContext used a later/unvalidated resolution", dialedIP, rounds[0])
 			}
-		} else if !dialedIP.Equal(net.ParseIP(host)) {
-			t.Fatalf("literal-IP host %q dialed a different address %s", host, dialedIP)
+		} else if !dialedIP.Equal(net.ParseIP(splitHost)) {
+			t.Fatalf("literal-IP host %q dialed a different address %s", splitHost, dialedIP)
 		}
 	})
 }

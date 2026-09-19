@@ -163,14 +163,15 @@ func (d Dialer) disallow(ip net.IP) bool {
 }
 
 // privateNetworkCIDRs is the canonical set of IP ranges IsPrivateOrLinkLocal
-// refuses. Covers RFC-1918, loopback, link-local (including cloud IMDS at
-// 169.254.169.254), shared carrier-grade NAT (RFC 6598), and IPv6
-// private/link-local equivalents.
+// refuses. Covers RFC-1918, loopback, "this network" (RFC 1122 §3.2.1.3),
+// link-local (including cloud IMDS at 169.254.169.254), shared carrier-grade
+// NAT (RFC 6598), and IPv6 private/link-local equivalents.
 var privateNetworkCIDRs = func() []*net.IPNet {
 	var nets []*net.IPNet
 	for _, cidr := range []string{ // NOSONAR -- these are the SSRF-guard blocklist ranges themselves (RFC-1918/1122/6598 + IPv6 equivalents), not a live endpoint; hardcoding them is the point of IsPrivateOrLinkLocal
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // NOSONAR -- RFC-1918
 		"127.0.0.0/8",    // loopback
+		"0.0.0.0/8",      // NOSONAR -- RFC 1122 "this network"; many kernels (Linux included) treat a connect() to 0.0.0.0 as a connect to loopback, making it a live SSRF bypass, not merely a non-routable curiosity
 		"169.254.0.0/16", // NOSONAR -- link-local / cloud IMDS
 		"100.64.0.0/10",  // NOSONAR -- shared address space (RFC 6598)
 		"::1/128",        // IPv6 loopback
