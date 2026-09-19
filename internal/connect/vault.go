@@ -57,7 +57,9 @@ func NewVaultConnector(name, address, token string, allowedRefs []string) *Vault
 			// sizeCappedRoundTripper's post-decompression response-size cap
 			// (hardened_client.go). Vault's own io.LimitReader below is kept too —
 			// this is belt-and-suspenders at the same bound, not a replacement.
-			Transport: newConnectHardenedTransport(),
+			// vaultBaseTransport() is Go's own stdlib default -- Vault never had
+			// any SDK layer or custom transport tuning to preserve here.
+			Transport: newConnectHardenedTransport(vaultBaseTransport()),
 			// Refuse to follow any redirect. Go's default redirect policy strips
 			// Authorization/Cookie/WWW-Authenticate on a cross-host hop, but
 			// X-Vault-Token is a custom header it does NOT know to strip — so a

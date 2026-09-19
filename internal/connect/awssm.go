@@ -107,9 +107,13 @@ func (c *AWSSecretsManagerConnector) client(ctx context.Context) (smSecretGetter
 	// property explicit and provable (refuseRedirect) instead of relying on an
 	// untraced SDK internal, and adds what the default genuinely lacks: the
 	// link-local-refusing dialer and the post-decompression size cap (§3).
+	// awsBaseTransport() is a REAL clone of the SDK's own default transport
+	// (hardened_client.go), via its own exported constructor -- not a
+	// hand-copied approximation, so it tracks the SDK's actual tuning
+	// (including its FIPS-mode TLS curve-preference restriction) automatically.
 	return secretsmanager.NewFromConfig(cfg, func(o *secretsmanager.Options) {
 		o.HTTPClient = &http.Client{
-			Transport:     newConnectHardenedTransport(),
+			Transport:     newConnectHardenedTransport(awsBaseTransport()),
 			CheckRedirect: refuseRedirect,
 		}
 	}), nil

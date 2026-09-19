@@ -518,6 +518,169 @@ not a forecast)**:
 | §1's no-ref-binding gap (all 4 backends) | **Unaffected by this fix** — orthogonal problem (response identity vs. transport hardening); would need each backend's own response-identity field (`ARN`/`Name`, `Secret.ID`, `AccessSecretVersionResponse.Name`) checked against the requested ref, not anything in the shared client. |
 | §2's baseline, general private/RFC-1918/on-prem slice | **Still deliberately unaffected — stays report-only, on purpose.** Only the link-local slice above is now guarded; a genuinely private/on-prem address (e.g. `10.x`, `192.168.x`) remains unguarded at both registration and dial, exactly as `validateConnectorURL`'s own doc comment already argues is correct for this product's on-prem deployment shape — confirmed by `TestVaultConnector_AllowsGenuinelyPrivateAddress` (`link_local_guard_test.go`), the explicit contrast case. |
 
+### 5a. Post-review hardening, 2026-09-19: proxy bypass, TLS/transport parity, explicit cap error
+
+A second review of the landed fix (before push) found one real gap and confirmed two
+things that needed verifying rather than assuming. All four items below landed in
+the same PR, same branch (`fix/connect-hardened-client`).
+
+**1. Proxy bypass — real gap, fixed.** `connectGuardedDialer`'s per-dial
+`netutil.Dialer` check is blind to the request's actual target when a proxy is
+configured: with `Transport.Proxy` set (all three base transports set it, matching
+each backend's own pre-fix default), `DialContext` dials the *proxy's* address for
+a plain-HTTP request, or the proxy first for an HTTPS CONNECT tunnel — never the
+origin target. A request to `http://169.254.169.254/...` routed through a
+configured proxy would have sailed past the dial-time guard entirely, since the
+guard only ever validated the proxy's own (non-link-local) address. Fixed by
+`targetGuardRoundTripper` (`hardened_client.go`): a new outermost `RoundTripper`
+layer that checks `req.URL.Hostname()` — the request's own declared target, set by
+the caller regardless of how the transport ends up reaching it — before the
+proxy/dial layer ever sees the request. Scope, stated explicitly (the same
+discipline as the rest of this doc): this only catches a *literal* link-local IP as
+the target; a *hostname* that resolves to link-local only at the proxy's own DNS
+resolution is not caught here — the client never sees or controls that resolution
+when a proxy is in use, and closing it would mean either resolving client-side
+first (defeating the point of the proxy) or trusting the proxy's own policy (out of
+scope). Proving tests:
+`TestConnectHardenedTransport_ProxyDoesNotBypassLinkLocalGuard` (target refused,
+proxy never contacted — `proxyHits == 0`),
+`TestConnectHardenedTransport_ProxyStillWorksForLegitimateTarget` (contrast case,
+confirms the fix doesn't just block everything once a proxy is configured).
+Red-proofed by temporarily removing `targetGuardRoundTripper` — the request
+succeeded through the proxy (`proxyHits == 1`, no error) instead of being refused.
+Reverted, never committed.
+
+**2. TLS/transport parity — investigated, no pre-existing config to regress, but a
+real transport-tuning gap was found and fixed anyway.** Before assuming anything,
+checked whether Vault, Azure Key Vault, or AWS Secrets Manager ever exposed a way
+for an operator to configure a custom CA or client certificate: confirmed,
+exhaustively, **no** — `ConnectorConfig` (`internal/config/config.go`) has no
+TLS-related field at all, and none of `vault.go`/`azurekv.go`/`awssm.go` ever read
+one, before or after this fix. So there was nothing to "preserve" on that specific
+axis; this fix does not regress custom-CA support because it never existed.
+What the review DID find real: `newConnectHardenedTransport` originally built its
+base transport as `http.DefaultTransport.Clone()` unconditionally for all three
+backends, discarding Azure's and AWS's own SDK-tuned transport defaults (Vault
+never had SDK tuning to discard, since it's raw `net/http` — see below). Fixed by
+giving each backend its own base-transport constructor
+(`vaultBaseTransport`/`azureBaseTransport`/`awsBaseTransport`, `hardened_client.go`),
+and having `newConnectHardenedTransport` take a `*http.Transport` parameter and
+clone/wrap IT rather than building a fresh one from Go's generic default:
+
+| Field | Vault (before = after) | Azure (before → after) | AWS (before → after) |
+|---|---|---|---|
+| Source | Go `http.DefaultTransport` (never had SDK tuning) | Go generic default → azcore's own default (hand-replicated, see below) | Go generic default → **real clone** of `awshttp.NewBuildableClient().GetTransport()` |
+| Dial timeout / keep-alive | 30s / 30s (unchanged — matches all three's own convention) | 30s / 30s (unchanged in value; now explicit via `connectGuardedDialer`, not inherited implicitly) | 30s / 30s (unchanged in value, same reason) |
+| `ForceAttemptHTTP2` | `true` | `true` | `true` |
+| `MaxIdleConns` | 100 | 100 | 100 |
+| `MaxIdleConnsPerHost` | 0 (→ Go's `DefaultMaxIdleConnsPerHost`=2 internally) | 0 → **10** | 0 → **10** |
+| `MaxConnsPerHost` | 0 (unlimited) | 0 (unlimited) | 0 → **2048** |
+| `IdleConnTimeout` | 90s | 90s | 90s |
+| `TLSHandshakeTimeout` | 10s | 10s | 10s |
+| `ExpectContinueTimeout` | 1s | 1s | 1s |
+| `ResponseHeaderTimeout` | 0/none (all three backends' own defaults agree — none set one) | 0/none | 0/none |
+| `TLSClientConfig.MinVersion` | unset (Go's own crypto/tls default, effectively ≥TLS1.2 today) | unset → **TLS1.2 explicit** | unset → **TLS1.2 explicit** |
+| `TLSClientConfig.Renegotiation` | unset (`RenegotiateNever`) | unset → **`RenegotiateFreelyAsClient`** | unset (AWS's own default doesn't set this either) |
+| `TLSClientConfig.CurvePreferences` | unset | unset (azcore doesn't set this) | unset → **FIPS-140-restricted when `crypto/fips140.Enabled()`, else unset** (tracks AWS SDK's own logic automatically, not a hand-copy) |
+
+Before this fix, Azure and AWS would have silently lost `MaxIdleConnsPerHost`
+(10→2, more connection churn under concurrent load), AWS would have lost its
+`MaxConnsPerHost` ceiling (2048→unlimited) and its FIPS-mode curve restriction (a
+real compliance-relevant gap for a FIPS-140 deployment), and Azure would have lost
+`Renegotiation: RenegotiateFreelyAsClient` (could break a legacy Key Vault-adjacent
+endpoint requiring TLS renegotiation). None of these are hand-copied literals for
+AWS — `awsBaseTransport` calls the SDK's own exported `GetTransport()` accessor, so
+it tracks the SDK's actual defaults across version bumps automatically, the same
+"prefer machine-checked over hand-duplicated" discipline this repo's own
+engineering practices already require elsewhere. Azure has no equivalent exported
+accessor (`azcore/runtime`'s own default transport is unexported with no public
+accessor), so `azureBaseTransport` is a hand-replication of
+`azcore@v1.23.1/runtime/transport_default_http_client.go` (version pinned per
+`go.mod` at the time of writing) — flagged as needing re-verification against that
+file whenever azcore is bumped, not silently assumed to stay correct forever.
+Deliberately NOT replicated: azcore's own HTTP/2 `ReadIdleTimeout`(10s)/`PingTimeout`(5s)
+tuning (via `http2.ConfigureTransports`) — a connection-health nicety, not a
+correctness or security property; replicating it would mean vendoring
+`golang.org/x/net/http2` directly for a minor gap, and Go's own `ForceAttemptHTTP2`
+already configures a working (if less tightly tuned) HTTP/2 transport
+automatically. Proving test:
+`TestConnectHardenedTransport_ParityWithBackendDefaults` (`transport_parity_test.go`),
+red-proofed per-field by temporarily discarding a backend's real base transport in
+favor of Go's generic default — the AWS case failed cleanly on
+`MaxIdleConnsPerHost` (10 expected, 0 actual). Reverted, never committed.
+
+Separately, confirmed the **design property** that matters going forward even
+though no operator-facing custom-CA config exists today:
+`newConnectHardenedTransport` wraps whatever base transport it's given rather than
+replacing it, so if custom-CA support is ever added (a realistic future ask for
+Vault specifically — on-prem Vault instances commonly use an internal CA) this
+hardened-client layer won't be what silently breaks it. Proving test:
+`TestConnectHardenedTransport_PreservesCustomTLSTrust` (connects successfully
+against an `httptest.NewTLSServer` whose cert is trusted only via a custom
+`RootCAs` pool supplied on the base transport, standing in for a private CA),
+paired with `TestConnectBaseTransports_NoCustomCAConfiguredToday` (machine-checks
+the accurate CURRENT-state claim: none of the three base-transport constructors
+set a custom `RootCAs` today). Red-proofed by temporarily making
+`newConnectHardenedTransport` discard its `base` parameter and rebuild from Go's
+generic default instead — the private-CA connection failed with a genuine `x509:
+certificate signed by unknown authority` error. Reverted, never committed.
+
+**3. Cap-overflow behavior — was silent truncation, now an explicit, typed,
+non-retryable error.** The original implementation used `io.LimitReader`, which
+silently truncates: a downstream JSON decoder then fails on the resulting
+malformed-JSON tail with a generic "unexpected end of JSON input"-shaped error,
+fail-closed but indistinguishable from any other truncated-body decode failure.
+Fixed by `cappedBodyReader` (`hardened_client.go`), adapting `net/http.MaxBytesReader`'s
+own read-n+1-bytes algorithm (server-side request bodies; `net/http` has no
+exported client-side response-body equivalent) for a response body: each `Read`
+requests at most one more byte than the remaining budget, so a single call can
+distinguish "the stream ended exactly at the cap" from "there was more data past
+it" and return a distinct `responseTooLargeError` in the latter case, matched via
+`errors.Is`. A genuinely unexpected finding while wiring this in: both SDKs'
+default retry policies (Azure's azcore, AWS's aws-sdk-go-v2) classify an
+unrecognized I/O error surfacing during body-read as *possibly transient* and
+retry the whole request — confirmed empirically, Azure's client under its own
+DEFAULT retry policy (azurekv.go sets no override) added **~8 seconds** of real
+exponential-backoff delay retrying a cap failure against the exact same,
+still-oversized response 3 extra times, before this was addressed. A cap overflow
+is a permanent condition (the SAME response will exceed the cap on a retry too),
+so `responseTooLargeError` now implements both SDKs' "don't retry me" marker
+interfaces *structurally* — satisfying `errorinfo.NonRetriable`'s and
+`retry.RetryableError`'s method sets without importing either SDK's internal
+retry-classification package (Azure's is genuinely internal and unimportable;
+Go interface satisfaction doesn't require importing the defining package). Proving
+tests: `TestAWSSMConnector_ResponseSizeCap_FailsClosed` /
+`TestAzureKVConnector_ResponseSizeCap_FailsClosed` (`response_size_cap_test.go`)
+assert `errors.Is(err, errResponseTooLarge)`; the Azure test additionally asserts
+wall-clock elapsed time under 2s, deliberately WITHOUT overriding azcore's default
+retry policy (unlike the fuzz harness, which does, for unrelated reasons) — that
+default is exactly what the timing assertion checks against. Red-proofed twice,
+separately: (a) reverting `cappedBodyReader` to `io.LimitReader` — both
+`errors.Is` assertions failed, matching generic "unexpected EOF"-shaped errors
+instead; (b) removing just the two marker methods with `cappedBodyReader` still in
+place — the Azure timing assertion failed at 8.28s. Both reverted, never
+committed.
+
+**4. Cap value vs. each backend's own documented maximum secret size, requested
+per-backend.** `connectMaxResponseBytes` (1 MiB, reusing `vaultMaxResponseBytes`)
+is set well above every backend's own documented legitimate maximum, on purpose —
+the cap exists to bound a HOSTILE response's amplification, not to model a real
+secret's size tightly against it:
+
+| Backend | Documented max secret-value size | `connectMaxResponseBytes` | Headroom |
+|---|---|---|---|
+| AWS Secrets Manager | 64 KiB | 1 MiB | ~16x |
+| Azure Key Vault | 25 KiB | 1 MiB | ~41x |
+| GCP Secret Manager | 64 KiB (per version) | 1 MiB (not currently applied — GCP is gRPC, out of this fix's scope; bounded today only by grpc-go's own 4 MiB default `MaxRecvMsgSize`, per §3's original table) | ~16x, if ever applied |
+| Vault | no documented hard cap (operator-defined KV backend) | 1 MiB (`vaultMaxResponseBytes`, pre-existing, unchanged by this fix) | N/A |
+
+The ~16-41x headroom is deliberate, not an oversight: a cap set tight against the
+legitimate maximum would risk false-positive failures on a real secret that
+happens to sit near a provider's own documented ceiling (encoding overhead,
+JSON-escaping expansion, envelope/metadata fields alongside the value), where a cap
+with generous headroom only ever fires on a response that's already wildly outside
+any legitimate shape — exactly the gzip-bomb case this section exists to bound.
+
 ---
 
 ## 6. Surviving `internal/connect` mutants (`killed_by=survived_no_fuzz_coverage`) vs. coverage replay

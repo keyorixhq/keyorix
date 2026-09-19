@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
@@ -84,7 +85,7 @@ func TestAWSSMConnector_ResponseSizeCap_FailsClosed(t *testing.T) {
 		Credentials:  credentials.NewStaticCredentialsProvider(awsFuzzAccessKeyID, awsFuzzSecretKey, ""),
 		BaseEndpoint: aws.String(srv.URL),
 		HTTPClient: &http.Client{
-			Transport:     newConnectHardenedTransport(),
+			Transport:     newConnectHardenedTransport(awsBaseTransport()),
 			CheckRedirect: refuseRedirect,
 		},
 		Retryer: retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 1 }),
@@ -96,12 +97,23 @@ func TestAWSSMConnector_ResponseSizeCap_FailsClosed(t *testing.T) {
 	val, err := c.GetSecret(context.Background(), "cap-test-ref")
 	require.Error(t, err, "a response whose decompressed size exceeds the cap must fail closed, not return a (truncated) value")
 	assert.Empty(t, val)
+	assert.ErrorIs(t, err, errResponseTooLarge, "must be the explicit cap-overflow error (MaxBytesReader-style), not a generic truncated-body decode failure")
 }
 
 // TestAzureKVConnector_ResponseSizeCap_FailsClosed reuses sizeCappedRoundTripper
 // directly (the real production type) rather than newConnectHardenedTransport,
 // which builds its own base *http.Transport that wouldn't trust srv's
 // self-signed TLS cert — the cap logic under test is identical either way.
+//
+// Deliberately does NOT override azcore's default Retry policy (unlike the
+// fuzz harness, which sets a fast one for unrelated reasons) — that default
+// is exactly what this test's own wall-clock assertion below is checking
+// against: azcore's retry classifier, by default, treats an unrecognized I/O
+// error surfacing during body-read as possibly transient and retries with
+// real exponential backoff. Confirmed empirically: before responseTooLargeError
+// implemented the NonRetriable() marker, this exact test took ~8s (3 extra
+// attempts against the same still-oversized response). An explicit fast-retry
+// override here would have hidden that regression rather than catching it.
 func TestAzureKVConnector_ResponseSizeCap_FailsClosed(t *testing.T) {
 	body := buildOversizedGzipJSON(t, `{"value":"`, `"}`, int(connectMaxResponseBytes)*2)
 
@@ -131,7 +143,11 @@ func TestAzureKVConnector_ResponseSizeCap_FailsClosed(t *testing.T) {
 	c := NewAzureKeyVaultConnector("cap-test", srv.URL, nil)
 	c.newClient = func(_ context.Context) (azSecretGetter, error) { return cl, nil }
 
+	start := time.Now()
 	val, err := c.GetSecret(context.Background(), "cap-test-ref")
+	elapsed := time.Since(start)
 	require.Error(t, err, "a response whose decompressed size exceeds the cap must fail closed, not return a (truncated) value")
 	assert.Empty(t, val)
+	assert.ErrorIs(t, err, errResponseTooLarge, "must be the explicit cap-overflow error (MaxBytesReader-style), not a generic truncated-body decode failure")
+	assert.Less(t, elapsed, 2*time.Second, "must fail on the FIRST attempt under azcore's default retry policy -- a cap overflow is a permanent, not transient, condition; if this is slow, responseTooLargeError's NonRetriable() marker regressed")
 }

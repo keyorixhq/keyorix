@@ -61,10 +61,13 @@ func (c *AzureKeyVaultConnector) client(ctx context.Context) (azSecretGetter, er
 	// docs/findings/2026-09-19-FINDING-connect-response-trust-gaps.md §2/§3.
 	// azsecrets builds its OWN internal auth-challenge policy on top of whatever
 	// Transporter is supplied here, so this doesn't disturb that handshake.
+	// azureBaseTransport() replicates azcore's own default transport tuning
+	// (hardened_client.go) -- see its own doc comment for why this can't be
+	// machine-derived the way awsBaseTransport is.
 	cl, err := azsecrets.NewClient(c.vaultURL, cred, &azsecrets.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Transport: &http.Client{
-				Transport:     newConnectHardenedTransport(),
+				Transport:     newConnectHardenedTransport(azureBaseTransport()),
 				CheckRedirect: refuseRedirect,
 			},
 		},
