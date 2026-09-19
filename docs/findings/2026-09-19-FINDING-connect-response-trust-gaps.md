@@ -9,8 +9,11 @@ regression — these are pre-existing design gaps, confirmed by direct source re
 and, where noted, by live reproduction against the real backend SDKs.
 
 Status: **not fixed**. Per this campaign's rules, this doc documents and does not
-patch. Three independent, related gaps below; recommend a product decision on which
-(if any) to close, since each has a different cost/benefit.
+patch. Three independent, related gaps below (§1-3), plus confirmation that
+pagination doesn't apply (§4) and a coverage-replay accounting of the 15 surviving
+`internal/connect` mutants against these 4 targets (§5). Recommend a product
+decision on which (if any) of §1-3 to close, since each has a different
+cost/benefit.
 
 ---
 
@@ -47,6 +50,13 @@ not redundant; this finding is about the latter, which has no coverage at all.
 bound via a different mechanism) — but worth considering for Azure specifically in
 combination with finding 2 below, since Azure is also the one that actively follows
 redirects.
+
+**Severity: Low.** This is a defense against *misrouting* (a proxy, cache, or
+backend-side bug answering for the wrong ref), not against a *compromised* backend —
+a backend that has been compromised outright can simply lie about the identity field
+too, so checking it would not have stopped that case. The value of closing this is
+narrower than it might first look: it catches accidental misrouting, not malicious
+backends.
 
 ---
 
@@ -121,13 +131,48 @@ refuses to follow any redirect by explicit design (`CheckRedirect` returns
 `http.ErrUseLastResponse`, already merged and tested). GCP is gRPC, not HTTP — no
 redirect concept applies.
 
+**Does the connector's transport use `netutil`'s guarded dialer?** No — confirmed by
+instrumenting the actual `DialContext` the connector's transport uses (a wrapper
+recording every address dialed, not a stand-in), not by reading source and
+inferring. Redirected to two targets:
+
+```
+target="127.0.0.1:1"        dialed=[<origin>, 127.0.0.1:1]        err="... connect: connection refused"
+target="169.254.169.254:80" dialed=[<origin>, 169.254.169.254:80] err="... context deadline exceeded"
+```
+
+Both targets were actually dialed (recorded by the spy *before* the real
+`net.Dialer.DialContext` ran) — the `127.0.0.1:1` case fails fast with a normal TCP
+refusal (nothing listens there), and the `169.254.169.254` case fails only after the
+client's own request timeout, consistent with a dial attempt that got no response
+(link-local addresses are not specially blocked at the OS/sandbox level here
+either). Neither failure comes from a guard rejecting the target *before* dialing —
+both are ordinary network-level outcomes. This confirms `azurekv.go`'s connector
+does not wire in `netutil.Dialer` (or any other host-classification check) on its
+HTTP transport, unlike the JWKS fetcher's `jwksEgressTransport`
+(`internal/core/oidc_jwks.go`), which does use `netutil.IsLinkLocal` on its dialer
+for exactly this class of guard.
+
+**Severity: Medium.** Two things raise this above the ref-binding finding's Low: (1)
+this requires no backend compromise at all, only a single 3xx response with a
+`Location` header — a misconfigured reverse proxy in front of the real Key Vault, or
+an open-redirect on the real Key Vault's own infrastructure, is enough; (2) it
+reaches an unguarded dial to an attacker-chosen destination, including
+`netutil`-classified private/link-local targets (confirmed above), which is exactly
+the SSRF shape this codebase already has a standard guard for elsewhere. It stops
+short of High because credentials are confirmed not to leak (limiting the blast
+radius to response-content trust, not credential theft) and because triggering it
+requires the operator's own configured Key Vault endpoint to actually emit a
+redirect, which is not the default posture of a healthy, uncompromised Vault.
+
 **Recommendation**: for Azure specifically, either (a) refuse redirects outright the
 same way Vault does (`CheckRedirect` returning a refusal), which is almost certainly
 correct since Key Vault's real GetSecret API has no legitimate reason to redirect a
 GET, or (b) at minimum validate the redirect target isn't
 private/link-local (reusing `netutil.IsPrivateOrLinkLocal`, the same predicate
-already used elsewhere in this codebase for exactly this class of guard) before
-following. (a) is the smaller, more clearly-correct change.
+already used elsewhere in this codebase for exactly this class of guard, and now
+confirmed by live test to be exactly what's missing) before following. (a) is the
+smaller, more clearly-correct change.
 
 ---
 
@@ -142,17 +187,42 @@ Requested per-backend report:
 | Azure Key Vault | **No** | `runtime.Payload()` → `io.ReadAll(resp.Body)`, unconditional (`sdk/internal/exported/exported.go:52`, confirmed by direct read) | — |
 | GCP Secret Manager | **Yes, but not Keyorix's** | gRPC client-side `MaxRecvMsgSize` default, 4 MiB (`google.golang.org/grpc/clientconn.go:139`, `defaultClientMaxReceiveMessageSize`) | Inherited from grpc-go's own default, not set by Keyorix |
 
-**Not measured**: actual peak allocation under a multi-GB gzip-bomb-shaped response
-for AWS/Azure. Both paths (`json.Decoder` streaming; `io.ReadAll`) would, in
-principle, allocate proportionally to the DECOMPRESSED size if the underlying HTTP
-transport performs transparent gzip decompression (Go's default `http.Transport`
-behavior when the caller doesn't set its own `Accept-Encoding`, which neither
-`awssm.go` nor `azurekv.go` does) — but this was not empirically measured (no peak-RSS
-instrumentation was built) in this round, only the absence of an explicit cap was
-confirmed by reading the code. If this is worth closing, measuring the actual
-amplification factor first (rather than assuming worst-case) would clarify whether
-it is a real DoS risk in practice or a theoretical one bounded by other factors
-(connection timeouts, OS-level memory limits on the process).
+**Measured** (not inferred): a fake server sending `Content-Encoding: gzip` with a
+~2.1 MiB compressed body (a JSON envelope wrapping a ~1 GiB run of a single
+repeated byte, ~510:1 compression ratio) against each connector's real client
+construction path, peak `runtime.MemStats.HeapAlloc` sampled every 2ms during the
+call (a watermark — a spike narrower than the sample interval could be missed —
+and delta is measured against a baseline taken immediately before the call, not an
+absolute number):
+
+| Backend | `Accept-Encoding` sent | Transparent decompression? | Peak HeapAlloc delta | Elapsed | Result |
+|---|---|---|---|---|---|
+| AWS Secrets Manager | `gzip` (Go's transport default; SDK sets nothing explicit) | Yes | **~4.09 GiB** | 6.4s | `err=nil`, full ~1 GiB string returned as the secret value |
+| Azure Key Vault | `gzip` (same) | Yes | **~3.64 GiB** | 5.9s | `err=nil`, full ~1 GiB string returned as the value |
+| Vault (control) | `gzip` (same) | Yes | **~0.9 MiB** | 7ms | `err="secret ... has no data"` — the 1 MiB `io.LimitReader` truncates the read, `json.Unmarshal` fails on the truncated bytes, fails closed |
+
+Confirms both open questions from the earlier (inference-only) version of this
+section: (1) neither SDK sets its own `Accept-Encoding`, so Go's `http.Transport`
+does add it and transparently decompress — the gzip-bomb shape works exactly as the
+threat model describes; (2) the resulting amplification is real and large (~4x the
+decompressed size in peak heap, likely accounting for the raw decompressed bytes
+buffer plus at least one further copy during JSON decode/UTF-8 validation — not
+further decomposed here), not merely theoretical. The Vault control confirms the
+inverse just as concretely: the *same* transparent-decompression behavior occurs
+(`Accept-Encoding: gzip` is sent, nothing in Vault's connector disables it either),
+but the explicit `io.LimitReader` caps what `GetSecret` ever pulls through
+`resp.Body.Read()` regardless of how much the underlying gzip reader could produce —
+bounding both the memory (~0.9 MiB vs ~4 GiB) and the time (7ms vs ~6s) by roughly
+three orders of magnitude, and failing closed rather than returning a
+truncated/garbage value.
+
+**Severity: Medium.** A single unauthenticated-adjacent response (the connector
+already holds valid credentials to the backend, so this requires the backend itself
+to be hostile/compromised/MITM'd, not an anonymous attacker) forces ~4 GiB of heap
+allocation and several seconds of latency per request, with no cap — repeated
+requests could exhaust available memory on the Keyorix process. Not High because it
+requires a hostile backend (not a passive misconfiguration) and the blast radius is
+availability (DoS), not confidentiality/integrity.
 
 **Recommendation**: if this is worth closing, Vault's `io.LimitReader` pattern is the
 smaller, most obviously-correct model for AWS (wrap `response.Body` before it
@@ -171,3 +241,64 @@ Confirmed by reading all four connectors: each is a single-item read
 operation, no next-token/next-link field anywhere in the four files. The
 "cyclic/repeating next-token must terminate" oracle class does not apply to any of
 the four backends as currently implemented.
+
+---
+
+## 5. Surviving `internal/connect` mutants (`killed_by=survived_no_fuzz_coverage`) vs. coverage replay
+
+Source: `~/proj/fuzz-archive/2026-09-19-mutation/connect_mutants.csv`, the 15 rows
+with `killed_by == "survived_no_fuzz_coverage"`. Mutants were **not** re-run here
+(per instruction — the rig will do that); this is only a coverage-replay check of
+whether the 4 new fuzz targets' seed corpora ever *execute* the mutated line at
+all, done by generating a per-target `-coverprofile` (`go test -run
+'^FuzzX$' -coverpkg=...`, seed corpus only, `-count=1` to force a fresh run) and
+checking the exact line's hit count in each of the 4 profiles.
+
+11 distinct file:line locations, one row per mutant (some lines carry more than one
+mutant/operator):
+
+| File:Line | Operator | Mutant ID | Reached by | Why |
+|---|---|---|---|---|
+| `azurekv.go:54` | negate-condition | `cc29006a25` | **none** | Inside `client()`'s real `azsecrets.NewClient` error check — `FuzzAzureKVConnectorResponse` always sets `c.newClient`, so `client()`'s real body (containing this line) is never called at all. Count 0 in all 4 profiles. |
+| `azurekv.go:54` | drop-err-guard | `cb9d14f751` | **none** | Same line, same reason. |
+| `azurekv.go:54` | comparison-flip | `186a7fad4a` | **none** | Same line, same reason. |
+| `awssm.go:80` | off-by-one | `06e35e3b71` | **none** | Inside `awsRefAccountID`, called only when `c.accountID != ""` (`awssm.go:115`) — the fuzz target constructs `NewAWSSecretsManagerConnector(..., "", nil)` (empty accountID), so `awsRefAccountID` is never invoked. Count 0 in all 4. |
+| `awssm.go:94` | negate-condition | `e6acac4769` | **none** | Inside `client()`'s real `awsconfig.LoadDefaultConfig` path — same `newClient`-bypass reason as azurekv.go:54. Count 0 in all 4. |
+| `awssm.go:94` | comparison-flip | `978638a44c` | **none** | Same line, same reason. |
+| `awssm.go:98` | drop-err-guard | `edbf959596` | **none** | Same `client()` real-path region as line 94. Count 0 in all 4. |
+| `awssm.go:131` | off-by-one | `c8ede9dcd4` | **`FuzzAWSSMConnectorResponse`** | `if len(out.SecretBinary) > 0` on `GetSecret`'s direct decode path (not gated by `client()`). Seed `{"SecretBinary":"AAEC"}` drives the true branch, `{}` the false branch. Count 1 in the AWS profile, 0 elsewhere. |
+| `vault.go:169` | negate-condition | `763e3dabfa` | **none** | `if strings.HasPrefix(safeRef, mountPath)` inside the mount-version *cache-hit* loop (`for mountPath, version := range c.mountVersions`). Each fuzz execution constructs a brand-new `*VaultConnector` (empty `mountVersions`) and calls `GetSecret` exactly once — RULES-mandated "no state carried between execs" — so the cache is always empty and this loop body never runs. Count 0 in all 4, including Vault's own profile. **Structural gap**: reaching this line would require the same connector to serve two reads under the same mount, which this harness's independent-input design deliberately never does. |
+| `vault.go:178` | drop-err-guard | `366efeca88` | **`FuzzVaultConnectorResponse`** (statement only) | `if err != nil` after `http.NewRequestWithContext` for the mount-info request. The *statement* executes every call (bundled with lines 176-177 in the coverage profile, count 1 in Vault's profile, 0 in the other 3) — but the guarded error body itself is realistically unreachable by any fuzzed input, since `http.NewRequestWithContext` only errors on a malformed method/URL, and the URL is built from fixed, well-formed components the fuzzer doesn't influence. Coverage-replay says "reached"; the mutant's actual kill condition is a separate question this check doesn't answer. |
+| `vault.go:205` | drop-err-guard | `225940c17b` | **`FuzzVaultConnectorResponse`** | `if err := json.Unmarshal(body, &mountResp); err != nil` — on the main path of every Vault `GetSecret` call. Count 1 in Vault's profile, 0 elsewhere. |
+| `vault.go:214` | negate-condition | `4424845b07` | **`FuzzVaultConnectorResponse`** | `if mountPath == ""` — reached whenever the (always-valid, canned) mount-info response parses successfully, i.e. every Vault call. Count 1 in Vault's profile, 0 elsewhere. |
+| `vault.go:214` | comparison-flip | `de8496a35a` | **`FuzzVaultConnectorResponse`** | Same line. |
+| `vault.go:326` | drop-err-guard | `6be5386b63` | **`FuzzVaultConnectorResponse`** | `if err := json.Unmarshal(env.Data, &kv2); err != nil` — the KV v2 unwrap, reached whenever `mountIsV2=true` and the outer envelope parses. Vault's seed corpus includes multiple `mountIsV2=true` cases with valid outer JSON. Count 1 in Vault's profile, 0 elsewhere. |
+| `vault.go:329` | off-by-one | `d9bd87e81c` | **`FuzzVaultConnectorResponse`** | `if len(kv2.Data) == 0 \|\| string(kv2.Data) == "null"` — the soft-delete check; Vault's own seed corpus has a dedicated soft-delete seed (`{"data":{"data":null,"metadata":{}}}`) that directly drives the true branch, plus other seeds driving the false branch. Count 1 in Vault's profile, 0 elsewhere. |
+
+**Summary**: 6 of 11 lines (8 of 15 mutants) are reached by `FuzzVaultConnectorResponse`
+or `FuzzAWSSMConnectorResponse`; 5 of 11 lines (7 of 15 mutants) are reached by
+**none** of the 4 targets, for two distinct structural reasons:
+
+1. **`client()`'s real-SDK-construction path is never exercised** (`azurekv.go:54`,
+   `awssm.go:94`, `awssm.go:98` — 6 of the 7 unreached mutants). All 4 targets
+   inject a real backend client through the `newClient` test seam specifically to
+   get wire-level decode coverage without needing live cloud credentials — the
+   necessary tradeoff is that the credential-resolution/client-construction branch
+   of `client()` itself (`awsconfig.LoadDefaultConfig`, `azidentity.NewDefaultAzureCredential`,
+   `azsecrets.NewClient`) is structurally unreachable through this seam. Closing
+   this would need a *different* test (one that lets `newClient` stay nil and
+   exercises the real credential chain, closer to what `coverage_test.go`'s
+   `TestAWSSM_ClientRealPath_*` / `TestAzureKV_ClientRealPath` already do at the
+   unit-test level, not fuzz-level).
+2. **`awsRefAccountID` is never called** (`awssm.go:80` — 1 mutant) because the
+   fuzz target's connector has no `accountID` configured. This is a fuzz-target
+   scoping choice (the account-pin behavior is already covered by
+   `TestAWSSM_AccountPin` and friends in `awssm_test.go`), not a structural
+   limitation — a variant target configuring a non-empty `accountID` and fuzzing
+   ARN-shaped refs could close it, but that's closer to `FuzzConnectRefScoping`'s
+   territory (request-side ref parsing) than this round's response-fuzzing scope.
+3. **`vault.go:169`'s cache-hit loop needs cross-call state** (1 mutant) that this
+   harness's independent-execution design (RULES: "fuzz inputs are independent, no
+   state carried between execs") deliberately never provides. Closing this would
+   need a dedicated, narrower test that calls `GetSecret` twice on the same
+   connector for the same mount — out of scope for response-fuzzing.
