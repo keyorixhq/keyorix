@@ -38,6 +38,21 @@
 // byte-exact token while the oracle checks it resolves to exactly that user, never
 // the other (folded into oracle (a)/(c), since the fixture always knows the true
 // owner of the byte-exact match).
+//
+// Red-proofed (scratch-edit ValidatePATToken/patRestrictionFrom/CreateOwnPAT to
+// plant each defect, confirm the corresponding oracle fires, then revert -- none
+// of these edits are present in this file; this is a record of what was checked):
+//   - revoked check disabled                                -> (a)/(b) REVOKED TOKEN ACCEPTED
+//   - expiry check disabled                                 -> (a)/(b) EXPIRED TOKEN ACCEPTED
+//   - patRestrictionFrom drops ProjectID                     -> (c) RESTRICTION BLEED
+//   - hash computed over only a 40-char prefix of raw        -> (a) AUTH BYPASS (extended/truncated
+//     (both at creation and lookup, so full tokens still       tokens sharing that prefix validate)
+//     round-trip)
+//   - GetUser looked up by a different stored user's id      -> (a) WRONG IDENTITY
+//     than the one the matched row actually carries
+//   - hash computed over strings.ToLower(raw)                -> (a) AUTH BYPASS (case-folded
+//     (both at creation and lookup)                            variants of a real token validate)
+//   - O(n^3) loop over raw inserted before any length check  -> (d) Guard: "exceeded 3s"
 package core
 
 import (
