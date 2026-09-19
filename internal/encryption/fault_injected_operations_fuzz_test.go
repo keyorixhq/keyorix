@@ -126,6 +126,38 @@ package encryption
 //
 // Then oracles (b)-(e) are checked (oracle (a) atomicity is folded into each
 // operation's own state check above, per the ambiguity classification).
+//
+// ── Known-open finding, tolerated not excluded ───────────────────────────────
+//
+// kek:rename-dek's faultRealEffectThenError case is a confirmed, filed, unfixed
+// data-loss bug (commitNewKEKFiles' error-cleanup deletes kek.salt.pending even
+// when the rename it's cleaning up after actually succeeded — see
+// docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md,
+// including the exact reachability conditions: NFS/network-filesystem rename
+// retransmission semantics, NOT a directory-fsync error, which is a separate,
+// disconnected, silently-discarded call in the same function). It stays IN the
+// decoder rather than being excluded: runKEKRotateFaultCase tolerates ONLY the
+// exact verified signature of this specific bug (see
+// isToleratedKnownOpenDataLoss) — any other seam, kind, or failure shape stays
+// fatal, so a regression or a NEW bug in the same neighborhood still surfaces.
+//
+// ── v2 candidates (not implemented here) ─────────────────────────────────────
+//
+//   - Fault during RECOVERY itself: every case above injects one fault into the
+//     original operation, then runs the REAL (unfaulted) recovery/startup step.
+//     A second fault dimension — the recovery path itself failing (e.g.
+//     CleanPendingDEK's os.Remove erroring, or a second crash during a manual
+//     apply-pending-salt recovery) — is not modeled.
+//   - A Postgres-gated regression test for the abort-after-constraint-violation
+//     trap (CLAUDE.md's documented Postgres hazard: a caught violation that
+//     returns nil is dead code there) — SQLite-only today; oracle (c)'s
+//     fail-closed check is sound against SQLite, not yet demonstrated against
+//     real Postgres transaction-abort semantics specifically.
+//   - KMS-provider dependency-error/timeout faults for rewrap (rewrap here only
+//     exercises the password-provider path). crypto.KMSClient is already an
+//     interface with test fakes (internal/crypto/kms_provider_test.go), so this
+//     needs no new production seam — just a fault-injecting fake wired through
+//     crypto.NewKMSKeyProvider.
 
 import (
 	"bytes"
@@ -216,19 +248,18 @@ func decodeFault(opSel, seamSel, kindSel, shortWriteK byte) (op opID, seam strin
 		}
 		return op, s.label, s.kind, &fileFault{kind: faultShortWrite, k: int(shortWriteK), err: errInjectedFault}
 	case seamRename:
-		// kek:rename-dek's faultRealEffectThenError combination is EXCLUDED here,
-		// not just unseeded: it is a confirmed, live production bug (commitNewKEKFiles'
-		// error-cleanup on a rename-dek failure unconditionally deletes
-		// kek.salt.pending — correct when the rename genuinely didn't happen, but it
-		// destroys the only recovery path when the rename actually succeeded and
-		// merely reported failure), filed and NOT fixed per this campaign's rules —
-		// see docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md
-		// for a standalone reproduction. Excluding it from the decoder (rather than
-		// only from the seed corpus) keeps this fuzz TARGET itself usable — undirected
-		// -fuzz would otherwise rediscover the same known bug on every run.
-		if op == opKEKRotate && s.label == "kek:rename-dek" {
-			return op, s.label, s.kind, &fileFault{kind: faultCleanError, err: errInjectedFault}
-		}
+		// kek:rename-dek's faultRealEffectThenError combination is a confirmed,
+		// live production bug (commitNewKEKFiles' error-cleanup on a rename-dek
+		// failure unconditionally deletes kek.salt.pending — correct when the
+		// rename genuinely didn't happen, but it destroys the only recovery path
+		// when the rename actually succeeded and merely reported failure), filed
+		// and NOT fixed per this campaign's rules — see
+		// docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md
+		// for the reachability analysis and a standalone reproduction. It stays
+		// IN the decoder (not excluded): runKEKRotateFaultCase tolerates ONLY
+		// this exact, verified failure signature (see
+		// isToleratedKnownOpenDataLoss) so the target keeps exercising the seam
+		// and would still fail loudly on any DIFFERENT or worse outcome.
 		if kindSel%2 == 0 {
 			return op, s.label, s.kind, &fileFault{kind: faultCleanError, err: errInjectedFault}
 		}
@@ -395,9 +426,9 @@ func scanForPlaintext(root string, canary []byte) []string {
 
 func FuzzFaultInjectedOperations(f *testing.F) {
 	// Seed one case per (operation, seam, kind) combination decodeFault can
-	// produce (kek:rename-dek's ambiguous kind is excluded by decodeFault
-	// itself — see its comment — so both kindSel values collapse to the same
-	// faultCleanError case there; harmless duplicate seeding, not a gap).
+	// produce, including kek:rename-dek's ambiguous kind — see decodeFault's
+	// comment and isToleratedKnownOpenDataLoss: that specific case is a known,
+	// filed, tolerated finding, not excluded.
 	for opSel := 0; opSel < int(numOps); opSel++ {
 		seams := opSeams[opID(opSel)]
 		for seamSel := range seams {
@@ -726,6 +757,10 @@ func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, ne
 
 	rec, via, ok := recoverDEK(dir, oldPass, newPass)
 	if !ok {
+		if isToleratedKnownOpenDataLoss(dir, seam, ff) {
+			t.Logf("KNOWN-OPEN (%s): tolerated orphaned-DEK data loss at kek:rename-dek's ambiguous fault — kek.salt.pending confirmed deleted by the documented cleanup bug, no other recovery path exists (expected; a different signature would still fail this test)", kekRenameDekFindingRef)
+			return
+		}
 		t.Fatalf("DATA LOSS: no recovery yields the DEK after kek-rotate fault %q (kind=%v)", seam, ff.kind)
 	}
 	if !bytes.Equal(rec, dek0) {
@@ -740,6 +775,37 @@ func runKEKRotateFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, ne
 	if hits := scanForPlaintext(dir, dek0); len(hits) > 0 {
 		t.Fatalf("PLAINTEXT SPILL: kek-rotate fault %q left the raw DEK bytes on disk outside key files: %v", seam, hits)
 	}
+}
+
+// kekRenameDekFindingRef ties the tolerance below to its finding doc, so the
+// tolerance can't silently drift to cover a different or worse bug.
+const kekRenameDekFindingRef = "docs/findings/2026-09-19-FINDING-kek-rotation-rename-dek-cleanup-dataloss.md"
+
+// isToleratedKnownOpenDataLoss reports whether a recoverDEK failure exactly
+// matches this ALREADY-FILED finding's signature — NOT a blanket "this seam
+// is known-flaky" allowance. All three conditions must hold:
+//  1. seam is kek:rename-dek (the ONLY seam this bug class applies to — see
+//     the finding doc's contrast with RewrapDEK's single-file cleanup, which
+//     is NOT susceptible).
+//  2. ff.kind is faultRealEffectThenError (the rename genuinely happened for
+//     real despite the reported error — the exact ambiguous case the bug
+//     needs; faultCleanError at this same seam must NOT be tolerated, since
+//     the rename never running for real is the well-behaved case that
+//     expectedKEKVia already asserts recovers via "old-passphrase").
+//  3. kek.salt.pending is CONFIRMED ABSENT on disk — the direct, checkable
+//     fingerprint of the buggy cleanup having run (it is the file that
+//     cleanup deletes). If it's still present, recoverDEK failing has some
+//     OTHER cause — a different or new bug — and must NOT be tolerated.
+//
+// Any recoverDEK failure that doesn't match all three stays fatal.
+func isToleratedKnownOpenDataLoss(dir, seam string, ff *fileFault) bool {
+	if seam != "kek:rename-dek" || ff.kind != faultRealEffectThenError {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(dir, "kek.salt.pending")); err == nil {
+		return false // pending salt still present — not this finding's signature
+	}
+	return true
 }
 
 // expectedKEKVia returns the recoverDEK "via" value(s) a DETERMINISTIC
