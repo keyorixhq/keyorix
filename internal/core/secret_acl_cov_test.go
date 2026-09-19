@@ -273,6 +273,52 @@ func TestAclGrantsPermission_NonNotFoundErr(t *testing.T) {
 	assert.False(t, got)
 }
 
+// --- AuthorizeSecret error propagation from HasSecretACL ---
+
+// TestAuthorizeSecret_HasSecretACLError verifies AuthorizeSecret fails closed
+// ((false, err)) when the underlying SecretACL lookup errors -- even for a user
+// who ALSO holds a project role that would otherwise grant access via the RBAC
+// fallback (c.Authorize). Without the `if err != nil { return false, err }` guard
+// immediately after HasSecretACL (authz.go's AuthorizeSecret), execution would
+// fall through past the error with hasACL's zero value (false), skip the "hasACL"
+// branch, and reach the RBAC fallback anyway -- silently discarding the ACL
+// resolution error and returning (true, nil) purely because the user's project
+// role happens to also grant the permission. The project-role setup here is
+// deliberate, not incidental: a user with NO project role would (coincidentally)
+// still be denied even with the guard missing, masking the bug entirely; only a
+// user who WOULD be granted via the fallback exposes the difference a mutant
+// deleting this guard needs a test to catch.
+func TestAuthorizeSecret_HasSecretACLError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, db := newACLCore(t)
+	sid := mkACLSecret(t, db, "acl-err-with-role")
+
+	// User 400 holds a real project role granting secrets.read.
+	role := &models.Role{Name: "project_admin_400", Description: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	perm := &models.Permission{Name: "secrets.read"}
+	require.NoError(t, db.Create(perm).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 400, RoleID: role.ID, ProjectID: 1}).Error)
+
+	// Sanity check: without any injected error, this user IS granted access via
+	// the RBAC fallback -- confirms the project-role setup actually works, so the
+	// assertion below is testing error propagation, not an unrelated setup bug.
+	okBaseline, errBaseline := c.AuthorizeSecret(ctx, 400, sid, "secrets.read")
+	require.NoError(t, errBaseline)
+	require.True(t, okBaseline, "test setup: user 400's project role must grant access on its own")
+
+	// Now inject a SecretACL lookup failure and confirm it is NOT silently
+	// swallowed by the RBAC fallback.
+	wantErr := errors.New("secret acl lookup unavailable")
+	c2 := newACLCoreWithStorage(c, &getACLErrStorage{Storage: c.storage, err: wantErr})
+	ok, err := c2.AuthorizeSecret(ctx, 400, sid, "secrets.read")
+	require.Error(t, err, "AuthorizeSecret must fail closed when HasSecretACL errors, even though the user's project role would otherwise grant access")
+	assert.ErrorIs(t, err, wantErr)
+	assert.False(t, ok)
+}
+
 // --- isNotFound ---
 
 func TestIsNotFound_Nil(t *testing.T) {
