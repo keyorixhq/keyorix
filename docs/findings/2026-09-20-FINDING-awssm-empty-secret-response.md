@@ -93,19 +93,67 @@ fixed.
   soft-deleted version). Not changed; noted here so the omission reads as
   considered, not overlooked.
 
+## Can the backend actually store an empty-string secret?
+
+- **AWS Secrets Manager: no — the API itself makes this impossible.**
+  `PutSecretValue`'s (and `CreateSecret`'s) `SecretString` parameter is
+  documented with `Length Constraints: Minimum length of 1. Maximum length
+  of 65536` (https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html).
+  A caller that tries to store `SecretString: ""` gets a `ValidationException`
+  before the write ever lands — there is no legitimate way for a real,
+  compliant AWS Secrets Manager to hand back `{"SecretString":""}` for a
+  secret an operator actually created. The only way `GetSecretValue` can
+  ever return that shape is a non-compliant/compromised/malfunctioning
+  endpoint (or, as found here, a fuzzer) — exactly the class of input this
+  connector's hardened-transport layer already exists to be suspicious of.
+  So for AWS specifically, this fix cannot reject any secret an operator
+  could actually have stored; it only closes a response shape the real API
+  contract says is impossible.
+- **Azure Key Vault: less certain — the REST API's own schema documents no
+  `minLength` on `value`.** `SecretSetParameters.value` is listed as
+  `Required: true, Type: string` with no length constraint
+  (https://learn.microsoft.com/en-us/rest/api/keyvault/secrets/set-secret/set-secret?view=rest-keyvault-secrets-2025-07-01),
+  unlike AWS's explicit minimum. The Azure **portal** UI refuses to create a
+  secret with no value, but that is client-side, not a server-side
+  guarantee — documented evidence of client libraries needing workarounds
+  to push an empty value through their own type-conversion layers (e.g.
+  PowerShell's `ConvertTo-SecureString` rejecting `""` and requiring a bare
+  `New-Object SecureString` instead:
+  https://mbraekman.github.io/2021/11/08/Azure-Key-Vault-Empty-Secrets/)
+  suggests the obstacle is tooling, not the Key Vault service itself. So,
+  unlike AWS, it is NOT certain an operator can never end up with a
+  genuinely empty-valued Key Vault secret.
+- **We fail closed on both regardless, and that is still the right call.**
+  For AWS, this is moot (the case is unreachable via the real API). For
+  Azure, even if an operator could legitimately store `""`, an empty
+  string is never a usable credential/config value downstream — a
+  consuming application that expects e.g. a password or connection string
+  cannot meaningfully act on `""` either way, so surfacing it as an
+  explicit `"secret %q has no value"` error (which the caller sees and can
+  act on) is strictly safer than silently handing back an empty string a
+  caller could mistake for "the secret is intentionally blank" and use as
+  a credential. An operator who genuinely needs to store an empty-string
+  value in Azure Key Vault for some reason is not a scenario this connector
+  needs to support — nothing in Keyorix's own secret model treats "" as a
+  meaningful stored value either (CreateSecretRequest's Value is the
+  plaintext to encrypt and store; an empty plaintext secret is already an
+  unusual, not a normal, state on Keyorix's own side).
+
 ## Severity
 
 **Low.** This is a read-path correctness bug, not an authorization or
 credential-leak issue — reachable only when the configured connector's own
 backend (AWS Secrets Manager / Azure Key Vault) returns a 2xx response
-carrying an explicitly-empty (not absent) value for the requested secret. In
-practice this means either: the operator genuinely stored an empty string as
-a "secret" in the backend (unusual, and arguably a misconfiguration on the
-operator's own side already), or a compromised/malfunctioning/MITM'd backend
-endpoint returns this shape — a scenario this connector's hardened-transport
-layer (redirect refusal, private-IP dialer, response-size cap) already
-defends against for the more dangerous cases (credential/data exfiltration,
-SSRF). The concrete harm of THIS specific gap is narrower: a caller reading
+carrying an explicitly-empty (not absent) value for the requested secret. Per
+"Can the backend actually store an empty-string secret?" above, for AWS this
+is only reachable via a non-compliant/compromised/malfunctioning endpoint —
+the real API cannot produce it for anything an operator actually stored; for
+Azure it may also be reachable via a genuinely (if unusually) empty-valued
+stored secret. Either way, this connector's hardened-transport layer
+(redirect refusal, private-IP dialer, response-size cap) already defends
+against the more dangerous versions of "a hostile endpoint controls the
+response" (credential/data exfiltration, SSRF). The concrete harm of THIS
+specific gap is narrower: a caller reading
 the secret gets back `""` instead of an explicit "no value" error, which
 could be silently treated as a valid (if empty) credential/config value
 downstream rather than failing loudly. No credential exposure, no
