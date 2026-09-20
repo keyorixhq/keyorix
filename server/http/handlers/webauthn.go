@@ -218,9 +218,11 @@ func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request)
 		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
+	// F2 (2026-09-20): reserve before resolving the challenge — see
+	// reserveLoginAttempt's doc (reserved after decode, matching Login).
+	h.reserveLoginAttempt(r.Context(), ip)
 	assertion, sessionToken, err := h.coreService.BeginWebAuthnLogin(r.Context(), body.Challenge)
 	if err != nil {
-		h.recordLoginAttempt(r.Context(), ip)
 		h.writeWebAuthnErr(w, err)
 		return
 	}
@@ -252,9 +254,11 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 		sendError(w, "BadRequest", "Invalid assertion", http.StatusBadRequest, nil)
 		return
 	}
+	// F2 (2026-09-20): reserve before the (slow) assertion verification — see
+	// reserveLoginAttempt's doc (reserved after decode+parse, matching Login).
+	h.reserveLoginAttempt(r.Context(), ip)
 	session, user, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
-		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
@@ -307,9 +311,11 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 		sendError(w, "BadRequest", "Invalid assertion", http.StatusBadRequest, nil)
 		return
 	}
+	// F2 (2026-09-20): reserve before the (slow) assertion verification — see
+	// reserveLoginAttempt's doc (reserved after decode+parse, matching Login).
+	h.reserveLoginAttempt(r.Context(), ip)
 	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
-		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}

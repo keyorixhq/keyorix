@@ -116,7 +116,7 @@ func TestVerifyMFA_RateLimited_S13B(t *testing.T) {
 }
 
 // TestVerifyMFA_CoreError_S13B — VerifyMFALogin fails (bad challenge/code) →
-// 401. Exercises the `h.recordLoginAttempt + sendError 401` branch.
+// 401. Exercises the `h.reserveLoginAttempt + sendError 401` branch.
 func TestVerifyMFA_CoreError_S13B(t *testing.T) {
 	cs := freshCoreS12(t)
 	h := NewAuthHandler(cs, false)
