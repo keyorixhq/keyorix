@@ -19,7 +19,9 @@
 // core.SetTestRevokeUserSessionsPreInvalidateHook (a test-only seam, nil in
 // production, invoked by RevokeUserSessions right after its DELETE commits and
 // right before invalidateTokenCache runs) instead of relying on goroutine
-// scheduling luck — the real crashers' natural hit rate is only 1-6% per replay
+// scheduling luck — the real crashers' natural hit rate is only ~2% per replay
+// (3 of 13 archived crashers independently confirmed at 1/50 in isolated
+// -count=50 -race replay)
 // (see the investigation report).
 package http
 
@@ -423,6 +425,60 @@ func TestSessionRevoke_RotatedTokenCacheHitDenied(t *testing.T) {
 	// only the OLD token's stale cache entry was the bug.
 	if !srrAuthedRead(r, w.ref, newSession.SessionToken) {
 		t.Error("the NEW, post-rotation token failed to authenticate")
+	}
+}
+
+// TestSessionCacheHit_AccountRestrictionRefreshedOnHit closes the
+// AccountRestricted stale-cache gap: EnforceAccountRestriction reads
+// UserContext.Restricted, which a cache hit previously never refreshed — only
+// the outright-deny AccountStillUsable boolean was re-checked on a hit. A
+// transition into a restricted-but-not-login-blocked state
+// (RequirePasswordReset -> password_reset_required; AccountLoginBlocked is
+// false for it, so the account stays "usable") was invisible to a cache hit
+// until that transition's OWN cache eviction reached this process — the same
+// race SHAPE as the session-liveness bug this PR fixes elsewhere, not just a
+// bounded TTL lag. Uses the same two-core pattern as
+// TestSessionRevoke_SecondReplicaNeverInvalidatedCacheHitDenied: cNode2 has no
+// cache invalidator wired, so its RequirePasswordReset call's own
+// invalidateTokenCache is a silent no-op — isolating the cache-hit path's own
+// fresh-read refresh (AccountUsabilityAndState / cloneUserContextWithAccountState)
+// as what has to do the work, not that call's own eviction.
+//
+// RED on unfixed code: the cache hit still serves the pre-transition
+// Restricted=false, so a non-allowlisted endpoint returns 200. GREEN after
+// the fix: the same cache hit re-reads AccountState fresh, and
+// EnforceAccountRestriction (server/middleware/auth.go, reading
+// userCtx.Restricted) returns 403.
+func TestSessionCacheHit_AccountRestrictionRefreshedOnHit(t *testing.T) {
+	w := srrSetupWorld(t, "srr-restrict.db")
+
+	cNode1 := core.NewKeyorixCore(w.ls)
+	cNode1.SetTokenCacheInvalidator(customMiddleware.InvalidateTokenCacheByHash)
+	r, err := NewRouter(&config.Config{}, cNode1)
+	if err != nil {
+		t.Fatalf("router: %v", err)
+	}
+
+	victim, token := w.createVictimAndLogin(t, cNode1, "srr-restrict-victim", "Xk7#Qp2$Rn5@Wv9!")
+
+	if !srrAuthedRead(r, w.ref, token) {
+		t.Fatalf("positive control: victim's own fresh session did not authenticate")
+	}
+
+	// cNode2: same underlying storage, but never wired to evict cNode1's (this
+	// process's) auth cache -- see the doc comment above for why this isolates
+	// the mechanism under test.
+	cNode2 := core.NewKeyorixCore(store.NewLocalStorage(w.db))
+	if err := cNode2.RequirePasswordReset(context.Background(), w.admin.ID, victim.ID); err != nil {
+		t.Fatalf("RequirePasswordReset: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+w.ref, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 (PasswordChangeRequired) on the next cache-hit request after RequirePasswordReset, got %d", rec.Code)
 	}
 }
 

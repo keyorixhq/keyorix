@@ -680,12 +680,15 @@ func hashSessionTokenForLookup(token string) string {
 //     rotated away, or expired. Callers must deny and evict, exactly like the
 //     PAT/machine branches deny on ErrPATRevoked/ErrMachineTokenRevoked.
 //   - (false, err) / (_, err) for any other error: the LOOKUP failed — a
-//     transient storage error, or (today) storage.type: remote, which has no
-//     GetSessionByID implementation at all (ErrRemoteUnsupported) and so can
-//     never positively confirm liveness via this path. Callers must fall back
-//     to the cached snapshot, exactly like the PAT/machine branches do on any
-//     err besides the specific revoked/expired sentinels — a DB blip (or a
-//     RemoteStorage deployment) must not lock out every session holder.
+//     transient storage error. Callers must fall back to the cached snapshot,
+//     exactly like the PAT/machine branches do on any err besides the
+//     specific revoked/expired sentinels — a DB blip must not lock out every
+//     session holder. (GetSessionByID also has no RemoteStorage implementation,
+//     which would hit this same branch, but that combination cannot occur in a
+//     supported deployment: ADR-083 makes storage.type: remote a CLI/client
+//     mode only, never wired into the server's own HTTP handlers — see
+//     validateRemoteStorageNotServer — so this path is unreachable there, not
+//     a deployment-relevant gap.)
 func (c *KeyorixCore) SessionLiveForToken(ctx context.Context, sessionID uint, token string) (bool, error) {
 	session, err := c.storage.GetSessionByID(ctx, sessionID)
 	if err != nil {
@@ -749,6 +752,36 @@ func (c *KeyorixCore) AccountStillUsable(ctx context.Context, userID uint) (bool
 		return false, err
 	}
 	return user.IsActive && !AccountLoginBlocked(user.ID, user.AccountState), nil
+}
+
+// AccountUsabilityAndState is AccountStillUsable's session-cache-hit sibling:
+// the same GetUser read, but also returns the account's raw AccountState —
+// needed to refresh UserContext.AccountState/Restricted on a cache hit, not
+// just decide the outright-deny boolean. AccountStillUsable itself is left
+// untouched (internal/cli/migrate/user_to_machine.go has its own, unrelated
+// caller that only needs the boolean) — this is a second, additive method,
+// not a signature change.
+//
+// The gap this closes: AccountLoginBlocked and AccountRestricted are NOT the
+// same predicate (see AccountRestricted's own doc comment) —
+// pending_first_login/password_reset_required are AccountRestricted but NOT
+// AccountLoginBlocked. Before this, a cache hit's AccountStillUsable check
+// passed (the account isn't blocked) but the CACHED UserContext's
+// AccountState/Restricted — fixed at the slow path's last fill — stayed
+// whatever it was then. A transition into a restricted-but-not-blocked state
+// was invisible to EnforceAccountRestriction on a cache hit until the entry's
+// own eviction (whether via that state-change's own invalidateTokenCache call,
+// or the TTL) actually landed — the same race SHAPE as the session-liveness
+// bug this PR fixes elsewhere, not merely a bounded 30s lag: a request served
+// from the cache in the window between the state committing and its own
+// eviction reaching this process's cache still sees the pre-transition
+// Restricted value. See serveAuthCacheHit's session branch.
+func (c *KeyorixCore) AccountUsabilityAndState(ctx context.Context, userID uint) (usable bool, state string, err error) {
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return false, "", err
+	}
+	return user.IsActive && !AccountLoginBlocked(user.ID, user.AccountState), user.AccountState, nil
 }
 
 // RequestPasswordReset issues a password-reset link for the given email and

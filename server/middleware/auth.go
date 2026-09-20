@@ -131,6 +131,20 @@ func cloneUserContextWithMachineRestriction(base *UserContext, restriction *core
 	return &clone
 }
 
+// cloneUserContextWithAccountState is the session cache-hit path's counterpart
+// to cloneUserContextWithRestriction/cloneUserContextWithMachineRestriction:
+// refreshes AccountState/Restricted from a freshly-read state on a shallow
+// copy, never mutating the shared cached entry in place (another concurrent
+// request may be reading the same *UserContext pointer out of tokenCache at
+// the same instant). Mirrors handleAuthRequest's own slow-path normalization
+// exactly (core.NormalizeAccountState / core.AccountRestricted).
+func cloneUserContextWithAccountState(base *UserContext, state string) *UserContext {
+	clone := *base
+	clone.AccountState = core.NormalizeAccountState(state)
+	clone.Restricted = core.AccountRestricted(state)
+	return &clone
+}
+
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
 // defaulting to user for legacy/empty contexts.
 func (u *UserContext) ActorKind() string {
@@ -425,24 +439,32 @@ func isTransientValidationError(ctx context.Context, err error) bool {
 // (CurrentPATRestriction), a machine token's restriction/Revoked/ExpiresAt/
 // machine-active-state (CurrentMachineTokenRestriction, previously refreshed
 // for a PAT but never for a machine token), and — for an interactive session —
-// BOTH the owning account's active/not-blocked state (AccountStillUsable) AND,
-// as of the session-revoke-cache-race fix
+// all of: the owning account's active/not-blocked state
+// (AccountUsabilityAndState's usable boolean, née AccountStillUsable's job);
+// its CURRENT AccountState/Restricted, refreshed onto a cloned UserContext on
+// every hit (AccountUsabilityAndState's state return,
+// cloneUserContextWithAccountState) so a transition into a
+// restricted-but-not-blocked state (pending_first_login/password_reset_required
+// — AccountRestricted and AccountLoginBlocked are NOT the same predicate, see
+// AccountRestricted's doc comment) is visible to EnforceAccountRestriction
+// immediately, not only once that state-change's own cache eviction lands;
+// and, as of the session-revoke-cache-race fix
 // (docs/findings/2026-09-20-FINDING-session-revoke-cache-race.md), whether the
 // SPECIFIC session row is still live (SessionLiveForToken): a session can be
 // revoked (RevokeUserSessions, the /system proxy's DeleteSessionsForUserExcept,
 // ChangePassword, MFA/WebAuthn enrollment changes, a setup-link password reset)
-// without the owning account's IsActive/AccountState ever changing, which
-// AccountStillUsable alone cannot see. Each of these was previously invisible
-// to a cache HIT and kept serving the stale cached snapshot for up to
-// validTokenTTL after an admin's suspend/revoke (or a session-specific
+// without the owning account's IsActive/AccountState ever changing, which the
+// usability check alone cannot see. Each of these was previously invisible to
+// a cache HIT and kept serving the stale cached snapshot for up to
+// validTokenTTL after an admin's suspend/revoke/restrict (or a session-specific
 // revocation) should have taken effect immediately, matching every other
 // credential-state check in this file. A DEFINITIVE revocation signal
 // (revoked/expired/inactive/session-gone) denies the request and evicts the
-// cache entry outright; an INDETERMINATE one (a transient storage error, or —
-// for SessionLiveForToken specifically — storage.type: remote, which has no
-// GetSessionByID implementation and so can never positively confirm session
-// liveness via this path) degrades to the cached snapshot rather than
-// fail-opening or fail-closing on a blip — same philosophy #146 established.
+// cache entry outright; an INDETERMINATE one (a transient storage error)
+// degrades to the cached snapshot rather than fail-opening or fail-closing on
+// a blip — same philosophy #146 established. See SessionLiveForToken's own
+// doc comment for why "storage.type: remote has no GetSessionByID" is not a
+// live deployment concern here (ADR-083).
 func serveAuthCacheHit(next http.Handler, w http.ResponseWriter, r *http.Request, token string, entry tokenCacheEntry, coreService *core.KeyorixCore) {
 	if entry.userCtx == nil {
 		// Negative cache — known bad token, skip DB entirely.
@@ -471,9 +493,19 @@ func serveAuthCacheHit(next http.Handler, w http.ResponseWriter, r *http.Request
 				effective = cloneUserContextWithMachineRestriction(entry.userCtx, fresh)
 			}
 		default:
-			if usable, err := coreService.AccountStillUsable(r.Context(), entry.userCtx.UserID); err == nil && !usable {
-				denyRevokedCacheHit(w, token)
-				return
+			if usable, state, err := coreService.AccountUsabilityAndState(r.Context(), entry.userCtx.UserID); err == nil {
+				if !usable {
+					denyRevokedCacheHit(w, token)
+					return
+				}
+				// Refresh AccountState/Restricted from this SAME fresh read on every
+				// hit, not just the outright-deny boolean — a transition into a
+				// restricted-but-not-login-blocked state (pending_first_login /
+				// password_reset_required) must not keep serving the pre-transition
+				// Restricted=false on a cache hit. See AccountUsabilityAndState's doc
+				// comment for why this is the same race shape SessionLiveForToken
+				// closes, not just a bounded-TTL lag.
+				effective = cloneUserContextWithAccountState(entry.userCtx, state)
 			}
 			// entry.userCtx.SessionID is nil for a cache entry filled before this
 			// check existed (a rolling deploy) or when the slow-path secondary
