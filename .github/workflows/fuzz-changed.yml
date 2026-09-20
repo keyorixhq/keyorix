@@ -5,19 +5,41 @@
 # without benefit here. See claude/2026-09-13-fuzzing-tooling-decisions.md.
 # Deep/continuous fuzzing lives on the dedicated rigs, not in CI.
 #
-# Selection tiers (narrowest change that still covers what could have broken):
-#   - go.mod/go.sum changed (dependency churn): a dep bump changes third-party
-#     parser behavior without touching any *.go in the target's package, and
-#     those parsers are exactly what the targets exist to catch — so fuzz EVERY
-#     fuzz-target package, all targets.
-#   - any non-test *.go changed: shared production code in a package can affect
-#     any target in it — so fuzz ALL targets in each changed package.
-#   - only *_test.go changed (harness-only PR): the production code every OTHER
-#     target exercises is unchanged, so only the harnesses you touched can behave
-#     differently — fuzz ONLY the targets defined in the changed *_test.go files.
-#     This is what keeps a 3-harness PR from re-running all 16 targets in
-#     internal/core (16 x FUZZTIME, serial). Test files are package-local, so
-#     this selection is provably complete for a test-only change.
+# Selection: two independent, ADDITIVE contributions — a dep-graph tier
+# unioned on top of a code-change tier — not one mutually-exclusive tier
+# picked by priority. Reason: the two questions are orthogonal ("did the PR's
+# OWN code change" vs. "did a THIRD-PARTY dependency underneath it change"),
+# and a PR can trigger both at once (e.g. it adds a new dep alongside its own
+# code) — picking only the broader-looking tier when both apply used to
+# silently drop the other's coverage (a PR that both bumped go.sum and added
+# a brand-new fuzz target got 0 targets planned for that new target, because
+# the dependency tier's fan-out — even scoped, see below — took over and the
+# code-change tier's contribution was never even computed).
+#
+#   - Code-change tier (narrowest sufficient scope for what the PR's OWN
+#     files changed):
+#     - any non-test *.go changed: shared production code in a package can
+#       affect any target in it — fuzz ALL targets in each changed package.
+#     - else, only *_test.go changed (harness-only PR): the production code
+#       every OTHER target exercises is unchanged, so only the harnesses you
+#       touched can behave differently — fuzz ONLY the targets defined in the
+#       changed *_test.go files. This is what keeps a 3-harness PR from
+#       re-running all 16 targets in internal/core (16 x FUZZTIME, serial).
+#       Test files are package-local, so this selection is provably complete
+#       for a test-only change.
+#   - Dependency tier (additive — layered on top of the code-change tier's
+#     result whenever go.mod/go.sum changed, never replacing it): a dep bump
+#     can change third-party parser behavior without touching any *.go in a
+#     target's own package, and those parsers are exactly what the targets
+#     exist to catch — but fanning out to EVERY fuzz-target package
+#     regardless of whether that package's own code ever reaches the changed
+#     dependency is needless (a test-only tooling dep like porcupine, used
+#     only by a fuzz harness itself, can't affect what ANY target's
+#     PRODUCTION code path does). Scoped instead: diff `go list -m all`
+#     between base and HEAD for the actually-changed module set, then for
+#     each fuzz-target package, include it only if `go list -deps` (its own
+#     NON-TEST import graph) contains one of those modules. A change to a
+#     test-only dependency plans 0 extra targets from this tier.
 name: fuzz-changed
 #
 # Execution: the planned targets are split round-robin across up to FUZZ_SHARDS
@@ -89,17 +111,35 @@ jobs:
             done
           }
 
+          # list_modules_at ref: the resolved module graph (`go list -m all`) as of
+          # ref, WITHOUT disturbing the actual checkout (which must stay at HEAD for
+          # every other step in this job, including the code-change tier below). Runs
+          # in an isolated temp dir seeded with just that ref's go.mod/go.sum -- `-m
+          # all` only needs the requirement graph, not the source tree, and this repo
+          # has no `replace` directives pointing at local paths that a bare go.mod/
+          # go.sum copy would break.
+          list_modules_at() {
+            local ref="$1" dir out
+            dir="$(mktemp -d)"
+            if ! git show "${ref}:go.mod" > "$dir/go.mod" 2>/dev/null; then
+              rm -rf "$dir"; return 0
+            fi
+            git show "${ref}:go.sum" > "$dir/go.sum" 2>/dev/null || true
+            out="$(cd "$dir" && go list -m all 2>/dev/null)" || out=""
+            rm -rf "$dir"
+            printf '%s\n' "$out"
+          }
+
           plan_file="$(mktemp)"
-          if [ "$dep_changed" = 1 ]; then
-            echo "go.mod/go.sum changed — dependency churn: fuzzing ALL fuzz-target packages."
-            git ls-files -- '*_test.go' | { xargs -r grep -lE '^func Fuzz' || true; } | xargs -r -n1 dirname | sort -u \
-              | while IFS= read -r d; do emit_all_in_pkg "./${d#./}"; done >> "$plan_file"
-          elif [ "$prod_go_changed" = 1 ]; then
+
+          # Code-change tier (mutually exclusive: narrowest sufficient scope for what
+          # the PR's OWN files changed).
+          if [ "$prod_go_changed" = 1 ]; then
             echo "Production .go changed — fuzzing ALL targets in each changed package."
             git diff --name-only "$base"...HEAD -- '*.go' | xargs -r -n1 dirname | sort -u \
               | while IFS= read -r d; do emit_all_in_pkg "./${d#./}"; done >> "$plan_file"
           else
-            echo "Harness-only change — fuzzing ONLY the targets defined in changed *_test.go files."
+            echo "No non-test .go changes — fuzzing ONLY the targets defined in changed *_test.go files."
             git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*_test.go' \
               | while IFS= read -r f; do
                   [ -f "$f" ] || continue
@@ -111,6 +151,36 @@ jobs:
                   comm -12 <(printf '%s\n' "$defined") <(printf '%s\n' "$listed") \
                     | while IFS= read -r fn; do printf '%s|%s\n' "$d" "$fn"; done
                 done >> "$plan_file"
+          fi
+
+          # Dependency tier (additive: layered on top of the code-change tier's
+          # result above whenever go.mod/go.sum changed, never replacing it).
+          if [ "$dep_changed" = 1 ]; then
+            base_modules="$(list_modules_at "$base" | sort -u)"
+            head_modules="$(list_modules_at HEAD | sort -u)"
+            # Only ADDED-or-version-bumped entries -- a REMOVED module implies the
+            # importing code also changed (import statements can't compile
+            # otherwise), which the code-change tier above already covers.
+            changed_modules="$(comm -13 <(printf '%s\n' "$base_modules") <(printf '%s\n' "$head_modules") | awk 'NF{print $1}' | sort -u)"
+            if [ -z "$changed_modules" ]; then
+              echo "go.mod/go.sum touched but the resolved module graph didn't change — 0 extra targets from the dependency tier."
+            else
+              echo "Dependency tier — changed modules:"
+              printf '%s\n' "$changed_modules" | sed 's/^/  /'
+              git ls-files -- '*_test.go' | { xargs -r grep -lE '^func Fuzz' || true; } | xargs -r -n1 dirname | sort -u \
+                | while IFS= read -r d; do
+                    pkg="./${d#./}"
+                    # NON-TEST dependency graph only (go list -deps has no -test flag
+                    # here) -- a test-only dependency (e.g. porcupine, used only by a
+                    # fuzz harness itself) can never show up in this list, so it
+                    # contributes 0 extra targets from this tier by construction.
+                    pkg_modules="$(go list -deps -f '{{with .Module}}{{.Path}}{{end}}' "$pkg" 2>/dev/null | sort -u)"
+                    [ -n "$pkg_modules" ] || continue
+                    if comm -12 <(printf '%s\n' "$changed_modules") <(printf '%s\n' "$pkg_modules") | grep -q .; then
+                      emit_all_in_pkg "$pkg"
+                    fi
+                  done >> "$plan_file"
+            fi
           fi
 
           sort -u "$plan_file" -o "$plan_file"
