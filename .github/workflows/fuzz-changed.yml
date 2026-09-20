@@ -19,16 +19,34 @@
 #     internal/core (16 x FUZZTIME, serial). Test files are package-local, so
 #     this selection is provably complete for a test-only change.
 name: fuzz-changed
+#
+# Execution: the planned targets are split round-robin across up to FUZZ_SHARDS
+# parallel jobs (matrix). Each target still gets the full FUZZTIME; only the
+# wall-clock changes (a 27-target PR went from ~45 min serial to ~1/6 of that).
+# A final `fuzz-changed` job aggregates the shards so the check keeps one name.
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      base:
+        description: "Ref/SHA to diff against (default: HEAD~1). Lets a manual run reproduce a PR-sized plan."
+        required: false
+        default: ""
 permissions:
   contents: read
+# A new push to the same PR supersedes the previous run instead of stacking.
+concurrency:
+  group: fuzz-changed-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 env:
   FUZZTIME: 90s   # per fuzz target
+  FUZZ_SHARDS: 6  # max parallel fuzz jobs
 jobs:
-  fuzz-changed:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.plan.outputs.count }}
+      shards: ${{ steps.shard.outputs.shards }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,7 +57,7 @@ jobs:
       - name: Determine fuzz targets to run
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base }}
         run: |
           set -euo pipefail
           base="${BASE_SHA:-$(git rev-parse HEAD~1)}"
@@ -105,21 +123,50 @@ jobs:
             echo "__FUZZ_PLAN_EOF__"
           } >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
-      - name: Restore fuzz corpus cache
-        if: steps.plan.outputs.count != '0'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/go-build/fuzz
-          key: fuzz-corpus-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            fuzz-corpus-${{ runner.os }}-
-      - name: Fuzz planned targets
-        if: steps.plan.outputs.count != '0'
+      - name: Split plan into shards
+        id: shard
         env:
           PLAN: ${{ steps.plan.outputs.plan }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$PLAN" | while IFS='|' read -r pkg fn; do
+          count="$(printf '%s\n' "$PLAN" | grep -c . || true)"
+          n=$(( count < FUZZ_SHARDS ? count : FUZZ_SHARDS ))
+          if [ "$n" -lt 1 ]; then echo 'shards=[]' >> "$GITHUB_OUTPUT"; exit 0; fi
+          shards="$(printf '%s\n' "$PLAN" | grep . | jq -R -s -c --argjson n "$n" '
+            split("\n") | map(select(length > 0)) | to_entries
+            | group_by(.key % $n)
+            | map({id: (.[0].key % $n), targets: (map(.value) | join(" "))})')"
+          echo "Shards: $shards"
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: plan
+    if: needs.plan.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    name: fuzz (shard ${{ matrix.shard.id }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ runner.os }}-${{ github.run_id }}-${{ matrix.shard.id }}
+          restore-keys: |
+            fuzz-corpus-${{ runner.os }}-
+      - name: Fuzz shard targets
+        env:
+          TARGETS: ${{ matrix.shard.targets }}
+        run: |
+          set -euo pipefail
+          for entry in $TARGETS; do
+            pkg="${entry%%|*}"; fn="${entry#*|}"
             if [ -z "$pkg" ] || [ -z "$fn" ]; then continue; fi
             echo "::group::fuzz $fn ($pkg) for $FUZZTIME"
             go test "$pkg" -run='^$' -fuzz="^${fn}$" -fuzztime="$FUZZTIME"
@@ -129,6 +176,22 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fuzz-crashers
+          name: fuzz-crashers-shard-${{ matrix.shard.id }}
           path: '**/testdata/fuzz/**'
           if-no-files-found: ignore
+
+  # Single, stable check name regardless of shard count (or zero targets).
+  fuzz-changed:
+    needs: [plan, fuzz]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate shard results
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          FUZZ_RESULT: ${{ needs.fuzz.result }}
+          COUNT: ${{ needs.plan.outputs.count }}
+        run: |
+          echo "plan=$PLAN_RESULT fuzz=$FUZZ_RESULT targets=$COUNT"
+          [ "$PLAN_RESULT" = "success" ] || exit 1
+          case "$FUZZ_RESULT" in success|skipped) exit 0 ;; *) exit 1 ;; esac
