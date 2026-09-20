@@ -56,6 +56,21 @@ git config core.hooksPath .githooks
   a push) if `golangci-lint` isn't installed. Bypass with
   `git push --no-verify` if you need to push anyway — CI still gates the
   merge regardless.
+  Same hook also **warns** (never blocks) if the branch you're pushing has an
+  already-open PR based on something other than `main` — the shape that let
+  #1961 merge into `fix/sweepfn-error-swallow` after THAT branch had already
+  landed on `main` under a different PR, so #1961's own commit never reached
+  `main` even though GitHub still showed it as "Merged." It's a warning, not
+  a hard failure:
+  a legitimate, still-in-progress stacked PR looks identical to a stale one
+  from git alone, and this repo opens correctly-stacked PRs routinely (CI's
+  own `base-branch-check` job is the actual hard gate, with a `stacked-pr`
+  label escape hatch — see `CLAUDE.md`'s "A merge badge is not a merge"
+  section). Silence it for
+  a deliberate, still-in-progress stack by naming the branch
+  `stacked-on-...`, or adding a `Stacked-On: <branch>` line to the latest
+  commit's body. Skips silently if `gh`/`jq` aren't available or `gh` isn't
+  authenticated.
 
 Neither hook is required — CI enforces both independently — but they turn a
 CI round-trip into an immediate local one.
