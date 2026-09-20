@@ -60,6 +60,22 @@ func TestAzureKV_GetSecret_PinnedVersion(t *testing.T) {
 	assert.Equal(t, "abc123", fake.gotVersion, "name/version pins the version")
 }
 
+// TestAzureKV_GetSecret_EmptyStringRejected is a dedicated, narrow regression
+// test for the Azure sibling of the AWS SecretsManager empty-value bug: a
+// non-nil pointer to "" is a real value's zero-length case, not "no value",
+// so GetSecret must not treat it as success. The fuzzer's own oracle
+// (FuzzAzureKVConnectorResponse) had the identical pointer-only blind spot
+// and was strengthened alongside this fix, but this is deliberately a direct
+// point test too, so this claim has its own unambiguous proving test in
+// docs/security-closures.tsv rather than sharing FuzzAzureKVConnectorResponse
+// with the unrelated connect-redirect-refusal-001 claim.
+func TestAzureKV_GetSecret_EmptyStringRejected(t *testing.T) {
+	fake := &fakeAzKV{value: strptr("")}
+	_, err := azKVConnectorWith("az", "https://v.vault.azure.net/", fake).GetSecret(context.Background(), "x")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no value")
+}
+
 func TestAzureKV_GetSecret_Errors(t *testing.T) {
 	t.Run("empty ref", func(t *testing.T) {
 		_, err := azKVConnectorWith("az", "https://v.vault.azure.net/", &fakeAzKV{}).GetSecret(context.Background(), "")

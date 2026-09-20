@@ -68,6 +68,20 @@ func TestAWSSM_GetSecret_Binary(t *testing.T) {
 	assert.Equal(t, "AAEC", val, "binary secrets are returned base64-encoded")
 }
 
+// TestAWSSM_GetSecret_EmptyStringRejected is a dedicated, narrow regression
+// test for the empty-SecretString bug FuzzAWSSMConnectorResponse found
+// (crasher 09de4b520b95a429): SecretString != nil is true for a non-nil
+// pointer to "", not just to real content, so GetSecret must not treat that
+// as success. Deliberately a direct point test, not just the fuzzer, so this
+// specific claim has its own unambiguous proving test in
+// docs/security-closures.tsv rather than sharing one with any other claim.
+func TestAWSSM_GetSecret_EmptyStringRejected(t *testing.T) {
+	fake := &fakeSM{out: &secretsmanager.GetSecretValueOutput{SecretString: aws.String("")}}
+	_, err := connectorWith("aws", fake).GetSecret(context.Background(), "prod/db")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has no value")
+}
+
 func TestAWSSM_GetSecret_Errors(t *testing.T) {
 	t.Run("empty ref", func(t *testing.T) {
 		_, err := connectorWith("aws", &fakeSM{}).GetSecret(context.Background(), "")
