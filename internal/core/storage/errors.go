@@ -184,6 +184,15 @@ var ErrDuplicateSecretDependency = errors.New("this secret dependency already ex
 // clean "would create a cycle" validation error.
 var ErrSecretDependencyCycle = errors.New("this secret dependency would create a cycle")
 
+// ErrSessionNotFound is returned (wrapped) by GetSessionByID when the row positively
+// does not exist (hard-deleted, e.g. by RevokeUserSessions), as distinct from a
+// transient retrieval failure. SessionLiveForToken (internal/core/auth.go) matches it
+// with errors.Is to decide "the session is definitively gone, deny" versus "the lookup
+// itself failed, fall back to the cached snapshot" — collapsing the two would either
+// deny live traffic on an ordinary DB blip, or (worse) treat an unreachable backend as
+// proof of revocation it never actually observed.
+var ErrSessionNotFound = errors.New("session not found")
+
 // IsUserNotFound reports whether err represents "this user positively does not
 // exist" under EITHER active storage backend (#504). LocalStorage wraps the
 // ErrUserNotFound sentinel above (errors.Is); RemoteStorage instead returns a
@@ -203,6 +212,25 @@ func IsUserNotFound(err error) bool {
 		return false
 	}
 	if errors.Is(err, ErrUserNotFound) {
+		return true
+	}
+	var httpErr *remote.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.IsNotFound()
+	}
+	return false
+}
+
+// IsSessionNotFound is IsUserNotFound's session counterpart — true only for a
+// definitive "this session row does not exist" (ErrSessionNotFound, or a mapped
+// RemoteStorage 4xx/5xx not-found), false for every other error including
+// ErrRemoteUnsupported (GetSessionByID has no RemoteStorage implementation today —
+// that is "unknown," not "confirmed absent," and callers must not conflate the two).
+func IsSessionNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrSessionNotFound) {
 		return true
 	}
 	var httpErr *remote.HTTPError

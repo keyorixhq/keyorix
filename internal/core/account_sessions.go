@@ -15,6 +15,23 @@ import (
 // EventUserSessionsRevoked is audited when an admin force-logs-out a user.
 const EventUserSessionsRevoked = "account.sessions_revoked"
 
+// testRevokeUserSessionsPreInvalidate, when non-nil, is invoked by
+// RevokeUserSessions immediately after DeleteSessionsForUserExcept has
+// committed and before invalidateTokenCache runs. Test-only seam (always nil
+// in production) for deterministically forcing the exact interleaving a
+// descheduled/delayed invalidate call can hit — see
+// server/http/session_revoke_race_test.go.
+var testRevokeUserSessionsPreInvalidate func()
+
+// SetTestRevokeUserSessionsPreInvalidateHook installs testRevokeUserSessionsPreInvalidate.
+// Exported (mirrors SetTokenCacheInvalidator) so a cross-package test
+// (server/http, which cannot see this package's unexported var directly) can
+// force the exact DELETE-committed/pre-invalidate interleaving; production
+// code never calls this.
+func SetTestRevokeUserSessionsPreInvalidateHook(fn func()) {
+	testRevokeUserSessionsPreInvalidate = fn
+}
+
 // RevokeUserSessions terminates every active session belonging to userID, returning
 // the number revoked. The account state is left unchanged — the user can log back in.
 // adminID is the actor (for the audit trail).
@@ -42,6 +59,9 @@ func (c *KeyorixCore) RevokeUserSessions(ctx context.Context, adminID, userID ui
 	// exceptID 0 matches no session, so this drops them all.
 	if err := c.storage.DeleteSessionsForUserExcept(ctx, userID, 0); err != nil {
 		return 0, fmt.Errorf("failed to revoke sessions: %w", err)
+	}
+	if testRevokeUserSessionsPreInvalidate != nil {
+		testRevokeUserSessionsPreInvalidate()
 	}
 	// Evict every revoked session from the HTTP auth cache so a compromised token stops
 	// authenticating on the NEXT request instead of lingering for the positive-cache TTL

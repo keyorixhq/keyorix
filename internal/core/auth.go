@@ -6,9 +6,12 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -634,6 +637,82 @@ func (c *KeyorixCore) SessionStillLive(ctx context.Context, sessionID uint) (boo
 	return true, nil
 }
 
+// hashSessionTokenForLookup mirrors internal/storage/store's own unexported
+// hashSessionToken (SHA-256 hex) so SessionLiveForToken can compare against a
+// session row's stored hash without exporting that helper across the storage
+// boundary. Must stay byte-for-byte identical to the storage layer's version — a
+// drift here would make every legitimate cache hit spuriously fail closed as a
+// hash mismatch.
+func hashSessionTokenForLookup(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// SessionLiveForToken reports whether sessionID is still the SAME live session
+// backing the presented token — the HTTP auth cache-hit path's (serveAuthCacheHit)
+// session counterpart of CurrentPATRestriction/CurrentMachineTokenRestriction
+// re-checking their own credential's live state on every cache hit, closing the
+// gap AccountStillUsable alone leaves (a session revoked without touching the
+// owning account's IsActive/AccountState — RevokeUserSessions, ChangePassword,
+// MFA/WebAuthn enrollment changes, and others — was previously invisible to a
+// cache hit for up to validTokenTTL; see docs/findings/2026-09-20-FINDING-
+// session-revoke-cache-race.md).
+//
+// Distinct from SessionStillLive (the gRPC long-lived-stream re-auth path, #G18):
+// SessionStillLive is deliberately keyed by row id ALONE — its caller does not
+// retain the bearer token past the stream's opening request, by design, for
+// credential-retention hygiene. serveAuthCacheHit, by contrast, already holds the
+// token for THIS SAME request (the caller presented it moments ago), so comparing
+// the row's own stored hash against it here adds a real invariant at no extra
+// retention cost: sessionID must belong to the EXACT token presented, not merely
+// be "some session that happens to still be live." Session rotation
+// (RefreshSession/RotateSession, #211) creates a NEW row with a NEW hash and
+// marks the OLD row's RotatedAt; it never rewrites an existing row's
+// session_token in place, so a rotated-out old token's own sessionID already
+// fails the RotatedAt check below without the hash comparison — but the hash
+// comparison is what makes the check safe against ANY sessionID that doesn't
+// actually belong to the presented token (a wiring bug, not rotation), not just
+// that one case, and is what a rotation regression test asserts directly.
+//
+// Return contract (callers must not treat these the same):
+//   - (false, nil): the session is DEFINITIVELY not live — row hard-deleted
+//     (storage.ErrSessionNotFound / storage.IsSessionNotFound), hash mismatch,
+//     rotated away, or expired. Callers must deny and evict, exactly like the
+//     PAT/machine branches deny on ErrPATRevoked/ErrMachineTokenRevoked.
+//   - (false, err) / (_, err) for any other error: the LOOKUP failed — a
+//     transient storage error. Callers must fall back to the cached snapshot,
+//     exactly like the PAT/machine branches do on any err besides the
+//     specific revoked/expired sentinels — a DB blip must not lock out every
+//     session holder. (GetSessionByID also has no RemoteStorage implementation,
+//     which would hit this same branch, but that combination cannot occur in a
+//     supported deployment: ADR-083 makes storage.type: remote a CLI/client
+//     mode only, never wired into the server's own HTTP handlers — see
+//     validateRemoteStorageNotServer — so this path is unreachable there, not
+//     a deployment-relevant gap.)
+func (c *KeyorixCore) SessionLiveForToken(ctx context.Context, sessionID uint, token string) (bool, error) {
+	session, err := c.storage.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		if storage.IsSessionNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if session.SessionToken != hashSessionTokenForLookup(token) {
+		return false, nil
+	}
+	if session.RotatedAt != nil {
+		return false, nil
+	}
+	now := c.now()
+	if session.ExpiresAt != nil && now.After(*session.ExpiresAt) {
+		return false, nil
+	}
+	if session.AbsoluteExpiresAt != nil && now.After(*session.AbsoluteExpiresAt) {
+		return false, nil
+	}
+	return true, nil
+}
+
 // SessionEffectiveExpiry returns the earliest of a session's idle-expiry (ExpiresAt)
 // and absolute-expiry (AbsoluteExpiresAt), or nil when the session has neither or
 // cannot be resolved. The auth middleware calls this on the SLOW validation path only
@@ -673,6 +752,36 @@ func (c *KeyorixCore) AccountStillUsable(ctx context.Context, userID uint) (bool
 		return false, err
 	}
 	return user.IsActive && !AccountLoginBlocked(user.ID, user.AccountState), nil
+}
+
+// AccountUsabilityAndState is AccountStillUsable's session-cache-hit sibling:
+// the same GetUser read, but also returns the account's raw AccountState —
+// needed to refresh UserContext.AccountState/Restricted on a cache hit, not
+// just decide the outright-deny boolean. AccountStillUsable itself is left
+// untouched (internal/cli/migrate/user_to_machine.go has its own, unrelated
+// caller that only needs the boolean) — this is a second, additive method,
+// not a signature change.
+//
+// The gap this closes: AccountLoginBlocked and AccountRestricted are NOT the
+// same predicate (see AccountRestricted's own doc comment) —
+// pending_first_login/password_reset_required are AccountRestricted but NOT
+// AccountLoginBlocked. Before this, a cache hit's AccountStillUsable check
+// passed (the account isn't blocked) but the CACHED UserContext's
+// AccountState/Restricted — fixed at the slow path's last fill — stayed
+// whatever it was then. A transition into a restricted-but-not-blocked state
+// was invisible to EnforceAccountRestriction on a cache hit until the entry's
+// own eviction (whether via that state-change's own invalidateTokenCache call,
+// or the TTL) actually landed — the same race SHAPE as the session-liveness
+// bug this PR fixes elsewhere, not merely a bounded 30s lag: a request served
+// from the cache in the window between the state committing and its own
+// eviction reaching this process's cache still sees the pre-transition
+// Restricted value. See serveAuthCacheHit's session branch.
+func (c *KeyorixCore) AccountUsabilityAndState(ctx context.Context, userID uint) (usable bool, state string, err error) {
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return false, "", err
+	}
+	return user.IsActive && !AccountLoginBlocked(user.ID, user.AccountState), user.AccountState, nil
 }
 
 // RequestPasswordReset issues a password-reset link for the given email and
