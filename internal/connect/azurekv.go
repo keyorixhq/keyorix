@@ -105,7 +105,12 @@ func (c *AzureKeyVaultConnector) GetSecret(ctx context.Context, ref string) (str
 	if err != nil {
 		return "", fmt.Errorf("azure-key-vault: get %q: %w", ref, err)
 	}
-	if out.Value == nil {
+	// Value != nil alone is not "has a value" -- same shape as the AWS Secrets
+	// Manager connector's SecretString bug this sweep found (
+	// docs/findings/2026-09-20-FINDING-awssm-empty-secret-response.md): a
+	// response body like {"value":""} decodes to a non-nil pointer to "",
+	// which must not be treated as a real secret and returned as success.
+	if out.Value == nil || *out.Value == "" {
 		return "", fmt.Errorf("azure-key-vault: secret %q has no value", ref)
 	}
 	return *out.Value, nil

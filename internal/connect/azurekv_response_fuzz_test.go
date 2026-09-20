@@ -93,6 +93,7 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 	f.Add(500, []byte(``))
 	f.Add(200, []byte(`not json`))
 	f.Add(200, []byte(`{"value":null}`))
+	f.Add(200, []byte(`{"value":""}`))
 	f.Add(200, []byte(`{}`))
 	f.Add(301, []byte(``))
 	f.Add(302, []byte(``))
@@ -189,16 +190,20 @@ func FuzzAzureKVConnectorResponse(f *testing.F) {
 		//  1. azsecrets.GetSecret requires EXACTLY 200 (runtime.HasStatusCode(
 		//     httpResp, http.StatusOK)) -- any other status must error, never be
 		//     treated as a successful read.
-		//  2. a 200 response that structurally carries no non-null "value" field
-		//     must ALSO error -- matches azurekv.go's own explicit "secret %q has
-		//     no value" check.
+		//  2. a 200 response that structurally carries no non-null, non-empty
+		//     "value" field must ALSO error -- matches azurekv.go's own explicit
+		//     "secret %q has no value" check. Non-empty, not just non-null: a
+		//     body like {"value":""} decodes to a non-nil pointer to "", which
+		//     is not a real secret value either (the sibling bug this oracle
+		//     definition was strengthened for -- see
+		//     docs/findings/2026-09-20-FINDING-awssm-empty-secret-response.md).
 		if code != http.StatusOK && err == nil {
 			t.Fatalf("BYPASS: non-200 status %d treated as success, returned value %q", code, val)
 		}
 		var ref azureSecretValueRef
-		hasValue := json.Unmarshal(body, &ref) == nil && ref.Value != nil
+		hasValue := json.Unmarshal(body, &ref) == nil && ref.Value != nil && *ref.Value != ""
 		if code == http.StatusOK && !hasValue && err == nil {
-			t.Fatalf("BYPASS: response has no non-null value field but GetSecret returned success with value %q", val)
+			t.Fatalf("BYPASS: response has no non-null, non-empty value field but GetSecret returned success with value %q", val)
 		}
 
 		// Oracle (d): no credential echo. The bearer token the connector actually
