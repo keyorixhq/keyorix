@@ -84,4 +84,88 @@ fi
 if [ "$status" != 0 ]; then
   echo "pre-push: golangci-lint found issues above -- push refused. Fix them, or run 'git push --no-verify' to bypass (CI still gates this)." >&2
 fi
+
+# --- base-branch check: warn on a push to a branch whose ALREADY-OPEN PR is
+# based on something other than main ---
+#
+# Why: a PR based on a feature branch instead of main, once merged, lands its
+# commits into THAT branch's history, not main's -- GitHub still reports the
+# PR as "Merged" (the merge into the wrong base genuinely happened), so it
+# looks done. Nothing else catches this reliably after the fact: CI's own
+# base-branch-check job (.github/workflows/ci.yml) runs while the PR is
+# open, at whatever base it has AT THAT TIME, with a `stacked-pr` label
+# escape hatch for deliberate stacking -- it has no way to notice a
+# correctly-labeled stacked PR's base branch merging first, and the stack
+# never being retargeted before its OWN merge. Found for real: #1961,
+# opened (correctly, at the time) against fix/sweepfn-error-swallow and
+# labeled stacked-pr, still open against that base after
+# fix/sweepfn-error-swallow had ALREADY landed on main -- #1961's own commit
+# would never have reached main had it merged as-is (see #1964, the
+# re-target that recovered its content).
+#
+# THIS IS NOT A PREVENTION MECHANISM FOR THE INITIAL MISTAKE: no git hook
+# runs at `gh pr create` time, and the base is a GitHub-side PR property
+# this hook can only read after the fact, not intercept. What this catches:
+# a LATER push to a branch whose already-open PR still has a non-main
+# base -- ideally the moment just before that branch gets merged, which is
+# exactly when a stale stacked base becomes permanent. Silent by design if
+# `gh`/`jq` is unavailable or unauthenticated (never blocks a push over a
+# missing local tool), or if the branch has no open PR yet (nothing to
+# check yet).
+#
+# Escape hatch for a genuinely still-in-progress stack: name the branch
+# with a "stacked-on-" prefix, or put a "Stacked-On: <branch>" line in the
+# most recent commit's body. Either marks the non-main base as deliberate
+# for this push and skips the check.
+#
+# WARNING, not a hard failure -- chosen deliberately, not the default. A
+# legitimate stacked PR that's still correctly waiting on its base to merge
+# is indistinguishable, from git alone, from one whose base already merged
+# and should have been retargeted -- this exact workflow routinely opens
+# correctly-stacked PRs (e.g. #1960/#1961) before any "Stacked-On"
+# convention exists to mark them. A hard failure here would block that
+# entirely normal workflow on every push until every stack is scrupulously
+# marked, and would also block an unrelated, urgent push over a `gh` API
+# hiccup or auth expiry -- a check this hook cannot fully verify locally.
+# CI's own base-branch-check job is the right place for a hard gate (it has
+# authoritative, current GitHub state and runs on every PR); this hook's
+# job is to put the same information in front of the pusher one step
+# earlier, right before the merge that would make it permanent -- a warning
+# does that without the failure modes above. If the base branch itself no
+# longer exists on the remote (the strongest available local signal that
+# the stack was never retargeted after its base merged), the warning is
+# upgraded to say so explicitly.
+
+branch="$(git symbolic-ref --short -q HEAD || true)"
+case "$branch" in
+  ""|stacked-on-*) : ;;
+  *)
+    if command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 \
+      && gh auth status >/dev/null 2>&1; then
+      if ! git log -1 --format=%B HEAD 2>/dev/null | grep -qE '^Stacked-On:'; then
+        pr_json="$(gh pr view "$branch" --json number,baseRefName,state 2>/dev/null || true)"
+        if [ -n "$pr_json" ]; then
+          pr_state="$(printf '%s' "$pr_json" | jq -r '.state')"
+          pr_base="$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
+          pr_number="$(printf '%s' "$pr_json" | jq -r '.number')"
+          if [ "$pr_state" = "OPEN" ] && [ "$pr_base" != "main" ]; then
+            if git ls-remote --exit-code --heads origin "$pr_base" >/dev/null 2>&1; then
+              echo "pre-push WARNING: PR #$pr_number for branch '$branch' is based on '$pr_base', not main." >&2
+              echo "  If '$pr_base' merges before this PR does and nobody retargets first, this PR's" >&2
+              echo "  commits never reach main even though GitHub will show it as Merged -- see #1961." >&2
+            else
+              echo "pre-push WARNING: PR #$pr_number for branch '$branch' is based on '$pr_base', which" >&2
+              echo "  NO LONGER EXISTS on the remote -- its own PR very likely already merged. This" >&2
+              echo "  stack was probably never retargeted, and #$pr_number's commits may already be" >&2
+              echo "  stranded off main. Retarget #$pr_number to main before merging it -- see #1961." >&2
+            fi
+            echo "  Deliberate, still-in-progress stack: name the branch 'stacked-on-...', or add a" >&2
+            echo "  'Stacked-On: $pr_base' line to the latest commit body, to silence this." >&2
+          fi
+        fi
+      fi
+    fi
+    ;;
+esac
+
 exit "$status"
