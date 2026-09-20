@@ -25,6 +25,7 @@ package core
 import (
 	"context"
 	"log"
+	"sync"
 )
 
 // Actor types stamped on every audit event (ADR-023). They distinguish a human
@@ -132,8 +133,21 @@ func DetachedAuditContext(parent context.Context) context.Context {
 // any panic in fn is recovered and logged instead of taking the server down.
 // This mirrors server/http/handlers' goSafe, duplicated here because that
 // package cannot be imported from internal/core.
+// goSafeWG tracks in-flight goSafe goroutines so tests can deterministically wait
+// for detached audit/side-effect writes instead of guessing with a sleep — see
+// DrainBackgroundGoroutines. Mirrors server/http/handlers' identical addition.
+var goSafeWG sync.WaitGroup
+
+// DrainBackgroundGoroutines blocks until every goSafe goroutine dispatched so far
+// by this package has returned. Test-only observability hook.
+func DrainBackgroundGoroutines() {
+	goSafeWG.Wait()
+}
+
 func goSafe(fn func()) {
+	goSafeWG.Add(1)
 	go func() {
+		defer goSafeWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("recovered from panic in background goroutine: %v", r)

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -95,8 +96,25 @@ func clientSafe(err error) string {
 // #243). goSafe closes that gap: any panic in fn is recovered and logged
 // instead of taking the server down. Use it in place of a bare `go` for any
 // detached side-effect goroutine spawned from a request handler.
+// goSafeWG tracks every in-flight goSafe goroutine so tests can deterministically
+// wait for detached audit/side-effect writes to land instead of guessing with a
+// sleep (see DrainBackgroundGoroutines). Negligible overhead in production — one
+// Add/Done pair per dispatch, no contention outside test use of the Wait below.
+var goSafeWG sync.WaitGroup
+
+// DrainBackgroundGoroutines blocks until every goSafe goroutine dispatched so far
+// by this package has returned. Test-only observability hook: production code has
+// no reason to call it (goSafe is fire-and-forget by design), but a test asserting
+// on an async side effect (e.g. an audit row) needs a deterministic point to scan
+// at, not a fixed sleep that can race a slow write and silently miss a real leak.
+func DrainBackgroundGoroutines() {
+	goSafeWG.Wait()
+}
+
 func goSafe(fn func()) {
+	goSafeWG.Add(1)
 	go func() {
+		defer goSafeWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("recovered from panic in background goroutine: %v", r)
