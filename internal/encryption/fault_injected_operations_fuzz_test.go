@@ -195,11 +195,9 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -370,13 +368,21 @@ func armSQLFault(db *gorm.DB, seam string) (restore func()) {
 
 // ── secret-CRUD world (create/update/delete/backup) ─────────────────────────
 
-// secretWorld is a fresh in-memory-SQLite + cheap-static-KEK harness for the
-// four operations that don't need a real password-derived KEK (their
-// durability seams are the SQL layer or a plain file write, not KEK
-// derivation) — mirrors FuzzDEKSweepCrashConsistency's own staticKEKProvider
-// reasoning: the KDF is not what's under test here.
+// secretWorldDBTables is the explicit, hand-named set of tables fuzzResetTables clears
+// between fuzz iterations that reuse the same per-worker DB world (see fuzzworld_test.go's
+// RESET SCOPE note for why this is a named list, not derived from the migrated model set).
+// Dependent-first order: secret_versions/secret_acls/share_records before secret_nodes.
+var secretWorldDBTables = []string{"secret_versions", "secret_acls", "share_records", "secret_nodes"}
+
+// secretWorld is a cheap-static-KEK harness for the four operations that don't need a real
+// password-derived KEK (their durability seams are the SQL layer or a plain file write, not
+// KEK derivation) — mirrors FuzzDEKSweepCrashConsistency's own staticKEKProvider reasoning:
+// the KDF is not what's under test here. Its DB comes from a per-worker fuzzDBWorld (SQLite
+// always, PostgreSQL too when KEYORIX_TEST_PG_DSN is set) reset fresh on every call to
+// newSecretWorld — only the key/file directory (dir) is still allocated per call.
 type secretWorld struct {
 	t         *testing.T
+	backend   string
 	dir       string
 	db        *gorm.DB
 	svc       *Service
@@ -385,18 +391,14 @@ type secretWorld struct {
 	canary    string
 }
 
-func newSecretWorld(t *testing.T, canary string) *secretWorld {
+func newSecretWorld(t *testing.T, dbw *fuzzDBWorld, canary string) *secretWorld {
 	t.Helper()
+	if err := fuzzResetTables(dbw, secretWorldDBTables); err != nil {
+		t.Fatalf("[%s] reset: %v", dbw.backend, err)
+	}
+	db := dbw.db
 	dir := t.TempDir()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	for _, m := range []interface{}{&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.SecretACL{}} {
-		if e := db.AutoMigrate(m); e != nil {
-			t.Fatalf("migrate %T: %v", m, e)
-		}
-	}
+
 	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
 	svc := NewService(cfg, dir)
 	svc.keyManager.SetKeyProvider(staticKEKProvider{})
@@ -407,7 +409,7 @@ func newSecretWorld(t *testing.T, canary string) *secretWorld {
 	seedVal := []byte("seed-value-" + canary)
 	node := &models.SecretNode{ProjectID: 1, Name: "seed", IsSecret: true}
 	if e := db.Create(node).Error; e != nil {
-		t.Fatalf("seed node: %v", e)
+		t.Fatalf("[%s] seed node: %v", dbw.backend, e)
 	}
 	aad := SecretAAD(node.ID, 1, 1)
 	enc, meta, e := svc.EncryptSecretWithAAD(seedVal, aad)
@@ -415,9 +417,9 @@ func newSecretWorld(t *testing.T, canary string) *secretWorld {
 		t.Fatalf("seed encrypt: %v", e)
 	}
 	if e := db.Create(&models.SecretVersion{SecretNodeID: node.ID, VersionNumber: 1, EncryptedValue: enc, EncryptionMetadata: models.JSON(meta)}).Error; e != nil {
-		t.Fatalf("seed version: %v", e)
+		t.Fatalf("[%s] seed version: %v", dbw.backend, e)
 	}
-	return &secretWorld{t: t, dir: dir, db: db, svc: svc, seedNode: node.ID, seedValue: seedVal, canary: canary}
+	return &secretWorld{t: t, backend: dbw.backend, dir: dir, db: db, svc: svc, seedNode: node.ID, seedValue: seedVal, canary: canary}
 }
 
 // decryptLatest returns the decrypted plaintext of the latest version row for
@@ -467,6 +469,16 @@ func scanForPlaintext(root string, canary []byte) []string {
 // ── the fuzz target ───────────────────────────────────────────────────────
 
 func FuzzFaultInjectedOperations(f *testing.F) {
+	// Built ONCE per testing.F, before f.Fuzz — see fuzzworld_test.go's PERFORMANCE note.
+	// SQLite always; PostgreSQL too when KEYORIX_TEST_PG_DSN is set. Only
+	// opCreate/opUpdate/opDelete/opBackup (via newSecretWorld) touch this DB at all —
+	// opRewrap/opKEKRotate never receive it (see runFaultInjectedCase below); they are pure
+	// file/PBKDF2 operations with zero database interaction, so they run once, not once per
+	// world.
+	dbWorlds := buildFuzzDBWorlds(f, "faultopsfuzz", []any{
+		&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.SecretACL{},
+	})
+
 	// Seed one case per (operation, seam, kind) combination decodeFault can
 	// produce, including kek:rename-dek's ambiguous kind — see decodeFault's
 	// comment: that case is deterministic post-fix (transparent recovery), not
@@ -499,7 +511,7 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			runFaultInjectedCase(t, opSel, seamSel, kindSel, shortWriteK, oldPass, newPass, canary)
+			runFaultInjectedCase(t, dbWorlds, opSel, seamSel, kindSel, shortWriteK, oldPass, newPass, canary)
 		}()
 		select {
 		case <-done:
@@ -509,12 +521,14 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 	})
 }
 
-func runFaultInjectedCase(t *testing.T, opSel, seamSel, kindSel, shortWriteK byte, oldPass, newPass, canary string) {
+func runFaultInjectedCase(t *testing.T, dbWorlds []*fuzzDBWorld, opSel, seamSel, kindSel, shortWriteK byte, oldPass, newPass, canary string) {
 	op, seam, sk, ff := decodeFault(opSel, seamSel, kindSel, shortWriteK)
 
 	switch op {
 	case opCreate, opUpdate, opDelete, opBackup:
-		runSecretWorldCase(t, op, seam, sk, ff, canary)
+		for _, dbw := range dbWorlds {
+			runSecretWorldCase(t, dbw, op, seam, sk, ff, canary)
+		}
 	case opRewrap:
 		runRewrapFaultCase(t, seam, ff, oldPass, newPass)
 	case opKEKRotate:
@@ -524,8 +538,8 @@ func runFaultInjectedCase(t *testing.T, opSel, seamSel, kindSel, shortWriteK byt
 
 // ── create / update / delete / backup ────────────────────────────────────
 
-func runSecretWorldCase(t *testing.T, op opID, seam string, sk seamKind, ff *fileFault, canary string) {
-	w := newSecretWorld(t, canary)
+func runSecretWorldCase(t *testing.T, dbw *fuzzDBWorld, op opID, seam string, sk seamKind, ff *fileFault, canary string) {
+	w := newSecretWorld(t, dbw, canary)
 
 	var restore func()
 	switch sk {
