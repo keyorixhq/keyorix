@@ -61,14 +61,21 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 	}
 
 	var sweepResult *SweepResult
-	sweepFn := func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error {
+	sweepFn := func(oldSvc, newSvc *EncryptionService, newKeyVersion string) (err error) {
 		tx := db.Begin()
 		if tx.Error != nil {
 			return fmt.Errorf("failed to begin transaction: %w", tx.Error)
 		}
+		// Named return + explicit assignment here (not a bare "if recover() != nil"): with an
+		// unnamed return, recovering from a panic makes this closure return nil regardless of
+		// what panicked, so RotateDEKWithSweep below would see err == nil and promote the new
+		// DEK / wipe the old one / delete backups even though the sweep transaction was rolled
+		// back and the rows never moved to the new DEK. See
+		// docs/findings/2026-09-20-FINDING-sweepfn-panic-recovery-swallows-failure.md.
 		defer func() {
-			if recover() != nil {
+			if r := recover(); r != nil {
 				tx.Rollback()
+				err = fmt.Errorf("re-encryption sweep panicked: %v", r)
 			}
 		}()
 
