@@ -6,9 +6,12 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -620,6 +623,79 @@ func (c *KeyorixCore) SessionStillLive(ctx context.Context, sessionID uint) (boo
 	session, err := c.storage.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		return false, err
+	}
+	if session.RotatedAt != nil {
+		return false, nil
+	}
+	now := c.now()
+	if session.ExpiresAt != nil && now.After(*session.ExpiresAt) {
+		return false, nil
+	}
+	if session.AbsoluteExpiresAt != nil && now.After(*session.AbsoluteExpiresAt) {
+		return false, nil
+	}
+	return true, nil
+}
+
+// hashSessionTokenForLookup mirrors internal/storage/store's own unexported
+// hashSessionToken (SHA-256 hex) so SessionLiveForToken can compare against a
+// session row's stored hash without exporting that helper across the storage
+// boundary. Must stay byte-for-byte identical to the storage layer's version — a
+// drift here would make every legitimate cache hit spuriously fail closed as a
+// hash mismatch.
+func hashSessionTokenForLookup(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// SessionLiveForToken reports whether sessionID is still the SAME live session
+// backing the presented token — the HTTP auth cache-hit path's (serveAuthCacheHit)
+// session counterpart of CurrentPATRestriction/CurrentMachineTokenRestriction
+// re-checking their own credential's live state on every cache hit, closing the
+// gap AccountStillUsable alone leaves (a session revoked without touching the
+// owning account's IsActive/AccountState — RevokeUserSessions, ChangePassword,
+// MFA/WebAuthn enrollment changes, and others — was previously invisible to a
+// cache hit for up to validTokenTTL; see docs/findings/2026-09-20-FINDING-
+// session-revoke-cache-race.md).
+//
+// Distinct from SessionStillLive (the gRPC long-lived-stream re-auth path, #G18):
+// SessionStillLive is deliberately keyed by row id ALONE — its caller does not
+// retain the bearer token past the stream's opening request, by design, for
+// credential-retention hygiene. serveAuthCacheHit, by contrast, already holds the
+// token for THIS SAME request (the caller presented it moments ago), so comparing
+// the row's own stored hash against it here adds a real invariant at no extra
+// retention cost: sessionID must belong to the EXACT token presented, not merely
+// be "some session that happens to still be live." Session rotation
+// (RefreshSession/RotateSession, #211) creates a NEW row with a NEW hash and
+// marks the OLD row's RotatedAt; it never rewrites an existing row's
+// session_token in place, so a rotated-out old token's own sessionID already
+// fails the RotatedAt check below without the hash comparison — but the hash
+// comparison is what makes the check safe against ANY sessionID that doesn't
+// actually belong to the presented token (a wiring bug, not rotation), not just
+// that one case, and is what a rotation regression test asserts directly.
+//
+// Return contract (callers must not treat these the same):
+//   - (false, nil): the session is DEFINITIVELY not live — row hard-deleted
+//     (storage.ErrSessionNotFound / storage.IsSessionNotFound), hash mismatch,
+//     rotated away, or expired. Callers must deny and evict, exactly like the
+//     PAT/machine branches deny on ErrPATRevoked/ErrMachineTokenRevoked.
+//   - (false, err) / (_, err) for any other error: the LOOKUP failed — a
+//     transient storage error, or (today) storage.type: remote, which has no
+//     GetSessionByID implementation at all (ErrRemoteUnsupported) and so can
+//     never positively confirm liveness via this path. Callers must fall back
+//     to the cached snapshot, exactly like the PAT/machine branches do on any
+//     err besides the specific revoked/expired sentinels — a DB blip (or a
+//     RemoteStorage deployment) must not lock out every session holder.
+func (c *KeyorixCore) SessionLiveForToken(ctx context.Context, sessionID uint, token string) (bool, error) {
+	session, err := c.storage.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		if storage.IsSessionNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if session.SessionToken != hashSessionTokenForLookup(token) {
+		return false, nil
 	}
 	if session.RotatedAt != nil {
 		return false, nil

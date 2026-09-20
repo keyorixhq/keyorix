@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
@@ -135,7 +136,12 @@ func (ls *LocalStorage) DeleteSessionsByFamily(ctx context.Context, familyID str
 func (ls *LocalStorage) GetSessionByID(ctx context.Context, id uint) (*models.Session, error) {
 	var session models.Session
 	if err := ls.db.WithContext(ctx).First(&session, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Wrap the typed sentinel so callers can distinguish "absent" from a
+			// transient failure (SessionLiveForToken's cache-hit deny-vs-fall-back split).
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrSessionNotFound)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &session, nil
 }
