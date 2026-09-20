@@ -34,13 +34,11 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -60,6 +58,7 @@ const apiFuzzPrincipalPassword = "Xk7#Qp2$Rn5@Wv9!"
 var apiSeqMutSeq atomic.Int64
 
 type apiFuzzWorld struct {
+	backend    string // "sqlite" or "postgres" -- failure messages only
 	router     http.Handler
 	db         *gorm.DB
 	c          *core.KeyorixCore
@@ -75,17 +74,40 @@ type apiFuzzWorld struct {
 	principals []apiFuzzPrincipal // non-admin, own no secrets, start with no grants
 }
 
-func buildAPIFuzzWorld(f *testing.F) *apiFuzzWorld {
+// buildAPIFuzzWorldSQLite and buildAPIFuzzWorldPostgres build the full rich
+// apiFuzzWorld on top of a bare *gorm.DB from fuzzworld_test.go's
+// apiFuzzDBWorldSQLite/apiFuzzDBWorldPostgres. buildAPIFuzzWorlds returns the
+// SQLite world (always) plus the PostgreSQL world (when KEYORIX_TEST_PG_DSN
+// is set) as a slice callers range over -- one iteration of the fuzz body
+// per world.
+func buildAPIFuzzWorldSQLite(f *testing.F) *apiFuzzWorld {
+	f.Helper()
+	return buildAPIFuzzWorld(f, "sqlite", apiFuzzDBWorldSQLite(f))
+}
+
+func buildAPIFuzzWorldPostgres(f *testing.F, schemaPrefix string) *apiFuzzWorld {
+	f.Helper()
+	db := apiFuzzDBWorldPostgres(f, schemaPrefix)
+	if db == nil {
+		return nil
+	}
+	return buildAPIFuzzWorld(f, "postgres", db)
+}
+
+func buildAPIFuzzWorlds(f *testing.F, schemaPrefix string) []*apiFuzzWorld {
+	worlds := []*apiFuzzWorld{buildAPIFuzzWorldSQLite(f)}
+	if pg := buildAPIFuzzWorldPostgres(f, schemaPrefix); pg != nil {
+		worlds = append(worlds, pg)
+	} else {
+		f.Logf("KEYORIX_TEST_PG_DSN not set (%s) -- PostgreSQL backend skipped, SQLite only", schemaPrefix)
+	}
+	return worlds
+}
+
+func buildAPIFuzzWorld(f *testing.F, backend string, db *gorm.DB) *apiFuzzWorld {
 	f.Helper()
 	if err := i18n.InitializeForTesting(); err != nil {
 		f.Fatalf("i18n: %v", err)
-	}
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		f.Fatalf("open sqlite: %v", err)
-	}
-	if sqlDB, e := db.DB(); e == nil {
-		sqlDB.SetMaxOpenConns(1)
 	}
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
 		f.Fatalf("migrate: %v", err)
@@ -206,7 +228,8 @@ func buildAPIFuzzWorld(f *testing.F) *apiFuzzWorld {
 	}
 
 	return &apiFuzzWorld{
-		router: r, db: db, c: c, readerRole: role.ID, adminTok: adminSess.SessionToken,
+		backend: backend,
+		router:  r, db: db, c: c, readerRole: role.ID, adminTok: adminSess.SessionToken,
 		adminID: admin.ID, revuserID: revuser.ID,
 		projAID: pA.ID, projBID: pB.ID, envAID: eA.ID,
 		refA: "proja/prod/sa", valA: "VALUE-A-9f3c1",
@@ -216,7 +239,7 @@ func buildAPIFuzzWorld(f *testing.F) *apiFuzzWorld {
 }
 
 func FuzzKeyorixHTTPAPISequence(f *testing.F) {
-	w := buildAPIFuzzWorld(f)
+	worlds := buildAPIFuzzWorlds(f, "apiseqfuzz")
 	f.Cleanup(i18n.ResetForTesting)
 
 	f.Add([]byte{0, 0, 0, 2, 0, 3, 2, 2, 3})
@@ -226,243 +249,250 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
-		ctx := context.Background()
-
-		// per-iteration reset: drop fuzz-principal grants, clear the model. NO token-cache
-		// flush. middleware.InvalidateTokenCache writes a negative TOMBSTONE (it is a
-		// revocation helper, not a refresh), which denied the token for invalidTokenTTL and
-		// so silently masked every AUTHORIZED read in this harness — the positive path was
-		// never actually verified (a granted read got 401, and read() only checks integrity
-		// on a 200, so the assertion was skipped). The auth cache holds only the
-		// authenticated IDENTITY; the per-request permission check re-reads grants from the
-		// DB, so a grant/revoke is reflected on the very next read with no flush needed.
-		w.db.Exec("DELETE FROM user_roles WHERE user_id IN (?,?,?)",
-			w.principals[0].id, w.principals[1].id, w.principals[2].id)
-		canRead := map[uint]map[uint]bool{}
-		for _, p := range w.principals {
-			canRead[p.id] = map[uint]bool{w.projAID: false, w.projBID: false}
-		}
-
-		projFor := func(sel int) uint {
-			if sel%2 == 1 {
-				return w.projBID
-			}
-			return w.projAID
-		}
-		grant := func(pi, proj int) {
-			p := w.principals[pi%len(w.principals)]
-			projID := projFor(proj)
-			if err := w.c.AssignUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}, false); err == nil {
-				canRead[p.id][projID] = true
-			}
-		}
-		revoke := func(pi, proj int) {
-			p := w.principals[pi%len(w.principals)]
-			projID := projFor(proj)
-			if err := w.c.RemoveUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}); err == nil {
-				canRead[p.id][projID] = false
-			}
-		}
-		read := func(who, which, mode byte) {
-			ref, val, projID := w.refA, w.valA, w.projAID
-			if which%2 == 1 {
-				ref, val, projID = w.refB, w.valB, w.projBID
-			}
-			var authz string
-			allowed := false
-			switch mode % 4 {
-			case 0: // no token
-			case 1: // garbage token
-				authz = "Bearer garbage-not-a-real-token"
-			case 2: // admin (owns every secret; global admin)
-				authz, allowed = "Bearer "+w.adminTok, true
-			default: // a fuzz principal's token
-				p := w.principals[int(who)%len(w.principals)]
-				if p.token != "" {
-					authz = "Bearer " + p.token
-				}
-				allowed = p.token != "" && canRead[p.id][projID]
-			}
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+ref, nil)
-			if authz != "" {
-				req.Header.Set("Authorization", authz)
-			}
-			rec := httptest.NewRecorder()
-			w.router.ServeHTTP(rec, req)
-			body := rec.Body.String()
-
-			if !allowed {
-				if rec.Code == http.StatusOK {
-					t.Fatalf("AUTHZ BYPASS: unauthorized read of %q returned 200 (mode=%d who=%d)\nbody=%s", ref, mode%4, who, body)
-				}
-				if strings.Contains(body, val) {
-					t.Fatalf("PLAINTEXT LEAK on deny: response for %q (code=%d) contains the secret value\nbody=%s", ref, rec.Code, body)
-				}
-				return
-			}
-			// allowed: a 200 must carry EXACTLY this secret's value (never assert must-200).
-			if rec.Code == http.StatusOK {
-				var resp struct {
-					Data struct {
-						Value string `json:"value"`
-					} `json:"data"`
-				}
-				if json.Unmarshal(rec.Body.Bytes(), &resp) == nil && resp.Data.Value != val {
-					t.Fatalf("INTEGRITY: authorized read of %q returned wrong value %q (want %q)", ref, resp.Data.Value, val)
-				}
-			}
-		}
-
-		// revocationProbe exercises token-revocation monotonicity end-to-end against the
-		// real stack: mint a FRESH session for revuser, grant it read on A, confirm the
-		// token actually authorizes the read (positive control — otherwise the deny below
-		// is vacuous), then RevokeUserSessions and assert the SAME token is now denied.
-		// Sound: only the deny direction is asserted, and only after proving the token
-		// worked immediately before. Revocation is driven through the real core path
-		// (deletes the session + evicts the auth cache), reads over HTTP — so it verifies
-		// the actual cache-eviction, not a directly-written tombstone.
-		revocationProbe := func() {
-			sess, _, lerr := w.c.Login(ctx, &core.LoginRequest{Username: "revuser", Password: apiFuzzPrincipalPassword})
-			if lerr != nil || sess == nil {
-				return
-			}
-			tok := sess.SessionToken
-			defer w.db.Exec("DELETE FROM user_roles WHERE user_id = ?", w.revuserID) // keep the shared world clean
-			if err := w.c.AssignUserRole(ctx, 0, w.revuserID, w.readerRole, core.Scope{ProjectID: w.projAID}, false); err != nil {
-				return
-			}
-			readA := func() *httptest.ResponseRecorder {
-				req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+w.refA, nil)
-				req.Header.Set("Authorization", "Bearer "+tok)
-				rec := httptest.NewRecorder()
-				w.router.ServeHTTP(rec, req)
-				return rec
-			}
-			// Positive control: the granted token must actually read A, else the deny below
-			// is vacuous and we skip the assertion (avoids a false positive).
-			if readA().Code != http.StatusOK {
-				return
-			}
-			if _, err := w.c.RevokeUserSessions(ctx, w.adminID, w.revuserID); err != nil {
-				return
-			}
-			post := readA()
-			if post.Code == http.StatusOK {
-				t.Fatalf("REVOCATION INEFFECTIVE: revuser's token still returned 200 for %q after RevokeUserSessions", w.refA)
-			}
-			if strings.Contains(post.Body.String(), w.valA) {
-				t.Fatalf("PLAINTEXT LEAK after revocation: response for %q contains the secret value\nbody=%s", w.refA, post.Body.String())
-			}
-		}
-
-		// mutationProbe drives the WRITE side of the CRUD lifecycle over HTTP through the
-		// real stack — create, rotate, update, delete — as the global admin (authorized at
-		// every scope, so each call genuinely succeeds), and asserts AUDIT COMPLETENESS:
-		// every successful privileged mutation must leave its attributable audit event.
-		//
-		// Sound and clock-free. The assertion fires ONLY after the HTTP call returned its
-		// documented success code (201/200/200/204); a non-success skips it and never
-		// asserts absence — so it can only catch a mutation that SUCCEEDED yet produced NO
-		// event, i.e. a real audit-trail gap (the property NIS2/DORA compliance leans on).
-		// The secret is created fresh with a process-unique name, so its SecretNodeID is
-		// brand new and the oracle matches on (Action, ResourceID) alone — no time window to
-		// race, no confounding older events.
-		//
-		// The audit write is asynchronous: the handlers fire LogSecret*WithProject inside a
-		// goSafe goroutine on a detached context, so the row is not guaranteed present the
-		// instant ServeHTTP returns. Hence a BOUNDED POLL, not an immediate read — the poll
-		// only ever converts a slow write into a short wait, and fails solely when the event
-		// never lands within a generous deadline (a genuine drop).
-		mutationProbe := func() {
-			name := fmt.Sprintf("apiseq-mut-%d", apiSeqMutSeq.Add(1))
-			defer w.db.Exec("DELETE FROM secret_nodes WHERE name = ? AND project_id = ?", name, w.projAID)
-
-			adminReq := func(method, target, body string) *httptest.ResponseRecorder {
-				var req *http.Request
-				if body != "" {
-					req = httptest.NewRequest(method, target, strings.NewReader(body))
-					req.Header.Set("Content-Type", "application/json")
-				} else {
-					req = httptest.NewRequest(method, target, nil)
-				}
-				req.Header.Set("Authorization", "Bearer "+w.adminTok)
-				rec := httptest.NewRecorder()
-				w.router.ServeHTTP(rec, req)
-				return rec
-			}
-
-			// assertAudited: the (kind, sid) event MUST appear within the deadline. The
-			// bounded poll absorbs the async detached-context audit write without ever
-			// false-positiving on a merely-slow one.
-			assertAudited := func(kind string, sid uint) {
-				deadline := time.Now().Add(10 * time.Second)
-				for {
-					res, err := w.c.SearchAuditLogs(ctx, core.AuditSearchRequest{Action: kind, ResourceID: sid, Limit: 5})
-					if err == nil && res != nil && (res.Total > 0 || len(res.Events) > 0) {
-						return
-					}
-					if time.Now().After(deadline) {
-						t.Fatalf("AUDIT COMPLETENESS: successful HTTP mutation left no %q event for secret %d (id-scoped, 10s deadline)", kind, sid)
-					}
-					time.Sleep(20 * time.Millisecond)
-				}
-			}
-
-			// CREATE — POST /api/v1/secrets/ (authz is handler-internal; admin passes).
-			createBody := fmt.Sprintf(`{"name":%q,"value":"MUT-CREATE-1","project_id":%d,"environment_id":%d,"type":"password"}`,
-				name, w.projAID, w.envAID)
-			if rec := adminReq(http.MethodPost, "/api/v1/secrets/", createBody); rec.Code != http.StatusCreated {
-				return // create didn't cleanly succeed — nothing to assert soundly
-			}
-			// Resolve the fresh secret's id by its unique name (clock- and JSON-shape-
-			// independent). Absent ⇒ skip rather than assert.
-			var node models.SecretNode
-			if e := w.db.Where("name = ? AND project_id = ?", name, w.projAID).First(&node).Error; e != nil || node.ID == 0 {
-				return
-			}
-			sid := node.ID
-			assertAudited("secret.created", sid)
-
-			// ROTATE — POST /{id}/rotate (secrets.write, route-gated; admin passes).
-			if rec := adminReq(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/rotate", sid), `{"new_value":"MUT-ROTATE-2"}`); rec.Code == http.StatusOK {
-				assertAudited("secret.rotated", sid)
-			}
-			// UPDATE — PUT /{id} (secrets.write, route-gated).
-			if rec := adminReq(http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d", sid), `{"value":"MUT-UPDATE-3"}`); rec.Code == http.StatusOK {
-				assertAudited("secret.updated", sid)
-			}
-			// DELETE — DELETE /{id} (secrets.delete, route-gated) → 204.
-			if rec := adminReq(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", sid), ""); rec.Code == http.StatusNoContent {
-				assertAudited("secret.deleted", sid)
-			}
-		}
-
-		const maxSteps = 60
-		for i := 0; i+2 < len(program) && i < maxSteps*3; i += 3 {
-			switch program[i] % 3 {
-			case 0:
-				grant(int(program[i+1]), int(program[i+2]))
-			case 1:
-				revoke(int(program[i+1]), int(program[i+2]))
-			default:
-				read(program[i+1], program[i+2], program[i+1])
-			}
-		}
-		// always exercise the two anchor paths regardless of input:
-		read(0, 0, 2) // admin reads A -> integrity/round-trip
-		read(2, 1, 3) // outsider (index 2, ungranted) reads B -> fail-closed
-
-		// Occasionally run the revocation-monotonicity probe. It mints a fresh session
-		// (bcrypt), so gate it (~1 in 4 inputs) to keep average throughput high.
-		if len(program) >= 1 && program[0]%4 == 0 {
-			revocationProbe()
-		}
-
-		// Occasionally run the mutation/audit-completeness probe (~1 in 4 inputs, disjoint
-		// from the revocation gate above). It creates + rotates + updates + deletes a fresh
-		// secret over HTTP and polls the async audit write, so it is heavier — gate it too.
-		if len(program) >= 1 && program[0]%4 == 1 {
-			mutationProbe()
+		for _, w := range worlds {
+			runAPISeqIteration(t, w, program)
 		}
 	})
+}
+
+func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
+	t.Helper()
+	ctx := context.Background()
+
+	// per-iteration reset: drop fuzz-principal grants, clear the model. NO token-cache
+	// flush. middleware.InvalidateTokenCache writes a negative TOMBSTONE (it is a
+	// revocation helper, not a refresh), which denied the token for invalidTokenTTL and
+	// so silently masked every AUTHORIZED read in this harness — the positive path was
+	// never actually verified (a granted read got 401, and read() only checks integrity
+	// on a 200, so the assertion was skipped). The auth cache holds only the
+	// authenticated IDENTITY; the per-request permission check re-reads grants from the
+	// DB, so a grant/revoke is reflected on the very next read with no flush needed.
+	w.db.Exec("DELETE FROM user_roles WHERE user_id IN (?,?,?)",
+		w.principals[0].id, w.principals[1].id, w.principals[2].id)
+	canRead := map[uint]map[uint]bool{}
+	for _, p := range w.principals {
+		canRead[p.id] = map[uint]bool{w.projAID: false, w.projBID: false}
+	}
+
+	projFor := func(sel int) uint {
+		if sel%2 == 1 {
+			return w.projBID
+		}
+		return w.projAID
+	}
+	grant := func(pi, proj int) {
+		p := w.principals[pi%len(w.principals)]
+		projID := projFor(proj)
+		if err := w.c.AssignUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}, false); err == nil {
+			canRead[p.id][projID] = true
+		}
+	}
+	revoke := func(pi, proj int) {
+		p := w.principals[pi%len(w.principals)]
+		projID := projFor(proj)
+		if err := w.c.RemoveUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}); err == nil {
+			canRead[p.id][projID] = false
+		}
+	}
+	read := func(who, which, mode byte) {
+		ref, val, projID := w.refA, w.valA, w.projAID
+		if which%2 == 1 {
+			ref, val, projID = w.refB, w.valB, w.projBID
+		}
+		var authz string
+		allowed := false
+		switch mode % 4 {
+		case 0: // no token
+		case 1: // garbage token
+			authz = "Bearer garbage-not-a-real-token"
+		case 2: // admin (owns every secret; global admin)
+			authz, allowed = "Bearer "+w.adminTok, true
+		default: // a fuzz principal's token
+			p := w.principals[int(who)%len(w.principals)]
+			if p.token != "" {
+				authz = "Bearer " + p.token
+			}
+			allowed = p.token != "" && canRead[p.id][projID]
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+ref, nil)
+		if authz != "" {
+			req.Header.Set("Authorization", authz)
+		}
+		rec := httptest.NewRecorder()
+		w.router.ServeHTTP(rec, req)
+		body := rec.Body.String()
+
+		if !allowed {
+			if rec.Code == http.StatusOK {
+				t.Fatalf("AUTHZ BYPASS: unauthorized read of %q returned 200 (mode=%d who=%d)\nbody=%s", ref, mode%4, who, body)
+			}
+			if strings.Contains(body, val) {
+				t.Fatalf("PLAINTEXT LEAK on deny: response for %q (code=%d) contains the secret value\nbody=%s", ref, rec.Code, body)
+			}
+			return
+		}
+		// allowed: a 200 must carry EXACTLY this secret's value (never assert must-200).
+		if rec.Code == http.StatusOK {
+			var resp struct {
+				Data struct {
+					Value string `json:"value"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(rec.Body.Bytes(), &resp) == nil && resp.Data.Value != val {
+				t.Fatalf("INTEGRITY: authorized read of %q returned wrong value %q (want %q)", ref, resp.Data.Value, val)
+			}
+		}
+	}
+
+	// revocationProbe exercises token-revocation monotonicity end-to-end against the
+	// real stack: mint a FRESH session for revuser, grant it read on A, confirm the
+	// token actually authorizes the read (positive control — otherwise the deny below
+	// is vacuous), then RevokeUserSessions and assert the SAME token is now denied.
+	// Sound: only the deny direction is asserted, and only after proving the token
+	// worked immediately before. Revocation is driven through the real core path
+	// (deletes the session + evicts the auth cache), reads over HTTP — so it verifies
+	// the actual cache-eviction, not a directly-written tombstone.
+	revocationProbe := func() {
+		sess, _, lerr := w.c.Login(ctx, &core.LoginRequest{Username: "revuser", Password: apiFuzzPrincipalPassword})
+		if lerr != nil || sess == nil {
+			return
+		}
+		tok := sess.SessionToken
+		defer w.db.Exec("DELETE FROM user_roles WHERE user_id = ?", w.revuserID) // keep the shared world clean
+		if err := w.c.AssignUserRole(ctx, 0, w.revuserID, w.readerRole, core.Scope{ProjectID: w.projAID}, false); err != nil {
+			return
+		}
+		readA := func() *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+w.refA, nil)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			rec := httptest.NewRecorder()
+			w.router.ServeHTTP(rec, req)
+			return rec
+		}
+		// Positive control: the granted token must actually read A, else the deny below
+		// is vacuous and we skip the assertion (avoids a false positive).
+		if readA().Code != http.StatusOK {
+			return
+		}
+		if _, err := w.c.RevokeUserSessions(ctx, w.adminID, w.revuserID); err != nil {
+			return
+		}
+		post := readA()
+		if post.Code == http.StatusOK {
+			t.Fatalf("REVOCATION INEFFECTIVE: revuser's token still returned 200 for %q after RevokeUserSessions", w.refA)
+		}
+		if strings.Contains(post.Body.String(), w.valA) {
+			t.Fatalf("PLAINTEXT LEAK after revocation: response for %q contains the secret value\nbody=%s", w.refA, post.Body.String())
+		}
+	}
+
+	// mutationProbe drives the WRITE side of the CRUD lifecycle over HTTP through the
+	// real stack — create, rotate, update, delete — as the global admin (authorized at
+	// every scope, so each call genuinely succeeds), and asserts AUDIT COMPLETENESS:
+	// every successful privileged mutation must leave its attributable audit event.
+	//
+	// Sound and clock-free. The assertion fires ONLY after the HTTP call returned its
+	// documented success code (201/200/200/204); a non-success skips it and never
+	// asserts absence — so it can only catch a mutation that SUCCEEDED yet produced NO
+	// event, i.e. a real audit-trail gap (the property NIS2/DORA compliance leans on).
+	// The secret is created fresh with a process-unique name, so its SecretNodeID is
+	// brand new and the oracle matches on (Action, ResourceID) alone — no time window to
+	// race, no confounding older events.
+	//
+	// The audit write is asynchronous: the handlers fire LogSecret*WithProject inside a
+	// goSafe goroutine on a detached context, so the row is not guaranteed present the
+	// instant ServeHTTP returns. Hence a BOUNDED POLL, not an immediate read — the poll
+	// only ever converts a slow write into a short wait, and fails solely when the event
+	// never lands within a generous deadline (a genuine drop).
+	mutationProbe := func() {
+		name := fmt.Sprintf("apiseq-mut-%d", apiSeqMutSeq.Add(1))
+		defer w.db.Exec("DELETE FROM secret_nodes WHERE name = ? AND project_id = ?", name, w.projAID)
+
+		adminReq := func(method, target, body string) *httptest.ResponseRecorder {
+			var req *http.Request
+			if body != "" {
+				req = httptest.NewRequest(method, target, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+			} else {
+				req = httptest.NewRequest(method, target, nil)
+			}
+			req.Header.Set("Authorization", "Bearer "+w.adminTok)
+			rec := httptest.NewRecorder()
+			w.router.ServeHTTP(rec, req)
+			return rec
+		}
+
+		// assertAudited: the (kind, sid) event MUST appear within the deadline. The
+		// bounded poll absorbs the async detached-context audit write without ever
+		// false-positiving on a merely-slow one.
+		assertAudited := func(kind string, sid uint) {
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				res, err := w.c.SearchAuditLogs(ctx, core.AuditSearchRequest{Action: kind, ResourceID: sid, Limit: 5})
+				if err == nil && res != nil && (res.Total > 0 || len(res.Events) > 0) {
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("AUDIT COMPLETENESS: successful HTTP mutation left no %q event for secret %d (id-scoped, 10s deadline)", kind, sid)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+
+		// CREATE — POST /api/v1/secrets/ (authz is handler-internal; admin passes).
+		createBody := fmt.Sprintf(`{"name":%q,"value":"MUT-CREATE-1","project_id":%d,"environment_id":%d,"type":"password"}`,
+			name, w.projAID, w.envAID)
+		if rec := adminReq(http.MethodPost, "/api/v1/secrets/", createBody); rec.Code != http.StatusCreated {
+			return // create didn't cleanly succeed — nothing to assert soundly
+		}
+		// Resolve the fresh secret's id by its unique name (clock- and JSON-shape-
+		// independent). Absent ⇒ skip rather than assert.
+		var node models.SecretNode
+		if e := w.db.Where("name = ? AND project_id = ?", name, w.projAID).First(&node).Error; e != nil || node.ID == 0 {
+			return
+		}
+		sid := node.ID
+		assertAudited("secret.created", sid)
+
+		// ROTATE — POST /{id}/rotate (secrets.write, route-gated; admin passes).
+		if rec := adminReq(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/rotate", sid), `{"new_value":"MUT-ROTATE-2"}`); rec.Code == http.StatusOK {
+			assertAudited("secret.rotated", sid)
+		}
+		// UPDATE — PUT /{id} (secrets.write, route-gated).
+		if rec := adminReq(http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d", sid), `{"value":"MUT-UPDATE-3"}`); rec.Code == http.StatusOK {
+			assertAudited("secret.updated", sid)
+		}
+		// DELETE — DELETE /{id} (secrets.delete, route-gated) → 204.
+		if rec := adminReq(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", sid), ""); rec.Code == http.StatusNoContent {
+			assertAudited("secret.deleted", sid)
+		}
+	}
+
+	const maxSteps = 60
+	for i := 0; i+2 < len(program) && i < maxSteps*3; i += 3 {
+		switch program[i] % 3 {
+		case 0:
+			grant(int(program[i+1]), int(program[i+2]))
+		case 1:
+			revoke(int(program[i+1]), int(program[i+2]))
+		default:
+			read(program[i+1], program[i+2], program[i+1])
+		}
+	}
+	// always exercise the two anchor paths regardless of input:
+	read(0, 0, 2) // admin reads A -> integrity/round-trip
+	read(2, 1, 3) // outsider (index 2, ungranted) reads B -> fail-closed
+
+	// Occasionally run the revocation-monotonicity probe. It mints a fresh session
+	// (bcrypt), so gate it (~1 in 4 inputs) to keep average throughput high.
+	if len(program) >= 1 && program[0]%4 == 0 {
+		revocationProbe()
+	}
+
+	// Occasionally run the mutation/audit-completeness probe (~1 in 4 inputs, disjoint
+	// from the revocation gate above). It creates + rotates + updates + deletes a fresh
+	// secret over HTTP and polls the async audit write, so it is heavier — gate it too.
+	if len(program) >= 1 && program[0]%4 == 1 {
+		mutationProbe()
+	}
 }
