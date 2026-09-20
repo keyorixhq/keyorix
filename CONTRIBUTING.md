@@ -34,6 +34,32 @@ git commit --amend -s --no-edit                              # last commit only
 git rebase --exec 'git commit --amend --no-edit -s' <base>    # every commit since <base>
 ```
 
+### Optional git hooks
+
+This repo ships two opt-in hooks in `.githooks/` (not installed by default —
+`.git/hooks/` and `.githooks/` are different directories, and git only uses
+the latter once you point it there):
+
+```
+git config core.hooksPath .githooks
+```
+
+- **`prepare-commit-msg`** — auto-appends `Signed-off-by:` to every commit
+  message from your git author identity, so the DCO check above never fails
+  on a forgotten `-s`. Skips merge/squash/revert/fixup commits and commits
+  that already have a trailer.
+- **`pre-push`** — runs `golangci-lint` locally before a push leaves your
+  machine, scoped to just the package(s) your push actually changed (diffed
+  against `origin/main`); runs the full module instead if `go.mod`, `go.sum`,
+  or `.golangci.yml` changed, since those can change any package's lint
+  result. Mirrors CI's own gate, just earlier. Skips silently (never blocks
+  a push) if `golangci-lint` isn't installed. Bypass with
+  `git push --no-verify` if you need to push anyway — CI still gates the
+  merge regardless.
+
+Neither hook is required — CI enforces both independently — but they turn a
+CI round-trip into an immediate local one.
+
 ## Making a change
 
 1. Fork (or branch, if you have write access) and make your change.
