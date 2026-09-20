@@ -1027,14 +1027,14 @@ func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixed
 	for rows.Next() {
 		var n string
 		if err := rows.Scan(&n); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			t.Fatalf("db scan: scan table name: %v", err)
 		}
 		if canaryTableNameRe.MatchString(n) {
 			tables = append(tables, n)
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	for _, tbl := range tables {
 		colRows, err := sqlDB.Query("PRAGMA table_info(" + tbl + ")")
@@ -1048,14 +1048,14 @@ func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixed
 			var notnull, pk int
 			var dflt interface{}
 			if err := colRows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-				colRows.Close()
+				_ = colRows.Close()
 				t.Fatalf("db scan: table_info scan %s: %v", tbl, err)
 			}
 			if canaryTableNameRe.MatchString(name) {
 				cols = append(cols, name)
 			}
 		}
-		colRows.Close()
+		_ = colRows.Close()
 		if len(cols) == 0 {
 			continue
 		}
@@ -1080,7 +1080,7 @@ func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixed
 		maxRowid := wm
 		for dataRows.Next() {
 			if err := dataRows.Scan(ptrs...); err != nil {
-				dataRows.Close()
+				_ = dataRows.Close()
 				t.Fatalf("db scan: row scan %s: %v", tbl, err)
 			}
 			if rid, ok := dest[0].(int64); ok && rid > maxRowid {
@@ -1095,7 +1095,7 @@ func scanDBGeneric(t *testing.T, sqlDB *sql.DB, known map[string]struct{}, fixed
 				cellCol = append(cellCol, cols[i-1])
 			}
 		}
-		dataRows.Close() // closed BEFORE scanning below -- see the doc comment above
+		_ = dataRows.Close() // closed BEFORE scanning below -- see the doc comment above
 		watermarks[tbl] = maxRowid
 
 		for i, b := range cellData {
@@ -1544,7 +1544,7 @@ func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
 				if rows.Next() {
 					tb.Logf("KNOWN-OPEN FINDING confirmed live: webhook URL canary present in audit_events.diff -- see " + findingRef)
 				}
-				rows.Close()
+				_ = rows.Close()
 			}
 		}
 	} else {
@@ -1662,7 +1662,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 		if derr != nil {
 			f.Fatalf("CANARY_DIAG_LOG open: %v", derr)
 		}
-		f.Cleanup(func() { diagFile.Close() })
+		f.Cleanup(func() { _ = diagFile.Close() })
 	}
 	diagBurstStart := time.Now()
 	var diagExecCount int64
@@ -2068,7 +2068,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExemptions)
 			rawScanDur := time.Since(rawScanStart)
 			if fi, statErr := os.Stat(w.dbPath); statErr == nil {
-				fmt.Fprintf(diagFile, "pid=%d iter=%d elapsed=%s dbSizeBytes=%d rawScanDur=%s\n",
+				_, _ = fmt.Fprintf(diagFile, "pid=%d iter=%d elapsed=%s dbSizeBytes=%d rawScanDur=%s\n",
 					os.Getpid(), diagExecCount, time.Since(diagBurstStart).Round(time.Millisecond), fi.Size(), rawScanDur)
 			}
 		} else {
