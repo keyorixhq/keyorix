@@ -52,7 +52,7 @@ func TestRotateDEKWithSweep_PanicMidSweepDoesNotPromoteOrWipe(t *testing.T) {
 	// Statement.Dest (the map passed to Updates()).
 	const hookName = "panic-mid-sweep"
 	fired := false
-	db.Callback().Update().Before("gorm:before_update").Register(hookName, func(d *gorm.DB) {
+	err := db.Callback().Update().Before("gorm:before_update").Register(hookName, func(d *gorm.DB) {
 		if fired {
 			return // once only — a real panic happens once, not on every statement after
 		}
@@ -61,7 +61,10 @@ func TestRotateDEKWithSweep_PanicMidSweepDoesNotPromoteOrWipe(t *testing.T) {
 			panic("sweepfn_panic_recovery_test: simulated mid-sweep panic (not a returned error)")
 		}
 	})
-	defer db.Callback().Update().Remove(hookName)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Callback().Update().Remove(hookName))
+	}()
 
 	result, err := svc.RotateDEKWithSweep("test-passphrase", db)
 
