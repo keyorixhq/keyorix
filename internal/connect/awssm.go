@@ -143,7 +143,14 @@ func (c *AWSSecretsManagerConnector) GetSecret(ctx context.Context, ref string) 
 	if err != nil {
 		return "", fmt.Errorf("aws-secrets-manager: get %q: %w", ref, err)
 	}
-	if out.SecretString != nil {
+	// SecretString != nil alone is not "has a value": the field decodes to a
+	// non-nil pointer to "" for a response body like {"SecretString":""},
+	// which a hostile or broken endpoint (or a struct literal built by a test)
+	// can produce trivially — that must not be treated as a real secret and
+	// returned as success (found by FuzzAWSSMConnectorResponse,
+	// crasher 09de4b520b95a429; see
+	// docs/findings/2026-09-20-FINDING-awssm-empty-secret-response.md).
+	if out.SecretString != nil && *out.SecretString != "" {
 		return *out.SecretString, nil
 	}
 	if len(out.SecretBinary) > 0 {
