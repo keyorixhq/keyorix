@@ -1,0 +1,87 @@
+#!/bin/sh
+# Lint the packages this push actually changed before letting it leave the
+# machine, mirroring CI's golangci-lint gate locally instead of finding out
+# about it a round-trip later. Enable with: git config core.hooksPath .githooks
+#
+# Scope: diffed against origin/main (or main, if origin isn't configured),
+# not against what's literally being pushed -- a push can carry commits from
+# several branches/refs at once, and "what changed relative to main" is the
+# same question CI's own PR diff asks.
+#
+# Fast path: golangci-lint scoped to just the changed packages' directories.
+# Full path (go.mod/go.sum/.golangci.yml changed, in either module): those
+# files can change what ANY package's lint result is (a new dependency, a
+# changed lint config), so a package-scoped run can't be trusted -- run the
+# whole module instead, matching CI's own unscoped `golangci-lint run ./...`.
+#
+# operator/ is a separate Go module (its own go.mod, deliberately outside
+# go.work) with its own CI lint job (working-directory: operator) -- handled
+# here as a second, independent pass over just the files under operator/.
+
+set -e
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+  echo "pre-push: golangci-lint not found on PATH -- skipping local lint (CI still gates this)" >&2
+  exit 0
+fi
+
+base_ref="origin/main"
+if ! git rev-parse --verify --quiet "$base_ref" >/dev/null; then
+  base_ref="main"
+fi
+if ! git rev-parse --verify --quiet "$base_ref" >/dev/null; then
+  echo "pre-push: could not resolve $base_ref -- skipping local lint" >&2
+  exit 0
+fi
+
+merge_base="$(git merge-base HEAD "$base_ref" 2>/dev/null || true)"
+if [ -z "$merge_base" ]; then
+  echo "pre-push: no merge-base with $base_ref -- skipping local lint" >&2
+  exit 0
+fi
+
+changed="$(git diff --name-only "$merge_base" HEAD -- '*.go' '*.golangci.yml' 'go.mod' 'go.sum' 'operator/go.mod' 'operator/go.sum' 2>/dev/null || true)"
+if [ -z "$changed" ]; then
+  exit 0
+fi
+
+status=0
+
+# --- root module (everything NOT under operator/) ---
+root_changed="$(printf '%s\n' "$changed" | grep -v '^operator/' || true)"
+if [ -n "$root_changed" ]; then
+  if printf '%s\n' "$root_changed" | grep -qE '^(go\.mod|go\.sum|\.golangci\.yml)$'; then
+    echo "pre-push: go.mod/go.sum/.golangci.yml changed -- running golangci-lint on the full root module"
+    golangci-lint run ./... || status=1
+  else
+    pkgs="$(printf '%s\n' "$root_changed" | grep -E '\.go$' | xargs -r -n1 dirname | sort -u | sed 's#^#./#')"
+    if [ -n "$pkgs" ]; then
+      echo "pre-push: linting changed root-module package(s):"
+      printf '%s\n' "$pkgs" | sed 's/^/  /'
+      # shellcheck disable=SC2086
+      golangci-lint run $pkgs || status=1
+    fi
+  fi
+fi
+
+# --- operator/ module (its own go.mod, its own CI lint job) ---
+op_changed="$(printf '%s\n' "$changed" | grep '^operator/' | sed 's#^operator/##' || true)"
+if [ -n "$op_changed" ]; then
+  if printf '%s\n' "$op_changed" | grep -qE '^(go\.mod|go\.sum|\.golangci\.yml)$'; then
+    echo "pre-push: operator/go.mod, go.sum, or .golangci.yml changed -- running golangci-lint on the full operator module"
+    ( cd operator && golangci-lint run ./... ) || status=1
+  else
+    op_pkgs="$(printf '%s\n' "$op_changed" | grep -E '\.go$' | xargs -r -n1 dirname | sort -u | sed 's#^#./#')"
+    if [ -n "$op_pkgs" ]; then
+      echo "pre-push: linting changed operator-module package(s):"
+      printf '%s\n' "$op_pkgs" | sed 's/^/  /'
+      # shellcheck disable=SC2086
+      ( cd operator && golangci-lint run $op_pkgs ) || status=1
+    fi
+  fi
+fi
+
+if [ "$status" != 0 ]; then
+  echo "pre-push: golangci-lint found issues above -- push refused. Fix them, or run 'git push --no-verify' to bypass (CI still gates this)." >&2
+fi
+exit "$status"
