@@ -124,8 +124,7 @@ const (
 )
 
 type clPrincipal struct {
-	id    uint
-	token string
+	id uint
 }
 
 // clWorld is built ONCE per backend per Fuzz-function invocation (login/bcrypt
