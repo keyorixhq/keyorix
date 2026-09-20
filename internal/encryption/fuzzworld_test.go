@@ -15,6 +15,17 @@ package encryption
 // exercises no code those two harnesses don't already run identically on
 // every backend, since there is no backend in their model at all.
 //
+// DELIBERATE DUPLICATION, not an oversight: two other near-identical copies
+// of this exact pattern exist in this repo -- internal/core/fuzzworld_test.go
+// (FuzzCoreOperationSequence) and server/http/fuzzworld_test.go
+// (FuzzKeyorixHTTPAPISequence, FuzzMultiTenantIsolation). Go's unexported
+// symbols don't cross package boundaries, and this repo's own existing
+// precedent (server/http/concurrent_linearizable_fuzz_test.go's own local
+// buildLinearizabilityWorldSQLite/buildLinearizabilityWorldPostgres) already
+// duplicates this exact shape per-fuzzer rather than extracting a shared
+// library. A tracking issue to extract a shared internal/testutil/fuzzworld
+// package is filed now that all three copies have landed.
+//
 // SQLite always runs (matching today's default -- no DSN, no behavior
 // change). PostgreSQL additionally runs whenever KEYORIX_TEST_PG_DSN is set,
 // via a schema-per-testing.F, gorm.Open(postgres.Open(dsn+" search_path=..."))
