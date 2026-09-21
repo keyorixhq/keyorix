@@ -460,6 +460,77 @@ var opCatalog = []operation{
 			return httpResult(st, body), nil
 		},
 	},
+	{
+		// Coverage batch 2: ordinary (non-/system) REST CRUD, one per
+		// major resource type not yet covered.
+		Key: "REST POST /api/v1/groups/",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/groups/", map[string]any{
+				"name": "fuzz-group-batch2", "description": "fuzz group",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST DELETE /api/v1/groups/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/groups/", map[string]any{
+				"name": "fuzz-group-batch2-setup", "description": "fuzz group",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateGroup: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateGroup response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/groups/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/roles/",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/roles/", map[string]any{
+				"name": "fuzz-role-batch2", "description": "fuzz role", "permissions": []string{"secrets.read"},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST DELETE /api/v1/roles/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createRoleForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/roles/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
 }
 
 // runOp runs op.Setup (if any) then op.Execute against w, with no fault

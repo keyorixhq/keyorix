@@ -64,6 +64,11 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/system/groups":             {StatusFuzzed, "opCatalog[\"CreateGroupProxy\"] — batch 1"},
 	"REST DELETE /api/v1/system/groups/{id}":      {StatusFuzzed, "opCatalog[\"DeleteGroupProxy\"] — batch 1"},
 	"REST DELETE /api/v1/system/projects/{id}":    {StatusFuzzed, "opCatalog[\"DeleteProjectProxy\"] — batch 1"},
+	// Coverage batch 2: ordinary REST CRUD.
+	"REST POST /api/v1/groups/":       {StatusFuzzed, "opCatalog[\"CreateGroup\"] — batch 2"},
+	"REST DELETE /api/v1/groups/{id}": {StatusFuzzed, "opCatalog[\"DeleteGroup\"] — batch 2"},
+	"REST POST /api/v1/roles/":        {StatusFuzzed, "opCatalog[\"CreateRole\"] — batch 2"},
+	"REST DELETE /api/v1/roles/{id}":  {StatusFuzzed, "opCatalog[\"DeleteRole\"] — batch 2"},
 }
 
 func statusOf(key string) overrideEntry {
