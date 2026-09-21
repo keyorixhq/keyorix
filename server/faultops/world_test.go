@@ -79,6 +79,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		t.Fatalf("i18n.InitializeForTesting: %v", err)
 	}
 
+	worldPhase := time.Now()
 	db, err := gorm.Open(sqlite.Open(uniqueMemDSN()), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +104,9 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'")
 	mustExec(t, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
 		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''")
+	logWorldPhase(t, "sqlite open+migrate+indexes", worldPhase)
 
+	worldPhase = time.Now()
 	real := store.NewLocalStorage(db)
 	faulty := faultstorage.NewFaultyStorage(real, spec)
 	testCore := core.NewKeyorixCore(faulty)
@@ -122,7 +125,9 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
+	logWorldPhase(t, "bootstrap+login", worldPhase)
 
+	worldPhase = time.Now()
 	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
 	handler, err := httpserver.NewRouter(cfg, testCore)
 	if err != nil {
@@ -130,7 +135,9 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	}
 	httpSrv := httptest.NewServer(handler)
 	t.Cleanup(httpSrv.Close)
+	logWorldPhase(t, "REST router + httptest.Server", worldPhase)
 
+	worldPhase = time.Now()
 	grpcSrv, err := grpcserver.NewServer(&config.Config{}, testCore)
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +155,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	logWorldPhase(t, "grpc.Server + bufconn + client", worldPhase)
 
 	grpcCtx := metadata.NewOutgoingContext(context.Background(),
 		metadata.Pairs("authorization", "Bearer "+session.SessionToken))
@@ -158,4 +166,13 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		adminToken: session.SessionToken,
 		grpcConn:   conn, grpcCtx: grpcCtx,
 	}
+}
+
+// logWorldPhase records one newFaultWorld phase's duration — always-on since
+// it's cheap and directly informs whether a slow iteration is DB/bootstrap-,
+// REST-, or gRPC-server-bound (see PROFILE-tagged tests in
+// profile_iteration_test.go and the STEP 1 execs/sec follow-up).
+func logWorldPhase(t *testing.T, label string, start time.Time) {
+	t.Helper()
+	t.Logf("PROFILE world.%-28s %v", label, time.Since(start))
 }

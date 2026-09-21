@@ -284,6 +284,49 @@ func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
 	return nil
 }
 
+// bestEffortTables maps a storage method this codebase deliberately calls
+// best-effort (error explicitly discarded with `_ =`, with a comment saying
+// so — internal/core/account.go:222, users.go:184, users.go:284, all three
+// read "Best-effort: <the primary operation> has already succeeded") to the
+// ONLY table(s) its own effect touches. This is narrower than a KNOWN-OPEN
+// tolerance: it's not an undiscovered bug being tracked toward a fix, it's an
+// intentional, already-documented design tradeoff (ADR-025's no-reuse check
+// legitimately misses a password whose history-seed write failed) —
+// STEP 2's "acceptable-by-design (exclusion with justification)" category,
+// flagged for review rather than silently accepted.
+//
+// FLAG FOR REVIEW: is the password-reuse policy gap this creates (a user
+// whose initial-password history-seed failed can immediately "change" back
+// to that same password without ADR-025 catching it) acceptable, or should
+// AddPasswordHistory's callers actually fail the request? Left as documented
+// existing behavior, not changed here — this task's scope is atomicity
+// bugs with no acknowledged tradeoff (F3a/F3b), not re-litigating an already
+// deliberate one.
+var bestEffortTables = map[string][]string{
+	"AddPasswordHistory": {"PasswordHistory"},
+}
+
+// acceptableByDesign reports whether every table in diff is accounted for by
+// method's own documented best-effort scope — i.e. the ONLY divergence from
+// the reference run is the exact, single side effect the code already says
+// it's willing to lose.
+func acceptableByDesign(method string, diff []string) bool {
+	allowed, ok := bestEffortTables[method]
+	if !ok || len(diff) == 0 {
+		return false
+	}
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, t := range allowed {
+		allowedSet[t] = true
+	}
+	for _, d := range diff {
+		if !allowedSet[d] {
+			return false
+		}
+	}
+	return true
+}
+
 // checkOracles applies GOAL's (a)-(e). (b) is checked structurally by the
 // panic-recovery wrapper around op.Drive in the caller — a panic that DID get
 // caught and converted to a failure response reaches here as
@@ -327,9 +370,15 @@ func checkOracles(t *testing.T, in oracleInput) {
 	switch {
 	case in.result.Success:
 		if in.after.Hash != in.refAfter.Hash {
+			diff := diffTables(in.refAfter, in.after)
+			if acceptableByDesign(in.method, diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which %s explicitly documents "+
+					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
+				return
+			}
 			report("%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
 				"fault-free reference run's state (partial/incorrect commit). Differing tables: %v",
-				label, diffTables(in.before, in.after, in.refAfter))
+				label, diff)
 		}
 	case in.kind == faultstorage.KindEffectThenError:
 		// (d): ambiguous by design — old or new state both acceptable, just not
@@ -346,17 +395,17 @@ func checkOracles(t *testing.T, in oracleInput) {
 			report("%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
-				label, diffTables(in.before, in.after, in.after), diffTables(in.refAfter, in.after, in.after))
+				label, diffTables(in.before, in.after), diffTables(in.refAfter, in.after))
 		}
 	default:
 		if in.after.Hash != in.before.Hash {
 			report("%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
-				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after, in.after))
+				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after))
 		}
 	}
 }
 
-func diffTables(before, after, _ dbSnapshot) []string {
+func diffTables(before, after dbSnapshot) []string {
 	var diffs []string
 	for name, b := range before.Tables {
 		a := after.Tables[name]
