@@ -146,6 +146,13 @@ var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{
 // not decided here.
 var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{
 	{op: "REST POST /api/v1/secrets/", method: "CreateSecret", nth: 1},
+	// internal/core/users.go's CreateUser has the identical shape: an
+	// ambiguous commit on c.storage.CreateUser (the FIRST call) returns
+	// immediately, before ever reaching the best-effort AddPasswordHistory
+	// and system_viewer AssignRole calls that follow — leaving a real,
+	// orphaned User row with neither. Same root cause, same "needs a design
+	// decision, not a small patch" conclusion as the CreateSecret entry above.
+	{op: "REST POST /api/v1/users/", method: "CreateUser", nth: 1},
 }
 
 func multiStepFirstCallAmbiguousCommit(op, method string, nth int) bool {

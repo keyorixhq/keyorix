@@ -181,6 +181,53 @@ func createSecretForFuzz(ctx context.Context, w *faultWorld) (uint, error) {
 	return decoded.Data.ID, nil
 }
 
+// createGroupForFuzz creates a group via the ordinary (non-/system) REST
+// endpoint and returns its ID — setup for group-member operations.
+func createGroupForFuzz(ctx context.Context, w *faultWorld, name string) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/groups/", map[string]any{
+		"name": name, "description": "fuzz group",
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup CreateGroup: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			ID uint `json:"ID"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+		return 0, fmt.Errorf("decoding CreateGroup response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.ID, nil
+}
+
+// createUserForFuzz creates a user via the ordinary REST endpoint and returns
+// its ID — setup for membership/role-assignment operations.
+func createUserForFuzz(ctx context.Context, w *faultWorld, username string) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/users/", map[string]any{
+		"username": username, "email": username + "@example.com",
+		"password": "Xk7#Qm2$Lp9@Vn4!", "display_name": "Fuzz User " + username,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup CreateUser: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			ID uint `json:"ID"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+		return 0, fmt.Errorf("decoding CreateUser response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.ID, nil
+}
+
 // machineIdentityWireForFuzz mirrors server/http/handlers/machine_identities_proxy.go's
 // unexported machineIdentityProxyWire (fields it round-trips over the wire) —
 // duplicated here rather than exported from the production handler package,
@@ -559,6 +606,63 @@ var opCatalog = []operation{
 				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
 			}
 			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 4: group membership.
+		Key: "REST POST /api/v1/groups/{id}/members",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-group-batch4")
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-user-batch4")
+			if err != nil {
+				return nil, err
+			}
+			return map[string]uint{"groupID": groupID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/groups/%d/members", s["groupID"]), map[string]any{
+				"user_id": s["userID"],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST DELETE /api/v1/groups/{id}/members/{userId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-group-batch4b")
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-user-batch4b")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/groups/%d/members", groupID), map[string]any{
+				"user_id": userID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup AddGroupMember: HTTP %d: %s", st, body)
+			}
+			return map[string]uint{"groupID": groupID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete,
+				fmt.Sprintf("/api/v1/groups/%d/members/%d", s["groupID"], s["userID"]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
 		},
 	},
 }
