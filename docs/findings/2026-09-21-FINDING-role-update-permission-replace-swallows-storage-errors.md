@@ -5,12 +5,18 @@
 `replaceRolePermissions`) and `internal/core/rbac_roles.go`
 (`KeyorixCore.UpdateRole`, unconditionally audit-logs before the handler even
 reaches permission replacement).
-**Status:** **KNOWN-OPEN — not fixed on this branch.** This is the harness-only
-branch `test/storage-fault-injection-fuzzer`; per the task's own RULES, a real
-bug found by the fuzzer is documented here and tolerated as narrowly
-fingerprinted KNOWN-OPEN cases in the fuzz oracle, not fixed in place. Two
-distinct trigger mechanisms of the SAME root cause are documented below —
-referred to together as **F3** in the originating task brief:
+**Status:** **Fixed.** `core.UpdateRole` (`internal/core/rbac_roles.go`) now
+runs the role-row update, the permission-set replacement, and the resulting
+audit events inside one `storage.WithTransaction`, with audit logged only
+after that transaction commits. Both REST and gRPC call this single function.
+Closure proven by `FuzzStorageFaultOperations` (`server/faultops`), which is
+now the regression test for both F3a and F3b — their KNOWN-OPEN tolerances
+have been removed from the harness, and both seeds (plus the F3b input the
+unattended fuzz burst found) now pass clean. Red-proofed both directions:
+reverting the fix locally reproduces both failures exactly as originally
+found; restoring it is green again. Two distinct trigger mechanisms of the
+SAME root cause are documented below — referred to together as **F3** in the
+originating task brief:
 
 - **F3a** (originally filed): `replaceRolePermissions` swallows every storage
   error from its own calls and the handler always replies 200 regardless.
@@ -196,26 +202,49 @@ rolled back with it. Same non-atomicity, two different symptoms.
 
 ## Fix status
 
-**Not fixed on this branch.** Per this task's RULES, a real bug found by the
-fuzzer gets documented here, tolerated as a narrowly fingerprinted KNOWN-OPEN
-case in the fuzz oracle (see `server/faultops/fuzz_storage_fault_operations_test.go`'s
-`knownOpenTolerances`), and reported — not silently fixed as a drive-by while
-building the harness. The straightforward fix (return an error from
-`replaceRolePermissions`, propagate it to `UpdateRole`, respond non-2xx on any
-of the three failure points) is a follow-up PR, out of scope here.
+**Fixed**, same PR as this finding doc (policy change: first-party findings
+are fixed and disclosed together now — no customers yet). `core.UpdateRole`
+(`internal/core/rbac_roles.go`) was rewritten to accept an optional
+`newPermissionIDs *[]uint` and run the role-row update, the permission
+add/remove diff, and the resulting audit events inside a single
+`storage.WithTransaction` call — `tx.RemovePermissionFromRole`/
+`tx.AssignPermissionToRole` (the raw storage-interface calls, not the
+authz/audit-wrapped core-level ones) run inside the transaction; every audit
+event (`LogRoleUpdated`, `LogPermissionRemoved`, `LogPermissionAssigned`) is
+written only AFTER that transaction commits, closing F3b's exact gap (an
+audit write surviving a rolled-back transaction).
+
+`server/http/handlers/rbac.go`'s `replaceRolePermissions` is deleted — its
+authorization-resolution half (`authorizeAndCollectPermissions`, "does the
+actor hold this permission themselves") stays in the handler (a read-only
+decision, not a write, so it correctly runs BEFORE the transaction), but the
+actual removal/assignment loop is gone, replaced by a single call into the
+new atomic `core.UpdateRole`.
+
+`server/grpc/services/role_service.go`'s `UpdateRole` had the same
+non-atomic two-phase shape (though, unlike REST, it already propagated its
+own permission-replace errors correctly) — it now calls the same
+`core.UpdateRole`, removing its own duplicated
+`RemovePermissionFromRole`/`AssignPermissionToRole` loop.
 
 ## Red-proof
 
-`FuzzStorageFaultOperations`'s seed at `(REST PUT /api/v1/roles/{id},
-RemovePermissionFromRole, NthCall=1, KindError)` fires **F3a** deterministically
-on every run against current `main` (`server/http/handlers/rbac.go`, commit
-`bb93b549` and unchanged since). The `-fuzztime=10m` burst independently
-rediscovered the same call site with a panic fault and produced **F3b**,
-minimized to `input=8001539619a0178cee0000` — saved at
+Before the fix: `FuzzStorageFaultOperations`'s seed at `(REST PUT
+/api/v1/roles/{id}, RemovePermissionFromRole, NthCall=1, KindError)` fired
+**F3a** deterministically on every run against pre-fix `main`
+(`server/http/handlers/rbac.go`, commit `bb93b549`). The `-fuzztime=10m`
+burst independently rediscovered the same call site with a panic fault and
+produced **F3b**, minimized to `input=8001539619a0178cee0000` — saved at
 `server/faultops/testdata/fuzz/FuzzStorageFaultOperations/bdbfad52d4cc7bae`,
 replayable standalone via `REPLAY_HEX=8001539619a0178cee0000 go test
-./server/faultops/... -run TestReplayStorageFaultInput -v`. Two narrowly
-fingerprinted KNOWN-OPEN tolerances are in the harness (see below), one per
-`(op, method, kind)` triple — neither suppresses any other finding, and each
-is removed the moment its half of the fix lands and the harness red-proofs
-clean without it.
+./server/faultops/... -run TestReplayStorageFaultInput -v`.
+
+After the fix: both directions verified locally — `git checkout <pre-fix
+commit> -- internal/core/rbac_roles.go internal/core/rbac_roles_test.go
+server/http/handlers/rbac.go server/grpc/services/role_service.go` (reverting
+just the fix, not the harness) reproduces both F3a and F3b exactly as
+originally found; restoring the fix makes both pass again, with no
+KNOWN-OPEN tolerance needed. The two tolerance entries that used to live in
+`server/faultops/fuzz_storage_fault_operations_test.go`'s
+`knownOpenTolerances` are removed — the fuzzer itself is now the permanent
+regression test for both.
