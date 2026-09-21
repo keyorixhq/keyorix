@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 
@@ -332,12 +333,17 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 		}
 		return nil, fmt.Errorf("failed to create project: %w", err)
 	}
-	// Seed default environments for new project
+	// Seed default environments for new project. Non-fatal (found by
+	// fuzz-injecting a CreateEnvironment failure: the comment here used to
+	// say "log and continue" but discarded the error with `_ = err` instead
+	// of actually logging it — the project silently ended up missing one or
+	// more of its expected default environments with zero operator
+	// visibility into why): the project row itself already committed, and a
+	// caller retries environment creation separately if seeding fails, but
+	// this must be OBSERVABLE, not a swallowed error.
 	for _, envName := range defaultEnvironmentNames {
-		_, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
-		if err != nil {
-			// Non-fatal: log and continue
-			_ = err
+		if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+			log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
 		}
 	}
 	return project, nil
@@ -456,7 +462,9 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 	}
 	for _, envName := range envNames {
 		if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
-			_ = err // non-fatal; log and continue
+			// Non-fatal, same rationale as CreateProject's default-environment
+			// seeding above — but must be observable, not silently discarded.
+			log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
 		}
 	}
 	return project, nil

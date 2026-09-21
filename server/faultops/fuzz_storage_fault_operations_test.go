@@ -378,6 +378,21 @@ var bestEffortTables = map[string][]string{
 	// already-existing subsystem's job, not something this task should
 	// re-litigate.
 	"LogAuditEvent": {"AuditEvent"},
+	// CreateEnvironment: CreateProject/CreateProjectWithEnvs (internal/core/catalog.go)
+	// seed a new project's default/requested environments in a loop after the
+	// project row itself already committed, and treat a per-environment
+	// failure as non-fatal — found live by a fuzz burst, which ALSO caught
+	// that the "non-fatal; log and continue" comment on both loops discarded
+	// the error with a bare `_ = err` instead of actually logging it (fixed
+	// same PR: both now log.Printf a Warning naming the project and the
+	// environment that failed to seed). The underlying "proceed without the
+	// environment" behavior itself is unchanged and is the actual tradeoff
+	// flagged here — a project can end up missing one or more expected
+	// environments with only a log line, no caller-visible signal. FLAG FOR
+	// REVIEW: should CreateProject instead report which environments seeded
+	// successfully in its response, or fail the whole create? Left as
+	// existing (now-observable) behavior, not decided here.
+	"CreateEnvironment": {"Environment"},
 }
 
 // acceptableByDesign reports whether every table in diff is accounted for by
