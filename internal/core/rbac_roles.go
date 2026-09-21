@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -118,24 +119,94 @@ func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, descri
 // a field mapping to models.Role.Name, verified by AST inspection in
 // server/http/role_rename_unreachable_guard_test.go's
 // TestUpdateRoleRequest_CarriesNoNameField, so there is no rename call site
-// here to guard). Rejects mutating a built-in role (mirrors CreateRole's
-// reserved-name guard — an
-// admin/system_admin role's permission set must not be alterable through this
-// path). Callers that also need to replace the role's permission set do so via
-// AssignPermissionToRole/RemovePermissionFromRole around this call, matching
-// the existing per-transport sequencing — this function only persists the
-// role row itself and audits that change.
-func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models.Role) (*models.Role, error) {
+// here to guard) and, when newPermissionIDs is non-nil, replaces the role's
+// entire permission set to match it (nil = leave permissions untouched; an
+// empty non-nil slice clears every permission). Rejects mutating a built-in
+// role (mirrors CreateRole's reserved-name guard — an admin/system_admin
+// role's permission set must not be alterable through this path), including a
+// permissions-only update: the guard runs before either phase, unconditionally.
+//
+// Both the role-row update and the permission replacement run inside ONE
+// storage.WithTransaction, and every audit event this call writes is written
+// only AFTER that transaction commits — fixing two real fault-injection
+// findings from the same defect (docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md):
+// F3a (a storage error partway through the old two-phase, non-transactional
+// sequence was silently swallowed by the caller and reported as success) and
+// F3b (a panic partway through was correctly turned into an error response,
+// but the role-update phase's own audit write — which used to happen before
+// permission replacement even started — had already committed and survived
+// the panic). Both callers (server/http/handlers/rbac.go,
+// server/grpc/services/role_service.go) now call this single function instead
+// of each independently sequencing AssignPermissionToRole/RemovePermissionFromRole
+// around a bare role-row update.
+func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models.Role, newPermissionIDs *[]uint) (*models.Role, []*models.Permission, error) {
 	if IsBuiltinRole(role.Name) {
 		c.LogRoleUpdateDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "cannot update built-in role: "+role.Name)
+		return nil, nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "cannot update built-in role: "+role.Name)
 	}
-	updated, err := c.storage.UpdateRole(ctx, role)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+
+	var updated *models.Role
+	var removedPermissionIDs, assignedPermissionIDs []uint
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var err error
+		updated, err = tx.UpdateRole(ctx, role)
+		if err != nil {
+			return err
+		}
+		if newPermissionIDs == nil {
+			return nil
+		}
+		existing, err := tx.GetRolePermissions(ctx, role.ID)
+		if err != nil {
+			return err
+		}
+		want := make(map[uint]bool, len(*newPermissionIDs))
+		for _, id := range *newPermissionIDs {
+			want[id] = true
+		}
+		have := make(map[uint]bool, len(existing))
+		for _, ep := range existing {
+			have[ep.ID] = true
+			if want[ep.ID] {
+				continue // already assigned, nothing to do
+			}
+			if err := tx.RemovePermissionFromRole(ctx, role.ID, ep.ID); err != nil {
+				return err
+			}
+			removedPermissionIDs = append(removedPermissionIDs, ep.ID)
+		}
+		for _, id := range *newPermissionIDs {
+			if have[id] {
+				continue // already assigned, nothing to do
+			}
+			if err := tx.AssignPermissionToRole(ctx, role.ID, id); err != nil {
+				return err
+			}
+			assignedPermissionIDs = append(assignedPermissionIDs, id)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), txErr)
 	}
+
+	// Audit AFTER commit, never before: an event logged before the transaction
+	// resolves could survive a later failure inside the same transaction body,
+	// asserting an effect that got rolled back — exactly F3b.
 	c.LogRoleUpdated(ctx, actorID, updated.ID, updated.Name)
-	return updated, nil
+	builtinTarget := IsBuiltinRole(updated.Name) // always false here (guarded above); kept symmetric with Assign/RemovePermissionFromRole's own logging for a future caller of those directly
+	for _, id := range removedPermissionIDs {
+		c.LogPermissionRemoved(ctx, actorID, role.ID, id, builtinTarget)
+	}
+	for _, id := range assignedPermissionIDs {
+		c.LogPermissionAssigned(ctx, actorID, role.ID, id, builtinTarget)
+	}
+
+	finalPermissions, err := c.storage.GetRolePermissions(ctx, role.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return updated, finalPermissions, nil
 }
 
 // DeleteRole deletes a role definition by id. Rejects deleting a built-in

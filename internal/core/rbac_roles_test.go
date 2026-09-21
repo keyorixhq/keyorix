@@ -28,7 +28,7 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	}))
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{}))
 	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
 }
 
@@ -106,7 +106,7 @@ func TestUpdateRole_RejectsBuiltin(t *testing.T) {
 	c, db := newRoleCRUDTestCore(t)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", NameFolded: "super_admin"}).Error)
 
-	_, err := c.UpdateRole(context.Background(), 1, &models.Role{ID: 1, Name: "super_admin", Description: "hijacked"})
+	_, _, err := c.UpdateRole(context.Background(), 1, &models.Role{ID: 1, Name: "super_admin", Description: "hijacked"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "built-in")
 
@@ -122,7 +122,7 @@ func TestUpdateRole_HappyPathAudited(t *testing.T) {
 	require.NoError(t, err)
 
 	created.Description = "new"
-	updated, err := c.UpdateRole(context.Background(), 9, created)
+	updated, _, err := c.UpdateRole(context.Background(), 9, created, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "new", updated.Description)
 

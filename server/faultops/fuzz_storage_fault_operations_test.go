@@ -268,21 +268,12 @@ type knownOpenTolerance struct {
 	findingDoc string
 }
 
-var knownOpenTolerances = []knownOpenTolerance{
-	{
-		// F3a: replaceRolePermissions swallows the error, reports 200 anyway.
-		op: "REST PUT /api/v1/roles/{id}", method: "RemovePermissionFromRole", kind: faultstorage.KindError,
-		findingDoc: "docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md",
-	},
-	{
-		// F3b: same call site, a panic instead — correctly reported as a 500,
-		// but core.UpdateRole's own unconditional audit write (committed
-		// BEFORE replaceRolePermissions even runs) survives the panic. Found
-		// by an unattended -fuzztime=10m burst, not a hand-written seed.
-		op: "REST PUT /api/v1/roles/{id}", method: "RemovePermissionFromRole", kind: faultstorage.KindPanic,
-		findingDoc: "docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md",
-	},
-}
+// F3a and F3b (docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md)
+// were tolerated here and are now fixed — core.UpdateRole runs the role
+// update, permission replace, and audit inside one storage.WithTransaction
+// (internal/core/rbac_roles.go). The fuzzer is now the regression test for
+// both; no entries needed unless a new finding is filed.
+var knownOpenTolerances = []knownOpenTolerance{}
 
 func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {

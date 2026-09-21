@@ -89,6 +89,29 @@ type mfaStepUpAllowEntry struct {
 // TestMFAStepUpConsumersUseExpectedPurpose -- exactly the shape a future
 // "accept any live grant" regression would take.
 var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
+	"internal/faultstorage/faulty_storage_generated.go:353": {
+		expectedPurpose: "",
+		reason: "generated, mechanical pass-through (w.real.ConsumeMFAStepUpGrant(...)) inside a " +
+			"test/fuzz-harness-only storage.Storage wrapper (server/faultops's FuzzStorageFaultOperations) " +
+			"— forwards whatever purpose argument the real caller already hardcoded, unmodified. The real " +
+			"call site making the authorization decision is whatever separately-guarded internal/core " +
+			"function invoked it; this line is one hop further down, at the storage interface, and never " +
+			"itself chooses or inspects the purpose value.",
+	},
+	"internal/faultstorage/faulty_storage_generated.go:357": {
+		expectedPurpose: "",
+		reason:          "see internal/faultstorage/faulty_storage_generated.go:353 — the second (KindEffectThenError) call to the real ConsumeMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+	},
+	"internal/faultstorage/faulty_storage_generated.go:2231": {
+		expectedPurpose: "",
+		reason: "generated, mechanical pass-through (w.real.GetActiveMFAStepUpGrant(...)) inside the same " +
+			"test/fuzz-harness-only wrapper — see internal/faultstorage/faulty_storage_generated.go:353's " +
+			"reasoning; this is the read-only sibling call, same forwarding shape.",
+	},
+	"internal/faultstorage/faulty_storage_generated.go:2235": {
+		expectedPurpose: "",
+		reason:          "see internal/faultstorage/faulty_storage_generated.go:2231 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+	},
 	"internal/core/mfa.go:522": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
 		reason: "requireReauth's account-security-factor-change gate (DisableMFA, " +
