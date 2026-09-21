@@ -13,6 +13,7 @@ package connect
 // exercises the actual smithy-go awsJson1_1 protocol decode, not just the
 // connector's own post-decode field checks.
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -173,16 +174,36 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 		//  1. the smithy-go awsJson1_1 deserializer routes any response outside
 		//     [200,300) to the error deserializer -- GetSecret must therefore
 		//     error, never return a value, on such a status.
-		//  2. a 2xx response that structurally carries neither a SecretString nor
-		//     a non-empty SecretBinary must ALSO error -- matches awssm.go's own
-		//     explicit "secret %q has no value" fallback.
+		//  2. a 2xx response that structurally carries neither a non-empty
+		//     SecretString nor a non-empty SecretBinary must ALSO error --
+		//     matches awssm.go's own explicit "secret %q has no value"
+		//     fallback. Non-empty, not just non-nil: a body like
+		//     {"SecretString":""} decodes to a non-nil pointer to "", which is
+		//     not a real secret value either (awssm.go's own check, and the
+		//     reason this reference must mirror it -- see
+		//     docs/findings/2026-09-20-FINDING-awssm-empty-secret-response.md).
 		if (code < 200 || code >= 300) && err == nil {
 			t.Fatalf("BYPASS: status %d outside [200,300) treated as success, returned value %q", code, val)
 		}
+		// Decoded with json.NewDecoder(...).Decode, not json.Unmarshal: the two
+		// disagree on trailing bytes after the first JSON value, and this
+		// reference decode must match what the SDK actually does, not what a
+		// strict decoder would do. Confirmed by reading the vendored SDK
+		// directly -- (*awsAwsjson11_deserializeOpGetSecretValue).HandleDeserialize
+		// (github.com/aws/aws-sdk-go-v2/service/secretsmanager@v1.49.0/deserializers.go,
+		// ~line 1063) builds `decoder := json.NewDecoder(body)` and calls
+		// `decoder.Decode(&shape)` exactly once: it decodes the first JSON value
+		// and never checks for (or rejects) anything left in the stream after
+		// it. json.Unmarshal, by contrast, errors on any trailing non-whitespace
+		// byte -- so a body like `{"SecretBinary":"0000"}0` decodes successfully
+		// under the SDK's own decoder (GetSecret correctly returns a value) but
+		// was previously reported as "no value" by this reference decode, a
+		// false positive on oracle (b), not a real bypass.
 		var ref awsAccessSecretValueRef
-		hasValue := json.Unmarshal(body, &ref) == nil && (ref.SecretString != nil || len(ref.SecretBinary) > 0)
+		hasValue := json.NewDecoder(bytes.NewReader(body)).Decode(&ref) == nil &&
+			((ref.SecretString != nil && *ref.SecretString != "") || len(ref.SecretBinary) > 0)
 		if code >= 200 && code < 300 && !hasValue && err == nil {
-			t.Fatalf("BYPASS: response has no SecretString/SecretBinary field but GetSecret returned success with value %q", val)
+			t.Fatalf("BYPASS: response has no non-empty SecretString/SecretBinary field but GetSecret returned success with value %q", val)
 		}
 
 		// Oracle (d): no credential echo. The access key ID the connector actually
