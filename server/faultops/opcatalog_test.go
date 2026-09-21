@@ -531,6 +531,36 @@ var opCatalog = []operation{
 			return httpResult(st, body), nil
 		},
 	},
+	{
+		// Coverage batch 3: gRPC group/role CRUD, over the real grpc.Server
+		// (bufconn) with the production interceptor chain.
+		Key: "GRPC keyorix.v1.GroupService.CreateGroup",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			_, err := pb.NewGroupServiceClient(w.grpcConn).CreateGroup(w.grpcCtx, &pb.CreateGroupRequest{
+				Name: "fuzz-group-grpc-batch3", Description: "fuzz group",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.RoleService.DeleteRole",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createRoleForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			roleID := state.(uint)
+			_, err := pb.NewRoleServiceClient(w.grpcConn).DeleteRole(w.grpcCtx, &pb.DeleteRoleRequest{
+				Id: uint32(roleID),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
 }
 
 // runOp runs op.Setup (if any) then op.Execute against w, with no fault
