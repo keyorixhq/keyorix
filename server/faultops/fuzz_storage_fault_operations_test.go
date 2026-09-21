@@ -1,0 +1,397 @@
+// fuzz_storage_fault_operations_test.go is FuzzStorageFaultOperations: fault
+// injection at the storage-INTERFACE level (one layer above #1951's
+// FuzzFaultInjectedOperations, which faults durability seams below it), across
+// every operation in opCatalog, driven through the real REST/system/gRPC
+// transports.
+//
+// SCOPE CUT (documented, not silent — see the STEP 0/REPORT): this MVP arms the
+// fault for the op's WHOLE Drive() call (setup calls included), not only its
+// final mutating request — STEP 1's original prefix/op/suffix split is
+// follow-up work. It does not yet run a "rest of the sequence" fault-free
+// afterward (single-operation fuzzing, not multi-op sequences) — a real gap for
+// catching state corruption that only surfaces on a LATER op, called out
+// explicitly rather than silently claimed as covered.
+package faultops
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
+)
+
+var errFuzzInjected = errors.New("fault-fuzz injected failure")
+
+// storageInterfaceMethodNames returns every storage.Storage method name, sorted
+// (reflect.Type.Method(i) already returns interface methods in that order) —
+// derived at runtime from the interface itself, so it can never drift from the
+// 418 faulty_storage_generated.go actually covers.
+func storageInterfaceMethodNames() []string {
+	t := reflect.TypeOf((*storage.Storage)(nil)).Elem()
+	names := make([]string, t.NumMethod())
+	for i := range names {
+		names[i] = t.Method(i).Name
+	}
+	return names
+}
+
+// authzReadMethods back core.Authorize / permission resolution / scope
+// discovery (confirmed by reading their doc comments in
+// internal/core/storage/interface.go, not guessed — "Together they back
+// core.Authorize"). Oracle (c): a fault on any of these must never let an
+// operation SUCCEED — error or deny only, regardless of what the reference
+// (fault-free) run would have done.
+var authzReadMethods = map[string]bool{
+	"GetUserRoleIDsAt":                true,
+	"GetUserRoleIDsExact":             true,
+	"GetUserGroupRoleIDsAt":           true,
+	"RoleSetHasPermission":            true,
+	"RoleSetBypassesPermissionChecks": true,
+	"GetUserPermissions":              true,
+	"GetUserGroupPermissions":         true,
+	"IsProjectMember":                 true,
+	"IsGroupProjectScoped":            true,
+	"GetUserRoleScopes":               true,
+}
+
+// canaryFragments are substrings that must never appear in an error response
+// body — the plaintext secret value this run wrote, standing in for "secret
+// plaintext" (RULES oracle (e)); reused verbatim, not a new canary scheme.
+var canaryFragments = []string{"fuzz-value", "fuzz-value-updated"}
+
+type decodedFuzzOp struct {
+	opIndex    int
+	methodName string
+	nthCall    int
+	kind       faultstorage.FaultKind
+}
+
+func decodeFuzzOp(data []byte) (decodedFuzzOp, bool) {
+	if len(opCatalog) == 0 {
+		return decodedFuzzOp{}, false
+	}
+	methods := storageInterfaceMethodNames()
+	if len(methods) == 0 {
+		return decodedFuzzOp{}, false
+	}
+	b := func(i int) byte {
+		if i < len(data) {
+			return data[i]
+		}
+		return 0
+	}
+	opIdx := int(b(0)) % len(opCatalog)
+	methodIdx := (int(b(1))<<8 | int(b(2))) % len(methods)
+	nthCall := 1 + int(b(3))%5
+	kinds := []faultstorage.FaultKind{faultstorage.KindError, faultstorage.KindPanic, faultstorage.KindEffectThenError}
+	kind := kinds[int(b(4))%len(kinds)]
+	return decodedFuzzOp{
+		opIndex:    opIdx,
+		methodName: methods[methodIdx],
+		nthCall:    nthCall,
+		kind:       kind,
+	}, true
+}
+
+func FuzzStorageFaultOperations(f *testing.F) {
+	// Seeds: one per known bug class, plus one clean seed per oracle. Byte
+	// layout: [opIndex, methodIdxHi, methodIdxLo, nthCall-1..4, kindSelector].
+	seedFor := func(opKey, method string, nth int, kind byte) []byte {
+		opIdx := -1
+		for i, op := range opCatalog {
+			if op.Key == opKey {
+				opIdx = i
+				break
+			}
+		}
+		if opIdx < 0 {
+			return nil
+		}
+		methods := storageInterfaceMethodNames()
+		methodIdx := -1
+		for i, m := range methods {
+			if m == method {
+				methodIdx = i
+				break
+			}
+		}
+		if methodIdx < 0 {
+			return nil
+		}
+		return []byte{byte(opIdx), byte(methodIdx >> 8), byte(methodIdx), byte(nth - 1), kind}
+	}
+
+	// F3: fault RemovePermissionFromRole inside UpdateRole's replaceRolePermissions.
+	if s := seedFor("REST PUT /api/v1/roles/{id}", "RemovePermissionFromRole", 1, 0); s != nil {
+		f.Add(s)
+	}
+	// sweepFn-class: a panic mid-operation on an ordinary write.
+	if s := seedFor("REST POST /api/v1/secrets/", "CreateSecret", 1, 1); s != nil {
+		f.Add(s)
+	}
+	// authz drop-err-guard class: fault a permission-resolution read.
+	if s := seedFor("GRPC keyorix.v1.RoleService.AssignRole", "GetUserRoleIDsAt", 1, 0); s != nil {
+		f.Add(s)
+	}
+	// effect-then-error: a write whose real effect lands but is reported failed.
+	if s := seedFor("REST DELETE /api/v1/secrets/{id}", "DeleteSecret", 1, 2); s != nil {
+		f.Add(s)
+	}
+	// /system proxy bypass class.
+	if s := seedFor("REST PUT /api/v1/system/machine-identities/{id}/transition", "TransitionMachineIdentityState", 1, 0); s != nil {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		runOneFuzzIteration(t, data)
+	})
+}
+
+// runOneFuzzIteration is the fuzz body, factored out so replay_test.go's
+// TestReplayStorageFaultInput can run the identical logic against one
+// specific saved input outside of f.Fuzz.
+func runOneFuzzIteration(t *testing.T, data []byte) {
+	t.Helper()
+	t.Log(traceFuzzOp(data)) // RULES: print the decoded operation/fault as a readable line, every run.
+
+	decoded, ok := decodeFuzzOp(data)
+	if !ok {
+		t.Skip("empty catalog/method list")
+	}
+	op := opCatalog[decoded.opIndex]
+	ctx := context.Background()
+
+	// Reference: same operation, fully unfaulted, fresh world — the
+	// expected post-state a legitimate success must match (oracle (a)).
+	ref := newFaultWorld(t, nil)
+	refResult, refErr := runOp(ctx, ref, op)
+	if refErr != nil {
+		t.Skipf("reference (fault-free) run itself errored — not a fault-injection finding: %v", refErr)
+	}
+	if !refResult.Success {
+		t.Skipf("reference (fault-free) run itself failed — not a fault-injection finding: %s", refResult.Detail)
+	}
+	refAfter, err := snapshotDB(ref.db)
+	if err != nil {
+		t.Fatalf("snapshotting reference world: %v", err)
+	}
+
+	// Fault world: Setup runs UNFAULTED (spec nil at construction), so
+	// NthCall below counts only Execute's own calls, and `before` reflects
+	// post-setup state rather than the pristine pre-setup world.
+	w := newFaultWorld(t, nil)
+	var state any
+	if op.Setup != nil {
+		state, err = op.Setup(ctx, w)
+		if err != nil {
+			t.Skipf("setup itself errored — not a fault-injection finding: %v", err)
+		}
+	}
+	before, err := snapshotDB(w.db)
+	if err != nil {
+		t.Fatalf("snapshotting pre-fault (post-setup) world: %v", err)
+	}
+
+	w.faulty.Arm(&faultstorage.FaultSpec{
+		Method: decoded.methodName, NthCall: decoded.nthCall, Kind: decoded.kind, Err: errFuzzInjected,
+	})
+
+	var result opResult
+	var execErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("panic escaped the transport layer entirely for op %q (fault %s/%d/%s) — "+
+					"the real Recovery middleware/RecoveryInterceptor should have converted this to "+
+					"a 500/codes.Internal response, not let it unwind past Execute(): %v",
+					op.Key, decoded.methodName, decoded.nthCall, decoded.kind, r)
+			}
+		}()
+		result, execErr = op.Execute(ctx, w, state)
+	}()
+	if execErr != nil {
+		// A transport-level Go error (connection reset, JSON encode failure in
+		// our own test helper, etc.) — not itself an oracle finding, but worth
+		// surfacing since fault injection should never break the CALLER's own
+		// ability to make the request in the first place.
+		t.Fatalf("op.Execute returned a transport error (not an application error) for op %q, fault %s/%d/%s: %v",
+			op.Key, decoded.methodName, decoded.nthCall, decoded.kind, execErr)
+	}
+
+	if !w.faulty.Fired() {
+		// NthCall exceeded the real call count for this method during
+		// Execute — not interesting for this input, matches a legitimate
+		// corner of the search space rather than a bug.
+		return
+	}
+
+	after, err := snapshotDB(w.db)
+	if err != nil {
+		t.Fatalf("snapshotting post-fault world: %v", err)
+	}
+
+	checkOracles(t, oracleInput{
+		op: op.Key, method: decoded.methodName, nth: decoded.nthCall, kind: decoded.kind,
+		result: result, before: before, after: after, refAfter: refAfter,
+	})
+}
+
+type oracleInput struct {
+	op, method string
+	nth        int
+	kind       faultstorage.FaultKind
+	result     opResult
+	before     dbSnapshot
+	after      dbSnapshot
+	refAfter   dbSnapshot
+}
+
+// knownOpenTolerance narrowly fingerprints one already-filed, not-yet-fixed
+// finding so the fuzzer doesn't fail on it forever — but never drops it from
+// the input space (RULES): decodeFuzzOp can still select this exact
+// (op, method, kind) triple, checkOracles still runs every other oracle
+// against it, and only the ONE specific violation this finding predicts is
+// downgraded from Errorf to Logf. A fix landing that makes this tolerance
+// stop matching is the intended way to notice the finding is closed — remove
+// the entry then, don't leave it tolerating a bug that no longer exists.
+type knownOpenTolerance struct {
+	op, method string
+	kind       faultstorage.FaultKind
+	findingDoc string
+}
+
+var knownOpenTolerances = []knownOpenTolerance{
+	{
+		// F3a: replaceRolePermissions swallows the error, reports 200 anyway.
+		op: "REST PUT /api/v1/roles/{id}", method: "RemovePermissionFromRole", kind: faultstorage.KindError,
+		findingDoc: "docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md",
+	},
+	{
+		// F3b: same call site, a panic instead — correctly reported as a 500,
+		// but core.UpdateRole's own unconditional audit write (committed
+		// BEFORE replaceRolePermissions even runs) survives the panic. Found
+		// by an unattended -fuzztime=10m burst, not a hand-written seed.
+		op: "REST PUT /api/v1/roles/{id}", method: "RemovePermissionFromRole", kind: faultstorage.KindPanic,
+		findingDoc: "docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md",
+	},
+}
+
+func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
+	for i, k := range knownOpenTolerances {
+		if k.op == in.op && k.method == in.method && k.kind == in.kind {
+			return &knownOpenTolerances[i]
+		}
+	}
+	return nil
+}
+
+// checkOracles applies GOAL's (a)-(e). (b) is checked structurally by the
+// panic-recovery wrapper around op.Drive in the caller — a panic that DID get
+// caught and converted to a failure response reaches here as
+// result.Success==false, exactly like any other injected error, and oracle (a)
+// covers it: a panic converted to success would be caught by the "success but
+// state doesn't match the reference" branch.
+func checkOracles(t *testing.T, in oracleInput) {
+	t.Helper()
+	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
+
+	report := func(format string, args ...any) {
+		msg := fmt.Sprintf(format, args...)
+		if known := matchingKnownOpen(in); known != nil {
+			t.Logf("KNOWN-OPEN (%s): %s", known.findingDoc, msg)
+			return
+		}
+		t.Errorf("%s", msg)
+	}
+
+	// Oracle (c): fail-closed authz. Checked FIRST and independently of (a) —
+	// a fail-open bug can leave state that coincidentally matches the
+	// reference run (the write happens anyway), which (a) alone would not flag.
+	if authzReadMethods[in.method] && in.kind != faultstorage.KindEffectThenError && in.result.Success {
+		report("%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
+			"result instead of an error/deny: %s", label, in.result.Detail)
+		return
+	}
+
+	// Oracle (e): error hygiene — no secret plaintext in an error body.
+	if !in.result.Success {
+		for _, frag := range canaryFragments {
+			if strings.Contains(in.result.Detail, frag) {
+				report("%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
+					label, frag, in.result.Detail)
+				return
+			}
+		}
+	}
+
+	// Oracle (a): atomicity.
+	switch {
+	case in.result.Success:
+		if in.after.Hash != in.refAfter.Hash {
+			report("%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
+				"fault-free reference run's state (partial/incorrect commit). Differing tables: %v",
+				label, diffTables(in.before, in.after, in.refAfter))
+		}
+	case in.kind == faultstorage.KindEffectThenError:
+		// (d): ambiguous by design — old or new state both acceptable, just not
+		// a mix. AuditEvent is compared separately, not folded into this check:
+		// it legitimately records the REPORTED outcome (an error), which
+		// diverges from a real success's audit row even when the underlying
+		// resource state matches the "new" (effect-applied) state exactly —
+		// that is the GOAL's own "model audit instead of dropping it" case,
+		// not a partial/mixed commit of application state.
+		nonAuditBefore := hashExcluding(in.before, "AuditEvent")
+		nonAuditAfter := hashExcluding(in.after, "AuditEvent")
+		nonAuditRef := hashExcluding(in.refAfter, "AuditEvent")
+		if nonAuditAfter != nonAuditBefore && nonAuditAfter != nonAuditRef {
+			report("%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
+				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
+				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
+				label, diffTables(in.before, in.after, in.after), diffTables(in.refAfter, in.after, in.after))
+		}
+	default:
+		if in.after.Hash != in.before.Hash {
+			report("%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
+				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after, in.after))
+		}
+	}
+}
+
+func diffTables(before, after, _ dbSnapshot) []string {
+	var diffs []string
+	for name, b := range before.Tables {
+		a := after.Tables[name]
+		if a.Hash != b.Hash {
+			diffs = append(diffs, name)
+		}
+	}
+	return diffs
+}
+
+// hashExcluding recomputes a snapshot's overall hash with the named table(s)
+// left out entirely — used for oracle (d), where AuditEvent legitimately
+// records the REPORTED outcome rather than the actual storage effect.
+func hashExcluding(snap dbSnapshot, excludeTables ...string) string {
+	exclude := make(map[string]bool, len(excludeTables))
+	for _, t := range excludeTables {
+		exclude[t] = true
+	}
+	var lines []string
+	for name, ts := range snap.Tables {
+		if exclude[name] {
+			continue
+		}
+		lines = append(lines, name+":"+ts.Hash)
+	}
+	sort.Strings(lines)
+	h := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(h[:])
+}
