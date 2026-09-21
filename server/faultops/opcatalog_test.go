@@ -351,6 +351,115 @@ var opCatalog = []operation{
 			return opResult{Success: true, Detail: codes.OK.String()}, nil
 		},
 	},
+	{
+		// /system proxy bypass class (batch 1): CreateMachineIdentityProxy
+		// calls coreService.CreateMachineIdentity directly, never through a
+		// REST-facing handler layer of its own.
+		Key: "REST POST /api/v1/system/machine-identities",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-mi-batch1-project"})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", st, body)
+			}
+			var proj struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &proj); err != nil || proj.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, body)
+			}
+			return proj.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			projectID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
+				"project_id": projectID, "name": "fuzz-mi-batch1", "created_by": 1,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// /system proxy bypass class (batch 1): CreateGroupProxy.
+		Key: "REST POST /api/v1/system/groups",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/groups", map[string]any{
+				"name": "fuzz-group-batch1", "description": "fuzz group",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// /system proxy bypass class (batch 1): DeleteGroupProxy.
+		Key: "REST DELETE /api/v1/system/groups/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/groups", map[string]any{
+				"name": "fuzz-group-batch1-setup", "description": "fuzz group",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateGroupProxy: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateGroupProxy response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/system/groups/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// /system proxy bypass class (batch 1): DeleteProjectProxy.
+		Key: "REST DELETE /api/v1/system/projects/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-project-delete-batch1"})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", st, body)
+			}
+			var proj struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &proj); err != nil || proj.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, body)
+			}
+			return proj.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/system/projects/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
 }
 
 // runOp runs op.Setup (if any) then op.Execute against w, with no fault

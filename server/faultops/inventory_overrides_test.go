@@ -57,6 +57,13 @@ var operationOverrides = map[string]overrideEntry{
 	"REST DELETE /api/v1/secrets/{id}": {StatusFuzzed, "opCatalog[\"DeleteSecret\"]"},
 	"REST POST /api/v1/projects":       {StatusFuzzed, "opCatalog[\"CreateProject\"]"},
 	"REST POST /api/v1/users/":         {StatusFuzzed, "opCatalog[\"CreateUser\"]"},
+	// Coverage batch 1 (of the 67 /system proxy routes): plain CRUD proxies
+	// with straightforward wire shapes, picked first per the "wire /system
+	// proxy routes before REST+gRPC resource CRUD" priority order.
+	"REST POST /api/v1/system/machine-identities": {StatusFuzzed, "opCatalog[\"CreateMachineIdentityProxy\"] — batch 1"},
+	"REST POST /api/v1/system/groups":             {StatusFuzzed, "opCatalog[\"CreateGroupProxy\"] — batch 1"},
+	"REST DELETE /api/v1/system/groups/{id}":      {StatusFuzzed, "opCatalog[\"DeleteGroupProxy\"] — batch 1"},
+	"REST DELETE /api/v1/system/projects/{id}":    {StatusFuzzed, "opCatalog[\"DeleteProjectProxy\"] — batch 1"},
 }
 
 func statusOf(key string) overrideEntry {
