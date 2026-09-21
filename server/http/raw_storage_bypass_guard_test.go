@@ -648,10 +648,27 @@ var rawStorageBypassAllowlist = map[string]string{
 	// would (which ADR-088 rejects for this route: full delegation would lose
 	// the FromActive CAS precondition the route exists to provide). Verified
 	// red/green in users_active_transition_proxy_credential_revoke_test.go.
-	"UpdateUserIfActiveStateMatchesProxy": "no-independent-ceiling once both bolt-ons are in place: " +
-		"GuardLastAdminDeactivation (fixed 2026-08-24) and RevokeAllPersonalAccessTokensForUser/" +
-		"DeleteSessionsForUserExcept (fixed here, #1572) replicate every check and side effect " +
-		"core.UpdateUser's deactivating branch applies around the same conditional write.",
+	//
+	// #F5 (2026-09-21): the claim below used to read "no-independent-ceiling"
+	// -- that was wrong even at the time (this handler's own caller-authority
+	// gate was the /system group's blanket system.write, identical to any
+	// other proxy, not "none"); what was actually true is that it had no
+	// ceiling BEYOND that blanket gate, unlike core.UpdateUser's real
+	// authority path (users.write at global scope, enforced at the HTTP layer
+	// on PUT /api/v1/users/{id}). A system.write-only caller could rewrite
+	// any user's username/email/display_name/active state through this raw
+	// call, including a global admin's -- see
+	// users_active_transition_proxy_ceiling_test.go (server/http). Fixed by
+	// core.RequireUsersWriteAuthority, checked before this raw call is ever
+	// reached.
+	"UpdateUserIfActiveStateMatchesProxy": "the raw CAS write itself stays justified for ADR-088's reasons " +
+		"(full delegation to core.UpdateUser would lose the FromActive precondition this route exists to " +
+		"provide); caller authority is no longer just the group's blanket system.write -- " +
+		"core.RequireUsersWriteAuthority (#F5) now re-derives the SAME users.write-at-global-scope ceiling " +
+		"PUT /api/v1/users/{id} requires, checked before this call. GuardLastAdminDeactivation " +
+		"(fixed 2026-08-24) and RevokeAllPersonalAccessTokensForUser/DeleteSessionsForUserExcept " +
+		"(fixed 2026-09-03, #1572) replicate every OTHER check and side effect core.UpdateUser's " +
+		"deactivating branch applies around the same conditional write.",
 	// G80 Wave 1 (#1547): the one new candidate the repo-wide extension found,
 	// outside /system. VERIFIED 2026-08-25 (G80 documented-exception
 	// re-verification sweep, escalation-delta test), docs/g80-raw-storage-
