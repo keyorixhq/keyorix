@@ -66,10 +66,10 @@ func TestUpdateUserIfActiveStateMatchesProxy_HappyPath(t *testing.T) {
 		"active":       false,
 		"from_active":  true,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", body),
 		"id", idStr,
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -105,10 +105,10 @@ func TestUpdateUserIfActiveStateMatchesProxy_LostRace(t *testing.T) {
 		"active":       false,
 		"from_active":  true,
 	})
-	firstReq := withChiParam(
+	firstReq := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", firstBody),
 		"id", idStr,
-	)
+	))
 	w1 := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w1, firstReq)
 	assert.Equal(t, http.StatusOK, w1.Code)
@@ -125,10 +125,10 @@ func TestUpdateUserIfActiveStateMatchesProxy_LostRace(t *testing.T) {
 		"active":       false,
 		"from_active":  true,
 	})
-	secondReq := withChiParam(
+	secondReq := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", secondBody),
 		"id", idStr,
-	)
+	))
 	w2 := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w2, secondReq)
 	assert.Equal(t, http.StatusOK, w2.Code)
@@ -182,10 +182,10 @@ func TestUpdateUserIfActiveStateMatchesProxy_DuplicateEmail(t *testing.T) {
 		"active":       false,
 		"from_active":  true,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition", body),
 		"id", "1",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
 	resp := decodeRemoteResp(t, w)
@@ -233,10 +233,10 @@ func TestUpdateUserIfActiveStateMatchesProxy_PreservesPasswordHashAndAccountStat
 		"active":       true,
 		"from_active":  true,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", body),
 		"id", idStr,
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -285,10 +285,10 @@ func TestUpdateUserIfActiveStateMatchesProxy_MismatchLeavesRowCompletelyUnchange
 		"active":       false,
 		"from_active":  false,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/users/"+idStr+"/active-transition", body),
 		"id", idStr,
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -346,10 +346,10 @@ func TestUpdateUserIfActiveStateMatchesProxy_DuplicateUsername(t *testing.T) {
 		"active":       false,
 		"from_active":  true,
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition", body),
 		"id", "1",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
 	resp := decodeRemoteResp(t, w)
