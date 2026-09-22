@@ -155,6 +155,58 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{
 	{op: "REST POST /api/v1/users/", method: "CreateUser", nth: 1},
 }
 
+// opScopedBestEffortTables narrows bestEffortTables' method-only scope to a
+// SPECIFIC (op, method) pair, for a storage method that is best-effort at ONE
+// call site but load-bearing at others — unlike AddPasswordHistory/
+// LogAuditEvent/CreateEnvironment (genuinely best-effort EVERYWHERE they are
+// called), storage.AssignRole is load-bearing at
+// internal/core/auth_bootstrap.go:322 (admin bootstrap) and
+// internal/core/rbac_management.go's explicit assign-role paths (wired into
+// opCatalog as "GRPC keyorix.v1.RoleService.AssignRole") — a blanket
+// bestEffortTables entry keyed only by method name would ALSO suppress a
+// genuine oracle (a) violation on those load-bearing call sites, since a
+// swallowed AssignRole failure there produces the identical UserRole-only
+// diff. Scoping to the specific op avoids that.
+//
+// REST POST /api/v1/users/, AssignRole: internal/core/users.go's CreateUser
+// auto-assigns the system_viewer role (ADR-021, "a minimal install-wide
+// baseline") as documented best-effort — `_ = c.storage.AssignRole(...)`,
+// its own comment reads "Failure is non-fatal — the user is created
+// regardless." Found live by the coverage-batch-6 smoke burst. Direction is
+// security-benign: failure means the new user ends up with FEWER roles than
+// the reference run (fail-closed, under-privileged), never more, so this is
+// the same class of accepted tradeoff as bestEffortTables' other entries,
+// just narrower in scope.
+var opScopedBestEffortTables = []struct {
+	op, method string
+	tables     []string
+}{
+	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
+}
+
+func opScopedAcceptableByDesign(op, method string, diff []string) bool {
+	for _, e := range opScopedBestEffortTables {
+		if e.op != op || e.method != method {
+			continue
+		}
+		allowedSet := make(map[string]bool, len(e.tables))
+		for _, t := range e.tables {
+			allowedSet[t] = true
+		}
+		ok := true
+		for _, d := range diff {
+			if !allowedSet[d] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
 func multiStepFirstCallAmbiguousCommit(op, method string, nth int) bool {
 	for _, e := range multiStepAmbiguousCommitExceptions {
 		if e.op == op && e.method == method && e.nth == nth {
@@ -516,6 +568,12 @@ func checkOracles(t *testing.T, in oracleInput) {
 			if acceptableByDesign(in.method, diff) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which %s explicitly documents "+
 					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
+				return
+			}
+			if opScopedAcceptableByDesign(in.op, in.method, diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
+					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
+					label, diff)
 				return
 			}
 			// Generalized AuditEvent-only case: every traced instance of
