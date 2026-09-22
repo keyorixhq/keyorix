@@ -96,6 +96,14 @@ func TestAddGroupMember_MachineActorHoldingRolePermissionsAllowed(t *testing.T) 
 	devRole, err := cs.Storage().GetRoleByName(ctx, "project_developer")
 	require.NoError(t, err)
 	require.NoError(t, cs.Storage().AssignMachineRole(ctx, machine.ID, devRole.ID, storage.Scope{ProjectID: 1}))
+	// F6 sweep (2026-09-22): joining a group now ALSO requires roles.assign as
+	// a baseline -- project_developer itself does not bundle it. Give the
+	// machine project_admin too, at the same project, so this test still
+	// isolates "holds every permission the group's role bundles" (its actual
+	// subject) from that separate baseline.
+	adminRole, err := cs.Storage().GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	require.NoError(t, cs.Storage().AssignMachineRole(ctx, machine.ID, adminRole.ID, storage.Scope{ProjectID: 1}))
 	require.NoError(t, cs.Storage().AssignRoleToGroupWithExpiry(ctx, grp.ID, devRole.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour)))
 
 	uc := &middleware.UserContext{
