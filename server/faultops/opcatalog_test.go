@@ -80,7 +80,7 @@ func httpJSON(ctx context.Context, w *faultWorld, method, path string, body any)
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, respBody, nil
 }

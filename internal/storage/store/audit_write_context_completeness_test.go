@@ -28,10 +28,25 @@ import (
 
 // auditWriteContextAllowlist names LogAuditEvent implementations that are
 // deliberately exempt from calling auditWriteContext, keyed
-// "<file basename>:<enclosing type name>", with the reason as the value. Empty on
-// purpose: every real implementation found so far needs the fix (test mocks in
-// _test.go files are already excluded by the walk below, not via this list).
-var auditWriteContextAllowlist = map[string]string{}
+// "<file basename>:<enclosing type name>", with the reason as the value.
+var auditWriteContextAllowlist = map[string]string{
+	// FaultyStorage.LogAuditEvent (internal/faultstorage/faulty_storage_generated.go,
+	// produced by internal/faultstorage/gen from the storage.Storage interface source —
+	// see that package's own doc comment) never does I/O itself: every branch either
+	// returns/panics with the injected fault WITHOUT calling the real storage at all,
+	// or forwards ctx unmodified to w.real.LogAuditEvent(ctx, event) — the wrapped
+	// real storage.Storage, always a genuine LocalStorage/RemoteStorage in this
+	// package's test harness (server/faultops), whose OWN LogAuditEvent already calls
+	// auditWriteContext as its first statement and is independently covered by this
+	// same walk. Detachment from caller cancellation is therefore still enforced, one
+	// layer down, at the implementation that actually performs the write. Adding a
+	// redundant auditWriteContext(ctx) call here would mean hand-patching one method
+	// inside an otherwise fully machine-generated file, which the package's own doc
+	// comment says should fail to build (not silently drift) if the interface changes
+	// out from under it — a hand-edit defeats that. FaultyStorage has zero production
+	// callers (verified by grep: only server/faultops's *_test.go files construct it).
+	"faulty_storage_generated.go:FaultyStorage": "test-only fault-injection wrapper; forwards ctx unmodified to the wrapped real storage.Storage, which already detaches (and is independently covered by this test) — see internal/faultstorage's package doc comment",
+}
 
 func TestLogAuditEventImplementations_DetachFromCallerCancellation(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)

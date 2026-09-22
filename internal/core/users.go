@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -185,9 +186,14 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 	}
 
 	// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
-	// baseline. Failure is non-fatal — the user is created regardless.
+	// baseline. Non-fatal (found by fuzz-injecting an AssignRole failure, same
+	// class as CreateProjectWithEnvs's CreateEnvironment fix above): the user
+	// row itself already committed, and this must be OBSERVABLE, not a
+	// swallowed error, even though the user is still created regardless.
 	if role, err := c.storage.GetRoleByName(ctx, "system_viewer"); err == nil {
-		_ = c.storage.AssignRole(ctx, createdUser.ID, role.ID, Scope{})
+		if err := c.storage.AssignRole(ctx, createdUser.ID, role.ID, Scope{}); err != nil {
+			log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
+		}
 	}
 
 	return createdUser, nil

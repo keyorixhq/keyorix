@@ -30,7 +30,7 @@ func TestNewFaultWorld_RESTAndGRPCBothReachable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("REST CreateProject status = %d, want 2xx", resp.StatusCode)
 	}

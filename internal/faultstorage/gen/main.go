@@ -173,10 +173,12 @@ func run() error {
 
 	formatted, ferr := format.Source(buf.Bytes())
 	if ferr != nil {
-		os.WriteFile(outFile+".broken", buf.Bytes(), 0o644)
+		if dumpErr := os.WriteFile(outFile+".broken", buf.Bytes(), 0o600); dumpErr != nil {
+			return fmt.Errorf("gofmt generated source failed (%w), and dumping the raw source to %s.broken also failed: %w", ferr, outFile, dumpErr)
+		}
 		return fmt.Errorf("gofmt generated source (raw dumped to %s.broken): %w", outFile, ferr)
 	}
-	if werr := os.WriteFile(outFile, formatted, 0o644); werr != nil {
+	if werr := os.WriteFile(outFile, formatted, 0o600); werr != nil {
 		return fmt.Errorf("writing %s: %w", outFile, werr)
 	}
 	fmt.Printf("genfaultystorage: wrote %d generated methods (%d hand-written, %d total) to %s\n",

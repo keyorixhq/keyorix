@@ -24,11 +24,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	grpcservices "github.com/keyorixhq/keyorix/server/grpc/services"
+	resthandlers "github.com/keyorixhq/keyorix/server/http/handlers"
 )
 
 var errFuzzInjected = errors.New("fault-fuzz injected failure")
+
+// drainAllBackgroundGoroutines deterministically waits for every in-flight goSafe
+// goroutine across all three packages that duplicate the goSafe helper (handlers,
+// grpc/services, core — see each package's own DrainBackgroundGoroutines doc
+// comment; server/http/canary_secret_leakage_fuzz_test.go does the identical
+// three-package drain for the same reason). A detached audit write dispatched by
+// Setup or Execute (goSafe, fire-and-forget by design) is not synchronized with
+// the caller's HTTP/gRPC response, so without draining it can land in the gap
+// between a `before`/`refAfter` snapshot and the following `after` snapshot,
+// producing a spurious AuditEvent-only diff blamed on the fault under test.
+func drainAllBackgroundGoroutines() {
+	resthandlers.DrainBackgroundGoroutines()
+	grpcservices.DrainBackgroundGoroutines()
+	core.DrainBackgroundGoroutines()
+}
 
 // storageInterfaceMethodNames returns every storage.Storage method name, sorted
 // (reflect.Type.Method(i) already returns interface methods in that order) —
@@ -103,6 +121,18 @@ var authzReadMethods = map[string]bool{
 // silently tolerated) could plausibly recur at other call sites this sweep
 // didn't specifically look for — worth a dedicated grep as follow-up, not
 // done here.
+//
+// REST DELETE /api/v1/secrets/{id}, GetUserGroupRoleIDsAt, NthCall=2: the
+// predicted recurrence from the FLAG FOR REVIEW note directly above, found by
+// a later fuzz burst — same call #2 (the redundant GetSecretWithPermissionCheck
+// prefetch), just caught inside CheckSecretPermission's RBAC fallback
+// (permissions.go: AuthorizePrincipal -> Authorize -> scopedRoleIDs ->
+// GetUserGroupRoleIDsAt) rather than the ACL-inheritance branch GetSecretAncestors
+// sits in — same handler, same non-owner/non-share/non-ACL fallthrough, same
+// prefetchErr-is-not-fatal handling. The real authorization gate is call #1
+// (the route's RequireScopedSecretPermission middleware), traced fail-closed
+// exactly as for the GetSecretAncestors entry above; only the audit-description
+// prefetch is affected here too.
 type nonLoadBearingException struct {
 	op, method string
 	nth        int
@@ -110,6 +140,7 @@ type nonLoadBearingException struct {
 
 var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{
 	{op: "REST DELETE /api/v1/secrets/{id}", method: "GetSecretAncestors", nth: 2},
+	{op: "REST DELETE /api/v1/secrets/{id}", method: "GetUserGroupRoleIDsAt", nth: 2},
 }
 
 // multiStepAmbiguousCommitExceptions narrowly flags a traced instance of
@@ -342,6 +373,9 @@ func runOneFuzzIteration(t *testing.T, data []byte) {
 	if !refResult.Success {
 		t.Skipf("reference (fault-free) run itself failed — not a fault-injection finding: %s", refResult.Detail)
 	}
+	// Same goSafe race as below: runOp's Setup+Execute may have dispatched a
+	// detached audit write that hasn't landed by the time we snapshot.
+	drainAllBackgroundGoroutines()
 	refAfter, err := snapshotDB(ref.db)
 	if err != nil {
 		t.Fatalf("snapshotting reference world: %v", err)
@@ -358,6 +392,17 @@ func runOneFuzzIteration(t *testing.T, data []byte) {
 			t.Skipf("setup itself errored — not a fault-injection finding: %v", err)
 		}
 	}
+	// Setup drives a real handler (e.g. CreateSecret), which may dispatch its own
+	// detached audit write via goSafe (server/http/handlers, server/grpc/services,
+	// or internal/core all duplicate it) — fired after the response, not
+	// synchronized with it. Without draining here, that goroutine can land AFTER
+	// `before` is snapshotted but BEFORE `after` is, producing a spurious
+	// AuditEvent-only diff attributed to the FAULTED call under test when it was
+	// really Setup's own unrelated write landing late. drainAllBackgroundGoroutines
+	// is the existing test-only hook built exactly for this (see its doc comment
+	// and each package's own); a fixed sleep would only reduce, not eliminate, the
+	// race.
+	drainAllBackgroundGoroutines()
 	before, err := snapshotDB(w.db)
 	if err != nil {
 		t.Fatalf("snapshotting pre-fault (post-setup) world: %v", err)
@@ -396,6 +441,11 @@ func runOneFuzzIteration(t *testing.T, data []byte) {
 		return
 	}
 
+	// Same reasoning as the drain after Setup above: Execute's own request may
+	// have dispatched a detached goSafe audit write (on a path that succeeded
+	// before the faulted call, or on a success response for `op`) that hasn't
+	// landed yet.
+	drainAllBackgroundGoroutines()
 	after, err := snapshotDB(w.db)
 	if err != nil {
 		t.Fatalf("snapshotting post-fault world: %v", err)
