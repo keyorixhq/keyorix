@@ -27,6 +27,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 var pgContentionSchemaCounter int64
@@ -61,7 +63,7 @@ func pgIsolatedSchemaDSN(t *testing.T, base string) string {
 		_ = cleaner.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error
 	})
 
-	return base + " search_path=" + schema
+	return pgdsn.PGSearchPathDSN(base, schema)
 }
 
 // pgOpen opens a *gorm.DB against dsn, closing it on test cleanup. Each call

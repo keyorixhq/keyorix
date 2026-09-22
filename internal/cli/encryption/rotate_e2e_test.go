@@ -45,6 +45,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	enc "github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 const e2ePassphrase = "e2e-test-passphrase-correct-horse-battery"
@@ -271,7 +272,7 @@ func configureBackend(t *testing.T, kind string, cfg *config.Config, workDir str
 			mustExec(t, admin, "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
 			closeGorm(admin)
 		})
-		dsn := base + " search_path=" + schema
+		dsn := pgdsn.PGSearchPathDSN(base, schema)
 		cfg.Storage.Type = "postgres"
 		cfg.Storage.Database.DSN = dsn
 		return func() *gorm.DB { return openPostgres(t, dsn) }

@@ -45,6 +45,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 // fuzzCoreDBWorld is a *gorm.DB built ONCE per testing.F invocation and
@@ -110,7 +111,7 @@ func buildFuzzCoreDBWorldPostgres(f *testing.F, schemaPrefix string, models []an
 		}
 	})
 
-	db, err := gorm.Open(postgres.Open(dsn+" search_path="+schema), &gorm.Config{Logger: logger.Discard})
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		f.Fatalf("open postgres: %v", err)
 	}
