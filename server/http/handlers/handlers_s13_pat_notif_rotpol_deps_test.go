@@ -597,7 +597,12 @@ func TestCreateSecretDependencyExclusiveProxy_MissingFields_S13(t *testing.T) {
 // cross-reference check requires this) → 200.
 func TestCreateSecretDependencyExclusiveProxy_HappyPath_S13(t *testing.T) {
 	t.Parallel()
-	cs := freshCoreS12(t)
+	// #SecretDependency (system-proxy-target-authority audit):
+	// CreateSecretDependencyExclusiveProxy now re-derives AuthorizeSecretPrincipal
+	// on both endpoints, so this happy-path test needs an authorized caller —
+	// freshCoreS12WithAdmin seeds UserID 1 (withUserCtx's caller) with a
+	// BypassesPermissionChecks role.
+	cs, _ := freshCoreS12WithAdmin(t)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 
@@ -616,7 +621,7 @@ func TestCreateSecretDependencyExclusiveProxy_HappyPath_S13(t *testing.T) {
 		"dependent_secret_id":  s1.ID,
 		"depends_on_secret_id": s2.ID,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
