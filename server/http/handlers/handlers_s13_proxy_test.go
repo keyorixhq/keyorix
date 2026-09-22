@@ -1238,12 +1238,19 @@ func TestExpireSetupTokenProxy_BadID_S13(t *testing.T) {
 }
 
 // TestExpireSetupTokenProxy_HappyPath_S13 — valid id (token doesn't exist, no-op) → 200.
+//
+// #ExpireSetupToken (system-proxy-target-authority audit): ExpireSetupTokenProxy
+// now requires users.write (global scope) -- freshAuthHandlerS13's plain
+// freshCoreS12(t) core has no admin wired for withUserCtx's UserID=1, so this
+// needs freshCoreS12WithAdmin instead of the shared freshAuthHandlerS13 helper
+// (which many other s13 tests rely on staying non-admin).
 func TestExpireSetupTokenProxy_HappyPath_S13(t *testing.T) {
-	h := freshAuthHandlerS13(t)
-	req := withChiParam(
+	cs, _ := freshCoreS12WithAdmin(t)
+	h := NewAuthHandler(cs, false)
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPost, "/system/setup-tokens/9999/expire", nil),
 		"id", "9999",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.ExpireSetupTokenProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

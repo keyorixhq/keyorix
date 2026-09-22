@@ -322,6 +322,18 @@ func (h *AuthHandler) ExpireSetupTokenProxy(w http.ResponseWriter, r *http.Reque
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid setup token ID")
 		return
 	}
+	// #ExpireSetupToken (system-proxy-target-authority audit): CreateSetupTokenProxy
+	// (minting) already requires users.write, same authority every other
+	// admin-facing route that mints a setup token needs -- but this route
+	// (invalidating one) had no ceiling beyond the group's blanket system.write,
+	// letting a system.write-only caller mass-invalidate any user's outstanding
+	// setup/password-reset/invitation-accept link by ID. Same ceiling as the
+	// sibling Create route.
+	actorType, actorID := requestActorKindAndID(r)
+	if err := h.coreService.RequireUsersWriteAuthority(r.Context(), actorType, actorID); err != nil {
+		writeUserCredentialsRevokeError(w, "expire-setup-token", err)
+		return
+	}
 	if err := h.coreService.ExpireSetupTokenByID(r.Context(), uint(id)); err != nil {
 		log.Printf("setup-tokens proxy: expire failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

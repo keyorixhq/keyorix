@@ -1586,8 +1586,10 @@ func TestDeleteGroupProxy_BadID(t *testing.T) {
 }
 
 func TestDeleteGroupProxy_NotFound(t *testing.T) {
-	h := newGroupHandler(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
+	cs, _ := freshCoreS12WithAdmin(t)
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.DeleteGroupProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -1602,8 +1604,10 @@ func TestRestoreGroupProxy_BadID(t *testing.T) {
 }
 
 func TestRestoreGroupProxy_NotFound(t *testing.T) {
-	h := newGroupHandler(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999")
+	cs, _ := freshCoreS12WithAdmin(t)
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.RestoreGroupProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -10914,10 +10918,17 @@ func TestCatalogHandler_CreateAccessReviewCampaignProxy_MissingFields(t *testing
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestCatalogHandler_CreateAccessReviewCampaignProxy_HappyPath:
+// CreateAccessReviewCampaignProxy now requires roles.assign scoped to the
+// project -- #AccessReview (system-proxy-target-authority audit).
+// newCatalogHandlerS4 is backed by the shared, non-admin sharedS4Core, so
+// this needs the s4AdminActorID/seedS4AdminActor/withUserCtxID pattern other
+// s4/s5/s9 tests needing admin authority against that shared core already use.
 func TestCatalogHandler_CreateAccessReviewCampaignProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 	body := `{"project_id":1,"name":"Test Campaign","state":"open"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -11547,9 +11558,12 @@ func TestGroupHandler_UpdateGroupProxy_HappyPath(t *testing.T) {
 }
 
 func TestGroupHandler_CreateGroupProxy_HappyPath(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	body := `{"name":"test group"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	cs := newHandlerCoreS4(t)
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	seedS4AdminActor(t, cs)
+	body := `{"name":"test group s4 happy path"}`
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.CreateGroupProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

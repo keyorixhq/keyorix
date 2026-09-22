@@ -298,7 +298,7 @@ func TestCreateSecretDependencyExclusiveProxy_Duplicate_DepCov(t *testing.T) {
 		"dependent_secret_id":  depID,
 		"depends_on_secret_id": dependsOnID,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
 	assert.Equal(t, http.StatusConflict, w.Code)
@@ -328,7 +328,7 @@ func TestCreateSecretDependencyExclusiveProxy_Cycle_DepCov(t *testing.T) {
 		"dependent_secret_id":  secretB,
 		"depends_on_secret_id": secretA,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -366,14 +366,14 @@ func TestCreateSecretDependencyExclusiveProxy_ConcurrentCycleRace(t *testing.T) 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(bodyAB))
+		req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(bodyAB)))
 		w := httptest.NewRecorder()
 		h.CreateSecretDependencyExclusiveProxy(w, req)
 		codes[0] = w.Code
 	}()
 	go func() {
 		defer wg.Done()
-		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(bodyBA))
+		req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(bodyBA)))
 		w := httptest.NewRecorder()
 		h.CreateSecretDependencyExclusiveProxy(w, req)
 		codes[1] = w.Code

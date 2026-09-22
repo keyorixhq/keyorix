@@ -453,15 +453,15 @@ func TestUpdateGroupProxy_BadBody_S29(t *testing.T) {
 // nonexistent group ID must 404, not silently create a new row.
 func TestUpdateGroupProxy_NonexistentID_S29(t *testing.T) {
 	t.Parallel()
-	cs := freshCoreS29(t)
+	cs, _ := freshCoreS29WithAdmin(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/1",
 			jsonBodyS29(t, map[string]string{"name": "auto-inserted"})),
 		"id", "1",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
 
@@ -478,12 +478,12 @@ func TestUpdateGroupProxy_HappyPath_S29(t *testing.T) {
 	grp := &models.Group{Name: "s29-update-group", Description: "original"}
 	require.NoError(t, db.Create(grp).Error)
 
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPut,
 			fmt.Sprintf("/api/v1/system/groups/%d", grp.ID),
 			jsonBodyS29(t, map[string]string{"name": "updated-name", "description": "updated"})),
 		"id", uintStrS29(grp.ID),
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
 

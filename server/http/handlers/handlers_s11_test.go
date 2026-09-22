@@ -1830,16 +1830,24 @@ func TestGetGroupProxy_HappyPath_S11(t *testing.T) {
 }
 
 // TestUpdateGroupProxy_HappyPath_S11 — update an existing group → 200.
+// UpdateGroupProxy now also requires caller authority
+// (requireGroupsProxyUsersWrite -> users.write), so this bootstraps a real
+// system admin (bootstrapS11, same pattern as
+// TestCreateGroup_HappyPath_WithAdmin_S11 above) and authenticates as them.
 func TestUpdateGroupProxy_HappyPath_S11(t *testing.T) {
 	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
+	bootstrapS11(t, cs, "grpupdate11")
+	admin, err := cs.GetUserByUsername(ctx, "s11grpupdate11")
+	require.NoError(t, err)
 
 	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11updategroup"})
 	require.NoError(t, err)
 
 	body := `{"name":"s11updategroup-updated","description":"updated"}`
 	r := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
+	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: admin.ID, Username: admin.Username}))
 	r = withChiParamS8(r, "id", fmt.Sprintf("%d", grp.ID))
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, r)
@@ -1847,11 +1855,21 @@ func TestUpdateGroupProxy_HappyPath_S11(t *testing.T) {
 }
 
 // TestCreateGroupProxy_HappyPath_S11 — create a new group → 200.
+// CreateGroupProxy now also requires caller authority
+// (requireGroupsProxyUsersWrite -> users.write), so this bootstraps a real
+// system admin (bootstrapS11, same pattern as
+// TestCreateGroup_HappyPath_WithAdmin_S11 above) and authenticates as them.
 func TestCreateGroupProxy_HappyPath_S11(t *testing.T) {
 	t.Parallel()
-	h, _ := freshGroupHandlerS11(t)
+	h, cs := freshGroupHandlerS11(t)
+	ctx := context.Background()
+	bootstrapS11(t, cs, "grpcreate11")
+	admin, err := cs.GetUserByUsername(ctx, "s11grpcreate11")
+	require.NoError(t, err)
+
 	body := `{"name":"s11newgroup","description":"s11 test group"}`
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: admin.ID, Username: admin.Username}))
 	w := httptest.NewRecorder()
 	h.CreateGroupProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)

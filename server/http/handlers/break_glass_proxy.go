@@ -247,6 +247,18 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
+	// #RevokeBreakGlass (system-proxy-target-authority audit): the check above
+	// only proved the caller is an attributable HUMAN, not that they hold the
+	// authority to revoke -- the human-facing route (POST /projects/{id}/
+	// break-glass/{activationId}/revoke) requires roles.assign scoped to the
+	// activation's own project. A system.write-only caller could silently
+	// revoke any project's active emergency-access grant with no roles.assign
+	// at all, undoing another admin's break-glass decision. Re-derive that,
+	// scoped to the activation's real project.
+	if err := h.coreService.RequireRolesAssignAuthority(r.Context(), core.ActorTypeUser, revokedBy, core.Scope{ProjectID: activation.ProjectID}); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", clientSafe(err))
+		return
+	}
 
 	// Fast-path guard BEFORE touching the role grant, mirroring core.RevokeBreakGlass's
 	// own ordering: without this, a stale/duplicate revoke replayed against an

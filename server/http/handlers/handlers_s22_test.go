@@ -849,7 +849,7 @@ func TestCreateGroupProxy_MissingName_S22(t *testing.T) {
 
 // TestCreateGroupProxy_Valid_S22 verifies the 200 happy path.
 func TestCreateGroupProxy_Valid_S22(t *testing.T) {
-	cs := freshCoreS12(t)
+	cs, _ := freshCoreS12WithAdmin(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 
@@ -857,8 +857,8 @@ func TestCreateGroupProxy_Valid_S22(t *testing.T) {
 		"name":        "proxy-group-s22",
 		"description": "Test group",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/groups",
-		bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/groups",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateGroupProxy(w, req)
@@ -949,14 +949,14 @@ func TestRestoreGroupProxy_BadID_S22(t *testing.T) {
 
 // TestRestoreGroupProxy_NotFound_S22 verifies the 404 branch.
 func TestRestoreGroupProxy_NotFound_S22(t *testing.T) {
-	cs := freshCoreS12(t)
+	cs, _ := freshCoreS12WithAdmin(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/9999/restore", nil),
 		"id", "9999",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.RestoreGroupProxy(w, req)
 

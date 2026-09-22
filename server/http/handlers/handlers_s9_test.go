@@ -261,10 +261,17 @@ func TestListAccessRequestApprovalsProxy_WithData_S9(t *testing.T) {
 
 // ── access_review_campaigns_proxy.go: success paths ──────────────────────────
 
+// TestCreateAccessReviewCampaignProxy_Success_S9: CreateAccessReviewCampaignProxy
+// now requires roles.assign scoped to the project -- #AccessReview
+// (system-proxy-target-authority audit). newCatalogHandlerS4 is backed by the
+// shared, non-admin sharedS4Core, so this uses the s4AdminActorID/
+// seedS4AdminActor/withUserCtxID pattern other s4/s5/s9 tests needing admin
+// authority against that shared core already use.
 func TestCreateAccessReviewCampaignProxy_Success_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 	body := `{"project_id":10,"name":"S9 Campaign","created_by":1,"state":"open"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -278,12 +285,17 @@ func TestGetAccessReviewCampaignProxy_NotFound_S9(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// TestGetAccessReviewCampaignProxy_Success_S9's fixture campaign is created
+// via CreateAccessReviewCampaignProxy, which now requires roles.assign
+// scoped to the project (#AccessReview, system-proxy-target-authority audit)
+// -- see TestCreateAccessReviewCampaignProxy_Success_S9's doc for the pattern.
 func TestGetAccessReviewCampaignProxy_Success_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 
 	// Create first
 	createBody := `{"project_id":11,"name":"S9 Get Campaign","created_by":1,"state":"open"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createReq := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody)), s4AdminActorID, "s4admin")
 	createW := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
@@ -304,12 +316,17 @@ func TestGetAccessReviewCampaignProxy_Success_S9(t *testing.T) {
 	assert.Equal(t, http.StatusOK, getW.Code)
 }
 
+// TestListAccessReviewCampaignsProxy_WithData_S9's fixture campaign is
+// created via CreateAccessReviewCampaignProxy, which now requires
+// roles.assign scoped to the project (#AccessReview,
+// system-proxy-target-authority audit).
 func TestListAccessReviewCampaignsProxy_WithData_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 
 	// Create a campaign for project 20
 	createBody := `{"project_id":20,"name":"S9 List Campaign","created_by":1,"state":"open"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createReq := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody)), s4AdminActorID, "s4admin")
 	createW := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
@@ -321,12 +338,17 @@ func TestListAccessReviewCampaignsProxy_WithData_S9(t *testing.T) {
 	assert.Equal(t, http.StatusOK, listW.Code)
 }
 
+// TestGetOpenAccessReviewCampaignProxy_WithCampaign_S9's fixture campaign is
+// created via CreateAccessReviewCampaignProxy, which now requires
+// roles.assign scoped to the project (#AccessReview,
+// system-proxy-target-authority audit).
 func TestGetOpenAccessReviewCampaignProxy_WithCampaign_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 
 	// Create an open campaign for project 21
 	createBody := `{"project_id":21,"name":"S9 Open Campaign","created_by":1,"state":"open"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createReq := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody)), s4AdminActorID, "s4admin")
 	createW := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
@@ -338,12 +360,19 @@ func TestGetOpenAccessReviewCampaignProxy_WithCampaign_S9(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestCreateAccessReviewItemsProxy_Success_S9: both CreateAccessReviewCampaignProxy
+// and CreateAccessReviewItemsProxy now require roles.assign scoped to the
+// project (#AccessReview, system-proxy-target-authority audit) -- the latter
+// derives its scope from a real GetAccessReviewCampaign lookup, so the
+// campaign fixture must exist genuinely (it does here, via the proxy call
+// itself) and the items call needs its own authorized caller too.
 func TestCreateAccessReviewItemsProxy_Success_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 
 	// Create campaign first
 	createBody := `{"project_id":40,"name":"S9 Items Campaign","created_by":1,"state":"open"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createReq := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody)), s4AdminActorID, "s4admin")
 	createW := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
@@ -359,18 +388,22 @@ func TestCreateAccessReviewItemsProxy_Success_S9(t *testing.T) {
 	// Create items (empty list covers the success path)
 	idStr := strconv.FormatUint(uint64(createResp.Data.ID), 10)
 	itemsBody := `{"items":[]}`
-	itemsReq := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(itemsBody)), "id", idStr)
+	itemsReq := withUserCtxID(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(itemsBody)), "id", idStr), s4AdminActorID, "s4admin")
 	itemsW := httptest.NewRecorder()
 	h.CreateAccessReviewItemsProxy(itemsW, itemsReq)
 	assert.Equal(t, http.StatusOK, itemsW.Code)
 }
 
+// TestListAccessReviewItemsProxy_WithData_S9's fixture campaign is created via
+// CreateAccessReviewCampaignProxy, which now requires roles.assign scoped to
+// the project (#AccessReview, system-proxy-target-authority audit).
 func TestListAccessReviewItemsProxy_WithData_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 
 	// Create campaign + items
 	createBody := `{"project_id":50,"name":"S9 ListItems Campaign","created_by":1,"state":"open"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createReq := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody)), s4AdminActorID, "s4admin")
 	createW := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
@@ -392,12 +425,16 @@ func TestListAccessReviewItemsProxy_WithData_S9(t *testing.T) {
 	assert.Equal(t, http.StatusOK, listW.Code)
 }
 
+// TestCountPendingAccessReviewItemsProxy_S9's fixture campaign is created via
+// CreateAccessReviewCampaignProxy, which now requires roles.assign scoped to
+// the project (#AccessReview, system-proxy-target-authority audit).
 func TestCountPendingAccessReviewItemsProxy_S9(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	seedS4AdminActor(t, h.coreService)
 
 	// Create campaign
 	createBody := `{"project_id":60,"name":"S9 Count Campaign","created_by":1,"state":"open"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createReq := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody)), s4AdminActorID, "s4admin")
 	createW := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
@@ -502,7 +539,14 @@ func TestUpdateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 	// replacement (name/credential_id could previously be overwritten wholesale).
 	idStr := strconv.FormatUint(uint64(cred.ID), 10)
 	updateBody := `{"user_id":99,"credential_id":"dGVzdC1jcmVkLXM5NA==","disabled":true}`
-	updateReq := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(updateBody)), "id", idStr)
+	// Self-service: caller authenticates as the credential's own owner
+	// (UserID 99), matching body.UserID exactly — the route's one
+	// no-extra-check path (#UpdateWebAuthnCredential, system-proxy-target-authority
+	// audit).
+	updateReq := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(updateBody)), "id", idStr),
+		99, "s9-webauthn-caller",
+	)
 	updateW := httptest.NewRecorder()
 	h.UpdateWebAuthnCredentialProxy(updateW, updateReq)
 	assert.Equal(t, http.StatusOK, updateW.Code)

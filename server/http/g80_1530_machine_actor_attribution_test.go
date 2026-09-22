@@ -47,14 +47,25 @@ func TestG80_1530_MachineActorAttribution_NonNodeServiceIdentity(t *testing.T) {
 	require.NoError(t, err)
 	perms, err := testCore.ListPermissions(ctx)
 	require.NoError(t, err)
-	var systemWriteID uint
+	var systemWriteID, usersWriteID uint
 	for _, p := range perms {
-		if p.Name == "system.write" {
+		switch p.Name {
+		case "system.write":
 			systemWriteID = p.ID
+		case "users.write":
+			// #Groups (system-proxy-target-authority audit): CreateGroupProxy now
+			// re-derives users.write, same as the human-facing route -- this
+			// test's own point (machine-actor audit attribution) is orthogonal
+			// to that ceiling, so grant it here rather than have this probe
+			// double as (an unintended) proof that system.write alone still
+			// reaches the route.
+			usersWriteID = p.ID
 		}
 	}
 	require.NotZero(t, systemWriteID)
+	require.NotZero(t, usersWriteID)
 	require.NoError(t, testCore.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
+	require.NoError(t, testCore.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID, false))
 	require.NoError(t, testCore.Storage().AssignMachineRole(ctx, mi.ID, role.ID, coreStorage.Scope{}))
 
 	result, err := testCore.IssueMachineToken(ctx, projects[0].ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "g80-1530-probe-token"})

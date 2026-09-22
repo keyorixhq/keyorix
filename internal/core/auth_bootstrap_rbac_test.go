@@ -128,7 +128,7 @@ func TestSystemWritePermissionDescriptionMatchesFullFootprint(t *testing.T) {
 		if def.Name != "system.write" {
 			continue
 		}
-		assert.Equal(t, "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", def.Description)
+		assert.Equal(t, "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers -- also the blanket gate on the entire /api/v1/system RemoteStorage-proxy route tree", def.Description)
 		return
 	}
 	t.Fatal("system.write not found in defaultPermissions")

@@ -168,10 +168,18 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 // storage.CreateSecretDependencyExclusive while holding secretDependencyMu —
 // the same mutex AddSecretDependency holds around the identical storage call
 // above. #G79: CreateSecretDependencyExclusiveProxy (server/http/handlers/
-// secret_dependencies_proxy.go) calls the raw storage primitive directly on
-// behalf of a RemoteStorage node that already ran AddSecretDependency's
-// authorization/same-project/same-environment checks itself — this proxy
-// deliberately does not re-run those (see that handler's doc) — but it still
+// secret_dependencies_proxy.go) calls the raw storage primitive directly
+// rather than through AddSecretDependency, since the caller's authorization
+// is now re-derived at the HTTP layer (AuthorizeSecretPrincipal on both
+// endpoints, #SecretDependency, system-proxy-target-authority audit) before
+// this is ever reached — this is a raw CAS write with its own authorization
+// already done, not an unauthenticated passthrough. [The prior text here
+// claimed the caller "already ran AddSecretDependency's authorization checks
+// itself" as a downstream-relay assumption — the same relay-trust reasoning
+// ADR-085 found cannot hold anywhere in this codebase
+// (validateRemoteStorageNotServer rejects storage.type: remote for any
+// server process, so no such relay topology can exist); that was wrong, and
+// was the actual root cause of the gap this fix closes.] It still
 // needs the SAME in-process serialization AddSecretDependency provides:
 // storage.CreateSecretDependencyExclusive's cycle check has no row to lock on
 // SQLite (no FOR UPDATE support) or on Postgres when the project has zero

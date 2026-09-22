@@ -279,6 +279,19 @@ func (h *CatalogHandler) UpdateInvitationProxy(w http.ResponseWriter, r *http.Re
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
+	// #UpdateInvitation (system-proxy-target-authority audit): this route had
+	// no ceiling beyond the group's blanket system.write, letting a
+	// system.write-only caller revoke (or falsely mark-accepted/expired) any
+	// project's pending invitation by ID -- the human-facing revoke route
+	// (DELETE /projects/{id}/invitations/{invitationId}) requires roles.assign
+	// scoped to the invitation's own project. Re-derive that, scoped to
+	// existing.ProjectID (the row's real project, not anything the wire body
+	// could claim).
+	actorType, actorID := requestActorKindAndID(r)
+	if err := h.coreService.RequireRolesAssignAuthority(r.Context(), actorType, actorID, core.Scope{ProjectID: existing.ProjectID}); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", clientSafe(err))
+		return
+	}
 	existing.State = body.State
 	existing.AcceptedAt = body.AcceptedAt
 	existing.RevokedAt = body.RevokedAt

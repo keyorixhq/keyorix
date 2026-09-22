@@ -86,6 +86,36 @@ func newGroupProxyWire(g *models.Group) groupProxyWire {
 	return w
 }
 
+// requireGroupsProxyUsersWrite re-derives the SAME users.write authority the
+// human-facing POST/PUT/DELETE /api/v1/groups(/{id}) routes already require
+// (RequirePermission(permUsersWrite), router.go) for CreateGroupProxy/
+// UpdateGroupProxy/DeleteGroupProxy. #Groups (system-proxy-target-authority
+// audit): core.CreateGroup/UpdateGroup/DeleteGroup use actorID only for audit
+// attribution, with no caller-authority check of their own -- gRPC's
+// GroupGRPCService already re-derives this same permission itself
+// (authorizeGlobal(ctx, s.core, actor, permUsersWrite), server/grpc/services/
+// group_service.go), so this closes the gap only for the /system proxy path;
+// gRPC was never affected.
+func (h *GroupHandler) requireGroupsProxyUsersWrite(r *http.Request) error {
+	actorType, id := requestActorKindAndID(r)
+	return h.coreService.RequireUsersWriteAuthority(r.Context(), actorType, id)
+}
+
+// requireGroupsProxyRolesAssign re-derives the SAME roles.assign authority
+// the human-facing POST /api/v1/groups/{id}/restore route already requires
+// (RequirePermission(permRolesAssign), router.go) for RestoreGroupProxy.
+// #Groups: core.RestoreGroup's own requireGlobalAdminToReinstateAdminRoles
+// check is a deliberate no-op for a group holding no admin-tier role (see
+// its doc) -- for that case this route had NO caller-authority check at all;
+// this adds the SAME baseline every restore needs, layered under the
+// existing admin-tier-specific check (left as-is, and stricter than plain
+// roles.assign for that case, which is a known, accepted over-restriction,
+// not a gap).
+func (h *GroupHandler) requireGroupsProxyRolesAssign(r *http.Request) error {
+	actorType, id := requestActorKindAndID(r)
+	return h.coreService.RequireRolesAssignAuthority(r.Context(), actorType, id, core.Scope{})
+}
+
 // isGroupNotFound reports whether err is LocalStorage's errGroupNotFoundLower
 // error (local_users.go wraps i18n.T("ErrorGroupNotFound", ...), which does
 // not necessarily contain the literal substring "not found" in every locale —
@@ -108,6 +138,10 @@ func (h *GroupHandler) CreateGroupProxy(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.Name == "" {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "name is required")
+		return
+	}
+	if err := h.requireGroupsProxyUsersWrite(r); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", err.Error())
 		return
 	}
 	created, err := h.coreService.CreateGroup(r.Context(), actorID(r), &core.CreateGroupRequest{
@@ -156,6 +190,10 @@ func (h *GroupHandler) UpdateGroupProxy(w http.ResponseWriter, r *http.Request) 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
+	if err := h.requireGroupsProxyUsersWrite(r); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", err.Error())
+		return
+	}
 	updated, err := h.coreService.UpdateGroup(r.Context(), actorID(r), &core.UpdateGroupRequest{
 		ID: uint(id), Name: body.Name, Description: body.Description,
 	})
@@ -184,6 +222,10 @@ func (h *GroupHandler) DeleteGroupProxy(w http.ResponseWriter, r *http.Request) 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
+	if err := h.requireGroupsProxyUsersWrite(r); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", err.Error())
+		return
+	}
 	if err := h.coreService.DeleteGroup(r.Context(), actorID(r), uint(id)); err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errGroupNotFoundLower)
@@ -205,6 +247,10 @@ func (h *GroupHandler) RestoreGroupProxy(w http.ResponseWriter, r *http.Request)
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
+		return
+	}
+	if err := h.requireGroupsProxyRolesAssign(r); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", err.Error())
 		return
 	}
 	if err := h.coreService.RestoreGroup(r.Context(), actorID(r), uint(id)); err != nil {

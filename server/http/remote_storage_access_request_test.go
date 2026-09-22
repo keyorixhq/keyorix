@@ -390,6 +390,41 @@ func grantSystemWrite(t *testing.T, upstream *core.KeyorixCore, userID uint) {
 	require.NoError(t, st.AssignRole(ctx, userID, role.ID, coreStorage.Scope{}))
 }
 
+// grantRolesAssignScoped creates (if needed) a test-only role holding ONLY
+// roles.assign and assigns it to userID at projectScope, mirroring
+// grantSystemWrite's pattern exactly. #AccessReview/#RevokeBreakGlass
+// (system-proxy-target-authority audit): UpdateAccessReviewItemProxy/
+// CreateAccessReviewCampaignProxy/CreateAccessReviewItemsProxy/
+// RevokeBreakGlassActivationProxy now re-derive roles.assign scoped to the
+// target project, in addition to the group's own blanket system.write --
+// callers reaching those routes directly (as these tests now must, per the
+// wire-actor-identity fix) need both.
+func grantRolesAssignScoped(t *testing.T, upstream *core.KeyorixCore, userID, projectID uint) {
+	t.Helper()
+	ctx := context.Background()
+	st := upstream.Storage()
+
+	role, err := st.GetRoleByName(ctx, "ar_test_roles_assigner")
+	if err != nil {
+		arTestRolesAssignerName, err := identity.NewFoldedName("ar_test_roles_assigner")
+		require.NoError(t, err)
+		role, err = st.CreateRole(ctx, arTestRolesAssignerName, "test-only role: roles.assign and nothing else")
+		require.NoError(t, err)
+		perms, err := upstream.ListPermissions(ctx)
+		require.NoError(t, err)
+		var rolesAssignID uint
+		for _, p := range perms {
+			if p.Name == "roles.assign" {
+				rolesAssignID = p.ID
+				break
+			}
+		}
+		require.NotZero(t, rolesAssignID, "roles.assign permission must already be seeded by bootstrap")
+		require.NoError(t, upstream.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID, false))
+	}
+	require.NoError(t, st.AssignRole(ctx, userID, role.ID, coreStorage.Scope{ProjectID: projectID}))
+}
+
 // seedAccessRequestSecretFixture creates a project, a requester (owner of the
 // secret and project viewer), a real user with NO special authority, a real
 // admin, and a restricted secret with one version — mirroring

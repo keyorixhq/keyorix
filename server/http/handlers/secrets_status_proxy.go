@@ -100,6 +100,30 @@ func (h *SecretHandler) TransitionSecretStatusProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
+	// #TransitionSecretStatus (system-proxy-target-authority audit): the
+	// package doc's "no suspend/resume POLICY decision is made here" framing
+	// was correct about WHO decides, but the human-facing SuspendSecret/
+	// ResumeSecret routes enforce that decision via
+	// RequireScopedSecretPermission(permSecretsWrite, "id") at the HTTP
+	// TRANSPORT layer -- core.SuspendSecret/ResumeSecret themselves apply no
+	// check (by design, same "transport enforces, core doesn't" pattern as
+	// core.UpdateUser). This route's only transport is the /system group's
+	// blanket system.write, so it never got the transport-layer check at all
+	// -- a system.write-only caller could suspend (deny read access to) OR,
+	// worse, silently RESUME a secret an admin had deliberately suspended as
+	// an incident-response containment action, undoing that decision with no
+	// real-time signal. Re-derive the same scoped secrets.write check both
+	// directions need, identically -- the human-facing route requires it for
+	// both /suspend and /resume.
+	actorType, actorID := requestActorKindAndID(r)
+	if allowed, aerr := h.coreService.AuthorizeSecretPrincipal(r.Context(), actorType, actorID, uint(id), "secrets.write"); aerr != nil {
+		log.Printf("secrets proxy: transition status authorize failed: %v", aerr)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(aerr))
+		return
+	} else if !allowed {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", "not authorized on this secret")
+		return
+	}
 	existing.Status = body.Secret.Status
 	existing.UpdatedAt = body.Secret.UpdatedAt
 	matched, err := h.coreService.Storage().TransitionSecretStatus(r.Context(), existing, body.FromStatus)

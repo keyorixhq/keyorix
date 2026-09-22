@@ -82,7 +82,22 @@ var defaultPermissions = []bootstrapPermissionDef{
 	// adminRoleNames (authz.go) unconditionally bypass every permission check, so
 	// any admin-tier role holder still reaches the proxy tree via the permission arm
 	// regardless of what's explicitly bundled into their role.
-	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", "system", "write"},
+	// #F6 (system-proxy-target-authority audit, 2026-09-21): the description
+	// used to name only the narrow, documented use case (audit checkpoints,
+	// legal holds, risk exceptions, SoD policies, admin job triggers) and said
+	// nothing about this permission's actual, much broader footprint: it is
+	// also the blanket gate on the entire /api/v1/system RemoteStorage-proxy
+	// route tree (server/http/router.go's r.Route("/system", ...) —
+	// machine-identity/credential/OIDC-binding CRUD, group CRUD, secret
+	// dependencies, invitations, setup tokens, break-glass, access-review
+	// campaigns, and more). Most of those routes have their own additional
+	// ceiling beyond this blanket gate (users.write, roles.assign,
+	// requireGranterHoldsRolePermissions, ...) — this permission alone does
+	// not grant them — but it is the FIRST gate every one of those routes
+	// requires, and a role scoped to only the narrow use case above still
+	// reaches every /system route's own gate. An operator granting
+	// system.write for the narrow use case should know this.
+	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers -- also the blanket gate on the entire /api/v1/system RemoteStorage-proxy route tree", "system", "write"},
 	{"connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 	// ADR-082 branch 4: narrows scope: platform connector reads, which connect.read
 	// alone permitted for any holder through branch 3 (an interim fail-open, marked

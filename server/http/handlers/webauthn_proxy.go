@@ -267,6 +267,30 @@ func (h *AuthHandler) UpdateWebAuthnCredentialProxy(w http.ResponseWriter, r *ht
 			"this route only disables a credential on a clone-detection signal; disabled must be true")
 		return
 	}
+	// #UpdateWebAuthnCredential (system-proxy-target-authority audit): this
+	// route had no ownership check at all -- a system.write-only caller could
+	// disable ANY other user's passkey (confirmed: full WebAuthn-login lockout,
+	// not a fallback to a weaker factor -- Login gates on the static
+	// user.WebAuthnEnabled/MFAEnabled flags, neither of which this route
+	// touches, so a disabled sole credential leaves BeginWebAuthnLogin refusing
+	// outright with "no passkeys registered"). Allow disabling your OWN
+	// credential with no extra check (the self-service DELETE
+	// /auth/webauthn/credentials/{id} route already lets any authenticated
+	// user do exactly this to their own credentials, gated on nothing but
+	// authentication) -- otherwise require BOTH users.write AND the same
+	// admin-rank ceiling impersonation uses, so a lower-privileged users.write
+	// holder can't lock out a higher-privileged admin's MFA.
+	actorType, callerID := requestActorKindAndID(r)
+	if !(actorType == core.ActorTypeUser && callerID != 0 && callerID == body.UserID) {
+		if err := h.coreService.RequireUsersWriteAuthority(r.Context(), actorType, callerID); err != nil {
+			writeUserCredentialsRevokeError(w, "update-webauthn-credential", err)
+			return
+		}
+		if err := h.coreService.RequireEqualOrGreaterAdminAuthority(r.Context(), callerID, body.UserID, "disable another user's WebAuthn credential"); err != nil {
+			writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", clientSafe(err))
+			return
+		}
+	}
 	_, err = h.coreService.MarkWebAuthnCredentialClonedByLookup(r.Context(), body.CredentialID, body.UserID, uint(id), clientIP(r))
 	if err != nil {
 		if errors.Is(err, core.ErrWebAuthnCredentialIDMismatch) {

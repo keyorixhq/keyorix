@@ -276,12 +276,57 @@ func TestCountActiveLeasesProxy_DBError_S30(t *testing.T) {
 
 // ── GroupHandler ──────────────────────────────────────────────────────────────
 
+// TestUpdateGroupProxy_DBError_S30 exercises UpdateGroupProxy's storage-error
+// (500) branch. UpdateGroupProxy now also requires caller authority
+// (requireGroupsProxyUsersWrite -> users.write), which itself needs a working
+// DB to resolve -- freshCoreBrokenS30's fully-closed connection would fail
+// THAT check first and yield 403, never reaching the group storage call this
+// test means to exercise. Dropping the "groups" table outright doesn't work
+// either: the authority check's own role resolution (scopedRoleIDs ->
+// GetUserGroupRoleIDsAt) unconditionally JOINs "groups" to exclude
+// soft-deleted groups' role grants, so a dropped "groups" table also fails
+// the authority check itself (403), even for a caller with a direct,
+// non-group role grant. So this uses a working, admin-seeded DB
+// (freshCoreS12WithAdmin, matching withUserCtx's UserID=1) with a real group
+// row, then a SQLite trigger that aborts only WRITEs to "groups" --
+// isolating the failure to UpdateGroup's own storage call while leaving both
+// authority resolution and UpdateGroup's own GetGroup lookup (a SELECT)
+// intact -- same technique as handlers_s13_connect_dynamic_test.go's
+// block_dynamic_config_update trigger.
 func TestUpdateGroupProxy_DBError_S30(t *testing.T) {
 	t.Parallel()
-	h, err := NewGroupHandler(freshCoreBrokenS30(t))
+
+	// Companion baseline: the IDENTICAL request/fixture shape, minus the
+	// trigger, must succeed -- this isolates the 500 below to the trigger
+	// itself, not the new authority check or some other storage bug that
+	// would also produce a non-200. clientSafe() redacts the response body
+	// down to a fixed generic string, so asserting on the trigger's own
+	// RAISE message isn't available; this before/after delta is the
+	// alternative proof.
+	baselineCS, baselineDB := freshCoreS12WithAdmin(t)
+	baselineH, err := NewGroupHandler(baselineCS)
 	require.NoError(t, err)
+	baselineGrp := &models.Group{Name: "s30-update-baseline", NameFolded: "s30-update-baseline"}
+	require.NoError(t, baselineDB.Create(baselineGrp).Error)
+	baselineReq := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`{"name":"x"}`)), "id", fmt.Sprintf("%d", baselineGrp.ID)))
+	baselineW := httptest.NewRecorder()
+	baselineH.UpdateGroupProxy(baselineW, baselineReq)
+	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (no trigger) must succeed: %s", baselineW.Body.String())
+
+	cs, db := freshCoreS12WithAdmin(t)
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	grp := &models.Group{Name: "s30-update-dberror", NameFolded: "s30-update-dberror"}
+	require.NoError(t, db.Create(grp).Error)
+	require.NoError(t, db.Exec(`
+		CREATE TRIGGER block_groups_update
+		BEFORE UPDATE ON groups
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
+		END;
+	`).Error)
 	body := bytes.NewBufferString(`{"name":"x"}`)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", body), "id", "1")
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", body), "id", fmt.Sprintf("%d", grp.ID)))
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

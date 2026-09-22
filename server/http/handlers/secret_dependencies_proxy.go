@@ -30,11 +30,15 @@
 // This also means the SecretHandler's existing human-facing
 // /api/v1/secrets/{id}/dependencies routes (secret_dependencies.go) are NOT reused for
 // this proxy: AddSecretDependency there runs THIS server's own core.AddSecretDependency
-// (including its own same-project/same-environment/self-edge/duplicate/cycle checks
-// against the HTTP caller's identity) — the wrong semantics for a raw storage-primitive
-// passthrough, whose caller already ran its OWN core logic and only needs this server
-// to persist/return rows, exactly like the human-facing /groups routes were the wrong
-// proxy target for Group storage (a prior fix in this same campaign).
+// end to end (URL-scoped RequireScopedSecretPermission plus its own same-project/
+// same-environment/self-edge/duplicate/cycle checks) — the wrong semantics for a raw
+// conditional-write passthrough whose caller resolves both endpoints from its own body
+// rather than a URL path param, exactly like the human-facing /groups routes were the
+// wrong proxy target for Group storage (a prior fix in this same campaign).
+// CreateSecretDependencyExclusiveProxy re-derives AuthorizeSecretPrincipal on BOTH
+// endpoints itself instead (#SecretDependency, system-proxy-target-authority audit) —
+// it does NOT trust a downstream caller to have already checked this; see this file's
+// CreateSecretDependencyExclusiveProxy doc.
 //
 // One deliberate exception: CreateSecretDependencyExclusiveProxy calls
 // storage.CreateSecretDependencyExclusive, which DOES evaluate the duplicate/cycle
@@ -170,6 +174,36 @@ func (h *SecretHandler) CreateSecretDependencyExclusiveProxy(w http.ResponseWrit
 	}
 	if err := crossReferenceSecretDependencyProxy(r.Context(), h, body.ProjectID, body.DependentSecretID, body.DependsOnSecretID); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
+		return
+	}
+	// #SecretDependency (system-proxy-target-authority audit): the package doc's
+	// "this proxy deliberately does not re-run [core.AddSecretDependency's]
+	// checks -- whose caller already ran its OWN core logic" was the exact
+	// relay-trust reasoning ADR-085 already invalidated for every other /system
+	// proxy (a downstream node relay topology cannot exist in this codebase --
+	// validateRemoteStorageNotServer). A system.write-only caller with no
+	// secrets.write anywhere could link two secrets it has no ACL on at all,
+	// bypassing #G32's per-secret-ACL scoping entirely. Re-derive
+	// AuthorizeSecretPrincipal on BOTH endpoints -- the same check
+	// core.AddSecretDependency already performs on dependsOnID for the
+	// human-facing path, plus the one on dependentID the URL-scoped middleware
+	// (RequireScopedSecretPermission) provides there that this route has no
+	// equivalent of.
+	actorType, actorID := requestActorKindAndID(r)
+	if allowed, aerr := h.coreService.AuthorizeSecretPrincipal(r.Context(), actorType, actorID, body.DependentSecretID, "secrets.write"); aerr != nil {
+		log.Printf("secret-dependencies proxy: authorize dependent failed: %v", aerr)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(aerr))
+		return
+	} else if !allowed {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", "not authorized on the dependent secret")
+		return
+	}
+	if allowed, aerr := h.coreService.AuthorizeSecretPrincipal(r.Context(), actorType, actorID, body.DependsOnSecretID, "secrets.write"); aerr != nil {
+		log.Printf("secret-dependencies proxy: authorize depends-on failed: %v", aerr)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(aerr))
+		return
+	} else if !allowed {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", "not authorized on the dependency target")
 		return
 	}
 	// #G79: routed through core.LockedCreateSecretDependencyExclusive (holds the

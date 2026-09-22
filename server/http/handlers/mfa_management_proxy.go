@@ -153,6 +153,20 @@ func (h *AuthHandler) MarkTOTPStepUsedProxy(w http.ResponseWriter, r *http.Reque
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
 		return
 	}
+	// #MarkTOTPStepUsed (system-proxy-target-authority audit): a "self-only"
+	// restriction (actorID == body.UserID) was attempted here and REVERTED --
+	// TestConformance_MarkTOTPStepUsed (remote_storage_conformance_tranche4_
+	// auth_security_test.go) proved the real caller shape is a MACHINE/node
+	// credential (the spoke's own system-to-system identity) acting on an
+	// ARBITRARY human's user_id -- a relay of that human's already-verified
+	// TOTP check, not a human self-action. Restricting to self would have
+	// broken every legitimate relay call, not just the gap. The gap itself is
+	// real but low-severity (a system.write-only caller can burn an arbitrary
+	// OTHER user's next TOTP step, forcing one rejected-as-replay login
+	// attempt -- self-healing, TOTP steps keep advancing) and unlike this
+	// route's ten siblings has no clean fix that both closes it and preserves
+	// the legitimate relay shape; filed in the finding doc as open, not fixed
+	// on this branch.
 	fresh, err := h.coreService.Storage().MarkTOTPStepUsed(r.Context(), body.UserID, body.Step)
 	if err != nil {
 		log.Printf("mfa proxy: mark TOTP step used failed: %v", err)
