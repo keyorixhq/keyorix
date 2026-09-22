@@ -112,6 +112,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -194,7 +195,7 @@ func buildLinearizabilityWorldPostgres(f *testing.F) *clWorld {
 		}
 	})
 
-	db, err := gorm.Open(postgres.Open(dsn+" search_path="+schema), &gorm.Config{Logger: logger.Discard})
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		f.Fatalf("open postgres: %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 // scope + role IDs the differential drives. There is no FK from user_roles to a
@@ -99,7 +100,7 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 			_ = c.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error
 		}
 	})
-	pdb, err := gorm.Open(postgres.Open(pgDSN+" search_path="+schema), &gorm.Config{Logger: logger.Discard})
+	pdb, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(pgDSN, schema)), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		f.Fatalf("open pg: %v", err)
 	}
