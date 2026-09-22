@@ -15,6 +15,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// freshSecretHandlerForProxyS13WithAdmin builds a SecretHandler backed by an
+// admin-seeded core (freshCoreS12WithAdmin — UserID 1 holds a
+// BypassesPermissionChecks role). TransitionSecretStatusProxy now re-derives
+// AuthorizeSecretPrincipal on the target secret (#TransitionSecretStatus,
+// system-proxy-target-authority audit), so any test that expects to reach
+// the actual transition logic needs an authorized caller — the plain,
+// non-admin freshSecretHandlerForProxyS13 fixture has no such caller.
+func freshSecretHandlerForProxyS13WithAdmin(t *testing.T) *SecretHandler {
+	t.Helper()
+	cs, _ := freshCoreS12WithAdmin(t)
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+	return h
+}
+
 // seedSecretForProxyS13 creates a minimal project/environment/secret via the
 // core's own storage layer — TransitionSecretStatusProxy is a raw storage
 // passthrough (no project-membership/RBAC gate, see the handler's own doc
@@ -105,7 +120,7 @@ func TestTransitionSecretStatusProxy_MissingFromStatus(t *testing.T) {
 // TestTransitionSecretStatusProxy_HappyPath — a conditional write from the
 // seeded secret's current "active" status succeeds and reports matched:true.
 func TestTransitionSecretStatusProxy_HappyPath(t *testing.T) {
-	h := freshSecretHandlerForProxyS13(t)
+	h := freshSecretHandlerForProxyS13WithAdmin(t)
 	secret := seedSecretForProxyS13(t, h)
 	idStr := strconv.FormatUint(uint64(secret.ID), 10)
 
@@ -120,10 +135,10 @@ func TestTransitionSecretStatusProxy_HappyPath(t *testing.T) {
 		},
 		"from_status": "active",
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/secrets/"+idStr+"/transition-status", body),
 		"id", idStr,
-	)
+	))
 	w := httptest.NewRecorder()
 	h.TransitionSecretStatusProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -142,7 +157,7 @@ func TestTransitionSecretStatusProxy_HappyPath(t *testing.T) {
 // change; every other field must come from the server's own authoritative
 // row, not the wire body.
 func TestTransitionSecretStatusProxy_RefusesFieldRewrite(t *testing.T) {
-	h := freshSecretHandlerForProxyS13(t)
+	h := freshSecretHandlerForProxyS13WithAdmin(t)
 	secret := seedSecretForProxyS13(t, h)
 	idStr := strconv.FormatUint(uint64(secret.ID), 10)
 
@@ -158,10 +173,10 @@ func TestTransitionSecretStatusProxy_RefusesFieldRewrite(t *testing.T) {
 		},
 		"from_status": "active",
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/secrets/"+idStr+"/transition-status", body),
 		"id", idStr,
-	)
+	))
 	w := httptest.NewRecorder()
 	h.TransitionSecretStatusProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -178,7 +193,7 @@ func TestTransitionSecretStatusProxy_RefusesFieldRewrite(t *testing.T) {
 // report matched:false, proving the CAS race closes at the HTTP-proxy
 // boundary too (not just LocalStorage).
 func TestTransitionSecretStatusProxy_LostRace(t *testing.T) {
-	h := freshSecretHandlerForProxyS13(t)
+	h := freshSecretHandlerForProxyS13WithAdmin(t)
 	secret := seedSecretForProxyS13(t, h)
 	idStr := strconv.FormatUint(uint64(secret.ID), 10)
 
@@ -191,10 +206,10 @@ func TestTransitionSecretStatusProxy_LostRace(t *testing.T) {
 		}`)
 	}
 
-	firstReq := withChiParam(
+	firstReq := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/secrets/"+idStr+"/transition-status", body()),
 		"id", idStr,
-	)
+	))
 	firstW := httptest.NewRecorder()
 	h.TransitionSecretStatusProxy(firstW, firstReq)
 	require.Equal(t, http.StatusOK, firstW.Code)
@@ -203,10 +218,10 @@ func TestTransitionSecretStatusProxy_LostRace(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, true, firstData["matched"], "first call must win")
 
-	secondReq := withChiParam(
+	secondReq := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/system/secrets/"+idStr+"/transition-status", body()),
 		"id", idStr,
-	)
+	))
 	secondW := httptest.NewRecorder()
 	h.TransitionSecretStatusProxy(secondW, secondReq)
 	assert.Equal(t, http.StatusOK, secondW.Code)
