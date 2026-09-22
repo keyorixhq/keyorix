@@ -59,6 +59,62 @@ func ensureS4TestRole(t *testing.T, h *CatalogHandler, roleName string) {
 	require.NoError(t, err)
 }
 
+// s4UserIDSentinelFloor is a deliberately high starting ID for users this
+// helper creates -- withUserCtx and several other S4 fixtures hardcode
+// UserID:1 as a fabricated, DB-backless actor (no real row ever exists for
+// it) and rely on it holding nothing. GORM's Create respects a pre-set,
+// non-zero PK instead of autoincrementing, so an explicit high ID here
+// guarantees no collision with that convention regardless of how many (or
+// how few) other tests have touched sharedS4Core's user table before this
+// one runs.
+const s4UserIDSentinelFloor = 900000
+
+var s4UserIDSentinelCounter uint32
+
+// newS4UserWithRolesAssign creates a FRESH, dedicated user holding
+// roles.assign at projectID and returns a request context authenticated as
+// them -- F6 sweep (2026-09-22): CreateInvitationProxy now requires
+// roles.assign unconditionally (baseline-before-the-branches fix), so tests
+// exercising it need a real actor holding it. This deliberately does NOT
+// reuse withUserCtx's shared UserID:1 in sharedS4Core: granting roles.assign
+// to that widely-reused ID would leak into every other S4 test that asserts
+// UserID 1 lacks it (e.g. TestCatalog_UpdateProject_RequireMFA_Unauthorized) --
+// confirmed the hard way: this helper's first version let CreateUser
+// autoincrement, and when this test happened to be the FIRST to touch
+// sharedS4Core's user table, it silently became UserID 1 itself.
+func newS4UserWithRolesAssignCtx(t *testing.T, h *CatalogHandler, projectID uint) context.Context {
+	t.Helper()
+	ctx := context.Background()
+	st := h.coreService.Storage()
+	id := s4UserIDSentinelFloor + atomic.AddUint32(&s4UserIDSentinelCounter, 1)
+	user, err := st.CreateUser(ctx, &models.User{ID: uint(id), Username: fmt.Sprintf("s4-inv-actor-%s", t.Name()), Email: fmt.Sprintf("s4-inv-actor-%s@example.com", t.Name())})
+	require.NoError(t, err)
+	roleName, err := identity.NewFoldedName(fmt.Sprintf("s4_roles_assign_role_%d", user.ID))
+	require.NoError(t, err)
+	role, err := st.CreateRole(ctx, roleName, "test-only: roles.assign")
+	require.NoError(t, err)
+	perms, err := h.coreService.ListPermissions(ctx)
+	require.NoError(t, err)
+	var rolesAssignID uint
+	for _, p := range perms {
+		if p.Name == "roles.assign" {
+			rolesAssignID = p.ID
+			break
+		}
+	}
+	if rolesAssignID == 0 {
+		p, err := st.CreatePermission(ctx, &models.Permission{
+			Name: "roles.assign", Description: "test-only: assign and remove roles", Resource: "roles", Action: "assign",
+		})
+		require.NoError(t, err)
+		rolesAssignID = p.ID
+	}
+	require.NoError(t, h.coreService.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID, false))
+	require.NoError(t, st.AssignRole(ctx, user.ID, role.ID, corestorage.Scope{ProjectID: projectID}))
+	uc := &middleware.UserContext{UserID: user.ID, Username: user.Username, Email: user.Email}
+	return context.WithValue(context.Background(), middleware.GetUserContextKey(), uc)
+}
+
 // ── access_request_proxy.go ───────────────────────────────────────────────────
 
 func TestValidAccessRequestTargetState(t *testing.T) {
@@ -4745,7 +4801,7 @@ func TestCreateInvitationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	ensureS4TestRole(t, h, "viewer")
 	body := `{"project_id":1,"email":"x@example.com","role":"viewer","state":"pending"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)).WithContext(newS4UserWithRolesAssignCtx(t, h, 1))
 	w := httptest.NewRecorder()
 	h.CreateInvitationProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -6135,7 +6191,7 @@ func TestUpdateInvitationProxy_HappyPath(t *testing.T) {
 	ensureS4TestRole(t, h, "viewer")
 	// First create an invitation to update
 	createBody := `{"project_id":1,"email":"x@example.com","role":"viewer","state":"pending"}`
-	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
+	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody)).WithContext(newS4UserWithRolesAssignCtx(t, h, 1))
 	createW := httptest.NewRecorder()
 	h.CreateInvitationProxy(createW, createReq)
 	require.Equal(t, http.StatusOK, createW.Code)
