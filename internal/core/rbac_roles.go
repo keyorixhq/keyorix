@@ -85,33 +85,74 @@ func validateRoleNameLength(name string) error {
 	return nil
 }
 
-// CreateRole creates a new role definition. name is the raw, caller-supplied
-// role name — this is the ONLY point that constructs the identity.FoldedName
-// storage.CreateRole requires, so no future call site can reach storage with
-// an unfolded/unvalidated name (mirrors CreateGroup's identical treatment,
-// groups.go). Rejects reserved built-in role names (#294) before ever writing
-// anything: roleSetContainsAdmin (authz.go) grants a full admin bypass by name
-// match alone, so a caller-created row named e.g. "super_admin" would function
-// as a complete admin-bypass switch the moment it's assigned, even with zero
-// permissions of its own. actorID is the admin performing the create (0 = no
-// authenticated principal).
-func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, description string) (*models.Role, error) {
+// CreateRole creates a new role definition and, when permissionIDs is
+// non-empty, bundles that permission set onto it — atomically: the role row
+// and every permission assignment run inside one storage.WithTransaction, so
+// a failure partway through can never leave a role created with only SOME of
+// its intended permissions while still reporting overall success. Both
+// REST (server/http/handlers/rbac.go) and gRPC
+// (server/grpc/services/role_service.go) used to run these as two separately-
+// sequenced steps, each discarding (REST: logged and swallowed) or
+// independently handling (gRPC: propagated) an AssignPermissionToRole
+// failure after the role row had already committed — the REST side is F3's
+// exact sibling shape (see docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md),
+// found live by FuzzStorageFaultOperations on this call site directly, not
+// assumed from the UpdateRole fix.
+//
+// name is the raw, caller-supplied role name — this is the ONLY point that
+// constructs the identity.FoldedName storage.CreateRole requires, so no
+// future call site can reach storage with an unfolded/unvalidated name
+// (mirrors CreateGroup's identical treatment, groups.go). Rejects reserved
+// built-in role names (#294) before ever writing anything: roleSetContainsAdmin
+// (authz.go) grants a full admin bypass by name match alone, so a
+// caller-created row named e.g. "super_admin" would function as a complete
+// admin-bypass switch the moment it's assigned, even with zero permissions of
+// its own. actorID is the admin performing the create (0 = no authenticated
+// principal).
+func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, description string, permissionIDs []uint) (*models.Role, []*models.Permission, error) {
 	if err := validateRoleNameLength(name); err != nil {
-		return nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
+		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
 	foldedName, ferr := identity.NewFoldedName(name)
 	if ferr != nil {
-		return nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
+		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
 	}
 	if IsBuiltinRole(foldedName.Folded()) {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this role name is reserved and cannot be created")
+		return nil, nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this role name is reserved and cannot be created")
 	}
-	role, err := c.storage.CreateRole(ctx, foldedName, description)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+
+	var role *models.Role
+	var assignedPermissionIDs []uint
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var err error
+		role, err = tx.CreateRole(ctx, foldedName, description)
+		if err != nil {
+			return err
+		}
+		for _, id := range permissionIDs {
+			if err := tx.AssignPermissionToRole(ctx, role.ID, id); err != nil {
+				return err
+			}
+			assignedPermissionIDs = append(assignedPermissionIDs, id)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), txErr)
 	}
+
+	// Audit AFTER commit, never before — same rationale as UpdateRole's fix.
 	c.LogRoleCreated(ctx, actorID, role.ID, role.Name)
-	return role, nil
+	builtinTarget := IsBuiltinRole(role.Name) // always false here (guarded above); kept symmetric with AssignPermissionToRole's own logging
+	for _, id := range assignedPermissionIDs {
+		c.LogPermissionAssigned(ctx, actorID, role.ID, id, builtinTarget)
+	}
+
+	assignedPermissions, err := c.storage.GetRolePermissions(ctx, role.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return role, assignedPermissions, nil
 }
 
 // UpdateRole updates an existing role's description (role names are immutable —

@@ -66,25 +66,21 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 		return nil, err
 	}
 
-	// #1660: core.CreateRole is the single place that folds the name (identity.
+	// core.CreateRole is the single place that folds the name (identity.
 	// NewFoldedName — #1642), rejects reserved built-in names (#294:
 	// roleSetContainsAdmin in authz.go grants a full admin bypass by NAME
 	// match alone, so a caller-created row named e.g. "super_admin" would
 	// function as a complete admin-bypass switch the moment it's assigned,
-	// even with zero permissions of its own), and audits the creation —
-	// previously duplicated per-transport (the identical HTTP-side treatment
-	// in RBACHandler.CreateRole called storage.CreateRole directly too).
-	role, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription())
+	// even with zero permissions of its own), runs the role-row create AND
+	// the permission bundling in one transaction, and audits only after that
+	// transaction commits — see its own doc comment for why (this path
+	// already propagated an AssignPermissionToRole failure correctly, unlike
+	// the REST side, but still left the role row committed non-atomically
+	// with its permission set).
+	role, _, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs)
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
-	for _, pid := range permIDs {
-		if err := s.core.AssignPermissionToRole(ctx, actor.UserID, role.ID, pid, false); err != nil {
-			return nil, status.Error(codes.Internal, "failed to assign permissions to role")
-		}
-	}
-	// core.CreateRole audits the role.created event itself now (permission
-	// grants are audited by AssignPermissionToRole).
 	return s.roleByID(ctx, role.ID)
 }
 

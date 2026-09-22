@@ -1,22 +1,25 @@
-# FINDING: `UpdateRole` is not atomic across its role-update and permission-replace phases — a mid-request failure (swallowed error OR panic) leaves partial effects, including a committed audit trail, behind a non-2xx or falsely-200 response
+# FINDING: `UpdateRole`/`CreateRole` are not atomic across their role-write and permission-replace/assign phases — a mid-request failure (swallowed error OR panic) leaves partial effects, including a committed audit trail, behind a non-2xx or falsely-200/201 response
 
-**Date:** 2026-09-21
+**Date:** 2026-09-21 (F3a/F3b), 2026-09-22 (F3c)
 **Component:** `server/http/handlers/rbac.go` (`RBACHandler.UpdateRole` /
-`replaceRolePermissions`) and `internal/core/rbac_roles.go`
-(`KeyorixCore.UpdateRole`, unconditionally audit-logs before the handler even
-reaches permission replacement).
-**Status:** **Fixed.** `core.UpdateRole` (`internal/core/rbac_roles.go`) now
-runs the role-row update, the permission-set replacement, and the resulting
-audit events inside one `storage.WithTransaction`, with audit logged only
-after that transaction commits. Both REST and gRPC call this single function.
-Closure proven by `FuzzStorageFaultOperations` (`server/faultops`), which is
-now the regression test for both F3a and F3b — their KNOWN-OPEN tolerances
-have been removed from the harness, and both seeds (plus the F3b input the
-unattended fuzz burst found) now pass clean. Red-proofed both directions:
-reverting the fix locally reproduces both failures exactly as originally
-found; restoring it is green again. Two distinct trigger mechanisms of the
-SAME root cause are documented below — referred to together as **F3** in the
-originating task brief:
+`replaceRolePermissions`, and originally `RBACHandler.CreateRole`'s own
+permission-assignment loop) and `internal/core/rbac_roles.go`
+(`KeyorixCore.UpdateRole`/`KeyorixCore.CreateRole`, the former unconditionally
+audit-logging before the handler even reaches permission replacement).
+**Status:** **Fixed.** `core.UpdateRole` and `core.CreateRole`
+(`internal/core/rbac_roles.go`) each now run their role-row write, the
+permission-set replacement/assignment, and the resulting audit events inside
+one `storage.WithTransaction`, with audit logged only after that transaction
+commits. Both REST and gRPC call these two functions for every code path that
+touches a role's permission set. Closure proven by
+`FuzzStorageFaultOperations` (`server/faultops`), which is now the regression
+test for F3a, F3b, and F3c — their KNOWN-OPEN tolerances have been removed
+from the harness, and every seed/corpus input that found them now passes
+clean. Red-proofed in both directions for all three: reverting the fix
+locally reproduces each failure exactly as originally found; restoring it is
+green again. Three distinct trigger mechanisms of the SAME root cause are
+documented below — referred to together as **F3** in the originating task
+brief:
 
 - **F3a** (originally filed): `replaceRolePermissions` swallows every storage
   error from its own calls and the handler always replies 200 regardless.
@@ -29,6 +32,15 @@ originating task brief:
   even runs) has already committed by the time the panic unwinds the request.
   The caller sees `500`, reasonably assumes nothing happened, while an
   `AuditEvent` row asserting "role updated" already exists.
+- **F3c** (found 2026-09-22, coverage-batch-5 fuzz burst, sibling on
+  `CreateRole` rather than `UpdateRole` — see "F3c" below): the REST
+  `CreateRole` handler's own permission-assignment loop swallowed
+  `AssignPermissionToRole` errors the same way F3a's `replaceRolePermissions`
+  did, so a role could be created and reported `201` with a permission
+  silently missing from the response (`"permissions":null`). Unlike F3a/F3b,
+  the triggering fault landed on an *authz-resolution* call inside the
+  assignment path, so this is an **oracle (c) violation** (a fault on an
+  authz-resolution read produced a successful effect), not just oracle (a).
 
 **Severity: Medium-High impact / straightforward likelihood** — see "Severity"
 below.
@@ -163,6 +175,52 @@ the permission-replace phase's failure IS correctly reported, the
 role-update phase's effects (specifically its audit trail) are not
 rolled back with it. Same non-atomicity, two different symptoms.
 
+### F3c: the same swallow-and-log shape on `CreateRole` (found by coverage batch 5)
+
+Wiring `REST POST /api/v1/roles/` into the operation catalog (coverage batch
+2, per the RULES' stated priority order) and then running a fresh unattended
+fuzz burst over it (coverage batch 5, rotation-policies) found a live third
+sibling. Pre-fix `RBACHandler.CreateRole` created the role row first, then
+looped over the caller's requested permissions:
+
+```go
+for _, perm := range toAssign {
+    if err := h.coreService.AssignPermissionToRole(ctx, userCtx.UserID, role.ID, perm.ID, false); err != nil {
+        log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, role.ID, err)
+    }
+}
+```
+
+— the exact same discard-and-log shape as F3a's `replaceRolePermissions`,
+just inline in the handler instead of a helper.
+
+**Reproduction:** `input=24254d3030` → fault
+`(method=RoleSetBypassesPermissionChecks, NthCall=4, kind=error)` on
+`REST POST /api/v1/roles/` with a `permissions` field in the body. The fault
+landed inside `AssignPermissionToRole`'s own authority-resolution path
+(`failed to resolve actor authority: fault-fuzz injected failure`,
+logged as a `Warning`, never returned). The handler still replied:
+
+```
+HTTP 201: {"data":{"permissions":null,"role":{"ID":11,"Name":"fuzz-role-batch2","Description":"fuzz role","BypassesPermissionChecks":false}},"message":"Role created successfully","success":true}
+```
+
+**Oracle (c) violation:** the fault fired on an authz-resolution read
+(`AssignPermissionToRole`'s internal actor-authority check), and instead of
+that read's failure blocking the effect it was gating, the caller still got
+a successful `201` — the create went through, just silently missing the
+permission grant the caller asked for and believed they got. This is
+distinct from F3a/F3b's oracle (a) framing: here the swallowed failure is
+specifically on the authorization-resolution step, not an ordinary storage
+write, so a fail-closed-authz guarantee is what actually breaks.
+
+**Root cause, same family as F3a/F3b:** `CreateRole`'s handler performed two
+independently-committing steps (create the role row, then assign permissions
+in a loop) with no transaction spanning both, and — like F3a — discarded
+every `AssignPermissionToRole` error instead of aborting or reporting it.
+gRPC's `CreateRole` already propagated this error correctly (the same
+REST/gRPC asymmetry F3a had before its own fix), so this was REST-only.
+
 ## Impact
 
 - **Availability of accurate authorization state:** an operator who issues
@@ -227,6 +285,17 @@ own permission-replace errors correctly) — it now calls the same
 `core.UpdateRole`, removing its own duplicated
 `RemovePermissionFromRole`/`AssignPermissionToRole` loop.
 
+**F3c fix:** `core.CreateRole` (`internal/core/rbac_roles.go`) was rewritten
+to accept `permissionIDs []uint` and run `tx.CreateRole` plus every
+`tx.AssignPermissionToRole` call inside one `storage.WithTransaction`;
+`LogRoleCreated`/`LogPermissionAssigned` are written only after that
+transaction commits. `server/http/handlers/rbac.go`'s `CreateRole` handler
+now computes `permissionIDs` from its already-authorized `toAssign` list and
+calls the new core signature, deleting its own swallow-and-log loop.
+`server/grpc/services/role_service.go`'s `CreateRole` now calls the same
+`core.CreateRole`, removing its own (previously-correct) per-permission
+assignment loop for symmetry with the REST path.
+
 ## Red-proof
 
 Before the fix: `FuzzStorageFaultOperations`'s seed at `(REST PUT
@@ -248,3 +317,21 @@ KNOWN-OPEN tolerance needed. The two tolerance entries that used to live in
 `server/faultops/fuzz_storage_fault_operations_test.go`'s
 `knownOpenTolerances` are removed — the fuzzer itself is now the permanent
 regression test for both.
+
+**F3c:** minimized to `input=24254d3030`, saved at
+`server/faultops/testdata/fuzz/FuzzStorageFaultOperations/c600067cf4d3bb8e`,
+replayable standalone via `REPLAY_HEX=24254d3030 go test
+./server/faultops/... -run TestReplayStorageFaultInput -v`. Red-proofed by
+reverting just `internal/core/rbac_roles.go`,
+`server/http/handlers/rbac.go`, and `server/grpc/services/role_service.go`
+to their pre-fix state (`git checkout HEAD -- <files>`, i.e. the commit
+immediately before this fix landed) and re-running the corpus:
+`FuzzStorageFaultOperations/c600067cf4d3bb8e` was the ONLY corpus entry to
+fail, with the exact oracle (c) message quoted above
+(`"permissions":null` / `201`); every other corpus entry (F3a's, F3b's, and
+the rest of the operation catalog) stayed green, confirming the revert's
+blast radius was exactly this one call site. Restoring the fix (copying the
+post-fix files back) made the corpus fully green again, confirmed by a full
+`go build ./...`, `go vet ./...`, the `internal/core`/`server/http`/
+`server/grpc` suites (including `-race`), and the fuzz corpus re-run — all
+clean.

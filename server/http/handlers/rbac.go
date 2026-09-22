@@ -151,17 +151,23 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	if handled {
 		return
 	}
+	permissionIDs := make([]uint, len(toAssign))
+	for i, p := range toAssign {
+		permissionIDs[i] = p.ID
+	}
 
-	// #1660: core.CreateRole is the single place that folds the name (identity.
+	// core.CreateRole is the single place that folds the name (identity.
 	// NewFoldedName — #1642), rejects reserved built-in names (#294:
 	// roleSetContainsAdmin in authz.go grants a full admin bypass by NAME match
 	// alone, so a caller-created row named e.g. "super_admin" would function as
 	// a complete admin-bypass switch the moment it's assigned, even with zero
-	// permissions of its own), and audits the creation — previously duplicated
-	// per-transport (this handler and the gRPC RoleGRPCService each called
-	// storage.CreateRole directly, bypassing internal/core's validation layer
-	// entirely).
-	role, err := h.coreService.CreateRole(r.Context(), userCtx.UserID, req.Name, req.Description)
+	// permissions of its own), runs the role-row create AND the permission
+	// bundling in one transaction, and audits only after that transaction
+	// commits — see its own doc comment for why this must not be split back
+	// into two separately-sequenced calls (an AssignPermissionToRole failure
+	// here used to be logged and swallowed, the role still reported created
+	// with whatever subset happened to succeed).
+	role, assignedPerms, err := h.coreService.CreateRole(r.Context(), userCtx.UserID, req.Name, req.Description, permissionIDs)
 	if err != nil {
 		log.Printf("Error creating role: %v", err)
 		msg := err.Error()
@@ -178,18 +184,6 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var assignedPerms []*models.Permission
-	for _, perm := range toAssign {
-		if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, role.ID, perm.ID, false); err != nil {
-			// Already authorized above; only a race (permission deleted concurrently) or
-			// storage error reaches here — log it, the role still exists with the rest.
-			log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, role.ID, err)
-		} else {
-			assignedPerms = append(assignedPerms, perm)
-		}
-	}
-
-	// core.CreateRole already audited the role.created event above.
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, map[string]any{"role": role, "permissions": assignedPerms}, "Role created successfully")
 }
