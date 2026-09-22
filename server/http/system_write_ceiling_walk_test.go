@@ -36,6 +36,20 @@
 // narrower, different thing: that holding ONLY the /system group's own blanket
 // system.write permission is never enough, on its own, to reach a route whose
 // real ceiling is something else.
+//
+// systemCeilingAllowlist entries carry their own verification status (Step 3,
+// user-directed F6 sweep, 2026-09-22): a prose reason alone is not proof --
+// each entry names a real Test* function that exercises it against the
+// WEAKEST principal the reason admits (a cross-project role-holder, a role
+// bundling zero permissions), or is explicitly marked unverified and counted
+// against systemCeilingUnverifiedRatchet (see that constant's doc). The
+// remaining unverified entries are intended to be converted by a
+// mixed-principal authority fuzzer -- generating requests across the
+// (actor-type × permission-set × scope) space and asserting each allowlisted
+// route's reasoning holds for all of them, rather than one hand-written test
+// per route -- not by hand-writing ~40 near-identical tests. Each conversion
+// (by the fuzzer or by hand) should lower systemCeilingUnverifiedRatchet by
+// one in the same commit.
 package http
 
 import (
@@ -43,8 +57,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -545,118 +563,148 @@ var systemCeilingReadOnly = map[string]string{
 //     backing function), gate-level passing is the complete picture, same
 //     as it is for dimension (a). Three routes below are NOT default: their
 //     own entry names the exception and the dedicated test that proves it.
-var systemCeilingAllowlist = map[string]string{
-	"POST /api/v1/system/login-attempts": "no human-facing equivalent -- internal per-replica rate-limit bookkeeping, " +
-		"CORE-RATE-003-hardened (validated/clamped in core.RecordLoginAttemptRelay).",
-	"POST /api/v1/system/login-attempts/prune": "no human-facing equivalent; core.PruneLoginAttempts clamps the " +
-		"caller-supplied 'before' to its own retention default -- narrows only, never widens.",
-	"POST /api/v1/system/invitations": "CreateInvitationProxy re-derives requireAuthorityForRole for Role/SystemRole/" +
-		"every AssignmentsJSON entry -- a system.write-only caller with no other grant cannot invite with any role " +
-		"that bundles a permission it doesn't hold.",
-	"POST /api/v1/system/access-requests": "CreateAccessRequestProxy forces State=pending unconditionally; the " +
+// systemCeilingAllowlistEntry is one systemCeilingAllowlist entry (F6 sweep,
+// 2026-09-22 -- Step 3, user-directed): a plain prose reason is no longer
+// enough on its own. reason states WHY system.write alone is sufficient;
+// exactly one of test/unverified must also be set.
+type systemCeilingAllowlistEntry struct {
+	reason string
+	// test names a Test* function in this package that exercises reason's
+	// claim against the weakest principal it admits (a cross-project
+	// role-holder, a role bundling zero permissions). TestSystemCeilingAllowlistVerificationRatchet
+	// below asserts it actually exists -- a named-but-missing test fails
+	// that walk outright, not silently passes.
+	test string
+	// unverified marks an entry not yet converted to cite such a test --
+	// prose only, counted against systemCeilingUnverifiedRatchet. A NEW
+	// entry may not set this; see that constant's doc.
+	unverified bool
+}
+
+var systemCeilingAllowlist = map[string]systemCeilingAllowlistEntry{
+	"POST /api/v1/system/login-attempts": {reason: "no human-facing equivalent -- internal per-replica rate-limit bookkeeping, " +
+		"CORE-RATE-003-hardened (validated/clamped in core.RecordLoginAttemptRelay).", unverified: true},
+	"POST /api/v1/system/login-attempts/prune": {reason: "no human-facing equivalent; core.PruneLoginAttempts clamps the " +
+		"caller-supplied 'before' to its own retention default -- narrows only, never widens.", unverified: true},
+	"POST /api/v1/system/invitations": {reason: "CreateInvitationProxy re-derives RequireGranterHoldsRolePermissions for " +
+		"Role/SystemRole/every AssignmentsJSON entry when present, PLUS (F6 sweep, 2026-09-22) an unconditional " +
+		"roles.assign baseline at the target project scope covering the case ALL THREE are empty -- the original " +
+		"prose here claimed the per-field checks alone were sufficient, but they are each gated on their own field " +
+		"being non-empty, so a request with Role/SystemRole/AssignmentsJSON all blank ran none of them; a " +
+		"system.write-only caller could plant a role-less invitation with zero authority. Closed by requiring " +
+		"roles.assign unconditionally whenever ProjectID != 0, mirroring TransitionMembership's identical " +
+		"baseline-before-the-branches fix below.", test: "TestG3Probe_CreateInvitationProxy_SystemWriteOnly_CreatesRoleLessInvitation"},
+	"POST /api/v1/system/access-requests": {reason: "CreateAccessRequestProxy forces State=pending unconditionally; the " +
 		"human-facing create route is self-service (no permission required) anyway, so system.write is already " +
-		"strictly stronger.",
-	"PUT /api/v1/system/access-requests/{id}": "UpdateAccessRequestProxy re-derives maker != checker plus " +
-		"admin/role-grant authority on the 'approved' transition specifically.",
-	"POST /api/v1/system/access-requests/{id}/approvals": "same ceiling as UpdateAccessRequestProxy above -- " +
-		"maker != checker re-derived on approval.",
-	"POST /api/v1/system/notifications": "core applies no authorization ceiling to notification creation at all, " +
-		"and models.Notification carries no actor/origin field a forged caller could exploit.",
-	"DELETE /api/v1/system/groups/{id}/members/{userId}": "RemoveGroupMemberProxy's only check is " +
-		"guardLastGlobalAdminMembership, a target-state invariant (would this strand the group's last admin-tier " +
-		"member) -- not actor-dependent. Removal is the safe direction, same reasoning as RemoveMachineRoleProxy.",
-	"DELETE /api/v1/system/machine-identities/{id}/roles/{roleId}": "RemoveMachineRoleProxy: no ceiling anywhere, " +
-		"local or proxy -- removal is safe-direction (node-credential classification registry).",
-	"PUT /api/v1/system/machine-identities/{id}/transition": "TransitionMachineIdentityStateProxy: illegal " +
+		"strictly stronger.", unverified: true},
+	"PUT /api/v1/system/access-requests/{id}": {reason: "UpdateAccessRequestProxy re-derives maker != checker plus " +
+		"admin/role-grant authority on the 'approved' transition specifically.", unverified: true},
+	"POST /api/v1/system/access-requests/{id}/approvals": {reason: "same ceiling as UpdateAccessRequestProxy above -- " +
+		"maker != checker re-derived on approval.", unverified: true},
+	"POST /api/v1/system/notifications": {reason: "core applies no authorization ceiling to notification creation at all, " +
+		"and models.Notification carries no actor/origin field a forged caller could exploit.", unverified: true},
+	"DELETE /api/v1/system/machine-identities/{id}/roles/{roleId}": {reason: "RemoveMachineRoleProxy: no ceiling anywhere, " +
+		"local or proxy -- removal is safe-direction (node-credential classification registry).", unverified: true},
+	"PUT /api/v1/system/machine-identities/{id}/transition": {reason: "TransitionMachineIdentityStateProxy: illegal " +
 		"transitions (e.g. revoked->active) are refused by core.IsValidMachineTransition regardless of caller -- " +
-		"see TestSystemWriteCeiling_TransitionMachineIdentityStateProxy_RejectsIllegalTransition below.",
-	"GET /api/v1/system/machine-identities/{id}/credentials": "read.",
-	"PUT /api/v1/system/machine-credentials/{id}": "UpdateMachineIdentityCredentialProxy only ever applies " +
+		"see TestSystemWriteCeiling_TransitionMachineIdentityStateProxy_RejectsIllegalTransition below.", unverified: true},
+	"GET /api/v1/system/machine-identities/{id}/credentials": {reason: "read.", unverified: true},
+	"PUT /api/v1/system/machine-credentials/{id}": {reason: "UpdateMachineIdentityCredentialProxy only ever applies " +
 		"Classification from the wire body -- Revoked/TokenHash/ExpiresAt are never read, so a caller cannot " +
-		"resurrect a revoked credential regardless of authority.",
-	"POST /api/v1/system/machine-credentials/{id}/touch": "TouchMachineIdentityCredentialProxy: documented " +
+		"resurrect a revoked credential regardless of authority.", unverified: true},
+	"POST /api/v1/system/machine-credentials/{id}/touch": {reason: "TouchMachineIdentityCredentialProxy: documented " +
 		"no-independent-ceiling exception (see the raw-storage-bypass registry) -- touching last-used metadata on " +
-		"a credential the caller can already reach confers nothing.",
-	"DELETE /api/v1/system/machine-oidc-bindings/{id}": "DeleteOIDCBindingProxy: core.DeleteOIDCBinding verifies " +
+		"a credential the caller can already reach confers nothing.", unverified: true},
+	"DELETE /api/v1/system/machine-oidc-bindings/{id}": {reason: "DeleteOIDCBindingProxy: core.DeleteOIDCBinding verifies " +
 		"the binding actually belongs to the named machine before deleting -- ownership, not caller authority " +
-		"(deleting a binding you're relaying on behalf of is legitimate; there is no separate authority ceiling).",
-	"POST /api/v1/system/setup-tokens/supersede": "SupersedeSetupTokensProxy: the IssueSetupToken step this backs " +
+		"(deleting a binding you're relaying on behalf of is legitimate; there is no separate authority ceiling).", unverified: true},
+	"POST /api/v1/system/setup-tokens/supersede": {reason: "SupersedeSetupTokensProxy: the IssueSetupToken step this backs " +
 		"(SupersedeActiveSetupTokens) has no caller-authorization gate of its own -- an unconditional exact-match " +
-		"(purpose, email[, project]) bulk state-flip, not scoped to any one user's authority to withhold.",
-	"POST /api/v1/system/connect-grants": "no route registered -- reads only.",
-	"POST /api/v1/system/sso-state": "ephemeral CSRF-state/nonce row for an in-flight SSO ceremony; no human-facing " +
-		"equivalent to compare against, nothing to authorize.",
-	"POST /api/v1/system/sso-state/consume": "single-use consume of the same ephemeral ceremony row -- same reasoning.",
-	"POST /api/v1/system/project-memberships": "CreateMembershipProxy: fixed (#1578) -- re-derives " +
+		"(purpose, email[, project]) bulk state-flip, not scoped to any one user's authority to withhold.", unverified: true},
+	"POST /api/v1/system/connect-grants": {reason: "no route registered -- reads only.", unverified: true},
+	"POST /api/v1/system/sso-state": {reason: "ephemeral CSRF-state/nonce row for an in-flight SSO ceremony; no human-facing " +
+		"equivalent to compare against, nothing to authorize.", unverified: true},
+	"POST /api/v1/system/sso-state/consume": {reason: "single-use consume of the same ephemeral ceremony row -- same reasoning.", unverified: true},
+	"POST /api/v1/system/project-memberships": {reason: "CreateMembershipProxy: fixed (#1578) -- re-derives " +
 		"RequireGranterHoldsRolePermissions against the requested membership Role at the target project scope " +
-		"before persisting, and forces InvitedBy to the authenticated caller.",
-	"PUT /api/v1/system/project-memberships/{id}/transition": "TransitionMembershipProxy: fixed (#1546) -- fully " +
-		"delegates to core.TransitionMembership, which re-derives the state-machine legality check and reads only " +
-		"(projectID, membershipID, to, actorID) off the wire -- every other field, including Role, is ignored.",
-	"PATCH /api/v1/system/webauthn/credentials/advance-counter": "AdvanceWebAuthnCredentialCounterProxy performs a " +
+		"before persisting, and forces InvitedBy to the authenticated caller. F6 sweep (2026-09-22): that " +
+		"re-derivation was reachable but unsatisfiable for a genuine machine caller -- the handler never tagged " +
+		"WithSelfMachineGranter before calling it, so requireGranterHoldsRolePermissions' actorIsMachine branch fell " +
+		"through to its unconditional false,nil refusal. Fixed by tagging ctx before the check (same pattern as the " +
+		"transition route below); the escalation reasoning itself was already sound, only the machine-caller " +
+		"principal class was unsatisfiable.", test: "TestConformance_CreateProjectMembership"},
+	"PUT /api/v1/system/project-memberships/{id}/transition": {reason: "TransitionMembershipProxy: fixed (#1546) -- fully " +
+		"delegates to core.TransitionMembership, which re-derives the state-machine LEGALITY check (canTransition) " +
+		"and reads only (projectID, membershipID, to, actorID) off the wire. F6 sweep (2026-09-22): legality is not " +
+		"authority -- this prose previously read as blanket safety, but the pre-fix code's actual AUTHORITY ceiling " +
+		"ran ONLY inside the to==MembershipActive branch; every other legal transition (active->revoked, " +
+		"provisioned->revoked, identity_verified->provisioned, ...) reached storage with a legality check but ZERO " +
+		"caller-authority check. Fixed by requiring roles.assign unconditionally before ANY transition, with the " +
+		"activate-specific role-permission ceiling layered on top for to==Active only, as before.", test: "TestConformance_TransitionProjectMembershipState"},
+	"PATCH /api/v1/system/webauthn/credentials/advance-counter": {reason: "AdvanceWebAuthnCredentialCounterProxy performs a " +
 		"locked compare-and-swap on a signature counter -- the anti-clone TOCTOU fix (#306/#517), not an authority " +
-		"decision; any caller reaching it can only ever advance a counter forward under a lock, never forge state.",
-	"POST /api/v1/system/webauthn/sessions":         "ephemeral WebAuthn ceremony session row -- no human-facing equivalent.",
-	"POST /api/v1/system/webauthn/sessions/consume": "single-use consume of the same ephemeral ceremony row.",
-	"POST /api/v1/system/legal-hold": "CreateLegalHoldProxy: core.PlaceLegalHold requires admin-tier authority " +
+		"decision; any caller reaching it can only ever advance a counter forward under a lock, never forge state.", unverified: true},
+	"POST /api/v1/system/webauthn/sessions": {reason: "ephemeral WebAuthn ceremony session row -- no human-facing equivalent.", unverified: true},
+	"POST /api/v1/system/webauthn/sessions/consume": {reason: "single-use consume of the same ephemeral ceremony row.", unverified: true},
+	"POST /api/v1/system/legal-hold": {reason: "CreateLegalHoldProxy: core.PlaceLegalHold requires admin-tier authority " +
 		"(isGlobalAdminRoleName, #377) unconditionally -- confirmed by direct read of legal_hold.go, not the doc " +
-		"comment; a system.write-only, non-admin caller is refused today.",
-	"PUT /api/v1/system/legal-hold/{id}": "UpdateLegalHoldProxy: core.LiftLegalHold requires placer-or-admin-tier " +
-		"authority (#157) unconditionally -- confirmed by direct read; same as CreateLegalHoldProxy above.",
-	"POST /api/v1/system/risk-exceptions": "CreateRiskExceptionProxy: creation alone confers nothing -- dual " +
+		"comment; a system.write-only, non-admin caller is refused today.", unverified: true},
+	"PUT /api/v1/system/legal-hold/{id}": {reason: "UpdateLegalHoldProxy: core.LiftLegalHold requires placer-or-admin-tier " +
+		"authority (#157) unconditionally -- confirmed by direct read; same as CreateLegalHoldProxy above.", unverified: true},
+	"POST /api/v1/system/risk-exceptions": {reason: "CreateRiskExceptionProxy: creation alone confers nothing -- dual " +
 		"control's real gate is the separate, per-actor-ceiling-gated approve step below. NOT the default principal " +
 		"applicability: (c) is REFUSED, not allowed -- core.CreateRiskException denies ANY machine actor " +
 		"unconditionally regardless of permission ('dual control' means two humans), confirmed by direct code read " +
 		"and TestSystemWriteCeiling_CreateRiskExceptionProxy_RefusesMachineActorByDesign below. ApproveRiskException " +
-		"has the identical actorIsMachine check.",
-	"PUT /api/v1/system/risk-exceptions/{id}/revoke": "RevokeRiskExceptionProxy: core.RevokeRiskException has no " +
-		"actor-authority check by design (#1529 territory, an audit-completeness gap, not a policy bypass).",
-	"POST /api/v1/system/sod-policies": "CreateSoDPolicyProxy: human-facing POST /api/v1/sod/policies requires " +
-		"the IDENTICAL permission (permSystemWrite) -- no mismatch possible by construction.",
-	"DELETE /api/v1/system/sod-policies/{id}": "DeleteSoDPolicyProxy: same as create above -- identical permission " +
-		"on both surfaces.",
-	"POST /api/v1/system/retention/role-grants/purge-expired": "DeleteExpiredRoleGrantsProxy: core.RemoveExpiredRoleGrants " +
-		"has no actor ceiling either -- an unconditional, time-bounded system sweep (#1529 territory).",
-	"POST /api/v1/system/retention/share-records/purge-expired": "DeleteExpiredShareRecordsProxy: same shape as " +
-		"the role-grants purge above.",
-	"POST /api/v1/system/users/with-role-grants": "CreateUserWithRoleGrantsProxy: ValidateRoleGrantAuthority runs " +
-		"unconditionally for every grant in the request -- escalation-by-proxy re-derived per role.",
-	"POST /api/v1/system/rbac/assign-role-with-expiry": "AssignRoleWithExpiryProxy: fixed (#1542/#1552) -- routes " +
+		"has the identical actorIsMachine check.", unverified: true},
+	"PUT /api/v1/system/risk-exceptions/{id}/revoke": {reason: "RevokeRiskExceptionProxy: core.RevokeRiskException has no " +
+		"actor-authority check by design (#1529 territory, an audit-completeness gap, not a policy bypass).", unverified: true},
+	"POST /api/v1/system/sod-policies": {reason: "CreateSoDPolicyProxy: human-facing POST /api/v1/sod/policies requires " +
+		"the IDENTICAL permission (permSystemWrite) -- no mismatch possible by construction.", unverified: true},
+	"DELETE /api/v1/system/sod-policies/{id}": {reason: "DeleteSoDPolicyProxy: same as create above -- identical permission " +
+		"on both surfaces.", unverified: true},
+	"POST /api/v1/system/retention/role-grants/purge-expired": {reason: "DeleteExpiredRoleGrantsProxy: core.RemoveExpiredRoleGrants " +
+		"has no actor ceiling either -- an unconditional, time-bounded system sweep (#1529 territory).", unverified: true},
+	"POST /api/v1/system/retention/share-records/purge-expired": {reason: "DeleteExpiredShareRecordsProxy: same shape as " +
+		"the role-grants purge above.", unverified: true},
+	"POST /api/v1/system/users/with-role-grants": {reason: "CreateUserWithRoleGrantsProxy: ValidateRoleGrantAuthority runs " +
+		"unconditionally for every grant in the request -- escalation-by-proxy re-derived per role.", unverified: true},
+	"POST /api/v1/system/rbac/assign-role-with-expiry": {reason: "AssignRoleWithExpiryProxy: fixed (#1542/#1552) -- routes " +
 		"through core.AssignUserRoleWithExpiry unconditionally; requireGranterHoldsRolePermissions runs against " +
-		"every caller's own authority.",
-	"POST /api/v1/system/rbac/assign-role-to-group-with-expiry": "AssignRoleToGroupWithExpiryProxy: fixed (#1542) -- " +
+		"every caller's own authority.", unverified: true},
+	"POST /api/v1/system/rbac/assign-role-to-group-with-expiry": {reason: "AssignRoleToGroupWithExpiryProxy: fixed (#1542) -- " +
 		"routes through core.AssignGroupRoleWithExpiry unconditionally; requireAuthorityForRole is admin-tier-only " +
-		"and actorID==0-safe.",
-	"POST /api/v1/system/rbac/remove-all-project-role-grants": "RemoveAllProjectRoleGrantsProxy: fixed (#1542) -- " +
-		"routes through core.RemoveProjectMember unconditionally, restoring guardLastProjectAdmin (target-state).",
-	"POST /api/v1/system/rbac/clear-project-secret-ownership": "ClearProjectSecretOwnershipProxy: confirmed false " +
-		"positive -- a best-effort CLEANUP side effect inside RemoveProjectMember, never independently gated.",
-	"POST /api/v1/system/rbac/delete-secret-acls-by-user-and-project": "DeleteSecretACLsByUserAndProjectProxy: " +
-		"same shape as clear-project-secret-ownership above.",
-	"POST /api/v1/system/rbac/global-admin-role/remove-guarded": "RemoveGlobalAdminRoleGuardedProxy: fixed -- " +
+		"and actorID==0-safe.", unverified: true},
+	"POST /api/v1/system/rbac/remove-all-project-role-grants": {reason: "RemoveAllProjectRoleGrantsProxy: fixed (#1542) -- " +
+		"routes through core.RemoveProjectMember unconditionally, restoring guardLastProjectAdmin (target-state).", unverified: true},
+	"POST /api/v1/system/rbac/clear-project-secret-ownership": {reason: "ClearProjectSecretOwnershipProxy: confirmed false " +
+		"positive -- a best-effort CLEANUP side effect inside RemoveProjectMember, never independently gated.", unverified: true},
+	"POST /api/v1/system/rbac/delete-secret-acls-by-user-and-project": {reason: "DeleteSecretACLsByUserAndProjectProxy: " +
+		"same shape as clear-project-secret-ownership above.", unverified: true},
+	"POST /api/v1/system/rbac/global-admin-role/remove-guarded": {reason: "RemoveGlobalAdminRoleGuardedProxy: fixed -- " +
 		"requires roles.assign at global scope, the same authority the human-facing DELETE /user-roles route " +
-		"requires.",
-	"POST /api/v1/system/mfa/totp-step-used": "MarkTOTPStepUsedProxy: reviewed, not independently ceiling-checked " +
+		"requires.", unverified: true},
+	"POST /api/v1/system/mfa/totp-step-used": {reason: "MarkTOTPStepUsedProxy: reviewed, not independently ceiling-checked " +
 		"on this branch. A caller-scoping fix was attempted and reverted: TestConformance_MarkTOTPStepUsed proved " +
 		"the real caller shape needs to act across principals, so a naive per-principal restriction broke a " +
-		"legitimate case. See docs/findings/2026-09-21-FINDING-system-proxy-target-authority.md for the analysis.",
-	"POST /api/v1/system/mfa/stepup-grants/prune": "PruneMFAStepUpGrantsProxy: core.PruneMFAStepUpGrants clamps " +
-		"the caller-supplied 'before' to the stricter of its own default retention -- narrows only.",
-	"DELETE /api/v1/system/projects/{id}": "DeleteProjectProxy: fixed (#1657) -- RequireScopedPermission(permSecretsDelete, " +
+		"legitimate case. See docs/findings/2026-09-21-FINDING-system-proxy-target-authority.md for the analysis.", unverified: true},
+	"POST /api/v1/system/mfa/stepup-grants/prune": {reason: "PruneMFAStepUpGrantsProxy: core.PruneMFAStepUpGrants clamps " +
+		"the caller-supplied 'before' to the stricter of its own default retention -- narrows only.", unverified: true},
+	"DELETE /api/v1/system/projects/{id}": {reason: "DeleteProjectProxy: fixed (#1657) -- RequireScopedPermission(permSecretsDelete, " +
 		"projectScope) layered on top of the group's blanket gate, mirroring the human-facing DeleteProject route. " +
 		"NOT the default principal applicability: (c) needs secrets.delete IN ADDITION to system.write (see " +
 		"systemCeilingLayeredPermission) -- a system.write-only machine is correctly refused by this SECOND layer, " +
 		"proven both directions by TestSystemCeilingLayeredPermission_DeleteProjectProxy_MachineSecretsDeleteHolder_Succeeds " +
-		"(positive) and the generic gate walk's layered-permission branch (negative).",
-	"POST /api/v1/system/projects/{id}/delete-if-empty": "DeleteProjectIfEmptyProxy: same scoped-permission fix as " +
+		"(positive) and the generic gate walk's layered-permission branch (negative).", unverified: true},
+	"POST /api/v1/system/projects/{id}/delete-if-empty": {reason: "DeleteProjectIfEmptyProxy: same scoped-permission fix as " +
 		"DeleteProjectProxy above -- same NOT-default principal applicability (secrets.delete required beyond " +
-		"system.write), not independently re-proven positive here (identical middleware wrapper, same permission).",
-	"DELETE /api/v1/system/environments/{id}": "DeleteEnvironmentProxy: fixed (#1648) -- the same scoped-permission " +
+		"system.write), not independently re-proven positive here (identical middleware wrapper, same permission).", unverified: true},
+	"DELETE /api/v1/system/environments/{id}": {reason: "DeleteEnvironmentProxy: fixed (#1648) -- the same scoped-permission " +
 		"treatment DeleteProjectProxy got, scoped to the environment's own project -- same NOT-default principal " +
-		"applicability as DeleteProjectProxy above.",
-	"POST /api/v1/system/audit/event": "IngestAuditEventProxy: raw storage write, no audit POLICY decision made " +
+		"applicability as DeleteProjectProxy above.", unverified: true},
+	"POST /api/v1/system/audit/event": {reason: "IngestAuditEventProxy: raw storage write, no audit POLICY decision made " +
 		"here (event type/severity/actor are the CALLING server's own core.KeyorixCore's decision) -- confirmed " +
-		"in the raw-storage-bypass registry.",
+		"in the raw-storage-bypass registry.", unverified: true},
 }
 
 // systemCeilingLayeredPermission: an allowlisted route whose "system.write is
@@ -711,6 +759,7 @@ var systemCeilingDenyChecked = map[string]bool{
 	"POST /api/v1/system/users/{id}/personal-access-tokens/revoke-all": true,
 	"POST /api/v1/system/users/{id}/sessions/delete-except":            true,
 	"POST /api/v1/system/groups/{id}/members":                          true,
+	"DELETE /api/v1/system/groups/{id}/members/{userId}":                true, // F6 sweep, 2026-09-22
 	"POST /api/v1/system/machine-credentials/{id}/revoke":              true,
 	"PUT /api/v1/system/risk-exceptions/{id}/approve":                  true,
 }
@@ -749,9 +798,10 @@ func TestSystemWriteOnlyCeilingWalk(t *testing.T) {
 		}
 		key := method + " " + route
 		checked++
+		_, inAllowlist := systemCeilingAllowlist[key]
 		switch {
 		case systemCeilingReadOnly[key] != "":
-		case systemCeilingAllowlist[key] != "":
+		case inAllowlist:
 		case systemCeilingDenyChecked[key]:
 		default:
 			uncovered = append(uncovered, key)
@@ -763,6 +813,89 @@ func TestSystemWriteOnlyCeilingWalk(t *testing.T) {
 	require.Emptyf(t, uncovered,
 		"route(s) with no ceiling classification -- add an entry to systemCeilingReadOnly, "+
 			"systemCeilingAllowlist, or a Test* function + systemCeilingDenyChecked entry: %s", strings.Join(uncovered, ", "))
+}
+
+// systemCeilingUnverifiedRatchet is the maximum number of systemCeilingAllowlist
+// entries allowed to rest on prose alone (unverified: true), not a cited
+// weakest-principal test. It started at 41 (the count the day the
+// test/unverified schema was introduced, F6 sweep 2026-09-22 Step 3),
+// already lowered to 40 the same day: RemoveGroupMemberProxy moved OUT of
+// this allowlist entirely (it now requires roles.assign, not "system.write
+// alone," so it belongs in systemCeilingDenyChecked instead). Must never go
+// up: a brand-new allowlist entry may not use unverified (doing so pushes
+// the actual count past this constant and fails
+// TestSystemCeilingAllowlistVerificationRatchet below); it must either cite
+// a real test or the author converts an existing unverified entry to make
+// room. Converting an existing entry to test: should lower this constant by
+// one in the same commit. The remaining 40 conversions are NOT written here
+// -- see that test's own doc for why (the mixed-principal authority fuzzer
+// this walk's doc comment names is the intended generator, not a one-off
+// manual sweep of ~40 hand-written tests).
+const systemCeilingUnverifiedRatchet = 40
+
+// definedTestFuncNames parses every *_test.go file in this package's own
+// directory (the working directory `go test` runs in) and returns the set
+// of top-level "func TestXxx(" names it declares. Used to verify a
+// systemCeilingAllowlistEntry.test citation names a real function, rather
+// than trusting the string -- a typo'd or since-deleted test name must fail
+// loudly, not read as "verified."
+func definedTestFuncNames(t *testing.T) map[string]bool {
+	t.Helper()
+	names := make(map[string]bool)
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		require.NoError(t, err, "parsing %s", e.Name())
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil {
+				continue
+			}
+			if strings.HasPrefix(fn.Name.Name, "Test") {
+				names[fn.Name.Name] = true
+			}
+		}
+	}
+	return names
+}
+
+// TestSystemCeilingAllowlistVerificationRatchet enforces Step 3's allowlist
+// schema (user-directed, F6 sweep 2026-09-22): every systemCeilingAllowlist
+// entry must set either test (a real, existing test proving the reason's
+// claim against the weakest principal it admits) or unverified (prose
+// only, explicitly counted) -- an entry setting neither fails outright, and
+// a test: citation naming a function this package does not actually define
+// also fails outright (see definedTestFuncNames). The unverified count is
+// compared against systemCeilingUnverifiedRatchet, which must never
+// increase -- see that constant's own doc for the intended path down.
+func TestSystemCeilingAllowlistVerificationRatchet(t *testing.T) {
+	defined := definedTestFuncNames(t)
+	var verified, unverified int
+	var missing []string
+	for key, entry := range systemCeilingAllowlist {
+		switch {
+		case entry.test != "":
+			verified++
+			if !defined[entry.test] {
+				missing = append(missing, fmt.Sprintf("%s -> %s", key, entry.test))
+			}
+		case entry.unverified:
+			unverified++
+		default:
+			t.Errorf("systemCeilingAllowlist[%q]: entry must set either test or unverified", key)
+		}
+	}
+	t.Logf("allowlist: %d verified, %d unverified (ratchet %d)", verified, unverified, systemCeilingUnverifiedRatchet)
+	require.Empty(t, missing,
+		"systemCeilingAllowlist entries citing a test that does not exist in this package: %s", strings.Join(missing, "; "))
+	require.LessOrEqualf(t, unverified, systemCeilingUnverifiedRatchet,
+		"unverified allowlist entries (%d) exceed the ratchet (%d) -- a new entry may not use unverified; "+
+			"either cite a real test or convert an existing unverified entry to make room", unverified, systemCeilingUnverifiedRatchet)
 }
 
 // TestSystemGroupGateHonorsSystemWriteAcrossActorTypes is dimensions (b) and
