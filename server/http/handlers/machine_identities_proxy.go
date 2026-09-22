@@ -950,14 +950,17 @@ func machineRoleScopeQuery(w http.ResponseWriter, r *http.Request) (storage.Scop
 // #1542: previously called storage.AssignMachineRole directly — no
 // machineInProject scope check (a machine's grant was reachable at ANY
 // project, including global scope 0, entirely caller-controlled via the
-// query params) and no requireAuthorityForRole admin-tier ceiling. Routed
-// through core.AssignMachineRole instead, closing both: machineInProject
-// bounds the grant to the machine's real project, and requireAuthorityForRole
-// only evaluates for admin-tier roles, denying actorID==0 with no
-// special-casing needed (same construction as AssignRoleToGroupWithExpiryProxy
-// — see that handler's doc) — correct for a node relay and a direct
-// system.write caller alike, no branch needed.
+// query params) and no granter-authority ceiling. Routed through
+// core.AssignMachineRole instead, closing both: machineInProject bounds the
+// grant to the machine's real project, and requireGranterHoldsRolePermissions
+// enforces a roles.assign baseline for every grant regardless of tier.
+//
+// F6 sweep (2026-09-22): that baseline reads the WithSelfMachineGranter tag
+// from ctx rather than tagging itself, so a genuine machine caller must be
+// tagged here before calling AssignMachineRole (same fix as
+// AssignRoleToGroupWithExpiryProxy).
 func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.Request) {
+	selfMachineID := machineID(r)
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
@@ -972,7 +975,15 @@ func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if err := h.coreService.AssignMachineRole(r.Context(), uint(machineID), uint(roleID), scope, actorID(r), isMachineActor(r)); err != nil {
+	// F6 sweep (2026-09-22): AssignMachineRole's roles.assign baseline
+	// (requireGranterHoldsRolePermissions) reads the WithSelfMachineGranter
+	// tag from ctx rather than tagging itself -- a genuine machine caller
+	// must be tagged here first.
+	ctx := r.Context()
+	if isMachineActor(r) {
+		ctx = core.WithSelfMachineGranter(ctx, selfMachineID)
+	}
+	if err := h.coreService.AssignMachineRole(ctx, uint(machineID), uint(roleID), scope, actorID(r), isMachineActor(r)); err != nil {
 		if isAlreadyAssignedErr(err) {
 			writeRemoteAPIError(w, http.StatusConflict, "ALREADY_ASSIGNED", "role already assigned")
 			return

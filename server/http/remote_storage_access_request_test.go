@@ -298,11 +298,17 @@ func TestRemoteStorageAccessRequest_Approvals_RealServer(t *testing.T) {
 	approver1, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "ar-approver-1", Email: "ar-approver-1@example.com", Password: pw})
 	require.NoError(t, err)
 	grantSystemWrite(t, upstream, approver1.ID)
+	// F6 sweep (2026-09-22): RequireGranterHoldsRolePermissions now requires
+	// a roles.assign baseline before the per-permission loop, closing the
+	// vacuous-pass this fixture previously relied on for a permission-less
+	// suggested role -- each approver must hold roles.assign itself.
+	grantRolesAssignScoped(t, upstream, approver1.ID, projectID)
 	sess1, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "ar-approver-1", Password: pw})
 	require.NoError(t, err)
 	approver2, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "ar-approver-2", Email: "ar-approver-2@example.com", Password: pw})
 	require.NoError(t, err)
 	grantSystemWrite(t, upstream, approver2.ID)
+	grantRolesAssignScoped(t, upstream, approver2.ID, projectID)
 	sess2, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "ar-approver-2", Password: pw})
 	require.NoError(t, err)
 	asApprover1 := newDeleteProjectScopeRemoteClient(t, baseURL, sess1.SessionToken)

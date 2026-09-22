@@ -303,6 +303,19 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 	// approving dual-control access is a human-only decision, not something
 	// ADR-085 changed.
 	resolverType, resolverID := requestActorKindAndID(r)
+	// F6 sweep (2026-09-22): a genuine machine resolver must be tagged via
+	// WithSelfMachineGranter before RequireGranterHoldsRolePermissions below
+	// (project/role-scoped branch only -- RequireAdminAuthorityAt, the
+	// secret-scoped branch, is a user-scoped check with no machine-tagging
+	// concept, and stays human-only by design, matching
+	// ApproveAccessRequestWithExpiry's identical secret-scoped check) can
+	// ever resolve against its OWN real permissions -- this comment block's
+	// own #1622-sibling note below already documents that a machine resolver
+	// is EXPECTED to be able to reach this branch; without tagging, it never
+	// actually could.
+	if resolverType == core.ActorTypeMachine {
+		r = r.WithContext(core.WithSelfMachineGranter(r.Context(), resolverID))
+	}
 	switch body.State {
 	case core.AccessRequestApproved:
 		if resolverType == core.ActorTypeUser && resolverID == existing.UserID {
@@ -445,6 +458,13 @@ func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter,
 	if approverID == 0 {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "approver_id must identify an attributable, authenticated caller")
 		return
+	}
+	// F6 sweep (2026-09-22): see UpdateAccessRequestProxy's identical comment
+	// -- a genuine machine approver must be tagged via WithSelfMachineGranter
+	// before RequireGranterHoldsRolePermissions below (project/role-scoped
+	// branch only) can resolve against its OWN real permissions.
+	if approverType == core.ActorTypeMachine {
+		r = r.WithContext(core.WithSelfMachineGranter(r.Context(), approverID))
 	}
 	// #1642-shape ceiling gap, closed the same way UpdateAccessRequestProxy's
 	// approve branch already is: re-derive maker!=checker plus the same
