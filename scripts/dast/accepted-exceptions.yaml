@@ -1,0 +1,58 @@
+# Accepted-exceptions allowlist for DAST findings that are deliberately not
+# actionable: either a genuine, permanent design tradeoff (CSP) or a scanner
+# false positive against SPA client-side routing (100001) or the CSRF
+# double-submit cookie (10010). This is the ONE suppression mechanism for the
+# DAST rig -- zap-api-scope-hook.py (a ZAP-native alertFilter) has been
+# retired and its 100001 rule migrated here, so a finding is never suppressed
+# in two different places by two different mechanisms.
+#
+# Matching, most-specific field wins:
+#   - If alert_ref is set, the finding's alertRef must match EXACTLY (ZAP's
+#     rules like 10055 "CSP" are families with numbered sub-checks --
+#     10055-6 is specifically style-src unsafe-inline; a bare plugin_id match
+#     would also silently swallow 10055-1/-2/-3/... which flag different,
+#     unrelated CSP problems). Falls back to plugin_id only when alert_ref is
+#     absent from the entry.
+#   - If param is set, at least one of the finding's instances must have that
+#     exact param (e.g. csrf_token) -- so this NEVER also suppresses the same
+#     rule firing on a DIFFERENT cookie (kx_session, kx_admin_session).
+#   - url_regex always applies, matched against instance URIs.
+#   - ALL fields present on the entry must match. plugin_id/alert_ref alone
+#     is never sufficient by itself.
+#
+# expected_risk is NOT optional bookkeeping: create-issues.sh compares the
+# CURRENT finding's risk against it, and if the finding now scores HIGHER
+# than expected_risk, it is filed anyway (title prefixed
+# "[exception risk escalated]") rather than silently suppressed. An accepted
+# exception is an assertion about a SPECIFIC risk level, not a blanket "never
+# file this rule again".
+#
+# Format: one flat "- key: value" block per entry, 2-space-indented
+# continuation keys. Parsed by a small line-based parser in create-issues.sh
+# (no YAML library on this box) -- keep entries in this exact flat shape;
+# nested structures, multi-line folded scalars, and inline comments are not
+# supported by that parser.
+
+- scanner: zap
+  plugin_id: 10055
+  alert_ref: 10055-6
+  expected_risk: Medium
+  url_regex: .*
+  reason: style-src 'unsafe-inline' is required by the SPA's Tailwind/CSS-in-JS runtime style injection. script-src carries no unsafe-inline, so the primary XSS vector (inline script injection) stays blocked. Accepted design tradeoff, not a scanner false positive -- expected to recur on every full scan. Scoped to alert_ref 10055-6 specifically (style-src), NOT the bare 10055 family, so a different CSP sub-finding (e.g. script-src unsafe-inline) still files.
+  reference: docs/DAST.md Known accepted exceptions; server/middleware/security_headers.go contentSecurityPolicy; issues #1213 #1273 #1302 #1971
+
+- scanner: zap
+  plugin_id: 100001
+  expected_risk: Low
+  url_regex: ^https?://[^/]+(/(?!api/|auth/|scim/|system/init|health|readyz|metrics|status|swagger/|openapi\.yaml).*)?$
+  reason: Unexpected Content Types fires on the SPA shell and any other non-API path, which correctly serves text/html by design (client-side routing fallback) rather than JSON. Genuine API paths (api/, auth/, etc.) are excluded from this pattern and still enforce JSON-only content types. Migrated from zap-api-scope-hook.py's ZAP-native alertFilter so there is one suppression mechanism instead of two.
+  reference: server/http/router.go NotFound handler / backendRoutePrefixes; issues #1245 #1249
+
+- scanner: zap
+  plugin_id: 10010
+  alert_ref: 10010
+  param: csrf_token
+  expected_risk: Low
+  url_regex: .*
+  reason: csrf_token is deliberately non-HttpOnly -- the SPA reads it and echoes it back as X-CSRF-Token for the double-submit CSRF pattern; the security property comes from CORS/origin restriction, not cookie secrecy. Scoped to param csrf_token specifically, NOT the bare 10010 rule, so the same rule firing on kx_session or kx_admin_session (which would be a real bug) still files. Not URL-scoped: csrf_token is set on every session-establishing endpoint (login, impersonation begin/end), not just logout.
+  reference: server/middleware/session_cookie.go SetCSRFCookie doc comment; server/http/integration_test.go TestSessionCookieAttrs_AcrossAuthFlows; issue #1972
