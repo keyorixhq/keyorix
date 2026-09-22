@@ -111,3 +111,50 @@ func TestUpdateUserIfActiveStateMatchesProxy_UsersWriteHolder_CanRewriteOtherUse
 	require.Equal(t, newEmail, after.Email,
 		"a caller who genuinely holds users.write must still be able to edit another user's profile via this route")
 }
+
+// TestUpdateUserIfActiveStateMatchesProxy_MachineUsersWriteHolder_CanRewriteOtherUserEmail
+// is the machine-actor analogue of the control case above (Task 3,
+// system-proxy-target-authority audit): CLI client mode's bearer token
+// (internal/cli/modes.go's initClientMode) is an operator-provisioned API
+// key of EITHER actor type, and core.RequireUsersWriteAuthority's underlying
+// core.AuthorizePrincipal takes a materially different code path for a
+// machine actor (GetMachineRoleIDsAt + RoleSetHasPermission,
+// internal/core/authz.go) than for the human path above (c.Authorize) --
+// the human-only control case does not by itself prove a real machine-credential
+// deployment still works post-fix.
+func TestUpdateUserIfActiveStateMatchesProxy_MachineUsersWriteHolder_CanRewriteOtherUserEmail(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+	c := newTestCore(t)
+	ctx := context.Background()
+	createTestToken(t, c)
+	admin, err := c.Storage().GetUserByUsername(ctx, "testadmin")
+	require.NoError(t, err)
+
+	router, err := NewRouter(&config.Config{}, c)
+	require.NoError(t, err)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	_ = createSystemWriteAndUsersWriteToken(t, c) // seeds the "ceiling_test_system_writer_users_write" role by name
+	token := createUsersWriteNodeToken(t, c)
+	const newEmail = "ceiling-probe-machine-authorized@example.invalid"
+	body, err := json.Marshal(map[string]any{
+		"username": admin.Username, "email": newEmail,
+		"display_name": admin.DisplayName, "active": admin.IsActive, "updated_at": admin.UpdatedAt, "from_active": admin.IsActive,
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/system/users/%d/active-transition", srv.URL, admin.ID), bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	after, err := c.Storage().GetUser(ctx, admin.ID)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, newEmail, after.Email,
+		"a MACHINE credential holding users.write must still be able to edit another user's profile via this route")
+}

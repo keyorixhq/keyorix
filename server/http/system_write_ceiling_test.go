@@ -82,6 +82,101 @@ func createSystemWriteOnlyToken(t *testing.T, c *core.KeyorixCore) string {
 	return sess.SessionToken
 }
 
+// createSystemWriteAndRolesAssignToken creates a human user holding system.write
+// AND roles.assign, via a custom role well outside adminRoleNames (same rationale
+// as createSystemWriteOnlyToken — an admin-tier role would bypass every
+// permission check and make a test asserting on roles.assign specifically
+// vacuous). Represents the legitimate direct caller RemoveGlobalAdminRoleGuardedProxy's
+// fix is meant to keep working: someone who actually holds the same authority the
+// human-facing DELETE /api/v1/user-roles route already requires for this operation.
+// Moved here from system_write_ceiling_table_test.go (replaced by
+// system_write_ceiling_walk_test.go) since it's used outside that file too
+// (g80_final_sweep_test.go, machine_privilege_ceiling_creation_test.go).
+func createSystemWriteAndRolesAssignToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+
+	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "sys_write_roles_assign", Email: "sys_write_roles_assign@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_roles_assign@example.com", "system_viewer"))
+
+	ceilingTestSystemWriterRolesAssignName, err := identity.NewFoldedName("ceiling_test_system_writer_roles_assign")
+	require.NoError(t, err)
+	role, err := c.Storage().CreateRole(ctx, ceilingTestSystemWriterRolesAssignName, "test-only role: system.write + roles.assign, nothing else")
+	require.NoError(t, err)
+
+	perms, err := c.ListPermissions(ctx)
+	require.NoError(t, err)
+	var systemWriteID, rolesAssignID uint
+	for _, p := range perms {
+		switch p.Name {
+		case "system.write":
+			systemWriteID = p.ID
+		case "roles.assign":
+			rolesAssignID = p.ID
+		}
+	}
+	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
+	require.NotZero(t, rolesAssignID, "roles.assign permission must already be seeded by bootstrap")
+
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID, false))
+	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_roles_assign@example.com", "ceiling_test_system_writer_roles_assign"))
+
+	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_roles_assign", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+	return sess.SessionToken
+}
+
+// createSystemWriteAndUsersWriteToken creates a human user holding system.write
+// AND users.write, via a custom role well outside adminRoleNames (same rationale
+// as createSystemWriteOnlyToken). Represents the legitimate direct caller
+// CreateSetupTokenProxy's fix is meant to keep working: someone who actually holds
+// the same authority every other admin-facing route that mints a setup token
+// (POST /api/v1/users, POST /api/v1/users/{id}/resend-setup-link) already requires.
+// Moved here from system_write_ceiling_table_test.go (replaced by
+// system_write_ceiling_walk_test.go) since it's used outside that file too
+// (users_active_transition_proxy_ceiling_test.go, F5).
+func createSystemWriteAndUsersWriteToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+
+	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "sys_write_users_write", Email: "sys_write_users_write@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
+	})
+	require.NoError(t, err)
+	require.NoError(t, c.RemoveRoleFromUser(ctx, "sys_write_users_write@example.com", "system_viewer"))
+
+	ceilingTestSystemWriterUsersWriteName, err := identity.NewFoldedName("ceiling_test_system_writer_users_write")
+	require.NoError(t, err)
+	role, err := c.Storage().CreateRole(ctx, ceilingTestSystemWriterUsersWriteName, "test-only role: system.write + users.write, nothing else")
+	require.NoError(t, err)
+
+	perms, err := c.ListPermissions(ctx)
+	require.NoError(t, err)
+	var systemWriteID, usersWriteID uint
+	for _, p := range perms {
+		switch p.Name {
+		case "system.write":
+			systemWriteID = p.ID
+		case "users.write":
+			usersWriteID = p.ID
+		}
+	}
+	require.NotZero(t, systemWriteID, "system.write permission must already be seeded by bootstrap")
+	require.NotZero(t, usersWriteID, "users.write permission must already be seeded by bootstrap")
+
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
+	require.NoError(t, c.AssignPermissionToRole(ctx, 0, role.ID, usersWriteID, false))
+	require.NoError(t, c.AssignRoleToUser(ctx, "sys_write_users_write@example.com", "ceiling_test_system_writer_users_write"))
+
+	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "sys_write_users_write", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+	return sess.SessionToken
+}
+
 func TestSystemWriteOnlyCeiling_RealServer(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	defer i18n.ResetForTesting()

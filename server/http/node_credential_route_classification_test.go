@@ -116,12 +116,22 @@ var classifiedNodeCredentialRoutes = []nodeRouteEntry{
 	{"PUT", "/api/v1/system/risk-exceptions/{id}/approve", classPerActorCeiling,
 		"ApproveRiskExceptionProxy: #1524 finding (c) -- dual control's self-approval check, now enforced for a machine actor via actorIsMachine (P1 fix)"},
 	{"POST", "/api/v1/system/project-memberships", classNodeLegitimate,
-		"CreateMembershipProxy: body.Role is required and passed straight to a raw storage.CreateProjectMembership call, no ceiling anywhere -- SAME #1542-shaped raw-storage-bypass pattern (a real ROLE field, not just a status field), NOT YET VERIFIED for reach -- noted in the P0/P2 report as a follow-up candidate, not investigated further here per scope"},
+		"CreateMembershipProxy: CORRECTED (system-proxy-target-authority audit, 2026-09-21) -- the entry here " +
+			"used to claim 'no ceiling anywhere ... NOT YET VERIFIED for reach,' describing pre-#1578 behavior that " +
+			"was already stale. Verified directly: the handler (server/http/handlers/project_memberships_proxy.go) " +
+			"calls core.RequireGranterHoldsRolePermissions(actorID(r), membershipRole.ID, Scope{ProjectID: " +
+			"body.ProjectID}, isMachineActor(r)) before persisting, and forces InvitedBy to actorID(r) -- a real, " +
+			"project-scoped escalation-by-proxy ceiling, not a raw passthrough."},
 	// UpdateMembershipProxy (PUT /api/v1/system/project-memberships/{id}) was
 	// DELETED (#1586, docs/adr-090-stale-fork-proxy-deletion.md) -- no live
 	// caller; row removed, no route to classify.
 	{"PUT", "/api/v1/system/project-memberships/{id}/transition", classNodeLegitimate,
-		"TransitionMembershipProxy: state transition (e.g. pending->active), not a role change -- lower concern than Create/Update above but same raw-storage shape"},
+		"TransitionMembershipProxy: CORRECTED (system-proxy-target-authority audit, 2026-09-21) -- the entry here " +
+			"used to claim 'same raw-storage shape' as the (now also corrected) Create row above, describing " +
+			"pre-#1546 behavior. Verified directly: the handler fully delegates to core.TransitionMembership, " +
+			"which re-derives requireGranterHoldsRolePermissions (project-scoped) on the ONE transition that " +
+			"actually grants anything (to==MembershipActive) and reads only (projectID, membershipID, to, " +
+			"actorID) off the wire -- not a raw passthrough."},
 }
 
 // --- Route extraction from router.go (scoped-down sibling of the #1511 AST
