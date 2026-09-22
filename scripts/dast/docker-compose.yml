@@ -1,0 +1,49 @@
+# Keyorix DAST stack — persistent on lxc-keyorix-dast (192.168.10.61).
+# cp .env.example .env, fill in values, then: docker compose up -d
+# Scans: ./scan-nuclei.sh (daily) and ./scan-zap.sh (weekly).
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keyorix
+      POSTGRES_USER: keyorix
+      POSTGRES_PASSWORD: ${KEYORIX_DB_PASSWORD:?required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keyorix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keyorix:
+    build:
+      context: /opt/keyorix-dast/src
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    environment:
+      KEYORIX_CONFIG_PATH: /app/keyorix-dast.yaml
+      KEYORIX_DB_PASSWORD: ${KEYORIX_DB_PASSWORD:?required}
+      KEYORIX_DAST_KEK: ${KEYORIX_DAST_KEK:?required}
+      KEYORIX_ADMIN_USERNAME: ${KEYORIX_ADMIN_USERNAME:-dast-admin}
+      KEYORIX_ADMIN_EMAIL: ${KEYORIX_ADMIN_EMAIL:-dast@keyorix.local}
+      KEYORIX_ADMIN_PASSWORD: ${KEYORIX_ADMIN_PASSWORD:?required}
+      KEYORIX_BOOTSTRAP_TOKEN: ${KEYORIX_BOOTSTRAP_TOKEN:?required}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./keyorix-dast.yaml:/app/keyorix-dast.yaml:ro
+      - keyorix_keys:/app/keys
+      # Built by build-web-dist.sh (pnpm build inside a throwaway node
+      # container) after every `git pull` on src/ -- so the DAST server
+      # actually serves the real dashboard (single-binary mode) instead of
+      # the "Web UI not bundled" placeholder, matching the CI dast.yml fix.
+      - /opt/keyorix-dast/src/web/dist:/app/web-dist:ro
+
+volumes:
+  postgres_data:
+  keyorix_keys:

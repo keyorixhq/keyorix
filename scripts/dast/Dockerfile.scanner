@@ -1,0 +1,18 @@
+# keyorix-scanner — ZAP + Nuclei baked into one image.
+# Build once on the DAST rig, prune build cache after, never pull at scan time.
+FROM ghcr.io/zaproxy/zaproxy:stable
+
+ARG NUCLEI_VERSION=3.11.0
+
+USER root
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends wget unzip \
+    && wget -qO /tmp/nuclei.zip \
+         "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" \
+    && unzip /tmp/nuclei.zip nuclei -d /usr/local/bin/ \
+    && chmod +x /usr/local/bin/nuclei \
+    && rm -rf /tmp/nuclei.zip /var/lib/apt/lists/*
+
+# Pre-fetch Nuclei templates as the zap user so scan runs need no network.
+USER zap
+RUN nuclei -update-templates -silent 2>/dev/null || true

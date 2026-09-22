@@ -1,0 +1,37 @@
+environment: "development"
+locale:
+  language: "en"
+  fallback_language: "en"
+server:
+  http:
+    enabled: true
+    port: "8080"
+    domain: "localhost"
+    swagger_enabled: true
+    tls:
+      enabled: false
+    ratelimit:
+      enabled: false
+    web_assets_path: "/app/web-dist"
+  grpc:
+    enabled: false
+storage:
+  type: postgres
+  database:
+    host: postgres
+    port: "5432"
+    name: keyorix
+    user: keyorix
+    ssl_mode: prefer
+  encryption:
+    enabled: true
+    dek_path: "/app/keys/data.key"
+    salt_path: "/app/keys/kek.salt"
+    key_provider:
+      type: env
+      env_var: KEYORIX_DAST_KEK
+security:
+  enable_file_permission_check: false
+soft_delete:
+  enabled: true
+  retention_days: 30
