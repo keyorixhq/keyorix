@@ -97,29 +97,33 @@ func TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentials_Real
 	_ = session
 }
 
-// TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentialsEvenWithoutUsersWrite_RealServer
-// is #1572 corrected 2026-09-03: the original fix called
-// core.RevokeAllPersonalAccessTokensForUser/core.DeleteSessionsForUserExcept,
-// which gate on requireUserCredentialsRevokeAuthority (users.write) — the
-// RIGHT ceiling for a caller invoking revocation as its OWN standalone
-// action, but the WRONG one here, since this /system route's own gate is the
-// broader system.write every /system proxy accepts, not users.write
-// specifically. A caller reaching this route holding system.write but NOT
-// users.write hit that ceiling on every deactivation, had the revocation
-// failure logged and swallowed as "best-effort," and left the deactivated
-// user's PAT/session live and warm-cache-usable. This drives the exact
-// scenario with a caller who does not hold users.write and confirms both
-// credentials come back revoked anyway — proving core.RevokeUserCredentialsForDeactivation
-// no longer re-authorizes the caller for what is a mandatory consequence of
-// an already-committed deactivation, not an independent decision.
-func TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentialsEvenWithoutUsersWrite_RealServer(t *testing.T) {
+// TestUpdateUserIfActiveStateMatchesProxy_RefusedWithoutUsersWrite_NeitherDeactivatesNorRevokes_RealServer
+// supersedes the pre-F5 version of this test (#1572 corrected 2026-09-03),
+// which drove this exact scenario -- a caller holding system.write but no
+// users.write -- and asserted the deactivation AND the PAT/session revocation
+// both still happened, because back then this route's own gate was the
+// broader, non-target-scoped system.write every /system proxy accepts, with
+// no further per-target check at all. #F5 closed the broader hole that
+// #1572's "EvenWithoutUsersWrite" scenario was itself downstream of: this
+// route now requires the SAME users.write authority core.RevokeUserCredentialsForDeactivation's
+// callers already needed, checked BEFORE the conditional write, not just
+// before the post-deactivation cleanup -- so a caller without users.write can
+// no longer reach the deactivation at all, and #1572's "deactivated but not
+// revoked" partial state can no longer occur by construction (there is no
+// window where the write succeeds but the caller lacks the authority the
+// revocation needs). This asserts the new invariant directly: the PUT is
+// refused outright, and neither the user's active state nor their live
+// PAT/session survive... unrevoked, unchanged -- verified straight off
+// storage.
+func TestUpdateUserIfActiveStateMatchesProxy_RefusedWithoutUsersWrite_NeitherDeactivatesNorRevokes_RealServer(t *testing.T) {
 	cs, _ := freshCoreS12WithAdmin(t)
 	h, err := NewUserHandler(cs)
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	// A caller with system.write but explicitly NO users.write anywhere —
-	// requireUserCredentialsRevokeAuthority would refuse this actor outright.
+	// A caller with system.write but explicitly NO users.write anywhere --
+	// core.RequireUsersWriteAuthority must refuse this actor outright, before
+	// ever touching storage.
 	caller, err := cs.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "g80-1572-caller", Email: "g80-1572-caller@example.com",
 		DisplayName: "G80 1572 Caller", Password: "NotArealpassword123!",
@@ -142,7 +146,7 @@ func TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentialsEvenW
 	require.NoError(t, err)
 	hashes, err := cs.Storage().ListSessionTokenHashesForUser(ctx, target.ID)
 	require.NoError(t, err)
-	require.Len(t, hashes, 1, "target must have exactly one live session before deactivation")
+	require.Len(t, hashes, 1, "target must have exactly one live session before the attempt")
 
 	body, err := json.Marshal(map[string]interface{}{
 		"username": target.Username, "email": target.Email,
@@ -151,27 +155,28 @@ func TestUpdateUserIfActiveStateMatchesProxy_DeactivationRevokesCredentialsEvenW
 	require.NoError(t, err)
 	req := httptest.NewRequest("PUT", "/", bytes.NewReader(body))
 	// caller holds no roles at all -- not even users.write, let alone
-	// roles.assign -- deliberately, to prove revocation no longer depends on
-	// the caller's own permission set.
+	// roles.assign -- deliberately, to prove the F5 ceiling refuses this
+	// caller before the deactivation (and therefore the revocation it would
+	// have triggered) ever runs.
 	uc := &middleware.UserContext{UserID: caller.ID, Username: caller.Username, Email: caller.Email}
 	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
 	req = withChiParams(req, map[string]string{"id": machineUintToStr(target.ID)})
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
-	require.Equal(t, 200, w.Code, "deactivation itself must still succeed: %s", w.Body.String())
+	require.Equal(t, 403, w.Code, "a caller with no users.write must be refused outright: %s", w.Body.String())
 
 	reloaded, err := cs.Storage().GetUser(ctx, target.ID)
 	require.NoError(t, err)
-	assert.False(t, reloaded.IsActive)
+	assert.True(t, reloaded.IsActive, "the refused request must not have deactivated the target")
 
 	patAfter, err := cs.Storage().GetPersonalAccessTokenByHash(ctx, "hash-1572b-pat")
 	require.NoError(t, err)
-	assert.True(t, patAfter.Revoked, "the target's PAT must be revoked even though the caller holds no users.write grant")
+	assert.False(t, patAfter.Revoked, "no deactivation happened, so nothing should have triggered a revocation")
 	assert.Equal(t, pat.ID, patAfter.ID)
 
 	hashesAfter, err := cs.Storage().ListSessionTokenHashesForUser(ctx, target.ID)
 	require.NoError(t, err)
-	assert.Empty(t, hashesAfter, "the target's session must be deleted even though the caller holds no users.write grant")
+	assert.Len(t, hashesAfter, 1, "the target's session must still be live -- the refused request must be a total no-op")
 }
 
 // TestUpdateUserIfActiveStateMatchesProxy_ReactivationDoesNotRevoke_RealServer
