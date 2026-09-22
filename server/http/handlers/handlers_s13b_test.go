@@ -314,6 +314,11 @@ func TestUpdateWebAuthnCredentialProxy_Success_S13B(t *testing.T) {
 		fmt.Sprintf("/api/v1/system/webauthn/credentials/%d", cred.ID),
 		bytes.NewReader(body))
 	r = withChiParams(r, map[string]string{"id": strconv.FormatUint(uint64(cred.ID), 10)})
+	// Self-service: caller authenticates as the credential's own owner
+	// (UserID 1), matching body.UserID exactly — the route's one
+	// no-extra-check path (#UpdateWebAuthnCredential, system-proxy-target-authority
+	// audit).
+	r = withUserCtx(r)
 	w := httptest.NewRecorder()
 	h.UpdateWebAuthnCredentialProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)

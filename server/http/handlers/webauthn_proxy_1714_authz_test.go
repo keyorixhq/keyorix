@@ -30,6 +30,34 @@ func putUpdateWebAuthnCredential(t *testing.T, h *AuthHandler, urlID string, bod
 	return w
 }
 
+// putUpdateWebAuthnCredentialAs is putUpdateWebAuthnCredential's authenticated
+// counterpart — the request carries a caller identity (callerUserID) via
+// withUserCtxID.
+//
+// #UpdateWebAuthnCredential (system-proxy-target-authority audit):
+// UpdateWebAuthnCredentialProxy now re-derives caller authority before
+// applying a disable — the self-service branch (actorID == body.UserID)
+// requires no extra check, matching the self-service DELETE
+// /auth/webauthn/credentials/{id} route these tests otherwise mirror. Tests
+// below authenticate AS the identity the wire body itself claims
+// (body["user_id"]), the same "attacker uses their own real account to try
+// to name someone else's credential" shape #1622's original vulnerability
+// actually took — so they still reach the pre-existing ownership/ID-mismatch
+// checks under test here, rather than being stopped earlier by the new
+// caller-authority check for an unrelated reason.
+func putUpdateWebAuthnCredentialAs(t *testing.T, h *AuthHandler, urlID string, callerUserID uint, body map[string]interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodPut, "/api/v1/system/webauthn/credentials/"+urlID, bytes.NewReader(b)), "id", urlID),
+		callerUserID, "webauthn-caller",
+	)
+	w := httptest.NewRecorder()
+	h.UpdateWebAuthnCredentialProxy(w, req)
+	return w
+}
+
 // TestUpdateWebAuthnCredentialProxy_1622_LegitimateDisable_HappyPath is the
 // route's one remaining legitimate use: a well-formed disable, identified
 // consistently across URL id and body (user_id, credential_id).
@@ -46,7 +74,9 @@ func TestUpdateWebAuthnCredentialProxy_1622_LegitimateDisable_HappyPath(t *testi
 	require.NotZero(t, cred.ID)
 
 	idStr := strconv.FormatUint(uint64(cred.ID), 10)
-	w := putUpdateWebAuthnCredential(t, h, idStr, map[string]interface{}{
+	// Self-service: caller authenticates as the credential's own owner (501),
+	// matching body.UserID exactly — the route's one no-extra-check path.
+	w := putUpdateWebAuthnCredentialAs(t, h, idStr, 501, map[string]interface{}{
 		"user_id": 501, "credential_id": credIDBytes, "disabled": true,
 	})
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -76,8 +106,11 @@ func TestUpdateWebAuthnCredentialProxy_1622_RefusesOwnershipReassignment(t *test
 	require.NotZero(t, cred.ID)
 
 	idStr := strconv.FormatUint(uint64(cred.ID), 10)
-	// Attacker claims a DIFFERENT user_id than the credential's real owner.
-	w := putUpdateWebAuthnCredential(t, h, idStr, map[string]interface{}{
+	// Attacker claims a DIFFERENT user_id than the credential's real owner --
+	// authenticated AS that claimed identity (999999), self-service, so the
+	// request reaches the pre-existing ownership-lookup check under test here
+	// rather than being stopped by the new caller-authority check first.
+	w := putUpdateWebAuthnCredentialAs(t, h, idStr, 999999, map[string]interface{}{
 		"user_id": 999999, "credential_id": credIDBytes, "disabled": true,
 	})
 	assert.Equal(t, http.StatusNotFound, w.Code,
@@ -141,7 +174,10 @@ func TestUpdateWebAuthnCredentialProxy_1622_RefusesIDMismatch(t *testing.T) {
 	require.NotEqual(t, credA.ID, credB.ID)
 
 	// URL names A's id, but the body's (credential_id, user_id) names B.
-	w := putUpdateWebAuthnCredential(t, h, strconv.FormatUint(uint64(credA.ID), 10), map[string]interface{}{
+	// Caller authenticates as 504 (self-service, matching body.UserID) so the
+	// request reaches the pre-existing URL-vs-body ID-mismatch check under
+	// test here.
+	w := putUpdateWebAuthnCredentialAs(t, h, strconv.FormatUint(uint64(credA.ID), 10), 504, map[string]interface{}{
 		"user_id": 504, "credential_id": credB.CredentialID, "disabled": true,
 	})
 	assert.Equal(t, http.StatusConflict, w.Code)
