@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -346,8 +347,20 @@ func (c *KeyorixCore) requireSecret(ctx context.Context, id uint) (*models.Secre
 // EventSecretDependencyRestored on restore. projectID is used to load the full edge
 // list; secretName is included in the human-readable description. Errors from the
 // edge list query are logged but never surface to the caller — the delete/restore
-// already succeeded and the audit emission is best-effort.
+// already succeeded and the audit emission is best-effort. A panic during that
+// same query is recovered here too (found live by FuzzStorageFaultOperations,
+// server/faultops): without the recover, a panic propagates straight through
+// DeleteSecret/RestoreSecret and out to the real Recovery middleware, which
+// turns it into a 500 — but the delete/restore has ALREADY committed by this
+// point, so the caller is told the request failed when it actually succeeded
+// (oracle (a): reported ERROR, but SecretNode state changed anyway). An error
+// return was already handled correctly; only the panic path was missing.
 func (c *KeyorixCore) emitDependencyLifecycleEvents(ctx context.Context, eventType string, actorID, secretID, projectID uint, secretName string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Warning: dependency-lifecycle event emission for secret %d panicked (best-effort, primary operation already succeeded): %v", secretID, r)
+		}
+	}()
 	edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
 	if err != nil {
 		return // best-effort; the primary operation already succeeded
