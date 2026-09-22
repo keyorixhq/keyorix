@@ -772,8 +772,8 @@ func TestCreateAccessReviewCampaignProxy_HappyPath_S26(t *testing.T) {
 		"state":      "open",
 		"created_by": 1,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns",
-		bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(w, req)
@@ -883,12 +883,12 @@ func TestCreateAccessReviewItemsProxy_EmptyItems_S26(t *testing.T) {
 	require.NoError(t, db.Create(campaign).Error)
 
 	body, _ := json.Marshal(map[string]interface{}{"items": []interface{}{}})
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPost,
 			fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items", campaign.ID),
 			bytes.NewReader(body)),
 		"id", uintStrS26(campaign.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewItemsProxy(w, req)
@@ -1110,7 +1110,7 @@ func TestRevokeBreakGlassActivationProxy_NotFound_S26(t *testing.T) {
 // TestRevokeBreakGlassActivationProxy_NotFound_S26 used to (imprecisely) assert
 // via a non-existent ID instead.
 func TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26(t *testing.T) {
-	cs := freshCoreS26(t)
+	cs, _ := freshCoreS26WithAdmin(t)
 	h := NewCatalogHandler(cs)
 
 	revokedAt := time.Now().UTC()
@@ -1145,7 +1145,7 @@ func TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26(t *testing.T) {
 // finding produced, duplicated at this second (remote-storage-proxy) call
 // site alongside core.RevokeBreakGlass's own guard.
 func TestRevokeBreakGlassActivationProxy_ExpiredStateStillRevocable_S26(t *testing.T) {
-	cs := freshCoreS26(t)
+	cs, _ := freshCoreS26WithAdmin(t)
 	h := NewCatalogHandler(cs)
 
 	activation, err := cs.Storage().CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{
@@ -1179,7 +1179,7 @@ func TestRevokeBreakGlassActivationProxy_ExpiredStateStillRevocable_S26(t *testi
 // user_roles (the table RBAC reads) after a successful revoke, not just
 // reported revoked in the activation row.
 func TestRevokeBreakGlassActivationProxy_RemovesRoleGrant(t *testing.T) {
-	cs := freshCoreS26(t)
+	cs, _ := freshCoreS26WithAdmin(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
 
@@ -1676,11 +1676,11 @@ func TestExpireSetupTokenProxy_HappyPath_S26(t *testing.T) {
 
 	// ExpireSetupTokenProxy uses chi "id" (token ID), not a JSON body.
 	// Use a real token ID of 1; MarkSetupTokenExpired with a non-existent ID still succeeds.
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodPost,
 			"/api/v1/system/setup-tokens/1/expire", nil),
 		"id", "1",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.ExpireSetupTokenProxy(w, req)
 	// MarkSetupTokenExpired with non-existent ID returns nil → 200 OK

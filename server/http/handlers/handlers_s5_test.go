@@ -1460,9 +1460,16 @@ func TestExpireSetupTokenProxy_BadIDS5(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestExpireSetupTokenProxy_HappyPath: ExpireSetupTokenProxy now requires
+// users.write (global scope) -- #ExpireSetupToken (system-proxy-target-authority
+// audit). newAuthHandlerWithWebAuthn is backed by the shared, non-admin
+// sharedS4Core, so this uses the same s4AdminActorID/seedS4AdminActor/
+// withUserCtxID pattern other s4/s5/s9 tests needing admin authority against
+// that shared core already use (e.g. TestCatalogHandler_CreateSoDPolicyProxy_HappyPath).
 func TestExpireSetupTokenProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999")
+	seedS4AdminActor(t, h.coreService)
+	req := withUserCtxID(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999"), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.ExpireSetupTokenProxy(w, req)
 	// row 9999 not found → expired: true (success)
@@ -3542,11 +3549,20 @@ func TestPruneLoginAttemptsProxy_BadJSONS5(t *testing.T) {
 
 // createGroupForTest creates a group via proxy and returns its ID. It uses a
 // unique name suffix so parallel test runs produce distinct rows.
+//
+// CreateGroupProxy now requires the same caller authority
+// (h.requireGroupsProxyUsersWrite, i.e. users.write) as the human-facing
+// route, so this helper seeds the shared s4 core's fixed admin actor
+// (seedS4AdminActor / s4AdminActorID) and authenticates as it, same as
+// other s4 proxy-mutation tests.
 func createGroupForTest(t *testing.T, suffix string) uint {
 	t.Helper()
-	h := newGroupHandlerS4(t)
+	cs := newHandlerCoreS4(t)
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	seedS4AdminActor(t, cs)
 	body := `{"name":"s5-grp-` + suffix + `","description":"s5 test"}`
-	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+	req := withUserCtxID(httptest.NewRequest("POST", "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.CreateGroupProxy(w, req)
 	require.Equal(t, 200, w.Code, "createGroupForTest: unexpected status %d: %s", w.Code, w.Body.String())
@@ -3573,7 +3589,7 @@ func TestUpdateGroupProxy_HappyPath(t *testing.T) {
 	id := createGroupForTest(t, "update")
 	h := newGroupHandlerS4(t)
 	body := `{"name":"s5-grp-update-renamed","description":"updated"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", strconv.FormatUint(uint64(id), 10))
+	req := withUserCtxID(withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
@@ -3582,7 +3598,7 @@ func TestUpdateGroupProxy_HappyPath(t *testing.T) {
 func TestDeleteGroupProxy_HappyPath(t *testing.T) {
 	id := createGroupForTest(t, "delete")
 	h := newGroupHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", strconv.FormatUint(uint64(id), 10))
+	req := withUserCtxID(withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.DeleteGroupProxy(w, req)
 	assert.Equal(t, 200, w.Code)
@@ -3592,12 +3608,12 @@ func TestRestoreGroupProxy_HappyPath(t *testing.T) {
 	id := createGroupForTest(t, "restore")
 	h := newGroupHandlerS4(t)
 	// First delete the group so restore has something to work with.
-	dReq := withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", strconv.FormatUint(uint64(id), 10))
+	dReq := withUserCtxID(withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
 	dW := httptest.NewRecorder()
 	h.DeleteGroupProxy(dW, dReq)
 	require.Equal(t, 200, dW.Code)
 	// Now restore.
-	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", strconv.FormatUint(uint64(id), 10))
+	req := withUserCtxID(withChiParam(httptest.NewRequest("POST", "/", nil), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
 	w := httptest.NewRecorder()
 	h.RestoreGroupProxy(w, req)
 	assert.Equal(t, 200, w.Code)
