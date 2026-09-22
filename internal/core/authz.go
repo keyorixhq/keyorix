@@ -751,28 +751,65 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, ac
 	if actorID == 0 && !actorIsMachine {
 		return nil
 	}
-	perms, err := c.storage.GetRolePermissions(ctx, roleID)
-	if err != nil {
-		return fmt.Errorf("failed to resolve role permissions: %w", err)
+	selfMachineID, isSelfMachineGrant := uint(0), false
+	if actorIsMachine {
+		selfMachineID, isSelfMachineGrant = selfMachineGranterFromContext(ctx)
+	}
+
+	// Baseline (F6 sweep, 2026-09-22): granting ANY role requires roles.assign
+	// at scope, independent of what that role happens to bundle. Without this,
+	// a role that bundles ZERO permissions -- a legal, ordinary role, not an
+	// edge case -- made the per-permission loop below vacuously succeed for
+	// ANY caller at ANY scope: zero permissions means zero loop iterations,
+	// so "you hold every permission this role bundles" was trivially true of
+	// nobody in particular. Every caller of this function already documents
+	// itself as gating a role GRANT (AssignRoleToGroup, AssignMachineRole,
+	// AssignUserRoleWithExpiry, CreateInvitationProxy/CreateMembershipProxy's
+	// escalation-by-proxy checks, ...) and assumes the actor separately holds
+	// roles.assign -- this makes that assumption load-bearing here instead of
+	// silently absent whenever the role's own bundle happens to be empty.
+	//
+	// Exception: CreateUserWithAssignments' MANDATORY, caller-non-discretionary
+	// system_viewer default (never an explicit ask) intentionally calls
+	// requireGranterHoldsRolePermissionsNoBaseline instead of this function --
+	// see that call site's own comment for why the roles.assign baseline does
+	// not apply there.
+	if ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, "roles.assign", scope, actorIsMachine, isSelfMachineGrant, selfMachineID); aerr != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+	} else if !ok {
+		return fmt.Errorf("cannot grant this role: you do not hold permission %q yourself", "roles.assign")
+	}
+
+	return c.requireGranterHoldsRolePermissionsNoBaseline(ctx, actorID, roleID, scope, actorIsMachine)
+}
+
+// requireGranterHoldsRolePermissionsNoBaseline is requireGranterHoldsRolePermissions'
+// per-permission loop WITHOUT the roles.assign baseline check -- the actor must
+// still hold every permission the role bundles, but is not additionally required
+// to hold roles.assign itself. Reserved for the one call site where that
+// distinction is correct: CreateUserWithAssignments' mandatory default
+// system_viewer grant, which mirrors plain CreateUser's own unconditional,
+// zero-ceiling auto-assign (users.go) -- "create a plain user" has always been
+// gated by users.write alone, not roles.assign, and every OTHER caller of the
+// escalation-by-proxy check in this codebase represents a genuinely
+// discretionary role grant the actor is choosing to make, which this one does
+// not. Do not reach for this function for a new call site without the same
+// "mandatory, non-discretionary, caller didn't ask for this specific role"
+// justification -- every other case should call requireGranterHoldsRolePermissions.
+func (c *KeyorixCore) requireGranterHoldsRolePermissionsNoBaseline(ctx context.Context, actorID, roleID uint, scope Scope, actorIsMachine bool) error {
+	if actorID == 0 && !actorIsMachine {
+		return nil
 	}
 	selfMachineID, isSelfMachineGrant := uint(0), false
 	if actorIsMachine {
 		selfMachineID, isSelfMachineGrant = selfMachineGranterFromContext(ctx)
 	}
+	perms, err := c.storage.GetRolePermissions(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve role permissions: %w", err)
+	}
 	for _, p := range perms {
-		var ok bool
-		var aerr error
-		switch {
-		case isSelfMachineGrant:
-			ok, aerr = c.AuthorizePrincipal(ctx, ActorTypeMachine, selfMachineID, p.Name, scope)
-		case actorIsMachine:
-			// actorIsMachine but ctx carries no WithSelfMachineGranter tag: a
-			// /system proxy relay (or any call site not yet updated to tag
-			// itself) -- fail closed exactly as before this fix.
-			ok = false
-		default:
-			ok, aerr = c.Authorize(ctx, actorID, p.Name, scope)
-		}
+		ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, p.Name, scope, actorIsMachine, isSelfMachineGrant, selfMachineID)
 		if aerr != nil {
 			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 		}
@@ -781,6 +818,27 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, ac
 		}
 	}
 	return nil
+}
+
+// checkGranterHoldsPermission resolves whether the granting actor holds
+// permName at scope, using the SAME actor-resolution rules
+// requireGranterHoldsRolePermissions has always applied: a genuinely
+// self-authenticated machine granter (isSelfMachineGrant) is checked against
+// its OWN permissions; any other machine actor (a /system proxy relay, or any
+// call site that never tagged itself via WithSelfMachineGranter) fails
+// closed; a human actor is checked via c.Authorize.
+func checkGranterHoldsPermission(ctx context.Context, c *KeyorixCore, actorID uint, permName string, scope Scope, actorIsMachine, isSelfMachineGrant bool, selfMachineID uint) (bool, error) {
+	switch {
+	case isSelfMachineGrant:
+		return c.AuthorizePrincipal(ctx, ActorTypeMachine, selfMachineID, permName, scope)
+	case actorIsMachine:
+		// actorIsMachine but ctx carries no WithSelfMachineGranter tag: a
+		// /system proxy relay (or any call site not yet updated to tag
+		// itself) -- fail closed exactly as before this fix.
+		return false, nil
+	default:
+		return c.Authorize(ctx, actorID, permName, scope)
+	}
 }
 
 // groupHoldsGlobalAdminRole reports whether groupID carries a LIVE global-scope

@@ -203,6 +203,12 @@ func TestApplyInvitationGrants_ProjectScopedInvite_RemoteMembershipStorage(t *te
 
 	ms.On("GetRoleByName", ctx, "viewer").Return(&models.Role{ID: 6, Name: "viewer"}, nil)
 	ms.On("GetProject", ctx, projectID).Return(&models.Project{ID: projectID, Name: "proj"}, nil)
+	// F6 sweep (2026-09-22): the invite-on-accept baseline check requires the
+	// inviter (9) hold roles.assign at the invitation's project.
+	ms.On("GetUserRoleIDsAt", ctx, invitedBy, Scope{ProjectID: projectID}).Return([]uint{100}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, invitedBy, Scope{ProjectID: projectID}).Return([]uint{}, nil)
+	ms.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	ms.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	anyAudit(ms)
 
 	fixed := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -248,6 +254,12 @@ func TestApplyInvitationGrants_ProjectScopedInvite_DuplicateMembership(t *testin
 
 	ms.On("GetRoleByName", ctx, "viewer").Return(&models.Role{ID: 6, Name: "viewer"}, nil)
 	ms.On("GetProject", ctx, projectID).Return(&models.Project{ID: projectID, Name: "proj"}, nil)
+	// F6 sweep (2026-09-22): the invite-on-accept baseline check requires the
+	// inviter (9) hold roles.assign at the invitation's project.
+	ms.On("GetUserRoleIDsAt", ctx, invitedBy, Scope{ProjectID: projectID}).Return([]uint{100}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, invitedBy, Scope{ProjectID: projectID}).Return([]uint{}, nil)
+	ms.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	ms.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	anyAudit(ms)
 
 	fixed := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)

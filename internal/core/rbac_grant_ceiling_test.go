@@ -68,12 +68,17 @@ func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
+	// F6 sweep (2026-09-22): the "holder" role must ALSO bundle roles.assign
+	// now — granting ANY role requires it as a baseline, independent of the
+	// per-permission bundle check this test is actually about.
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "holder"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 2}).Error)
 
 	const attacker = uint(9)
 	const target = uint(10)
-	// attacker holds secrets.delete only at project 3, not globally.
+	// attacker holds secrets.delete and roles.assign only at project 3, not globally.
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 3, ProjectID: 3}).Error)
 
 	err := c.AssignUserRole(ctx, attacker, target, 2, Scope{}, false) // global grant attempt
@@ -96,9 +101,13 @@ func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
 	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 2}).Error)
+	// F6 sweep (2026-09-22): the "holder" role must ALSO bundle roles.assign
+	// now -- granting ANY role requires it as a baseline.
+	require.NoError(t, db.Create(&models.Permission{ID: 3, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "holder"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 3}).Error)
 
 	const holder = uint(9)
 	const target = uint(10)
@@ -151,15 +160,50 @@ func TestAssignUserRole_SystemActorBypassesCeiling(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
-// A role with NO bundled permissions at all (an empty/placeholder role) is always
-// grantable — there is nothing to ceiling-check.
-func TestAssignUserRole_EmptyRoleAlwaysGrantable(t *testing.T) {
+// A role with NO bundled permissions at all (an empty/placeholder role) used
+// to be always grantable — the per-permission loop had nothing to
+// ceiling-check, so it vacuously succeeded for ANY caller at ANY scope. F6
+// sweep (2026-09-22): this was the exact source-level vacuity the sweep
+// closed -- granting ANY role, including an empty one, now requires the
+// baseline roles.assign permission at scope, matching what the human-facing
+// grant routes have always required unconditionally.
+func TestAssignUserRole_EmptyRoleRequiresRolesAssignBaseline(t *testing.T) {
 	t.Parallel()
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "empty-role"}).Error)
 
-	const actor = uint(9) // holds nothing
+	const actor = uint(9) // holds nothing, not even roles.assign
 	const target = uint(10)
-	require.NoError(t, c.AssignUserRole(ctx, actor, target, 2, Scope{ProjectID: 3}, false))
+	err := c.AssignUserRole(ctx, actor, target, 2, Scope{ProjectID: 3}, false)
+	require.Error(t, err, "CEILING VIOLATED: an empty-permission role must still require roles.assign to grant")
+	assert.Contains(t, err.Error(), "do not hold permission")
+
+	var count int64
+	require.NoError(t, db.Model(&models.UserRole{}).Count(&count).Error)
+	assert.Zero(t, count, "the grant must not have been persisted")
+}
+
+// TestAssignUserRole_EmptyRoleGrantableByRolesAssignHolder is the control
+// case for the fix above: a caller who genuinely holds roles.assign at scope
+// can still grant an empty-permission role -- the fix must not turn into a
+// blanket denial of every empty role, only of an unauthorized caller.
+func TestAssignUserRole_EmptyRoleGrantableByRolesAssignHolder(t *testing.T) {
+	t.Parallel()
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "empty-role"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "role-manager"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 1}).Error)
+
+	const holder = uint(9)
+	const target = uint(10)
+	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 3, ProjectID: 3}).Error)
+
+	require.NoError(t, c.AssignUserRole(ctx, holder, target, 2, Scope{ProjectID: 3}, false))
+
+	var count int64
+	require.NoError(t, db.Model(&models.UserRole{}).Where("user_id = ? AND role_id = ?", target, 2).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
 }

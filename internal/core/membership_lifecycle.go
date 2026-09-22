@@ -171,6 +171,19 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	// hold every permission the role bundles (parallel to the access-request
 	// approval ceiling), not merely an admin-tier role name. idpResolved invites
 	// still pass through here.
+	//
+	// F6 sweep (2026-09-22): requireGranterHoldsRolePermissions now also checks a
+	// roles.assign BASELINE before this per-role check -- for a genuine machine
+	// inviter (invitedByMachineID != 0), that baseline can only resolve against
+	// the machine's OWN real permissions if ctx is tagged via
+	// WithSelfMachineGranter first (mirrors InviteToProject's identical, already-
+	// existing tagging, invitations.go); without it, checkGranterHoldsPermission's
+	// actorIsMachine branch fails closed unconditionally, which would make it
+	// impossible for ANY machine inviter -- however genuinely permissioned -- to
+	// ever pass.
+	if invitedByMachineID != 0 {
+		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteMemberRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
 		return nil, err
 	}
@@ -269,10 +282,30 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	if !canTransition(m.State, to) {
 		return nil, fmt.Errorf("cannot transition membership from %s to %s", m.State, to)
 	}
-	// Activating a membership grants its role, so the same escalation-by-proxy ceiling
-	// applies: the actor must already hold every permission the membership's role
-	// bundles to activate it. (Revocation/other transitions remove or don't grant, so
-	// they're unaffected.)
+	// F6 sweep (2026-09-22): this used to be checked ONLY inside the
+	// MembershipActive branch below -- every OTHER legal transition
+	// (membershipTransitions: e.g. active->revoked, provisioned->revoked,
+	// identity_verified->provisioned) reached storage with ZERO
+	// caller-authority check, gated only by the state-machine legality guard
+	// above and the cross-project ID-match guard, which refuses a
+	// MISMATCHED project_id but never required the caller hold anything on
+	// the matching one. The human-facing PUT
+	// /projects/{id}/memberships/{membershipId} route requires roles.assign
+	// unconditionally, for every target state -- require it here too, before
+	// ANY transition, not only activation.
+	selfMachineID, isSelfMachineGrant := uint(0), false
+	if actorIsMachine {
+		selfMachineID, isSelfMachineGrant = selfMachineGranterFromContext(ctx)
+	}
+	if ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, "roles.assign", Scope{ProjectID: m.ProjectID}, actorIsMachine, isSelfMachineGrant, selfMachineID); aerr != nil {
+		return nil, fmt.Errorf("failed to resolve actor authority: %w", aerr)
+	} else if !ok {
+		return nil, ErrMembershipAuthorityRequired
+	}
+	// Activating a membership grants its role, so the ADDITIONAL
+	// escalation-by-proxy ceiling applies on top of the baseline above: the
+	// actor must already hold every permission the membership's role bundles
+	// to activate it, not merely roles.assign.
 	if to == MembershipActive {
 		activateRole, err := c.storage.GetRoleByName(ctx, m.Role)
 		if err != nil {

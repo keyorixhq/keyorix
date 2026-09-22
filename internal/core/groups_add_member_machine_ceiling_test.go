@@ -40,6 +40,14 @@ func TestAddUserToGroup_MachineGranterHoldingRolePermissionsAllowed(t *testing.T
 	// storage layer, bypassing the ceiling check itself for test setup (same
 	// pattern authz_machine_granter_ceiling_test.go uses).
 	require.NoError(t, st.AssignMachineRole(ctx, granter.ID, devRole.ID, storage.Scope{ProjectID: 1}))
+	// F6 sweep (2026-09-22): joining a group now ALSO requires roles.assign
+	// as a baseline -- project_developer itself does not bundle it. Give the
+	// granter project_admin too, at the same project, so this test still
+	// isolates "holds every permission the group's role bundles" (its actual
+	// subject) from that separate baseline.
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignMachineRole(ctx, granter.ID, adminRole.ID, storage.Scope{ProjectID: 1}))
 	require.NoError(t, st.AssignRoleToGroupWithExpiry(ctx, grp.ID, devRole.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour)))
 
 	grantCtx := WithSelfMachineGranter(ctx, granter.ID)

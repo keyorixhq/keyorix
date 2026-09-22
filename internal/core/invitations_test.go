@@ -25,6 +25,13 @@ func TestInviteToProject(t *testing.T) {
 	c := newInviteCore(store)
 	ctx := context.Background()
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline before the (here vacuous, since GetRolePermissions defaults to
+	// nil/no-mock) per-role escalation-by-proxy check.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.State == InvitationPending && inv.Email == "a@b.com" && inv.ProjectID == 1 && inv.ExpiresAt != nil
 	})).Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
@@ -53,6 +60,10 @@ func TestInviteToProject_RecordsActingMachineIdentity(t *testing.T) {
 	// that's the fix working as intended, not something this test should
 	// pin down.
 	store.On("GetRoleByName", mock.Anything, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline -- machine 42 resolves via AuthorizePrincipal's machine branch.
+	store.On("GetMachineRoleIDsAt", mock.Anything, uint(42), Scope{ProjectID: 1}).Return([]uint{200}, nil)
+	store.On("RoleSetHasPermission", mock.Anything, []uint{200}, "roles.assign").Return(true, nil)
 	store.On("CreateProjectInvitation", mock.Anything, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.InvitedBy == 0 && inv.InvitedByMachineIdentityID == 42
 	})).Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
@@ -88,6 +99,12 @@ func TestInviteToProject_AllowsAllowlistedDomain(t *testing.T) {
 	c.SetMembershipDomainAllowlist([]string{"acme.com"})
 	ctx := context.Background()
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline before the domain-allowlist logic (this test's actual subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.State == InvitationPending && inv.Email == "a@acme.com"
 	})).Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
@@ -139,6 +156,12 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending,
 	}, nil)
 	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
+	// F6 sweep (2026-09-22): approving now ALSO requires roles.assign as a
+	// baseline before the role-upgrade grant (this test's actual subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	// Admin upgrades the grant to developer.
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
@@ -176,6 +199,13 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	}, nil)
 	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
+	// F6 sweep (2026-09-22): approving now ALSO requires roles.assign as a
+	// baseline before the suggested-role fallback logic (this test's actual
+	// subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
@@ -211,6 +241,11 @@ func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{6}).Return(false, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline -- role 6 DOES carry it (this test's inviter is meant to be an
+	// ordinary authorized inviter, just not admin-tier), used by both invite
+	// calls below.
+	store.On("RoleSetHasPermission", ctx, []uint{6}, "roles.assign").Return(true, nil)
 	// FIX-1: the ceiling now derives from project_admin's own bundled
 	// permissions rather than its name, so the mock must resolve them —
 	// and the inviter's own role (6) must not carry that permission either.
@@ -251,6 +286,12 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{6}).Return(false, nil)
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires roles.assign
+	// as a baseline -- role 6 doesn't carry that either, so the baseline
+	// check itself now refuses this approver first (same "do not hold
+	// permission" error shape the original system.admin-specific denial
+	// below asserted on).
+	store.On("RoleSetHasPermission", ctx, []uint{6}, "roles.assign").Return(false, nil)
 	// FIX-1: the ceiling now derives from admin's own bundled permissions
 	// rather than its name, so the mock must resolve them — and the
 	// approver's own role (6) must not carry that permission either.
@@ -496,6 +537,12 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	anyAudit(store)
 
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline, before the resend-throttle logic (this test's actual subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
 		Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
 	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com", ptr(uint(1))).Return(nil)
@@ -548,6 +595,12 @@ func TestInviteToProjectWithLink_RecordsActingMachineIdentityOnSetupToken(t *tes
 	// propagate back to this test's ctx variable, so every OTHER call below
 	// still legitimately matches the exact original ctx.
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline -- machine 42 is tagged via WithSelfMachineGranter (a real
+	// machine inviter), so this baseline check resolves against ITS OWN
+	// permissions via AuthorizePrincipal's machine branch.
+	store.On("GetMachineRoleIDsAt", mock.Anything, uint(42), Scope{ProjectID: 1}).Return([]uint{200}, nil)
+	store.On("RoleSetHasPermission", mock.Anything, []uint{200}, "roles.assign").Return(true, nil)
 	store.On("CreateProjectInvitation", mock.Anything, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.InvitedBy == 0 && inv.InvitedByMachineIdentityID == 42
 	})).Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
@@ -583,6 +636,11 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
 	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
+
+	// F6 sweep (2026-09-22): requireGranterHoldsRolePermissions now checks a
+	// roles.assign baseline before the per-permission loop this test's
+	// throttling behavior actually exercises.
+	stubAuthorizedPrincipal(store, 9, Scope{}, "roles.assign")
 
 	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9, 0)
 	require.NoError(t, err)

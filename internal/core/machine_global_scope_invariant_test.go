@@ -75,6 +75,14 @@ func TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal(t *testi
 	ms.On("GetMachineIdentity", mock.Anything, uint(1)).Return(machine, nil)
 	role := &models.Role{ID: 2, Name: "viewer"}
 	ms.On("GetRole", mock.Anything, uint(2)).Return(role, nil)
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires the actor (1)
+	// hold roles.assign as a baseline, before the target role's own bundle is
+	// checked -- unrelated to this test's actual subject (the ProjectID==0
+	// scope-matching gap).
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), Scope{ProjectID: 0}).Return([]uint{100}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), Scope{ProjectID: 0}).Return([]uint{}, nil)
+	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{100}).Return(false, nil)
+	ms.On("RoleSetHasPermission", mock.Anything, []uint{100}, "roles.assign").Return(true, nil)
 	ms.On("AssignMachineRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)

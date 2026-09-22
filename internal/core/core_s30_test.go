@@ -206,6 +206,9 @@ func TestAssignMachineRole_Success(t *testing.T) {
 	ms.On("AssignMachineRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(nil)
 	// LogAuditEvent for logMachineEvent → writeAuditEventFull.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	// F6 sweep (2026-09-22): the granting actor (1) now needs roles.assign at
+	// the target scope as a baseline, before the per-permission bundle loop.
+	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 5}, "roles.assign")
 	c := NewKeyorixCore(ms)
 	err := c.AssignMachineRole(context.Background(), 1, 2, Scope{ProjectID: 5}, 1, false)
 	require.NoError(t, err)

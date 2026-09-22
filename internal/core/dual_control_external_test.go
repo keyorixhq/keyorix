@@ -194,6 +194,15 @@ func TestApprove_DualControl_TwoDistinctMachineApprovers(t *testing.T) {
 	require.NoError(t, err)
 	reqID := req0.ID
 
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires roles.assign
+	// as a baseline -- "empty-role" bundling zero permissions no longer makes
+	// requireGranterHoldsRolePermissions vacuously pass. Give both approving
+	// machines a real roles.assign grant at the request's project so this
+	// test still isolates dual-control's same-vs-distinct-approver mechanics
+	// (its actual subject) from that separate baseline.
+	require.NoError(t, h.Storage.AssignMachineRole(ctx, 101, 2 /* admin, bundles roles.assign */, storage.Scope{ProjectID: 2}))
+	require.NoError(t, h.Storage.AssignMachineRole(ctx, 202, 2, storage.Scope{ProjectID: 2}))
+
 	// Machine 101 approves: still pending, no grant yet.
 	req, err := h.CoreService.ApproveAccessRequestWithExpiry(ctx, 2, reqID, 0, 101, "", 0)
 	require.NoError(t, err, "the first machine approver must succeed")
@@ -235,6 +244,11 @@ func TestApprove_DualControl_SameMachineApproverTwiceRejected(t *testing.T) {
 	})
 	require.NoError(t, err)
 	reqID := req0.ID
+
+	// F6 sweep (2026-09-22): see TestApprove_DualControl_TwoDistinctMachineApprovers's
+	// identical comment -- machine 101 needs a real roles.assign grant now
+	// that "empty-role" no longer makes the baseline check vacuous.
+	require.NoError(t, h.Storage.AssignMachineRole(ctx, 101, 2 /* admin, bundles roles.assign */, storage.Scope{ProjectID: 2}))
 
 	req, err := h.CoreService.ApproveAccessRequestWithExpiry(ctx, 2, reqID, 0, 101, "", 0)
 	require.NoError(t, err)

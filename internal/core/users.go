@@ -271,7 +271,20 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	// same ceiling check requireGranterHoldsRolePermissions applies everywhere
 	// else — the actor's real bundled permissions, not just the role's name —
 	// at global scope (projectID 0).
-	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, sr.ID, Scope{}, actorIsMachine); err != nil {
+	//
+	// F6 sweep (2026-09-22): requireGranterHoldsRolePermissions's roles.assign
+	// BASELINE deliberately does not apply when systemRole was left empty (the
+	// caller never asked for a specific system role -- sysRole defaulted to
+	// system_viewer above). That mandatory, non-discretionary default mirrors
+	// plain CreateUser's own unconditional auto-assign (users.go): "create a
+	// plain user" has always been gated by users.write alone. Only an
+	// EXPLICITLY requested system role represents a real discretionary grant
+	// the actor is choosing to make, so only that case needs roles.assign.
+	if systemRole == "" {
+		if err := c.requireGranterHoldsRolePermissionsNoBaseline(ctx, actorID, sr.ID, Scope{}, actorIsMachine); err != nil {
+			return nil, err
+		}
+	} else if err := c.requireGranterHoldsRolePermissions(ctx, actorID, sr.ID, Scope{}, actorIsMachine); err != nil {
 		return nil, err
 	}
 	addRoleGrant(&grants, seen, sr.ID, 0)
@@ -361,6 +374,28 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID uint, actorIsMachine bool, grants []storage.RoleGrant) error {
 	if len(grants) > maxUserCreateAssignments {
 		return fmt.Errorf("%s: grants exceeds the maximum batch size of %d", i18n.T("ErrorValidation", nil), maxUserCreateAssignments)
+	}
+	// Baseline (F6 sweep, 2026-09-22): the loop below only ever calls
+	// requireGranterHoldsRolePermissions for a grant that's actually IN the
+	// list -- an empty grants slice (a legal request: "create this user,
+	// no role grants yet") is zero iterations, so this function returned nil
+	// unconditionally regardless of the caller's standing. This function's
+	// one real caller (CreateUserWithRoleGrantsProxy) mints a brand-new,
+	// fully-active user account -- the same authority the human-facing
+	// POST /users route requires (users.write) unconditionally, independent
+	// of how many grants (if any) accompany the create. Machine-actor
+	// resolution mirrors requireGranterHoldsRolePermissions/
+	// checkGranterHoldsPermission exactly: CreateUserWithRoleGrantsProxy
+	// never tags ctx via WithSelfMachineGranter, so a machine caller here
+	// fails closed, same as it always has for the per-grant loop below.
+	selfMachineID, isSelfMachineGrant := uint(0), false
+	if actorIsMachine {
+		selfMachineID, isSelfMachineGrant = selfMachineGranterFromContext(ctx)
+	}
+	if ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, "users.write", Scope{}, actorIsMachine, isSelfMachineGrant, selfMachineID); aerr != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+	} else if !ok {
+		return fmt.Errorf("creating a user with role grants requires the users.write permission")
 	}
 	roleIDs := make([]uint, 0, len(grants))
 	for _, g := range grants {

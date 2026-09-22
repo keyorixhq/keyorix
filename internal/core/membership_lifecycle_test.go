@@ -60,6 +60,13 @@ func TestInviteMember_AllowlistStartsInvited(t *testing.T) {
 	ctx := context.Background()
 
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline, before the allowlist-mode "starts invited" logic (this
+	// test's actual subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).Return(nil, fmt.Errorf("not found"))
 	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.State == MembershipInvited && m.ProjectID == 1 && m.UserID == 2 && m.InvitedBy == 9
@@ -84,8 +91,17 @@ func TestInviteMember_RecordsActingMachineIdentity(t *testing.T) {
 	ctx := context.Background()
 
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
-	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).Return(nil, fmt.Errorf("not found"))
-	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline -- machine 42 is tagged via WithSelfMachineGranter (a real
+	// machine inviter), so this resolves against ITS OWN permissions via
+	// AuthorizePrincipal's machine branch.
+	store.On("GetMachineRoleIDsAt", mock.Anything, uint(42), storage.Scope{ProjectID: 1}).Return([]uint{200}, nil)
+	store.On("RoleSetHasPermission", mock.Anything, []uint{200}, "roles.assign").Return(true, nil)
+	// mock.Anything for ctx below too: WithSelfMachineGranter tagging (just
+	// above) changes ctx's identity for every call after it, same as
+	// invitations_test.go's identical machine-inviter tests.
+	store.On("GetActiveProjectMembership", mock.Anything, uint(1), uint(2)).Return(nil, fmt.Errorf("not found"))
+	store.On("CreateProjectMembership", mock.Anything, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.InvitedBy == 0 && m.InvitedByMachineIdentityID == 42
 	})).Return(&models.ProjectMembership{ID: 51, ProjectID: 1, UserID: 2, State: MembershipInvited}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -103,6 +119,13 @@ func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
 	ctx := context.Background()
 
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline, before the open-mode immediate-activation logic (this test's
+	// actual subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).Return(nil, fmt.Errorf("not found"))
 	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.State == MembershipActive && m.ActivatedAt != nil
@@ -167,6 +190,13 @@ func TestInviteMember_RejectsDuplicate(t *testing.T) {
 	c := newMembershipCore(store)
 	ctx := context.Background()
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline, before the duplicate-membership check (this test's actual
+	// subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).
 		Return(&models.ProjectMembership{ID: 1, State: MembershipActive}, nil)
 
@@ -209,6 +239,13 @@ func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *t
 	ctx := context.Background()
 
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline, before the activation-failure revert logic (this test's
+	// actual subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).Return(nil, fmt.Errorf("not found"))
 	created := &models.ProjectMembership{ID: 51, ProjectID: 1, UserID: 2, Role: "project_viewer", State: MembershipActive}
 	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
@@ -252,6 +289,13 @@ func TestTransitionMembership_ActivationFailure_RevertsToPriorState(t *testing.T
 
 	existing := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, Role: "project_viewer", State: MembershipProvisioned}
 	store.On("GetProjectMembership", ctx, uint(50)).Return(existing, nil)
+	// F6 sweep (2026-09-22): every transition now requires the ACTOR (9) hold
+	// roles.assign at the membership's project as a baseline, before the
+	// activation-specific logic (this test's actual subject) runs.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return(nil, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
 	// First write: persists the (about to be reverted) active state.
 	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
@@ -298,6 +342,16 @@ func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
 	ctx := context.Background()
 	m := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, Role: "project_developer", State: MembershipProvisioned}
 	store.On("GetProjectMembership", ctx, uint(50)).Return(m, nil)
+	// F6 sweep (2026-09-22): every transition now requires the ACTOR (9) hold
+	// roles.assign at the membership's project as a baseline, before the
+	// activation-specific escalation-by-proxy check below runs. project_developer
+	// bundles zero permissions here so that per-role check stays a no-op,
+	// isolating this test to its actual subject (activation grants the role).
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return(nil, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
+	store.On("GetRolePermissions", ctx, uint(5)).Return([]*models.Permission{}, nil)
 	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
 		return x.State == MembershipActive && x.ActivatedAt != nil
 	}), MembershipProvisioned).Return(true, nil)
@@ -318,6 +372,14 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 	ctx := context.Background()
 	m := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, State: MembershipActive}
 	store.On("GetProjectMembership", ctx, uint(50)).Return(m, nil)
+	// F6 sweep (2026-09-22): every transition now requires the ACTOR (9) hold
+	// roles.assign at the membership's project as a baseline, before the
+	// state-specific logic below runs -- actor 9's own role set (100) is
+	// unrelated to role 5, the TARGET user's (2) role being revoked.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{100}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return(nil, nil)
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
 		return x.State == MembershipRevoked && x.RevokedAt != nil
 	}), MembershipActive).Return(true, nil)
@@ -356,6 +418,11 @@ func TestTransitionMembership_RevokeRefusedForLastAdmin_RevertsAndReturnsError(t
 	ctx := context.Background()
 	m := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, State: MembershipActive}
 	store.On("GetProjectMembership", ctx, uint(50)).Return(m, nil)
+	// F6 sweep (2026-09-22): TransitionMembership now requires roles.assign
+	// at the membership's project for EVERY transition, not only activation
+	// -- this test's actor (9) needs to clear that baseline before the
+	// revert-on-failure behavior it actually tests is ever reached.
+	stubAuthorizedPrincipal(store, 9, Scope{ProjectID: 1}, "roles.assign")
 	// First write: persists the (about to be reverted) revoked state.
 	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
 		return x.State == MembershipRevoked
