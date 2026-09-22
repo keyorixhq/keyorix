@@ -605,6 +605,24 @@ func truncateAuditField(s string, maxLen int) string {
 // mechanism. This is guard-the-invariant-not-the-conclusion's fifth instance in
 // this campaign -- see docs/adr-092-audit-event-userid-machine-principal.md.
 func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
+	// A panic anywhere inside this function (most likely from the
+	// c.storage.LogAuditEvent call below, or the auditForwarder/auditStream
+	// hooks that follow it) must never propagate to emitAudit's callers: every
+	// caller of this function is itself in a "the primary operation already
+	// succeeded, only the audit trail is being written" position, exactly the
+	// same shape as the best-effort helpers this same fuzz campaign found
+	// unprotected against a panic (secret_dependencies.go's
+	// emitDependencyLifecycleEvents, users.go's CreateUser) — see
+	// docs/findings/2026-09-22-FINDING-secret-delete-restore-dependency-emission-panic-masks-success.md.
+	// emitAudit is the SINGLE choke point every c.Log*/writeAuditEvent* helper
+	// funnels through (confirmed by TestDirectLogAuditEventCallersAreSafe), so
+	// fixing panic-safety here closes it for every caller at once, the same
+	// way the existing returned-error handling below already does.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: emitAudit panicked persisting audit event %q (success=%v, best-effort, primary operation already succeeded): %v", event.EventType, event.Success, r)
+		}
+	}()
 	if event.ActorType == ActorTypeMachine {
 		if event.MachineIdentityID == nil {
 			if machineID, ok := machineActorFromContext(ctx); ok {

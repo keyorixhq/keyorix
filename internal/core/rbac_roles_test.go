@@ -28,14 +28,14 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	}))
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{}))
 	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
 }
 
 func TestCreateRole_RejectsReservedBuiltinName(t *testing.T) {
 	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
-	_, err := c.CreateRole(context.Background(), 1, "super_admin", "d")
+	_, _, err := c.CreateRole(context.Background(), 1, "super_admin", "d", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reserved")
 }
@@ -46,7 +46,7 @@ func TestCreateRole_RejectsReservedBuiltinName(t *testing.T) {
 func TestCreateRole_RejectsReservedBuiltinName_CaseVariant(t *testing.T) {
 	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
-	_, err := c.CreateRole(context.Background(), 1, "Super_Admin", "d")
+	_, _, err := c.CreateRole(context.Background(), 1, "Super_Admin", "d", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reserved")
 }
@@ -54,14 +54,14 @@ func TestCreateRole_RejectsReservedBuiltinName_CaseVariant(t *testing.T) {
 func TestCreateRole_RejectsControlCharacters(t *testing.T) {
 	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
-	_, err := c.CreateRole(context.Background(), 1, "readonly\n[AUDIT] granted admin", "d")
+	_, _, err := c.CreateRole(context.Background(), 1, "readonly\n[AUDIT] granted admin", "d", nil)
 	require.Error(t, err)
 }
 
 func TestCreateRole_RejectsTooShortName(t *testing.T) {
 	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
-	_, err := c.CreateRole(context.Background(), 1, "ab", "d")
+	_, _, err := c.CreateRole(context.Background(), 1, "ab", "d", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "between")
 }
@@ -69,7 +69,7 @@ func TestCreateRole_RejectsTooShortName(t *testing.T) {
 func TestCreateRole_RejectsTooLongName(t *testing.T) {
 	t.Parallel()
 	c, _ := newRoleCRUDTestCore(t)
-	_, err := c.CreateRole(context.Background(), 1, strings.Repeat("a", RoleNameMaxLen+1), "d")
+	_, _, err := c.CreateRole(context.Background(), 1, strings.Repeat("a", RoleNameMaxLen+1), "d", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "between")
 }
@@ -77,7 +77,7 @@ func TestCreateRole_RejectsTooLongName(t *testing.T) {
 func TestCreateRole_HappyPathAudited(t *testing.T) {
 	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
-	role, err := c.CreateRole(context.Background(), 7, "custom-role", "a custom role")
+	role, _, err := c.CreateRole(context.Background(), 7, "custom-role", "a custom role", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "custom-role", role.Name)
 	assert.NotZero(t, role.ID)
@@ -95,9 +95,9 @@ func TestCreateRole_DuplicateNameRejected(t *testing.T) {
 	// a real constraint and would silently "succeed" twice.
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX uniq_roles_name_folded ON roles (name_folded)").Error)
 	ctx := context.Background()
-	_, err := c.CreateRole(ctx, 1, "dup-role", "d")
+	_, _, err := c.CreateRole(ctx, 1, "dup-role", "d", nil)
 	require.NoError(t, err)
-	_, err = c.CreateRole(ctx, 1, "dup-role", "d")
+	_, _, err = c.CreateRole(ctx, 1, "dup-role", "d", nil)
 	require.Error(t, err)
 }
 
@@ -106,7 +106,7 @@ func TestUpdateRole_RejectsBuiltin(t *testing.T) {
 	c, db := newRoleCRUDTestCore(t)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", NameFolded: "super_admin"}).Error)
 
-	_, err := c.UpdateRole(context.Background(), 1, &models.Role{ID: 1, Name: "super_admin", Description: "hijacked"})
+	_, _, err := c.UpdateRole(context.Background(), 1, &models.Role{ID: 1, Name: "super_admin", Description: "hijacked"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "built-in")
 
@@ -118,11 +118,11 @@ func TestUpdateRole_RejectsBuiltin(t *testing.T) {
 func TestUpdateRole_HappyPathAudited(t *testing.T) {
 	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
-	created, err := c.CreateRole(context.Background(), 1, "editable-role", "old")
+	created, _, err := c.CreateRole(context.Background(), 1, "editable-role", "old", nil)
 	require.NoError(t, err)
 
 	created.Description = "new"
-	updated, err := c.UpdateRole(context.Background(), 9, created)
+	updated, _, err := c.UpdateRole(context.Background(), 9, created, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "new", updated.Description)
 
@@ -155,7 +155,7 @@ func TestDeleteRole_RejectsBuiltin(t *testing.T) {
 func TestDeleteRole_HappyPathAudited(t *testing.T) {
 	t.Parallel()
 	c, db := newRoleCRUDTestCore(t)
-	created, err := c.CreateRole(context.Background(), 1, "deletable-role", "desc")
+	created, _, err := c.CreateRole(context.Background(), 1, "deletable-role", "desc", nil)
 	require.NoError(t, err)
 
 	require.NoError(t, c.DeleteRole(context.Background(), 9, created.ID))

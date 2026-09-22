@@ -66,25 +66,21 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 		return nil, err
 	}
 
-	// #1660: core.CreateRole is the single place that folds the name (identity.
+	// core.CreateRole is the single place that folds the name (identity.
 	// NewFoldedName — #1642), rejects reserved built-in names (#294:
 	// roleSetContainsAdmin in authz.go grants a full admin bypass by NAME
 	// match alone, so a caller-created row named e.g. "super_admin" would
 	// function as a complete admin-bypass switch the moment it's assigned,
-	// even with zero permissions of its own), and audits the creation —
-	// previously duplicated per-transport (the identical HTTP-side treatment
-	// in RBACHandler.CreateRole called storage.CreateRole directly too).
-	role, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription())
+	// even with zero permissions of its own), runs the role-row create AND
+	// the permission bundling in one transaction, and audits only after that
+	// transaction commits — see its own doc comment for why (this path
+	// already propagated an AssignPermissionToRole failure correctly, unlike
+	// the REST side, but still left the role row committed non-atomically
+	// with its permission set).
+	role, _, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs)
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
-	for _, pid := range permIDs {
-		if err := s.core.AssignPermissionToRole(ctx, actor.UserID, role.ID, pid, false); err != nil {
-			return nil, status.Error(codes.Internal, "failed to assign permissions to role")
-		}
-	}
-	// core.CreateRole audits the role.created event itself now (permission
-	// grants are audited by AssignPermissionToRole).
 	return s.roleByID(ctx, role.ID)
 }
 
@@ -118,50 +114,40 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 		}
 	}
 
-	role, current, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
+	role, _, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
 	if req.Description != nil {
 		role.Description = req.GetDescription()
 	}
-	// #1660: core.UpdateRole is the single place that rejects mutating a
-	// built-in role (UpdateRole unconditionally strips a role's entire
-	// current permission set before re-adding the caller-supplied one below,
-	// so without this guard a roles.write holder could shrink e.g. admin/
-	// system_admin down to whatever subset they hold themselves, silently
-	// locking out every administrator who relies on that built-in role) and
-	// audits the update — previously duplicated per-transport (the identical
-	// HTTP-side treatment in RBACHandler.UpdateRole called storage.UpdateRole
-	// directly too). Called unconditionally, even when only Permissions is
-	// being replaced below, so a permission-only update to a built-in role is
-	// still rejected — the guard used to sit unconditionally right after the
-	// fetch for exactly this reason.
-	role, err = s.core.UpdateRole(ctx, actor.UserID, role)
-	if err != nil {
-		return nil, mapRoleError(err)
-	}
 
-	// A provided permission list replaces the entire set.
+	// A provided non-empty permission list replaces the entire set (matches
+	// this endpoint's pre-existing semantics: an empty/omitted list leaves
+	// permissions untouched, there is no way to clear every permission via
+	// this call).
+	var newPermissionIDs *[]uint
 	if len(req.GetPermissions()) > 0 {
 		permIDs, err := s.resolvePermissionIDs(ctx, actor.UserID, req.GetPermissions())
 		if err != nil {
 			return nil, err
 		}
-		for _, p := range current {
-			if err := s.core.RemovePermissionFromRole(ctx, actor.UserID, role.ID, p.ID); err != nil {
-				return nil, status.Error(codes.Internal, "failed to update role permissions")
-			}
-		}
-		for _, pid := range permIDs {
-			if err := s.core.AssignPermissionToRole(ctx, actor.UserID, role.ID, pid, false); err != nil {
-				return nil, status.Error(codes.Internal, "failed to update role permissions")
-			}
-		}
+		newPermissionIDs = &permIDs
 	}
 
-	// core.UpdateRole already audited the role.updated event above (permission
-	// grants/removals are audited by AssignPermissionToRole/RemovePermissionFromRole).
+	// core.UpdateRole is the single place that rejects mutating a built-in
+	// role, runs the role-row update AND the permission replacement in one
+	// storage transaction, and audits only after that transaction commits —
+	// see its own doc comment (docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md,
+	// F3a/F3b) for why this must not be split back into two separately-
+	// sequenced calls the way it used to be (this gRPC path used to interleave
+	// its own RemovePermissionFromRole/AssignPermissionToRole loop after a bare
+	// role-row UpdateRole call, the same non-atomic shape the REST handler had).
+	role, _, err = s.core.UpdateRole(ctx, actor.UserID, role, newPermissionIDs)
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
+
 	return s.roleByID(ctx, role.ID)
 }
 

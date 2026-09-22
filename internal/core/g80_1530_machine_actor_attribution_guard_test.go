@@ -41,6 +41,13 @@ import (
 // fails if a new direct caller appears unlisted, or if a listed entry no
 // longer matches what it claims. Keys are repo-root-relative "path:func".
 var auditAttributionAllowlist = map[string]string{
+	"internal/faultstorage/faulty_storage_generated.go:LogAuditEvent": "generated, mechanical pass-through " +
+		"(w.real.LogAuditEvent(ctx, event)) inside a test/fuzz-harness-only storage.Storage wrapper " +
+		"(server/faultops's FuzzStorageFaultOperations) -- it forwards whatever *models.AuditEvent the real " +
+		"caller already constructed, unmodified, and never builds or mutates one itself, so it cannot be the " +
+		"site of an attribution bug: whatever emitAudit correction should have applied already happened " +
+		"upstream, before this call. Every one of the other 417 generated methods has the identical pass-" +
+		"through shape; this is the one storage.Storage method this guard's AST walk happens to care about.",
 	"internal/core/anomaly.go:auditBusinessHoursConfig": "hardcodes ActorType: \"system\" -- a " +
 		"scheduler/config-change event with no human or machine actor, correctly using the system-actor marker " +
 		"rather than a null. Never machine-identity-typed, so emitAudit's corrections would never apply to it " +

@@ -151,17 +151,23 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	if handled {
 		return
 	}
+	permissionIDs := make([]uint, len(toAssign))
+	for i, p := range toAssign {
+		permissionIDs[i] = p.ID
+	}
 
-	// #1660: core.CreateRole is the single place that folds the name (identity.
+	// core.CreateRole is the single place that folds the name (identity.
 	// NewFoldedName — #1642), rejects reserved built-in names (#294:
 	// roleSetContainsAdmin in authz.go grants a full admin bypass by NAME match
 	// alone, so a caller-created row named e.g. "super_admin" would function as
 	// a complete admin-bypass switch the moment it's assigned, even with zero
-	// permissions of its own), and audits the creation — previously duplicated
-	// per-transport (this handler and the gRPC RoleGRPCService each called
-	// storage.CreateRole directly, bypassing internal/core's validation layer
-	// entirely).
-	role, err := h.coreService.CreateRole(r.Context(), userCtx.UserID, req.Name, req.Description)
+	// permissions of its own), runs the role-row create AND the permission
+	// bundling in one transaction, and audits only after that transaction
+	// commits — see its own doc comment for why this must not be split back
+	// into two separately-sequenced calls (an AssignPermissionToRole failure
+	// here used to be logged and swallowed, the role still reported created
+	// with whatever subset happened to succeed).
+	role, assignedPerms, err := h.coreService.CreateRole(r.Context(), userCtx.UserID, req.Name, req.Description, permissionIDs)
 	if err != nil {
 		log.Printf("Error creating role: %v", err)
 		msg := err.Error()
@@ -178,18 +184,6 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var assignedPerms []*models.Permission
-	for _, perm := range toAssign {
-		if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, role.ID, perm.ID, false); err != nil {
-			// Already authorized above; only a race (permission deleted concurrently) or
-			// storage error reaches here — log it, the role still exists with the rest.
-			log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, role.ID, err)
-		} else {
-			assignedPerms = append(assignedPerms, perm)
-		}
-	}
-
-	// core.CreateRole already audited the role.created event above.
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, map[string]any{"role": role, "permissions": assignedPerms}, "Role created successfully")
 }
@@ -320,15 +314,13 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	}
 	// #169: resolve + authorize every requested permission BEFORE touching the
 	// role's existing permission set — otherwise a request naming even one
-	// permission the actor doesn't hold would strip the role's current permissions
-	// (RemovePermissionFromRole runs unconditionally below) and then fail partway
-	// through re-adding them, leaving the role broken. An authorization failure on a
+	// permission the actor doesn't hold would abort partway through a
+	// mutation already applied to the role. An authorization failure on a
 	// KNOWN permission must abort before any mutation. Unknown names are still
 	// skipped later, matching CreateRole's convention.
-	var toAssign []*models.Permission
+	var newPermissionIDs *[]uint
 	if req.Permissions != nil {
-		var aerr error
-		toAssign, aerr = h.authorizeAndCollectPermissions(r.Context(), userCtx, *req.Permissions)
+		toAssign, aerr := h.authorizeAndCollectPermissions(r.Context(), userCtx, *req.Permissions)
 		if aerr != nil {
 			if strings.Contains(aerr.Error(), "cannot bundle") {
 				sendError(w, "Forbidden", aerr.Error(), http.StatusForbidden, nil)
@@ -338,20 +330,23 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 			}
 			return
 		}
+		ids := make([]uint, len(toAssign))
+		for i, p := range toAssign {
+			ids[i] = p.ID
+		}
+		newPermissionIDs = &ids
 	}
 
 	if req.Description != nil {
 		role.Description = *req.Description
 	}
-	// #1660: core.UpdateRole is the single place that rejects mutating a
-	// built-in role (replaceRolePermissions below unconditionally strips a
-	// role's entire current permission set before re-adding the caller-
-	// supplied one, so without this guard a roles.write holder could shrink
-	// e.g. admin/system_admin down to whatever subset they hold themselves,
-	// silently locking out every administrator who relies on that built-in
-	// role) and audits the update — previously duplicated per-transport, the
-	// same shape CreateRole had (see its own #1660 comment above).
-	updated, err := h.coreService.UpdateRole(r.Context(), userCtx.UserID, role)
+	// core.UpdateRole is the single place that rejects mutating a built-in
+	// role, runs the role-row update AND the permission replacement in one
+	// storage transaction, and audits only after that transaction commits —
+	// see its own doc comment (docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md,
+	// F3a/F3b) for why this must not be split back into two separately-
+	// sequenced calls the way it used to be.
+	updated, perms, err := h.coreService.UpdateRole(r.Context(), userCtx.UserID, role, newPermissionIDs)
 	if err != nil {
 		log.Printf("Error updating role: %v", err)
 		if strings.Contains(err.Error(), "built-in") {
@@ -363,12 +358,6 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	}
 	role = updated
 
-	// Replace permissions if provided.
-	if req.Permissions != nil {
-		h.replaceRolePermissions(r.Context(), userCtx.UserID, id, toAssign)
-	}
-
-	perms, _ := h.coreService.Storage().GetRolePermissions(r.Context(), id)
 	sendSuccess(w, map[string]any{"role": role, "permissions": perms}, "Role updated successfully")
 }
 
@@ -389,18 +378,6 @@ func (h *RBACHandler) authorizeAndCollectPermissions(ctx context.Context, userCt
 		toAssign = append(toAssign, perm)
 	}
 	return toAssign, nil
-}
-
-func (h *RBACHandler) replaceRolePermissions(ctx context.Context, actorID, roleID uint, toAssign []*models.Permission) {
-	existing, _ := h.coreService.Storage().GetRolePermissions(ctx, roleID)
-	for _, ep := range existing {
-		_ = h.coreService.RemovePermissionFromRole(ctx, actorID, roleID, ep.ID)
-	}
-	for _, perm := range toAssign {
-		if err := h.coreService.AssignPermissionToRole(ctx, actorID, roleID, perm.ID, false); err != nil {
-			log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, roleID, err)
-		}
-	}
 }
 
 // DeleteRole handles DELETE /api/v1/roles/{id}
