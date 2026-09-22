@@ -7,9 +7,24 @@
 // A downstream Keyorix server booted with storage.type: remote (ADR-049)
 // proxies this conditional write to whichever upstream server it's configured
 // against, through this route (registered in server/http/router.go under
-// /api/v1/system/users/{id}/active-transition, gated on the existing
-// system.write RBAC permission every other RemoteStorage-primitive proxy in
-// this package already needs — no new privilege class).
+// /api/v1/system/users/{id}/active-transition). Unlike most other proxies in
+// this package, this does NOT rely on the /system group's blanket
+// system.write gate alone: core.UpdateUser performs no caller-authority check
+// of its own on a user-row mutation (only GuardLastAdminDeactivation, a
+// target-state invariant with no actor parameter) — the actual ceiling that
+// governs "who may edit a user" lives entirely at the HTTP layer, on
+// RequirePermission(permUsersWrite) at PUT /api/v1/users/{id}
+// (server/http/router.go). This route must inherit that SAME ceiling, not the
+// broader, differently-scoped system.write the /system route group otherwise
+// blanket-gates on — see internal/core/users.go's
+// requireUserCredentialsRevokeAuthority doc for the full derivation (the
+// identical fix already applied to
+// RevokeAllPersonalAccessTokensForUserProxy/DeleteSessionsForUserExceptProxy,
+// users_credentials_proxy.go). #F5: a system.write-only caller with no
+// users.write used to be able to rewrite ANY user's username/email/
+// display_name/active state through this route, including a global admin's
+// — reusing core.RequireUsersWriteAuthority closes that without
+// re-implementing the ceiling check.
 //
 // This is NOT a thin passthrough of a caller-supplied row (it used to be, and
 // that was an authentication-bypass bug -- see below): storage.Storage.
@@ -123,6 +138,15 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	// #F5: the /system group's own blanket system.write gate is NOT the real
+	// ceiling here -- see the package doc. Check before any storage read, so
+	// an unauthorized caller can't use this route's uniqueness pre-checks
+	// below as a users.write-gated username/email existence oracle.
+	actorType, actorID := requestActorKindAndID(r)
+	if err := h.coreService.RequireUsersWriteAuthority(r.Context(), actorType, actorID); err != nil {
+		writeUserCredentialsRevokeError(w, "active-transition", err)
 		return
 	}
 	if body.Username != "" {

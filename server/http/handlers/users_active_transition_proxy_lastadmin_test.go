@@ -10,12 +10,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,6 +45,8 @@ func TestUpdateUserIfActiveStateMatchesProxy_RefusesLastAdminDeactivation_RealSe
 	})
 	require.NoError(t, err)
 	req := withChiParams(httptest.NewRequest("PUT", "/", bytes.NewReader(body)), map[string]string{"id": machineUintToStr(admin.ID)})
+	uc := &middleware.UserContext{UserID: admin.ID, Username: admin.Username, Email: admin.Email}
+	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
 	assert.Equal(t, 403, w.Code, "deactivating the install's last admin must be refused: %s", w.Body.String())
@@ -62,6 +66,9 @@ func TestUpdateUserIfActiveStateMatchesProxy_AllowsNonAdminDeactivation_RealServ
 	require.NoError(t, err)
 	ctx := t.Context()
 
+	admin, err := cs.GetUserByUsername(ctx, "testuser_s12")
+	require.NoError(t, err)
+
 	regular, err := cs.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "g80lastadminregular", Email: "g80-lastadmin-regular@example.com",
 		DisplayName: "G80 Regular", Password: "NotArealpassword123!",
@@ -77,6 +84,8 @@ func TestUpdateUserIfActiveStateMatchesProxy_AllowsNonAdminDeactivation_RealServ
 	})
 	require.NoError(t, err)
 	req := withChiParams(httptest.NewRequest("PUT", "/", bytes.NewReader(body)), map[string]string{"id": machineUintToStr(regular.ID)})
+	uc := &middleware.UserContext{UserID: admin.ID, Username: admin.Username, Email: admin.Email}
+	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
 	w := httptest.NewRecorder()
 	h.UpdateUserIfActiveStateMatchesProxy(w, req)
 	require.Equal(t, 200, w.Code, "deactivating a non-admin user must still succeed: %s", w.Body.String())
