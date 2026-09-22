@@ -340,6 +340,25 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
 		return
 	}
+	// F6 sweep (2026-09-22): the human-facing POST /api/v1/groups/{id}/members
+	// route requires roles.assign at GLOBAL scope unconditionally
+	// (RequirePermission(permRolesAssign), router.go), regardless of whether
+	// the target group holds any role grant -- core.AddUserToGroup's own
+	// ceiling (validateGroupJoinRoles) only fires when the group HAS grants,
+	// which is correct for that layer, but left a role-LESS group with no
+	// caller-authority check on this proxy at all. Not a theoretical gap: a
+	// group holding editor/project_developer (the most powerful non-admin-tier
+	// roles -- secrets.read+write+delete) is a normal, expected
+	// team-management pattern, and group membership is inherited by every
+	// member (GetUserGroupRoleIDsAt) -- so this was reachable as a direct
+	// escalation to full secrets read/write/delete via ANY existing
+	// role-bearing group, using nothing but the narrow, unrelated
+	// system.write permission. Mirrors requireGroupsProxyRolesAssign
+	// (RestoreGroupProxy's identical fix, above).
+	if err := h.requireGroupsProxyRolesAssign(r); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		return
+	}
 	if err := h.coreService.AddUserToGroup(r.Context(), actorID(r), isMachineActor(r), body.UserID, uint(groupID), body.ProjectID); err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "user or group not found")
@@ -359,6 +378,22 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 // remove a user whose global admin-tier authority comes solely from this
 // group's role grant when no other admin route remains — also covers a
 // membership removal via node-sync (#G79).
+//
+// F6 sweep (2026-09-22): core.RemoveUserFromGroup itself has no
+// caller-authority ceiling by design (target-state guards only — removal
+// confers nothing, the same reasoning RemoveMachineRoleProxy documents). But
+// the human-facing DELETE /api/v1/groups/{id}/members/{userId} route
+// requires roles.assign at GLOBAL scope unconditionally
+// (RequirePermission(permRolesAssign), router.go) regardless of the group's
+// grants -- this proxy had no equivalent, so a system.write-only caller
+// could silently detach any user from any group, including one whose sole
+// role grant (editor/project_developer) is that member's only path to
+// secrets.read/write/delete on a project. Availability/tampering, not
+// escalation: removal grants nothing, but it does revoke real, live access,
+// and only an actor holding roles.assign (an admin, or a re-add) can restore
+// it -- the removed member cannot self-recover. Mirrors
+// requireGroupsProxyRolesAssign (RestoreGroupProxy's identical fix, above,
+// and AddGroupMemberProxy's identical fix, below in this file).
 func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -378,6 +413,10 @@ func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Req
 			return
 		}
 		projectID = uint(pid)
+	}
+	if err := h.requireGroupsProxyRolesAssign(r); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		return
 	}
 	if err := h.coreService.RemoveUserFromGroup(r.Context(), actorID(r), uint(userID), uint(groupID), projectID); err != nil {
 		log.Printf("groups proxy: remove member failed: %v", err)
