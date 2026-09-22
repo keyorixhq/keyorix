@@ -181,20 +181,43 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 
 	// Seed password history with the initial password so the no-reuse rule
 	// (ADR-025) counts it. Best-effort — user creation has already succeeded.
+	// A panic here is recovered too (found live by FuzzStorageFaultOperations,
+	// server/faultops, on the sibling AssignRole step below): without it, a
+	// panic propagates straight through CreateUser and out to the real
+	// Recovery middleware, misreporting an already-committed user creation as
+	// a failed request (oracle (a) — see
+	// docs/findings/2026-09-22-FINDING-secret-delete-restore-dependency-emission-panic-masks-success.md
+	// for the identical shape found first on DeleteSecret/RestoreSecret).
 	if c.passwordPolicy.HistoryCount > 0 {
-		_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Warning: seeding password history for new user %d panicked (best-effort, user creation already succeeded): %v", createdUser.ID, r)
+				}
+			}()
+			_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
+		}()
 	}
 
 	// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
 	// baseline. Non-fatal (found by fuzz-injecting an AssignRole failure, same
 	// class as CreateProjectWithEnvs's CreateEnvironment fix above): the user
-	// row itself already committed, and this must be OBSERVABLE, not a
-	// swallowed error, even though the user is still created regardless.
-	if role, err := c.storage.GetRoleByName(ctx, "system_viewer"); err == nil {
-		if err := c.storage.AssignRole(ctx, createdUser.ID, role.ID, Scope{}); err != nil {
-			log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
+	// row itself already committed, and both failure modes — a returned error
+	// AND a panic (found separately, by fuzz-injecting a panic on the same
+	// call) — must be OBSERVABLE, not swallowed, even though the user is
+	// still created regardless.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: assignment panicked: %v", createdUser.ID, createdUser.Username, r)
+			}
+		}()
+		if role, err := c.storage.GetRoleByName(ctx, "system_viewer"); err == nil {
+			if err := c.storage.AssignRole(ctx, createdUser.ID, role.ID, Scope{}); err != nil {
+				log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
+			}
 		}
-	}
+	}()
 
 	return createdUser, nil
 }

@@ -1,14 +1,22 @@
-# FINDING: a panic inside DeleteSecret's/RestoreSecret's best-effort dependency-lifecycle audit emission masks an already-successful delete/restore as a failed request
+# FINDING: a panic inside a "best-effort, primary operation already succeeded" step masks an already-successful request as a failed one
 
 **Date:** 2026-09-22
-**Component:** `internal/core/secret_dependencies.go` (`emitDependencyLifecycleEvents`),
-called from `internal/core/secrets.go`'s `DeleteSecret` and `RestoreSecret`.
+**Component:** `internal/core/secret_dependencies.go` (`emitDependencyLifecycleEvents`,
+called from `secrets.go`'s `DeleteSecret`/`RestoreSecret`); `internal/core/users.go`
+(`CreateUser`'s password-history seed + `system_viewer` auto-assign);
+`internal/core/service.go` (`emitAudit`, the single choke point every
+`c.Log*`/audit-write helper funnels through).
 **Status:** Fixed, same PR as this finding doc (policy change: first-party
 findings are fixed and disclosed together — no customers yet).
 
-Found by an unattended final-checks fuzz burst (`FuzzStorageFaultOperations`,
-`server/faultops`), run after coverage batch 6 landed — not a hand-written
-seed.
+Found by two separate unattended final-checks fuzz bursts
+(`FuzzStorageFaultOperations`, `server/faultops`), run back-to-back after
+coverage batch 6 landed — neither from a hand-written seed. The SAME defect
+shape recurred live twice in immediate succession (first on
+`DeleteSecret`/`RestoreSecret`, then on `CreateUser`), which is why this doc
+now covers three sites instead of one: two found live, one (`emitAudit`)
+fixed proactively at the shared choke point once the pattern's second live
+occurrence made it clear this was recurring, not a one-off.
 
 ## Summary
 
@@ -153,17 +161,57 @@ func (c *KeyorixCore) emitDependencyLifecycleEvents(ctx context.Context, eventTy
 No transport-layer change was needed — both `DeleteSecret` and
 `RestoreSecret` already just call this one shared function.
 
+### Second live occurrence: CreateUser's password-history seed and system_viewer auto-assign
+
+A second unattended final-checks burst, run immediately after the fix above
+landed, found the IDENTICAL shape on a completely different function:
+`core.CreateUser` (`internal/core/users.go`) seeds password history and
+auto-assigns the `system_viewer` baseline role (ADR-021) as two sequential
+best-effort steps AFTER `c.storage.CreateUser` has already committed the new
+user row — both discarded a returned error (`_ = ...`) but neither was
+protected against a panic from the same call.
+
+**Reproduction:** fault `(op="REST POST /api/v1/users/", method=AssignRole,
+NthCall=1, kind=panic)`. `AssignRole`'s panic propagated through `CreateUser`,
+past the already-committed `User` row (and, if password history is enabled,
+past the already-committed `PasswordHistory` row too) and out to the real
+Recovery middleware, producing a 500 for a request that had, in fact, already
+succeeded — `Differing tables: [PasswordHistory User]`. Minimized input saved
+at `server/faultops/testdata/fuzz/FuzzStorageFaultOperations/8ee52322e0585924`.
+
+**Fix:** both best-effort steps in `CreateUser` are now wrapped in their own
+`defer`/`recover`, logging a warning and continuing — the same treatment
+`emitDependencyLifecycleEvents` received above, applied to the second live
+instance of the identical shape.
+
+### Proactive fix: emitAudit, the shared audit choke point
+
+Given the SAME defect shape recurred live twice in immediate succession
+(different functions, same root cause), a third site was fixed proactively
+rather than waiting for a third live finding: `emitAudit`
+(`internal/core/service.go`) is the single choke point every
+`c.Log*`/`writeAuditEvent*` helper funnels through (confirmed by
+`TestDirectLogAuditEventCallersAreSafe`) — every caller of those helpers is,
+by construction, in the exact "primary operation already succeeded, only the
+audit trail is being written" position this defect class targets. A panic
+inside `emitAudit` (most plausibly from its own `c.storage.LogAuditEvent`
+call) would propagate to EVERY one of those callers, all at once, the same
+way F3b's unprotected audit write did before its own fix. `emitAudit` now
+recovers a panic the same way it already handles a returned `LogAuditEvent`
+error (logging with the existing `"SECURITY: ..."` prefix its error-handling
+branch already uses), closing this for every audit-emitting call site in the
+codebase in one fix, not sixty separate ones.
+
 **FLAG FOR REVIEW (not swept here):** a repo-wide grep for `best-effort`
-across `internal/core` turns up roughly sixty comparable call sites (see
-`account.go`, `login_lockout.go`, `dashboard.go`, `notifications.go`,
-`compliance_posture.go`, and many others) — this finding fixes the ONE the
-fuzzer actually landed a panic fault on, not a systematic panic-safety audit
-of every "best-effort" helper in the codebase. Whether the same
-returned-error-only gap recurs at any of those other sites is a real open
-question worth a dedicated sweep, not decided or attempted here — consistent
-with this campaign's own "check fix siblings, not just original site"
-practice applied narrowly (siblings of the *exact* call this fuzz burst
-found), not stretched into an unrelated, much larger audit mid-task.
+across `internal/core` still turns up roughly sixty comparable call sites
+beyond the three fixed here (see `account.go`, `login_lockout.go`,
+`dashboard.go`, `notifications.go`, `compliance_posture.go`, and many
+others). This finding fixes the two the fuzzer actually landed a panic fault
+on, plus the one shared choke point (`emitAudit`) whose leverage justified a
+proactive fix once the pattern recurred live — not a systematic panic-safety
+audit of every remaining "best-effort" helper in the codebase. Whether the
+same gap recurs at any of those other sites is a real open question worth a
+dedicated sweep, not decided or attempted here.
 
 ## Red-proof
 
@@ -180,3 +228,16 @@ operation catalog) stayed green. Restoring the fix made the corpus fully
 green again, confirmed by `go build ./...`, the fuzz corpus re-run, and the
 `internal/core`/`server/http`/`server/grpc` suites (including `-race`) —
 all clean.
+
+Second occurrence: reverting `internal/core/users.go` and
+`internal/core/service.go` together (`git checkout HEAD -- internal/core/users.go
+internal/core/service.go`, the commit immediately before this second fix)
+and re-running the corpus reproduced `8ee52322e0585924` exactly, with every
+other corpus entry (including `059212c4cda84764` from the first fix, still
+present) staying green. Restoring both files made the corpus fully green
+again, confirmed by `go build ./...`, the fuzz corpus re-run, and the
+`internal/core`/`server/http`/`server/grpc` suites (including `-race`) —
+all clean. `emitAudit`'s own fix had no dedicated fuzz-found trigger (it was
+proactive, not reactive) — its correctness rests on the same `-race` suite
+pass plus the existing `TestDirectLogAuditEventCallersAreSafe` guard
+continuing to pass unchanged.
