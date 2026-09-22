@@ -38,6 +38,8 @@ systemd unit's `ExecStart` points at `fuzz-runner.sh`.
 - **`DISCLOSURE-TRIAGE.md`** — the crash-feasibility gate a third-party-library
   finding must pass before it becomes a disclosure or an article sentence.
 
+Fuzzing catches ledger (finds, lessons, disclosure history): `keyorixhq/fuzz-corpus` `docs/fuzzing-catches-ledger.md`.
+
 ## Harness quality gates (beyond never-panic)
 
 A never-panic harness proves nothing about a security boundary, and an *in-wall*
