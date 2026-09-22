@@ -326,25 +326,44 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 	if err := validateDescription(description); err != nil {
 		return nil, err
 	}
-	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
-	if err != nil {
-		if errors.Is(err, storage.ErrDuplicateProjectName) {
-			return nil, translateProjectNameError(err)
+	// SCRATCH (fix/createproject-atomicity): wrap the project-row create and the
+	// default-environment seeding in one storage.WithTransaction, same pattern as
+	// CreateRole/UpdateRole (#1969-class). This closes the mixed-state half of the
+	// fault-fuzz finding (Project committed, Environment never attempted) — an
+	// effect-then-error fault on the FIRST call now rolls back to old state instead
+	// of leaving a mix; a lost-ack-after-commit fault yields the full new state.
+	// Both are old-OR-new, which oracle (d) accepts. Does NOT close the ambiguous-
+	// response half (the client is still told "error" even when the write commits)
+	// — that needs an idempotency key, tracked separately.
+	var project *models.Project
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var err error
+		project, err = tx.CreateProject(ctx, &models.Project{Name: name, Description: description})
+		if err != nil {
+			return err
 		}
-		return nil, fmt.Errorf("failed to create project: %w", err)
-	}
-	// Seed default environments for new project. Non-fatal (found by
-	// fuzz-injecting a CreateEnvironment failure: the comment here used to
-	// say "log and continue" but discarded the error with `_ = err` instead
-	// of actually logging it — the project silently ended up missing one or
-	// more of its expected default environments with zero operator
-	// visibility into why): the project row itself already committed, and a
-	// caller retries environment creation separately if seeding fails, but
-	// this must be OBSERVABLE, not a swallowed error.
-	for _, envName := range defaultEnvironmentNames {
-		if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
-			log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
+		// Seed default environments for new project. Non-fatal (found by
+		// fuzz-injecting a CreateEnvironment failure: the comment here used to
+		// say "log and continue" but discarded the error with `_ = err` instead
+		// of actually logging it — the project silently ended up missing one or
+		// more of its expected default environments with zero operator
+		// visibility into why): the project row itself already committed, and a
+		// caller retries environment creation separately if seeding fails, but
+		// this must be OBSERVABLE, not a swallowed error. Left non-fatal even
+		// inside the transaction — this loop's own failure must not roll back
+		// the project row, matching the pre-existing accepted tradeoff.
+		for _, envName := range defaultEnvironmentNames {
+			if _, err := tx.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+				log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
+			}
 		}
+		return nil
+	})
+	if txErr != nil {
+		if errors.Is(txErr, storage.ErrDuplicateProjectName) {
+			return nil, translateProjectNameError(txErr)
+		}
+		return nil, fmt.Errorf("failed to create project: %w", txErr)
 	}
 	return project, nil
 }
@@ -453,19 +472,28 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 			return nil, err
 		}
 	}
-	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
-	if err != nil {
-		if errors.Is(err, storage.ErrDuplicateProjectName) {
-			return nil, translateProjectNameError(err)
+	// SCRATCH (fix/createproject-atomicity): same tx-wrap as CreateProject above.
+	var project *models.Project
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var err error
+		project, err = tx.CreateProject(ctx, &models.Project{Name: name, Description: description})
+		if err != nil {
+			return err
 		}
-		return nil, fmt.Errorf("failed to create project: %w", err)
-	}
-	for _, envName := range envNames {
-		if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
-			// Non-fatal, same rationale as CreateProject's default-environment
-			// seeding above — but must be observable, not silently discarded.
-			log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
+		for _, envName := range envNames {
+			if _, err := tx.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+				// Non-fatal, same rationale as CreateProject's default-environment
+				// seeding above — but must be observable, not silently discarded.
+				log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
+			}
 		}
+		return nil
+	})
+	if txErr != nil {
+		if errors.Is(txErr, storage.ErrDuplicateProjectName) {
+			return nil, translateProjectNameError(txErr)
+		}
+		return nil, fmt.Errorf("failed to create project: %w", txErr)
 	}
 	return project, nil
 }

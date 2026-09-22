@@ -22,7 +22,12 @@ import (
 // Postgres, and remote (ADR-049) storage. Fail-closed: an encryption error aborts the
 // write; the value is never silently downgraded to plaintext. Used by CreateSecret,
 // UpdateSecret, and RotateSecret.
-func (c *KeyorixCore) storeSecretVersion(ctx context.Context, secret *models.SecretNode, value []byte, versionNumber int) error {
+//
+// db is the storage handle to write through — c.storage for callers running outside a
+// transaction, or a tx-scoped storage.Storage for a caller that needs the version write
+// to commit or roll back together with an earlier call in the same operation (CreateSecret,
+// fix/create-ops-atomicity: the secret row and its version 1 now share one WithTransaction).
+func (c *KeyorixCore) storeSecretVersion(ctx context.Context, db storage.Storage, secret *models.SecretNode, value []byte, versionNumber int) error {
 	storedValue, metadata, err := c.encryptVersionValue(secret, value, versionNumber)
 	if err != nil {
 		return err
@@ -38,7 +43,7 @@ func (c *KeyorixCore) storeSecretVersion(ctx context.Context, secret *models.Sec
 		ReadCount:          0,
 		CreatedAt:          time.Now(),
 	}
-	_, err = c.storage.CreateSecretVersion(ctx, version)
+	_, err = db.CreateSecretVersion(ctx, version)
 	return err
 }
 
@@ -90,7 +95,7 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 			// A real read failure, not "no versions yet" - don't guess.
 			return err
 		}
-		lastErr = c.storeSecretVersion(ctx, secret, value, nextVersionNumber)
+		lastErr = c.storeSecretVersion(ctx, c.storage, secret, value, nextVersionNumber)
 		if lastErr == nil {
 			return nil
 		}
