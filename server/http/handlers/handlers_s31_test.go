@@ -44,13 +44,100 @@ func freshCoreBrokenS31(t *testing.T) *core.KeyorixCore {
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
+// freshCoreS31AdminMinusCampaigns returns a KeyorixCore with a WORKING role
+// system (User/Role/UserRole/... migrated, an admin role assigned to
+// UserID=1 so withUserCtx's caller clears the roles.assign authority check
+// CreateAccessReviewCampaignProxy now runs ahead of its storage call) but
+// deliberately WITHOUT the access_review_campaigns table migrated -- the
+// storage-layer CreateAccessReviewCampaign call itself is the thing meant to
+// fail here, not the (new) authority check ahead of it.
+//
+// #AccessReview (system-proxy-target-authority audit): before that authority
+// check existed, freshCoreBrokenS31's fully-closed DB connection was enough
+// to drive CreateAccessReviewCampaign's own error path (the handler's only
+// storage call). Now the authority check runs FIRST and touches storage too
+// (role resolution) -- with a closed connection it fails exactly as fail-
+// closed as it should, but that reroutes the response to 403
+// PERMISSION_DENIED before ever reaching CreateAccessReviewCampaign, so the
+// old fixture no longer exercises the code path this test's name claims to
+// cover. Splitting "role resolution must work" from "the campaigns table
+// must not" isolates the storage failure this test is actually about.
+func freshCoreS31AdminMinusCampaigns(t *testing.T) *core.KeyorixCore {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	n := s31DBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhandlers_s31admin_%d?mode=memory&cache=shared&_timeout=30000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
+		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
+	))
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
+	require.NoError(t, db.Create(adminRole).Error)
+	testUser := &models.User{Username: "s31admin", Email: "s31admin@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(testUser).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: testUser.ID, RoleID: adminRole.ID}).Error)
+	return core.NewKeyorixCore(store.NewLocalStorage(db))
+}
+
+// freshCoreS31AdminMinusItems is freshCoreS31AdminMinusCampaigns's sibling for
+// CreateAccessReviewItemsProxy: the access_review_campaigns table IS migrated
+// (the handler now fetches the campaign first, to scope its own roles.assign
+// check, so that lookup must genuinely succeed) but access_review_items is
+// deliberately left unmigrated so CreateAccessReviewItems' own storage call
+// is what fails.
+func freshCoreS31AdminMinusItems(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	n := s31DBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhandlers_s31admin2_%d?mode=memory&cache=shared&_timeout=30000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
+		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.AccessReviewCampaign{},
+	))
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
+	require.NoError(t, db.Create(adminRole).Error)
+	testUser := &models.User{Username: "s31admin2", Email: "s31admin2@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(testUser).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: testUser.ID, RoleID: adminRole.ID}).Error)
+	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
+}
+
 // ── CatalogHandler / access_review_campaigns_proxy.go ─────────────────────────
 
+// TestCreateAccessReviewCampaignProxy_DBError_S31 verifies that a genuine
+// storage failure inside CreateAccessReviewCampaign itself (not the
+// #AccessReview roles.assign authority check ahead of it) surfaces as 500.
+// Needs an authorized admin caller (freshCoreS31AdminMinusCampaigns) so the
+// new authority check -- which also touches storage for role resolution --
+// passes cleanly and the response genuinely reflects the campaigns-table
+// storage error, not a fail-closed 403 from a broken role lookup.
 func TestCreateAccessReviewCampaignProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS31(t))
+
+	// Companion baseline: the IDENTICAL request against a fully-migrated
+	// admin-backed core (access_review_campaigns table present) must
+	// succeed -- isolating the 500 below to the missing-table storage
+	// failure specifically, not the roles.assign authority check ahead of
+	// it or some other cause. clientSafe() redacts the response body to a
+	// fixed generic string, so this before/after delta is the available
+	// proof (no message text to assert on).
+	baselineCS, _ := freshCoreS12WithAdmin(t)
+	baselineH := NewCatalogHandler(baselineCS)
+	baselineBody := bytes.NewBufferString(`{"project_id":1,"name":"Test Campaign","state":"open","created_by":1}`)
+	baselineR := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns", baselineBody))
+	baselineW := httptest.NewRecorder()
+	baselineH.CreateAccessReviewCampaignProxy(baselineW, baselineR)
+	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (campaigns table present) must succeed: %s", baselineW.Body.String())
+
+	h := NewCatalogHandler(freshCoreS31AdminMinusCampaigns(t))
 	body := bytes.NewBufferString(`{"project_id":1,"name":"Test Campaign","state":"open","created_by":1}`)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns", body)
+	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns", body))
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -93,11 +180,46 @@ func TestGetLatestClosedAccessReviewCampaignProxy_DBError_S31(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// TestCreateAccessReviewItemsProxy_DBError_S31 verifies that a genuine
+// storage failure inside CreateAccessReviewItems itself (not the
+// #AccessReview roles.assign authority check, and not the campaign lookup
+// that check now depends on) surfaces as 500. Needs a real campaign row (the
+// handler fetches it first to scope its authority check) and an authorized
+// admin caller (freshCoreS31AdminMinusItems) so both of those succeed
+// cleanly, isolating the access_review_items-table storage failure this test
+// is actually about.
 func TestCreateAccessReviewItemsProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS31(t))
-	body := bytes.NewBufferString(`{"items":[{"user_id":1,"role":"viewer","decision":"pending","reviewed_by":0}]}`)
-	r := withChiParamS7(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns/1/items", body), "id", "1")
+
+	// Companion baseline: the IDENTICAL request/fixture shape against a
+	// fully-migrated admin-backed core (access_review_items table present)
+	// must succeed -- isolating the 500 below to the missing-table storage
+	// failure specifically, not the roles.assign authority check or the
+	// campaign lookup ahead of it. clientSafe() redacts the response body
+	// to a fixed generic string, so this before/after delta is the
+	// available proof.
+	baselineCS, baselineDB := freshCoreS12WithAdmin(t)
+	baselineH := NewCatalogHandler(baselineCS)
+	baselineCampaign := &models.AccessReviewCampaign{ProjectID: 1, Name: "S31 DBError Items Baseline", State: "open", CreatedBy: 1}
+	require.NoError(t, baselineDB.Create(baselineCampaign).Error)
+	baselineBody := bytes.NewBufferString(`{"items":[{"principal_type":"user","principal_id":1,"decision":"pending"}]}`)
+	baselineR := withUserCtx(withChiParamS7(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items", baselineCampaign.ID), baselineBody),
+		"id", fmt.Sprintf("%d", baselineCampaign.ID),
+	))
+	baselineW := httptest.NewRecorder()
+	baselineH.CreateAccessReviewItemsProxy(baselineW, baselineR)
+	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (items table present) must succeed: %s", baselineW.Body.String())
+
+	cs, db := freshCoreS31AdminMinusItems(t)
+	h := NewCatalogHandler(cs)
+	campaign := &models.AccessReviewCampaign{ProjectID: 1, Name: "S31 DBError Items", State: "open", CreatedBy: 1}
+	require.NoError(t, db.Create(campaign).Error)
+	body := bytes.NewBufferString(`{"items":[{"principal_type":"user","principal_id":1,"decision":"pending"}]}`)
+	r := withUserCtx(withChiParamS7(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items", campaign.ID), body),
+		"id", fmt.Sprintf("%d", campaign.ID),
+	))
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewItemsProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

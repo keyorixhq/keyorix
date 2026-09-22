@@ -30,7 +30,8 @@ import (
 // TestCreateAccessReviewCampaignProxy_IgnoresClosedState_R128 pins ARC-003:
 // a body carrying state="closed" must be persisted as state="open".
 func TestCreateAccessReviewCampaignProxy_IgnoresClosedState_R128(t *testing.T) {
-	h := freshCatalogHandlerS13(t)
+	cs, _ := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
 	now := time.Now()
 	body, _ := json.Marshal(map[string]interface{}{
 		"project_id":        42,
@@ -40,7 +41,7 @@ func TestCreateAccessReviewCampaignProxy_IgnoresClosedState_R128(t *testing.T) {
 		"closed_at":         now,
 		"forced_incomplete": true,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns", bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(w, req)
@@ -66,13 +67,14 @@ func TestCreateAccessReviewCampaignProxy_IgnoresClosedState_R128(t *testing.T) {
 // for forced_incomplete only: even without state="closed", forced_incomplete must
 // be stripped.
 func TestCreateAccessReviewCampaignProxy_IgnoresForcedIncomplete_R128(t *testing.T) {
-	h := freshCatalogHandlerS13(t)
+	cs, _ := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
 	body, _ := json.Marshal(map[string]interface{}{
 		"project_id":        43,
 		"name":              "ARC-003 forced-incomplete injection",
 		"forced_incomplete": true,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns", bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewCampaignProxy(w, req)
@@ -122,12 +124,12 @@ func TestCreateAccessReviewItemsProxy_StripsDecisionFields_R128(t *testing.T) {
 			},
 		},
 	})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPost,
 			fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items", campaign.ID),
 			bytes.NewReader(body)),
 		"id", fmt.Sprintf("%d", campaign.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateAccessReviewItemsProxy(w, req)
@@ -159,14 +161,22 @@ func TestCreateAccessReviewItemsProxy_StripsDecisionFields_R128(t *testing.T) {
 // the wire's decided_by=7 is deliberately different from 1 to prove it has
 // no effect on the outcome.
 func TestUpdateAccessReviewItemProxy_RejectsSelfCertification_R128(t *testing.T) {
-	h := freshCatalogHandlerS13(t)
+	cs, _ := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
+	// #AccessReview (system-proxy-target-authority audit): UpdateAccessReviewItemProxy
+	// now looks up the item's real campaign to scope its roles.assign check --
+	// needs a genuine campaign row, not just a bare CampaignID reference.
+	campaign, err := h.coreService.Storage().CreateAccessReviewCampaign(context.Background(), &models.AccessReviewCampaign{
+		Name: "self-cert-campaign", State: "open", CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
 	// The self-cert check now fetches the real item from storage first
 	// (documented-exception re-verification fix: it used to trust the wire
 	// body's principal_type/principal_id, letting a caller lie about
 	// principal_type to skip the check) -- seed a genuine item with
 	// PrincipalType "user" / PrincipalID 1, matching withUserCtx's actor.
 	require.NoError(t, h.coreService.Storage().CreateAccessReviewItems(context.Background(), []*models.AccessReviewItem{{
-		ID: 1, CampaignID: 1, PrincipalType: "user", PrincipalID: 1, Decision: "pending",
+		ID: 1, CampaignID: campaign.ID, PrincipalType: "user", PrincipalID: 1, Decision: "pending",
 	}}))
 	body, _ := json.Marshal(map[string]interface{}{
 		"principal_type": "user",

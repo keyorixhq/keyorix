@@ -234,6 +234,18 @@ func (h *CatalogHandler) CreateAccessReviewCampaignProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id and name are required")
 		return
 	}
+	// #AccessReview (system-proxy-target-authority audit): the human-facing
+	// OpenAccessReviewCampaign route (POST /projects/{id}/access-review/
+	// campaigns) requires roles.assign scoped to the project -- this route had
+	// only the group's blanket system.write. An opened-but-empty campaign
+	// confers nothing by itself, but re-derive the same ceiling anyway so the
+	// two surfaces stay consistent (the real lever, deciding an item, is
+	// UpdateAccessReviewItemProxy below, fixed for the same reason).
+	actorType, requesterID := requestActorKindAndID(r)
+	if err := h.coreService.RequireRolesAssignAuthority(r.Context(), actorType, requesterID, core.Scope{ProjectID: body.ProjectID}); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", clientSafe(err))
+		return
+	}
 	// ARC-003: strip any caller-supplied lifecycle state — a new campaign is
 	// always open with no closer and no forced-incomplete flag.
 	body.State = core.CampaignStateOpen
@@ -361,6 +373,24 @@ func (h *CatalogHandler) CreateAccessReviewItemsProxy(w http.ResponseWriter, r *
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
+		return
+	}
+	// #AccessReview (system-proxy-target-authority audit): same ceiling as
+	// CreateAccessReviewCampaignProxy above, scoped to the campaign's own
+	// project -- see that handler's doc for the full reasoning.
+	campaign, err := h.coreService.Storage().GetAccessReviewCampaign(r.Context(), uint(campaignID))
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "access-review campaign not found")
+			return
+		}
+		log.Printf("access-review-campaigns proxy: get campaign for items failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	actorType, requesterID := requestActorKindAndID(r)
+	if err := h.coreService.RequireRolesAssignAuthority(r.Context(), actorType, requesterID, core.Scope{ProjectID: campaign.ProjectID}); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", clientSafe(err))
 		return
 	}
 	items := make([]*models.AccessReviewItem, 0, len(body.Items))
@@ -513,6 +543,27 @@ func (h *CatalogHandler) UpdateAccessReviewItemProxy(w http.ResponseWriter, r *h
 	}
 	if existing.PrincipalType == "user" && decidedBy == existing.PrincipalID {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "self-certification is not allowed; an independent reviewer is required")
+		return
+	}
+	// #AccessReview (system-proxy-target-authority audit): the checks above
+	// prove attribution (an identifiable human) and non-self-certification --
+	// neither is a roles.assign check. The human-facing decision route
+	// (PUT /projects/{id}/access-review/campaigns/{campaignId}/items/{itemId})
+	// requires roles.assign scoped to the project; this route had none at all.
+	// This is not just record-keeping: a "revoke" decision here actually
+	// removes the underlying role grant (core.DecideAccessReviewItem's
+	// applyAccessDecision) -- a system.write-only caller could silently
+	// approve OR revoke real access-review decisions, including revoking
+	// someone's real access, in any project. Re-derive the ceiling scoped to
+	// the item's own campaign's project.
+	campaign, cerr := h.coreService.Storage().GetAccessReviewCampaign(r.Context(), existing.CampaignID)
+	if cerr != nil {
+		log.Printf("access-review-campaigns proxy: get campaign for item authority check failed: %v", cerr)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(cerr))
+		return
+	}
+	if err := h.coreService.RequireRolesAssignAuthority(r.Context(), actorType, decidedBy, core.Scope{ProjectID: campaign.ProjectID}); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", clientSafe(err))
 		return
 	}
 	existing.Decision = body.Decision
