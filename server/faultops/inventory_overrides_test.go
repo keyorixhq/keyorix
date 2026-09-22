@@ -78,6 +78,11 @@ var operationOverrides = map[string]overrideEntry{
 	// Coverage batch 5: rotation policies.
 	"REST POST /api/v1/rotation-policies/":       {StatusFuzzed, "opCatalog[\"CreateRotationPolicy\"] — batch 5"},
 	"REST DELETE /api/v1/rotation-policies/{id}": {StatusFuzzed, "opCatalog[\"DeleteRotationPolicy\"] — batch 5"},
+	// Coverage batch 6: /system proxy routes with non-trivial (non-passthrough)
+	// logic of their own -- multi-step state guard + side effect (break-glass
+	// revoke) and an invariant-checked write (secret-dependency exclusive create).
+	"REST POST /api/v1/system/break-glass/{id}/revoke":       {StatusFuzzed, "opCatalog[\"RevokeBreakGlassActivationProxy\"] — batch 6"},
+	"REST POST /api/v1/system/secret-dependencies/exclusive": {StatusFuzzed, "opCatalog[\"CreateSecretDependencyExclusiveProxy\"] — batch 6"},
 }
 
 func statusOf(key string) overrideEntry {

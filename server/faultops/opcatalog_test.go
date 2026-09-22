@@ -28,7 +28,11 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -703,6 +707,118 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			id := state.(uint)
 			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/rotation-policies/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 6: RevokeBreakGlassActivationProxy — a multi-step
+		// /system proxy (state guard + role removal + conditional revoke +
+		// audit, see break_glass_proxy.go's own doc for why it is NOT a thin
+		// passthrough) with no transaction spanning its steps. No REST
+		// creation route exists any more (CreateBreakGlassActivationProxy was
+		// deleted, G80 liveness sweep), so Setup seeds the activation and its
+		// role grant directly through the unfaulted storage wrapper — the
+		// same primitives a real downstream server's core.ActivateBreakGlass
+		// would call.
+		Key: "REST POST /api/v1/system/break-glass/{id}/revoke",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			pStatus, pBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-bg-project"})
+			if err != nil {
+				return nil, err
+			}
+			if pStatus/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", pStatus, pBody)
+			}
+			var proj struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(pBody, &proj); err != nil || proj.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, pBody)
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-bg-user")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := w.faulty.AssignRole(ctx, userID, roleID, coreStorage.Scope{ProjectID: proj.Data.ID}); err != nil {
+				return nil, fmt.Errorf("setup AssignRole: %w", err)
+			}
+			activation, err := w.faulty.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+				ProjectID:     proj.Data.ID,
+				UserID:        userID,
+				RoleID:        roleID,
+				RoleName:      "fuzz-role",
+				Justification: "fuzz break-glass",
+				State:         core.BreakGlassActive,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateBreakGlassActivation: %w", err)
+			}
+			return activation.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass/%d/revoke", id), map[string]any{
+				"revoked_by": 1, "revoked_at": time.Now(),
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 6: CreateSecretDependencyExclusiveProxy — the ONE
+		// deliberately non-passthrough method in secret_dependencies_proxy.go
+		// (evaluates the duplicate/cycle invariant itself, since no real
+		// transaction spans the HTTP hop back to the calling server); routed
+		// through core.LockedCreateSecretDependencyExclusive, which holds the
+		// same lock core.AddSecretDependency does around the identical call.
+		Key: "REST POST /api/v1/system/secret-dependencies/exclusive",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			createSecret := func(name string) (uint, error) {
+				st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secrets/", map[string]any{
+					"name": name, "value": "fuzz-value", "project_id": 1, "environment_id": 1, "type": "generic",
+				})
+				if err != nil {
+					return 0, err
+				}
+				if st/100 != 2 {
+					return 0, fmt.Errorf("setup CreateSecret(%s): HTTP %d: %s", name, st, body)
+				}
+				var decoded struct {
+					Data struct {
+						ID uint `json:"ID"`
+					} `json:"data"`
+				}
+				if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+					return 0, fmt.Errorf("decoding CreateSecret(%s) response: %w (body=%s)", name, err, body)
+				}
+				return decoded.Data.ID, nil
+			}
+			dependent, err := createSecret("fuzz-sd-dependent")
+			if err != nil {
+				return nil, err
+			}
+			dependsOn, err := createSecret("fuzz-sd-dependson")
+			if err != nil {
+				return nil, err
+			}
+			return map[string]uint{"dependent": dependent, "dependsOn": dependsOn}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/secret-dependencies/exclusive", map[string]any{
+				"project_id": 1, "dependent_secret_id": s["dependent"], "depends_on_secret_id": s["dependsOn"],
+			})
 			if err != nil {
 				return opResult{}, err
 			}

@@ -123,6 +123,7 @@ func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, descri
 
 	var role *models.Role
 	var assignedPermissionIDs []uint
+	var assignedPermissions []*models.Permission
 	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		var err error
 		role, err = tx.CreateRole(ctx, foldedName, description)
@@ -135,7 +136,13 @@ func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, descri
 			}
 			assignedPermissionIDs = append(assignedPermissionIDs, id)
 		}
-		return nil
+		// Read the final permission set to return to the caller INSIDE the
+		// same transaction, not after it commits (F3d — see UpdateRole's own
+		// comment for the fault-injection finding this exact shape produced):
+		// a failure here must roll back the whole create, not report an
+		// error against an already-committed role.
+		assignedPermissions, err = tx.GetRolePermissions(ctx, role.ID)
+		return err
 	})
 	if txErr != nil {
 		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), txErr)
@@ -148,10 +155,6 @@ func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, descri
 		c.LogPermissionAssigned(ctx, actorID, role.ID, id, builtinTarget)
 	}
 
-	assignedPermissions, err := c.storage.GetRolePermissions(ctx, role.ID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
 	return role, assignedPermissions, nil
 }
 
@@ -188,6 +191,7 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 
 	var updated *models.Role
 	var removedPermissionIDs, assignedPermissionIDs []uint
+	var finalPermissions []*models.Permission
 	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		var err error
 		updated, err = tx.UpdateRole(ctx, role)
@@ -195,7 +199,11 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 			return err
 		}
 		if newPermissionIDs == nil {
-			return nil
+			// No permission-set change requested — still read the final set
+			// to return to the caller INSIDE this transaction (F3d, see
+			// below), not after it commits.
+			finalPermissions, err = tx.GetRolePermissions(ctx, role.ID)
+			return err
 		}
 		existing, err := tx.GetRolePermissions(ctx, role.ID)
 		if err != nil {
@@ -225,7 +233,17 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 			}
 			assignedPermissionIDs = append(assignedPermissionIDs, id)
 		}
-		return nil
+		// F3d (found live by FuzzStorageFaultOperations, coverage-batch-6
+		// burst): this final read used to happen AFTER the transaction
+		// committed and AFTER audit logging — a fault landing on it reported
+		// an ERROR to the caller even though the role update and permission
+		// diff had already committed underneath it (oracle (a): reported
+		// error, but logical state changed anyway). Reading it here, as the
+		// last statement inside the transaction, means a failure rolls the
+		// whole update back instead of leaving a committed-but-reported-
+		// failed operation.
+		finalPermissions, err = tx.GetRolePermissions(ctx, role.ID)
+		return err
 	})
 	if txErr != nil {
 		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), txErr)
@@ -243,10 +261,6 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		c.LogPermissionAssigned(ctx, actorID, role.ID, id, builtinTarget)
 	}
 
-	finalPermissions, err := c.storage.GetRolePermissions(ctx, role.ID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
 	return updated, finalPermissions, nil
 }
 
