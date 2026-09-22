@@ -1433,3 +1433,212 @@ func TestImpersonation_BreakGlassBlocked(t *testing.T) {
 	require.NoError(t, json.NewDecoder(bgResp.Body).Decode(&bgErrBody))
 	assert.Contains(t, bgErrBody.Message, "not permitted while impersonating")
 }
+
+// ── #1972 cookie-attribute invariants ───────────────────────────────────────
+//
+// #1972 was a DAST false positive: ZAP's "Cookie No HttpOnly Flag" (rule
+// 10010) fired on a /auth/logout response, but the actual cookie in that
+// response missing HttpOnly was csrf_token — non-HttpOnly BY DESIGN (see
+// SetCSRFCookie's doc comment in server/middleware/session_cookie.go: the
+// SPA reads it and echoes it back for the double-submit pattern). kx_session
+// and kx_admin_session were already HttpOnly on every set/clear path. These
+// tests make that property machine-checked across every flow that touches a
+// session cookie, rather than merely asserted in the issue's close comment —
+// it's the property an accepted-exceptions.yaml suppression for
+// (plugin_id: 10010, param: csrf_token) will depend on staying true.
+
+// assertSessionCookieAttrs checks the invariant every kx_session/
+// kx_admin_session Set-Cookie must hold: HttpOnly, SameSite=Lax, Path=/, and
+// Secure matching whatever TLS mode issued it.
+func assertSessionCookieAttrs(t *testing.T, cookie *http.Cookie, wantSecure bool, context string) {
+	t.Helper()
+	require.NotNil(t, cookie, "%s: cookie must be present", context)
+	assert.True(t, cookie.HttpOnly, "%s: must be HttpOnly", context)
+	assert.Equal(t, wantSecure, cookie.Secure, "%s: Secure must match TLS mode", context)
+	assert.Equal(t, http.SameSiteLaxMode, cookie.SameSite, "%s: SameSite must be Lax", context)
+	assert.Equal(t, "/", cookie.Path, "%s: Path must be /", context)
+}
+
+// findCookie returns the named cookie from a raw Set-Cookie response, or nil.
+func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, c := range cookies {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// TestSessionCookieAttrs_AcrossAuthFlows drives login, refresh, impersonation
+// begin/end, and logout through the real router and asserts every kx_session
+// Set-Cookie carries HttpOnly+SameSite=Lax+Path=/ (Secure is covered
+// separately below, since this suite runs with TLS disabled throughout).
+func TestSessionCookieAttrs_AcrossAuthFlows(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	_ = createTestToken(t, testCore) // seeds testadmin (admin role) /TestPassword123!
+
+	ctx := context.Background()
+	targetUser, err := testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "target1972", Email: "target1972@example.com", Password: "CorrectHorseBattery9!",
+	})
+	require.NoError(t, err)
+
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := newCookieClient(t)
+
+	loginResp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+	require.Equal(t, http.StatusOK, loginResp.StatusCode)
+	loginCookies := loginResp.Cookies()
+	_ = loginResp.Body.Close()
+
+	loginSession := findCookie(loginCookies, "kx_session")
+	require.NotNil(t, loginSession, "login must set kx_session")
+	originalPath := loginSession.Path
+	originalDomain := loginSession.Domain
+
+	// Refresh: extractBearerToken checks the cookie before the header, so the
+	// jar's session cookie alone drives this — no Authorization header needed.
+	refreshReq, err := http.NewRequest(http.MethodPost, server.URL+"/auth/refresh", nil)
+	require.NoError(t, err)
+	refreshResp, err := client.Do(refreshReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, refreshResp.StatusCode)
+	refreshCookies := refreshResp.Cookies()
+	_ = refreshResp.Body.Close()
+
+	startBody, err := json.Marshal(map[string]uint{"user_id": targetUser.ID})
+	require.NoError(t, err)
+	startReq, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/admin/impersonate", bytes.NewReader(startBody))
+	require.NoError(t, err)
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	startResp, err := client.Do(startReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, startResp.StatusCode)
+	beginCookies := startResp.Cookies()
+	_ = startResp.Body.Close()
+
+	endReq, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/end-impersonation", nil)
+	require.NoError(t, err)
+	endReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	endResp, err := client.Do(endReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, endResp.StatusCode)
+	endCookies := endResp.Cookies()
+	_ = endResp.Body.Close()
+
+	// Logout, of the restored admin session. /auth/logout requires CSRF
+	// (router.go applies RequireCSRF individually to this route).
+	logoutReq, err := http.NewRequest(http.MethodPost, server.URL+"/auth/logout", nil)
+	require.NoError(t, err)
+	logoutReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	logoutResp, err := client.Do(logoutReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, logoutResp.StatusCode)
+	logoutCookies := logoutResp.Cookies()
+	_ = logoutResp.Body.Close()
+
+	// Table: every handler that sets/clears kx_session must carry the same
+	// HttpOnly/SameSite/Path invariant.
+	cases := []struct {
+		flow    string
+		cookies []*http.Cookie
+	}{
+		{"login", loginCookies},
+		{"refresh", refreshCookies},
+		{"impersonation begin", beginCookies},
+		{"impersonation end (restore)", endCookies},
+		{"logout (clear)", logoutCookies},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flow, func(t *testing.T) {
+			session := findCookie(tc.cookies, "kx_session")
+			assertSessionCookieAttrs(t, session, false, tc.flow+" kx_session")
+		})
+	}
+
+	// #1972's actual fix point: csrf_token stays non-HttpOnly on every flow
+	// that (re)issues it. Named explicitly rather than folded into the table
+	// above — this is the one cookie this test must NOT expect HttpOnly on.
+	// Don't change this: a future accepted-exceptions.yaml suppression for
+	// ZAP rule 10010 / param csrf_token depends on it staying true.
+	t.Run("csrf_token stays non-HttpOnly by design (do not change)", func(t *testing.T) {
+		for _, tc := range []struct {
+			flow    string
+			cookies []*http.Cookie
+		}{
+			{"login", loginCookies},
+			{"refresh", refreshCookies},
+			{"impersonation begin", beginCookies},
+			{"impersonation end", endCookies},
+		} {
+			csrf := findCookie(tc.cookies, "csrf_token")
+			require.NotNil(t, csrf, "%s: must (re)issue csrf_token", tc.flow)
+			assert.False(t, csrf.HttpOnly,
+				"%s: csrf_token must stay JS-readable for the double-submit pattern (SetCSRFCookie doc comment) -- see #1972", tc.flow)
+		}
+	})
+
+	// Logout's clear must target the SAME Path/Domain the cookie was issued
+	// with -- otherwise the browser keeps the originally-issued cookie alive
+	// alongside a separately-scoped "cleared" one that never actually
+	// overwrites it. (#1972's investigation confirmed this is NOT the case
+	// today; this makes that fact machine-checked instead of asserted.)
+	t.Run("logout clear matches the issued cookie's Path/Domain", func(t *testing.T) {
+		clearedSession := findCookie(logoutCookies, "kx_session")
+		require.NotNil(t, clearedSession)
+		assert.Equal(t, originalPath, clearedSession.Path, "cleared cookie's Path must match the issued cookie's Path")
+		assert.Equal(t, originalDomain, clearedSession.Domain, "cleared cookie's Domain must match the issued cookie's Domain")
+		assert.Less(t, clearedSession.MaxAge, 0, "cleared cookie must carry a negative MaxAge so the browser deletes it immediately")
+
+		clearedCSRF := findCookie(logoutCookies, "csrf_token")
+		require.NotNil(t, clearedCSRF)
+		assert.False(t, clearedCSRF.HttpOnly, "cleared csrf_token must still not be HttpOnly")
+	})
+}
+
+// TestSessionCookieAttrs_SecureFlagFollowsTLSConfig confirms kx_session's
+// Secure attribute actually reflects cfg.Server.HTTP.TLS.Enabled in both
+// directions, rather than being hardcoded either way. Uses a raw client (no
+// cookie jar): a Secure cookie legitimately won't roundtrip over this
+// plain-HTTP httptest.Server, which is correct RFC 6265 behavior, not a bug
+// to route around — the response's own Set-Cookie header is all this needs.
+func TestSessionCookieAttrs_SecureFlagFollowsTLSConfig(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	for _, tlsEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tls_enabled=%v", tlsEnabled), func(t *testing.T) {
+			cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    "8080",
+				TLS:     config.TLSConfig{Enabled: tlsEnabled},
+			}}}
+			testCore := newTestCore(t)
+			_ = createTestToken(t, testCore)
+
+			router, err := NewRouter(cfg, testCore)
+			require.NoError(t, err)
+			server := httptest.NewServer(router)
+			defer server.Close()
+
+			body, err := json.Marshal(map[string]string{"username": "testadmin", "password": "TestPassword123!"})
+			require.NoError(t, err)
+			resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(server.URL+"/auth/login", "application/json", bytes.NewReader(body))
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			session := findCookie(resp.Cookies(), "kx_session")
+			assertSessionCookieAttrs(t, session, tlsEnabled, fmt.Sprintf("login kx_session (tls_enabled=%v)", tlsEnabled))
+		})
+	}
+}
