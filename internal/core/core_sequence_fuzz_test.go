@@ -34,6 +34,52 @@ var coreSeqResetTables = []string{
 	"users", "groups", "roles", "permissions",
 }
 
+// coreCurrentSizes/coreTransitionSizes are FuzzCoreOperationSequence's abstract
+// security-state tuple, bucketed into small enums and encoded via
+// fuzzutil.PackTuple. This harness has no tokens, sessions, cache, or tenant
+// variation (one project throughout, no HTTP layer) -- so, unlike the HTTP
+// harness below, the tuple is deliberately narrow: only the axes that
+// correspond to a real state distinction this harness can actually reach.
+//
+//	opKind (5):           create / grant / revoke / read / rotate (op % 5)
+//	principal (3):        the targeted principal's index; 0 (n/a) for
+//	                       create/rotate, which never target a principal
+//	roleState (2):        targeted principal's canRead BEFORE this op; 0 (n/a)
+//	                       for create/rotate
+//	secretPopulation (3): len(secretIDs) bucketed {0, 1, 2+}
+//
+// coreTransitionSizes prepends priorOutcome (3: none-yet / success /
+// business-deny -- see runCoreSeqIteration's outcome tracking; a guard
+// timeout aborts the test via t.Fatalf before a next step could run, so it is
+// not a reachable bucket here and is deliberately not modeled).
+//
+// Not modeled at all: impersonation (no such op exists in this harness) --
+// its future home is the mixed-principal authority fuzzer, not this one.
+var (
+	coreCurrentSizes    = []int{5, 3, 2, 3}
+	coreTransitionSizes = []int{3, 5, 3, 2, 3}
+
+	coreCurrentBase    = 0
+	coreTransitionBase = coreCurrentBase + fuzzutil.TupleSpace(coreCurrentSizes)
+
+	coreOpKindNames  = []string{"create", "grant", "revoke", "read", "rotate"}
+	coreOutcomeNames = []string{"none-yet", "success", "business-deny"}
+)
+
+// coreCurrentLabel/coreTransitionLabel render a tuple human-readably for
+// FUZZ_STATE_REPORT (fuzzutil.StateReport) -- the SAME functions
+// TestEnumerateCoreStateLabels calls to build the full enumerable space, so
+// the report and the enumeration can never drift apart.
+func coreCurrentLabel(kind, principal, roleState, pop int) string {
+	return fmt.Sprintf("core/current op=%s principal=%d roleState=%d secretPop=%d",
+		coreOpKindNames[kind], principal, roleState, pop)
+}
+
+func coreTransitionLabel(prior, kind, principal, roleState, pop int) string {
+	return fmt.Sprintf("core/transition priorOutcome=%s op=%s principal=%d roleState=%d secretPop=%d",
+		coreOutcomeNames[prior], coreOpKindNames[kind], principal, roleState, pop)
+}
+
 // FuzzCoreOperationSequence is a stateful, model-based fuzzer for KeyorixCore: it
 // drives a fuzzer-chosen SEQUENCE of create / grant / revoke / read / rotate
 // operations, with the acting principal varied per step, against a real core over
@@ -173,6 +219,29 @@ func runCoreSeqIteration(
 	var secretIDs []uint
 	secretSeq, rotateSeq := 0, 0
 
+	// state-edge bookkeeping: a fresh gate per iteration (one fuzz input), so
+	// revisiting the same abstract state twice within one input doesn't
+	// re-fire the edge -- see fuzzutil.StateEdgeGate. priorOutcome feeds the
+	// transition-pair tuple; see coreTransitionSizes' doc comment for its
+	// 3-value domain (guard-timeout is unreachable, not modeled).
+	edgeGate := fuzzutil.NewStateEdgeGate()
+	const (
+		outcomeNoneYet = iota
+		outcomeSuccess
+		outcomeBusinessDeny
+	)
+	priorOutcome := outcomeNoneYet
+	secretPopBucket := func() int {
+		switch {
+		case len(secretIDs) == 0:
+			return 0
+		case len(secretIDs) == 1:
+			return 1
+		default:
+			return 2
+		}
+	}
+
 	// assertAdminValue enforces PRESERVE-DATA: the admin bypasses permission checks
 	// and our secrets are unclassified with no max-reads, so a successful create or
 	// rotate MUST leave the value admin-readable and byte-identical to the model.
@@ -191,7 +260,37 @@ func runCoreSeqIteration(
 	}
 
 	step := func(op, a, b byte) {
-		switch op % 5 {
+		kind := int(op % 5)
+
+		// principal/roleState are only meaningful for ops that target a principal
+		// (grant/revoke/read); create/rotate are admin-only, so they bucket to the
+		// fixed n/a value 0 rather than fabricating a distinction that isn't there.
+		principalIdx := 0
+		roleState := 0
+		if kind == 1 || kind == 2 || kind == 3 {
+			principalIdx = int(a) % len(principals)
+			if canRead[principals[principalIdx]] {
+				roleState = 1
+			}
+		}
+		pop := secretPopBucket()
+
+		curKey := fuzzutil.PackTuple([]int{kind, principalIdx, roleState, pop}, coreCurrentSizes)
+		edgeGate.FireOnce(uint32(coreCurrentBase + curKey))
+		transKey := fuzzutil.PackTuple([]int{priorOutcome, kind, principalIdx, roleState, pop}, coreTransitionSizes)
+		edgeGate.FireOnce(uint32(coreTransitionBase + transKey))
+		if fuzzutil.StateReportEnabled() {
+			fuzzutil.StateReport(coreCurrentLabel(kind, principalIdx, roleState, pop))
+			fuzzutil.StateReport(coreTransitionLabel(priorOutcome, kind, principalIdx, roleState, pop))
+		}
+
+		// outcome defaults to business-deny: every early "no target yet" return
+		// below (case 3/4 with no secret created yet) falls through this default
+		// via the defer, exactly like a real denial would.
+		outcome := outcomeBusinessDeny
+		defer func() { priorOutcome = outcome }()
+
+		switch kind {
 		case 0: // admin creates a secret
 			secretSeq++
 			val := []byte{a, b}
@@ -199,28 +298,34 @@ func runCoreSeqIteration(
 				secretIDs = append(secretIDs, id)
 				value[id] = val
 				assertAdminValue(id, val) // round-trip integrity on create
+				outcome = outcomeSuccess
 			}
 		case 1: // grant reader to a principal (system actor 0 bypasses the grant ceiling)
-			u := principals[int(a)%len(principals)]
+			u := principals[principalIdx]
 			if err := c.AssignUserRole(ctx, 0, u, readerRoleID, scope, false); err == nil {
 				canRead[u] = true
+				outcome = outcomeSuccess
 			}
 		case 2: // revoke reader from a principal
-			u := principals[int(a)%len(principals)]
+			u := principals[principalIdx]
 			if err := c.RemoveUserRole(ctx, 0, u, readerRoleID, scope); err == nil {
 				canRead[u] = false
+				outcome = outcomeSuccess
 			}
 		case 3: // a principal attempts a permission-checked VALUE read
 			if len(secretIDs) == 0 {
 				return
 			}
-			u := principals[int(a)%len(principals)]
+			u := principals[principalIdx]
 			sid := secretIDs[int(b)%len(secretIDs)]
 			var got []byte
 			var rerr error
 			fuzzutil.Guard(t.Fatalf, "GetSecretValueWithPermissionCheck", func() {
 				got, rerr = c.GetSecretValueWithPermissionCheck(ctx, sid, u)
 			})
+			if rerr == nil {
+				outcome = outcomeSuccess
+			}
 			if !canRead[u] {
 				// Fail-closed: no read-granting role, owns nothing → must be denied,
 				// and must NOT leak plaintext.
@@ -256,6 +361,7 @@ func runCoreSeqIteration(
 			if rerr == nil {
 				value[sid] = newVal
 				assertAdminValue(sid, newVal) // rotation preserved data, no loss/corruption
+				outcome = outcomeSuccess
 			}
 		}
 	}

@@ -37,6 +37,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -238,6 +239,80 @@ func buildAPIFuzzWorld(f *testing.F, backend string, db *gorm.DB) *apiFuzzWorld 
 	}
 }
 
+// httpCurrentSizes/httpTransitionSizes are FuzzKeyorixHTTPAPISequence's
+// abstract security-state tuple, fired at every instrumented read() call
+// (the harness's actual authz decision point):
+//
+//	principalKind (7):  no-token / garbage-token / admin / p0 / p1 / p2 / revuser
+//	                    (revuser is the dedicated revocation-probe principal --
+//	                    it's a real, distinct principal this harness drives, not
+//	                    a fabricated bucket; see revocationProbe below)
+//	roleState (2):      the principal holds the reader role on ANY project
+//	                    (proja or projb); 0 (n/a) for no-token/garbage/admin
+//	tenantMatch (3):    match (grant IS on the target secret's project) /
+//	                    mismatch (grant exists, but on the OTHER project) /
+//	                    n/a (no grant anywhere, or not a principal-mode read)
+//	tokenState (4):     none / garbage / valid / revoked -- "revoked" is only
+//	                    ever reached via revocationProbe; the main grant/
+//	                    revoke/read loop never produces it
+//
+// httpTransitionSizes prepends prevOpKind (4: none-yet / grant / revoke /
+// read -- the last op this iteration performed before the current read).
+//
+// Deliberately NOT modeled: an auth-cache warm/cold axis -- there is no
+// existing exported hook or metric that reports a real cache hit/miss for a
+// request (server/middleware's cacheGet/serveAuthCacheHit are unexported, and
+// this harness explicitly does not flush the cache per-iteration -- see the
+// comment at the top of runAPISeqIteration). Adding one would mean touching
+// production code, out of scope for this branch. Also NOT modeled:
+// impersonation -- no such op exists in this harness; its future home is the
+// mixed-principal authority fuzzer, not this one.
+var (
+	httpCurrentSizes    = []int{7, 2, 3, 4}
+	httpTransitionSizes = []int{4, 7, 2, 3, 4}
+
+	httpCurrentBase    = 0
+	httpTransitionBase = httpCurrentBase + fuzzutil.TupleSpace(httpCurrentSizes)
+)
+
+// httpOpKind values feed httpTransitionSizes' prevOpKind axis.
+const (
+	httpOpNoneYet = iota
+	httpOpGrant
+	httpOpRevoke
+	httpOpRead
+)
+
+// httpPrincipalKind values feed httpCurrentSizes' principalKind axis.
+const (
+	httpPrincipalNoToken = iota
+	httpPrincipalGarbageToken
+	httpPrincipalAdmin
+	httpPrincipalP0 // p1, p2 follow: httpPrincipalP0+1, httpPrincipalP0+2
+	_
+	_
+	httpPrincipalRevuser
+)
+
+var (
+	httpPrincipalKindNames = []string{"no-token", "garbage-token", "admin", "p0", "p1", "p2", "revuser"}
+	httpOpKindNames        = []string{"none-yet", "grant", "revoke", "read"}
+)
+
+// httpCurrentLabel/httpTransitionLabel render a tuple human-readably for
+// FUZZ_STATE_REPORT (fuzzutil.StateReport) -- the SAME functions
+// TestEnumerateHTTPStateLabels calls to build the full enumerable space, so
+// the report and the enumeration can never drift apart.
+func httpCurrentLabel(principalKind, roleState, tenantMatch, tokenState int) string {
+	return fmt.Sprintf("http/current principalKind=%s roleState=%d tenantMatch=%d tokenState=%d",
+		httpPrincipalKindNames[principalKind], roleState, tenantMatch, tokenState)
+}
+
+func httpTransitionLabel(prevOp, principalKind, roleState, tenantMatch, tokenState int) string {
+	return fmt.Sprintf("http/transition prevOp=%s principalKind=%s roleState=%d tenantMatch=%d tokenState=%d",
+		httpOpKindNames[prevOp], httpPrincipalKindNames[principalKind], roleState, tenantMatch, tokenState)
+}
+
 func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 	worlds := buildAPIFuzzWorlds(f, "apiseqfuzz")
 	f.Cleanup(i18n.ResetForTesting)
@@ -274,8 +349,22 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 		canRead[p.id] = map[uint]bool{w.projAID: false, w.projBID: false}
 	}
 
+	// state-edge bookkeeping: a fresh gate per iteration (one fuzz input) --
+	// see fuzzutil.StateEdgeGate. prevOpKind feeds the transition-pair tuple
+	// read() fires; grant/revoke update it but fire no tuple of their own (the
+	// axes -- tenantMatch, tokenState -- only have meaning at a read, which is
+	// this harness's actual authz decision point).
+	edgeGate := fuzzutil.NewStateEdgeGate()
+	prevOpKind := httpOpNoneYet
+
 	projFor := func(sel int) uint {
 		if sel%2 == 1 {
+			return w.projBID
+		}
+		return w.projAID
+	}
+	otherProj := func(projID uint) uint {
+		if projID == w.projAID {
 			return w.projBID
 		}
 		return w.projAID
@@ -286,6 +375,7 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 		if err := w.c.AssignUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}, false); err == nil {
 			canRead[p.id][projID] = true
 		}
+		prevOpKind = httpOpGrant
 	}
 	revoke := func(pi, proj int) {
 		p := w.principals[pi%len(w.principals)]
@@ -293,6 +383,23 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 		if err := w.c.RemoveUserRole(ctx, 0, p.id, w.readerRole, core.Scope{ProjectID: projID}); err == nil {
 			canRead[p.id][projID] = false
 		}
+		prevOpKind = httpOpRevoke
+	}
+	// fireReadStateEdge encodes and fires the current + transition security-state
+	// tuple for one read (see httpCurrentSizes' doc comment). It's a standalone
+	// helper (not inlined into read() below) so revocationProbe's two dedicated
+	// reads -- which drive tokenState=revoked, unreachable from read() -- can
+	// fire the same tuples through the same gate.
+	fireReadStateEdge := func(principalKind, roleState, tenantMatch, tokenState int) {
+		curKey := fuzzutil.PackTuple([]int{principalKind, roleState, tenantMatch, tokenState}, httpCurrentSizes)
+		edgeGate.FireOnce(uint32(httpCurrentBase + curKey))
+		transKey := fuzzutil.PackTuple([]int{prevOpKind, principalKind, roleState, tenantMatch, tokenState}, httpTransitionSizes)
+		edgeGate.FireOnce(uint32(httpTransitionBase + transKey))
+		if fuzzutil.StateReportEnabled() {
+			fuzzutil.StateReport(httpCurrentLabel(principalKind, roleState, tenantMatch, tokenState))
+			fuzzutil.StateReport(httpTransitionLabel(prevOpKind, principalKind, roleState, tenantMatch, tokenState))
+		}
+		prevOpKind = httpOpRead
 	}
 	read := func(who, which, mode byte) {
 		ref, val, projID := w.refA, w.valA, w.projAID
@@ -301,19 +408,36 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 		}
 		var authz string
 		allowed := false
+
+		principalKind, roleState, tenantMatch, tokenState := 0, 0, 2, 0 // n/a defaults
 		switch mode % 4 {
 		case 0: // no token
+			principalKind = httpPrincipalNoToken
 		case 1: // garbage token
 			authz = "Bearer garbage-not-a-real-token"
+			principalKind, tokenState = httpPrincipalGarbageToken, 1
 		case 2: // admin (owns every secret; global admin)
 			authz, allowed = "Bearer "+w.adminTok, true
+			principalKind, tokenState = httpPrincipalAdmin, 2
 		default: // a fuzz principal's token
-			p := w.principals[int(who)%len(w.principals)]
+			pi := int(who) % len(w.principals)
+			p := w.principals[pi]
+			principalKind = httpPrincipalP0 + pi
 			if p.token != "" {
 				authz = "Bearer " + p.token
+				tokenState = 2
 			}
 			allowed = p.token != "" && canRead[p.id][projID]
+			hasHere, hasOther := canRead[p.id][projID], canRead[p.id][otherProj(projID)]
+			switch {
+			case hasHere:
+				roleState, tenantMatch = 1, 0
+			case hasOther:
+				roleState, tenantMatch = 1, 1
+			}
 		}
+		fireReadStateEdge(principalKind, roleState, tenantMatch, tokenState)
+
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+ref, nil)
 		if authz != "" {
 			req.Header.Set("Authorization", authz)
@@ -362,6 +486,7 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 		if err := w.c.AssignUserRole(ctx, 0, w.revuserID, w.readerRole, core.Scope{ProjectID: w.projAID}, false); err != nil {
 			return
 		}
+		prevOpKind = httpOpGrant
 		readA := func() *httptest.ResponseRecorder {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/value?ref="+w.refA, nil)
 			req.Header.Set("Authorization", "Bearer "+tok)
@@ -369,6 +494,10 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 			w.router.ServeHTTP(rec, req)
 			return rec
 		}
+		// state-edge: revuser is granted on projA and targets refA (projA) -- match,
+		// tokenState=valid. This is the only path in the harness that fires
+		// principalKind=revuser at all.
+		fireReadStateEdge(httpPrincipalRevuser, 1 /* roleState=granted */, 0 /* tenantMatch=match */, 2 /* tokenState=valid */)
 		// Positive control: the granted token must actually read A, else the deny below
 		// is vacuous and we skip the assertion (avoids a false positive).
 		if readA().Code != http.StatusOK {
@@ -377,6 +506,9 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 		if _, err := w.c.RevokeUserSessions(ctx, w.adminID, w.revuserID); err != nil {
 			return
 		}
+		// state-edge: same principal/grant/target, but the token is now revoked --
+		// the ONLY path in this harness that reaches tokenState=revoked.
+		fireReadStateEdge(httpPrincipalRevuser, 1, 0, 3 /* tokenState=revoked */)
 		post := readA()
 		if post.Code == http.StatusOK {
 			t.Fatalf("REVOCATION INEFFECTIVE: revuser's token still returned 200 for %q after RevokeUserSessions", w.refA)
