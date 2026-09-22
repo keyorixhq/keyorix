@@ -40,6 +40,33 @@ func newGroupHandlerWithCoreS13(t *testing.T) (*GroupHandler, *core.KeyorixCore)
 	return gh, cs
 }
 
+// newGroupHandlerWithAdminS13 returns a GroupHandler backed by a core whose
+// UserID=1 is seeded as a global admin (freshCoreS12WithAdmin). The
+// CreateGroupProxy/UpdateGroupProxy/DeleteGroupProxy/RestoreGroupProxy
+// handlers now require caller authority (users.write / roles.assign) in
+// addition to the /system route group's blanket system.write permission, so
+// tests exercising those handlers directly (bypassing the real HTTP+auth
+// middleware) need an authorized caller in the request context via
+// withUserCtx.
+func newGroupHandlerWithAdminS13(t *testing.T) *GroupHandler {
+	t.Helper()
+	cs, _ := freshCoreS12WithAdmin(t)
+	gh, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	return gh
+}
+
+// newGroupHandlerWithCoreWithAdminS13 is the admin-backed counterpart to
+// newGroupHandlerWithCoreS13, for tests that need to both seed data via the
+// core AND call a proxy handler that now requires caller authority.
+func newGroupHandlerWithCoreWithAdminS13(t *testing.T) (*GroupHandler, *core.KeyorixCore) {
+	t.Helper()
+	cs, _ := freshCoreS12WithAdmin(t)
+	gh, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	return gh, cs
+}
+
 // jsonBody encodes v as compact JSON into a *bytes.Reader.
 func jsonBody(t *testing.T, v interface{}) *bytes.Reader {
 	t.Helper()
@@ -424,9 +451,9 @@ func TestInitCoreHandlers_S13(t *testing.T) {
 // CreateGroupProxy and confirms the response omits deleted_at when the group is
 // not soft-deleted (the omitempty branch).
 func TestNewGroupProxyWire_ActiveGroup_S13(t *testing.T) {
-	h := newGroupHandlerS13(t)
-	req := httptest.NewRequest(http.MethodPost, "/",
-		jsonBody(t, map[string]string{"name": "wire-active-s13", "description": "desc"}))
+	h := newGroupHandlerWithAdminS13(t)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/",
+		jsonBody(t, map[string]string{"name": "wire-active-s13", "description": "desc"})))
 	w := httptest.NewRecorder()
 	h.CreateGroupProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -478,13 +505,13 @@ func TestUpdateGroupProxy_BadID_S13(t *testing.T) {
 // ID is treated as an insert. The not-found path in UpdateGroupProxy is therefore
 // unreachable for a plain missing-id scenario.
 func TestUpdateGroupProxy_HappyPath_S13(t *testing.T) {
-	h, cs := newGroupHandlerWithCoreS13(t)
+	h, cs := newGroupHandlerWithCoreWithAdminS13(t)
 	g, err := cs.Storage().CreateGroup(context.Background(), &models.Group{Name: "update-proxy-s13"})
 	require.NoError(t, err)
 
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/",
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/",
 		jsonBody(t, map[string]string{"name": "update-proxy-s13-renamed"})),
-		"id", fmt.Sprintf("%d", g.ID))
+		"id", fmt.Sprintf("%d", g.ID)))
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -501,8 +528,8 @@ func TestDeleteGroupProxy_BadID_S13(t *testing.T) {
 }
 
 func TestDeleteGroupProxy_NotFound_S13(t *testing.T) {
-	h := newGroupHandlerS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
+	h := newGroupHandlerWithAdminS13(t)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999"))
 	w := httptest.NewRecorder()
 	h.DeleteGroupProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -519,8 +546,8 @@ func TestRestoreGroupProxy_BadID_S13(t *testing.T) {
 }
 
 func TestRestoreGroupProxy_NotFound_S13(t *testing.T) {
-	h := newGroupHandlerS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999999")
+	h := newGroupHandlerWithAdminS13(t)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999999"))
 	w := httptest.NewRecorder()
 	h.RestoreGroupProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)

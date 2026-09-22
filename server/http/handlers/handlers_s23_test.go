@@ -112,7 +112,7 @@ func TestRemoveGroupMemberProxy_HappyPath_S23(t *testing.T) {
 // TestRestoreGroupProxy_HappyPath_S23 verifies the 200 branch: soft-delete a
 // group then restore it via the proxy.
 func TestRestoreGroupProxy_HappyPath_S23(t *testing.T) {
-	cs := freshCoreS12(t)
+	cs, _ := freshCoreS12WithAdmin(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 
@@ -122,10 +122,10 @@ func TestRestoreGroupProxy_HappyPath_S23(t *testing.T) {
 	require.NoError(t, gErr)
 	require.NoError(t, h.coreService.Storage().DeleteGroup(context.Background(), created.ID))
 
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/restore", nil),
 		"id", uintStr(created.ID),
-	)
+	))
 	w := httptest.NewRecorder()
 	h.RestoreGroupProxy(w, req)
 

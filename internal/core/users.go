@@ -735,6 +735,37 @@ func (c *KeyorixCore) RequireUsersWriteAuthority(ctx context.Context, actorType 
 	return c.requireUserCredentialsRevokeAuthority(ctx, actorType, actorID)
 }
 
+// RequireRolesAssignAuthority is the /system-proxy-layer export of a plain
+// "does actorType/actorID hold roles.assign at scope" check, for a caller
+// outside internal/core that needs to re-derive the SAME roles.assign
+// authority a human-facing route already requires via RequirePermission(
+// permRolesAssign) (global scope, e.g. POST /groups/{id}/restore) or
+// RequireScopedPermission(permRolesAssign, projectScope) (project scope,
+// e.g. POST /projects/{id}/break-glass/{id}/revoke, the access-review
+// campaign/item routes, POST /projects/{id}/invitations/{id} revoke).
+// Pass Scope{} for the global-scope form.
+func (c *KeyorixCore) RequireRolesAssignAuthority(ctx context.Context, actorType string, actorID uint, scope Scope) error {
+	allowed, err := c.AuthorizePrincipal(ctx, actorType, actorID, permRolesAssign, scope)
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !allowed {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "this operation requires roles.assign authority")
+	}
+	return nil
+}
+
+// RequireEqualOrGreaterAdminAuthority is the /system-proxy-layer export of
+// requireEqualOrGreaterAdminAuthority (authz.go) — the admin-rank ceiling
+// impersonation already uses, for a caller outside internal/core that needs
+// the SAME ceiling on an action targeting another user's own account state
+// (e.g. UpdateWebAuthnCredentialProxy disabling another user's passkey): a
+// lower-privileged actor must not be able to touch a target who holds, at
+// any scope, a permission the actor does not also hold.
+func (c *KeyorixCore) RequireEqualOrGreaterAdminAuthority(ctx context.Context, actorID, targetID uint, action string) error {
+	return c.requireEqualOrGreaterAdminAuthority(ctx, actorID, targetID, action)
+}
+
 // RevokeAllPersonalAccessTokensForUser authorizes, performs, and audits an
 // admin-driven bulk PAT revocation for targetUserID — the /system proxy
 // layer's direct-caller entry point (RevokeAllPersonalAccessTokensForUserProxy).

@@ -301,7 +301,7 @@ func TestShareHandler_SendSuccess_BrokenWriter_S18(t *testing.T) {
 // wire response to ensure the non-deleted path in newGroupProxyWire is also
 // exercised through an actual HTTP call (not just direct invocation).
 func TestNewGroupProxyWire_ViaProxy_S18(t *testing.T) {
-	cs := freshCoreS12(t)
+	cs, _ := freshCoreS12WithAdmin(t)
 	gh, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 
@@ -309,7 +309,7 @@ func TestNewGroupProxyWire_ViaProxy_S18(t *testing.T) {
 		"name":        "wire-proxy-s18",
 		"description": "via proxy s18",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
 	w := httptest.NewRecorder()
 	gh.CreateGroupProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)

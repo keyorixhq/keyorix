@@ -650,14 +650,14 @@ func TestUpdateGroupProxy_BadBody_S19(t *testing.T) {
 // storage.UpdateGroup's GORM-Save upsert-on-missing-ID quirk — a PUT to a
 // nonexistent group ID must 404, not silently create a new row.
 func TestUpdateGroupProxy_NonexistentID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
+	cs, _ := freshCoreS19WithAdmin(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 	body, _ := json.Marshal(map[string]interface{}{"name": "upserted-group-s19"})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/9999", bytes.NewReader(body)),
 		"id", "9999",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
