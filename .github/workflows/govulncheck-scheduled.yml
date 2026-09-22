@@ -1,0 +1,58 @@
+name: govulncheck (scheduled)
+
+# ci.yml's static-analysis job already runs govulncheck on every push/PR that
+# touches Go code -- but only then. Between two PRs that happen not to touch
+# Go, a new entry could land in the vulnerability database (vuln.go.dev) for
+# a symbol our code already calls, and nothing would notice until the next
+# incidental Go change. This closes that gap the same way osv-scanner.yml
+# already does for its own (different) database: a weekly, schedule-only run
+# of the identical check.
+on:
+  schedule:
+    # Matches osv-scanner.yml's own cadence exactly (same rationale, same
+    # slot) -- one weekly reminder-class scan schedule for this repo, not two
+    # different ones to keep track of.
+    - cron: '19 17 * * 5'
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: Cache govulncheck binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/govulncheck
+          # Deliberately its own cache key, not shared with ci.yml's
+          # static-analysis job -- see that job's identical rationale for its
+          # own gosec cache key (a save-step race between two jobs sharing
+          # one key can silently drop a path neither job re-populates).
+          key: govulncheck-scheduled-v1.8.0-${{ runner.os }}
+
+      # Intentionally the EXACT SAME two lines as ci.yml's static-analysis
+      # job's own govulncheck step, not a paraphrase. govulncheck's own
+      # pass/fail rule (x/vuln@v1.8.0 internal/scan/text.go:80-85) returns
+      # exit 3 ONLY when a finding is call-graph-REACHABLE at the default
+      # `-scan symbol` level; a finding that's merely present in a required
+      # module (module-tier only, e.g. GO-2026-5932 / golang.org/x/crypto's
+      # unmaintained openpgp package, confirmed unreachable here as of
+      # 2026-09-22 -- see the PR this workflow shipped with) exits 0. Running
+      # the identical invocation, with no extra flags or filtering of our
+      # own, means this scheduled job inherits that exact rule: it cannot be
+      # red on arrival where the PR-gated job is green, and a real newly-
+      # reachable finding fails here exactly as it would on a PR.
+      - name: govulncheck
+        run: |
+          [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 # NOSONAR githubactions:S8545 -- version is pinned to v1.8.0
+          govulncheck ./...
