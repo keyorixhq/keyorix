@@ -160,7 +160,11 @@ func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 		// the restored session actually belongs to the admin who started this
 		// impersonation.
 		if adminUser, _, verr := h.coreService.ValidateSessionToken(r.Context(), adminCookie.Value); verr == nil && adminUser != nil && adminUser.ID == adminID {
-			middleware.SetSessionCookie(w, adminCookie.Value, nil, h.tlsEnabled)
+			// #1974: carry the restored session's real expiry (earliest of its
+			// idle and absolute ceilings), like every other SetSessionCookie call
+			// site — nil would make this a browser-session cookie that outlives
+			// the server-side session it points at.
+			middleware.SetSessionCookie(w, adminCookie.Value, h.coreService.SessionEffectiveExpiry(r.Context(), adminCookie.Value), h.tlsEnabled)
 			if csrfToken, cerr2 := middleware.GenerateCSRFToken(); cerr2 == nil {
 				middleware.SetCSRFCookie(w, csrfToken, h.tlsEnabled)
 			}
