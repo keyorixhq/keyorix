@@ -304,7 +304,7 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 	// ADR-085 changed.
 	resolverType, resolverID := requestActorKindAndID(r)
 	// F6 sweep (2026-09-22): a genuine machine resolver must be tagged via
-	// WithSelfMachineGranter before RequireGranterHoldsRolePermissions below
+	// WithSystemProxyMachineGranter before RequireGranterHoldsRolePermissions below
 	// (project/role-scoped branch only -- RequireAdminAuthorityAt, the
 	// secret-scoped branch, is a user-scoped check with no machine-tagging
 	// concept, and stays human-only by design, matching
@@ -314,7 +314,7 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 	// is EXPECTED to be able to reach this branch; without tagging, it never
 	// actually could.
 	if resolverType == core.ActorTypeMachine {
-		r = r.WithContext(core.WithSelfMachineGranter(r.Context(), resolverID))
+		r = r.WithContext(core.WithSystemProxyMachineGranter(r.Context(), resolverID))
 	}
 	switch body.State {
 	case core.AccessRequestApproved:
@@ -460,11 +460,11 @@ func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter,
 		return
 	}
 	// F6 sweep (2026-09-22): see UpdateAccessRequestProxy's identical comment
-	// -- a genuine machine approver must be tagged via WithSelfMachineGranter
+	// -- a genuine machine approver must be tagged via WithSystemProxyMachineGranter
 	// before RequireGranterHoldsRolePermissions below (project/role-scoped
 	// branch only) can resolve against its OWN real permissions.
 	if approverType == core.ActorTypeMachine {
-		r = r.WithContext(core.WithSelfMachineGranter(r.Context(), approverID))
+		r = r.WithContext(core.WithSystemProxyMachineGranter(r.Context(), approverID))
 	}
 	// #1642-shape ceiling gap, closed the same way UpdateAccessRequestProxy's
 	// approve branch already is: re-derive maker!=checker plus the same

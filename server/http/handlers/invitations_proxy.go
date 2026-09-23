@@ -159,7 +159,7 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 	// resolves the real caller instead.
 	//
 	// F6 sweep (2026-09-22): a genuine machine inviter must be tagged via
-	// WithSelfMachineGranter before these checks (and the roles.assign
+	// WithSystemProxyMachineGranter before these checks (and the roles.assign
 	// baseline requireGranterHoldsRolePermissions now enforces) can ever
 	// resolve against its OWN real permissions -- mirroring InviteToProject's
 	// (internal/core/invitations.go) identical, already-established tagging
@@ -171,7 +171,7 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 	actorType, principalID := requestActorKindAndID(r)
 	ctx := r.Context()
 	if actorType == core.ActorTypeMachine {
-		ctx = core.WithSelfMachineGranter(ctx, principalID)
+		ctx = core.WithSystemProxyMachineGranter(ctx, principalID)
 	}
 	r = r.WithContext(ctx)
 	// F6 sweep (2026-09-22), G3 probe TestG3Probe_CreateInvitationProxy_SystemWriteOnly_CreatesRoleLessInvitation:

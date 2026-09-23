@@ -196,6 +196,29 @@ its own conformance test: `CreateInvitationProxy`, `UpdateAccessRequestProxy`,
 `AssignRoleWithExpiryProxy`, `AssignRoleToGroupWithExpiryProxy`,
 `AssignMachineRoleProxy`.
 
+**Correction (2026-09-23, CI on this PR):** tagging `WithSelfMachineGranter`
+in `/system` proxies was not purely an availability fix. A `/system` caller is,
+at the auth layer, indistinguishable from a node credential relaying on behalf
+of an unidentified downstream actor, and node credentials legitimately hold
+admin-tier roles. `requireGranterHoldsRolePermissions`' own doc forbids this
+tag in proxies for exactly that reason. With the tag, a node credential's own
+`admin` role authorized admin-tier grants it was only relaying. Three existing
+guard tests caught it in CI: `TestInvitationProxy_CreateRejectsProjectAdminRoleWithoutAuthority`,
+`TestInvitationProxy_CreateRejectsGlobalSystemRoleWithoutAuthority` and
+`TestMembershipProxy_CreateRejectsAdminRoleWithoutAuthority`.
+Removing the tags wasn't an option either: every relayed grant then fails
+closed (~24 remote-storage/conformance tests), because on `main` relays only
+passed through the empty-role vacuity this sweep closed.
+
+Resolution: the 9 proxies now use `core.WithSystemProxyMachineGranter`. It
+resolves permissions against the machine exactly like `WithSelfMachineGranter`,
+but `requireGranterHoldsRolePermissionsNoBaseline` refuses any admin-tier role
+for it: a canonical admin name, or a bundle `roleIsAdminTier` classifies as
+administrative (#1685). Non-admin grants relay as before. Admin-tier grants over
+a relay fail closed, as they did on `main`. Regression:
+`internal/core/authz_system_proxy_relay_ceiling_test.go` plus the three guard
+tests above. All red-proofed by disabling the check.
+
 ## `actorID == 0 && !actorIsMachine` short-circuit reachability (investigated, not changed)
 
 `requireGranterHoldsRolePermissions`/`requireGranterHoldsRolePermissionsNoBaseline`

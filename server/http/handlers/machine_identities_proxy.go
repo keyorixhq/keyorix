@@ -955,7 +955,7 @@ func machineRoleScopeQuery(w http.ResponseWriter, r *http.Request) (storage.Scop
 // grant to the machine's real project, and requireGranterHoldsRolePermissions
 // enforces a roles.assign baseline for every grant regardless of tier.
 //
-// F6 sweep (2026-09-22): that baseline reads the WithSelfMachineGranter tag
+// F6 sweep (2026-09-22): that baseline reads the WithSystemProxyMachineGranter tag
 // from ctx rather than tagging itself, so a genuine machine caller must be
 // tagged here before calling AssignMachineRole (same fix as
 // AssignRoleToGroupWithExpiryProxy).
@@ -976,12 +976,12 @@ func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 	// F6 sweep (2026-09-22): AssignMachineRole's roles.assign baseline
-	// (requireGranterHoldsRolePermissions) reads the WithSelfMachineGranter
+	// (requireGranterHoldsRolePermissions) reads the WithSystemProxyMachineGranter
 	// tag from ctx rather than tagging itself -- a genuine machine caller
 	// must be tagged here first.
 	ctx := r.Context()
 	if isMachineActor(r) {
-		ctx = core.WithSelfMachineGranter(ctx, selfMachineID)
+		ctx = core.WithSystemProxyMachineGranter(ctx, selfMachineID)
 	}
 	if err := h.coreService.AssignMachineRole(ctx, uint(machineID), uint(roleID), scope, actorID(r), isMachineActor(r)); err != nil {
 		if isAlreadyAssignedErr(err) {

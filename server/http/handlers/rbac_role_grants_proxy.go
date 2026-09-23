@@ -144,11 +144,11 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
 	// F6 sweep (2026-09-22): AssignUserRoleWithExpiry's own roles.assign
 	// baseline (requireGranterHoldsRolePermissions) reads the
-	// WithSelfMachineGranter tag from ctx rather than tagging itself -- a
+	// WithSystemProxyMachineGranter tag from ctx rather than tagging itself -- a
 	// genuine machine caller must be tagged here first.
 	ctx := r.Context()
 	if isMachineActor(r) {
-		ctx = core.WithSelfMachineGranter(ctx, machineID(r))
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
 	}
 	err := h.coreService.AssignUserRoleWithExpiry(ctx, actorID(r), body.UserID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r))
 	if err != nil {
@@ -172,7 +172,7 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 // requireGranterHoldsRolePermissions, which now runs a roles.assign
 // baseline check for every grant regardless of tier, so the claim no longer
 // holds — a genuine machine caller must be tagged via
-// WithSelfMachineGranter before that baseline can resolve.
+// WithSystemProxyMachineGranter before that baseline can resolve.
 func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r *http.Request) {
 	var body roleWithExpiryProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -186,7 +186,7 @@ func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r 
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
 	ctx := r.Context()
 	if isMachineActor(r) {
-		ctx = core.WithSelfMachineGranter(ctx, machineID(r))
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
 	}
 	if err := h.coreService.AssignGroupRoleWithExpiry(ctx, actorID(r), body.GroupID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r)); err != nil {
 		log.Printf("rbac role-grants proxy: assign role to group with expiry failed: %v", err)

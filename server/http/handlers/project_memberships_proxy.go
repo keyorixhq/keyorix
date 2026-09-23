@@ -127,12 +127,12 @@ func (h *CatalogHandler) CreateMembershipProxy(w http.ResponseWriter, r *http.Re
 		return
 	}
 	// F6 sweep (2026-09-22): a genuine machine granter must be tagged via
-	// WithSelfMachineGranter before RequireGranterHoldsRolePermissions (and
+	// WithSystemProxyMachineGranter before RequireGranterHoldsRolePermissions (and
 	// the roles.assign baseline it now enforces) can resolve against its OWN
 	// real permissions -- mirrors AddGroupMemberProxy/CreateInvitationProxy.
 	ctx := r.Context()
 	if isMachineActor(r) {
-		ctx = core.WithSelfMachineGranter(ctx, machineID(r))
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
 	}
 	if err := h.coreService.RequireGranterHoldsRolePermissions(ctx, actorID(r), membershipRole.ID, core.Scope{ProjectID: body.ProjectID}, isMachineActor(r)); err != nil {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
@@ -262,14 +262,14 @@ func (h *CatalogHandler) TransitionMembershipProxy(w http.ResponseWriter, r *htt
 		return
 	}
 	// F6 sweep (2026-09-22): TransitionMembership's own roles.assign baseline
-	// (internal/core/membership_lifecycle.go) reads the WithSelfMachineGranter
+	// (internal/core/membership_lifecycle.go) reads the WithSystemProxyMachineGranter
 	// tag from ctx rather than tagging itself -- a genuine machine caller must
 	// be tagged here, before the call, or it can never resolve against its
 	// own real permissions (mirrors AddGroupMemberProxy/CreateInvitationProxy's
 	// identical tagging).
 	ctx := r.Context()
 	if isMachineActor(r) {
-		ctx = core.WithSelfMachineGranter(ctx, machineID(r))
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
 	}
 	_, err = h.coreService.TransitionMembership(ctx, body.Membership.ProjectID, uint(id), body.Membership.State, actorID(r), isMachineActor(r))
 	if err != nil {

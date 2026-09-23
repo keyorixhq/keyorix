@@ -681,6 +681,41 @@ func selfMachineGranterFromContext(ctx context.Context) (uint, bool) {
 	return machineID, ok && machineID != 0
 }
 
+// systemProxyRelayCtxKey marks a WithSelfMachineGranter tag that was set by a
+// /system proxy handler (WithSystemProxyMachineGranter) rather than by a
+// direct machine-facing handler.
+type systemProxyRelayCtxKey struct{}
+
+// WithSystemProxyMachineGranter is the /system-proxy counterpart of
+// WithSelfMachineGranter (PR #1979 CI fix). The F6 sweep's roles.assign
+// baseline made every relayed grant fail closed unless the proxy tagged the
+// machine caller, so the /system proxies tag it -- but a /system call is,
+// at the auth layer, indistinguishable from a NODE CREDENTIAL relaying on
+// behalf of an unidentified downstream actor, and node credentials
+// legitimately hold admin-tier roles (server/http/integration_test.go's
+// createNodeToken). Letting such a credential's OWN permissions authorize an
+// admin-tier grant is exactly the self-authorization requireGranterHoldsRole-
+// Permissions' doc warns against (G80/#1529/#1578 guard tests). So this tag
+// resolves permissions against the machine like WithSelfMachineGranter, but
+// requireGranterHoldsRolePermissionsNoBaseline additionally refuses ANY
+// admin-tier role (canonical admin name, or a bundle roleIsAdminTier
+// classifies as administrative, #1685) for it. Non-admin grants relay as
+// before; admin-tier grants over a relay fail closed, as they did on main.
+// A zero machineID is a no-op.
+func WithSystemProxyMachineGranter(ctx context.Context, machineID uint) context.Context {
+	if machineID == 0 {
+		return ctx
+	}
+	return context.WithValue(WithSelfMachineGranter(ctx, machineID), systemProxyRelayCtxKey{}, true)
+}
+
+// isSystemProxyRelayGrant reports whether ctx's machine-granter tag came from
+// WithSystemProxyMachineGranter.
+func isSystemProxyRelayGrant(ctx context.Context) bool {
+	relay, _ := ctx.Value(systemProxyRelayCtxKey{}).(bool)
+	return relay
+}
+
 // requireGranterHoldsRolePermissions refuses to GRANT roleID at scope unless the
 // actor already holds, at that scope or broader, EVERY permission bundled into the
 // role — the admin-rank-ceiling check on the GRANT step (#93/#107/#141), distinct
@@ -807,6 +842,17 @@ func (c *KeyorixCore) requireGranterHoldsRolePermissionsNoBaseline(ctx context.C
 	perms, err := c.storage.GetRolePermissions(ctx, roleID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve role permissions: %w", err)
+	}
+	// A /system relay never grants an admin-tier role on the strength of the
+	// relaying credential's own authority -- see WithSystemProxyMachineGranter.
+	if isSelfMachineGrant && isSystemProxyRelayGrant(ctx) {
+		role, rerr := c.storage.GetRole(ctx, roleID)
+		if rerr != nil {
+			return fmt.Errorf("failed to resolve role: %w", rerr)
+		}
+		if isAdminRoleName(role.Name) || roleIsAdminTier(perms) {
+			return fmt.Errorf("cannot grant this role: an admin-tier role cannot be granted through a /system relay credential")
+		}
 	}
 	for _, p := range perms {
 		ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, p.Name, scope, actorIsMachine, isSelfMachineGrant, selfMachineID)
