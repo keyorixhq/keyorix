@@ -14,6 +14,7 @@ import (
 )
 
 var renderOutput string
+var renderProjectName string
 
 var renderCmd = &cobra.Command{
 	Use:   "render [template-file]",
@@ -35,6 +36,7 @@ Examples:
 
 func init() {
 	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "Write to this file instead of stdout")
+	renderCmd.Flags().StringVar(&renderProjectName, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	SecretCmd.AddCommand(renderCmd)
 }
 

@@ -20,10 +20,12 @@ var rotateCmd = &cobra.Command{
 
 var rotateValue string
 var rotateEnv string
+var rotateProjectName string
 
 func init() {
 	rotateCmd.Flags().StringVarP(&rotateValue, "value", "v", "", "New secret value (omit to be prompted interactively)")
 	rotateCmd.Flags().StringVarP(&rotateEnv, "env", "e", "production", "Environment name")
+	rotateCmd.Flags().StringVar(&rotateProjectName, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	SecretCmd.AddCommand(rotateCmd)
 }
 
