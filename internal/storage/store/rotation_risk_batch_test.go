@@ -106,7 +106,7 @@ func TestListSharesBySecretIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ls.db.Model(&models.ShareRecord{}).Where("id = ?", expired.ID).Update("expires_at", past).Error)
 
-	got, err := ls.ListSharesBySecretIDs(ctx, []uint{1, 2})
+	got, err := ls.ListSharesBySecretIDs(ctx, []uint{1, 2}, time.Now())
 	require.NoError(t, err)
 	bySecret := map[uint][]uint{}
 	for _, sh := range got {

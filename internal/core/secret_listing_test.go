@@ -17,6 +17,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -116,6 +117,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowOwnedOnly(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -162,6 +164,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -223,6 +226,7 @@ func TestKeyorixCore_GetSecretSharingStatus(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 

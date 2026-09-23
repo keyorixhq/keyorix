@@ -723,6 +723,28 @@ func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 	}
 }
 
+// ShareEffectiveNow exposes shareEffectiveNow (permissions.go) to callers
+// outside package core that need "now" for a share-active decision sourced
+// from the SAME watermarked clock every in-process share-active check
+// already uses, instead of reading the real wall clock independently
+// (#1983 investigation finding). Its two current external callers:
+// ListSharesByOwnerProxy/ListSharesByUserProxy (server/http/handlers/
+// misc_remote_proxy.go, which call Storage() directly, bypassing every
+// other core-level share method) and the JIT-expiry scheduler's
+// RemoveExpiredShares call (server/main.go).
+func (c *KeyorixCore) ShareEffectiveNow() time.Time { return c.shareEffectiveNow() }
+
+// EffectiveNow exposes this process's base injected clock (see the now
+// field's "For testability" doc comment above) to callers outside package
+// core that need a testable clock reading but have no dedicated watermarked
+// variant of their own -- currently the dynamic-secrets sweep scheduler's
+// RevokeExpiredLeases call (server/main.go), which itself reads c.now()
+// directly throughout dynamic_secrets.go with no watermark (#1983
+// investigation finding: unlike sessions/PATs/shares, dynamic secrets have
+// no anti-rollback watermark yet -- introducing one is a separate, larger
+// change, out of scope here).
+func (c *KeyorixCore) EffectiveNow() time.Time { return c.now() }
+
 // SetWebhookURLValidator replaces the SSRF guard applied to notification channel
 // URLs on create and update. The default (nil) uses validateWebhookURL which
 // enforces https-only and rejects private/loopback destinations via a live DNS

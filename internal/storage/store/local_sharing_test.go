@@ -111,7 +111,7 @@ func TestDeleteShareRecord_RemovesAllDuplicatesForSameTuple(t *testing.T) {
 	// Revoke by share1's ID only.
 	require.NoError(t, ls.DeleteShareRecord(ctx, share1.ID))
 
-	perm, err := ls.CheckSharePermission(ctx, 100, 2)
+	perm, err := ls.CheckSharePermission(ctx, 100, 2, time.Now())
 	require.Error(t, err, "revoking one of the duplicate rows must remove access entirely")
 	assert.Equal(t, "", perm)
 
@@ -149,7 +149,7 @@ func TestDeleteSecret_RevokesActiveShares(t *testing.T) {
 	require.NoError(t, err)
 
 	// Sanity: the grantee has access before the delete.
-	perm, err := ls.CheckSharePermission(ctx, sec.ID, 2)
+	perm, err := ls.CheckSharePermission(ctx, sec.ID, 2, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "read", perm)
 
@@ -166,7 +166,7 @@ func TestDeleteSecret_RevokesActiveShares(t *testing.T) {
 
 	// The previously-revoked share must NOT silently reactivate: CheckSharePermission
 	// must deny the former grantee post-restore with zero new authorization step.
-	perm, err = ls.CheckSharePermission(ctx, sec.ID, 2)
+	perm, err = ls.CheckSharePermission(ctx, sec.ID, 2, time.Now())
 	require.Error(t, err, "a share revoked by secret delete must not resurrect when the secret is restored")
 	assert.Equal(t, "", perm)
 }
@@ -201,7 +201,7 @@ func TestDeleteProject_RevokesActiveSharesForProjectSecrets(t *testing.T) {
 	require.NoError(t, err)
 
 	// Sanity: the grantee has access before the project delete.
-	perm, err := ls.CheckSharePermission(ctx, sec.ID, 2)
+	perm, err := ls.CheckSharePermission(ctx, sec.ID, 2, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "read", perm)
 
@@ -220,7 +220,7 @@ func TestDeleteProject_RevokesActiveSharesForProjectSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, restoredSecrets, "the project restore must bring the secret back")
 
-	perm, err = ls.CheckSharePermission(ctx, sec.ID, 2)
+	perm, err = ls.CheckSharePermission(ctx, sec.ID, 2, time.Now())
 	require.Error(t, err, "a share revoked by project delete must not resurrect when the project is restored")
 	assert.Equal(t, "", perm)
 }
@@ -264,7 +264,7 @@ func TestCheckSharePermission_OwnerZeroGuard(t *testing.T) {
 		ID: 100, Name: "s", ProjectID: 1, EnvironmentID: 1, OwnerID: 0, Status: "active", Type: "password",
 	}).Error)
 
-	perm, err := ls.CheckSharePermission(ctx, 100, 0)
+	perm, err := ls.CheckSharePermission(ctx, 100, 0, time.Now())
 	require.Error(t, err, "userID=0 must not match an ownerless secret's OwnerID=0")
 	assert.Equal(t, "", perm)
 }
@@ -341,7 +341,7 @@ func TestListShares_ExcludeExpiredIncludeActive(t *testing.T) {
 		Update("expires_at", past).Error)
 
 	// --- ListSharesBySecret ---
-	bySecret, err := ls.ListSharesBySecret(ctx, 100)
+	bySecret, err := ls.ListSharesBySecret(ctx, 100, time.Now())
 	require.NoError(t, err)
 	gotIDs := shareIDSet(bySecret)
 	assert.Contains(t, gotIDs, activeDirect.ID, "permanent active share must be listed")
@@ -351,28 +351,28 @@ func TestListShares_ExcludeExpiredIncludeActive(t *testing.T) {
 	assert.NotContains(t, gotIDs, expiredGroup.ID, "expired group share must be excluded")
 
 	// --- ListSharesByUser (recipient 3: one active time-bound, none expired left there) ---
-	byUser3, err := ls.ListSharesByUser(ctx, 3)
+	byUser3, err := ls.ListSharesByUser(ctx, 3, time.Now())
 	require.NoError(t, err)
 	got3 := shareIDSet(byUser3)
 	assert.Contains(t, got3, activeTimeBound.ID, "active time-bound share must be listed for its recipient")
 
 	// --- ListSharesByUser (recipient 4: only an expired share) ---
-	byUser4, err := ls.ListSharesByUser(ctx, 4)
+	byUser4, err := ls.ListSharesByUser(ctx, 4, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, byUser4, "a recipient whose only share is expired must see no active shares")
 
 	// --- ListSharesByGroup ---
-	byGroup1, err := ls.ListSharesByGroup(ctx, 1)
+	byGroup1, err := ls.ListSharesByGroup(ctx, 1, time.Now())
 	require.NoError(t, err)
 	got1 := shareIDSet(byGroup1)
 	assert.Contains(t, got1, activeGroup.ID, "active group share must be listed for its group")
 
-	byGroup2, err := ls.ListSharesByGroup(ctx, 2)
+	byGroup2, err := ls.ListSharesByGroup(ctx, 2, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, byGroup2, "a group whose only share is expired must see no active shares")
 
 	// --- ListSharesByOwner ---
-	byOwner, err := ls.ListSharesByOwner(ctx, 1)
+	byOwner, err := ls.ListSharesByOwner(ctx, 1, time.Now())
 	require.NoError(t, err)
 	gotOwner := shareIDSet(byOwner)
 	assert.Contains(t, gotOwner, activeDirect.ID)
@@ -419,7 +419,7 @@ func TestCheckSharePermission_DirectVsGroupConflict_StrongestWins(t *testing.T) 
 		})
 		require.NoError(t, err)
 
-		perm, err := ls.CheckSharePermission(ctx, 100, 2)
+		perm, err := ls.CheckSharePermission(ctx, 100, 2, time.Now())
 		require.NoError(t, err)
 		assert.Equal(t, "write", perm, "a stronger group grant must not be shadowed by a weaker direct grant")
 	})
@@ -437,7 +437,7 @@ func TestCheckSharePermission_DirectVsGroupConflict_StrongestWins(t *testing.T) 
 		})
 		require.NoError(t, err)
 
-		perm, err := ls.CheckSharePermission(ctx, 101, 2)
+		perm, err := ls.CheckSharePermission(ctx, 101, 2, time.Now())
 		require.NoError(t, err)
 		assert.Equal(t, "write", perm, "a stronger direct grant must win over a weaker group grant")
 	})
@@ -465,11 +465,11 @@ func TestCheckSharePermission_ProjectScopedMembershipDoesNotCrossProjects(t *tes
 	})
 	require.NoError(t, err)
 
-	perm, err := ls.CheckSharePermission(ctx, 200, 3)
+	perm, err := ls.CheckSharePermission(ctx, 200, 3, time.Now())
 	require.Error(t, err, "a membership scoped to project 7 must not grant access to a secret in project 9")
 	assert.Empty(t, perm)
 
-	secrets, err := ls.ListSharedSecrets(ctx, 3)
+	secrets, err := ls.ListSharedSecrets(ctx, 3, time.Now())
 	require.NoError(t, err)
 	for _, s := range secrets {
 		assert.NotEqual(t, uint(200), s.ID, "ListSharedSecrets must not surface a secret reached only via a cross-project membership")
@@ -494,14 +494,14 @@ func TestCheckSharePermission_SoftDeletedOwnerDeniesAccess(t *testing.T) {
 	}).Error)
 
 	// While the owner is live, owner-equality grants "write".
-	perm, err := ls.CheckSharePermission(ctx, 300, 1)
+	perm, err := ls.CheckSharePermission(ctx, 300, 1, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "write", perm, "a live owner must still get owner-level access")
 
 	// Soft-delete the owner's account (mirrors DeleteUser's user-row soft delete).
 	require.NoError(t, db.Delete(&models.User{}, 1).Error)
 
-	perm, err = ls.CheckSharePermission(ctx, 300, 1)
+	perm, err = ls.CheckSharePermission(ctx, 300, 1, time.Now())
 	require.Error(t, err, "a soft-deleted owner must not retain owner-level access via OwnerID equality")
 	assert.Empty(t, perm)
 }
@@ -529,20 +529,20 @@ func TestCheckSharePermission_SoftDeletedDirectRecipientDeniesAccess(t *testing.
 	require.NoError(t, err)
 
 	// While the recipient is live, the direct share grants access.
-	perm, err := ls.CheckSharePermission(ctx, 301, 2)
+	perm, err := ls.CheckSharePermission(ctx, 301, 2, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "write", perm, "a live direct recipient must still get the shared permission")
-	secrets, err := ls.ListSharedSecrets(ctx, 2)
+	secrets, err := ls.ListSharedSecrets(ctx, 2, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, secrets, 1, "a live direct recipient must see the secret in their shared list")
 
 	// Soft-delete the recipient's account.
 	require.NoError(t, db.Delete(&models.User{}, 2).Error)
 
-	perm, err = ls.CheckSharePermission(ctx, 301, 2)
+	perm, err = ls.CheckSharePermission(ctx, 301, 2, time.Now())
 	require.Error(t, err, "a soft-deleted direct recipient must not retain access via their ShareRecord")
 	assert.Empty(t, perm)
-	secrets, err = ls.ListSharedSecrets(ctx, 2)
+	secrets, err = ls.ListSharedSecrets(ctx, 2, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, secrets, "a soft-deleted direct recipient must not see the secret in their shared list")
 }

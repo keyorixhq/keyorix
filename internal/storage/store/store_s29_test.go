@@ -395,14 +395,14 @@ func TestListSharesBySecret_S29_HappyPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	shares, err := ls.ListSharesBySecret(ctx, secID)
+	shares, err := ls.ListSharesBySecret(ctx, secID, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, shares, 1)
 }
 
 func TestListSharesBySecretIDs_S29_EmptyEarlyReturn(t *testing.T) {
 	ls := newS29Store(t, sharingModels...)
-	shares, err := ls.ListSharesBySecretIDs(context.Background(), nil)
+	shares, err := ls.ListSharesBySecretIDs(context.Background(), nil, time.Now())
 	require.NoError(t, err)
 	assert.Nil(t, shares)
 }
@@ -417,7 +417,7 @@ func TestListSharesBySecretIDs_S29_HappyPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	shares, err := ls.ListSharesBySecretIDs(ctx, []uint{secID})
+	shares, err := ls.ListSharesBySecretIDs(ctx, []uint{secID}, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, shares, 1)
 }
@@ -432,7 +432,7 @@ func TestListSharesByUser_S29_HappyPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	shares, err := ls.ListSharesByUser(ctx, recipID)
+	shares, err := ls.ListSharesByUser(ctx, recipID, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, shares, 1)
 }
@@ -447,7 +447,7 @@ func TestListSharesByOwner_S29_HappyPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	shares, err := ls.ListSharesByOwner(ctx, ownerID)
+	shares, err := ls.ListSharesByOwner(ctx, ownerID, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, shares, 1)
 }
@@ -465,7 +465,7 @@ func TestListSharesByGroup_S29_HappyPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	shares, err := ls.ListSharesByGroup(ctx, 5)
+	shares, err := ls.ListSharesByGroup(ctx, 5, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, shares, 1)
 }
@@ -480,7 +480,7 @@ func TestListSharedSecrets_S29_DirectShare(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	secrets, err := ls.ListSharedSecrets(ctx, recipID)
+	secrets, err := ls.ListSharedSecrets(ctx, recipID, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, secrets, 1)
 	assert.Equal(t, secID, secrets[0].ID)
@@ -492,7 +492,7 @@ func TestListSharedSecrets_S29_DirectShare(t *testing.T) {
 
 func TestCheckSharePermission_S29_SecretNotFound(t *testing.T) {
 	ls := newS29Store(t, sharingModels...)
-	_, err := ls.CheckSharePermission(context.Background(), 9999, 1)
+	_, err := ls.CheckSharePermission(context.Background(), 9999, 1, time.Now())
 	require.Error(t, err)
 }
 
@@ -506,7 +506,7 @@ func TestCheckSharePermission_S29_DirectShare(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	perm, err := ls.CheckSharePermission(ctx, secID, recipID)
+	perm, err := ls.CheckSharePermission(ctx, secID, recipID, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "write", perm)
 }
@@ -515,7 +515,7 @@ func TestCheckSharePermission_S29_NoPermission(t *testing.T) {
 	ls := newS29Store(t, sharingModels...)
 	_, _, secID := seedShareFixture(t, ls)
 
-	_, err := ls.CheckSharePermission(context.Background(), secID, 99) // 99 has no share
+	_, err := ls.CheckSharePermission(context.Background(), secID, 99, time.Now()) // 99 has no share
 	require.Error(t, err)
 }
 
@@ -523,7 +523,7 @@ func TestCheckSharePermission_S29_OwnerGetsWrite(t *testing.T) {
 	ls := newS29Store(t, sharingModels...)
 	ownerID, _, secID := seedShareFixture(t, ls)
 
-	perm, err := ls.CheckSharePermission(context.Background(), secID, ownerID)
+	perm, err := ls.CheckSharePermission(context.Background(), secID, ownerID, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "write", perm)
 }
@@ -551,7 +551,7 @@ func TestDeleteSecret_S29_RevokesShares(t *testing.T) {
 	require.NoError(t, ls.DeleteSecret(ctx, secID))
 
 	// Share must be gone.
-	shares, err := ls.ListSharesBySecret(ctx, secID)
+	shares, err := ls.ListSharesBySecret(ctx, secID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, shares)
 }

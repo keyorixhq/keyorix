@@ -95,6 +95,7 @@ func TestKeyorixCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -167,6 +168,7 @@ func TestKeyorixCore_ShareSecretWithGroup_StorageError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -195,6 +197,7 @@ func TestKeyorixCore_ListGroupShares(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -233,6 +236,7 @@ func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -408,7 +412,7 @@ func TestShareSecretWithGroup_CrossProjectRefused(t *testing.T) {
 	})
 	require.Error(t, err, "sharing a secret with a group from an unrelated project must be refused")
 
-	shares, lerr := c.storage.ListSharesBySecret(ctx, secret.ID)
+	shares, lerr := c.storage.ListSharesBySecret(ctx, secret.ID, time.Now())
 	require.NoError(t, lerr)
 	assert.Empty(t, shares, "the refused cross-project group share must not have been persisted")
 

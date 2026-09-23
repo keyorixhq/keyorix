@@ -808,7 +808,14 @@ func (m *MockStorage) DeleteShareRecord(ctx context.Context, shareID uint) error
 	return args.Error(0)
 }
 
-func (m *MockStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
+// now (all seven methods below) is accepted for storage.Storage conformance
+// but deliberately NOT forwarded to m.Called() -- these are mocking DB
+// behavior, and the injected clock a caller passes is not something the
+// existing ~90 .On(...) expectation setups across this test suite assert on
+// (unlike DeleteExpiredShareRecords' `before`, which genuinely varies
+// meaningfully between its own test cases below). Forwarding it would force
+// every one of those setups to add a matching arg for no test-behavior gain.
+func (m *MockStorage) ListSharesBySecret(ctx context.Context, secretID uint, now time.Time) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, secretID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -816,7 +823,7 @@ func (m *MockStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]
 	return args.Get(0).([]*models.ShareRecord), args.Error(1)
 }
 
-func (m *MockStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error) {
+func (m *MockStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint, now time.Time) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, secretIDs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -824,7 +831,7 @@ func (m *MockStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uin
 	return args.Get(0).([]*models.ShareRecord), args.Error(1)
 }
 
-func (m *MockStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
+func (m *MockStorage) ListSharesByUser(ctx context.Context, userID uint, now time.Time) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -832,7 +839,7 @@ func (m *MockStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*mod
 	return args.Get(0).([]*models.ShareRecord), args.Error(1)
 }
 
-func (m *MockStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+func (m *MockStorage) ListSharesByOwner(ctx context.Context, ownerID uint, now time.Time) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, ownerID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -840,7 +847,7 @@ func (m *MockStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*m
 	return args.Get(0).([]*models.ShareRecord), args.Error(1)
 }
 
-func (m *MockStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
+func (m *MockStorage) ListSharesByGroup(ctx context.Context, groupID uint, now time.Time) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, groupID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -848,7 +855,7 @@ func (m *MockStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*m
 	return args.Get(0).([]*models.ShareRecord), args.Error(1)
 }
 
-func (m *MockStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
+func (m *MockStorage) ListSharedSecrets(ctx context.Context, userID uint, now time.Time) ([]*models.SecretNode, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -856,7 +863,7 @@ func (m *MockStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*mo
 	return args.Get(0).([]*models.SecretNode), args.Error(1)
 }
 
-func (m *MockStorage) CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error) {
+func (m *MockStorage) CheckSharePermission(ctx context.Context, secretID, userID uint, now time.Time) (string, error) {
 	args := m.Called(ctx, secretID, userID)
 	return args.String(0), args.Error(1)
 }

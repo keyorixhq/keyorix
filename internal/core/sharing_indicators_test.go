@@ -21,6 +21,7 @@ func setupTestCore(t *testing.T) *KeyorixCore {
 	mockStorage := new(MockStorage)
 	return &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 }
 

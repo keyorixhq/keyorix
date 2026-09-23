@@ -93,7 +93,7 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 
 	result := &SecretAccessorsResult{}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

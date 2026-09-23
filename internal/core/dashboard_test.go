@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -78,7 +79,7 @@ type failingDashboardSharesByOwnerStore struct {
 	*store.LocalStorage
 }
 
-func (s *failingDashboardSharesByOwnerStore) ListSharesByOwner(_ context.Context, _ uint) ([]*models.ShareRecord, error) {
+func (s *failingDashboardSharesByOwnerStore) ListSharesByOwner(_ context.Context, _ uint, _ time.Time) ([]*models.ShareRecord, error) {
 	return nil, errors.New("simulated shares-by-owner query failure")
 }
 
@@ -88,7 +89,7 @@ type failingDashboardSharesByUserStore struct {
 	*store.LocalStorage
 }
 
-func (s *failingDashboardSharesByUserStore) ListSharesByUser(_ context.Context, _ uint) ([]*models.ShareRecord, error) {
+func (s *failingDashboardSharesByUserStore) ListSharesByUser(_ context.Context, _ uint, _ time.Time) ([]*models.ShareRecord, error) {
 	return nil, errors.New("simulated shares-by-user query failure")
 }
 

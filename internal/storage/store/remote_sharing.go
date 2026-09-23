@@ -91,7 +91,13 @@ func (rs *RemoteStorage) DeleteShareRecord(ctx context.Context, shareID uint) er
 }
 
 // ListSharesBySecret lists all share records for a given secret via remote API.
-func (rs *RemoteStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
+// The now parameter is accepted only for storage.Storage interface parity
+// with LocalStorage — the upstream server computes its own "now" via its own
+// core layer (KeyorixCore.shareEffectiveNow) when it runs the equivalent
+// local query, the same clock every other in-process share-active check
+// already uses there; there is no wire field to carry a caller's value into,
+// and no local time read here to replace (#1983).
+func (rs *RemoteStorage) ListSharesBySecret(ctx context.Context, secretID uint, _ time.Time) ([]*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/secrets/%d/shares", secretID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
@@ -118,10 +124,10 @@ func (rs *RemoteStorage) ListSharesBySecret(ctx context.Context, secretID uint) 
 // low-exposure) this method must not reintroduce. Failing the batch degrades
 // every secret's exposure factor to the worst case instead — never fewer
 // principals than reality, only ever more caution than strictly necessary.
-func (rs *RemoteStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error) {
+func (rs *RemoteStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint, now time.Time) ([]*models.ShareRecord, error) {
 	var out []*models.ShareRecord
 	for _, id := range secretIDs {
-		shares, err := rs.ListSharesBySecret(ctx, id)
+		shares, err := rs.ListSharesBySecret(ctx, id, now)
 		if err != nil {
 			return nil, fmt.Errorf("list shares by secret %d: %w", id, err)
 		}
@@ -141,8 +147,10 @@ func (rs *RemoteStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []
 // unconditionally under storage.type: remote, even after #531 fixed the
 // ListSharesByOwner half. Same thin-passthrough pattern as ListSharesByOwner
 // immediately below: no policy decision made here, gated on the SAME
-// system.read tier.
-func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
+// system.read tier. The now parameter is accepted only for storage.Storage
+// interface parity with LocalStorage — see ListSharesBySecret's identical
+// reasoning above (#1983).
+func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint, _ time.Time) ([]*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/system/shares/by-user/%d", userID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
@@ -168,8 +176,10 @@ func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*
 // owned-share half of ListSharesByUser generally) end to end under
 // storage.type: remote. A thin passthrough onto storage.Storage's own
 // active-share query (no policy decision made here); gated on the SAME
-// system.read tier every other RemoteStorage read already needs.
-func (rs *RemoteStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+// system.read tier every other RemoteStorage read already needs. The now
+// parameter is accepted only for storage.Storage interface parity with
+// LocalStorage — see ListSharesBySecret's identical reasoning above (#1983).
+func (rs *RemoteStorage) ListSharesByOwner(ctx context.Context, ownerID uint, _ time.Time) ([]*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/system/shares/by-owner/%d", ownerID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
@@ -187,8 +197,11 @@ func (rs *RemoteStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([
 	return result.Shares, nil
 }
 
-// ListSharesByGroup lists all share records where groupID is the recipient via remote API.
-func (rs *RemoteStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
+// ListSharesByGroup lists all share records where groupID is the recipient
+// via remote API. The now parameter is accepted only for storage.Storage
+// interface parity with LocalStorage — see ListSharesBySecret's identical
+// reasoning above (#1983).
+func (rs *RemoteStorage) ListSharesByGroup(ctx context.Context, groupID uint, _ time.Time) ([]*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/groups/%d/shares", groupID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
@@ -211,7 +224,7 @@ func (rs *RemoteStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([
 // GET /shared-secrets, the caller's own, exists). Sole CLI caller
 // (share/shared_secrets.go) is behind a NewRemoteClient() guard. See
 // docs/adr-087-remote-storage-deletion-pass.md.
-func (rs *RemoteStorage) ListSharedSecrets(_ context.Context, _ uint) ([]*models.SecretNode, error) {
+func (rs *RemoteStorage) ListSharedSecrets(_ context.Context, _ uint, _ time.Time) ([]*models.SecretNode, error) {
 	return nil, remoteUnsupported("ListSharedSecrets")
 }
 
@@ -220,7 +233,7 @@ func (rs *RemoteStorage) ListSharedSecrets(_ context.Context, _ uint) ([]*models
 // itself has zero callers anywhere (no HTTP handler, no gRPC service, no CLI)
 // — orphaned server-side, not just under storage.type: remote. See
 // docs/adr-087-remote-storage-deletion-pass.md.
-func (rs *RemoteStorage) CheckSharePermission(_ context.Context, _, _ uint) (string, error) {
+func (rs *RemoteStorage) CheckSharePermission(_ context.Context, _, _ uint, _ time.Time) (string, error) {
 	return "", remoteUnsupported("CheckSharePermission")
 }
 
