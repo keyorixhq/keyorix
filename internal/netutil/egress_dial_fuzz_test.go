@@ -250,16 +250,24 @@ func FuzzEgressDialEnforcement(f *testing.F) {
 
 		if err != nil {
 			// Classify which of DialContext's OWN distinct failure branches fired, by
-			// its distinguishing error text (dialer.go:82,124,135,138,144) — more
+			// its distinguishing error text (dialer.go:82,124,128,135,138,144) — more
 			// robust than trying to independently predict from host/program content
 			// whether e.g. net.SplitHostPort will reject a fuzzer-mangled host string;
 			// that can fail even when the `malformed` flag wasn't set.
 			addrParseFailure := strings.Contains(err.Error(), "invalid dial address")
 			resolveFailure := strings.Contains(err.Error(), "resolve ") && !strings.Contains(err.Error(), "did not resolve to any address")
 			noAnswersFailure := strings.Contains(err.Error(), "did not resolve to any address")
+			// #1948: an empty/whitespace-only host is refused before any lookup —
+			// fires with dialCount==0 exactly like the other three, and for a
+			// fuzzer-chosen empty host, rounds[0] (never populated, since resolve
+			// is never called) is vacuously "all allowed" by roundAllAllowed. Without
+			// this branch that vacuous truth misclassifies the refusal as an
+			// OVER-BLOCK regression instead of the correct, intentional fail-closed
+			// guard it actually is.
+			emptyHostFailure := strings.Contains(err.Error(), "refusing to dial an empty host")
 
-			// (c) fail-closed: none of these three should ever reach Dial.
-			if addrParseFailure || resolveFailure || noAnswersFailure {
+			// (c) fail-closed: none of these four should ever reach Dial.
+			if addrParseFailure || resolveFailure || noAnswersFailure || emptyHostFailure {
 				if dialCount != 0 {
 					t.Fatalf("FAIL-CLOSED VIOLATION: DialContext errored (%v) but still invoked Dial %d time(s), addr=%q", err, dialCount, dialedAddr)
 				}

@@ -51,6 +51,7 @@ func TestGuard_HTTPClient_WiresDialContext(t *testing.T) {
 	var dialed string
 	g := Guard{
 		Dial: Dialer{
+			Resolve: noDNS(t),
 			Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
 				dialed = addr
 				return &fakeConn{}, nil
@@ -61,7 +62,7 @@ func TestGuard_HTTPClient_WiresDialContext(t *testing.T) {
 	transport, ok := client.Transport.(*http.Transport)
 	require.True(t, ok)
 	require.NotNil(t, transport.DialContext)
-	_, err := transport.DialContext(context.Background(), "tcp", "203.0.113.10:443")
+	_, err := transport.DialContext(testCtx(t), "tcp", "203.0.113.10:443")
 	require.NoError(t, err)
 	assert.Equal(t, "203.0.113.10:443", dialed)
 }
@@ -71,13 +72,14 @@ func TestGuard_HTTPClient_WiresDialContext(t *testing.T) {
 func TestGuard_RedisDialer_NoTLS_ReturnsRawConn(t *testing.T) {
 	g := Guard{
 		Dial: Dialer{
+			Resolve: noDNS(t),
 			Dial: func(_ context.Context, _, _ string) (net.Conn, error) {
 				return &fakeConn{}, nil
 			},
 		},
 	}
 	dialer := g.RedisDialer(nil)
-	conn, err := dialer(context.Background(), "tcp", "203.0.113.10:6379")
+	conn, err := dialer(testCtx(t), "tcp", "203.0.113.10:6379")
 	require.NoError(t, err)
 	_, isTLS := conn.(*tls.Conn)
 	assert.False(t, isTLS, "no tlsConfig means the raw conn must be returned unwrapped")
@@ -87,13 +89,14 @@ func TestGuard_RedisDialer_DialErrorPropagates(t *testing.T) {
 	wantErr := errors.New("dial refused")
 	g := Guard{
 		Dial: Dialer{
+			Resolve: noDNS(t),
 			Dial: func(_ context.Context, _, _ string) (net.Conn, error) {
 				return nil, wantErr
 			},
 		},
 	}
 	dialer := g.RedisDialer(&tls.Config{})
-	_, err := dialer(context.Background(), "tcp", "203.0.113.10:6379")
+	_, err := dialer(testCtx(t), "tcp", "203.0.113.10:6379")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
 }
@@ -114,7 +117,7 @@ func TestGuard_RedisDialer_TLSHandshakeFailurePropagates(t *testing.T) {
 		}
 	}()
 
-	g := Guard{Dial: Dialer{}}
+	g := Guard{Dial: Dialer{Resolve: noDNS(t)}}
 	dialer := g.RedisDialer(&tls.Config{})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -241,7 +244,7 @@ func TestGuard_ValidateSRVTargets_AllTargetsValid(t *testing.T) {
 			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
 		},
 	}}
-	require.NoError(t, g.ValidateSRVTargets(context.Background(), "mongodb", "tcp", "cluster0.example.net"))
+	require.NoError(t, g.ValidateSRVTargets(testCtx(t), "mongodb", "tcp", "cluster0.example.net"))
 }
 
 func TestGuard_ValidateSRVTargets_OneDisallowedTargetRefusesAll(t *testing.T) {
@@ -262,7 +265,7 @@ func TestGuard_ValidateSRVTargets_OneDisallowedTargetRefusesAll(t *testing.T) {
 			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
 		},
 	}}
-	err := g.ValidateSRVTargets(context.Background(), "mongodb", "tcp", "cluster0.example.net")
+	err := g.ValidateSRVTargets(testCtx(t), "mongodb", "tcp", "cluster0.example.net")
 	require.Error(t, err, "a DNS-rebinding-safe SRV pre-check must refuse the whole lookup if ANY target is disallowed")
 	assert.Contains(t, err.Error(), "shard00-01.cluster0.example.net")
 }
@@ -273,8 +276,8 @@ func TestGuard_ValidateSRVTargets_LookupErrorPropagates(t *testing.T) {
 	srvLookup = func(_ context.Context, _, _, _ string) (string, []*net.SRV, error) {
 		return "", nil, errors.New("no such SRV record")
 	}
-	g := Guard{Dial: Dialer{Disallow: IsPrivateOrLinkLocal}}
-	err := g.ValidateSRVTargets(context.Background(), "mongodb", "tcp", "cluster0.example.net")
+	g := Guard{Dial: Dialer{Disallow: IsPrivateOrLinkLocal, Resolve: noDNS(t)}}
+	err := g.ValidateSRVTargets(testCtx(t), "mongodb", "tcp", "cluster0.example.net")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no such SRV record")
 }
@@ -285,8 +288,8 @@ func TestGuard_ValidateSRVTargets_EmptyResultRefused(t *testing.T) {
 	srvLookup = func(_ context.Context, _, _, _ string) (string, []*net.SRV, error) {
 		return "", nil, nil
 	}
-	g := Guard{Dial: Dialer{Disallow: IsPrivateOrLinkLocal}}
-	err := g.ValidateSRVTargets(context.Background(), "mongodb", "tcp", "cluster0.example.net")
+	g := Guard{Dial: Dialer{Disallow: IsPrivateOrLinkLocal, Resolve: noDNS(t)}}
+	err := g.ValidateSRVTargets(testCtx(t), "mongodb", "tcp", "cluster0.example.net")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no targets")
 }

@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 )
 
 // IPValidator reports whether ip must be refused as a dial target (e.g.
@@ -118,7 +119,14 @@ func (d Dialer) ValidateHost(ctx context.Context, host string) error {
 // any is returned — a hostname that resolves to a mix of public and private
 // addresses must not be allowed through just because one answer happened to
 // be checked first. Returns the first validated address.
+//
+// An empty or whitespace-only host is refused before any lookup (#1948):
+// fail closed rather than hand "" to a resolver whose behavior for it is
+// resolver-specific (and, for a raw dial, "" means the local host).
 func (d Dialer) resolveValidated(ctx context.Context, host string) (net.IP, error) {
+	if strings.TrimSpace(host) == "" {
+		return nil, fmt.Errorf("netutil: refusing to dial an empty host")
+	}
 	if ip := net.ParseIP(host); ip != nil {
 		if d.disallow(ip) {
 			return nil, fmt.Errorf("netutil: refusing to dial disallowed address %s", ip)

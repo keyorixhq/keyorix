@@ -53,6 +53,7 @@ func TestIsLinkLocal(t *testing.T) {
 func TestIsLinkLocal_DialerRefusesIMDSAllowsPrivate(t *testing.T) {
 	var dialed string
 	d := Dialer{
+		Resolve:  noDNS(t),
 		Disallow: IsLinkLocal,
 		Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
 			dialed = addr
@@ -60,11 +61,11 @@ func TestIsLinkLocal_DialerRefusesIMDSAllowsPrivate(t *testing.T) {
 		},
 	}
 
-	_, err := d.DialContext(context.Background(), "tcp", "169.254.169.254:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "169.254.169.254:443")
 	require.Error(t, err, "cloud IMDS literal IP must be refused by the link-local guard")
 	assert.Empty(t, dialed, "the underlying dial must never be reached for IMDS")
 
-	_, err = d.DialContext(context.Background(), "tcp", "10.10.0.5:443")
+	_, err = d.DialContext(testCtx(t), "tcp", "10.10.0.5:443")
 	require.NoError(t, err, "an RFC-1918 on-prem issuer must remain reachable under the link-local guard")
 	assert.Equal(t, "10.10.0.5:443", dialed)
 }
