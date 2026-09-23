@@ -59,8 +59,9 @@ func TestOIDCSSODifferential_SingleConstraintViolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			v.now = func() time.Time { return now }
-			c := &KeyorixCore{now: func() time.Time { return now }, ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey}}
+			v.setClock(func() time.Time { return now })
+			c := &KeyorixCore{ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey}}
+			c.SetClockForTesting(func() time.Time { return now })
 
 			oidcClaims := oidcSingleConstraintBaseClaims(now, "sa-differential", oidcIss, oidcAud)
 			applySharedJWTViolation(kind, oidcClaims, now, oidcIss, oidcAud, oidcClockSkew)

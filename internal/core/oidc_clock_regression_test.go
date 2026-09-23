@@ -57,13 +57,13 @@ func TestOIDCVerify_ClockSteppedBackward_StaleTokenStaysRejected(t *testing.T) {
 		"iat": iat.Unix(),
 		"exp": baseline.Add(time.Hour).Unix(), // past every v.now() this test injects -- exp check stays out of the way (see file header)
 	})
-	v.now = func() time.Time { return baseline }
+	v.setClock(func() time.Time { return baseline })
 	_, _, err = v.Verify(context.Background(), raw)
 	require.ErrorContains(t, err, "exceeds max age", "sanity: the token must read as too old at the baseline time before the clock ever moves")
 
 	// Step 2: the exploit. Step v.now() BACKWARD to only 10 minutes after iat.
 	steppedBack := iat.Add(10 * time.Minute)
-	v.now = func() time.Time { return steppedBack }
+	v.setClock(func() time.Time { return steppedBack })
 	_, _, err = v.Verify(context.Background(), raw)
 	require.ErrorContains(t, err, "exceeds max age", "a stale token must still be rejected after the clock steps backward to look freshly within the max-age budget")
 }
@@ -92,7 +92,7 @@ func TestOIDCVerify_ClockSteppedBackward_FreshTokenStillAccepted(t *testing.T) {
 		"exp": realNow.Add(time.Hour).Unix(),
 	})
 
-	v.now = func() time.Time { return realNow.Add(-1 * time.Second) }
+	v.setClock(func() time.Time { return realNow.Add(-1 * time.Second) })
 	_, _, err = v.Verify(context.Background(), raw)
 	require.NoError(t, err, "a fresh token must still verify after a small in-tolerance backward step")
 }

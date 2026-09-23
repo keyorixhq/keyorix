@@ -723,6 +723,16 @@ func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 	}
 }
 
+// SetClockForTesting overrides the clock KeyorixCore uses for every c.now()
+// read in this package -- session/PAT/machine-token expiry, JWT verification
+// via jwt.WithTimeFunc (oidc.go, sso.go), SSO state TTLs, etc. Test-only:
+// production code must never call this, since it would let anything other
+// than a test retarget every time-based auth check the core package makes at
+// once. See TestClockOverridesNotCalledOutsideTests (clock_testing_setter_guard_test.go).
+func (c *KeyorixCore) SetClockForTesting(now func() time.Time) {
+	c.now = now
+}
+
 // SetWebhookURLValidator replaces the SSRF guard applied to notification channel
 // URLs on create and update. The default (nil) uses validateWebhookURL which
 // enforces https-only and rejects private/loopback destinations via a live DNS

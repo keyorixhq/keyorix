@@ -98,6 +98,14 @@ func (v *OIDCVerifier) effectiveNow() time.Time {
 	return now
 }
 
+// setClock overrides v.now -- and, via effectiveNow, the JWT parser's own
+// exp/nbf/iat-future checks (jwt.WithTimeFunc wires effectiveNow into the
+// parser in Verify below). Test-only: production code must never call this.
+// See TestClockOverridesNotCalledOutsideTests (clock_testing_setter_guard_test.go).
+func (v *OIDCVerifier) setClock(now func() time.Time) {
+	v.now = now
+}
+
 // NewOIDCVerifier builds a verifier over the trusted issuers. An issuer with no
 // configured audiences is rejected at build time — audience binding is required
 // (fail closed), since an unaudienced token is replayable across services.

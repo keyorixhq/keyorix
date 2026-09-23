@@ -378,7 +378,7 @@ func FuzzOIDCIDTokenSingleConstraintViolation(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		v.now = func() time.Time { return now }
+		v.setClock(func() time.Time { return now })
 		claims := oidcSingleConstraintBaseClaims(now, sub, trustedIss, trustedAud)
 		applySharedJWTViolation(kind, claims, now, trustedIss, trustedAud, leeway)
 		applyOIDCOnlyViolation(kind, claims, now, defaultOIDCMaxTokenAge, leeway)
@@ -461,10 +461,8 @@ func FuzzSSOIDTokenSingleConstraintViolation(f *testing.F) {
 		// Fresh KeyorixCore per iteration, clock pinned to this iteration's
 		// `now` — see the matching comment in FuzzOIDCIDTokenSingleConstraintViolation.
 		now := time.Now()
-		c := &KeyorixCore{
-			now:     func() time.Time { return now },
-			ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey},
-		}
+		c := &KeyorixCore{ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey}}
+		c.SetClockForTesting(func() time.Time { return now })
 		claims := ssoSingleConstraintBaseClaims(now, sub, trustedIss, clientID, correctNonce)
 		applySharedJWTViolation(kind, claims, now, trustedIss, clientID, leeway)
 		applySSOOnlyViolation(kind, claims)

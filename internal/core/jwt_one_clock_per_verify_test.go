@@ -53,7 +53,7 @@ func TestOIDCVerify_ExpNbfCheckedAgainstInjectedClock_NotRealTime(t *testing.T) 
 	// would fail identically to the control. Success proves the library's
 	// check and the max-age check below both used v.effectiveNow().
 	v := newTestVerifier(t, key)
-	v.now = func() time.Time { return pinned }
+	v.setClock(func() time.Time { return pinned })
 	_, subject, err := v.Verify(context.Background(), raw)
 	require.NoError(t, err, "a token valid only relative to the injected clock must verify once that clock is wired into the JWT library's own exp/nbf/max-age checks")
 	require.Equal(t, "system:serviceaccount:ci:deployer", subject)
@@ -79,14 +79,13 @@ func TestVerifyIDToken_ExpNbfCheckedAgainstInjectedClock_NotRealTime(t *testing.
 		"nonce": nonce,
 	})
 
-	control := &KeyorixCore{now: time.Now, ssoJWKS: staticResolver{kid: "kid-1", key: &key.PublicKey}}
+	control := &KeyorixCore{ssoJWKS: staticResolver{kid: "kid-1", key: &key.PublicKey}}
+	control.SetClockForTesting(time.Now)
 	_, _, _, _, err = control.verifyIDToken(context.Background(), p, nonce, raw)
 	require.Error(t, err, "sanity: a 2020-dated id_token must be rejected against the real (2026+) wall clock")
 
-	c := &KeyorixCore{
-		now:     func() time.Time { return pinned },
-		ssoJWKS: staticResolver{kid: "kid-1", key: &key.PublicKey},
-	}
+	c := &KeyorixCore{ssoJWKS: staticResolver{kid: "kid-1", key: &key.PublicKey}}
+	c.SetClockForTesting(func() time.Time { return pinned })
 	sub, _, _, _, err := c.verifyIDToken(context.Background(), p, nonce, raw)
 	require.NoError(t, err, "an id_token valid only relative to the injected clock must verify once that clock is wired into the JWT library's exp/nbf checks")
 	require.Equal(t, "okta|123", sub)
