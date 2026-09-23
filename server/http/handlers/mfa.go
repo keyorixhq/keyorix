@@ -151,9 +151,11 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
+	// F2 (2026-09-20): reserve before the (slow) TOTP/recovery-code check —
+	// see reserveLoginAttempt's doc (reserved after decode, matching Login).
+	h.reserveLoginAttempt(r.Context(), ip)
 	session, user, err := h.coreService.VerifyMFALogin(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip)
 	if err != nil {
-		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
