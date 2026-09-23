@@ -723,6 +723,23 @@ func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 	}
 }
 
+// SetClockForTesting overrides the clock behind every time-based
+// authorization/expiry decision this KeyorixCore makes directly (sessions,
+// PATs, machine tokens, shares, dynamic secrets, MFA, impersonation) AND,
+// transitively, federated JWT verification if an OIDCVerifier is already
+// wired via SetOIDCVerifier — call SetOIDCVerifier first if both need to
+// share one clock. Production code never calls this; it exists so a single
+// call can drive every one of these decisions off one injected clock, which
+// is what a clock-jump fuzz/test harness needs to assert that independent
+// enforcement paths for the same logical decision agree (#1983). Default
+// (unset) is time.Now.
+func (c *KeyorixCore) SetClockForTesting(now func() time.Time) {
+	c.now = now
+	if c.oidcVerifier != nil {
+		c.oidcVerifier.setClock(now)
+	}
+}
+
 // SetWebhookURLValidator replaces the SSRF guard applied to notification channel
 // URLs on create and update. The default (nil) uses validateWebhookURL which
 // enforces https-only and rejects private/loopback destinations via a live DNS

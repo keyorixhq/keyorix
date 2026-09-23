@@ -98,6 +98,19 @@ func (v *OIDCVerifier) effectiveNow() time.Time {
 	return now
 }
 
+// setClock overrides the clock Verify uses for every check (both golang-jwt's
+// own exp/nbf/iat-future evaluation, wired via jwt.WithTimeFunc below, and the
+// custom max-age check via effectiveNow) and resets the monotonic watermark to
+// zero. The reset matters: without it, a caller that moves the clock backward
+// after this verifier has already observed a later reading would find that
+// reading still clamps effectiveNow, silently discarding the override. #1983.
+func (v *OIDCVerifier) setClock(now func() time.Time) {
+	v.clockWatermarkMu.Lock()
+	defer v.clockWatermarkMu.Unlock()
+	v.now = now
+	v.clockWatermark = time.Time{}
+}
+
 // NewOIDCVerifier builds a verifier over the trusted issuers. An issuer with no
 // configured audiences is rejected at build time — audience binding is required
 // (fail closed), since an unaudienced token is replayable across services.
@@ -147,6 +160,13 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 		// positive bound, so nothing rejected it (docs/findings/
 		// 2026-09-23-FINDING-oidc-future-iat-and-crit.md).
 		jwt.WithIssuedAt(),
+		// Without this, golang-jwt's own exp/nbf/iat-future checks read the
+		// real wall clock directly, while the max-age check below reads
+		// v.effectiveNow() — two independent clocks inside one Verify call
+		// that a test (or a fuzz harness) can't both freeze at once, and that
+		// diverge under a clock-jump exactly when this verifier most needs to
+		// agree with itself about what "now" is (#1983).
+		jwt.WithTimeFunc(v.effectiveNow),
 	)
 
 	keyfunc := func(token *jwt.Token) (interface{}, error) {
