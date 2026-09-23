@@ -120,13 +120,30 @@ func (h *DashboardHandler) GetComplianceControls(w http.ResponseWriter, r *http.
 
 // GetComplianceEvidence handles GET /api/v1/compliance/evidence — the auditor
 // evidence pack (posture + supporting records); gated by audit.read in the router.
+//
+// Returns the pack alongside its canonical archive name and detached
+// signature (data_b64/filename/signature, mirroring VerifyComplianceEvidence's
+// own request shape) so `keyorix compliance export` can persist exactly what
+// `keyorix compliance verify` needs to check later (AUD-009 filename-bound
+// signatures) -- this used to return the bare evidence struct with no name or
+// signature at all, so export→verify could never produce VALID for a
+// genuinely untampered pack (inventory GAP-2 / Finding S16). data_b64, not a
+// nested JSON object, because embedding the pack as a raw JSON value inside
+// this response would let the outer marshal re-compact its whitespace,
+// changing the exact bytes a client receives from the exact bytes that were
+// signed.
 func (h *DashboardHandler) GetComplianceEvidence(w http.ResponseWriter, r *http.Request) {
-	evidence, err := h.coreService.GenerateComplianceEvidence(r.Context())
+	_, filename, data, signature, signed, err := h.coreService.GenerateSignedComplianceEvidence(r.Context())
 	if err != nil {
 		sendError(w, "InternalServerError", "Failed to assemble compliance evidence", http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, evidence, "")
+	sendSuccess(w, map[string]interface{}{
+		"filename":  filename,
+		"data_b64":  base64.StdEncoding.EncodeToString(data),
+		"signature": signature,
+		"signed":    signed,
+	}, "")
 }
 
 // GetActivity handles GET /api/v1/dashboard/activity
