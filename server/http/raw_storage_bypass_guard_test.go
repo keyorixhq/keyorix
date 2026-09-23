@@ -910,10 +910,11 @@ var rawStorageBypassAllowlist = map[string]string{
 	// (break_glass_proxy.go) for the full reasoning, including why it does NOT
 	// call core.RevokeBreakGlass directly (would break this route's own wire
 	// error-code contract).
-	"RevokeBreakGlassActivationProxy": "FIXED: was a false documented-exception (the offsetting role-removal " +
-		"chain it claimed to travel through never existed end-to-end, #1511) -- now self-contained (state guard " +
-		"+ RemoveUserRole + conditional revoke + LogBreakGlassRevoked audit), see the FIXED comment immediately " +
-		"above this entry.",
+	// Entry removed (not moved) 2026-09-23 (#2018, break-glass revoke half-commit):
+	// the handler now routes through core.RevokeBreakGlassActivationAtomic (role
+	// removal + conditional revoke in one storage.WithTransaction, audit after
+	// commit) instead of calling Storage() write primitives directly, so this
+	// guard's AST scan no longer flags it at all.
 	// RecordLoginAttemptProxy: FIXED 2026-08-25 (G80 documented-exception
 	// re-verification sweep) -- was a FALSE documented-exception (ip/at were
 	// completely unvalidated, enabling cross-namespace rate-limit poisoning and
