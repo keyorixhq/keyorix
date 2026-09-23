@@ -3,10 +3,11 @@
 // is NOT monotonic-safe (claims.IssuedAt is parsed from the JWT, round-tripped,
 // its monotonic reading stripped) -- a host clock stepped backward makes a
 // stale token's computed age look smaller, extending acceptance of it past its
-// configured max-age. Note: the JWT library's OWN exp/nbf validation uses the
-// real wall clock (no jwt.WithTimeFunc configured), independent of v.now -- so
-// this test keeps `exp` valid against real time throughout and controls only
-// v.now (via effectiveNow's clamp) to exercise the max-age check specifically.
+// configured max-age. Since #1983, the JWT library's OWN exp/nbf validation is
+// wired to the SAME v.effectiveNow() via jwt.WithTimeFunc (previously it read
+// the real wall clock, independent of v.now) -- so these tests now set `exp`
+// far enough past every v.now() value they inject that the library's exp
+// check never fires, isolating the max-age check exactly as before.
 package core
 
 import (
@@ -51,7 +52,7 @@ func TestOIDCVerify_ClockSteppedBackward_StaleTokenStaysRejected(t *testing.T) {
 		"sub": "system:serviceaccount:ci:deployer",
 		"aud": []string{"keyorix"},
 		"iat": iat.Unix(),
-		"exp": realNow.Add(time.Hour).Unix(), // valid against the JWT library's own real-clock exp check throughout
+		"exp": iat.Add(48 * time.Hour).Unix(), // past every v.now() this test injects below, so only the max-age check fires
 	})
 
 	// Step 1: v.now() two hours ahead of iat -- exceeds the 1h MaxTokenAge,
