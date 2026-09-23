@@ -13,7 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-func newRBACAuditCore(t *testing.T) *KeyorixCore {
+func newRBACAuditCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -22,13 +22,27 @@ func newRBACAuditCore(t *testing.T) *KeyorixCore {
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SoDPolicy{},
 	))
-	return NewKeyorixCore(store.NewLocalStorage(db))
+	return NewKeyorixCore(store.NewLocalStorage(db)), db
+}
+
+// seedRolesAssignGrant grants actorID roles.assign at scope via DIRECT DB
+// rows (never through core.AssignUserRole), so the seed itself never emits
+// an audit-log entry that would pollute a test's exact audit-entry-count
+// assertion. F6 sweep (2026-09-22): granting ANY role now requires the actor
+// already hold roles.assign at that scope.
+func seedRolesAssignGrant(t *testing.T, db *gorm.DB, actorID, permissionID, roleID uint, scope Scope) {
+	t.Helper()
+	require.NoError(t, db.Create(&models.Permission{ID: permissionID, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: roleID, Name: "seeded-roles-assign-holder"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: roleID, PermissionID: permissionID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actorID, RoleID: roleID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}).Error)
 }
 
 func TestRBACAuditTrail_AssignAndRemove(t *testing.T) {
 	t.Parallel()
-	c := newRBACAuditCore(t)
+	c, db := newRBACAuditCore(t)
 	ctx := context.Background()
+	seedRolesAssignGrant(t, db, 5, 100, 100, Scope{ProjectID: 3})
 
 	require.NoError(t, c.AssignUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3}, false))
 	require.NoError(t, c.RemoveUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3}))
@@ -69,8 +83,9 @@ func TestRBACAuditTrail_AssignAndRemove(t *testing.T) {
 // the read side even though it was captured at write time.
 func TestRBACAuditTrail_EnvironmentIDRoundTrips(t *testing.T) {
 	t.Parallel()
-	c := newRBACAuditCore(t)
+	c, db := newRBACAuditCore(t)
 	ctx := context.Background()
+	seedRolesAssignGrant(t, db, 5, 100, 100, Scope{ProjectID: 3, EnvironmentID: 7})
 
 	require.NoError(t, c.AssignUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3, EnvironmentID: 7}, false))
 
@@ -92,7 +107,7 @@ func TestRBACAuditTrail_EnvironmentIDRoundTrips(t *testing.T) {
 // records no actor.
 func TestRBACAuditTrail_SystemActor(t *testing.T) {
 	t.Parallel()
-	c := newRBACAuditCore(t)
+	c, _ := newRBACAuditCore(t)
 	ctx := context.Background()
 
 	require.NoError(t, c.AssignUserRole(ctx, 0, 11, 4, Scope{}, false))
@@ -111,12 +126,14 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Group{}, &models.Role{}, &models.GroupRole{}, &models.SoDPolicy{},
-		&models.Permission{}, &models.RolePermission{},
+		&models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Project{}, &models.Environment{}, &models.UserGroup{},
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
+	seedRolesAssignGrant(t, db, 5, 100, 100, Scope{ProjectID: 3})
 
 	require.NoError(t, c.AssignRoleToGroup(ctx, 5, 7, 2, Scope{ProjectID: 3}, false))
 
@@ -177,8 +194,9 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 // SetUserRoles diffs the current vs desired set and audits each resulting change.
 func TestRBACAuditTrail_SetUserRolesEmitsPerChange(t *testing.T) {
 	t.Parallel()
-	c := newRBACAuditCore(t)
+	c, db := newRBACAuditCore(t)
 	ctx := context.Background()
+	seedRolesAssignGrant(t, db, 9, 100, 100, Scope{})
 
 	// From {} to {1,2}: two assignments.
 	require.NoError(t, c.SetUserRoles(ctx, 9, 20, []uint{1, 2}, Scope{}, false))

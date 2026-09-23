@@ -224,10 +224,22 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 	// role is the most powerful grant this flow can mint, so it needs the ceiling
 	// check applied everywhere else — the inviter's real bundled permissions, not
 	// just the role's name — at global scope (projectID 0).
+	//
+	// F6 sweep (2026-09-22): requireGranterHoldsRolePermissions's roles.assign
+	// BASELINE deliberately does not apply when systemRole was left empty --
+	// see CreateUserWithAssignments' identical comment (users.go) for the full
+	// reasoning: a mandatory, non-discretionary default (here, system_viewer)
+	// mirrors plain CreateUser's own unconditional auto-assign and is gated by
+	// users.write alone, same as this test file's own documented invariant
+	// ("inviting the default baseline (no role) is still allowed").
 	if invitedByMachineID != 0 {
 		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
 	}
-	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, sysRoleModel.ID, Scope{}, invitedByMachineID != 0); err != nil {
+	if systemRole == "" {
+		if err := c.requireGranterHoldsRolePermissionsNoBaseline(ctx, invitedBy, sysRoleModel.ID, Scope{}, invitedByMachineID != 0); err != nil {
+			return nil, err
+		}
+	} else if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, sysRoleModel.ID, Scope{}, invitedByMachineID != 0); err != nil {
 		return nil, err
 	}
 

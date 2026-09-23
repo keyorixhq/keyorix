@@ -109,6 +109,7 @@ func TestConcurrency_ApproveAccessRequestWithExpiry_CrossReplicaPostgres_Thresho
 	for _, u := range []*models.User{approverC, approverA, approverB} {
 		require.NoError(t, setupCore.Storage().AssignRole(ctx, u.ID, viewerRoleForApprovers.ID, Scope{ProjectID: projectID}))
 	}
+	grantRolesAssignAt(t, setupCore, setupDB, Scope{ProjectID: projectID}, approverC, approverA, approverB)
 
 	req, err := setupCore.RequestProjectAccess(ctx, projectID, target.ID, "project_viewer", "need read access")
 	require.NoError(t, err)
@@ -183,6 +184,27 @@ func TestConcurrency_ApproveAccessRequestWithExpiry_CrossReplicaPostgres_Thresho
 // project|global union, which isn't needed here) for how many rows currently grant
 // roleID to userID at projectID -- 0 or 1 in the correct case, 2 if both racers'
 // grants are simultaneously live.
+// grantRolesAssignAt gives each user a dedicated role holding ONLY
+// roles.assign at scope. F6 sweep (2026-09-22): approving now also requires a
+// roles.assign baseline, independent of the granted role's own bundle --
+// mirrors the SQLite sibling's fixture (concurrency_g04_threshold_race_test.go)
+// so these tests keep isolating the threshold race, their actual subject.
+func grantRolesAssignAt(t *testing.T, c *KeyorixCore, db *gorm.DB, scope Scope, users ...*models.User) {
+	t.Helper()
+	ctx := context.Background()
+	var perm models.Permission
+	if err := db.Where("name = ?", "roles.assign").First(&perm).Error; err != nil {
+		perm = models.Permission{Name: "roles.assign", Resource: "roles", Action: "assign"}
+		require.NoError(t, db.Create(&perm).Error)
+	}
+	role := models.Role{Name: "dc-race-approver", NameFolded: "dc-race-approver"}
+	require.NoError(t, db.Create(&role).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	for _, u := range users {
+		require.NoError(t, c.Storage().AssignRole(ctx, u.ID, role.ID, scope))
+	}
+}
+
 func countUserRoleGrants(t *testing.T, db *gorm.DB, userID, roleID, projectID uint) int {
 	t.Helper()
 	var count int64

@@ -115,6 +115,12 @@ func TestAddUserToGroup_AllowsAllowedDomain(t *testing.T) {
 
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
+	// F6 sweep (2026-09-22): granting ANY role -- including via a group join
+	// -- now ALSO requires roles.assign as a baseline at the target scope.
+	// Actor 99 is meant to be an ordinary authorized granter here; the
+	// allowlist behavior under test is orthogonal to that baseline.
+	h.AssignUserRole(t, 99, 2 /* admin, bundles roles.assign */, &projID)
+
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, peggy.ID, 62, proj)
 	require.NoError(t, err, "an allowed-domain user must still be able to join a project-conferring group")
 

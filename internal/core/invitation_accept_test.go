@@ -50,6 +50,12 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		// system_viewer auto-assign (CreateUser) + the invited "developer" grant on activation.
 		ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, assertNotFoundErr())
 		ms.On("GetRoleByName", ctx, "developer").Return(&models.Role{ID: 9, Name: "developer"}, nil)
+		// F6 sweep (2026-09-22): activation-on-accept now ALSO requires the
+		// inviter (7) hold roles.assign as a baseline at the invitation's project.
+		ms.On("GetUserRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{100}, nil)
+		ms.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{}, nil)
+		ms.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+		ms.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 		ms.On("GetActiveProjectMembership", ctx, uint(5), uint(20)).Return(nil, assertNotFoundErr())
 		ms.On("CreateProjectMembership", ctx, mock.AnythingOfType("*models.ProjectMembership")).
 			Return(&models.ProjectMembership{ID: 1, ProjectID: 5, UserID: 20, Role: "developer", State: MembershipActive}, nil)
@@ -85,6 +91,12 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		ms.On("AddPasswordHistory", ctx, uint(21), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 		ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, assertNotFoundErr())
 		ms.On("GetRoleByName", ctx, "developer").Return(&models.Role{ID: 9, Name: "developer"}, nil)
+		// F6 sweep (2026-09-22): the invite-on-accept baseline check runs
+		// regardless of validation mode -- see the "open mode" subtest above.
+		ms.On("GetUserRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{100}, nil)
+		ms.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{}, nil)
+		ms.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+		ms.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 		ms.On("GetActiveProjectMembership", ctx, uint(5), uint(21)).Return(nil, assertNotFoundErr())
 		ms.On("CreateProjectMembership", ctx, mock.AnythingOfType("*models.ProjectMembership")).
 			Return(&models.ProjectMembership{ID: 2, ProjectID: 5, UserID: 21, Role: "developer", State: MembershipInvited}, nil)

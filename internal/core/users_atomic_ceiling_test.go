@@ -101,6 +101,20 @@ func TestCreateUserWithAssignments_NonAdminRoleAllowed(t *testing.T) {
 	viewerRole, err := st.GetRoleByName(ctx, "system_viewer")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, actor, viewerRole.ID, storage.Scope{}))
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires roles.assign
+	// as a baseline at the target scope -- project_developer itself does not
+	// bundle roles.assign (a developer may read/write/rotate secrets but may
+	// not grant roles). CreateUserWithAssignments checks this TWICE: once at
+	// GLOBAL scope for the mandatory system_viewer grant every new user gets
+	// (line ~274, Scope{}), and once at project scope for the project_developer
+	// assignment below (resolveProjectRoleGrant, Scope{ProjectID: 1}). Give the
+	// actor project_admin GLOBALLY (not project-scoped) -- broader authority
+	// covers the narrower project-scoped check too, satisfying both call sites
+	// with one grant, while still isolating "holds every permission the TARGET
+	// role bundles" from the separate roles.assign baseline this fix adds.
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, actor, adminRole.ID, storage.Scope{}))
 
 	created, err := c.CreateUserWithAssignments(ctx, &CreateUserRequest{
 		Username: "cua-teammate", Email: "cua-teammate@acme.io", Password: "Qr7#Kp2$Lm5@Vn9!",

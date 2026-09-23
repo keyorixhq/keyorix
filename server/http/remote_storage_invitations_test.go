@@ -348,6 +348,10 @@ func TestInvitationProxy_UpdateDoesNotRewriteIdentityUnderCoverOfTransition(t *t
 	inviter, err := upstream.CreateUser(ctx, &core.CreateUserRequest{Username: "inv-real-inviter", Email: "inv-real-inviter@example.com", Password: pw})
 	require.NoError(t, err)
 	grantSystemWrite(t, upstream, inviter.ID)
+	// F6 sweep (2026-09-22): CreateInvitationProxy now requires roles.assign
+	// at the target project unconditionally; the inviter needs it for the
+	// fixture invitation to be created at all.
+	grantRolesAssignScoped(t, upstream, inviter.ID, projectID)
 	inviterSess, _, err := upstream.Login(ctx, &core.LoginRequest{Username: "inv-real-inviter", Password: pw})
 	require.NoError(t, err)
 	asInviter := newDeleteProjectScopeRemoteClient(t, baseURL, inviterSess.SessionToken)

@@ -84,6 +84,7 @@ func TestConcurrency_ApproveAccessRequestWithExpiry_CrossReplicaPostgres_SubThre
 	for _, u := range []*models.User{approverA, approverB} {
 		require.NoError(t, setupCore.Storage().AssignRole(ctx, u.ID, viewerRoleForApprovers.ID, Scope{ProjectID: projectID}))
 	}
+	grantRolesAssignAt(t, setupCore, setupDB, Scope{ProjectID: projectID}, approverA, approverB)
 
 	req, err := setupCore.RequestProjectAccess(ctx, projectID, target.ID, "project_viewer", "need read access")
 	require.NoError(t, err)

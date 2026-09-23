@@ -85,6 +85,19 @@ func freshUserHandlerForProxyS13(t *testing.T) *UserHandler {
 	return h
 }
 
+// freshUserHandlerForProxyS13WithAdmin is freshUserHandlerForProxyS13 backed
+// by freshCoreS12WithAdmin, for CreateUserWithRoleGrantsProxy cases that need
+// an authorized (UserID=1, admin-bypass) caller to clear
+// ValidateRoleGrantAuthority's users.write baseline (F6 sweep, 2026-09-22)
+// before reaching the behavior actually under test.
+func freshUserHandlerForProxyS13WithAdmin(t *testing.T) *UserHandler {
+	t.Helper()
+	cs, _ := freshCoreS12WithAdmin(t)
+	h, err := NewUserHandler(cs)
+	require.NoError(t, err)
+	return h
+}
+
 func proxyJSON(v interface{}) *bytes.Buffer {
 	b, _ := json.Marshal(v)
 	return bytes.NewBuffer(b)
@@ -503,7 +516,7 @@ func TestCreateUserWithRoleGrantsProxy_MissingPasswordHash_S13(t *testing.T) {
 
 // TestCreateUserWithRoleGrantsProxy_HappyPath_S13 — valid body → 200.
 func TestCreateUserWithRoleGrantsProxy_HappyPath_S13(t *testing.T) {
-	h := freshUserHandlerForProxyS13(t)
+	h := freshUserHandlerForProxyS13WithAdmin(t)
 	body := proxyJSON(map[string]interface{}{
 		"username":      "newproxy_user_s13",
 		"email":         "newproxy_s13@example.com",
@@ -512,7 +525,7 @@ func TestCreateUserWithRoleGrantsProxy_HappyPath_S13(t *testing.T) {
 		"account_state": "active",
 		"grants":        []interface{}{},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body))
 	w := httptest.NewRecorder()
 	h.CreateUserWithRoleGrantsProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -527,7 +540,7 @@ func TestCreateUserWithRoleGrantsProxy_HappyPath_S13(t *testing.T) {
 // core.IsValidAccountState's doc comment) -- so it must validate the value
 // itself instead of persisting arbitrary caller-supplied garbage.
 func TestCreateUserWithRoleGrantsProxy_RejectsInvalidAccountState_S13(t *testing.T) {
-	h := freshUserHandlerForProxyS13(t)
+	h := freshUserHandlerForProxyS13WithAdmin(t)
 	body := proxyJSON(map[string]interface{}{
 		"username":      "badstate_user_s13",
 		"email":         "badstate_s13@example.com",
@@ -535,7 +548,7 @@ func TestCreateUserWithRoleGrantsProxy_RejectsInvalidAccountState_S13(t *testing
 		"account_state": "not_a_real_state",
 		"grants":        []interface{}{},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body))
 	w := httptest.NewRecorder()
 	h.CreateUserWithRoleGrantsProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -547,14 +560,14 @@ func TestCreateUserWithRoleGrantsProxy_RejectsInvalidAccountState_S13(t *testing
 // an omitted account_state (the legacy shorthand) must still be accepted and
 // normalized to active, not rejected as invalid.
 func TestCreateUserWithRoleGrantsProxy_EmptyAccountStateNormalizesToActive_S13(t *testing.T) {
-	h := freshUserHandlerForProxyS13(t)
+	h := freshUserHandlerForProxyS13WithAdmin(t)
 	body := proxyJSON(map[string]interface{}{
 		"username":      "emptystate_user_s13",
 		"email":         "emptystate_s13@example.com",
 		"password_hash": "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0",
 		"grants":        []interface{}{},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/system/users/with-role-grants", body))
 	w := httptest.NewRecorder()
 	h.CreateUserWithRoleGrantsProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

@@ -162,6 +162,13 @@ func TestValidateRoleGrantAuthority_Allowed(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "custom"}, nil)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return([]*models.Permission{{Name: "secrets.read"}}, nil)
+	// F6 sweep (2026-09-22): ValidateRoleGrantAuthority now checks a
+	// users.write baseline (global scope) before its per-grant loop, AND each
+	// per-grant call into requireGranterHoldsRolePermissions now checks its
+	// OWN roles.assign baseline (at the grant's own scope) before that
+	// function's per-permission loop.
+	stubAuthorizedPrincipal(ms, 1, Scope{}, "users.write")
+	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 2}, "roles.assign")
 	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 2}, "secrets.read")
 
 	c := NewKeyorixCore(ms)
@@ -175,6 +182,9 @@ func TestValidateRoleGrantAuthority_DeniedWhenActorLacksBundledPermission(t *tes
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "custom"}, nil)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return([]*models.Permission{{Name: "secrets.read"}}, nil)
+	// F6 sweep (2026-09-22): the actor must clear the users.write baseline
+	// before this test's own per-grant denial (its actual subject) is reached.
+	stubAuthorizedPrincipal(ms, 1, Scope{}, "users.write")
 	stubUnauthorizedPrincipal(ms, 1, Scope{ProjectID: 2})
 
 	c := NewKeyorixCore(ms)
@@ -196,6 +206,13 @@ func TestValidateRoleGrantAuthority_RejectsOversizedBatch(t *testing.T) {
 func TestValidateRoleGrantAuthority_UnknownRoleID(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	// F6 sweep (2026-09-22): ValidateRoleGrantAuthority now checks a
+	// users.write baseline before its per-grant loop (this test's actual
+	// subject: an unresolvable role ID inside that loop).
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), Scope{}).Return([]uint{100}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), Scope{}).Return([]uint{}, nil)
+	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{100}).Return(false, nil)
+	ms.On("RoleSetHasPermission", mock.Anything, []uint{100}, "users.write").Return(true, nil)
 	ms.On("GetRole", mock.Anything, uint(999)).Return(nil, errors.New("record not found"))
 
 	c := NewKeyorixCore(ms)
@@ -459,6 +476,9 @@ func TestRequireGranterHoldsRolePermissions_Allowed(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return([]*models.Permission{{Name: "secrets.read"}, {Name: "secrets.write"}}, nil)
+	// F6 sweep (2026-09-22): the actor must clear the roles.assign BASELINE
+	// check before the per-permission loop this test is actually about.
+	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 2}, "roles.assign")
 	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 2}, "secrets.read")
 	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 2}, "secrets.write")
 
@@ -477,6 +497,9 @@ func TestRequireGranterHoldsRolePermissions_DeniedWhenMissingOneBundledPermissio
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), Scope{ProjectID: 2}).Return([]uint{roleID}, nil).Maybe()
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), Scope{ProjectID: 2}).Return([]uint{}, nil).Maybe()
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, mock.Anything).Return(false, nil).Maybe()
+	// F6 sweep (2026-09-22): the actor must clear the roles.assign BASELINE
+	// check before the per-permission loop this test is actually about.
+	ms.On("RoleSetHasPermission", mock.Anything, []uint{roleID}, "roles.assign").Return(true, nil).Maybe()
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{roleID}, "secrets.read").Return(true, nil).Maybe()
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{roleID}, "secrets.write").Return(false, nil).Maybe()
 
@@ -502,6 +525,12 @@ func TestRequireGranterHoldsRolePermissions_BootstrapActorBypasses(t *testing.T)
 func TestRequireGranterHoldsRolePermissions_RoleLookupErrorFailsClosed(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	// F6 sweep (2026-09-22): the actor must clear the roles.assign BASELINE
+	// check before the function ever reaches GetRolePermissions -- stub the
+	// actor as holding roles.assign so this test actually exercises the
+	// role-lookup error path its name claims, not the (also error-returning,
+	// but different) baseline-denial path.
+	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 2}, "roles.assign")
 	ms.On("GetRolePermissions", mock.Anything, uint(5)).Return(nil, errors.New("connection reset"))
 	c := NewKeyorixCore(ms)
 	err := c.RequireGranterHoldsRolePermissions(context.Background(), 1, 5, Scope{ProjectID: 2}, false)

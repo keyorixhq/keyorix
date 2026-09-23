@@ -18,6 +18,15 @@ func TestInviteGlobal_ValidatesAndSnapshotsAssignments(t *testing.T) {
 	c := newInviteCore(store)
 	ctx := context.Background()
 
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline at EACH grant's own scope -- system role (global), plus each
+	// project assignment below.
+	for _, scope := range []Scope{{}, {ProjectID: 1}, {ProjectID: 2}} {
+		store.On("GetUserRoleIDsAt", ctx, uint(9), scope).Return([]uint{100}, nil)
+		store.On("GetUserGroupRoleIDsAt", ctx, uint(9), scope).Return([]uint{}, nil)
+	}
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	// GetProject is a fixed stub in the mock (always resolves), so only roles are
 	// asserted here.
 	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3, Name: "system_auditor"}, nil)
@@ -57,6 +66,9 @@ func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
 
 	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1}, nil)
 	store.On("GetRoleByName", ctx, "bogus_role").Return(nil, assertNotFoundErr())
+	// F6 sweep (2026-09-22): the roles.assign baseline does NOT apply here --
+	// systemRole is left empty (the mandatory, non-discretionary system_viewer
+	// default) -- see invitations.go's InviteGlobal comment for the full reasoning.
 
 	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
 		{ProjectID: 1, Role: "bogus_role"},
@@ -91,6 +103,9 @@ func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
 	ctx := context.Background()
 
 	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1}, nil)
+	// F6 sweep (2026-09-22): the roles.assign baseline does NOT apply here --
+	// systemRole is left empty (the mandatory, non-discretionary system_viewer
+	// default) -- see invitations.go's InviteGlobal comment for the full reasoning.
 
 	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
 		{ProjectID: 1, Role: ""},
@@ -146,6 +161,11 @@ func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {
 	ctx := context.Background()
 
 	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
+	// F6 sweep (2026-09-22): the roles.assign baseline does NOT apply here --
+	// systemRole is left empty (the mandatory, non-discretionary system_viewer
+	// default), so InviteGlobal calls requireGranterHoldsRolePermissionsNoBaseline
+	// instead. See that call site's comment (invitations.go) for the full
+	// reasoning; this is this test's own documented invariant too (its name).
 	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.SystemRole == "system_viewer" && inv.AssignmentsJSON == ""
 	})).Return(&models.ProjectInvitation{ID: 13, State: InvitationPending}, nil)
@@ -175,6 +195,15 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 		ValidationModeAtInvite: ValidationModeOpen,
 	}
 
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires the granter
+	// (the inviter, 9) hold roles.assign as a baseline, at EACH grant's own
+	// scope -- system role (global), plus each project assignment below.
+	for _, scope := range []storage.Scope{{ProjectID: 0}, {ProjectID: 1}, {ProjectID: 2}} {
+		store.On("GetUserRoleIDsAt", ctx, uint(9), Scope(scope)).Return([]uint{100}, nil)
+		store.On("GetUserGroupRoleIDsAt", ctx, uint(9), Scope(scope)).Return([]uint{}, nil)
+	}
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	// System role grant at scope 0.
 	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3}, nil)
 	store.On("AssignRole", ctx, uint(20), uint(3), storage.Scope{ProjectID: 0}).Return(nil)

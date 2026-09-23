@@ -609,9 +609,9 @@ func TestAddGroupMemberProxy_ZeroUserID_S13(t *testing.T) {
 }
 
 func TestAddGroupMemberProxy_GroupNotFound_S13(t *testing.T) {
-	h := newGroupHandlerS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/",
-		jsonBody(t, map[string]int{"user_id": 1})), "id", "999999")
+	h := newGroupHandlerWithAdminS13(t)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/",
+		jsonBody(t, map[string]int{"user_id": 1})), "id", "999999"))
 	w := httptest.NewRecorder()
 	h.AddGroupMemberProxy(w, req)
 	// user or group not found → 404

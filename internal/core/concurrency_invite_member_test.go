@@ -40,6 +40,18 @@ func TestConcurrency_InviteMember_NoDuplicateActiveMembership(t *testing.T) {
 
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 6, Name: "project_viewer"}).Error)
+	// F6 sweep (2026-09-22): inviting now ALSO requires roles.assign as a
+	// baseline, independent of "project_viewer"'s own (here empty) permission
+	// bundle. Give the inviter (actor 9) a real roles.assign grant at the
+	// project so this test still isolates the concurrent-invite race (its
+	// actual subject) from that separate baseline. GetUserGroupRoleIDsAt
+	// (the baseline check's group-role side) needs Group/UserGroup/GroupRole
+	// migrated too, even though this test seeds no groups.
+	require.NoError(t, db.AutoMigrate(&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Environment{}))
+	require.NoError(t, db.Create(&models.Permission{ID: 900, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 7, Name: "invite-actor"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 7, PermissionID: 900}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 7, ProjectID: 1}).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	c.SetMembershipValidationMode(core.ValidationModeAllowlist)

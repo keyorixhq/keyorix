@@ -126,7 +126,15 @@ func (h *CatalogHandler) CreateMembershipProxy(w http.ResponseWriter, r *http.Re
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "unknown role: "+roleErr.Error())
 		return
 	}
-	if err := h.coreService.RequireGranterHoldsRolePermissions(r.Context(), actorID(r), membershipRole.ID, core.Scope{ProjectID: body.ProjectID}, isMachineActor(r)); err != nil {
+	// F6 sweep (2026-09-22): a genuine machine granter must be tagged via
+	// WithSystemProxyMachineGranter before RequireGranterHoldsRolePermissions (and
+	// the roles.assign baseline it now enforces) can resolve against its OWN
+	// real permissions -- mirrors AddGroupMemberProxy/CreateInvitationProxy.
+	ctx := r.Context()
+	if isMachineActor(r) {
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
+	}
+	if err := h.coreService.RequireGranterHoldsRolePermissions(ctx, actorID(r), membershipRole.ID, core.Scope{ProjectID: body.ProjectID}, isMachineActor(r)); err != nil {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 		return
 	}
@@ -253,13 +261,27 @@ func (h *CatalogHandler) TransitionMembershipProxy(w http.ResponseWriter, r *htt
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "membership.state (the target state) is required")
 		return
 	}
-	_, err = h.coreService.TransitionMembership(r.Context(), body.Membership.ProjectID, uint(id), body.Membership.State, actorID(r), isMachineActor(r))
+	// F6 sweep (2026-09-22): TransitionMembership's own roles.assign baseline
+	// (internal/core/membership_lifecycle.go) reads the WithSystemProxyMachineGranter
+	// tag from ctx rather than tagging itself -- a genuine machine caller must
+	// be tagged here, before the call, or it can never resolve against its
+	// own real permissions (mirrors AddGroupMemberProxy/CreateInvitationProxy's
+	// identical tagging).
+	ctx := r.Context()
+	if isMachineActor(r) {
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
+	}
+	_, err = h.coreService.TransitionMembership(ctx, body.Membership.ProjectID, uint(id), body.Membership.State, actorID(r), isMachineActor(r))
 	if err != nil {
 		// #G42: a lost CAS race is a normal outcome on this wire contract
 		// (matched=false), not a server error -- matches every other
 		// conditional-transition wire method in this package.
 		if errors.Is(err, core.ErrMembershipStateConflict) {
 			writeRemoteAPISuccess(w, map[string]bool{"matched": false})
+			return
+		}
+		if errors.Is(err, core.ErrMembershipAuthorityRequired) {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", clientSafe(err))
 			return
 		}
 		log.Printf("project-memberships proxy: transition failed: %v", err)

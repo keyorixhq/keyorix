@@ -74,6 +74,18 @@ func TestCreateAccessRequestApprovalProxy_MachineApproverAttributedToMachineIden
 	}
 	require.NotZero(t, systemWriteID)
 	require.NoError(t, testCore.AssignPermissionToRole(ctx, 0, role.ID, systemWriteID, false))
+	var rolesAssignID uint
+	for _, p := range perms {
+		if p.Name == "roles.assign" {
+			rolesAssignID = p.ID
+		}
+	}
+	require.NotZero(t, rolesAssignID)
+	// F6 sweep (2026-09-22): RequireGranterHoldsRolePermissions now requires
+	// a roles.assign baseline before the per-permission loop, closing the
+	// vacuous-pass this fixture previously relied on for a permission-less
+	// target role -- the machine approver must hold roles.assign itself.
+	require.NoError(t, testCore.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID, false))
 	require.NoError(t, testCore.Storage().AssignMachineRole(ctx, mi.ID, role.ID, coreStorage.Scope{}))
 
 	tok, err := testCore.IssueMachineToken(ctx, projectID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "machine-attribution-token"})

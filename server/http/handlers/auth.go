@@ -25,8 +25,30 @@ func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, ip string) bool {
 	return h.coreService.IsLoginRateLimited(ctx, ip)
 }
 
-// recordLoginAttempt records a failed login attempt for the IP (best-effort).
-func (h *AuthHandler) recordLoginAttempt(ctx context.Context, ip string) {
+// reserveLoginAttempt consumes one slot from the IP's login-attempt budget
+// (best-effort). Callers MUST call this immediately after checkLoginRateLimit
+// passes and BEFORE running the actual (slow — bcrypt, TOTP, WebAuthn
+// assertion verification) credential check, regardless of whether that check
+// goes on to succeed or fail.
+//
+// F2 (2026-09-20): every call site used to call checkLoginRateLimit, run the
+// slow credential check, and only record the attempt afterward — and only on
+// failure. Since the check and the eventual record straddled the slow step, a
+// burst of concurrent requests from one IP all observed the SAME
+// under-budget count at their check (none of the others had recorded yet),
+// then all proceeded through the slow verification, and only THEN recorded —
+// letting a concurrent burst blow through LoginMaxAttempts before the
+// counter ever caught up (the check-then-act race the budget exists to
+// prevent). Reserving the slot up front closes the race: the budget is now
+// consumed at admission time, not at verdict time, so concurrent requests
+// genuinely compete for the same slots instead of each evaluating a stale
+// count. This does mean a successful login now also consumes a slot (this
+// primitive is intentionally outcome-agnostic, like the pre-existing
+// RecordPasswordResetAttempt/RecordSSOBeginAttempt siblings in the same
+// budget) — LoginMaxAttempts (10/15min) has ample headroom for legitimate use
+// and a two-step MFA/WebAuthn login already spent slots on both steps before
+// this change, so this is not a meaningful behavior change for real users.
+func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) {
 	h.coreService.RecordFailedLogin(ctx, ip)
 }
 
@@ -116,6 +138,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
+	// F2 (2026-09-20): reserve the slot BEFORE the slow credential check runs
+	// (bcrypt) — see reserveLoginAttempt's doc for why recording only after a
+	// failure let a concurrent burst outrun the budget. Reserved here, after
+	// decode, rather than right after the rate-limit check: decode is not the
+	// slow step an attacker exploits, so a structurally-malformed request
+	// (never a real credential guess) need not consume a slot.
+	h.reserveLoginAttempt(r.Context(), ip)
 
 	session, user, err := h.coreService.Login(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
@@ -142,7 +171,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			}, "MFA required")
 			return
 		}
-		h.recordLoginAttempt(r.Context(), ip)
 		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
@@ -335,10 +363,14 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", "Missing authorization token", http.StatusBadRequest, nil)
 		return
 	}
+	// F2 (2026-09-20): reserve before the token lookup — see reserveLoginAttempt's
+	// doc. Reserved after the trivial "is a token even present" check, matching
+	// Login's "after decode" placement — a request with no token at all is not a
+	// real guess attempt.
+	h.reserveLoginAttempt(r.Context(), ip)
 
 	session, err := h.coreService.RefreshSession(r.Context(), token)
 	if err != nil {
-		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Session not found or expired", http.StatusUnauthorized, nil)
 		return
 	}

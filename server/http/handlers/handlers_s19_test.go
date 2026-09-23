@@ -476,7 +476,7 @@ func TestCreateUserWithRoleGrantsProxy_MissingFields_S19(t *testing.T) {
 
 // TestCreateUserWithRoleGrantsProxy_Success_S19 — all required fields → 200.
 func TestCreateUserWithRoleGrantsProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
+	cs, _ := freshCoreS19WithAdmin(t)
 	uh, err := NewUserHandler(cs)
 	require.NoError(t, err)
 	body, _ := json.Marshal(map[string]interface{}{
@@ -486,8 +486,12 @@ func TestCreateUserWithRoleGrantsProxy_Success_S19(t *testing.T) {
 		"is_active":     true,
 		"account_state": "active",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/users/with-grants",
-		bytes.NewReader(body))
+	// F6 sweep (2026-09-22): ValidateRoleGrantAuthority now requires a
+	// users.write baseline before its per-grant loop; this route has no
+	// actor-context exemption for actorID==0, unlike core-internal callers,
+	// so an authorized caller context is required here.
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/users/with-grants",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	uh.CreateUserWithRoleGrantsProxy(w, req)

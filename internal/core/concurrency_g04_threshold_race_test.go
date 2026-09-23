@@ -184,6 +184,16 @@ func newDualControlFixture(t *testing.T, dbFile string) (c *core.KeyorixCore, db
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "approver-existing"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 3, Username: "approver-a"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 4, Username: "approver-b"}).Error)
+	// F6 sweep (2026-09-22): approving now ALSO requires roles.assign as a
+	// baseline, independent of "editor"'s own (here empty) permission bundle.
+	// Give both racing approvers a real roles.assign grant at the request's
+	// project so this test still isolates the threshold race (its actual
+	// subject) from that separate baseline.
+	require.NoError(t, db.Create(&models.Permission{ID: 900, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 21, Name: "race-approver"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 21, PermissionID: 900}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 21, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 4, RoleID: 21, ProjectID: 1}).Error)
 
 	req := &models.AccessRequest{ProjectID: 1, UserID: 1, SuggestedRole: "editor", State: core.AccessRequestPending, CreatedAt: time.Now()}
 	require.NoError(t, db.Create(req).Error)
