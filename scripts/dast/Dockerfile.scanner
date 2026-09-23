@@ -16,3 +16,7 @@ RUN apt-get update -qq \
 # Pre-fetch Nuclei templates as the zap user so scan runs need no network.
 USER zap
 RUN nuclei -update-templates -silent 2>/dev/null || true
+
+# One-shot scan tool, not a long-running service — nothing to probe.
+# HEALTHCHECK NONE makes that explicit.
+HEALTHCHECK NONE
