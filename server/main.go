@@ -56,10 +56,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
+	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/keyorixhq/keyorix/internal/startup"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/server/admin"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -73,12 +75,34 @@ import (
 // including under `go test`, which never calls main() and so never touches this var.
 var masterPassphraseSource crypto.PassphraseSource
 
+// isAdminDispatch reports whether argv routes to `keyorix-server admin`
+// (ADR-108 §B, PR 11) rather than the plain server. Extracted from main()
+// so this exact routing decision is unit-testable without invoking main()
+// itself (which os/exec.Command'ing the built binary aside, `go test` never
+// calls): only os.Args[1] == "admin" diverts — every other invocation,
+// including one whose first argument happens to start with "-admin" or is
+// simply absent, falls through to the unchanged flag-based server startup.
+func isAdminDispatch(args []string) bool {
+	return len(args) > 1 && args[1] == "admin"
+}
+
 func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// #1647: see main.go's identical call for the full rationale -- an explicit,
 	// restrictive process umask means the SQLite database and its -wal/-shm sidecars
 	// (created deep inside the driver, with no mode this process's Go code controls
 	// directly) are born at 0600 regardless of what umask this process inherited.
 	syscall.Umask(0o077)
+
+	// `keyorix-server admin <cmd>` (ADR-108 §B, PR 11): a completely separate
+	// command tree for offline/host-side operations (init, validate, audit,
+	// diagnose, migrate) that must never start a listener. Dispatched BEFORE
+	// this binary's own flag.Parse() below, so it never touches (and cannot be
+	// confused with) the plain `keyorix-server` flag set --
+	// --passphrase-fd/--passphrase-file/--passphrase-stdin keep their existing
+	// meaning and behavior for every other invocation, unchanged.
+	if isAdminDispatch(os.Args) {
+		os.Exit(admin.Execute(os.Args[2:]))
+	}
 
 	// Byte-based master-passphrase sources (ADR-099): fd is the strongest -- it
 	// never touches argv, an env var, or a path this process opens by name -- and
@@ -181,6 +205,19 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	if err := enforceKeyFilePermissions(cfg); err != nil {
 		log.Fatalf("key file security: %v", err)
 	}
+
+	// Mark this process as a live server attached to cfg's database (ADR-108 §B,
+	// PR 11) — held for the whole process lifetime, released on shutdown. Lets
+	// `keyorix-server admin` commands detect and refuse to run concurrently
+	// with a live server (unless the operator passes --force). SHARED, so
+	// concurrent server replicas against a shared Postgres database (ADR-039
+	// HA) never conflict with each other or with this check; see
+	// internal/serverguard's package doc for the full mechanism and its limits.
+	presence, err := serverguard.AcquirePresence(cfg)
+	if err != nil {
+		log.Fatalf("failed to acquire server-presence lock: %v", err)
+	}
+	defer presence.Release() //nolint:errcheck
 
 	// #G12: construct the core service (and its owned singletons — encryption
 	// Service + exclusive DEK flock, SIEM Forwarder + spool, dynamic-secrets-sweep
