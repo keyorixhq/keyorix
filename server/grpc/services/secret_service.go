@@ -243,10 +243,15 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 		return nil, err
 	}
 	// Pre-fetch name + project for the audit log before the record is gone, mirroring
-	// the HTTP handler. Best-effort: a miss falls back to the id.
+	// the HTTP handler. Plain, unauthorized read: authorizeSecretScoped above already
+	// authorized this delete, and DeleteSecretWithPermissionCheck below authorizes it
+	// again — a second *WithPermissionCheck call here bought nothing but a second
+	// CheckSecretPermission storage round trip (see
+	// docs/findings/2026-09-23-FINDING-redundant-authz-prefetch.md). Best-effort: a
+	// miss falls back to the id.
 	secretName := fmt.Sprintf("id=%d", req.GetId())
 	var secretProjectID uint
-	if sec, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); err == nil {
+	if sec, err := s.core.GetSecret(ctx, uint(req.GetId())); err == nil {
 		secretName = sec.Name
 		secretProjectID = sec.ProjectID
 	}
@@ -361,8 +366,14 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	// Audit as a secret read, mirroring the HTTP handler (secrets_versions.go) —
 	// without this, listing version history over gRPC left no secret.read event,
 	// an HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168).
-	// Best-effort metadata fetch, same as HTTP: a miss just skips the audit call.
-	if secret, sErr := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); sErr == nil && secret != nil {
+	// Plain, unauthorized read, matching the HTTP handler's own GetSecret (not
+	// GetSecretWithPermissionCheck) for this exact prefetch: authorizeSecretScoped
+	// above already authorized this read, and GetSecretVersionsWithPermissionCheck
+	// above authorizes it again — a second *WithPermissionCheck call here bought
+	// nothing but a second CheckSecretPermission storage round trip (see
+	// docs/findings/2026-09-23-FINDING-redundant-authz-prefetch.md). Best-effort
+	// metadata fetch: a miss just skips the audit call.
+	if secret, sErr := s.core.GetSecret(ctx, uint(req.GetId())); sErr == nil && secret != nil {
 		auditCtx := core.DetachedAuditContext(ctx)
 		ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
 		goSafe(func() {

@@ -572,16 +572,15 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	// delete unconditionally failed CheckSecretPermission's userID==0 guard.
 	isMachine := userCtx.MachineIdentityID != nil
 
-	// Pre-fetch name and project for audit log before the record is deleted.
+	// Pre-fetch name and project for audit log before the record is deleted. Plain,
+	// unauthorized read: authorization for this delete already happened above, via the
+	// route's RequireScopedSecretPermission middleware gate, and happens again below via
+	// DeleteSecretWithPermissionCheck itself — a second *WithPermissionCheck call here
+	// bought nothing but a second CheckSecretPermission storage round trip (see
+	// docs/findings/2026-09-23-FINDING-redundant-authz-prefetch.md).
+	prefetched, prefetchErr := h.coreService.GetSecret(r.Context(), uint(id))
 	secretName := fmt.Sprintf("id=%d", id)
 	var secretProjectID uint
-	var prefetchErr error
-	var prefetched *models.SecretNode
-	if isMachine {
-		prefetched, prefetchErr = h.coreService.GetSecret(r.Context(), uint(id))
-	} else {
-		prefetched, prefetchErr = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
-	}
 	if prefetchErr == nil {
 		secretName = prefetched.Name
 		secretProjectID = prefetched.ProjectID
