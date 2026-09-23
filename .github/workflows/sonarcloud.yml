@@ -107,6 +107,7 @@ jobs:
       # if the run produced no usable profile, so a coverage figure on the
       # SonarCloud dashboard is never quietly sourced from a run that died.
       - name: Generate coverage report
+        id: gocov
         if: needs.changes.outputs.skip_go != 'true'
         continue-on-error: true
         env:
@@ -154,6 +155,15 @@ jobs:
             exit 0
           fi
           if [ "$(wc -l < coverage.out)" -lt 2 ]; then
+            # A header-only profile is legitimate when every changed package has
+            # no statements (e.g. a PR touching only _test.go files, where go test
+            # reports "coverage: [no statements]"). Only a FAILED test step makes
+            # it an error (#2021 was blocked by the old "empty means failed" rule).
+            if [ "${{ steps.gocov.outcome }}" = "success" ]; then
+              echo "::notice::Changed packages contain no measurable statements (test-only change). Not publishing Go coverage for this analysis."
+              rm -f coverage.out
+              exit 0
+            fi
             echo "::error::coverage.out exists but contains no coverage data -- the test run above failed. Refusing to publish an empty Go coverage figure to SonarCloud."
             exit 1
           fi
