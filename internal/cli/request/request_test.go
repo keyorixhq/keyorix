@@ -25,7 +25,12 @@ func TestRequestSecretAccessFlags(t *testing.T) {
 	for _, name := range []string{"secret-id", "ref", "user", "reason"} {
 		assert.NotNil(t, secretAccessCmd.Flags().Lookup(name), "secret-access should have --%s", name)
 	}
-	assert.NotEmpty(t, secretAccessCmd.Flags().Lookup("user").Annotations[cobraRequired], "--user should be required")
+	// --user is NOT cobra-required: it's required only in embedded mode
+	// (runSecretAccess checks this at runtime, after the remote-mode branch),
+	// and ignored entirely when a remote server is configured -- the server
+	// attributes the request to the caller's own authenticated identity, the
+	// same reasoning runReviewRemote's --by handling already established.
+	assert.Empty(t, secretAccessCmd.Flags().Lookup("user").Annotations[cobraRequired], "--user must not be cobra-required -- it's optional/ignored in remote mode")
 }
 
 func TestRequestAccessFlags(t *testing.T) {

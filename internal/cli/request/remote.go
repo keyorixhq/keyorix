@@ -19,8 +19,11 @@ package request
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -79,6 +82,58 @@ func fetchAccessRequest(ctx context.Context, rc *common.RemoteClient, projectID,
 		}
 	}
 	return nil, fmt.Errorf("access request %d not found in project (id=%d)", reqID, projectID)
+}
+
+// resolveSecretIDRemote resolves a secret ID from either a numeric ID
+// (returned unchanged) or a "project/environment/name" reference, mirroring
+// core.ResolveSecretRef's own name-based resolution exactly (project name,
+// then environment name within that project, then secret name within that
+// environment) but over HTTP: GET /api/v1/projects (name lookup, shared with
+// resolveProjectIDByName), GET /api/v1/projects/{id}/environments (name
+// lookup), then GET /api/v1/secrets/by-name (metadata only). Deliberately
+// NOT GET /api/v1/secrets/value?ref=... (secret/get.go's own --ref path):
+// that route reads and audits the secret's VALUE, which the very reason this
+// command exists is that the caller does NOT yet have permission to do.
+func resolveSecretIDRemote(ctx context.Context, rc *common.RemoteClient, secretID uint, ref string) (uint, error) {
+	if secretID != 0 {
+		return secretID, nil
+	}
+	projectName, envName, secretName, err := core.ParseSecretRef(ref)
+	if err != nil {
+		return 0, fmt.Errorf("resolve ref %q: %w", ref, err)
+	}
+	projectID, err := resolveProjectIDByName(ctx, rc, projectName)
+	if err != nil {
+		return 0, fmt.Errorf("resolve ref %q: %w", ref, err)
+	}
+	var envResp struct {
+		Environments []*models.Environment `json:"environments"`
+	}
+	if err := rc.Get(ctx, fmt.Sprintf("/api/v1/projects/%d/environments", projectID), &envResp); err != nil {
+		return 0, fmt.Errorf("resolve ref %q: failed to list environments: %w", ref, err)
+	}
+	var envID uint
+	for _, e := range envResp.Environments {
+		if e.Name == envName {
+			envID = e.ID
+			break
+		}
+	}
+	if envID == 0 {
+		return 0, fmt.Errorf("resolve ref %q: environment %q not found in project %q", ref, envName, projectName)
+	}
+	q := url.Values{}
+	q.Set("name", secretName)
+	q.Set("project_id", strconv.FormatUint(uint64(projectID), 10))
+	q.Set("environment_id", strconv.FormatUint(uint64(envID), 10))
+	var secret models.SecretNode
+	if err := rc.Get(ctx, "/api/v1/secrets/by-name?"+q.Encode(), &secret); err != nil {
+		return 0, fmt.Errorf("resolve ref %q: %w", ref, err)
+	}
+	if secret.ID == 0 {
+		return 0, fmt.Errorf("resolve ref %q: secret not found", ref)
+	}
+	return secret.ID, nil
 }
 
 // remoteUserLabel renders a user ID as "username (#id)" via GET

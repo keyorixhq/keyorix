@@ -492,3 +492,239 @@ func TestClassificationMFAStepUp_On_CustomWindow_Denied(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "5m0s", "denial must mention the custom 5-minute window")
 }
+
+// ── HTTP-route-layer core additions: RequestSecretAccess dedup, GetSecretAccessRequest,
+// RejectSecretAccessRequest, ListSecretAccessRequestsForUser ──────────────────
+
+// #G82's sibling gap for the secret-scoped shape: a second pending request for
+// the SAME (user, secret) pair must be refused, exactly as RequestProjectAccess
+// already refuses a second pending (user, project) role request.
+func TestRequestSecretAccess_DuplicatePendingRefused(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	secretID, requesterID, approverID, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+
+	first, err := c.RequestSecretAccess(ctx, secretID, requesterID, "first")
+	require.NoError(t, err)
+
+	_, err = c.RequestSecretAccess(ctx, secretID, requesterID, "second")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already have a pending")
+
+	// Once the first is resolved, a fresh request is allowed again.
+	_, err = c.ApproveSecretAccessRequest(ctx, first.ID, approverID)
+	require.NoError(t, err)
+	_, err = c.RequestSecretAccess(ctx, secretID, requesterID, "third")
+	require.NoError(t, err, "a new request must be allowed once the prior one is resolved")
+}
+
+// A request against a DIFFERENT secret is unaffected by an existing pending
+// request on this one (the dedup guard is scoped per-secret, not per-project).
+func TestRequestSecretAccess_DuplicateGuardScopedPerSecret(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	secretID, requesterID, _, projectID := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+
+	_, err := c.RequestSecretAccess(ctx, secretID, requesterID, "first")
+	require.NoError(t, err)
+
+	otherSecret, err := st.CreateSecret(ctx, &models.SecretNode{
+		Name: "other-secret", ProjectID: projectID, EnvironmentID: 1, Type: "password",
+		IsSecret: true, OwnerID: requesterID, Status: "active", Classification: ClassificationRestricted,
+	})
+	require.NoError(t, err)
+
+	_, err = c.RequestSecretAccess(ctx, otherSecret.ID, requesterID, "different secret")
+	require.NoError(t, err, "a pending request on a different secret must not block this one")
+}
+
+// GetSecretAccessRequest's visibility rules: the requester sees their own
+// request, an admin at the project sees it too, an unrelated non-admin gets
+// the SAME "not found" a truly nonexistent ID would produce, and a project/role
+// (SecretID nil) request ID is likewise reported not found through this accessor.
+func TestGetSecretAccessRequest_Visibility(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	secretID, requesterID, approverID, projectID := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+
+	req, err := c.RequestSecretAccess(ctx, secretID, requesterID, "need it")
+	require.NoError(t, err)
+
+	// Requester sees their own.
+	got, err := c.GetSecretAccessRequest(ctx, req.ID, requesterID)
+	require.NoError(t, err)
+	assert.Equal(t, req.ID, got.ID)
+
+	// Admin at the project sees it too.
+	got, err = c.GetSecretAccessRequest(ctx, req.ID, approverID)
+	require.NoError(t, err)
+	assert.Equal(t, req.ID, got.ID)
+
+	// An unrelated non-admin gets a "not found" identical to a bogus ID.
+	stranger, err := st.CreateUser(ctx, &models.User{Username: "stranger", Email: "stranger@example.com", IsActive: true})
+	require.NoError(t, err)
+	_, errStranger := c.GetSecretAccessRequest(ctx, req.ID, stranger.ID)
+	require.Error(t, errStranger)
+	_, errBogus := c.GetSecretAccessRequest(ctx, 999999, stranger.ID)
+	require.Error(t, errBogus)
+	assert.Equal(t, errBogus.Error(), errStranger.Error(), "a real request the caller can't see must read identically to a nonexistent one")
+
+	// A project/role request is out of scope for this accessor.
+	roleReq, err := c.RequestProjectAccess(ctx, projectID, requesterID, "viewer", "")
+	require.NoError(t, err)
+	_, errRole := c.GetSecretAccessRequest(ctx, roleReq.ID, approverID)
+	require.Error(t, errRole)
+	assert.Equal(t, errBogus.Error(), errRole.Error())
+}
+
+// RejectSecretAccessRequest mirrors ApproveSecretAccessRequest's own guards:
+// admin-authority ceiling, pending-only, and refusing a project/role request.
+func TestRejectSecretAccessRequest_Guards(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	secretID, requesterID, approverID, projectID := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+
+	req, err := c.RequestSecretAccess(ctx, secretID, requesterID, "")
+	require.NoError(t, err)
+
+	// A non-admin rejecter is refused.
+	nonAdmin, err := st.CreateUser(ctx, &models.User{Username: "nonadmin-reject", Email: "nonadmin-reject@example.com", IsActive: true})
+	require.NoError(t, err)
+	_, err = c.RejectSecretAccessRequest(ctx, req.ID, nonAdmin.ID, 0, "no")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "administrator")
+
+	// A project/role (SecretID nil) request is refused by this function.
+	roleReq, err := c.RequestProjectAccess(ctx, projectID, requesterID, "viewer", "")
+	require.NoError(t, err)
+	_, err = c.RejectSecretAccessRequest(ctx, roleReq.ID, approverID, 0, "no")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a secret-scoped")
+
+	// The real rejection succeeds, and the read stays refused afterward.
+	c.SetClassificationRestrictedRequiresApproval(true)
+	rejected, err := c.RejectSecretAccessRequest(ctx, req.ID, approverID, 0, "not now")
+	require.NoError(t, err)
+	assert.Equal(t, AccessRequestRejected, rejected.State)
+	_, err = c.GetSecretValueWithPermissionCheck(ctx, secretID, requesterID)
+	require.Error(t, err, "a rejected request must not satisfy the classification gate")
+
+	// A second reject attempt refuses (no longer pending).
+	_, err = c.RejectSecretAccessRequest(ctx, req.ID, approverID, 0, "again")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only a pending")
+}
+
+// ListSecretAccessRequestsForUser splits visible requests into "mine" and
+// "pendingApproval", excluding self-approval and requests the caller has no
+// authority over.
+func TestListSecretAccessRequestsForUser(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	secretID, requesterID, approverID, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+
+	req, err := c.RequestSecretAccess(ctx, secretID, requesterID, "need it")
+	require.NoError(t, err)
+
+	// Requester's own view: "mine" has it, "pendingApproval" does not (no
+	// self-approval listing) even though the request is pending.
+	mine, pending, err := c.ListSecretAccessRequestsForUser(ctx, requesterID)
+	require.NoError(t, err)
+	require.Len(t, mine, 1)
+	assert.Equal(t, req.ID, mine[0].ID)
+	assert.Empty(t, pending, "a requester must never see their own request in their approval queue")
+
+	// Approver's view: "pendingApproval" has it, "mine" does not.
+	mine, pending, err = c.ListSecretAccessRequestsForUser(ctx, approverID)
+	require.NoError(t, err)
+	assert.Empty(t, mine)
+	require.Len(t, pending, 1)
+	assert.Equal(t, req.ID, pending[0].ID)
+
+	// An unrelated non-admin sees neither.
+	stranger, err := st.CreateUser(ctx, &models.User{Username: "stranger-list", Email: "stranger-list@example.com", IsActive: true})
+	require.NoError(t, err)
+	mine, pending, err = c.ListSecretAccessRequestsForUser(ctx, stranger.ID)
+	require.NoError(t, err)
+	assert.Empty(t, mine)
+	assert.Empty(t, pending)
+
+	// Once resolved, it drops out of the approver's pending queue but stays
+	// in the requester's "mine".
+	_, err = c.ApproveSecretAccessRequest(ctx, req.ID, approverID)
+	require.NoError(t, err)
+	mine, pending, err = c.ListSecretAccessRequestsForUser(ctx, approverID)
+	require.NoError(t, err)
+	assert.Empty(t, mine)
+	assert.Empty(t, pending, "a resolved request must not remain in the approval queue")
+	mine, _, err = c.ListSecretAccessRequestsForUser(ctx, requesterID)
+	require.NoError(t, err)
+	require.Len(t, mine, 1)
+}
+
+// End-to-end classification-gate lifecycle over the new core surface: request
+// -> approve unlocks the read for the approved (user, secret) pair -> a
+// rejected request on a DIFFERENT secret never unlocks it -> the approval
+// never lets a different user, or a read of a different secret, piggyback on
+// it (not reusable across secrets or users).
+func TestSecretAccessRequestLifecycle_ApproveGrantsRejectRefuses(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	secretID, requesterID, approverID, projectID := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresApproval(true)
+
+	// A second restricted secret, and a second requester, to prove the
+	// eventual grant does not leak across either axis.
+	otherSecret, err := st.CreateSecret(ctx, &models.SecretNode{
+		Name: "other-secret-2", ProjectID: projectID, EnvironmentID: 1, Type: "password",
+		IsSecret: true, OwnerID: requesterID, Status: "active", Classification: ClassificationRestricted,
+	})
+	require.NoError(t, err)
+	_, err = st.CreateSecretVersion(ctx, &models.SecretVersion{
+		SecretNodeID: otherSecret.ID, VersionNumber: 1, EncryptedValue: []byte("other-value"),
+	})
+	require.NoError(t, err)
+	viewerRole, err := st.GetRoleByName(ctx, "project_viewer")
+	require.NoError(t, err)
+	otherUser, err := st.CreateUser(ctx, &models.User{Username: "other-requester", Email: "other-requester@example.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, otherUser.ID, viewerRole.ID, storage.Scope{ProjectID: projectID}))
+
+	// Reject a request on the OTHER secret — must not affect the first secret at all.
+	otherReq, err := c.RequestSecretAccess(ctx, otherSecret.ID, requesterID, "")
+	require.NoError(t, err)
+	_, err = c.RejectSecretAccessRequest(ctx, otherReq.ID, approverID, 0, "no")
+	require.NoError(t, err)
+	_, err = c.GetSecretValueWithPermissionCheck(ctx, secretID, requesterID)
+	require.Error(t, err, "an unrelated rejection must not affect this secret's gate")
+
+	// Approve the real request.
+	req, err := c.RequestSecretAccess(ctx, secretID, requesterID, "need it")
+	require.NoError(t, err)
+	_, err = c.ApproveSecretAccessRequest(ctx, req.ID, approverID)
+	require.NoError(t, err)
+
+	// The approved (user, secret) pair reads — any number of times.
+	val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, requesterID)
+	require.NoError(t, err)
+	assert.Equal(t, "s3cr3t-value", string(val))
+	val, err = c.GetSecretValueWithPermissionCheck(ctx, secretID, requesterID)
+	require.NoError(t, err)
+	assert.Equal(t, "s3cr3t-value", string(val))
+
+	// Not reusable across secrets: the same requester still cannot read the
+	// OTHER secret (whose own request was rejected, not approved).
+	_, err = c.GetSecretValueWithPermissionCheck(ctx, otherSecret.ID, requesterID)
+	require.Error(t, err, "an approval for one secret must not unlock a different secret")
+
+	// Not reusable across users: a different user, even with equivalent project
+	// membership, gets no benefit from someone else's approved request.
+	_, err = c.GetSecretValueWithPermissionCheck(ctx, secretID, otherUser.ID)
+	require.Error(t, err, "an approval for one user must not unlock the read for a different user")
+}

@@ -382,8 +382,8 @@ in `internal/cli/`).
 | `request list` | list.go | `GET /projects/{id}/access-requests` | API — local `requireListAuthority` matches the route's `roles.assign` exactly, no skip |
 | `request withdraw` | withdraw.go | `POST /projects/{id}/access-requests/{id}/withdraw` (self-service) | API — same `--user` shape as `access` |
 | `request review` (role-scoped) | review.go | `PUT /projects/{id}/access-requests/{id}` | API |
-| `request review` (secret-scoped approve) | review.go:90,162-176 | **none** — remote explicitly refused with a loud error rather than silently mis-routed | **GAP** — see §6 GAP-1 |
-| `request secret-access` | secret_access.go:44-84 | **none anywhere** — local-only by explicit, runtime-enforced design | **GAP** — see §6 GAP-1 |
+| `request review` (secret-scoped approve/reject) | review.go | `PUT /secret-access-requests/{requestId}` | API — **GAP-1 closed** |
+| `request secret-access` | secret_access.go | `POST /secret-access-requests` | API — **GAP-1 closed** |
 | `request bulk-approve` | bulk.go:47-52 | `POST /access-requests/bulk-approve` (exists) | API, **but the CLI never calls it** — §8 Finding S15 (GAP-F-BULK) |
 | `request bulk-reject` | bulk.go:105-110 | `POST /access-requests/bulk-reject` (exists) | API, same bug — Finding S15 |
 | `request rejection-templates list/add` | bulk.go:189-248 | `GET/POST /rejection-reason-templates` | API — correctly checks `NewRemoteClient()` |
@@ -712,16 +712,16 @@ own PR.
 
 ## 6. Top 5 GAPs by user impact
 
-1. **Secret-scoped access-request approval has no REST route at all.** `request secret-access`
-   (approve access to read one `restricted`-classified secret's value) and the secret-scoped branch
-   of `request review --action approve` are local-only by explicit, runtime-enforced design — the
-   command itself refuses to run if a remote client is configured, rather than silently touching a
-   stray local DB. `internal/core/classification_gate.go`'s `RequestSecretAccess`/
-   `ApproveSecretAccessRequest` have zero HTTP handler anywhere in `server/http`. This is a
-   compliance-relevant, classification-gate-driven feature with zero network path today — if the
-   thin CLI ships REST-only with no local-DB fallback (which is the whole point of ADR-108), this
-   capability disappears entirely unless a new route is built. Needs a product decision (build it,
-   or explicitly drop the feature) before Phase 2's `request`/`accessreview` PR.
+1. **CLOSED.** ~~Secret-scoped access-request approval has no REST route at all.~~ Andrei decided:
+   keep the feature, build the routes. `POST/GET /api/v1/secret-access-requests`,
+   `GET/PUT /api/v1/secret-access-requests/{requestId}`, and
+   `POST /api/v1/secret-access-requests/{requestId}/withdraw` now back
+   `RequestSecretAccess`/`ApproveSecretAccessRequest`/`RejectSecretAccessRequest`/
+   `WithdrawAccessRequest`/`GetSecretAccessRequest` (`internal/core/classification_gate.go`,
+   `server/http/handlers/secret_access_requests.go`). `request secret-access` and the secret-scoped
+   branch of `request review --action approve`/`reject` now use these routes when a remote client is
+   configured (`internal/cli/request/secret_access.go`, `review.go`); local mode is unchanged pending
+   Phase 5. No remaining blocker for the Phase 3 `request`/`accessreview` PR on this point.
 2. **B4 (offline, independent-of-the-running-server audit-chain verification) doesn't exist in any
    form.** `audit verify` is 100% REST and asks the live server to verify its own chain — the
    opposite of what regulated customers need this for. This is new `keyorix-server admin` work,
@@ -848,10 +848,9 @@ not a fix). Size: medium.
 **PR 7 — `audit`, `anomalies`, `notification`, `accessreview`, `request` (37 commands).** **Hard
 prerequisite**: fix GAP-F-BULK (Finding S15 / §6 GAP-5) — 3 of 6 `request bulk.go` commands need
 rewiring to check `NewRemoteClient()` like their siblings, otherwise they silently break the moment
-local mode is removed. **Needs a product decision**: `request secret-access`/secret-scoped `review
-approve` (§6 GAP-1) — build a new route, or drop the feature with release-note documentation. Size:
-medium-large, gated on the GAP-1 decision landing first (this PR's scope shrinks or grows
-depending on which way that decision goes).
+local mode is removed. GAP-1 (`request secret-access`/secret-scoped `review approve`/`reject`) is
+now closed — both commands are REST-backed in remote mode, so this PR's scope no longer depends on
+that decision. Size: medium.
 
 **PR 8 — `risk`, `sod`, `legalhold`, `compliance`, `hygiene`, `trust` (24 commands).** **Needs a
 product/engineering decision**: the `compliance export`/`verify` round-trip bug (§6 GAP-4) — fix

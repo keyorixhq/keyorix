@@ -25,13 +25,16 @@ import (
 // guard — masking whether the guard itself did anything. Using an untouched
 // second request for the actual exploit attempt isolates the guard's effect.
 //
-//  1. Create warmupReq and exploitReq at the same base time (identical
-//     ExpiresAt).
+//  1. Create warmupReq at a base time.
 //  2. Approve warmupReq at a baseline c.now() two hours past ExpiresAt —
 //     correctly refused ("access request has expired"), and this warms
 //     checkAccessRequestApprovalClockNotRegressed's watermark to that
-//     baseline. exploitReq is untouched so far, still Pending.
-//  3. Step c.now() BACKWARD to 10 minutes BEFORE ExpiresAt (i.e., if trusted
+//     baseline. This also moves warmupReq off Pending (into Expired).
+//  3. Create exploitReq with c.now() reset to the SAME base time as step 1,
+//     so it carries the identical ExpiresAt -- only possible now that
+//     warmupReq is no longer Pending (RequestSecretAccess refuses a second
+//     pending request for the same (user, secret) pair).
+//  4. Step c.now() BACKWARD to 10 minutes BEFORE ExpiresAt (i.e., if trusted
 //     naively, exploitReq would look not-yet-expired) and approve
 //     exploitReq. Before this fix, the approver could approve a request
 //     that has genuinely already expired. After the fix, the regression
@@ -46,11 +49,8 @@ func TestApproveSecretAccessRequest_ClockSteppedBackward_ExpiredRequestStaysRefu
 	c.now = func() time.Time { return base }
 	warmupReq, err := c.RequestSecretAccess(ctx, secretID, requesterID, "warmup")
 	require.NoError(t, err)
-	exploitReq, err := c.RequestSecretAccess(ctx, secretID, requesterID, "exploit")
-	require.NoError(t, err)
 	expiresAt := base.Add(accessRequestTTL)
 	require.Equal(t, expiresAt, *warmupReq.ExpiresAt)
-	require.Equal(t, expiresAt, *exploitReq.ExpiresAt)
 
 	// Step 1: baseline, clearly past expiry — correctly refused, warms the
 	// watermark. Only warmupReq is touched.
@@ -59,8 +59,25 @@ func TestApproveSecretAccessRequest_ClockSteppedBackward_ExpiredRequestStaysRefu
 	require.Error(t, err, "sanity: approval must be refused at the baseline time before the clock ever moves")
 	require.Contains(t, err.Error(), "expired")
 
+	// exploitReq is created only NOW, after the failed approval above has
+	// already moved warmupReq off Pending (into Expired, as this file's own
+	// package doc explains) -- RequestSecretAccess refuses a second PENDING
+	// request for the same (user, secret) pair (#G82's sibling guard,
+	// classification_gate.go), so creating it any earlier, while warmupReq
+	// was still Pending, would itself be refused before the exploit ever
+	// gets to run. c.now is reset to base only for this one call so
+	// exploitReq's ExpiresAt still equals warmupReq's -- required for the
+	// backward-step exploit below to mean the same thing it always did.
+	c.now = func() time.Time { return base }
+	exploitReq, err := c.RequestSecretAccess(ctx, secretID, requesterID, "exploit")
+	require.NoError(t, err)
+	require.Equal(t, expiresAt, *exploitReq.ExpiresAt)
+
 	// Step 2: the exploit. Step c.now() BACKWARD to before expiry, and
-	// attempt exploitReq -- still Pending, never touched until now.
+	// attempt exploitReq -- still Pending, never touched until now. The
+	// watermark warmed in step 1 is unaffected by resetting c.now above:
+	// only an approval attempt against a non-nil ExpiresAt advances it, and
+	// creating a request never does.
 	c.now = func() time.Time { return expiresAt.Add(-10 * time.Minute) }
 	_, err = c.ApproveSecretAccessRequest(ctx, exploitReq.ID, approverID)
 	require.Error(t, err, "approval must still be refused after the clock steps backward to before the request's expiry")
