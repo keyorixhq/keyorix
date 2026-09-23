@@ -34,11 +34,10 @@ var scoreCmd = &cobra.Command{
 The score is 0-100 (higher = riskier) and is broken down into four weighted
 factors: rotation age (30%), expiry (30%), usage (20%), and exposure (20%).
 
-In remote mode the secret name is resolved to an ID via the list endpoint, then
-GET /api/v1/secrets/{id}/risk is called.
+The secret name is resolved within a single project (--project, KEYORIX_PROJECT,
+or the active project — required), then GET /api/v1/secrets/{id}/risk is called.
 
 Examples:
-  keyorix secret score my-api-key
   keyorix secret score my-api-key --project web
   keyorix secret score my-api-key --project web --env 2`,
 	Args:         cobra.ExactArgs(1),
@@ -101,18 +100,23 @@ func runScoreRemote(ctx context.Context, rc *common.RemoteClient, name string) e
 	return nil
 }
 
-// resolveSecretIDByName finds the ID of a secret by its name via the list endpoint.
+// resolveSecretIDByName finds the ID of a secret by its name via the list endpoint,
+// scoped to a required project — an unscoped listing across every project the
+// caller can read would silently resolve to another project's same-named secret's
+// risk score (the same class of bug fixed for `secret render`/`secret rotate`,
+// inventory #2012 finding S2).
 func resolveSecretIDByName(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
 	path := "/api/v1/secrets?page=1&page_size=500"
 
-	projectName, _ := common.ResolveProject(scoreProject)
-	if projectName != "" {
-		param, err := resolveProjectIDParam(ctx, rc, projectName)
-		if err != nil {
-			return 0, err
-		}
-		path += param
+	projectName, err := common.ResolveProject(scoreProject)
+	if err != nil {
+		return 0, err
 	}
+	param, err := resolveProjectIDParam(ctx, rc, projectName)
+	if err != nil {
+		return 0, err
+	}
+	path += param
 	if scoreEnv != 0 {
 		path += fmt.Sprintf("&environment_id=%d", scoreEnv)
 	}
@@ -149,14 +153,15 @@ func runScoreEmbedded(ctx context.Context, name string) error {
 		Page:     1,
 		PageSize: 500,
 	}
-	projectName, _ := common.ResolveProject(scoreProject)
-	if projectName != "" {
-		projectID, err := common.LookupProjectIDByName(ctx, svc.Storage(), projectName)
-		if err != nil {
-			return err
-		}
-		filter.ProjectID = &projectID
+	projectName, err := common.ResolveProject(scoreProject)
+	if err != nil {
+		return err
 	}
+	projectID, err := common.LookupProjectIDByName(ctx, svc.Storage(), projectName)
+	if err != nil {
+		return err
+	}
+	filter.ProjectID = &projectID
 	if scoreEnv != 0 {
 		filter.EnvironmentID = &scoreEnv
 	}
