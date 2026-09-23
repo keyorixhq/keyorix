@@ -27,7 +27,23 @@ import (
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	gax "github.com/googleapis/gax-go/v2"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc"
 )
+
+// gcpMaxRecvMsgSize caps how large a single AccessSecretVersion response this
+// connector will accept. Google's own client (secretmanager's
+// defaultGRPCClientOptions, confirmed by reading it directly) sets
+// grpc.MaxCallRecvMsgSize(math.MaxInt32) as its dial-level default -- effectively
+// no cap at all -- unlike the Vault/AWS/Azure connectors, whose HTTP clients read
+// a size-bounded body. A malicious or compromised endpoint (a MITM'd connection,
+// or a compromised secretmanager.googleapis.com peer) could otherwise force this
+// process to buffer an attacker-sized response before GetSecret ever gets a
+// chance to reject it. GCP Secret Manager's own documented maximum secret
+// version payload is 64 KiB; 1 MiB leaves generous headroom for protocol/gRPC
+// framing overhead while still bounding the worst case to a small, fixed amount
+// instead of ~2 GiB.
+const gcpMaxRecvMsgSize = 1 << 20 // 1 MiB
 
 // gcpSMAccessAPI is the slice of the Secret Manager client the connector uses — an
 // interface seam so it is unit-tested with a fake and the SDK stays contained here.
@@ -88,7 +104,9 @@ func (c *GCPSecretManagerConnector) client(ctx context.Context) (gcpSMAccessAPI,
 	if c.newClient != nil {
 		return c.newClient(ctx)
 	}
-	cl, err := secretmanager.NewClient(ctx)
+	cl, err := secretmanager.NewClient(ctx, option.WithGRPCDialOption(
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(gcpMaxRecvMsgSize)),
+	))
 	if err != nil {
 		return nil, fmt.Errorf("gcp-secret-manager: new client: %w", err)
 	}
