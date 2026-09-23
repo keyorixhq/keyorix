@@ -489,6 +489,16 @@ while reading this package's config backing: `CLIConfig.Connections[]` and its 4
 anywhere outside their own definitions and tests — **DROP**, a whole unused "saved connections"
 schema.
 
+A second, separate piece of dead code sits one level up from any command package:
+`internal/cli/modes.go`'s `NewCLI()`/`CLI`/`CLIMode` (the `EmbeddedMode`/`ClientMode`
+auto-detecting dispatcher, `initEmbeddedMode`/`initClientMode`) has **zero production callers** —
+`rg -n "NewCLI\(\)"` across `internal/cli` matches only `main_test.go`/`modes_s23_test.go`/
+`modes_s24_test.go`. Every real command instead uses the per-file `common.NewRemoteClient()`/
+`common.InitializeCoreService()` pattern documented throughout §2. **DROP** — this whole
+mode-dispatch abstraction was superseded by the per-command pattern and never wired into
+`rootCmd`/`Execute()` (`internal/cli/main.go`) at all; removing it is a pure deletion, not a
+migration.
+
 **`config`** (`keyorix.yaml`, distinct from `connect`'s `~/.keyorix/cli.yaml`) — `status`/
 `set-remote`/`use-local`/`test-connection`: **DROP the whole group.** `set-remote`/`use-local`
 configure exactly the `storage.type` mechanism ADR-108 Decision A/C removes outright; `status`/
