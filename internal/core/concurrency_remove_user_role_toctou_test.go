@@ -32,14 +32,20 @@
 //     RemoveUserRole for admin 2 -- it must run in its own goroutine, since
 //     post-fix it blocks trying to acquire the same lock admin1 still holds,
 //     and calling it synchronously would deadlock this test against the fixed
-//     code. The decorator also signals the moment this call's guard read
-//     starts, which the test waits on (bounded by a generous timeout) before
-//     releasing admin1's write: pre-fix the lock is already free so the read
-//     fires almost immediately; post-fix the call is genuinely blocked on the
-//     lock and the signal never fires, so the timeout always elapses -- either
-//     way, admin1's write is released only once it's certain admin2's call has
-//     either already read the pre-write state (pre-fix) or is still waiting to
-//     read anything at all (post-fix), never in the ambiguous window between.
+//     code. The test waits for THIS call to either finish naturally or hit a
+//     generous timeout before releasing admin1's write: pre-fix the lock is
+//     already free, so admin2's whole guard-and-write sequence (several
+//     sequential queries: GetUserRoleIDsExact, ListProjectRoleAssignments,
+//     one GetUser per surviving holder) completes well within the window;
+//     post-fix admin2's call is genuinely blocked on the lock and never
+//     completes, so the timeout always elapses. An earlier version of this
+//     test released admin1 as soon as admin2's FIRST guard query started
+//     (not finished) -- that left a real window, between admin2's first read
+//     and its later ListProjectRoleAssignments/GetUser calls, where admin1's
+//     released write could land first and admin2's guard would then correctly
+//     (if accidentally, from the test's point of view) refuse it, masking the
+//     bug. Waiting for admin2 to actually FINISH (or definitively hang)
+//     removes that ambiguity.
 //  3. The test releases A's decorator; A's write commits (and, post-fix, A's
 //     lock acquisition finally releases, letting step 2's call proceed).
 //
@@ -54,7 +60,6 @@ package core_test
 import (
 	"context"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -71,21 +76,28 @@ import (
 // delayedRemoveRoleStorage wraps a real storage.Storage, pausing exactly one
 // targeted RemoveRole(userID, roleID, ...) call until released -- signaling
 // blocked once it starts waiting, so the test can deterministically sequence a
-// second, concurrent RemoveUserRole call around the pause. It also signals
-// (once, non-blocking) the moment a targeted GetUserRoleIDsExact read starts,
-// so the test can tell "the second call's guard read already ran" (pre-fix:
-// the lock was free, so it ran immediately) apart from "the second call is
-// still blocked trying to acquire the lock the first call still holds"
-// (post-fix) -- the two cases are indistinguishable by return value alone
-// since neither has returned yet at the point the test needs to decide
-// whether it's safe to release the first call's delayed write.
+// second, concurrent call around the pause.
 type delayedRemoveRoleStorage struct {
 	storage.Storage
 	targetUserID, targetRoleID uint
 	blocked, release           chan struct{}
-	readUserID, readRoleID     uint
-	readStarted                chan struct{}
-	readSignalOnce             sync.Once
+}
+
+// WithTransaction wraps the transaction-scoped storage.Storage fn receives
+// with an identical decorator sharing this one's channels, so a caller that
+// performs its targeted RemoveRole call INSIDE a transaction
+// (RevokeBreakGlassActivationAtomic's tx.RemoveRole, break_glass.go) still
+// gets paused -- without this override, that RemoveRole call would run on
+// the fresh, un-decorated *LocalStorage WithTransaction constructs
+// internally (local_transaction.go) and the pause would never fire.
+func (d *delayedRemoveRoleStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
+	return d.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return fn(&delayedRemoveRoleStorage{
+			Storage:      tx,
+			targetUserID: d.targetUserID, targetRoleID: d.targetRoleID,
+			blocked: d.blocked, release: d.release,
+		})
+	})
 }
 
 func (d *delayedRemoveRoleStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
@@ -94,13 +106,6 @@ func (d *delayedRemoveRoleStorage) RemoveRole(ctx context.Context, userID, roleI
 		<-d.release
 	}
 	return d.Storage.RemoveRole(ctx, userID, roleID, scope)
-}
-
-func (d *delayedRemoveRoleStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
-	if userID == d.readUserID {
-		d.readSignalOnce.Do(func() { close(d.readStarted) })
-	}
-	return d.Storage.GetUserRoleIDsExact(ctx, userID, scope)
 }
 
 func TestConcurrency_RemoveUserRole_ProjectScope_TOCTOU_Deterministic(t *testing.T) {
@@ -127,7 +132,6 @@ func TestConcurrency_RemoveUserRole_ProjectScope_TOCTOU_Deterministic(t *testing
 		Storage:      realStorage,
 		targetUserID: 1, targetRoleID: 10,
 		blocked: make(chan struct{}), release: make(chan struct{}),
-		readUserID: 2, readStarted: make(chan struct{}),
 	}
 	c := core.NewKeyorixCore(wrapped)
 	ctx := context.Background()
@@ -153,14 +157,11 @@ func TestConcurrency_RemoveUserRole_ProjectScope_TOCTOU_Deterministic(t *testing
 		errB = c.RemoveUserRole(ctx, 99, 2, 10, scope)
 	}()
 
-	// Give admin2's call a bounded window to run its guard read before releasing
-	// admin1's delayed write. Pre-fix, the lock is already free, so this fires
-	// almost immediately. Post-fix, admin2's call is genuinely blocked
-	// acquiring the same lock admin1 still holds -- this never fires, the
-	// timeout always elapses, and releasing admin1 now is exactly what lets
-	// admin2's call finally proceed (against the now-updated state).
+	// Give admin2's call a generous bounded window to run to COMPLETION before
+	// releasing admin1's delayed write -- see the file doc comment for why
+	// waiting for completion (not merely "started reading") is required.
 	select {
-	case <-wrapped.readStarted:
+	case <-doneB:
 	case <-time.After(2 * time.Second):
 	}
 	close(wrapped.release)

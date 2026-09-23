@@ -14,7 +14,6 @@ package core
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -37,9 +36,21 @@ type pgDelayedRemoveRoleStorage struct {
 	storage.Storage
 	targetUserID, targetRoleID uint
 	blocked, release           chan struct{}
-	readUserID                 uint
-	readStarted                chan struct{}
-	readSignalOnce             sync.Once
+}
+
+// WithTransaction wraps the transaction-scoped storage.Storage fn receives
+// with an identical decorator sharing this one's channels -- see
+// concurrency_remove_user_role_toctou_test.go's delayedRemoveRoleStorage.WithTransaction
+// for the full rationale (RevokeBreakGlassActivationAtomic's tx.RemoveRole
+// call needs this to be paused at all).
+func (d *pgDelayedRemoveRoleStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
+	return d.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return fn(&pgDelayedRemoveRoleStorage{
+			Storage:      tx,
+			targetUserID: d.targetUserID, targetRoleID: d.targetRoleID,
+			blocked: d.blocked, release: d.release,
+		})
+	})
 }
 
 func (d *pgDelayedRemoveRoleStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
@@ -48,13 +59,6 @@ func (d *pgDelayedRemoveRoleStorage) RemoveRole(ctx context.Context, userID, rol
 		<-d.release
 	}
 	return d.Storage.RemoveRole(ctx, userID, roleID, scope)
-}
-
-func (d *pgDelayedRemoveRoleStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
-	if userID == d.readUserID {
-		d.readSignalOnce.Do(func() { close(d.readStarted) })
-	}
-	return d.Storage.GetUserRoleIDsExact(ctx, userID, scope)
 }
 
 var removeUserRoleProjectModels = []interface{}{
@@ -108,7 +112,6 @@ func TestConcurrency_RemoveUserRole_ProjectScope_CrossReplicaPostgres(t *testing
 		Storage:      localstore.NewLocalStorage(pgOpen(t, dsn)),
 		targetUserID: userA.ID, targetRoleID: role.ID,
 		blocked: make(chan struct{}), release: make(chan struct{}),
-		readUserID: userB.ID, readStarted: make(chan struct{}),
 	}
 	coreA := NewKeyorixCore(wrapped)
 	// Replica B: its own, independent connection.
@@ -131,8 +134,12 @@ func TestConcurrency_RemoveUserRole_ProjectScope_CrossReplicaPostgres(t *testing
 		errB = coreB.RemoveUserRole(ctx, 0, userB.ID, role.ID, scope)
 	}()
 
+	// Give replica B's call a generous bounded window to run to COMPLETION
+	// before releasing replica A's delayed write -- see
+	// concurrency_remove_user_role_toctou_test.go's file doc comment for why
+	// waiting for completion (not merely "started reading") is required.
 	select {
-	case <-wrapped.readStarted:
+	case <-doneB:
 	case <-time.After(2 * time.Second):
 	}
 	close(wrapped.release)
