@@ -25,7 +25,10 @@ func TestDeprovisionSCIMUser_RevokesSessionAndPAT(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.PersonalAccessToken{}, &models.AuditEvent{},
-		&models.UserRole{}, &models.Project{}, &models.Environment{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+		// Role + UserRole so the precondition validations' GetUserRoles succeeds
+		// (#1944: a role-lookup storage error now fails validation instead of
+		// soft-failing to an empty role list).
+		&models.Role{}, &models.UserRole{}, &models.Project{}, &models.Environment{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 
 	ls := store.NewLocalStorage(db)
 	c := NewKeyorixCore(ls)
