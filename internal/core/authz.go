@@ -478,6 +478,29 @@ const ceilingCacheTTL = 60 * time.Second
 // not repeated on every ValidateSessionToken call (IMP-001). The cache TTL is
 // intentionally 2× the auth-cache window so a cache miss here never triggers
 // two consecutive uncached ceiling checks within the same outer auth-cache miss.
+//
+// #1983 investigation, closed as NO BUG: this is an in-process TTL -- both
+// entry.expiresAt (written below) and the comparison against it happen in
+// THIS process, so both sides come from c.now() and, in production, retain
+// Go's monotonic clock reading (time.Now(), unless something strips it).
+// Go compares two monotonic-carrying times using ONLY the monotonic delta,
+// which a host wall-clock step (an operator's `date -s`, an NTP correction)
+// never affects -- this cache is therefore ALREADY immune to that threat,
+// via the language's own guarantee, not anything this function does
+// explicitly. Do NOT route this through authEffectiveNow, shareEffectiveNow,
+// or a new equivalent watermark wrapper: those call .UTC() before clamping,
+// which unconditionally strips the monotonic reading and REPLACES this
+// existing immunity with a strictly weaker wall-clock-only comparison whose
+// watermark then holds a stale verdict past its 60s TTL for as long as a
+// backward step lasts -- confirmed as a real regression in two independent,
+// since-closed fix attempts (#1994, #1995), neither merged. See
+// impersonation_ceiling_monotonic_test.go, which pins this invariant, and
+// docs/findings/2026-09-23-FINDING-impersonation-ceiling-monotonic-not-a-bug.md.
+// That watermark pattern is correct for authEffectiveNow/shareEffectiveNow's
+// OWN actual use (comparing against a PERSISTED instant -- a DB ExpiresAt, a
+// JWT exp/iat -- that was serialized and never had a monotonic reading to
+// begin with); it is the wrong tool for an in-process-only comparison like
+// this one, which already has a stronger guarantee to lose.
 func (c *KeyorixCore) cachedImpersonationCeiling(ctx context.Context, actorID, targetID uint) error {
 	key := fmt.Sprintf("%d:%d", actorID, targetID)
 	if v, ok := c.impersonationCeilingCache.Load(key); ok {
