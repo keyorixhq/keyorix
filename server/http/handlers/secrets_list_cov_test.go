@@ -104,6 +104,28 @@ func TestListSecrets_MachineIdentity_NoProjectID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestListSecrets_EnvironmentNameParamRejected is the #2012 inventory (finding
+// S2) regression: `environment=<name>` was never a recognized filter on this
+// endpoint (only the numeric environment_id is honored) but was silently
+// ignored instead of rejected, letting a caller believe a listing was scoped
+// by environment name when it was actually unscoped. It must now fail fast
+// with 400, before any storage call (closed DB proves that — a fall-through
+// to the storage layer here would error differently, not 400).
+func TestListSecrets_EnvironmentNameParamRejected(t *testing.T) {
+	h, db := freshCovListFixture(t)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	req := withCovUserCtx(
+		httptest.NewRequest(http.MethodGet, "/api/v1/secrets?environment=production", nil), 70)
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "environment")
+}
+
 // TestListSecrets_ScopedRequest_ListError closes the DB so ListSecretsWithSharingInfo
 // fails on the scoped path and the handler returns 500 (line 178–182).
 func TestListSecrets_ScopedRequest_ListError(t *testing.T) {

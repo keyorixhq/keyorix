@@ -25,9 +25,9 @@ func isolateCLIConfig(t *testing.T) {
 // mutates them directly.
 func resetRotateFlags(t *testing.T) {
 	t.Helper()
-	origValue, origEnv := rotateValue, rotateEnv
+	origValue, origEnv, origProject := rotateValue, rotateEnv, rotateProjectName
 	t.Cleanup(func() {
-		rotateValue, rotateEnv = origValue, origEnv
+		rotateValue, rotateEnv, rotateProjectName = origValue, origEnv, origProject
 		_ = rotateCmd.Flags().Set("value", "")
 		rotateCmd.Flags().Lookup("value").Changed = false
 	})

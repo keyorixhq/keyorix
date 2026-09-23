@@ -16,9 +16,17 @@ func TestRunRotate_ListSecretsError(t *testing.T) {
 	isolateCLIConfig(t)
 	resetRotateFlags(t)
 	require.NoError(t, rotateCmd.Flags().Set("value", "new-value"))
+	require.NoError(t, rotateCmd.Flags().Set("project", "proj"))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
+		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"proj"}]}}`))
+		case "/api/v1/projects/1/environments":
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"production"}]}}`))
+		default:
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}
 	}))
 	defer srv.Close()
 	t.Setenv("KEYORIX_SERVER", srv.URL)
@@ -33,11 +41,16 @@ func TestRunRotate_RotateRequestError(t *testing.T) {
 	isolateCLIConfig(t)
 	resetRotateFlags(t)
 	require.NoError(t, rotateCmd.Flags().Set("value", "new-value"))
+	require.NoError(t, rotateCmd.Flags().Set("project", "proj"))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.Method {
-		case http.MethodGet:
+		switch {
+		case r.URL.Path == "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"proj"}]}}`))
+		case r.URL.Path == "/api/v1/projects/1/environments":
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"production"}]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":9,"Name":"db-password"}]}}`))
 		default:
 			http.Error(w, "boom", http.StatusInternalServerError)

@@ -8,7 +8,6 @@
 //   - buildUpdateRequest: from-file absolute rejection, from-file success
 //   - collectEntries: both-set error, neither-set error, file-not-exist
 //   - runScan: invalid-severity error, severity-filter branch, scanImport path
-//   - splitSecretRef: happy path + error variants (unique names)
 //   - displayVersionsTable: with versions + unknown algorithm
 //   - sanitizeForTerminal: control-char stripping (unique names)
 //   - runVersions: zero-id guard (unique name)
@@ -240,21 +239,6 @@ func TestRunScan_ScanImportPath_S24(t *testing.T) {
 	// Should not error — the scan-import path just prints a readiness message.
 	err := runScan(scanCmd, []string{dir})
 	assert.NoError(t, err)
-}
-
-// ── splitSecretRef: unique-name variants ─────────────────────────────────────
-
-func TestSplitSecretRef_HappyPath_S24(t *testing.T) {
-	env, name, err := splitSecretRef("production/my-db-pass")
-	require.NoError(t, err)
-	assert.Equal(t, "production", env)
-	assert.Equal(t, "my-db-pass", name)
-}
-
-func TestSplitSecretRef_Empty_S24(t *testing.T) {
-	_, _, err := splitSecretRef("")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid reference")
 }
 
 // ── displayVersionsTable: with versions + unknown algorithm ──────────────────

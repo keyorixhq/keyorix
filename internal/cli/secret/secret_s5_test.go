@@ -896,28 +896,6 @@ func TestRunDeleteS5_MissingIDAndName(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// splitSecretRef — additional edge cases for the render resolver
-// ────────────────────────────────────────────────────────────────────────────
-
-func TestSplitSecretRefS5_TrailingSlash(t *testing.T) {
-	_, _, err := splitSecretRef("env/")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid reference")
-}
-
-func TestSplitSecretRefS5_LeadingSlash(t *testing.T) {
-	_, _, err := splitSecretRef("/name")
-	require.Error(t, err)
-}
-
-func TestSplitSecretRefS5_ValidNestedName(t *testing.T) {
-	env, name, err := splitSecretRef("production/db/password")
-	require.NoError(t, err)
-	assert.Equal(t, "production", env)
-	assert.Equal(t, "db/password", name)
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // writeExportJSON / writeVault helpers (direct unit coverage)
 // ────────────────────────────────────────────────────────────────────────────
 

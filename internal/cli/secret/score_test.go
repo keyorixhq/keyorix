@@ -23,12 +23,18 @@ import (
 
 // scoreSetup creates a test HTTP server driven by handler and points the CLI at
 // it via env vars. It returns the RemoteClient and a cleanup function.
+//
+// scoreProject is required (see resolveSecretIDByName's doc comment — an
+// unscoped listing could resolve to another project's same-named secret), so
+// this sets it to "test-proj"; callers whose handler needs to serve
+// GET /api/v1/projects should route it to return that project's ID.
 func scoreSetup(t *testing.T, handler http.HandlerFunc) (*common.RemoteClient, func()) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "tok")
 	t.Setenv("KEYORIX_PROJECT", "")
+	scoreProject = "test-proj"
 	// Reset package-level flag vars so tests don't bleed into each other.
 	t.Cleanup(func() {
 		scoreProject = ""
@@ -38,6 +44,10 @@ func scoreSetup(t *testing.T, handler http.HandlerFunc) (*common.RemoteClient, f
 	require.True(t, ok)
 	return rc, srv.Close
 }
+
+// scoreProjectRoute is the GET /api/v1/projects response shared by every
+// scoreSetup-based test: one project, "test-proj", id 1.
+const scoreProjectRoute = `{"success":true,"data":{"projects":[{"id":1,"name":"test-proj"}]}}`
 
 // captureScoreOutput captures both stdout and stderr produced by fn.
 func captureScoreOutput(t *testing.T, fn func()) (stdout, stderr string) {
@@ -80,6 +90,8 @@ func captureScoreOutput(t *testing.T, fn func()) (stdout, stderr string) {
 //   - GET /api/v1/secrets/5/risk → high-risk score
 func highRiskHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/projects":
+		_, _ = w.Write([]byte(scoreProjectRoute))
 	case "/api/v1/secrets":
 		_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[{"ID":5,"Name":"prod-db"}],"total":1,"page":1,"page_size":500,"total_pages":1}}`))
 	case "/api/v1/secrets/5/risk":
@@ -114,6 +126,8 @@ func TestSecretScore_Remote_HighRisk(t *testing.T) {
 // lowRiskHandler serves a low-risk score for secret "jwt-key" (id=3).
 func lowRiskHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/projects":
+		_, _ = w.Write([]byte(scoreProjectRoute))
 	case "/api/v1/secrets":
 		_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[{"ID":3,"Name":"jwt-key"}],"total":1,"page":1,"page_size":500,"total_pages":1}}`))
 	case "/api/v1/secrets/3/risk":
@@ -144,6 +158,8 @@ func TestSecretScore_Remote_LowRisk(t *testing.T) {
 // notFoundHandler responds to all requests with 404.
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/projects":
+		_, _ = w.Write([]byte(scoreProjectRoute))
 	case "/api/v1/secrets":
 		// Return an empty list so name resolution fails gracefully.
 		_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[],"total":0,"page":1,"page_size":500,"total_pages":1}}`))
@@ -168,6 +184,10 @@ func TestSecretScore_Remote_NotFound(t *testing.T) {
 // returns a non-2xx status, runScoreRemote returns a "failed to list secrets" error.
 func TestSecretScore_Remote_ListError(t *testing.T) {
 	rc, done := scoreSetup(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/projects" {
+			_, _ = w.Write([]byte(scoreProjectRoute))
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"success":false,"error":"DBError","message":"db down","code":500}`))
 	})
@@ -183,6 +203,8 @@ func TestSecretScore_Remote_ListError(t *testing.T) {
 func TestSecretScore_Remote_RiskEndpointError(t *testing.T) {
 	rc, done := scoreSetup(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(scoreProjectRoute))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[{"ID":5,"Name":"my-secret"}],"total":1,"page":1,"page_size":500,"total_pages":1}}`))
 		default:
@@ -247,6 +269,8 @@ func TestSecretScore_Remote_WithProjectFilter_ProjectNotFound(t *testing.T) {
 func TestSecretScore_Remote_WithEnvFilter(t *testing.T) {
 	rc, done := scoreSetup(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(scoreProjectRoute))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[{"ID":11,"Name":"env-secret"}],"total":1,"page":1,"page_size":500,"total_pages":1}}`))
 		default:
@@ -269,6 +293,8 @@ func TestSecretScore_Remote_WithEnvFilter(t *testing.T) {
 func TestSecretScore_Remote_DegradedScore(t *testing.T) {
 	rc, done := scoreSetup(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(scoreProjectRoute))
 		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"secrets":[{"ID":7,"Name":"degraded-secret"}],"total":1,"page":1,"page_size":500,"total_pages":1}}`))
 		default:
@@ -294,6 +320,7 @@ func TestSecretScore_RunE_Remote(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "tok")
 	t.Setenv("KEYORIX_PROJECT", "")
+	scoreProject = "test-proj"
 	t.Cleanup(func() { scoreProject = ""; scoreEnv = 0 })
 
 	_, _ = captureScoreOutput(t, func() {
@@ -318,14 +345,27 @@ func TestSecretScore_RunE_Embedded(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(func() { scoreProject = ""; scoreEnv = 0 })
 
+	svc, err := common.InitializeCoreService()
+	require.NoError(t, err)
+	_, err = svc.CreateProject(context.Background(), "runE-embedded-proj", "")
+	require.NoError(t, err)
+	scoreProject = "runE-embedded-proj"
+
 	// Embedded mode, secret not found → error.
-	err := scoreCmd.RunE(scoreCmd, []string{"no-such-secret"})
+	err = scoreCmd.RunE(scoreCmd, []string{"no-such-secret"})
 	require.Error(t, err)
 }
 
 // ── Embedded mode ──────────────────────────────────────────────────────────
 
-// setupScoreEmbedded configures an isolated SQLite database for embedded score tests.
+// scoreDefaultEmbeddedProject is the project setupScoreEmbedded creates and
+// points scoreProject at — --project is now required (resolveSecretIDByName's
+// doc comment), so every embedded test needs a real, existing project to
+// resolve, even ones only testing the secret-not-found path.
+const scoreDefaultEmbeddedProject = "score-default-proj"
+
+// setupScoreEmbedded configures an isolated SQLite database for embedded score
+// tests, creates scoreDefaultEmbeddedProject, and points scoreProject at it.
 func setupScoreEmbedded(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -340,6 +380,13 @@ func setupScoreEmbedded(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_PROJECT", "")
 	require.NoError(t, i18n.InitializeForTesting())
+
+	svc, err := common.InitializeCoreService()
+	require.NoError(t, err)
+	_, err = svc.CreateProject(context.Background(), scoreDefaultEmbeddedProject, "")
+	require.NoError(t, err)
+	scoreProject = scoreDefaultEmbeddedProject
+
 	t.Cleanup(func() { scoreProject = ""; scoreEnv = 0 })
 }
 
@@ -375,6 +422,7 @@ func TestSecretScore_Embedded_Found(t *testing.T) {
 
 	p, err := svc.CreateProject(ctx, "score-proj", "")
 	require.NoError(t, err)
+	scoreProject = "score-proj"
 
 	env, err := svc.CreateEnvironment(ctx, p.ID, "dev")
 	require.NoError(t, err)
@@ -455,24 +503,45 @@ func TestSecretScore_Embedded_ServiceInitError(t *testing.T) {
 
 // ── Mock storage helpers for error-path coverage ───────────────────────────
 
-// listSecretsErrStorage embeds a nil coreStorage.Storage and overrides only
-// ListSecrets so that the embedded nil never gets called.
+// scoreMockProjectName is the project name resolveSecretIDByName/runScoreEmbedded
+// now require to be resolvable; both mock storages below implement ListProjects
+// to return exactly one project by this name so common.LookupProjectIDByName
+// (called before ListSecrets is ever reached) succeeds instead of panicking on
+// the embedded nil coreStorage.Storage.
+const scoreMockProjectName = "score-mock-proj"
+
+func scoreMockProjects() ([]*models.Project, error) {
+	return []*models.Project{{ID: 1, Name: scoreMockProjectName}}, nil
+}
+
+// listSecretsErrStorage embeds a nil coreStorage.Storage and overrides
+// ListProjects (so project resolution succeeds) and ListSecrets so the
+// embedded nil never gets called for either.
 type listSecretsErrStorage struct {
 	coreStorage.Storage
 	err error
+}
+
+func (s *listSecretsErrStorage) ListProjects(_ context.Context) ([]*models.Project, error) {
+	return scoreMockProjects()
 }
 
 func (s *listSecretsErrStorage) ListSecrets(_ context.Context, _ *coreStorage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	return nil, 0, s.err
 }
 
-// getSecretErrStorage embeds a nil coreStorage.Storage, implements ListSecrets
-// to return one fake secret, and overrides GetSecret to return an error. This
-// causes ComputeSecretRiskScore to fail after the secret ID has been resolved.
+// getSecretErrStorage embeds a nil coreStorage.Storage, implements ListProjects
+// and ListSecrets to return one fake secret, and overrides GetSecret to return
+// an error. This causes ComputeSecretRiskScore to fail after the secret ID has
+// been resolved.
 type getSecretErrStorage struct {
 	coreStorage.Storage
 	secretName string
 	err        error
+}
+
+func (s *getSecretErrStorage) ListProjects(_ context.Context) ([]*models.Project, error) {
+	return scoreMockProjects()
 }
 
 func (s *getSecretErrStorage) ListSecrets(_ context.Context, _ *coreStorage.SecretFilter) ([]*models.SecretNode, int64, error) {
@@ -494,6 +563,7 @@ func TestSecretScore_Embedded_ListSecretsError(t *testing.T) {
 		coreServiceInit = common.InitializeCoreService
 	})
 
+	scoreProject = scoreMockProjectName
 	injErr := errors.New("storage exploded")
 	coreServiceInit = func() (*core.KeyorixCore, error) {
 		return core.NewKeyorixCore(&listSecretsErrStorage{err: injErr}), nil
@@ -516,6 +586,7 @@ func TestSecretScore_Embedded_ComputeScoreError(t *testing.T) {
 		coreServiceInit = common.InitializeCoreService
 	})
 
+	scoreProject = scoreMockProjectName
 	injErr := errors.New("storage exploded")
 	const secretName = "target-secret"
 	coreServiceInit = func() (*core.KeyorixCore, error) {

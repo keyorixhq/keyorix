@@ -4,16 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	"github.com/keyorixhq/keyorix/internal/secrettemplate"
 	"github.com/spf13/cobra"
 )
 
 var renderOutput string
+var renderProjectName string
 
 var renderCmd = &cobra.Command{
 	Use:   "render [template-file]",
@@ -21,13 +19,14 @@ var renderCmd = &cobra.Command{
 	Long: `Render a template file (or stdin) to stdout (or --output), replacing each
 ${secret:<environment>/<name>} placeholder with that secret's current value.
 
-Only secrets you can read are resolved; a missing or forbidden reference fails the
-render without writing partial output. Useful for generating a .env or config file
-from live Keyorix secrets.
+References are resolved within a single project (--project, KEYORIX_PROJECT, or
+the active project — required). Only secrets you can read there are resolved; a
+missing or forbidden reference fails the render without writing partial output.
+Useful for generating a .env or config file from live Keyorix secrets.
 
 Examples:
-  keyorix secret render app.env.tpl -o app.env
-  cat app.env.tpl | keyorix secret render`,
+  keyorix secret render app.env.tpl -o app.env --project my-project
+  cat app.env.tpl | keyorix secret render --project my-project`,
 	Args:         cobra.MaximumNArgs(1),
 	SilenceUsage: true,
 	RunE:         runRender,
@@ -35,6 +34,7 @@ Examples:
 
 func init() {
 	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "Write to this file instead of stdout")
+	renderCmd.Flags().StringVar(&renderProjectName, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	SecretCmd.AddCommand(renderCmd)
 }
 
@@ -59,17 +59,18 @@ func runRender(_ *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Rendering via remote server: %s\n", rc.Endpoint)
 
-	ctx := context.Background()
-	// A template with zero ${secret:...} references never calls the resolver,
-	// so renderWith below would otherwise report success without ever making a
-	// network call — indistinguishable from a genuinely-reached server. Ping
-	// unconditionally so an unreachable/misconfigured remote is caught before
-	// anything is written, regardless of what the template actually contains.
-	if err := rc.Ping(ctx); err != nil {
-		return fmt.Errorf("remote server unreachable: %w", err)
+	projectName, err := common.ResolveProject(renderProjectName)
+	if err != nil {
+		return err
 	}
 
-	out, err := renderWith(ctx, rc, string(tmpl))
+	ctx := context.Background()
+	projectID, err := common.ResolveProjectIDRemote(ctx, rc, projectName)
+	if err != nil {
+		return err
+	}
+
+	out, err := renderRemote(ctx, rc, projectID, string(tmpl))
 	if err != nil {
 		return err
 	}
@@ -96,57 +97,21 @@ func runRender(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-// renderWith expands the template using a resolver backed by the remote client. Split
-// out from the command so it can be exercised against an httptest server.
-func renderWith(ctx context.Context, rc *common.RemoteClient, tmpl string) (string, error) {
-	return secrettemplate.Render(tmpl, keyorixResolver(ctx, rc))
-}
-
-// keyorixResolver resolves "<environment>/<name>" to the secret's value over the API:
-// list the environment's secrets to find the id (exact, case-insensitive name match),
-// then read the value. The name segment may contain slashes (path-like names).
-func keyorixResolver(ctx context.Context, rc *common.RemoteClient) secrettemplate.Resolver {
-	return func(ref string) (string, error) {
-		env, name, err := splitSecretRef(ref)
-		if err != nil {
-			return "", err
-		}
-		var list struct {
-			Secrets []struct {
-				ID   uint   `json:"ID"`
-				Name string `json:"Name"`
-			} `json:"secrets"`
-		}
-		path := fmt.Sprintf("/api/v1/secrets?environment=%s&page_size=1000&page=1", url.QueryEscape(env))
-		if err := rc.Get(ctx, path, &list); err != nil {
-			return "", fmt.Errorf("list secrets in %q: %w", env, err)
-		}
-		var id uint
-		for _, s := range list.Secrets {
-			if strings.EqualFold(s.Name, name) {
-				id = s.ID
-				break
-			}
-		}
-		if id == 0 {
-			return "", fmt.Errorf("secret %q not found in environment %q", name, env)
-		}
-		var vb struct {
-			Value string `json:"value"`
-		}
-		if err := rc.Get(ctx, fmt.Sprintf("/api/v1/secrets/%d?include_value=true", id), &vb); err != nil {
-			return "", fmt.Errorf("read value: %w", err)
-		}
-		return vb.Value, nil
+// renderRemote calls the project-scoped server-side template renderer
+// (POST /api/v1/projects/{id}/secrets/render), which resolves every
+// ${secret:<environment>/<name>} reference within projectID under the
+// caller's own read permissions — the environment name is looked up within
+// THIS project only, so a same-named environment/secret in another project
+// can never be substituted. Split out from the command so it can be
+// exercised against an httptest server.
+func renderRemote(ctx context.Context, rc *common.RemoteClient, projectID uint, tmpl string) (string, error) {
+	var resp struct {
+		Rendered string `json:"rendered"`
 	}
-}
-
-// splitSecretRef splits "<environment>/<name>"; the name may contain further slashes.
-func splitSecretRef(ref string) (env, name string, err error) {
-	ref = strings.TrimSpace(ref)
-	i := strings.IndexByte(ref, '/')
-	if i <= 0 || i == len(ref)-1 {
-		return "", "", fmt.Errorf("invalid reference %q: expected \"<environment>/<name>\"", ref)
+	body := map[string]string{"template": tmpl}
+	path := fmt.Sprintf("/api/v1/projects/%d/secrets/render", projectID)
+	if err := rc.Post(ctx, path, body, &resp); err != nil {
+		return "", fmt.Errorf("render template: %w", err)
 	}
-	return ref[:i], ref[i+1:], nil
+	return resp.Rendered, nil
 }
