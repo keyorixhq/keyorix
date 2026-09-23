@@ -40,20 +40,25 @@ import (
 // compare against this, not the pre-encoding fuzz input, or a perfectly
 // valid accept gets misreported as "wrong identity".
 // boundaryMargin is how far past the verifier's clock-skew leeway an
-// exp/nbf violation is pushed. Originally 1 second — flaky under real fuzzing
-// load: golang-jwt's exp/nbf checks always use real wall-clock time (neither
-// oidc.go nor sso.go calls jwt.WithTimeFunc), so the gap between this test's
-// `now := time.Now()` and the library's own verification-time now() is not
-// zero, and under -parallel=2 CPU contention (GC pauses, goroutine scheduling
-// delays) that gap occasionally exceeded 1 second — enough to make a token
-// meant to be 1s past the boundary land back inside it, producing a false
-// CONSTRAINT BYPASS (found live: kind=nbf_future_beyond_skew accepted after
-// an 8s fuzz run, testdata/fuzz/FuzzOIDCIDTokenSingleConstraintViolation/de868c9cc60f40dd).
-// 10s is comfortably past any realistic scheduling delay while still testing
-// "the skew is bounded, not unlimited" — the ±1s-at-the-exact-edge case this
-// architecture can't reliably assert without clock injection wired into
-// production code, which nothing here calls for.
-const boundaryMargin = 10 * time.Second
+// exp/nbf violation is pushed. Was widened to 10s (from 1s) because
+// golang-jwt's exp/nbf checks used to always read the real wall clock
+// directly (neither oidc.go nor sso.go called jwt.WithTimeFunc), so the gap
+// between this test's `now := time.Now()` and the library's own
+// verification-time now() was never zero, and under -parallel=2 CPU
+// contention (GC pauses, goroutine scheduling delays) that gap occasionally
+// exceeded 1 second — enough to make a token meant to be 1s past the boundary
+// land back inside it, producing a false CONSTRAINT BYPASS (found live:
+// kind=nbf_future_beyond_skew accepted after an 8s fuzz run, testdata/fuzz/
+// FuzzOIDCIDTokenSingleConstraintViolation/de868c9cc60f40dd).
+//
+// #1983 closed the underlying gap: both fuzz targets below now freeze the
+// verifier's clock (v.setClock / c.SetClockForTesting) to the exact `now`
+// used to build the claims, for the duration of that one Verify call — via
+// jwt.WithTimeFunc, golang-jwt's own exp/nbf/iat-future check reads that same
+// frozen instant instead of a fresh real-time read. With construction-time
+// and verification-time clock reads now byte-identical, the boundary can be
+// asserted precisely again.
+const boundaryMargin = 1 * time.Second
 
 func jsonRoundTripString(s string) string {
 	b, err := json.Marshal(s)
@@ -368,6 +373,12 @@ func FuzzOIDCIDTokenSingleConstraintViolation(f *testing.F) {
 		}
 
 		now := time.Now()
+		// Freeze v's clock to the exact instant the claims below are built
+		// against, so golang-jwt's own exp/nbf/iat-future check (wired via
+		// jwt.WithTimeFunc) and the custom max-age check (effectiveNow) both
+		// see the same "now" Verify was called with — no construction-vs-
+		// verification clock drift left to produce a false boundary result.
+		v.setClock(func() time.Time { return now })
 		claims := oidcSingleConstraintBaseClaims(now, sub, trustedIss, trustedAud)
 		applySharedJWTViolation(kind, claims, now, trustedIss, trustedAud, leeway)
 		applyOIDCOnlyViolation(kind, claims, now, defaultOIDCMaxTokenAge, leeway)
@@ -452,6 +463,9 @@ func FuzzSSOIDTokenSingleConstraintViolation(f *testing.F) {
 		}
 
 		now := time.Now()
+		// Freeze c's clock to the exact instant the claims below are built
+		// against — see the matching comment in FuzzOIDCIDTokenSingleConstraintViolation.
+		c.SetClockForTesting(func() time.Time { return now })
 		claims := ssoSingleConstraintBaseClaims(now, sub, trustedIss, clientID, correctNonce)
 		applySharedJWTViolation(kind, claims, now, trustedIss, clientID, leeway)
 		applySSOOnlyViolation(kind, claims)
