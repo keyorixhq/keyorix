@@ -346,14 +346,27 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 	// the target group holds any role grant -- core.AddUserToGroup's own
 	// ceiling (validateGroupJoinRoles) only fires when the group HAS grants,
 	// which is correct for that layer, but left a role-LESS group with no
-	// caller-authority check on this proxy at all. Not a theoretical gap: a
-	// group holding editor/project_developer (the most powerful non-admin-tier
-	// roles -- secrets.read+write+delete) is a normal, expected
-	// team-management pattern, and group membership is inherited by every
-	// member (GetUserGroupRoleIDsAt) -- so this was reachable as a direct
-	// escalation to full secrets read/write/delete via ANY existing
-	// role-bearing group, using nothing but the narrow, unrelated
-	// system.write permission. Mirrors requireGroupsProxyRolesAssign
+	// caller-authority check on this proxy at all.
+	//
+	// Severity correction (falsified 2026-09-23, against origin/main
+	// pre-fix, TestPrefix_AddGroupMemberProxy_SystemWriteOnly_*): an earlier
+	// pass of this fix's own PR (#1979) claimed this was reachable as a
+	// DIRECT escalation to full secrets read/write/delete via any group
+	// already holding editor/project_developer -- that claim is FALSE.
+	// validateGroupJoinRoles's per-grant loop already calls
+	// requireGranterHoldsRolePermissions for every grant the group HOLDS,
+	// which (even pre-fix, before this PR's source-level baseline change)
+	// loops over the role's own NON-empty permission bundle and refuses a
+	// caller holding none of them -- confirmed empirically both as a human
+	// caller and as an untagged machine relay, both correctly refused
+	// (though with the wrong status code, 500 not 403 -- a separate,
+	// pre-existing defect in this handler's error classification, not a
+	// security bypass). The real, narrower gap this fix closes: a
+	// ROLE-LESS group (validateGroupJoinRoles's outer loop never runs at
+	// all) had no ceiling on this proxy, while the human-facing route
+	// requires roles.assign even then -- an availability/parity gap
+	// (pre-positioning a membership before a later, separately-gated role
+	// grant), not a direct privilege grant. Mirrors requireGroupsProxyRolesAssign
 	// (RestoreGroupProxy's identical fix, above).
 	if err := h.requireGroupsProxyRolesAssign(r); err != nil {
 		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())

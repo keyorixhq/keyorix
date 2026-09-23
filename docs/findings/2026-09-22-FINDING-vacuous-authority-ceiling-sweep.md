@@ -12,13 +12,36 @@ after #1968/#1969/#1970).
 `server/http/system_write_ceiling_walk_test.go` (the F6 allowlist).
 **Status:** source-level fix landed; **8 of 8** probe-confirmed route gaps
 closed (6 by the source fix alone; `AddGroupMemberProxy` and
-`RemoveGroupMemberProxy` needed their own handler-level fix, landed here —
-`AddGroupMemberProxy`'s was mis-scoped as Medium in an earlier pass of this
-same review; see severity correction below). 3 stale/false walk-allowlist
-entries corrected, plus a 4th reclassification (`RemoveGroupMemberProxy`
-moved out of the allowlist into `systemCeilingDenyChecked` now that it
-requires more than blanket `system.write`). Full repo test suite green
-(`go build ./...`, `go test ./internal/... ./server/... ./cmd/...`).
+`RemoveGroupMemberProxy` needed their own handler-level fix, landed here). 3
+stale/false walk-allowlist entries corrected, plus a 4th reclassification
+(`RemoveGroupMemberProxy` moved out of the allowlist into
+`systemCeilingDenyChecked` now that it requires more than blanket
+`system.write`). Full repo test suite green (`go build ./...`,
+`go test ./internal/... ./server/... ./cmd/...`).
+
+**Severity correction (2026-09-23), falsified against a live probe:** an
+earlier pass of this PR claimed `AddGroupMemberProxy` was **Critical** — a
+direct escalation to full `secrets.read`/`write`/`delete` via joining a
+group already holding `editor`/`project_developer`. That claim is **false**,
+confirmed by actually running the exact request (as both a human caller and
+a machine relay) against unmodified `origin/main`, before any of this PR's
+fixes, in an isolated worktree:
+`validateGroupJoinRoles`'s per-grant loop already called
+`requireGranterHoldsRolePermissions` for every grant a group holds, and that
+function's pre-fix per-permission loop — run against `editor`'s real,
+non-empty permission bundle — already refused a caller holding none of
+those permissions. Both probes were refused pre-fix with the exact core
+error `"cannot grant this role: you do not hold permission \"secrets.read\"
+yourself"`; no membership was created; no secrets access resolved
+afterward. The only real pre-fix defect in that exact scenario was a status
+code: `AddGroupMemberProxy`'s error handling returned 500 `STORAGE_ERROR`
+for a correctly-refused permission denial instead of 403, a minor,
+unrelated API-contract issue. **Re-graded to Medium.** See the corrected
+finding below and `server/http/group_editor_escalation_falsification_test.go`
+for the committed regression test (proves the scenario stays refused
+post-fix too, as defense in depth on top of the new unconditional check).
+The fix itself is unchanged and still correct — it closes a real, narrower
+gap (see below) — only the severity claim was wrong.
 
 ## Summary
 
@@ -99,7 +122,7 @@ Each probe sends the request as a `system.write`-only caller (no
 | `CreateMembershipProxy` | **Yes** (source fix) + machine-caller tagging fix | Closed | Creating a project membership with a permission-less role now requires `roles.assign` at the target project. | **Medium-High** |
 | `TransitionMembershipProxy` | **Yes** (source fix) + machine-caller tagging fix | Closed | Every transition (not just `active`) now requires `roles.assign` at the membership's project — `active->revoked`, `provisioned->revoked`, `identity_verified->provisioned` previously had zero authority check, gated only by state-machine legality. An active membership carrying a zero-permission role grants no RBAC-checked capability on its own (permissions are resolved from the role's bundle, which is empty) — the exploitable value pre-fix was in the CEILING being skippable, not in what a zero-permission role itself confers. | **High** (any `system.write` caller could revoke/transition any project's memberships) |
 | `CreateUserWithRoleGrantsProxy` | **Yes** (source fix) + machine-caller tagging fix | Closed | `ValidateRoleGrantAuthority` now requires `users.write` unconditionally. A new account created with empty/zero-permission grants can authenticate but holds no RBAC-checked capability anywhere (a "shell" account) — the exploit's real value pre-fix was bypassing the creator's own authority requirement, not minting a privileged account directly; a subsequent, separately-authorized role grant to that account is a normal, already-gated operation. | **Medium-High** |
-| `AddGroupMemberProxy` | No | **Fixed** this branch | **Severity correction:** an earlier pass of this review called this "Medium (any system.write caller can add arbitrary users to any group)" — that undersold it. `editor`/`project_developer`, the most powerful **non-admin-tier** default roles, both grant `secrets.read` + `secrets.write` + `secrets.delete` (`auth_bootstrap.go`'s `editorPermissions`/`defaultRoles`) — full read/write/delete over the crown-jewel resource. Group role grants are inherited by every member (`GetUserGroupRoleIDsAt`; `validateGroupJoinRoles`'s own doc: "joining a group confers EVERY role the group holds"), and assigning a role to a group instead of individual users is a normal, expected team-management pattern, not a contrived edge case. Pre-fix, a caller holding only `system.write` — documented as grantable to a narrow, unrelated custom role (audit checkpoints, legal holds, risk exceptions, SoD policies, admin job triggers) — could add itself or an accomplice account to ANY existing group, including one already holding `editor`/`project_developer`, and walk away with full secrets read/write/delete on that group's scope. This **is** a direct privilege grant, not a "confers nothing" case. `core.AddUserToGroup`'s own ceiling (`validateGroupJoinRoles`) only fires when the group HAS grants (correct at that layer — the source fix's baseline already closes that case), but nothing mirrored the human-facing route's UNCONDITIONAL `roles.assign` requirement (`RequirePermission(permRolesAssign)`, global scope, router.go) for a role-LESS group, which is exactly the gap that made the direct escalation reachable via any ALREADY-privileged group regardless of whether IT specifically has grants at add-time. **Fix:** added the same unconditional `roles.assign`-at-global-scope check the human-facing route already requires, via the existing `requireGroupsProxyRolesAssign` helper (already used by `RestoreGroupProxy` in the same file). | **Critical** (direct privilege escalation to full secrets read/write/delete via any existing role-bearing group, no `roles.assign` required) |
+| `AddGroupMemberProxy` | No | **Fixed** this branch | **Falsified and re-graded (2026-09-23):** an earlier pass of this review claimed this was reachable as a direct escalation to full `secrets.read`/`write`/`delete` via joining any group already holding `editor`/`project_developer` (the most powerful non-admin-tier default roles). That claim is FALSE — confirmed by actually running the request pre-fix (see the falsification note above). `validateGroupJoinRoles`'s per-grant loop already called `requireGranterHoldsRolePermissions` for every grant a group holds, and its per-permission loop already required the caller to hold each of `editor`'s real, non-empty bundled permissions — a `system.write`-only caller was already refused, both as a human and as an untagged machine relay, both times with `"cannot grant this role: you do not hold permission \"secrets.read\" yourself"`. The REAL, narrower gap: a group with NO role grants at all (`validateGroupJoinRoles`'s outer loop never runs) had no ceiling on this proxy, while the human-facing route requires `roles.assign` unconditionally even then (`RequirePermission(permRolesAssign)`, global scope, router.go) — an availability/parity gap (pre-positioning a membership before a later, separately-gated role grant), not a direct privilege grant. **Fix (unchanged, still correct):** added the same unconditional `roles.assign`-at-global-scope check the human-facing route already requires, via the existing `requireGroupsProxyRolesAssign` helper (already used by `RestoreGroupProxy` in the same file) — this is defense-in-depth on top of `validateGroupJoinRoles`'s own already-adequate per-grant check, not a fix for an escalation that never existed. | **Medium** (parity/pre-positioning gap on a role-less group, not escalation — corrected down from an erroneous Critical claim) |
 | `RemoveGroupMemberProxy` | No | **Fixed** this branch | `core.RemoveUserFromGroup` has no actor-authority ceiling at all by design (target-state guards only, same "removal confers nothing" reasoning as `RemoveMachineRoleProxy`) — but the human-facing route still requires `roles.assign` at global scope unconditionally. Pre-fix, a `system.write`-only caller could silently detach any user from any group — including revoking that user's ONLY path to `secrets.read`/`write`/`delete` if the group holds `editor`/`project_developer`. Not privilege escalation (removal grants nothing), but a real, targeted denial capability: the removed member cannot self-recover, only re-adding them (which itself now requires `roles.assign`, closing the loop) restores the access. **Fix:** same `requireGroupsProxyRolesAssign` check, mirroring the human-facing route. | **Medium** (targeted, repeatable access-denial/tampering capability, not escalation — but real, live access is actually lost, not merely at-risk) |
 
 ## Walk allowlist corrections
@@ -173,6 +196,49 @@ its own conformance test: `CreateInvitationProxy`, `UpdateAccessRequestProxy`,
 `AssignRoleWithExpiryProxy`, `AssignRoleToGroupWithExpiryProxy`,
 `AssignMachineRoleProxy`.
 
+## `actorID == 0 && !actorIsMachine` short-circuit reachability (investigated, not changed)
+
+`requireGranterHoldsRolePermissions`/`requireGranterHoldsRolePermissionsNoBaseline`
+both open with `if actorID == 0 && !actorIsMachine { return nil }` — the
+documented "local CLI / trusted system pseudo-actor" exemption. If any
+HTTP/gRPC path could reach either function with this exact condition while
+representing a real, unresolved/attacker-controlled caller, that would be a
+genuine bypass of the entire baseline+per-permission check landed in this
+PR.
+
+Traced all 16 call sites and their HTTP/gRPC callers. Verdict: **not
+reachable**. Two load-bearing facts, both independently verified by direct
+code read (not just traced by a subagent):
+
+1. `actorID(r)` (`server/http/handlers/catalog.go`) returns `u.UserID` if a
+   `UserContext` exists in the request context, else 0. `isMachineActor(r)`
+   returns `false` when there is no context at all, matching `actorID(r)`'s
+   0 in that same case — but `RequireScopedPermission`/`RequirePermission`
+   (`server/middleware/auth.go`'s `requireUserAndCore`) reject with 401
+   BEFORE calling the handler whenever `GetUserFromContext` returns nil.
+   Every request that actually reaches an authenticated handler is
+   therefore guaranteed to have a non-nil `UserContext` — the "no context"
+   case `actorID(r)`'s 0 could otherwise represent is unreachable past the
+   middleware.
+2. Every `UserContext`/gRPC-interceptor-context construction site (4 total:
+   HTTP session/PAT, HTTP machine, gRPC session/PAT, gRPC machine) sets
+   `UserID`, `MachineIdentityID`, and `ActorType` together, consistently, at
+   one location each — confirmed directly for the HTTP machine path
+   (`machineUserContext`, `server/middleware/auth.go`): `UserID: 0,
+   MachineIdentityID: &mid, ActorType: core.ActorTypeMachine` in the same
+   struct literal. A human session can never produce `UserID==0`; a
+   `UserID==0` context is always tagged machine.
+
+Every call site's `actorIsMachine` argument is derived from the live
+`isMachineActor(r)`/`ActorKind()` value at call time, not a hardcoded
+literal (the one historical instance of that exact bug shape, #PM-006 in
+`groups_members.go`, is already fixed). The only genuine
+`actorID==0 && !actorIsMachine` occurrences are CLI-only
+(`internal/cli/**`, an env-var-driven local-trust sentinel, never
+network-reachable) or internal core-to-core calls using 0 as the documented
+system pseudo-actor for startup/background processes. No code change made
+— none needed.
+
 ## Verification
 
 - Branch rebased onto current `origin/main` (fast-forwarded; no local commits
@@ -188,11 +254,15 @@ its own conformance test: `CreateInvitationProxy`, `UpdateAccessRequestProxy`,
 - `TestSystemCeilingAllowlistVerificationRatchet` red-proofed both ways
   (ratchet-exceeded, missing-test-citation) before landing green; logs
   "allowlist: 3 verified, 40 unverified (ratchet 40)".
-- 5 test fixtures across `groups_s13_test.go`/`handlers_s23_test.go`/`handlers_s35_test.go`
-  needed the established repair (an authenticated actor holding the new
-  ceiling's permission, or — for the two DB-error tests — migrated to the
+- 7 test fixtures across `groups_s13_test.go`/`handlers_s23_test.go`/
+  `handlers_s35_test.go`/`handlers_s11_test.go` needed the established
+  repair (an authenticated actor holding the new ceiling's permission, or —
+  for the two DB-error tests — migrated to the
   `TestRestoreGroupProxy_DBError_S35` SQL-trigger-isolation pattern so the
   500 is proven to come from the targeted write, not the new auth check).
+- `TestGroupEditorEscalationFalsification_HumanCaller_Refused`/
+  `_MachineRelay_Refused` (`server/http/group_editor_escalation_falsification_test.go`):
+  the falsification regression tests, both green post-fix.
 
 ## Not yet done (for review before deciding next steps)
 
