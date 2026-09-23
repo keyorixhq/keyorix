@@ -11,23 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// keyorixRenderStub serves the list + value endpoints the resolver uses.
-func keyorixRenderStub(t *testing.T) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/secrets" && r.URL.Query().Get("environment") == "prod":
-			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":7,"Name":"db-password"},{"ID":9,"Name":"api-key"}]}}`))
-		case r.URL.Path == "/api/v1/secrets/7":
-			_, _ = w.Write([]byte(`{"data":{"value":"s3cr3t"}}`))
-		case r.URL.Path == "/api/v1/secrets/9":
-			_, _ = w.Write([]byte(`{"data":{"value":"k3y"}}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-}
-
 func newRenderClient(t *testing.T, srv *httptest.Server) *common.RemoteClient {
 	t.Helper()
 	t.Setenv("KEYORIX_SERVER", srv.URL)
@@ -37,43 +20,28 @@ func newRenderClient(t *testing.T, srv *httptest.Server) *common.RemoteClient {
 	return rc
 }
 
-func TestRenderWith(t *testing.T) {
-	srv := keyorixRenderStub(t)
+func TestRenderRemote_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/projects/7/secrets/render", r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":{"rendered":"DB_PASSWORD=s3cr3t\nAPI_KEY=k3y\n"}}`))
+	}))
 	defer srv.Close()
 	rc := newRenderClient(t, srv)
 
-	out, err := renderWith(context.Background(), rc,
+	out, err := renderRemote(context.Background(), rc, 7,
 		"DB_PASSWORD=${secret:prod/db-password}\nAPI_KEY=${secret:prod/api-key}\n")
 	require.NoError(t, err)
 	assert.Equal(t, "DB_PASSWORD=s3cr3t\nAPI_KEY=k3y\n", out)
 }
 
-func TestRenderWith_LiteralAndEscape(t *testing.T) {
-	srv := keyorixRenderStub(t)
+func TestRenderRemote_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
 	defer srv.Close()
 	rc := newRenderClient(t, srv)
 
-	out, err := renderWith(context.Background(), rc, "lit=$${secret:prod/db-password} val=${secret:prod/db-password}")
-	require.NoError(t, err)
-	assert.Equal(t, "lit=${secret:prod/db-password} val=s3cr3t", out)
-}
-
-func TestRenderWith_MissingRefFails(t *testing.T) {
-	srv := keyorixRenderStub(t)
-	defer srv.Close()
-	rc := newRenderClient(t, srv)
-
-	_, err := renderWith(context.Background(), rc, "x=${secret:prod/nope}")
+	_, err := renderRemote(context.Background(), rc, 7, "x=${secret:prod/nope}")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestRenderWith_BadRef(t *testing.T) {
-	srv := keyorixRenderStub(t)
-	defer srv.Close()
-	rc := newRenderClient(t, srv)
-
-	_, err := renderWith(context.Background(), rc, "${secret:noslash}")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid reference")
+	assert.Contains(t, err.Error(), "render template")
 }

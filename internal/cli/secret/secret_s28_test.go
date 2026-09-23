@@ -12,7 +12,7 @@
 //   - buildUpdateRequest: fromFile absolute path, fromFile symlink, fromFile happy path
 //   - fetchAccessLog: days > 0 path (covers the query-string branch)
 //   - interactiveUpdate: stdin-driven non-interactive skip (exercises the reader)
-//   - runRender: template file read error, splitSecretRef error branches
+//   - runRender: template file read error
 //   - runDelete: --id and --name both empty (error path)
 //   - collectEntries: both source + file set, neither set
 //   - isPlaceholder: short string branch, placeholder keyword branches
@@ -711,32 +711,6 @@ func TestFetchAccessLog_S28_ZeroDaysNoQuery(t *testing.T) {
 	_, err := fetchAccessLog(context.Background(), rc, 7, 0)
 	require.NoError(t, err)
 	assert.NotContains(t, gotPath, "days=")
-}
-
-// ── splitSecretRef ────────────────────────────────────────────────────────────
-
-func TestSplitSecretRef_S28_ErrorBranches(t *testing.T) {
-	_, _, err := splitSecretRef("")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid reference")
-
-	_, _, err = splitSecretRef("/name")
-	require.Error(t, err)
-
-	_, _, err = splitSecretRef("env/")
-	require.Error(t, err)
-}
-
-func TestSplitSecretRef_S28_Happy(t *testing.T) {
-	env, name, err := splitSecretRef("production/db-password")
-	require.NoError(t, err)
-	assert.Equal(t, "production", env)
-	assert.Equal(t, "db-password", name)
-
-	env2, name2, err := splitSecretRef("staging/path/to/secret")
-	require.NoError(t, err)
-	assert.Equal(t, "staging", env2)
-	assert.Equal(t, "path/to/secret", name2)
 }
 
 // ── collectEntries error paths ────────────────────────────────────────────────

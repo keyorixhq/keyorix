@@ -50,6 +50,10 @@ func TestRunRotate_SuccessWithConfigFile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"rot-proj"}]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/5/environments":
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":50,"name":"production"}]}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":7,"Name":"db-pass"}]}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/secrets/7/rotate":
@@ -65,6 +69,7 @@ func TestRunRotate_SuccessWithConfigFile(t *testing.T) {
 	resetRotateFlags(t)
 	rotateEnv = "production"
 	require.NoError(t, rotateCmd.Flags().Set("value", "new-s3cr3t"))
+	require.NoError(t, rotateCmd.Flags().Set("project", "rot-proj"))
 
 	err := runRotate(rotateCmd, []string{"db-pass"})
 	require.NoError(t, err)
@@ -74,7 +79,14 @@ func TestRunRotate_SuccessWithConfigFile(t *testing.T) {
 
 func TestRunRotate_SecretNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{"secrets":[]}}`))
+		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"rot-proj"}]}}`))
+		case "/api/v1/projects/5/environments":
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":50,"name":"production"}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{"secrets":[]}}`))
+		}
 	}))
 	defer srv.Close()
 
@@ -82,6 +94,7 @@ func TestRunRotate_SecretNotFound(t *testing.T) {
 	resetRotateFlags(t)
 	rotateEnv = "production"
 	require.NoError(t, rotateCmd.Flags().Set("value", "v"))
+	require.NoError(t, rotateCmd.Flags().Set("project", "rot-proj"))
 
 	err := runRotate(rotateCmd, []string{"missing-secret"})
 	require.Error(t, err)
@@ -90,11 +103,16 @@ func TestRunRotate_SecretNotFound(t *testing.T) {
 
 func TestRunRotate_RotateReturns500(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
+		switch {
+		case r.URL.Path == "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":5,"name":"rot-proj"}]}}`))
+		case r.URL.Path == "/api/v1/projects/5/environments":
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":50,"name":"production"}]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":9,"Name":"api-key"}]}}`))
-			return
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
 		}
-		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
@@ -102,6 +120,7 @@ func TestRunRotate_RotateReturns500(t *testing.T) {
 	resetRotateFlags(t)
 	rotateEnv = "production"
 	require.NoError(t, rotateCmd.Flags().Set("value", "x"))
+	require.NoError(t, rotateCmd.Flags().Set("project", "rot-proj"))
 
 	err := runRotate(rotateCmd, []string{"api-key"})
 	require.Error(t, err)
@@ -332,10 +351,10 @@ func TestRunRender_ToFileS3(t *testing.T) {
 		switch r.URL.Path {
 		case "/health":
 			_, _ = w.Write([]byte(`{"status":"healthy"}`))
-		case "/api/v1/secrets":
-			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":1,"Name":"db-pass"}]}}`))
-		case "/api/v1/secrets/1":
-			_, _ = w.Write([]byte(`{"data":{"value":"s3cr3t"}}`))
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":9,"name":"s3-proj"}]}}`))
+		case "/api/v1/projects/9/secrets/render":
+			_, _ = w.Write([]byte(`{"data":{"rendered":"DB=s3cr3t\n"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -343,6 +362,7 @@ func TestRunRender_ToFileS3(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "tok")
+	t.Setenv("KEYORIX_PROJECT", "s3-proj")
 
 	dir := t.TempDir()
 	tplFile := filepath.Join(dir, "template.tpl")
@@ -366,10 +386,10 @@ func TestRunRender_ToStdout(t *testing.T) {
 		switch r.URL.Path {
 		case "/health":
 			_, _ = w.Write([]byte(`{"status":"healthy"}`))
-		case "/api/v1/secrets":
-			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":1,"Name":"db-pass"}]}}`))
-		case "/api/v1/secrets/1":
-			_, _ = w.Write([]byte(`{"data":{"value":"s3cr3t"}}`))
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":9,"name":"s3-proj"}]}}`))
+		case "/api/v1/projects/9/secrets/render":
+			_, _ = w.Write([]byte(`{"data":{"rendered":"DB=s3cr3t\n"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -377,6 +397,7 @@ func TestRunRender_ToStdout(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "tok")
+	t.Setenv("KEYORIX_PROJECT", "s3-proj")
 
 	dir := t.TempDir()
 	tplFile := filepath.Join(dir, "template.tpl")

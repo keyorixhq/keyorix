@@ -717,10 +717,18 @@ func TestRunRender_WriteToFile_S7(t *testing.T) {
 	require.NoError(t, os.WriteFile(tmplFile, []byte("no placeholders here"), 0o600))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{}}`))
+		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"s7-proj"}]}}`))
+		case "/api/v1/projects/1/secrets/render":
+			_, _ = w.Write([]byte(`{"data":{"rendered":"no placeholders here"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
 	}))
 	defer srv.Close()
 	_ = newS7Client(t, srv)
+	t.Setenv("KEYORIX_PROJECT", "s7-proj")
 
 	origOutput := renderOutput
 	t.Cleanup(func() { renderOutput = origOutput })
@@ -1500,37 +1508,6 @@ func TestDisplaySecretsTable_NoSecrets_S7(t *testing.T) {
 	displaySecretsTable(nil, 0, filter)
 }
 
-// ─── splitSecretRef ───────────────────────────────────────────────────────────
-
-func TestSplitSecretRef_Valid_S7(t *testing.T) {
-	env, name, err := splitSecretRef("production/my-db-password")
-	require.NoError(t, err)
-	assert.Equal(t, "production", env)
-	assert.Equal(t, "my-db-password", name)
-}
-
-func TestSplitSecretRef_NameWithSlashes_S7(t *testing.T) {
-	env, name, err := splitSecretRef("staging/nested/path/secret")
-	require.NoError(t, err)
-	assert.Equal(t, "staging", env)
-	assert.Equal(t, "nested/path/secret", name)
-}
-
-func TestSplitSecretRef_NoSlash_S7(t *testing.T) {
-	_, _, err := splitSecretRef("noslash")
-	require.Error(t, err)
-}
-
-func TestSplitSecretRef_LeadingSlash_S7(t *testing.T) {
-	_, _, err := splitSecretRef("/leadingslash")
-	require.Error(t, err)
-}
-
-func TestSplitSecretRef_TrailingSlash_S7(t *testing.T) {
-	_, _, err := splitSecretRef("env/")
-	require.Error(t, err)
-}
-
 // ─── truncateString ───────────────────────────────────────────────────────────
 
 func TestTruncateString_Short_S7(t *testing.T) {
@@ -1613,10 +1590,18 @@ func TestCollectEntries_FileHappyPath_S7(t *testing.T) {
 
 func TestRunRender_ReadFromStdin_S7(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{}}`))
+		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"s7-proj"}]}}`))
+		case "/api/v1/projects/1/secrets/render":
+			_, _ = w.Write([]byte(`{"data":{"rendered":"hello from stdin"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
 	}))
 	defer srv.Close()
 	_ = newS7Client(t, srv)
+	t.Setenv("KEYORIX_PROJECT", "s7-proj")
 
 	// Pipe "hello world" to stdin
 	old := os.Stdin
@@ -1638,10 +1623,18 @@ func TestRunRender_ReadFromStdin_S7(t *testing.T) {
 
 func TestRunRender_NoArgs_ReadFromStdin_S7(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{}}`))
+		switch r.URL.Path {
+		case "/api/v1/projects":
+			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"s7-proj"}]}}`))
+		case "/api/v1/projects/1/secrets/render":
+			_, _ = w.Write([]byte(`{"data":{"rendered":""}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
 	}))
 	defer srv.Close()
 	_ = newS7Client(t, srv)
+	t.Setenv("KEYORIX_PROJECT", "s7-proj")
 
 	// Empty stdin (EOF immediately)
 	old := os.Stdin

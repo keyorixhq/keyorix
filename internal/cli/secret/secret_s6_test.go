@@ -6,7 +6,6 @@
 //   - fetchTrash error path via bad server response
 //   - fetchAccessLog (positive-days path)
 //   - getSecretDescription (PascalCase & snake_case branches, empty desc)
-//   - keyorixResolver (list-error, not-found, value-read-error)
 //   - findAndPlanFix / runFix (dry-run=false apply path)
 //   - displayVersionsJSON (with EncryptionMetadata)
 //   - jsonScalar (object / array / null / number / bool branches)
@@ -27,7 +26,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -145,73 +143,6 @@ func TestGetSecretDescriptionS6_Empty(t *testing.T) {
 	desc, err := getSecretDescription(context.Background(), rc, 42)
 	require.NoError(t, err)
 	assert.Equal(t, "", desc)
-}
-
-// ─── keyorixResolver ──────────────────────────────────────────────────────────
-
-func TestKeyorixResolverS6_ListError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	rc := newS6Client(t, srv)
-	resolver := keyorixResolver(context.Background(), rc)
-	_, err := resolver("production/my-secret")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "list secrets")
-}
-
-func TestKeyorixResolverS6_SecretNotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Return a list with no matching secret name.
-		_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":1,"Name":"other-secret"}]}}`))
-	}))
-	defer srv.Close()
-
-	rc := newS6Client(t, srv)
-	resolver := keyorixResolver(context.Background(), rc)
-	_, err := resolver("production/my-secret")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestKeyorixResolverS6_ValueReadError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/secrets") && r.URL.Query().Get("environment") != "" {
-			// list call — found
-			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":3,"Name":"my-secret"}]}}`))
-			return
-		}
-		// value read call — error
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer srv.Close()
-
-	rc := newS6Client(t, srv)
-	resolver := keyorixResolver(context.Background(), rc)
-	_, err := resolver("production/my-secret")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "read value")
-}
-
-func TestKeyorixResolverS6_InvalidRef(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	rc := newS6Client(t, srv)
-	resolver := keyorixResolver(context.Background(), rc)
-
-	// No slash → invalid ref.
-	_, err := resolver("no-slash")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid reference")
-
-	// Trailing slash only → invalid.
-	_, err = resolver("env/")
-	require.Error(t, err)
 }
 
 // ─── displayVersionsJSON ──────────────────────────────────────────────────────

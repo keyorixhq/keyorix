@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -70,22 +69,11 @@ func resolveProjectIDParam(ctx context.Context, rc *common.RemoteClient, project
 	if projectName == "" {
 		return "", nil
 	}
-	// rc.Get strips the {"data":…} envelope — decode the inner payload directly.
-	var resp struct {
-		Projects []struct {
-			ID   uint   `json:"id"`
-			Name string `json:"name"`
-		} `json:"projects"`
+	id, err := common.ResolveProjectIDRemote(ctx, rc, projectName)
+	if err != nil {
+		return "", err
 	}
-	if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
-		return "", fmt.Errorf("failed to list projects: %w", err)
-	}
-	for _, p := range resp.Projects {
-		if strings.EqualFold(p.Name, projectName) {
-			return fmt.Sprintf("&project_id=%d", p.ID), nil
-		}
-	}
-	return "", fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", projectName)
+	return fmt.Sprintf("&project_id=%d", id), nil
 }
 
 func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
