@@ -1,5 +1,25 @@
 package fuzzutil
 
+// StateEdge/StateEdgeGate/PackTuple/TupleSpace are built and verified (unit
+// tests, red-proof, `go tool nm` symbol count) but NOT wired into any
+// harness in this repo -- measured 2026-09-23 on the core/HTTP sequence
+// harnesses (FuzzCoreOperationSequence, FuzzKeyorixHTTPAPISequence): no
+// benefit. With StateEdge wired in vs. a red-proofed no-op, distinct
+// security-states-reached and rare-tuple time-to-first-reach were
+// statistically indistinguishable (and the no-op condition was equal or
+// slightly faster on several metrics). Root cause: both harnesses' state
+// spaces are shallow enough (360/840 tuples, reached via small-modulo op
+// selection on mutated bytes within a single ~30-60 step execution) that
+// random sampling enumerates them almost immediately, with or without
+// coverage guidance -- the mechanism never got a chance to demonstrate
+// corpus-retention benefit. Revisit for a harness with genuinely deep,
+// sequence-dependent states (unreachable in one execution by chance alone).
+// If revisited, measure state-reach via the fuzzer's own RETAINED CORPUS
+// (testdata/fuzz/<Target>/, which only grows on judged-new coverage), not
+// via StateReport -- StateReport fires unconditionally on every execution,
+// decoupled from coverage novelty, so it can't distinguish "StateEdge
+// helped" from "StateEdge is a no-op" (this is exactly what the red-proof
+// run demonstrated).
 import "fmt"
 
 //go:generate go run ./gen -k 2048 -out stateedge_gen.go
