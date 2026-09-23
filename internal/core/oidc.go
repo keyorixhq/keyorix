@@ -138,6 +138,15 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}),
 		jwt.WithLeeway(v.leeway),
 		jwt.WithExpirationRequired(),
+		// WithIssuedAt rejects an iat set more than v.leeway into the future
+		// (golang-jwt's verifyIssuedAt: fails iff now < iat-leeway). It does
+		// NOT touch the far-past direction or make iat required — the
+		// existing manual iat-required + max-age check below still owns
+		// that. Without this, a future-dated iat only ever makes the max-age
+		// check's age computation negative, which can never exceed a
+		// positive bound, so nothing rejected it (docs/findings/
+		// 2026-09-23-FINDING-oidc-future-iat-and-crit.md).
+		jwt.WithIssuedAt(),
 	)
 
 	keyfunc := func(token *jwt.Token) (interface{}, error) {
@@ -158,6 +167,12 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 	}
 	if !token.Valid {
 		return "", "", fmt.Errorf("oidc token invalid")
+	}
+	// RFC 7515 §4.1.11: a recipient MUST reject a JWS whose "crit" header
+	// names an extension it doesn't understand. This verifier understands
+	// none, so ANY crit header — regardless of what it names — is rejected.
+	if _, hasCrit := token.Header["crit"]; hasCrit {
+		return "", "", fmt.Errorf("oidc token has an unrecognized crit header")
 	}
 
 	trust, ok := v.issuers[claims.Issuer]
