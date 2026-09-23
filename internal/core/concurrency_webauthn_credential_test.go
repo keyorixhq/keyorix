@@ -35,7 +35,7 @@ import (
 // production single-process case. Run with -race.
 func TestConcurrency_WebAuthnPersistUpdatedCredential_NoStaleCounterRegression(t *testing.T) {
 	t.Parallel()
-	dsn := "file:" + filepath.Join(t.TempDir(), "webauthn.db") + "?_busy_timeout=10000&_journal_mode=WAL"
+	dsn := "file:" + filepath.Join(t.TempDir(), "webauthn.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.WebAuthnCredential{}))
@@ -102,7 +102,7 @@ func TestConcurrency_WebAuthnPersistUpdatedCredential_NoStaleCounterRegression(t
 // transaction re-reads the row's current counter and skips the write.
 func TestConcurrency_WebAuthnPersistUpdatedCredential_StaleWriteAfterWinnerIsRejected(t *testing.T) {
 	t.Parallel()
-	dsn := "file:" + filepath.Join(t.TempDir(), "webauthn2.db") + "?_busy_timeout=10000&_journal_mode=WAL"
+	dsn := "file:" + filepath.Join(t.TempDir(), "webauthn2.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.WebAuthnCredential{}))
