@@ -41,20 +41,29 @@ func TestOIDCSSODifferential_SingleConstraintViolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, err := NewOIDCVerifier(
-		[]OIDCTrustedIssuer{{Issuer: oidcIss, Audiences: []string{oidcAud}}},
-		staticResolver{kid: trustedKid, key: &key.PublicKey},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := &KeyorixCore{now: time.Now, ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey}}
 	p := &SSOProvider{Name: "okta", Issuer: ssoIss, ClientID: ssoClientID}
 
 	for _, kind := range sharedJWTViolationKinds {
 		kind := kind
 		t.Run("kind="+kind.String(), func(t *testing.T) {
+			// Pin each verifier's clock to this subtest's own `now` — see the
+			// matching comment in jwt_single_constraint_fuzz_test.go's
+			// FuzzOIDCIDTokenSingleConstraintViolation. Needed here too: this
+			// test exercises the same boundaryMargin=1s exp/nbf edge cases via
+			// t.Errorf (gating, not report-only), so a construction-vs-
+			// verification clock drift under load could produce the same
+			// false-negative flake the fuzz targets had before #1983.
 			now := time.Now()
+			v, err := NewOIDCVerifier(
+				[]OIDCTrustedIssuer{{Issuer: oidcIss, Audiences: []string{oidcAud}}},
+				staticResolver{kid: trustedKid, key: &key.PublicKey},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.setClock(func() time.Time { return now })
+			c := &KeyorixCore{now: time.Now, ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey}}
+			c.SetClockForTesting(func() time.Time { return now })
 
 			oidcClaims := oidcSingleConstraintBaseClaims(now, "sa-differential", oidcIss, oidcAud)
 			applySharedJWTViolation(kind, oidcClaims, now, oidcIss, oidcAud, oidcClockSkew)
