@@ -171,13 +171,13 @@ func Worlds(tb testing.TB, schemaPrefix, sqliteDSN string, sqliteMaxOpenConns in
 func (w *World) Reset(tables []string) error {
 	switch w.Backend {
 	case BackendPostgres:
-		stmt := "TRUNCATE TABLE " + strings.Join(tables, ", ") + " CASCADE"
+		stmt := "TRUNCATE TABLE " + strings.Join(tables, ", ") + " CASCADE" // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tables is always a hardcoded []string literal from a test file (coreSeqResetTables/secretWorldDBTables/sweepDBTables), never fuzzer/external input; SQL doesn't support parameterizing table identifiers anyway
 		if err := w.DB.Exec(stmt).Error; err != nil {
 			return fmt.Errorf("[postgres] reset tables %v: %w", tables, err)
 		}
 	default:
 		for _, tbl := range tables {
-			if err := w.DB.Exec("DELETE FROM " + tbl).Error; err != nil {
+			if err := w.DB.Exec("DELETE FROM " + tbl).Error; err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tbl ranges over the same hardcoded, test-file-only table list as the TRUNCATE branch above, never external input
 				return fmt.Errorf("[sqlite] delete from %s: %w", tbl, err)
 			}
 		}

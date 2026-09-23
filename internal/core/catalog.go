@@ -360,14 +360,26 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 		// though this loop is meant to be non-fatal. Found reviewing PR #1996
 		// before merge — SQLite-only fault-fuzz validation stayed green despite
 		// this, since SQLite has no equivalent transaction-abort behavior.
+		//
+		// A panic from the same call is recovered too (found live by
+		// FuzzStorageFaultOperations, same class as CreateUser's seeding in
+		// users.go): without it, a panic would propagate out to the Recovery
+		// middleware and misreport the create as a failed request (oracle (a)).
 		for _, envName := range defaultEnvironmentNames {
 			envName := envName
-			if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
-				_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
-				return err
-			}); err != nil {
-				log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
-			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("Warning: project %d (%s) created without its default environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+					}
+				}()
+				if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+					_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
+					return err
+				}); err != nil {
+					log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
+				}
+			}()
 		}
 		return nil
 	})
@@ -496,14 +508,23 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 		}
 		for _, envName := range envNames {
 			envName := envName
-			if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
-				_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
-				return err
-			}); err != nil {
-				// Non-fatal, same rationale as CreateProject's default-environment
-				// seeding above — but must be observable, not silently discarded.
-				log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
-			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// Panic recovery, same rationale as CreateProject's
+						// default-environment seeding above.
+						log.Printf("Warning: project %d (%s) created without requested environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+					}
+				}()
+				if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+					_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
+					return err
+				}); err != nil {
+					// Non-fatal, same rationale as CreateProject's default-environment
+					// seeding above — but must be observable, not silently discarded.
+					log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
+				}
+			}()
 		}
 		return nil
 	})
