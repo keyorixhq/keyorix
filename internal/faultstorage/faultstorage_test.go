@@ -14,9 +14,9 @@ import (
 
 // newFaultTestReal builds a fresh in-memory SQLite-backed storage.Storage, plus
 // the raw *gorm.DB so tests can assert on real row state directly rather than
-// through the interface under test. Each test gets its own DB, mirroring the
-// repo-wide fuzzworld_test.go convention of a fresh world per test rather than a
-// shared+reset one.
+// through the interface under test. Each test gets its own DB — a fresh world
+// per test rather than a shared+reset one (unlike the fuzzers built on
+// internal/testutil/fuzzworld, which reuse one world per testing.F).
 func newFaultTestReal(t *testing.T) (storage.Storage, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

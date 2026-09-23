@@ -10,22 +10,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
+	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 )
 
-// coreSeqModels is the migration set for FuzzCoreOperationSequence's world.
-var coreSeqModels = []any{
-	&models.Project{}, &models.Environment{},
-	&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessSchedule{},
-	&models.ShareRecord{}, &models.SecretACL{},
-	&models.User{}, &models.Group{}, &models.UserGroup{},
-	&models.Role{}, &models.Permission{}, &models.RolePermission{},
-	&models.UserRole{}, &models.GroupRole{},
-	&models.SoDPolicy{}, &models.AuditEvent{}, &models.Session{},
-}
-
-// coreSeqResetTables is the explicit, hand-named table list fuzzCoreResetTables
+// coreSeqResetTables is the explicit, hand-named table list fuzzworld.World.Reset
 // clears between iterations that reuse the same per-worker world (see
-// fuzzworld_test.go's RESET SCOPE note). Dependent-first order.
+// fuzzworld.World.Reset for why it is hand-named). Dependent-first order.
 var coreSeqResetTables = []string{
 	"role_permissions", "user_roles", "group_roles", "user_groups",
 	"secret_versions", "secret_access_schedules", "share_records", "secret_acls", "secret_nodes",
@@ -78,10 +68,12 @@ func FuzzCoreOperationSequence(f *testing.F) {
 	// principal user IDs the fuzzer drives (none is admin; none owns a secret).
 	principals := []uint{2, 3, 4}
 
-	newWorld := func(t *testing.T, w *fuzzCoreDBWorld) (*KeyorixCore, *store.LocalStorage, uint, uint) {
+	newWorld := func(t *testing.T, w *fuzzworld.World) (*KeyorixCore, *store.LocalStorage, uint, uint) {
 		t.Helper()
-		fuzzCoreResetTables(t, w, coreSeqResetTables)
-		db := w.db
+		if err := w.Reset(coreSeqResetTables); err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		db := w.DB
 		ls := store.NewLocalStorage(db)
 		ctx := context.Background()
 
@@ -137,9 +129,12 @@ func FuzzCoreOperationSequence(f *testing.F) {
 		return s.ID, true
 	}
 
-	// Built ONCE per testing.F, before f.Fuzz -- see fuzzworld_test.go's PERFORMANCE note.
-	// SQLite always; PostgreSQL too when KEYORIX_TEST_PG_DSN is set.
-	worlds := buildFuzzCoreDBWorlds(f, "coreseqfuzz", coreSeqModels)
+	// Built ONCE per testing.F, before f.Fuzz (internal/testutil/fuzzworld): opening and
+	// migrating a fresh DB per iteration was the dominant per-input cost.
+	// SetMaxOpenConns(1): a plain ":memory:" DSN gives each pooled connection its own DB.
+	// SQLite always; PostgreSQL too when KEYORIX_TEST_PG_DSN is set. Full production schema
+	// (fuzzworld.Bootstrap, #1947), not an AutoMigrate-only subset.
+	worlds := fuzzworld.Worlds(f, "coreseqfuzz", ":memory:", 1)
 
 	f.Add([]byte{0, 0, 1, 0, 3, 0, 2, 0, 3, 0})
 	f.Add([]byte{0, 1, 3, 1, 1, 1, 3, 4, 2, 1, 3, 4})
@@ -154,8 +149,8 @@ func FuzzCoreOperationSequence(f *testing.F) {
 }
 
 func runCoreSeqIteration(
-	t *testing.T, w *fuzzCoreDBWorld, program []byte,
-	newWorld func(*testing.T, *fuzzCoreDBWorld) (*KeyorixCore, *store.LocalStorage, uint, uint),
+	t *testing.T, w *fuzzworld.World, program []byte,
+	newWorld func(*testing.T, *fuzzworld.World) (*KeyorixCore, *store.LocalStorage, uint, uint),
 	createSecret func(*testing.T, *KeyorixCore, uint, uint, string, []byte) (uint, bool),
 	principals []uint, adminRoleID, readerRoleID, adminUserID uint,
 ) {
