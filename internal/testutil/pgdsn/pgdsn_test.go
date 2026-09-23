@@ -33,6 +33,81 @@ func TestPGSearchPathDSN_URLWithQuery(t *testing.T) {
 	}
 }
 
+func TestPGReplaceDBName_KeywordValue(t *testing.T) {
+	got := PGReplaceDBName("host=localhost port=5432 dbname=x user=y sslmode=disable", "newdb")
+	want := "host=localhost port=5432 dbname=newdb user=y sslmode=disable"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestPGReplaceDBName_KeywordValueNoDBName(t *testing.T) {
+	got := PGReplaceDBName("host=localhost port=5432 user=y sslmode=disable", "newdb")
+	want := "host=localhost port=5432 user=y sslmode=disable dbname=newdb"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestPGReplaceDBName_URLNoQuery(t *testing.T) {
+	got := PGReplaceDBName("postgres://user:pass@localhost:5432/db", "newdb")
+	want := "postgres://user:pass@localhost:5432/newdb"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestPGReplaceDBName_URLWithQuery(t *testing.T) {
+	got := PGReplaceDBName("postgresql://user:pass@localhost:5432/db?sslmode=disable", "newdb")
+	want := "postgresql://user:pass@localhost:5432/newdb?sslmode=disable"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestPGReplaceDBName_URLConnects is the red-proof: before this fix, the
+// naive `strings.Fields`-based dbname= swap used verbatim in
+// postgres_pk_rebuild_helpers_test.go silently appended a bogus trailing
+// " dbname=..." token to a URL-style DSN instead of replacing the path — a
+// no-op that left every "isolated" test pointed at the same shared base
+// database. This proves PGReplaceDBName's output actually connects to a
+// database named newName, for a URL DSN specifically.
+func TestPGReplaceDBName_URLConnects(t *testing.T) {
+	base := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if base == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set — skipping live Postgres connectivity check")
+	}
+
+	admin, err := gorm.Open(postgres.Open(base), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("open admin (base DSN as given): %v", err)
+	}
+	const dbName = "pgdsn_selftest_replacedbname"
+	_ = admin.Exec("DROP DATABASE IF EXISTS " + dbName + " WITH (FORCE)").Error
+	if err := admin.Exec("CREATE DATABASE " + dbName).Error; err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	t.Cleanup(func() {
+		cleaner, cerr := gorm.Open(postgres.Open(base), &gorm.Config{Logger: logger.Discard})
+		if cerr == nil {
+			_ = cleaner.Exec("DROP DATABASE IF EXISTS " + dbName + " WITH (FORCE)").Error
+		}
+	})
+
+	scoped := PGReplaceDBName(base, dbName)
+	db, err := gorm.Open(postgres.Open(scoped), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("open scoped DSN %q: %v", scoped, err)
+	}
+	var currentDB string
+	if err := db.Raw("SELECT current_database()").Scan(&currentDB).Error; err != nil {
+		t.Fatalf("select current_database(): %v", err)
+	}
+	if currentDB != dbName {
+		t.Fatalf("current_database() = %q, want %q — dbname was not replaced", currentDB, dbName)
+	}
+}
+
 // TestPGSearchPathDSN_URLConnects is the red-proof: before this fix, the naive
 // `base + " search_path=" + schema` concatenation — used verbatim in
 // backend_differential_fuzz_test.go and 7 sibling files — fails to even open a
