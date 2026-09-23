@@ -40,6 +40,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -75,23 +76,26 @@ type apiFuzzWorld struct {
 }
 
 // buildAPIFuzzWorldSQLite and buildAPIFuzzWorldPostgres build the full rich
-// apiFuzzWorld on top of a bare *gorm.DB from fuzzworld_test.go's
-// apiFuzzDBWorldSQLite/apiFuzzDBWorldPostgres. buildAPIFuzzWorlds returns the
+// apiFuzzWorld on top of a bare *gorm.DB from internal/testutil/fuzzworld
+// (OpenSQLite/OpenPostgres). The rich-world construction (router, core,
+// principals, secrets) is itself the expensive once-per-backend step here,
+// so unlike the core/encryption fuzzers this one does not use
+// fuzzworld.Worlds/World.Reset. buildAPIFuzzWorlds returns the
 // SQLite world (always) plus the PostgreSQL world (when KEYORIX_TEST_PG_DSN
 // is set) as a slice callers range over -- one iteration of the fuzz body
 // per world.
 func buildAPIFuzzWorldSQLite(f *testing.F) *apiFuzzWorld {
 	f.Helper()
-	return buildAPIFuzzWorld(f, "sqlite", apiFuzzDBWorldSQLite(f))
+	return buildAPIFuzzWorld(f, fuzzworld.BackendSQLite, fuzzworld.OpenSQLite(f, uniqueMemDSN("&_timeout=30000&_journal_mode=WAL"), 1))
 }
 
 func buildAPIFuzzWorldPostgres(f *testing.F, schemaPrefix string) *apiFuzzWorld {
 	f.Helper()
-	db := apiFuzzDBWorldPostgres(f, schemaPrefix)
+	db := fuzzworld.OpenPostgres(f, schemaPrefix)
 	if db == nil {
 		return nil
 	}
-	return buildAPIFuzzWorld(f, "postgres", db)
+	return buildAPIFuzzWorld(f, fuzzworld.BackendPostgres, db)
 }
 
 func buildAPIFuzzWorlds(f *testing.F, schemaPrefix string) []*apiFuzzWorld {

@@ -36,7 +36,7 @@ package encryption
 // default (the same dialect sweep_test.go uses), so the whole thing is CI-runnable with no
 // external dependency; the committed rows survive the simulated (panic) crash because the
 // in-memory DB handle outlives it, exactly as a real on-disk DB's committed rows would.
-// PostgreSQL runs too whenever KEYORIX_TEST_PG_DSN is set (see fuzzworld_test.go) — this is
+// PostgreSQL runs too whenever KEYORIX_TEST_PG_DSN is set (see internal/testutil/fuzzworld) — this is
 // the one member of the crash-consistency trilogy with a real DB transaction in its
 // durability model (RotateDEKWithSweep's sweepFn does BEGIN…re-encrypt…COMMIT around the
 // re-encryption sweep, service_rotation.go), so it's the one where SQLite's single-connection
@@ -57,11 +57,12 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 )
 
-// sweepDBTables is the explicit, hand-named set of tables fuzzResetTables clears between
-// fuzz iterations that reuse the same per-worker DB world (see fuzzworld_test.go's RESET
-// SCOPE note for why this is a named list, not derived from the migrated model set).
+// sweepDBTables is the explicit, hand-named set of tables fuzzworld.World.Reset clears between
+// fuzz iterations that reuse the same per-worker DB world (see World.Reset's doc
+// for why this is a named list, not derived from the migrated model set).
 // Dependent-first order: secret_versions before secret_nodes (FK). system_metadata is
 // included deliberately — it holds RotateDEKWithSweep's redo marker
 // (dekRotationPromotePendingKey, service_rotation.go), and every iteration here
@@ -97,9 +98,10 @@ var sweepCrashLabels = []string{
 }
 
 func FuzzDEKSweepCrashConsistency(f *testing.F) {
-	// Built ONCE per testing.F, before f.Fuzz — see fuzzworld_test.go's PERFORMANCE note.
+	// Built ONCE per testing.F, before f.Fuzz (internal/testutil/fuzzworld) — reopening and
+	// migrating a DB per iteration was the dominant per-input cost.
 	// SQLite always; PostgreSQL too when KEYORIX_TEST_PG_DSN is set.
-	worlds := buildFuzzDBWorlds(f, "sweepfuzz", []any{
+	worlds := fuzzworld.Worlds(f, "sweepfuzz", ":memory:", 0, []any{
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Session{},
 		&models.APIToken{}, &models.APIClient{}, &models.PasswordReset{},
 		&models.MFASecret{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
@@ -141,7 +143,7 @@ func FuzzDEKSweepCrashConsistency(f *testing.F) {
 			select {
 			case <-done:
 			case <-time.After(sweepGuardDeadline):
-				t.Fatalf("[%s] dek-sweep-crash-consistency exceeded %s — possible hang", w.backend, sweepGuardDeadline)
+				t.Fatalf("[%s] dek-sweep-crash-consistency exceeded %s — possible hang", w.Backend, sweepGuardDeadline)
 			}
 		}
 	})
@@ -179,11 +181,11 @@ func (staticKEKProvider) Name() string { return "test-static" }
 // the availability + value-integrity + confidentiality invariants. It panics on any
 // violation — matching this function's pre-existing convention (it has no *testing.T; it
 // runs on a bare goroutine under FuzzDEKSweepCrashConsistency's hang guard).
-func runSweepCrashCase(w *fuzzDBWorld, dir, pass, valPrefix string, rows int, target string) {
-	if err := fuzzResetTables(w, sweepDBTables); err != nil {
-		panic(fmt.Sprintf("[%s] reset: %v", w.backend, err))
+func runSweepCrashCase(w *fuzzworld.World, dir, pass, valPrefix string, rows int, target string) {
+	if err := w.Reset(sweepDBTables); err != nil {
+		panic(fmt.Sprintf("[%s] reset: %v", w.Backend, err))
 	}
-	db := w.db
+	db := w.DB
 
 	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
 	svc := NewService(cfg, dir)

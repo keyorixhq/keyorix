@@ -235,8 +235,8 @@ func createUserForFuzz(ctx context.Context, w *faultWorld, username string) (uin
 // machineIdentityWireForFuzz mirrors server/http/handlers/machine_identities_proxy.go's
 // unexported machineIdentityProxyWire (fields it round-trips over the wire) —
 // duplicated here rather than exported from the production handler package,
-// consistent with this repo's fuzzworld_test.go convention of a harness owning
-// its own fixture shapes instead of the production package growing a
+// consistent with this repo's convention of a harness owning its own fixture
+// shapes instead of the production package growing a
 // test-only export.
 type machineIdentityWireForFuzz struct {
 	ID             uint   `json:"id"`

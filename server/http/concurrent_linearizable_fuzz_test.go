@@ -101,18 +101,14 @@ import (
 	"time"
 
 	"github.com/anishathalye/porcupine"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
-
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
+	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -148,58 +144,29 @@ type clWorld struct {
 }
 
 var (
-	clRotateSeq  atomic.Int64 // global across all backends/iterations — guarantees every rotated value is unique
-	clSecretSeq  atomic.Int64
-	clPgSchemaID atomic.Int64
+	clRotateSeq atomic.Int64 // global across all backends/iterations — guarantees every rotated value is unique
+	clSecretSeq atomic.Int64
 )
 
 func buildLinearizabilityWorldSQLite(f *testing.F) *clWorld {
 	f.Helper()
+	// A real file DB (not :memory:) with FKs on and a multi-connection pool:
+	// this fuzzer's whole point is concurrent operations, so it deliberately
+	// does not use the single-connection in-memory shape the other fuzzers do.
 	dbPath := filepath.Join(f.TempDir(), "cl.db")
 	dsn := fmt.Sprintf("%s?_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL", dbPath, clSqliteBusyTimeoutMillis)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		f.Fatalf("open sqlite: %v", err)
-	}
-	if sqlDB, e := db.DB(); e == nil {
-		sqlDB.SetMaxOpenConns(clSqliteMaxOpenConns)
-	}
-	return buildLinearizabilityWorld(f, "sqlite", db)
+	return buildLinearizabilityWorld(f, fuzzworld.BackendSQLite, fuzzworld.OpenSQLite(f, dsn, clSqliteMaxOpenConns))
 }
 
 // buildLinearizabilityWorldPostgres returns nil (not a skip) when
 // KEYORIX_TEST_PG_DSN is unset — the caller decides whether that's fine.
 func buildLinearizabilityWorldPostgres(f *testing.F) *clWorld {
 	f.Helper()
-	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
-	if dsn == "" {
+	db := fuzzworld.OpenPostgres(f, "cl_fuzz")
+	if db == nil {
 		return nil
 	}
-	n := clPgSchemaID.Add(1)
-	schema := fmt.Sprintf("cl_fuzz_%d_%d", os.Getpid(), n)
-
-	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		f.Fatalf("open postgres (admin): %v", err)
-	}
-	if err := admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error; err != nil {
-		f.Fatalf("drop schema %s: %v", schema, err)
-	}
-	if err := admin.Exec("CREATE SCHEMA " + schema).Error; err != nil {
-		f.Fatalf("create schema %s: %v", schema, err)
-	}
-	f.Cleanup(func() {
-		_ = admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error
-		if sqlDB, e := admin.DB(); e == nil {
-			_ = sqlDB.Close()
-		}
-	})
-
-	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		f.Fatalf("open postgres: %v", err)
-	}
-	return buildLinearizabilityWorld(f, "postgres", db)
+	return buildLinearizabilityWorld(f, fuzzworld.BackendPostgres, db)
 }
 
 func buildLinearizabilityWorld(f *testing.F, backend string, db *gorm.DB) *clWorld {

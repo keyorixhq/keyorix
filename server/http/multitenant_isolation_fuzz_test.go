@@ -12,7 +12,7 @@ package http
 // Neither is a global admin; neither has any grant at the other's scope. Grants are FIXED
 // (never cross-project — that is the boundary under test), so there is no per-iteration
 // grant churn to model. Runs on SQLite always, PostgreSQL too when KEYORIX_TEST_PG_DSN is
-// set (buildAPIFuzzWorlds, api_sequence_fuzz_test.go/fuzzworld_test.go) — the fixed
+// set (buildAPIFuzzWorlds, api_sequence_fuzz_test.go / internal/testutil/fuzzworld) — the fixed
 // alice/bob setup below runs ONCE PER WORLD (not per fuzz iteration), matching this
 // fuzzer's own "no per-iteration grant churn" design.
 //

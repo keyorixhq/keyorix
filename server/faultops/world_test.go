@@ -93,9 +93,8 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		t.Fatal(err)
 	}
 	// Mirrors server/http/integration_test.go's partial-unique-index setup
-	// (production migrations these AutoMigrate skips) — duplicated per this
-	// repo's established fuzzworld_test.go convention of one copy per package
-	// rather than a shared helper (see STEP 0 report).
+	// (production migrations these AutoMigrate skips) — duplicated here rather
+	// than shared (see STEP 0 report).
 	mustExec(t, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
 		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'")
 	mustExec(t, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active "+
