@@ -143,6 +143,23 @@ const sqliteBusyTimeoutMillis = 10000
 //   - _journal_mode=WAL (#465): the default rollback-journal mode blocks readers
 //     during a write and vice versa, increasing SQLITE_BUSY frequency under
 //     concurrent access; WAL lets readers proceed concurrently with a writer.
+//   - _txlock=immediate: SQLite's default BEGIN is DEFERRED — a transaction that
+//     reads first and writes second (e.g. AssignRole's existing-grant check
+//     before its Create) only requests the write lock at that first write
+//     statement, mid-transaction. If another connection committed a write after
+//     this transaction's read snapshot was taken, that lock request returns
+//     SQLITE_BUSY immediately: the busy handler backing _busy_timeout is NEVER
+//     invoked for a lock upgrade (only for an initial lock acquisition, so two
+//     transactions each waiting to upgrade the other's read lock can't
+//     deadlock in the handler) — so a spuriously-failed read-then-write
+//     transaction is possible even with a generous busy_timeout configured.
+//     BEGIN IMMEDIATE claims the write lock upfront, when _busy_timeout's
+//     retry loop is actually consulted, converting that failure mode into an
+//     ordinary bounded wait. Root-caused via TestSessionCacheChokepoint_
+//     CoversEveryVulnerableCallSite flaking on PR #1996's branch (CI runs
+//     35871480798, 35840030029: "grant victim ...: database is locked (5)
+//     (SQLITE_BUSY)" from AssignUserRole) despite _busy_timeout already
+//     being set.
 //
 // Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
 // pragmas, so this is intentionally SQLite-only — never applied to the Postgres
@@ -154,7 +171,7 @@ func sqliteDSN(dbPath string) string {
 		// custom path with embedded pragmas) — append rather than clobber them.
 		sep = "&"
 	}
-	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL", dbPath, sep, sqliteBusyTimeoutMillis)
+	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate", dbPath, sep, sqliteBusyTimeoutMillis)
 }
 
 // gormConfig returns the *gorm.Config shared by every gorm.Open call in this

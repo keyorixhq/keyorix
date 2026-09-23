@@ -115,6 +115,9 @@ import (
 // clSqliteBusyTimeoutMillis / clSqliteMaxOpenConns mirror
 // internal/storage/factory.go's sqliteDSN/defaultMaxOpenConns exactly (see
 // this file's package doc for why matching production's pool matters here).
+// The DSN built below also mirrors sqliteDSN's _txlock=immediate, for the
+// same reason: this fuzzer's whole point is exercising production's real
+// locking behavior under concurrency.
 const (
 	clSqliteBusyTimeoutMillis = 10000
 	clSqliteMaxOpenConns      = 25
@@ -154,7 +157,7 @@ func buildLinearizabilityWorldSQLite(f *testing.F) *clWorld {
 	// this fuzzer's whole point is concurrent operations, so it deliberately
 	// does not use the single-connection in-memory shape the other fuzzers do.
 	dbPath := filepath.Join(f.TempDir(), "cl.db")
-	dsn := fmt.Sprintf("%s?_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL", dbPath, clSqliteBusyTimeoutMillis)
+	dsn := fmt.Sprintf("%s?_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate", dbPath, clSqliteBusyTimeoutMillis)
 	return buildLinearizabilityWorld(f, fuzzworld.BackendSQLite, fuzzworld.OpenSQLite(f, dsn, clSqliteMaxOpenConns))
 }
 
