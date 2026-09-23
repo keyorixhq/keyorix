@@ -24,6 +24,13 @@ func newInactivityCore(store *MockStorage) *KeyorixCore {
 // SuspendUser(ctx, 0, userID) call.
 func stubSuspendCall(store *MockStorage, ctx context.Context, userID uint) {
 	store.On("GetUser", ctx, userID).Return(&models.User{ID: userID, AccountState: AccountActive}, nil)
+	// S1 (CLI-split inventory #2012): the sweep's actorID (0, "system/background
+	// job") is no longer exempt from the admin-rank ceiling -- it fails closed
+	// exactly like an ordinary unprivileged actor, refused against any target
+	// holding a real permission and passed through only for a target holding
+	// none. Every caller of this helper expects SuspendUser to SUCCEED, so the
+	// fixture target here holds no role scopes.
+	store.On("GetUserRoleScopes", ctx, userID).Return([]Scope{}, nil)
 	store.On("SetAccountState", ctx, userID, AccountSuspended, mock.Anything).Return(nil)
 	store.On("ListSessionTokenHashesForUser", ctx, userID).Return([]string{}, nil)
 	// H-2: ALL state transitions collect PAT hashes for cache eviction.
@@ -219,6 +226,9 @@ func TestSuspendInactiveUsers_SuspendError(t *testing.T) {
 	store.On("ListInactiveUsers", ctx, threshold).Return([]*models.User{user}, nil)
 
 	stubNotAdminCalls(store, ctx, 8)
+	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs before the
+	// GetUser error below is ever reached.
+	store.On("GetUserRoleScopes", ctx, uint(8)).Return([]Scope{}, nil)
 	// GetUser (via LockUserForUpdate) returns error — simulates a suspend failure.
 	store.On("GetUser", ctx, uint(8)).Return(nil, errors.New("lock failed"))
 

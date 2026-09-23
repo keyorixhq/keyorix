@@ -11,6 +11,7 @@ package user
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -78,7 +79,12 @@ func TestRunUpdate_Email_SeededDB(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	_, targetID := seedUserDB(t)
+	adminID, targetID := seedUserDB(t)
+	// S1b (CLI-split inventory #2012): the target holds a baseline role
+	// (system.read); assert the actor as the seeded admin so the
+	// admin-rank ceiling core.UpdateUser now enforces doesn't refuse this
+	// otherwise-unprivileged (KEYORIX_CLI_ACTOR unset) local-mode call.
+	t.Setenv("KEYORIX_CLI_ACTOR", strconv.FormatUint(uint64(adminID), 10))
 
 	origID, origU, origE, origD, origA := updateUserID, updateUsername, updateEmail, updateDisplayName, updateActiveStr
 	defer func() {
@@ -106,7 +112,9 @@ func TestRunUpdate_DisplayName_SeededDB(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	_, targetID := seedUserDB(t)
+	adminID, targetID := seedUserDB(t)
+	// S1b (CLI-split inventory #2012): see TestRunUpdate_Email_SeededDB.
+	t.Setenv("KEYORIX_CLI_ACTOR", strconv.FormatUint(uint64(adminID), 10))
 
 	origID, origU, origE, origD, origA := updateUserID, updateUsername, updateEmail, updateDisplayName, updateActiveStr
 	defer func() {
@@ -134,7 +142,9 @@ func TestRunUpdate_Username_SeededDB(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	_, targetID := seedUserDB(t)
+	adminID, targetID := seedUserDB(t)
+	// S1b (CLI-split inventory #2012): see TestRunUpdate_Email_SeededDB.
+	t.Setenv("KEYORIX_CLI_ACTOR", strconv.FormatUint(uint64(adminID), 10))
 
 	origID, origU, origE, origD, origA := updateUserID, updateUsername, updateEmail, updateDisplayName, updateActiveStr
 	defer func() {

@@ -62,7 +62,19 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	u, err := service.UpdateUser(ctx, &core.UpdateUserRequest{
-		ID:          updateUserID,
+		ID: updateUserID,
+		// S1b (CLI-split inventory #2012): unlike its siblings (delete.go,
+		// lifecycle.go, setup_link.go), this command never had a --by flag --
+		// it was the one account-lifecycle command in this package with no
+		// actor attribution at all. common.ResolveActorID() (KEYORIX_CLI_ACTOR)
+		// is the same fallback embedded-mode commands elsewhere in the CLI
+		// already use; the ceiling core.UpdateUser now enforces treats an
+		// unset actor (0) as a system caller and refuses to modify any target
+		// that holds a permission a zero actor can't be shown to hold, so an
+		// unset KEYORIX_CLI_ACTOR now fails closed against a privileged target
+		// instead of silently succeeding. Local mode is removed entirely in
+		// ADR-108 Phase 5, so a dedicated --by flag was not added here.
+		ActorID:     common.ResolveActorID(),
 		Username:    updateUsername,
 		Email:       updateEmail,
 		DisplayName: updateDisplayName,

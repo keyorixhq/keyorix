@@ -293,6 +293,14 @@ func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User)
 // clear fails OPEN (logged once via warnLockoutUnsupportedOnce) rather than erroring
 // the admin — the worst case is the lock merely expires on its own cooldown instead of
 // being cleared early.
+// S1 sweep decision (CLI-split inventory #2012): deliberately NOT ceiling-gated
+// like its siblings (UpdateUser, DeleteUser, RestoreUser, SuspendUser/
+// ReactivateUser/RequirePasswordReset, RevokeUserSessions,
+// ResendAccountSetupLink). Unlocking a login-lockout grants no new access and
+// changes no identity or privilege field -- the target still needs their own
+// real password (or second factor) to actually authenticate. A users.write
+// holder clearing a HIGHER-privileged account's lockout counter early is, at
+// worst, a minor UX favor to that account, not an escalation vector.
 func (c *KeyorixCore) UnlockUser(ctx context.Context, adminID, userID uint) error {
 	if userID == 0 {
 		return fmt.Errorf("user ID is required")

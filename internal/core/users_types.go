@@ -26,8 +26,16 @@ type CreateUserRequest struct {
 }
 
 // UpdateUserRequest represents a request to update an existing user.
+//
+// ActorID is the caller making the change. Zero means "no human actor" (a
+// system/background caller — see the same convention documented on
+// DeleteUser's actorID) and is exempt from the admin-rank ceiling UpdateUser
+// enforces for every other actor; every human-facing caller (HTTP, gRPC, the
+// CLI) must set this to a real, resolved user ID. See UpdateUser's own doc
+// comment (S1, CLI-split inventory #2012).
 type UpdateUserRequest struct {
 	ID          uint
+	ActorID     uint
 	Username    string
 	Email       string
 	DisplayName string

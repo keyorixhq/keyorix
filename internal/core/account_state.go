@@ -251,6 +251,22 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	if userID == 0 {
 		return fmt.Errorf("user ID is required")
 	}
+	// S1 sweep (CLI-split inventory #2012): a non-zero, non-self adminID must
+	// hold the same admin-rank ceiling UpdateUser/DeleteUser/RestoreUser now
+	// enforce -- suspending, reactivating, or forcing a password reset on a
+	// HIGHER-privileged account is the same shape of attack (a users.write
+	// holder acting on a target they don't outrank), just against account
+	// state instead of identity fields. adminID == 0 stays exempt: the
+	// inactivity-suspend sweep (inactivity_suspend.go) calls SuspendUser with
+	// adminID 0 as an explicit system/background caller, and already excludes
+	// global admins itself before reaching this point -- see
+	// requireAdminRankCeilingForTarget's own doc for why 0 means "not a human
+	// decision" rather than "unauthenticated human."
+	if adminID != userID {
+		if err := c.requireAdminRankCeilingForTarget(ctx, adminID, userID, "change the account state of"); err != nil {
+			return err
+		}
+	}
 	c.accountStateMu.Lock()
 	defer c.accountStateMu.Unlock()
 

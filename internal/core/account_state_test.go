@@ -146,6 +146,11 @@ func TestAdminAccountTransitions(t *testing.T) {
 			c := newAccountCore(store)
 			ctx := context.Background()
 			store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, AccountState: AccountActive}, nil)
+			// S1 (CLI-split inventory #2012): setAccountState now calls the
+			// admin-rank ceiling first (actor 1 != target 2) for all three
+			// transitions — the fixture target holds no role scopes, so it
+			// passes trivially.
+			store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
 			store.On("SetAccountState", ctx, uint(2), tc.wantState, mock.Anything).Return(nil)
 			store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 				return e.EventType == tc.event
@@ -321,6 +326,9 @@ func TestRequirePasswordReset_EvictsPATCache(t *testing.T) {
 
 	// LockUserForUpdate delegates to GetUser inside the mock.
 	store.On("GetUser", ctx, userID).Return(&models.User{ID: userID, AccountState: AccountActive}, nil)
+	// S1 (CLI-split inventory #2012): actor 1 != target 5 — the admin-rank
+	// ceiling runs first; the fixture target holds no role scopes.
+	store.On("GetUserRoleScopes", ctx, userID).Return([]Scope{}, nil)
 	store.On("ListSessionTokenHashesForUser", ctx, userID).Return([]string{}, nil)
 	store.On("ListPersonalAccessTokensByUser", ctx, userID).Return([]*models.PersonalAccessToken{
 		{ID: 1, UserID: userID, TokenHash: patHash, Revoked: false},

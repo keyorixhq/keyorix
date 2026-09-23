@@ -72,6 +72,9 @@ func TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction(t *te
 		require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: 0, EnvironmentID: 0}).Error)
 
 		require.NoError(t, db.Create(&models.User{ID: 2, Username: "actingadmin", IsActive: true, AccountState: AccountActive}).Error)
+		// S1 (CLI-split inventory #2012): the acting caller must itself be an
+		// admin for the admin-rank ceiling to permit suspending target 1.
+		require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 0, EnvironmentID: 0}).Error)
 		ctx := WithPATRestriction(context.Background(), &PATRestriction{Permissions: []string{"users.write"}})
 
 		require.NoError(t, c.SuspendUser(ctx, 2, 1),

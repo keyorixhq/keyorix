@@ -188,6 +188,11 @@ func TestStartImpersonation_RejectsAdminTargetForNonAdminCaller(t *testing.T) {
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
+	// S1 sweep (CLI-split inventory #2012): this fixture's "admin" role
+	// deliberately does NOT carry BypassesPermissionChecks — the ceiling's
+	// new bypass check must resolve false here so the (unaffected) #G05
+	// permission-comparison path below still runs.
+	store.On("RoleSetBypassesPermissionChecks", ctx, mock.Anything).Return(false, nil)
 	// #G05: the ceiling now compares the target's ACTUAL bundled permissions
 	// (not the "admin" role name itself) against what the caller can exercise.
 	store.On("GetRolePermissions", ctx, uint(7)).Return([]*models.Permission{{Name: "system.write"}}, nil)
@@ -220,6 +225,11 @@ func TestStartImpersonation_RejectsProjectScopedAdminTargetForNonAdminCaller(t *
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "proj-admin", IsActive: true, AccountState: AccountActive}, nil)
 	// Target (id 2) holds project_admin at project 7 only; caller (id 1) holds nothing.
 	store.On("GetRoleByName", ctx, mock.Anything).Return(&models.Role{ID: 8, Name: "project_admin"}, nil)
+	// This fixture's project_admin role does NOT carry BypassesPermissionChecks
+	// (unlike TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCaller's
+	// role 8) — the ceiling's bypass check must resolve false so the
+	// #G05 permission-comparison path below is what actually refuses.
+	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{8}).Return(false, nil)
 	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{projScope}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(2), projScope).Return([]uint{8}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), projScope).Return([]uint{}, nil)
