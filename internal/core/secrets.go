@@ -182,23 +182,34 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// below, unchanged), while RemoteStorage forwards it over the wire so the real
 	// upstream handler's required "value" field is satisfied and version 1 is created
 	// atomically server-side. Never logged.
-	createdSecret, err := c.storage.CreateSecret(ctx, secret, string(req.Value))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-
-	// Skip the separate version-creation call when the backend already stored the value
-	// atomically as part of CreateSecret itself (RemoteStorage, #499): calling
-	// storeSecretVersion again here would try to mint a conflicting duplicate version 1
-	// against a secret that already has one. LocalStorage never sets ValueStored, so this
-	// call remains exactly as before for it.
-	if !createdSecret.ValueStored {
-		if err := c.storeSecretVersion(ctx, createdSecret, req.Value, 1); err != nil {
-			if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
-				log.Printf("warning: failed to cleanup orphaned secret %d after failed version creation: %v", createdSecret.ID, delErr)
-			}
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	// fix/create-ops-atomicity: the secret row and its version 1 row now share ONE
+	// storage.WithTransaction — a fault (or any real failure) partway through rolls
+	// both back together, so the caller never sees a mix (secret committed, no
+	// version) that neither the pre-create state nor a successful create would
+	// produce. This REPLACES the old compensating DeleteSecret cleanup below: a
+	// rollback achieves the same "as if nothing happened" outcome without a
+	// second best-effort delete that could itself fail and leave the orphan behind.
+	var createdSecret *models.SecretNode
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var err error
+		createdSecret, err = tx.CreateSecret(ctx, secret, string(req.Value))
+		if err != nil {
+			return err
 		}
+		// Skip the separate version-creation call when the backend already stored the
+		// value atomically as part of CreateSecret itself (RemoteStorage, #499): calling
+		// storeSecretVersion again here would try to mint a conflicting duplicate version
+		// 1 against a secret that already has one. LocalStorage never sets ValueStored,
+		// so this call remains exactly as before for it.
+		if !createdSecret.ValueStored {
+			if err := c.storeSecretVersion(ctx, tx, createdSecret, req.Value, 1); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), txErr)
 	}
 
 	// Apply the create-time tags (#390) now that the secret and its first version both

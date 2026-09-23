@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,12 +30,14 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 	grpcserver "github.com/keyorixhq/keyorix/server/grpc"
 	httpserver "github.com/keyorixhq/keyorix/server/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -43,6 +46,84 @@ var memDBSeq atomic.Int64
 
 func uniqueMemDSN() string {
 	return fmt.Sprintf("file:faultops_%d?mode=memory&cache=shared&_timeout=30000&_journal_mode=WAL", memDBSeq.Add(1))
+}
+
+// pgDSNEnv matches CI's own convention (.github/workflows/ci.yml's test-suite
+// job) and every other PG-gated fuzz world in this repo (e.g.
+// server/http/concurrent_linearizable_fuzz_test.go): unset means SQLite-only,
+// set means every world built for the rest of THIS run uses Postgres instead.
+const pgDSNEnv = "KEYORIX_TEST_PG_DSN"
+
+var pgSchemaSeq atomic.Int64
+
+// openWorldDB opens the backend for one world: Postgres (a fresh, uniquely
+// named schema, dropped via t.Cleanup) when pgDSNEnv is set, SQLite otherwise.
+// Called once per newFaultWorld call — twice per fuzz iteration (reference +
+// faulted) — so Postgres runs necessarily create/drop a schema twice per
+// iteration; this is accepted validation-run overhead, not something this
+// harness tries to amortize (unlike buildLinearizabilityWorldPostgres's
+// per-testing.F reuse, newFaultWorld's own contract is a FRESH world per
+// call, RULES-mandated for reproducibility — see the package doc comment).
+func openWorldDB(t *testing.T) (*gorm.DB, string) {
+	t.Helper()
+	dsn := os.Getenv(pgDSNEnv)
+	if dsn == "" {
+		db, err := gorm.Open(sqlite.Open(uniqueMemDSN()), &gorm.Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB.SetMaxOpenConns(1)
+		return db, "sqlite"
+	}
+
+	n := pgSchemaSeq.Add(1)
+	schema := fmt.Sprintf("faultops_%d_%d", os.Getpid(), n)
+
+	// A short-lived admin connection per schema-management call, closed
+	// immediately after use — NOT held open for the world's lifetime. Two
+	// worlds are built per fuzz iteration and -parallel multiplies that
+	// further; holding one admin connection open per world alongside the
+	// real per-world connection doubled simultaneous connections for no
+	// reason and exhausted Postgres's default max_connections (100) under
+	// -parallel >1 (confirmed empirically: "sorry, too many clients already"
+	// after ~8 iterations at -parallel=2 before this fix).
+	pgAdminExec := func(sql string) error {
+		admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if sqlDB, e := admin.DB(); e == nil {
+				_ = sqlDB.Close()
+			}
+		}()
+		return admin.Exec(sql).Error
+	}
+	if err := pgAdminExec("DROP SCHEMA IF EXISTS " + schema + " CASCADE"); err != nil {
+		t.Fatalf("drop schema %s: %v", schema, err)
+	}
+	if err := pgAdminExec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatalf("create schema %s: %v", schema, err)
+	}
+	t.Cleanup(func() {
+		_ = pgAdminExec("DROP SCHEMA IF EXISTS " + schema + " CASCADE")
+	})
+
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(2)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return db, "postgres"
 }
 
 func mustExec(t *testing.T, db *gorm.DB, sql string) {
@@ -80,21 +161,16 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	}
 
 	worldPhase := time.Now()
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN()), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
+	db, backend := openWorldDB(t)
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
 		t.Fatal(err)
 	}
 	// Mirrors server/http/integration_test.go's partial-unique-index setup
-	// (production migrations these AutoMigrate skips) — duplicated here rather
-	// than shared (see STEP 0 report).
+	// (production migrations these AutoMigrate skips) — duplicated per this
+	// repo's established fuzzworld_test.go convention of one copy per package
+	// rather than a shared helper (see STEP 0 report). Standard partial-index
+	// syntax; identical on SQLite and PostgreSQL, same as
+	// buildLinearizabilityWorld's equivalent block.
 	mustExec(t, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
 		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'")
 	mustExec(t, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active "+
@@ -103,7 +179,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'")
 	mustExec(t, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
 		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''")
-	logWorldPhase(t, "sqlite open+migrate+indexes", worldPhase)
+	logWorldPhase(t, backend+" open+migrate+indexes", worldPhase)
 
 	worldPhase = time.Now()
 	real := store.NewLocalStorage(db)

@@ -326,38 +326,68 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 	if err := validateDescription(description); err != nil {
 		return nil, err
 	}
-	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
-	if err != nil {
-		if errors.Is(err, storage.ErrDuplicateProjectName) {
-			return nil, translateProjectNameError(err)
+	// Wrap the project-row create and the default-environment seeding in one
+	// storage.WithTransaction, same pattern as CreateRole/UpdateRole (#1969-class).
+	// This closes the mixed-state half of the fault-fuzz finding (Project committed,
+	// Environment never attempted) — an effect-then-error fault on the FIRST call now
+	// rolls back to old state instead of leaving a mix; a lost-ack-after-commit fault
+	// yields the full new state. Both are old-OR-new, which oracle (d) accepts. Does
+	// NOT close the ambiguous-response half (the client is still told "error" even
+	// when the write commits) — that needs an idempotency key, tracked separately.
+	var project *models.Project
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var err error
+		project, err = tx.CreateProject(ctx, &models.Project{Name: name, Description: description})
+		if err != nil {
+			return err
 		}
-		return nil, fmt.Errorf("failed to create project: %w", err)
-	}
-	// Seed default environments for new project. Non-fatal (found by
-	// fuzz-injecting a CreateEnvironment failure: the comment here used to
-	// say "log and continue" but discarded the error with `_ = err` instead
-	// of actually logging it — the project silently ended up missing one or
-	// more of its expected default environments with zero operator
-	// visibility into why): the project row itself already committed, and a
-	// caller retries environment creation separately if seeding fails, but
-	// this must be OBSERVABLE, not a swallowed error. A panic from the same
-	// call must be recovered too (found live by FuzzStorageFaultOperations,
-	// same class as CreateUser's password-history/system_viewer seeding in
-	// users.go): without it, a panic propagates straight past the
-	// already-committed Project row and out to the real Recovery middleware,
-	// misreporting an already-successful project creation as a failed
-	// request (oracle (a)).
-	for _, envName := range defaultEnvironmentNames {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Warning: project %d (%s) created without its default environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+		// Seed default environments for new project. Non-fatal (found by
+		// fuzz-injecting a CreateEnvironment failure: the comment here used to
+		// say "log and continue" but discarded the error with `_ = err` instead
+		// of actually logging it — the project silently ended up missing one or
+		// more of its expected default environments with zero operator
+		// visibility into why): the project row itself already committed, and a
+		// caller retries environment creation separately if seeding fails, but
+		// this must be OBSERVABLE, not a swallowed error.
+		//
+		// Each seed runs in its OWN nested tx.WithTransaction (a SAVEPOINT on
+		// PostgreSQL, gorm's own nested-transaction support). On PostgreSQL a
+		// FAILED STATEMENT aborts the enclosing transaction at the protocol
+		// level (any later statement errors, and COMMIT downgrades to ROLLBACK,
+		// pgx's ErrTxCommitRollback) — unlike SQLite, which has no such
+		// poisoning. Without the SAVEPOINT, a single faulted CreateEnvironment
+		// call would silently fail the WHOLE project create on Postgres, even
+		// though this loop is meant to be non-fatal. Found reviewing PR #1996
+		// before merge — SQLite-only fault-fuzz validation stayed green despite
+		// this, since SQLite has no equivalent transaction-abort behavior.
+		//
+		// A panic from the same call is recovered too (found live by
+		// FuzzStorageFaultOperations, same class as CreateUser's seeding in
+		// users.go): without it, a panic would propagate out to the Recovery
+		// middleware and misreport the create as a failed request (oracle (a)).
+		for _, envName := range defaultEnvironmentNames {
+			envName := envName
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("Warning: project %d (%s) created without its default environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+					}
+				}()
+				if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+					_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
+					return err
+				}); err != nil {
+					log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
 				}
 			}()
-			if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
-				log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
-			}
-		}()
+		}
+		return nil
+	})
+	if txErr != nil {
+		if errors.Is(txErr, storage.ErrDuplicateProjectName) {
+			return nil, translateProjectNameError(txErr)
+		}
+		return nil, fmt.Errorf("failed to create project: %w", txErr)
 	}
 	return project, nil
 }
@@ -466,28 +496,43 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 			return nil, err
 		}
 	}
-	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
-	if err != nil {
-		if errors.Is(err, storage.ErrDuplicateProjectName) {
-			return nil, translateProjectNameError(err)
+	// Same tx-wrap as CreateProject above, including the per-seed SAVEPOINT
+	// (nested tx.WithTransaction) — a failed CreateEnvironment must not abort the
+	// whole create on PostgreSQL, same reasoning as CreateProject's own loop.
+	var project *models.Project
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var err error
+		project, err = tx.CreateProject(ctx, &models.Project{Name: name, Description: description})
+		if err != nil {
+			return err
 		}
-		return nil, fmt.Errorf("failed to create project: %w", err)
-	}
-	for _, envName := range envNames {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					// Panic recovery, same rationale as CreateProject's
-					// default-environment seeding above.
-					log.Printf("Warning: project %d (%s) created without requested environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+		for _, envName := range envNames {
+			envName := envName
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// Panic recovery, same rationale as CreateProject's
+						// default-environment seeding above.
+						log.Printf("Warning: project %d (%s) created without requested environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+					}
+				}()
+				if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+					_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
+					return err
+				}); err != nil {
+					// Non-fatal, same rationale as CreateProject's default-environment
+					// seeding above — but must be observable, not silently discarded.
+					log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
 				}
 			}()
-			if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
-				// Non-fatal, same rationale as CreateProject's default-environment
-				// seeding above — but must be observable, not silently discarded.
-				log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
-			}
-		}()
+		}
+		return nil
+	})
+	if txErr != nil {
+		if errors.Is(txErr, storage.ErrDuplicateProjectName) {
+			return nil, translateProjectNameError(txErr)
+		}
+		return nil, fmt.Errorf("failed to create project: %w", txErr)
 	}
 	return project, nil
 }

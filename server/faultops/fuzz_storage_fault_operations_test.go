@@ -120,67 +120,22 @@ var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{}
 // because it's decided safe (unlike bestEffortTables/nonLoadBearingAuthzRead,
 // this is NOT auto-accepted as fine) but because forcing a decision here
 // (fix vs. accept) needs a product call this task should not make
-// unilaterally — see the doc comment below for the full trace. Every
-// occurrence still logs loudly (t.Logf, not silently skipped) so it stays
-// visible on every run.
+// unilaterally.
 //
-// REST POST /api/v1/secrets/, CreateSecret, NthCall=1, KindEffectThenError:
-// internal/core/secrets.go's CreateSecret is two storage calls —
-// c.storage.CreateSecret (creates the SecretNode) then c.storeSecretVersion
-// (creates version 1) — and ALREADY has explicit compensating cleanup for the
-// SECOND call failing (`if err := c.storeSecretVersion(...); err != nil { ...
-// c.storage.DeleteSecret(ctx, createdSecret.ID) ... }`, secrets.go). There is
-// NO equivalent handling for the FIRST call: when c.storage.CreateSecret
-// itself returns an error, CreateSecret returns immediately
-// (`if err != nil { return nil, ... }`) — and if that error was itself
-// ambiguous (the real effect committed, e.g. a network blip on the ack, which
-// is exactly what KindEffectThenError models), the caller has NO ID to clean
-// up, because CreateSecret's own return value on that path is (nil, err) —
-// the created node's ID is never surfaced to it. The result: a real,
-// orphaned SecretNode row with zero SecretVersion rows.
-//
-// This is NOT the same defect class as F3 (a swallowed error masking a
-// failure) — the error here is NOT swallowed, it correctly propagates as a
-// failure response. It is a narrower, classic ambiguous-commit gap inherent
-// to any non-idempotent multi-step write without a correlation ID or
-// two-phase commit, and fixing it properly (client-supplied idempotency key,
-// or a reconciliation sweep for zero-version SecretNode rows) is a real
-// design decision, not a small patch — left for product/engineering review,
-// not decided here.
-var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{
-	{op: "REST POST /api/v1/secrets/", method: "CreateSecret", nth: 1},
-	// internal/core/users.go's CreateUser has the identical shape: an
-	// ambiguous commit on c.storage.CreateUser (the FIRST call) returns
-	// immediately, before ever reaching the best-effort AddPasswordHistory
-	// and system_viewer AssignRole calls that follow — leaving a real,
-	// orphaned User row with neither. Same root cause, same "needs a design
-	// decision, not a small patch" conclusion as the CreateSecret entry above.
-	{op: "REST POST /api/v1/users/", method: "CreateUser", nth: 1},
-	// internal/core/catalog.go's CreateProject has the identical shape: an
-	// ambiguous commit on c.storage.CreateProject (the FIRST call) returns
-	// immediately, before ever reaching the default-environment-seeding loop
-	// that follows — leaving a real, orphaned Project row with none of its 3
-	// default environments. CreateProjectWithEnvs (same file) has the
-	// identical shape on its own c.storage.CreateProject call, but isn't
-	// independently reachable through this op's fixed request body
-	// (opcatalog_test.go's "REST POST /api/v1/projects" sends no
-	// `environments` field, so it only ever routes to CreateProject) — noted
-	// here for the next person who wires a second op that does.
-	//
-	// TEMPORARY until #1996 merges; #1996 removes this entry. #1996
-	// (https://github.com/keyorixhq/keyorix/pull/1996) wraps CreateProject's
-	// full multi-step sequence in one storage.WithTransaction, closing the
-	// MIXED-STATE half of this gap (a fault rolls back cleanly to old state,
-	// or the real effect lands as full new state — never a mix), same as it
-	// already does for CreateSecret/CreateUser. "Needs a product decision,
-	// not a small patch" is true only of the OTHER half — the
-	// ambiguous-response problem (the caller still can't tell "failed" apart
-	// from "succeeded, ack lost") — which #1996 deliberately leaves open (see
-	// its docs/adr-draft-request-idempotency-for-create-operations.md); the
-	// mixed-state half this entry exists for is not actually a product
-	// decision, just not yet landed.
-	{op: "REST POST /api/v1/projects", method: "CreateProject", nth: 1},
-}
+// Empty as of fix/create-ops-atomicity
+// (docs/findings/2026-09-23-FINDING-create-ops-ambiguous-commit-mixed-state.md):
+// both entries this list ever held — CreateSecret and CreateUser, NthCall=1 —
+// are now fixed by wrapping each operation's full multi-step sequence in one
+// storage.WithTransaction, closing the MIXED-STATE half of the gap (a fault
+// now rolls back cleanly to old state, or the real effect lands as full new
+// state — never a mix). The AMBIGUOUS-RESPONSE half (the client still can't
+// tell "failed" apart from "succeeded, ack lost") is intentionally NOT closed
+// by this list being empty — see the deferred, unnumbered ADR outline
+// (docs/adr-draft-request-idempotency-for-create-operations.md) for that.
+// FuzzStorageFaultOperations is the regression test for both fixed sites now;
+// if this list gains an entry again, add a docs/findings-style trace exactly
+// like the one this replaces, not a bare tuple.
+var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 
 // opScopedBestEffortTables narrows bestEffortTables' method-only scope to a
 // SPECIFIC (op, method) pair, for a storage method that is best-effort at ONE

@@ -164,7 +164,52 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 	// and CreateUserWithOneTimePassword all populate req.Password with a real, hashable
 	// string before reaching here — see buildUserForCreate above and setup_delivery.go),
 	// and it is never logged.
-	createdUser, err := c.storage.CreateUser(ctx, user, req.Password)
+	// fix/create-ops-atomicity: the user row and its baseline system_viewer role
+	// grant now share ONE storage.WithTransaction, closing the same mixed-state gap
+	// as CreateProject/CreateSecret above — a fault on the CreateUser write itself
+	// rolls back cleanly instead of leaving a user row with an ambiguous role state.
+	// The role-assignment step stays non-fatal INSIDE the transaction (its own
+	// failure/panic must not roll back the user row — same accepted tradeoff as
+	// before, just tx-scoped now), so only a CreateUser failure can trigger rollback.
+	var createdUser *models.User
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var txErr error
+		createdUser, txErr = tx.CreateUser(ctx, user, req.Password)
+		if txErr != nil {
+			return txErr
+		}
+		// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
+		// baseline. Non-fatal (found by fuzz-injecting an AssignRole failure, same
+		// class as CreateProjectWithEnvs's CreateEnvironment fix above): the user
+		// row itself already committed, and both failure modes — a returned error
+		// AND a panic (found separately, by fuzz-injecting a panic on the same
+		// call) — must be OBSERVABLE, not swallowed, even though the user is
+		// still created regardless.
+		//
+		// Runs in its own nested tx.WithTransaction (a SAVEPOINT on PostgreSQL):
+		// on PostgreSQL a failed statement aborts the enclosing transaction at
+		// the protocol level, so an unguarded AssignRole failure would silently
+		// fail the whole CreateUser call, not just the non-fatal role grant —
+		// unlike SQLite, which has no equivalent transaction-abort behavior.
+		// Found reviewing PR #1996 before merge.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: assignment panicked: %v", createdUser.ID, createdUser.Username, r)
+				}
+			}()
+			if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+				role, err := savepoint.GetRoleByName(ctx, "system_viewer")
+				if err != nil {
+					return err
+				}
+				return savepoint.AssignRole(ctx, createdUser.ID, role.ID, Scope{})
+			}); err != nil {
+				log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
+			}
+		}()
+		return nil
+	})
 	if err != nil {
 		// #117: the pre-check above (GetUserByEmail) is a check-then-act read that races
 		// with a concurrent create for the identical email — both can pass it before
@@ -198,26 +243,8 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 			_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
 		}()
 	}
-
-	// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
-	// baseline. Non-fatal (found by fuzz-injecting an AssignRole failure, same
-	// class as CreateProjectWithEnvs's CreateEnvironment fix above): the user
-	// row itself already committed, and both failure modes — a returned error
-	// AND a panic (found separately, by fuzz-injecting a panic on the same
-	// call) — must be OBSERVABLE, not swallowed, even though the user is
-	// still created regardless.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: assignment panicked: %v", createdUser.ID, createdUser.Username, r)
-			}
-		}()
-		if role, err := c.storage.GetRoleByName(ctx, "system_viewer"); err == nil {
-			if err := c.storage.AssignRole(ctx, createdUser.ID, role.ID, Scope{}); err != nil {
-				log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
-			}
-		}
-	}()
+	// Role assignment (system_viewer) now happens INSIDE the WithTransaction above,
+	// alongside the CreateUser write — see the fix/create-ops-atomicity comment there.
 
 	return createdUser, nil
 }
