@@ -163,7 +163,7 @@ func TestBulkDelete_Remote_NamesResolved(t *testing.T) {
 	rc, done := bulkDeleteStub(t, 7, handler)
 	defer done()
 
-	ids, err := resolveNamesToIDs(context.Background(), rc, 7, []string{"alpha", "beta"})
+	ids, err := resolveNamesToIDs(context.Background(), rc, 7, 1, []string{"alpha", "beta"})
 	require.NoError(t, err)
 	require.Len(t, ids, 2)
 	assert.Contains(t, ids, uint(10))
@@ -230,16 +230,19 @@ func TestRunBulkDeleteRemote_WithIDsConfirmed(t *testing.T) {
 
 func TestRunBulkDeleteRemote_NamesWithProjectConfirmed(t *testing.T) {
 	origProject := bulkDeleteProject
+	origEnv := bulkDeleteEnv
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
 	origConfirm := bulkDeleteConfirm
 	t.Cleanup(func() {
 		bulkDeleteProject = origProject
+		bulkDeleteEnv = origEnv
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
 	})
 	bulkDeleteProject = 7
+	bulkDeleteEnv = 1
 	bulkDeleteIDs = nil
 	bulkDeleteNames = []string{"alpha"}
 	bulkDeleteConfirm = true
@@ -251,12 +254,31 @@ func TestRunBulkDeleteRemote_NamesWithProjectConfirmed(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRunBulkDeleteRemote_NamesWithoutEnv(t *testing.T) {
+	origProject := bulkDeleteProject
+	origEnv := bulkDeleteEnv
+	origNames := bulkDeleteNames
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteEnv = origEnv
+		bulkDeleteNames = origNames
+	})
+	bulkDeleteProject = 7
+	bulkDeleteEnv = 0
+	bulkDeleteNames = []string{"foo"}
+
+	// rc is never reached due to early return.
+	err := runBulkDeleteRemote(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--env is required when using --names")
+}
+
 func TestResolveNamesToIDs_NameNotFound(t *testing.T) {
 	rc, done := bulkDeleteStub(t, 7, func(w http.ResponseWriter, r *http.Request) {})
 	defer done()
 
 	// The stub serves alpha(10) and beta(11); "gamma" is not present.
-	_, err := resolveNamesToIDs(context.Background(), rc, 7, []string{"gamma"})
+	_, err := resolveNamesToIDs(context.Background(), rc, 7, 1, []string{"gamma"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gamma")
 }
@@ -444,7 +466,7 @@ func newBulkEmbeddedCore(t *testing.T) *core.KeyorixCore {
 func TestResolveNamesToIDsEmbedded_NotFound(t *testing.T) {
 	svc := newBulkEmbeddedCore(t)
 
-	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, 1, []string{"nonexistent"})
+	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, 1, 1, []string{"nonexistent"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent")
 }
@@ -459,7 +481,7 @@ func TestResolveNamesToIDsEmbedded_Found(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ids, err := resolveNamesToIDsEmbedded(context.Background(), svc, 1, []string{"my-secret"})
+	ids, err := resolveNamesToIDsEmbedded(context.Background(), svc, 1, 1, []string{"my-secret"})
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	assert.Equal(t, s.ID, ids[0])
@@ -487,7 +509,7 @@ func newBulkBrokenCore(t *testing.T) *core.KeyorixCore {
 func TestResolveNamesToIDsEmbedded_ListError(t *testing.T) {
 	svc := newBulkBrokenCore(t)
 
-	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, 1, []string{"any"})
+	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, 1, 1, []string{"any"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list secrets for name resolution")
 }
@@ -514,7 +536,7 @@ func TestRunBulkDeleteEmbedded_NamesResolveError(t *testing.T) {
 	bulkDeleteConfirm = true
 
 	// Call directly with the broken svc to bypass InitializeCoreService.
-	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, bulkDeleteProject, bulkDeleteNames)
+	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, bulkDeleteProject, 1, bulkDeleteNames)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list secrets for name resolution")
 }
@@ -547,7 +569,7 @@ func TestRunBulkDeleteEmbedded_NamesAppendedToIDs(t *testing.T) {
 	bulkDeleteConfirm = true
 
 	// Resolve and confirm the append path fires: resolved ID should equal s.ID.
-	ids, err := resolveNamesToIDsEmbedded(context.Background(), svc, bulkDeleteProject, bulkDeleteNames)
+	ids, err := resolveNamesToIDsEmbedded(context.Background(), svc, bulkDeleteProject, 1, bulkDeleteNames)
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	assert.Equal(t, s.ID, ids[0])
@@ -567,16 +589,19 @@ func TestRunBulkDeleteEmbedded_NamesNotFound(t *testing.T) {
 	isolateBulkDeleteEmbeddedStorage(t)
 
 	origProject := bulkDeleteProject
+	origEnv := bulkDeleteEnv
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
 	origConfirm := bulkDeleteConfirm
 	t.Cleanup(func() {
 		bulkDeleteProject = origProject
+		bulkDeleteEnv = origEnv
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
 	})
 	bulkDeleteProject = 1
+	bulkDeleteEnv = 1
 	bulkDeleteIDs = nil
 	bulkDeleteNames = []string{"does-not-exist"}
 	bulkDeleteConfirm = true
@@ -622,16 +647,19 @@ locale:
 	require.NoError(t, err)
 
 	origProject := bulkDeleteProject
+	origEnv := bulkDeleteEnv
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
 	origConfirm := bulkDeleteConfirm
 	t.Cleanup(func() {
 		bulkDeleteProject = origProject
+		bulkDeleteEnv = origEnv
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
 	})
 	bulkDeleteProject = proj.ID
+	bulkDeleteEnv = env.ID
 	bulkDeleteIDs = nil
 	bulkDeleteNames = []string{"by-name-secret"}
 	bulkDeleteConfirm = true
@@ -733,16 +761,19 @@ func TestRunBulkDelete_RemotePath(t *testing.T) {
 // return inside runBulkDeleteRemote (line 86-88).
 func TestRunBulkDeleteRemote_ResolveNamesError(t *testing.T) {
 	origProject := bulkDeleteProject
+	origEnv := bulkDeleteEnv
 	origIDs := bulkDeleteIDs
 	origNames := bulkDeleteNames
 	origConfirm := bulkDeleteConfirm
 	t.Cleanup(func() {
 		bulkDeleteProject = origProject
+		bulkDeleteEnv = origEnv
 		bulkDeleteIDs = origIDs
 		bulkDeleteNames = origNames
 		bulkDeleteConfirm = origConfirm
 	})
 	bulkDeleteProject = 7
+	bulkDeleteEnv = 1
 	bulkDeleteIDs = nil
 	bulkDeleteNames = []string{"unknown-secret"}
 	bulkDeleteConfirm = true
@@ -816,7 +847,7 @@ func TestResolveNamesToIDs_GetError(t *testing.T) {
 	require.True(t, ok)
 	defer srv.Close()
 
-	_, err := resolveNamesToIDs(context.Background(), rc, 7, []string{"any"})
+	_, err := resolveNamesToIDs(context.Background(), rc, 7, 1, []string{"any"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list secrets for name resolution")
 }

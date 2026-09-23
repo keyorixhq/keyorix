@@ -42,20 +42,22 @@ var bulkDeleteCmd = &cobra.Command{
 	Long: `Delete one or more secrets in a project in a single call.
 
 Pass secret IDs directly with --ids, or resolve by name with --names (requires
---project for name resolution). --confirm is mandatory for the deletion to
-proceed; without it the command prints what would be deleted and exits.
+--project and --env — a secret name is only unique within one project's
+environment, not across the whole project). --confirm is mandatory for the
+deletion to proceed; without it the command prints what would be deleted and
+exits.
 
   keyorix secret bulk-delete --ids 1,2,3 --confirm
-  keyorix secret bulk-delete --names s1,s2,s3 --project 7 --confirm`,
+  keyorix secret bulk-delete --names s1,s2,s3 --project 7 --env 3 --confirm`,
 	SilenceUsage: true,
 	RunE:         runBulkDelete,
 }
 
 func init() {
 	bulkDeleteCmd.Flags().UintVar(&bulkDeleteProject, "project", 0, "Project ID (required for --names and for cross-project guard)")
-	bulkDeleteCmd.Flags().UintVar(&bulkDeleteEnv, "env", 0, "Environment ID")
+	bulkDeleteCmd.Flags().UintVar(&bulkDeleteEnv, "env", 0, "Environment ID (required for --names)")
 	bulkDeleteCmd.Flags().UintSliceVar(&bulkDeleteIDs, "ids", nil, "Comma-separated secret IDs to delete")
-	bulkDeleteCmd.Flags().StringSliceVar(&bulkDeleteNames, "names", nil, "Comma-separated secret names to delete (requires --project)")
+	bulkDeleteCmd.Flags().StringSliceVar(&bulkDeleteNames, "names", nil, "Comma-separated secret names to delete (requires --project and --env)")
 	bulkDeleteCmd.Flags().BoolVar(&bulkDeleteConfirm, "confirm", false, "Required to actually delete (omit to preview)")
 	SecretCmd.AddCommand(bulkDeleteCmd)
 }
@@ -78,13 +80,16 @@ func runBulkDeleteRemote(ctx context.Context, rc *common.RemoteClient) error {
 	if bulkDeleteProject == 0 && len(bulkDeleteNames) > 0 {
 		return fmt.Errorf("--project is required when using --names")
 	}
+	if bulkDeleteEnv == 0 && len(bulkDeleteNames) > 0 {
+		return fmt.Errorf("--env is required when using --names (a secret name is only unique within one project's environment, not across the whole project)")
+	}
 
 	ids := make([]uint, 0, len(bulkDeleteIDs)+len(bulkDeleteNames))
 	ids = append(ids, bulkDeleteIDs...)
 
-	// Resolve names → IDs via the project's secret list.
+	// Resolve names → IDs via the project+environment's secret list.
 	if len(bulkDeleteNames) > 0 {
-		resolved, err := resolveNamesToIDs(ctx, rc, bulkDeleteProject, bulkDeleteNames)
+		resolved, err := resolveNamesToIDs(ctx, rc, bulkDeleteProject, bulkDeleteEnv, bulkDeleteNames)
 		if err != nil {
 			return err
 		}
@@ -117,34 +122,54 @@ func postBulkDelete(ctx context.Context, rc *common.RemoteClient, projectID uint
 	return result, nil
 }
 
-// resolveNamesToIDs fetches the project's secret list and resolves each name to
-// its ID. Unknown names produce an error.
-func resolveNamesToIDs(ctx context.Context, rc *common.RemoteClient, projectID uint, names []string) ([]uint, error) {
-	path := fmt.Sprintf("/api/v1/secrets?project_id=%d&page_size=500", projectID)
+// resolveNamesToIDs fetches the project+environment's secret list and resolves
+// each name to its ID, scoped by BOTH project_id and environment_id — a
+// project-only scope would let a name that exists in two different
+// environments of the same project silently resolve to whichever one a
+// name->ID map happened to insert last (inventory #2012 S2 sweep finding).
+// Zero matches for a name is a clear "not found" error; more than one match
+// is refused outright and lists every matching ID — this function never
+// silently picks one.
+func resolveNamesToIDs(ctx context.Context, rc *common.RemoteClient, projectID, environmentID uint, names []string) ([]uint, error) {
+	path := fmt.Sprintf("/api/v1/secrets?project_id=%d&environment_id=%d&page_size=500", projectID, environmentID)
 	var resp models.SecretListResponse
 	if err := rc.Get(ctx, path, &resp); err != nil {
 		return nil, fmt.Errorf("failed to list secrets for name resolution: %w", err)
 	}
 
-	nameToID := make(map[string]uint, len(resp.Secrets))
+	nameToIDs := make(map[string][]uint, len(resp.Secrets))
 	for _, s := range resp.Secrets {
 		if s.SecretNode != nil {
-			nameToID[s.SecretNode.Name] = s.SecretNode.ID
+			nameToIDs[s.SecretNode.Name] = append(nameToIDs[s.SecretNode.Name], s.SecretNode.ID)
 		}
 	}
 
+	return resolveNameMatches(names, nameToIDs, projectID, environmentID)
+}
+
+// resolveNameMatches applies the 0/1/many rule to a name->[]ID map built from
+// a project+environment-scoped listing: exactly one match resolves, zero is
+// "not found", more than one is refused (ambiguous), never silently picking a
+// match. Shared by bulk-delete's remote and embedded name resolution.
+func resolveNameMatches(names []string, nameToIDs map[string][]uint, projectID, environmentID uint) ([]uint, error) {
 	ids := make([]uint, 0, len(names))
 	var missing []string
+	var ambiguous []string
 	for _, name := range names {
-		id, ok := nameToID[name]
-		if !ok {
+		switch matches := nameToIDs[name]; len(matches) {
+		case 0:
 			missing = append(missing, name)
-			continue
+		case 1:
+			ids = append(ids, matches[0])
+		default:
+			ambiguous = append(ambiguous, fmt.Sprintf("%q (IDs %v)", name, matches))
 		}
-		ids = append(ids, id)
+	}
+	if len(ambiguous) > 0 {
+		return nil, fmt.Errorf("secret name(s) ambiguous in project %d, environment %d: %s — refusing to guess", projectID, environmentID, strings.Join(ambiguous, "; "))
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("secret(s) not found in project %d: %s", projectID, strings.Join(missing, ", "))
+		return nil, fmt.Errorf("secret(s) not found in project %d, environment %d: %s", projectID, environmentID, strings.Join(missing, ", "))
 	}
 	return ids, nil
 }
@@ -154,6 +179,9 @@ func resolveNamesToIDs(ctx context.Context, rc *common.RemoteClient, projectID u
 func runBulkDeleteEmbedded(ctx context.Context) error {
 	if bulkDeleteProject == 0 {
 		return fmt.Errorf("--project is required in embedded mode")
+	}
+	if bulkDeleteEnv == 0 && len(bulkDeleteNames) > 0 {
+		return fmt.Errorf("--env is required when using --names (a secret name is only unique within one project's environment, not across the whole project)")
 	}
 
 	svc, err := common.InitializeCoreService()
@@ -165,7 +193,7 @@ func runBulkDeleteEmbedded(ctx context.Context) error {
 	ids = append(ids, bulkDeleteIDs...)
 
 	if len(bulkDeleteNames) > 0 {
-		resolved, err := resolveNamesToIDsEmbedded(ctx, svc, bulkDeleteProject, bulkDeleteNames)
+		resolved, err := resolveNamesToIDsEmbedded(ctx, svc, bulkDeleteProject, bulkDeleteEnv, bulkDeleteNames)
 		if err != nil {
 			return err
 		}
@@ -200,32 +228,19 @@ func runBulkDeleteEmbedded(ctx context.Context) error {
 	return nil
 }
 
-func resolveNamesToIDsEmbedded(ctx context.Context, svc *core.KeyorixCore, projectID uint, names []string) ([]uint, error) {
-	filter := &coreStorage.SecretFilter{ProjectID: &projectID, PageSize: 500}
+func resolveNamesToIDsEmbedded(ctx context.Context, svc *core.KeyorixCore, projectID, environmentID uint, names []string) ([]uint, error) {
+	filter := &coreStorage.SecretFilter{ProjectID: &projectID, EnvironmentID: &environmentID, PageSize: 500}
 	secrets, _, err := svc.ListSecrets(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list secrets for name resolution: %w", err)
 	}
 
-	nameToID := make(map[string]uint, len(secrets))
+	nameToIDs := make(map[string][]uint, len(secrets))
 	for _, s := range secrets {
-		nameToID[s.Name] = s.ID
+		nameToIDs[s.Name] = append(nameToIDs[s.Name], s.ID)
 	}
 
-	ids := make([]uint, 0, len(names))
-	var missing []string
-	for _, name := range names {
-		id, ok := nameToID[name]
-		if !ok {
-			missing = append(missing, name)
-			continue
-		}
-		ids = append(ids, id)
-	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("secret(s) not found in project %d: %s", projectID, strings.Join(missing, ", "))
-	}
-	return ids, nil
+	return resolveNameMatches(names, nameToIDs, projectID, environmentID)
 }
 
 // ── Output ────────────────────────────────────────────────────────────────────
