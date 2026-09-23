@@ -582,11 +582,16 @@ func TestConformance_MarkTOTPStepUsed(t *testing.T) {
 	// an arbitrary small constant like 12345 would be "older" than that already-
 	// persisted step and get rejected as stale, not accepted as fresh. Derive the
 	// baseline from the row enrollMFA actually left behind instead of guessing.
+	// +2, not the +100 this margin used before F6 (system-proxy-target-authority
+	// audit): MarkTOTPStepUsedProxy now rejects any step more than
+	// maxTOTPStepClockSkew (20) periods from its own clock -- +2 stays well
+	// inside that window while still being strictly greater than the
+	// enrolled baseline, the only property this parity check actually needs.
 	localUser, _ := enrollMFA(t, h, ctx, "conformance-mtsu-local")
 	localSecretRow, err := h.ls.GetMFASecret(ctx, localUser.ID)
 	require.NoError(t, err)
 	require.NotNil(t, localSecretRow.LastUsedStep, "sanity: ActivateMFA must have already recorded a last-used step")
-	localFreshStep := *localSecretRow.LastUsedStep + 100
+	localFreshStep := *localSecretRow.LastUsedStep + 2
 	freshLocal, err := h.ls.MarkTOTPStepUsed(ctx, localUser.ID, localFreshStep)
 	require.NoError(t, err)
 	assert.True(t, freshLocal, "sanity: a strictly greater step must be accepted as fresh")
@@ -598,7 +603,7 @@ func TestConformance_MarkTOTPStepUsed(t *testing.T) {
 	remoteSecretRow, err := h.ls.GetMFASecret(ctx, remoteUser.ID)
 	require.NoError(t, err)
 	require.NotNil(t, remoteSecretRow.LastUsedStep)
-	remoteFreshStep := *remoteSecretRow.LastUsedStep + 100
+	remoteFreshStep := *remoteSecretRow.LastUsedStep + 2
 	freshRemote, err := h.rs.MarkTOTPStepUsed(ctx, remoteUser.ID, remoteFreshStep)
 	require.NoError(t, err)
 	assert.True(t, freshRemote, "RemoteStorage.MarkTOTPStepUsed must report fresh=true for a strictly greater step")
