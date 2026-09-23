@@ -563,6 +563,7 @@ var systemCeilingReadOnly = map[string]string{
 //     backing function), gate-level passing is the complete picture, same
 //     as it is for dimension (a). Three routes below are NOT default: their
 //     own entry names the exception and the dedicated test that proves it.
+//
 // systemCeilingAllowlistEntry is one systemCeilingAllowlist entry (F6 sweep,
 // 2026-09-22 -- Step 3, user-directed): a plain prose reason is no longer
 // enough on its own. reason states WHY system.write alone is sufficient;
@@ -644,7 +645,7 @@ var systemCeilingAllowlist = map[string]systemCeilingAllowlistEntry{
 	"PATCH /api/v1/system/webauthn/credentials/advance-counter": {reason: "AdvanceWebAuthnCredentialCounterProxy performs a " +
 		"locked compare-and-swap on a signature counter -- the anti-clone TOCTOU fix (#306/#517), not an authority " +
 		"decision; any caller reaching it can only ever advance a counter forward under a lock, never forge state.", unverified: true},
-	"POST /api/v1/system/webauthn/sessions": {reason: "ephemeral WebAuthn ceremony session row -- no human-facing equivalent.", unverified: true},
+	"POST /api/v1/system/webauthn/sessions":         {reason: "ephemeral WebAuthn ceremony session row -- no human-facing equivalent.", unverified: true},
 	"POST /api/v1/system/webauthn/sessions/consume": {reason: "single-use consume of the same ephemeral ceremony row.", unverified: true},
 	"POST /api/v1/system/legal-hold": {reason: "CreateLegalHoldProxy: core.PlaceLegalHold requires admin-tier authority " +
 		"(isGlobalAdminRoleName, #377) unconditionally -- confirmed by direct read of legal_hold.go, not the doc " +
@@ -759,7 +760,7 @@ var systemCeilingDenyChecked = map[string]bool{
 	"POST /api/v1/system/users/{id}/personal-access-tokens/revoke-all": true,
 	"POST /api/v1/system/users/{id}/sessions/delete-except":            true,
 	"POST /api/v1/system/groups/{id}/members":                          true,
-	"DELETE /api/v1/system/groups/{id}/members/{userId}":                true, // F6 sweep, 2026-09-22
+	"DELETE /api/v1/system/groups/{id}/members/{userId}":               true, // F6 sweep, 2026-09-22
 	"POST /api/v1/system/machine-credentials/{id}/revoke":              true,
 	"PUT /api/v1/system/risk-exceptions/{id}/approve":                  true,
 }
