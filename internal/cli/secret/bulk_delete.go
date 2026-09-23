@@ -17,6 +17,7 @@ import (
 
 var (
 	bulkDeleteProject uint
+	bulkDeleteEnv     uint
 	bulkDeleteIDs     []uint
 	bulkDeleteNames   []string
 	bulkDeleteConfirm bool
@@ -52,6 +53,7 @@ proceed; without it the command prints what would be deleted and exits.
 
 func init() {
 	bulkDeleteCmd.Flags().UintVar(&bulkDeleteProject, "project", 0, "Project ID (required for --names and for cross-project guard)")
+	bulkDeleteCmd.Flags().UintVar(&bulkDeleteEnv, "env", 0, "Environment ID")
 	bulkDeleteCmd.Flags().UintSliceVar(&bulkDeleteIDs, "ids", nil, "Comma-separated secret IDs to delete")
 	bulkDeleteCmd.Flags().StringSliceVar(&bulkDeleteNames, "names", nil, "Comma-separated secret names to delete (requires --project)")
 	bulkDeleteCmd.Flags().BoolVar(&bulkDeleteConfirm, "confirm", false, "Required to actually delete (omit to preview)")
