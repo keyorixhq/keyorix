@@ -89,7 +89,7 @@ func TestEmitAudit_SignalsSubscribers(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
-	c := &KeyorixCore{storage: ms, auditStream: newAuditBroker()}
+	c := &KeyorixCore{now: time.Now, storage: ms, auditStream: newAuditBroker()}
 
 	id, wake := c.SubscribeAuditStream()
 	defer c.UnsubscribeAuditStream(id)

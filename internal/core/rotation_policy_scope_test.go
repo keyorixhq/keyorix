@@ -102,7 +102,7 @@ func TestScopedPolicySecrets_EnvironmentScopeDoesNotLeakAcrossProjects(t *testin
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 
 	require.NoError(t, db.Create(&models.Environment{ID: 10, ProjectID: 1, Name: "production"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 20, ProjectID: 2, Name: "production"}).Error)
@@ -136,7 +136,7 @@ func TestScopedPolicySecrets_EnvironmentScopeMatchesOwnProject(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.RotationPolicy{}))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 
 	require.NoError(t, db.Create(&models.Environment{ID: 10, ProjectID: 1, Name: "production"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 20, ProjectID: 2, Name: "production"}).Error)

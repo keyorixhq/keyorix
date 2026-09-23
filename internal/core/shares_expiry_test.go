@@ -16,10 +16,13 @@ import (
 )
 
 // newSharesExpiryFixture spins up an in-memory core with an owner (1) and two recipients
-// (2, 3), one owned secret, and a controllable clock seeded to the real wall clock. The
-// clock matters for core-level enforcement (CheckSecretPermission uses c.now()), while
-// the storage listing/permission queries use time.Now() directly — so the fixture's base
-// is the real now to keep the two in agreement. Returns the core, secret ID, base now, db.
+// (2, 3), one owned secret, and a controllable clock seeded to the real wall clock.
+// Since #1983-c, every share-expiry storage call (ListSharesBySecret, CheckSharePermission,
+// etc.) takes its comparison instant as an explicit parameter, and every core-layer
+// caller supplies c.shareEffectiveNow() -- so overriding c.now on the returned core (see
+// TestSplitClock_CheckSharePermissionAgreesWithListSharesBySecretIDs) consistently drives
+// every enforcement path through this fixture, not just CheckSecretPermission. Returns
+// the core, secret ID, base now, db.
 func newSharesExpiryFixture(t *testing.T) (*KeyorixCore, uint, time.Time, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
@@ -346,7 +349,7 @@ func TestRemoveExpiredShares(t *testing.T) {
 	assert.Equal(t, 1, n)
 
 	// The permanent share survives; the expired one is gone.
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	require.NoError(t, err)
 	require.Len(t, shares, 1)
 	assert.Equal(t, permanent.ID, shares[0].ID)

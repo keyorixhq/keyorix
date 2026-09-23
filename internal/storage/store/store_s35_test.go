@@ -194,7 +194,7 @@ func TestPrunePasswordHistory_NegativeKeep_DBError_S35(t *testing.T) {
 func TestListSharesBySecret_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListSharesBySecret(context.Background(), 1)
+	_, err := ls.ListSharesBySecret(context.Background(), 1, time.Now())
 	require.Error(t, err)
 }
 
@@ -202,28 +202,28 @@ func TestListSharesBySecretIDs_DBError_S35(t *testing.T) {
 	// Non-empty slice: exercises the Find path (empty returns nil,nil early).
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListSharesBySecretIDs(context.Background(), []uint{1, 2})
+	_, err := ls.ListSharesBySecretIDs(context.Background(), []uint{1, 2}, time.Now())
 	require.Error(t, err)
 }
 
 func TestListSharesByUser_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListSharesByUser(context.Background(), 1)
+	_, err := ls.ListSharesByUser(context.Background(), 1, time.Now())
 	require.Error(t, err)
 }
 
 func TestListSharesByOwner_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListSharesByOwner(context.Background(), 1)
+	_, err := ls.ListSharesByOwner(context.Background(), 1, time.Now())
 	require.Error(t, err)
 }
 
 func TestListSharesByGroup_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListSharesByGroup(context.Background(), 1)
+	_, err := ls.ListSharesByGroup(context.Background(), 1, time.Now())
 	require.Error(t, err)
 }
 

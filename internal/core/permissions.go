@@ -128,13 +128,16 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 		}, nil
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	now := c.shareEffectiveNow()
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	// Drop expired (time-bound) shares before any authorization: an expired share
-	// must never grant access, even though the sweep that reclaims its row runs later.
-	shares = activeShares(shares, c.shareEffectiveNow())
+	// must never grant access, even though the sweep that reclaims its row runs
+	// later. Already filtered at the DB level by the same now above; belt and
+	// suspenders, cheap on an already-small slice.
+	shares = activeShares(shares, now)
 
 	// Check direct shares.
 	for _, share := range shares {
@@ -375,7 +378,7 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 	// exists rather than after.
 	now := c.shareEffectiveNow()
 
-	directShares, err := c.storage.ListSharesByUser(ctx, userID)
+	directShares, err := c.storage.ListSharesByUser(ctx, userID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -398,7 +401,7 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, group := range groups {
-		groupShares, err := c.storage.ListSharesByGroup(ctx, group.ID)
+		groupShares, err := c.storage.ListSharesByGroup(ctx, group.ID, now)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}

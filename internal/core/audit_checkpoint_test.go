@@ -24,7 +24,7 @@ func newCheckpointCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.AuditCheckpoint{}, &models.SystemMetadata{}))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
 	return c, db
 }
@@ -129,7 +129,7 @@ func TestSeedAuditWatermark_RestoresFloorAfterRestart(t *testing.T) {
 
 	// Simulate a restart: a fresh core over the same DB with the same key (in-memory
 	// watermark starts at 0), then seed from the persisted mark.
-	c2 := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c2 := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	c2.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
 	c2.SeedAuditWatermark(ctx)
 	assert.Equal(t, int64(5), c2.watermark(), "watermark restored from persisted high-water")
@@ -525,7 +525,7 @@ func TestAuditCheckpoint_DetectsRollbackToOlderCheckpoint(t *testing.T) {
 
 	// A FRESH core (server restart: in-memory watermark starts at 0) still catches the
 	// rollback via the persistent signed high-water mark.
-	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	fresh := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
 	v, err := fresh.VerifyAuditChain(ctx)
 	require.NoError(t, err)
@@ -571,7 +571,7 @@ func TestAuditCheckpoint_TamperedHighWaterDetected(t *testing.T) {
 	require.NoError(t, db.Exec("UPDATE system_metadata SET value = ? WHERE key = ?",
 		"v1\x1f2\x1f2\x1fdeadbeef\x1fv1\x1fbogussig", auditHighWaterKey).Error)
 
-	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	fresh := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
 	v, err := fresh.VerifyAuditChain(ctx)
 	require.NoError(t, err)
@@ -616,7 +616,7 @@ func TestAuditCheckpoint_ForgedKeyVersionHighWaterDetected(t *testing.T) {
 	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id > 7").Error)
 
 	// Simulate a restart: fresh core, in-memory watermark reset.
-	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	fresh := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
 
 	v, err := fresh.VerifyAuditChain(ctx)

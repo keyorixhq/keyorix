@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +21,7 @@ func TestRotationPolicyCRUDAudit(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.RotationPolicy{}, &models.AuditEvent{}))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	ctx := context.Background()
 
 	count := func(eventType string) int64 {

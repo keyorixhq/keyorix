@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -232,7 +233,7 @@ func TestDeleteShareRecord_DeleteFails(t *testing.T) {
 func TestListSharedSecrets_DirectQueryBrokenDB(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.ListSharedSecrets(context.Background(), 1)
+	_, err := ls.ListSharedSecrets(context.Background(), 1, time.Now())
 	require.Error(t, err)
 }
 
@@ -240,14 +241,14 @@ func TestListSharedSecrets_GroupQueryFails(t *testing.T) {
 	t.Parallel()
 	ls := newPartialSecretsDB(t, &models.SecretNode{}, &models.ShareRecord{}, &models.User{})
 	// groups/user_groups tables intentionally absent.
-	_, err := ls.ListSharedSecrets(context.Background(), 1)
+	_, err := ls.ListSharedSecrets(context.Background(), 1, time.Now())
 	require.Error(t, err)
 }
 
 func TestCheckSharePermission_BrokenDB(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.CheckSharePermission(context.Background(), 1, 1)
+	_, err := ls.CheckSharePermission(context.Background(), 1, 1, time.Now())
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "ErrorSecretNotFound")
 }
@@ -260,7 +261,7 @@ func TestCheckSharePermission_OwnerActiveCountFails(t *testing.T) {
 	require.NoError(t, ls.db.Create(secret).Error)
 
 	// users table intentionally absent.
-	_, err := ls.CheckSharePermission(ctx, secret.ID, 5)
+	_, err := ls.CheckSharePermission(ctx, secret.ID, 5, time.Now())
 	require.Error(t, err)
 }
 
@@ -273,7 +274,7 @@ func TestCheckSharePermission_DirectShareQueryFails(t *testing.T) {
 
 	// share_records/users tables intentionally absent, userID != OwnerID so the
 	// owner branch is skipped entirely.
-	_, err := ls.CheckSharePermission(ctx, secret.ID, 7)
+	_, err := ls.CheckSharePermission(ctx, secret.ID, 7, time.Now())
 	require.Error(t, err)
 }
 
@@ -286,6 +287,6 @@ func TestCheckSharePermission_GroupShareQueryFails(t *testing.T) {
 
 	// groups/user_groups tables intentionally absent; direct-share query
 	// succeeds (finds nothing) since share_records/users exist.
-	_, err := ls.CheckSharePermission(ctx, secret.ID, 9)
+	_, err := ls.CheckSharePermission(ctx, secret.ID, 9, time.Now())
 	require.Error(t, err)
 }

@@ -667,7 +667,7 @@ func TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects(t *te
 	})
 	require.NoError(t, err)
 
-	shares, err := ls.ListSharesBySecret(ctx, secret.ID)
+	shares, err := ls.ListSharesBySecret(ctx, secret.ID, time.Now())
 	require.NoError(t, err)
 	perm, shareID, err := c.CheckGroupPermissions(ctx, secret.ID, 2, shares, projA.ID)
 	require.NoError(t, err)
@@ -688,7 +688,7 @@ func TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects(t *te
 		SecretID: secretB.ID, RecipientID: 5, IsGroup: true, OwnerID: 1, Permission: "write",
 	})
 	require.NoError(t, err)
-	sharesB, err := ls.ListSharesBySecret(ctx, secretB.ID)
+	sharesB, err := ls.ListSharesBySecret(ctx, secretB.ID, time.Now())
 	require.NoError(t, err)
 	permB, shareIDB, err := c.CheckGroupPermissions(ctx, secretB.ID, 2, sharesB, projB.ID)
 	require.NoError(t, err)

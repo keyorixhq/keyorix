@@ -13,7 +13,7 @@ import (
 )
 
 func newAnomalyConfigCore(store *MockStorage) *KeyorixCore {
-	return &KeyorixCore{storage: store}
+	return &KeyorixCore{now: time.Now, storage: store}
 }
 
 func TestGetAnomalyConfig_DelegatesToStorage(t *testing.T) {

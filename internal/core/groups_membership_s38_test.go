@@ -12,6 +12,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -37,7 +38,7 @@ func newGroupsS38Core(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Role{},
 		&models.User{}, &models.UserRole{}, &models.AuditEvent{},
 	))
-	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
+	return &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}, db
 }
 
 // ── AddUserToGroup validation ─────────────────────────────────────────────────

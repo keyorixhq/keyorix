@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -51,7 +52,7 @@ func TestEmitAudit_StorageFailure_LogsWarningAndSkipsSIEMForward(t *testing.T) {
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(storageErr)
 
 	fwd := &fakeAuditForwarder{}
-	c := &KeyorixCore{storage: ms, auditForwarder: fwd, auditStream: newAuditBroker()}
+	c := &KeyorixCore{now: time.Now, storage: ms, auditForwarder: fwd, auditStream: newAuditBroker()}
 
 	event := &models.AuditEvent{EventType: "secret.read", Description: "User alice read secret db-password"}
 
@@ -70,7 +71,7 @@ func TestEmitAudit_StorageSuccess_ForwardsToSIEMAndDoesNotWarn(t *testing.T) {
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	fwd := &fakeAuditForwarder{}
-	c := &KeyorixCore{storage: ms, auditForwarder: fwd, auditStream: newAuditBroker()}
+	c := &KeyorixCore{now: time.Now, storage: ms, auditForwarder: fwd, auditStream: newAuditBroker()}
 
 	event := &models.AuditEvent{EventType: "secret.read"}
 
@@ -88,7 +89,7 @@ func TestWriteAccessLog_StorageFailure_LogsWarning(t *testing.T) {
 	storageErr := errors.New("connection exhausted")
 	ms.On("CreateSecretAccessLog", mock.Anything, mock.Anything).Return(storageErr)
 
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 
 	logged := captureLog(t, func() {
 		c.writeAccessLog(context.Background(), 42, "alice", "read", "10.0.0.1", "curl/8")
@@ -102,7 +103,7 @@ func TestWriteAccessLog_StorageSuccess_DoesNotWarn(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("CreateSecretAccessLog", mock.Anything, mock.Anything).Return(nil)
 
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 
 	logged := captureLog(t, func() {
 		c.writeAccessLog(context.Background(), 42, "alice", "read", "10.0.0.1", "curl/8")
@@ -122,7 +123,7 @@ func TestEmitAudit_TruncatesOversizedDescriptionAndDiff(t *testing.T) {
 		}).
 		Return(nil)
 
-	c := &KeyorixCore{storage: ms, auditStream: newAuditBroker()}
+	c := &KeyorixCore{now: time.Now, storage: ms, auditStream: newAuditBroker()}
 
 	// Simulate an attacker-chosen secret name (no length cap unless
 	// secret_name_policy is configured) flowing into a Description, and an
@@ -155,7 +156,7 @@ func TestEmitAudit_NormalLengthDescriptionAndDiffUnaffected(t *testing.T) {
 		}).
 		Return(nil)
 
-	c := &KeyorixCore{storage: ms, auditStream: newAuditBroker()}
+	c := &KeyorixCore{now: time.Now, storage: ms, auditStream: newAuditBroker()}
 
 	desc := "User alice read secret db-password"
 	diff := `{"name":{"old":"db-password","new":"db-password-2"}}`

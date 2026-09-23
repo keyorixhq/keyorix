@@ -321,7 +321,7 @@ func (c *KeyorixCore) appendSecretGrantEntries(ctx context.Context, secrets []*m
 				Source: "owner", AccessLevel: "owner", SecretID: s.ID, SecretName: s.Name,
 			})
 		}
-		shares, err := c.storage.ListSharesBySecret(ctx, s.ID)
+		shares, err := c.storage.ListSharesBySecret(ctx, s.ID, c.shareEffectiveNow())
 		if err != nil {
 			report.degrade(fmt.Sprintf("shares:secret=%d", s.ID), err)
 			continue

@@ -114,7 +114,7 @@ func (c *KeyorixCore) ListGroupShares(ctx context.Context, actorKind string, act
 	}
 
 	// Get shares from storage
-	shares, err := c.storage.ListSharesByGroup(ctx, groupID)
+	shares, err := c.storage.ListSharesByGroup(ctx, groupID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -140,17 +140,19 @@ func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, actorKind stri
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to list this group's shared secrets")
 	}
 
-	shares, err := c.storage.ListSharesByGroup(ctx, groupID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-
 	// #1653: shares the same clamp-based clock as shareActive/activeShares
 	// (permissions.go) rather than a bare c.now() — this is the same
 	// "share still authorizes" predicate, duplicated inline instead of
 	// calling shareActive, so it gets the same defense against a
-	// backward-stepped clock resurrecting an expired time-bound share.
+	// backward-stepped clock resurrecting an expired time-bound share. Also
+	// now the same now passed to ListSharesByGroup's own DB-level filter, so
+	// the two never disagree.
 	now := c.shareEffectiveNow()
+	shares, err := c.storage.ListSharesByGroup(ctx, groupID, now)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+
 	secrets := make([]*models.SecretNode, 0, len(shares))
 	seen := make(map[uint]bool, len(shares))
 	for _, s := range shares {

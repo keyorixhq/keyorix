@@ -75,7 +75,7 @@ func rotationPoliciesFailOpenCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Ti
 		Status: "active", CreatedAt: fixed.Add(-90 * 24 * time.Hour),
 	}).Error)
 
-	c := &KeyorixCore{storage: &failingEnvSecretsStore{LocalStorage: store.NewLocalStorage(db), failEnv: brokenEnv}}
+	c := &KeyorixCore{now: time.Now, storage: &failingEnvSecretsStore{LocalStorage: store.NewLocalStorage(db), failEnv: brokenEnv}}
 	c.now = func() time.Time { return fixed }
 	return c, db, fixed
 }
@@ -137,7 +137,7 @@ func TestGetRotationStatus_NoErrorWhenAllPoliciesSucceed(t *testing.T) {
 		ID: 1, Name: "s", ProjectID: pid, EnvironmentID: 1, IsSecret: true, Status: "active",
 		CreatedAt: fixed.Add(-60 * 24 * time.Hour),
 	}).Error)
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	c.now = func() time.Time { return fixed }
 
 	entries, err := c.GetRotationStatus(context.Background(), nil, nil)

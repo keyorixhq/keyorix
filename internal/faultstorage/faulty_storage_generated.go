@@ -257,7 +257,7 @@ func (w *FaultyStorage) BulkRevokeExpiredPATsByUser(ctx context.Context, userID 
 	return w.real.BulkRevokeExpiredPATsByUser(ctx, userID, now)
 }
 
-func (w *FaultyStorage) CheckSharePermission(ctx context.Context, secretID uint, userID uint) (string, error) {
+func (w *FaultyStorage) CheckSharePermission(ctx context.Context, secretID uint, userID uint, now time.Time) (string, error) {
 	fire, kind, injected := w.check("CheckSharePermission")
 	if fire {
 		switch kind {
@@ -267,11 +267,11 @@ func (w *FaultyStorage) CheckSharePermission(ctx context.Context, secretID uint,
 			var zero1 string
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.CheckSharePermission(ctx, secretID, userID)
+			rv1, _ := w.real.CheckSharePermission(ctx, secretID, userID, now)
 			return rv1, injected
 		}
 	}
-	return w.real.CheckSharePermission(ctx, secretID, userID)
+	return w.real.CheckSharePermission(ctx, secretID, userID, now)
 }
 
 func (w *FaultyStorage) CleanupExpiredSessions(ctx context.Context) error {
@@ -5026,7 +5026,7 @@ func (w *FaultyStorage) ListSessionsByUser(ctx context.Context, userID uint) ([]
 	return w.real.ListSessionsByUser(ctx, userID)
 }
 
-func (w *FaultyStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
+func (w *FaultyStorage) ListSharedSecrets(ctx context.Context, userID uint, now time.Time) ([]*models.SecretNode, error) {
 	fire, kind, injected := w.check("ListSharedSecrets")
 	if fire {
 		switch kind {
@@ -5036,14 +5036,14 @@ func (w *FaultyStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 			var zero1 []*models.SecretNode
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.ListSharedSecrets(ctx, userID)
+			rv1, _ := w.real.ListSharedSecrets(ctx, userID, now)
 			return rv1, injected
 		}
 	}
-	return w.real.ListSharedSecrets(ctx, userID)
+	return w.real.ListSharedSecrets(ctx, userID, now)
 }
 
-func (w *FaultyStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
+func (w *FaultyStorage) ListSharesByGroup(ctx context.Context, groupID uint, now time.Time) ([]*models.ShareRecord, error) {
 	fire, kind, injected := w.check("ListSharesByGroup")
 	if fire {
 		switch kind {
@@ -5053,14 +5053,14 @@ func (w *FaultyStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]
 			var zero1 []*models.ShareRecord
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.ListSharesByGroup(ctx, groupID)
+			rv1, _ := w.real.ListSharesByGroup(ctx, groupID, now)
 			return rv1, injected
 		}
 	}
-	return w.real.ListSharesByGroup(ctx, groupID)
+	return w.real.ListSharesByGroup(ctx, groupID, now)
 }
 
-func (w *FaultyStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+func (w *FaultyStorage) ListSharesByOwner(ctx context.Context, ownerID uint, now time.Time) ([]*models.ShareRecord, error) {
 	fire, kind, injected := w.check("ListSharesByOwner")
 	if fire {
 		switch kind {
@@ -5070,14 +5070,14 @@ func (w *FaultyStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]
 			var zero1 []*models.ShareRecord
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.ListSharesByOwner(ctx, ownerID)
+			rv1, _ := w.real.ListSharesByOwner(ctx, ownerID, now)
 			return rv1, injected
 		}
 	}
-	return w.real.ListSharesByOwner(ctx, ownerID)
+	return w.real.ListSharesByOwner(ctx, ownerID, now)
 }
 
-func (w *FaultyStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
+func (w *FaultyStorage) ListSharesBySecret(ctx context.Context, secretID uint, now time.Time) ([]*models.ShareRecord, error) {
 	fire, kind, injected := w.check("ListSharesBySecret")
 	if fire {
 		switch kind {
@@ -5087,14 +5087,14 @@ func (w *FaultyStorage) ListSharesBySecret(ctx context.Context, secretID uint) (
 			var zero1 []*models.ShareRecord
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.ListSharesBySecret(ctx, secretID)
+			rv1, _ := w.real.ListSharesBySecret(ctx, secretID, now)
 			return rv1, injected
 		}
 	}
-	return w.real.ListSharesBySecret(ctx, secretID)
+	return w.real.ListSharesBySecret(ctx, secretID, now)
 }
 
-func (w *FaultyStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error) {
+func (w *FaultyStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint, now time.Time) ([]*models.ShareRecord, error) {
 	fire, kind, injected := w.check("ListSharesBySecretIDs")
 	if fire {
 		switch kind {
@@ -5104,14 +5104,14 @@ func (w *FaultyStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []u
 			var zero1 []*models.ShareRecord
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.ListSharesBySecretIDs(ctx, secretIDs)
+			rv1, _ := w.real.ListSharesBySecretIDs(ctx, secretIDs, now)
 			return rv1, injected
 		}
 	}
-	return w.real.ListSharesBySecretIDs(ctx, secretIDs)
+	return w.real.ListSharesBySecretIDs(ctx, secretIDs, now)
 }
 
-func (w *FaultyStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
+func (w *FaultyStorage) ListSharesByUser(ctx context.Context, userID uint, now time.Time) ([]*models.ShareRecord, error) {
 	fire, kind, injected := w.check("ListSharesByUser")
 	if fire {
 		switch kind {
@@ -5121,11 +5121,11 @@ func (w *FaultyStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*m
 			var zero1 []*models.ShareRecord
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.ListSharesByUser(ctx, userID)
+			rv1, _ := w.real.ListSharesByUser(ctx, userID, now)
 			return rv1, injected
 		}
 	}
-	return w.real.ListSharesByUser(ctx, userID)
+	return w.real.ListSharesByUser(ctx, userID, now)
 }
 
 func (w *FaultyStorage) ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy, error) {

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -38,7 +39,7 @@ func TestSecretOwnedBy(t *testing.T) {
 func TestRevokeShare_MachineCannotManageOwnerlessSecret(t *testing.T) {
 	t.Parallel()
 	mockStorage := new(MockStorage)
-	core := &KeyorixCore{storage: mockStorage}
+	core := &KeyorixCore{now: time.Now, storage: mockStorage}
 	ctx := context.Background()
 
 	mockStorage.On("GetShareRecord", ctx, uint(1)).
@@ -59,7 +60,7 @@ func TestRevokeShare_MachineCannotManageOwnerlessSecret(t *testing.T) {
 func TestShareSecret_OwnerlessSecretNotShareable(t *testing.T) {
 	t.Parallel()
 	mockStorage := new(MockStorage)
-	core := &KeyorixCore{storage: mockStorage}
+	core := &KeyorixCore{now: time.Now, storage: mockStorage}
 	ctx := context.Background()
 
 	mockStorage.On("GetSecret", ctx, uint(7)).

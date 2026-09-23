@@ -91,6 +91,7 @@ func TestKeyorixCore_ShareSecret_ValidationError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -176,6 +177,7 @@ func TestKeyorixCore_ShareSecret_StorageError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -204,7 +206,7 @@ func TestKeyorixCore_ShareSecret_StorageError(t *testing.T) {
 func TestKeyorixCore_ShareSecret_RejectsSelfShare(t *testing.T) {
 	t.Parallel()
 	mockStorage := new(MockStorage)
-	core := &KeyorixCore{storage: mockStorage}
+	core := &KeyorixCore{now: time.Now, storage: mockStorage}
 	ctx := context.Background()
 
 	selfShareReq := &ShareSecretRequest{
@@ -415,6 +417,7 @@ func TestKeyorixCore_ListSharedSecrets(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -503,6 +506,7 @@ func TestKeyorixCore_ListSharesByUser(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -654,6 +658,7 @@ func TestKeyorixCore_CheckSharePermission(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 

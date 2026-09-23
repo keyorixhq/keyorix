@@ -93,11 +93,12 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 
 	result := &SecretAccessorsResult{}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	now := c.shareEffectiveNow()
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	for _, sh := range activeShares(shares, c.shareEffectiveNow()) {
+	for _, sh := range activeShares(shares, now) {
 		if sh.IsGroup {
 			gname := fmt.Sprintf("group %d", sh.RecipientID)
 			if g, err := c.storage.GetGroup(ctx, sh.RecipientID); err == nil && g != nil && g.Name != "" {

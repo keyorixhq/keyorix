@@ -32,7 +32,7 @@ func (c *KeyorixCore) GetSecretSharingStatus(ctx context.Context, actorKind stri
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -77,13 +77,17 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 		return nil, err
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	now := c.shareEffectiveNow()
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	// Expired (time-bound) shares no longer authorize, so the reported sharing
 	// status must not count or display them — keep it consistent with enforcement.
-	shares = activeShares(shares, c.shareEffectiveNow())
+	// Already filtered at the DB level by ListSharesBySecret's own now (same
+	// value), but shares can arrive from other, unfiltered sources too — belt
+	// and suspenders, cheap on an already-small slice.
+	shares = activeShares(shares, now)
 
 	// Owner authority requires live project membership (requireLiveOwnerAuthority),
 	// matching this file's GetUserSecretPermission and sharing_query.go's
@@ -183,12 +187,15 @@ func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, use
 		}, nil
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	now := c.shareEffectiveNow()
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	// An expired share grants no permission — match the authorization gate.
-	shares = activeShares(shares, c.shareEffectiveNow())
+	// Already filtered at the DB level by the same now above; belt and
+	// suspenders, cheap on an already-small slice.
+	shares = activeShares(shares, now)
 
 	for _, share := range shares {
 		if !share.IsGroup && share.RecipientID == userID {

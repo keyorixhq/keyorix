@@ -189,7 +189,12 @@ func (h *ShareHandler) ListSharesByOwnerProxy(w http.ResponseWriter, r *http.Req
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid owner id")
 		return
 	}
-	shares, err := h.coreService.Storage().ListSharesByOwner(r.Context(), uint(ownerID))
+	// time.Now(): this handler bypasses the core.KeyorixCore wrapper (thin
+	// passthrough, see doc comment above) and calls storage directly, so it
+	// can't reach the unexported shareEffectiveNow watermark package-private
+	// to internal/core -- real wall time is the pragmatic choice for a pure
+	// infra replication route with no policy decision of its own.
+	shares, err := h.coreService.Storage().ListSharesByOwner(r.Context(), uint(ownerID), time.Now())
 	if err != nil {
 		log.Printf("shares proxy: list shares by owner failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -208,7 +213,8 @@ func (h *ShareHandler) ListSharesByUserProxy(w http.ResponseWriter, r *http.Requ
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user id")
 		return
 	}
-	shares, err := h.coreService.Storage().ListSharesByUser(r.Context(), uint(userID))
+	// time.Now(): see ListSharesByOwnerProxy's identical comment above.
+	shares, err := h.coreService.Storage().ListSharesByUser(r.Context(), uint(userID), time.Now())
 	if err != nil {
 		log.Printf("shares proxy: list shares by user failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

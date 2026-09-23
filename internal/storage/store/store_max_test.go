@@ -1432,7 +1432,7 @@ func TestDeleteShareRecord_NotFound(t *testing.T) {
 // ListSharesBySecretIDs — empty ids.
 func TestListSharesBySecretIDs_Empty(t *testing.T) {
 	ls := newSharingStoreMax(t)
-	shares, err := ls.ListSharesBySecretIDs(context.Background(), nil)
+	shares, err := ls.ListSharesBySecretIDs(context.Background(), nil, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, shares)
 }
@@ -1440,7 +1440,7 @@ func TestListSharesBySecretIDs_Empty(t *testing.T) {
 // ListSharesByUser — empty.
 func TestListSharesByUser_Empty(t *testing.T) {
 	ls := newSharingStoreMax(t)
-	shares, err := ls.ListSharesByUser(context.Background(), 999)
+	shares, err := ls.ListSharesByUser(context.Background(), 999, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, shares)
 }
@@ -1448,7 +1448,7 @@ func TestListSharesByUser_Empty(t *testing.T) {
 // ListSharesByOwner — empty.
 func TestListSharesByOwner_Empty(t *testing.T) {
 	ls := newSharingStoreMax(t)
-	shares, err := ls.ListSharesByOwner(context.Background(), 999)
+	shares, err := ls.ListSharesByOwner(context.Background(), 999, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, shares)
 }
@@ -1456,7 +1456,7 @@ func TestListSharesByOwner_Empty(t *testing.T) {
 // ListSharesByGroup — empty.
 func TestListSharesByGroup_Empty(t *testing.T) {
 	ls := newSharingStoreMax(t)
-	shares, err := ls.ListSharesByGroup(context.Background(), 999)
+	shares, err := ls.ListSharesByGroup(context.Background(), 999, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, shares)
 }

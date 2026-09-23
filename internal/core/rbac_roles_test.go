@@ -9,6 +9,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +30,7 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{}))
-	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
+	return &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}, db
 }
 
 func TestCreateRole_RejectsReservedBuiltinName(t *testing.T) {

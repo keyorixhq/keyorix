@@ -185,11 +185,12 @@ func (ls *LocalStorage) DeleteExpiredShareRecords(ctx context.Context, before ti
 // already applies. #402: this used to return expired shares too, so reporting/
 // compliance/risk-scoring callers built on it over-counted access that no longer
 // authorizes anything, even though the real permission-check path was never fooled.
-func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
+func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint, now time.Time) ([]*models.ShareRecord, error) {
+	now = now.UTC()
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"secret_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		secretID, time.Now().UTC(),
+		secretID, now,
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -200,14 +201,15 @@ func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) (
 // share records (same soft-delete/expiry filter, #402) for every secret in
 // secretIDs, in one query. Used by the rotation planner's risk-scoring batch
 // (#409) instead of one ListSharesBySecret call per candidate secret.
-func (ls *LocalStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error) {
+func (ls *LocalStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint, now time.Time) ([]*models.ShareRecord, error) {
 	if len(secretIDs) == 0 {
 		return nil, nil
 	}
+	now = now.UTC()
 	var shares []*models.ShareRecord
 	if err := ls.db.WithContext(ctx).Where(
 		"secret_id IN ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		secretIDs, time.Now().UTC(),
+		secretIDs, now,
 	).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -216,11 +218,12 @@ func (ls *LocalStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []u
 
 // ListSharesByUser lists currently-active share records where userID is the direct
 // recipient. See ListSharesBySecret for why expired shares are excluded (#402).
-func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
+func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint, now time.Time) ([]*models.ShareRecord, error) {
+	now = now.UTC()
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		userID, false, time.Now().UTC(),
+		userID, false, now,
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -231,11 +234,12 @@ func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*m
 // ListSharesBySecret for why expired shares are excluded (#402) — this feeds the
 // dashboard's outgoing-share count and ListSharesByUser's owned-share half, both of
 // which must reflect what actually still grants access, not stale time-bound grants.
-func (ls *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+func (ls *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint, now time.Time) ([]*models.ShareRecord, error) {
+	now = now.UTC()
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		ownerID, time.Now().UTC(),
+		ownerID, now,
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -244,11 +248,12 @@ func (ls *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]
 
 // ListSharesByGroup lists currently-active share records where groupID is the
 // recipient. See ListSharesBySecret for why expired shares are excluded (#402).
-func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
+func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint, now time.Time) ([]*models.ShareRecord, error) {
+	now = now.UTC()
 	var shares []*models.ShareRecord
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-		groupID, true, time.Now().UTC(),
+		groupID, true, now,
 	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -256,12 +261,12 @@ func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]
 }
 
 // ListSharedSecrets returns all secrets shared with userID, directly or via group membership.
-func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
+func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint, now time.Time) ([]*models.SecretNode, error) {
 	var secrets []*models.SecretNode
 	// Expired (time-bound) shares no longer authorize, so they must not surface in
 	// the "shared with me" listing either — filter them the same way the auth queries do.
 	// G81 (ShareRecord.ExpiresAt): normalize internally — see GetAuditLogs.
-	now := time.Now().UTC()
+	now = now.UTC()
 	// store-secret-acl-002: JOIN users ... deleted_at IS NULL mirrors the group query's
 	// user-liveness guard below (and CheckSharePermission's identical direct-share
 	// guard) — a soft-deleted recipient's direct ShareRecord row stays live for
@@ -320,7 +325,7 @@ var permissionRank = map[string]int{"read": 1, "write": 2, "owner": 3}
 // #252: when a user has BOTH a direct share and a group share on the same secret,
 // the STRONGER of the two wins — a weaker direct grant must never silently
 // override a stronger group grant (or vice versa).
-func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error) {
+func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, userID uint, now time.Time) (string, error) {
 	var secret models.SecretNode
 	if err := ls.db.First(&secret, secretID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -359,7 +364,7 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 
 	// Skip expired (time-bound) shares — an expired share grants no permission.
 	// G81 (ShareRecord.ExpiresAt): normalize internally — see GetAuditLogs.
-	now := time.Now().UTC()
+	now = now.UTC()
 	// store-secret-acl-002: JOIN users ... deleted_at IS NULL mirrors the group-share
 	// query's user-liveness guard below — a soft-deleted recipient's direct
 	// ShareRecord row stays live for audit/restore, so without this guard a deleted

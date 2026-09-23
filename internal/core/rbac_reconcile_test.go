@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +22,7 @@ func newRBACReconcileCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{},
 		&models.UserRole{}, &models.Project{}, &models.Environment{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
-	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
+	return &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}, db
 }
 
 // seedOldCatalog simulates an install seeded BEFORE connect.read existed: every

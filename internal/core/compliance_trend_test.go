@@ -33,7 +33,7 @@ func complianceTrendCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.Project{},
 		&models.CompliancePostureSnapshot{},
 	))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	c.now = func() time.Time { return time.Date(2099, 1, 15, 12, 0, 0, 0, time.UTC) }
 	return c, db
 }

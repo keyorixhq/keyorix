@@ -224,28 +224,28 @@ func TestRemoteStorageListSharesByOwner_RealServer(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, created.ID)
 
-	shares, err := downstream.Storage().ListSharesByOwner(ctx, adminID)
+	shares, err := downstream.Storage().ListSharesByOwner(ctx, adminID, time.Now())
 	require.NoError(t, err, "listing shares by owner must succeed via storage.type: remote")
 	require.Len(t, shares, 1)
 	assert.Equal(t, secret.ID, shares[0].SecretID)
 	assert.Equal(t, recipient.ID, shares[0].RecipientID)
 
 	// An owner with no shares cleanly returns an empty slice.
-	empty, err := downstream.Storage().ListSharesByOwner(ctx, recipient.ID)
+	empty, err := downstream.Storage().ListSharesByOwner(ctx, recipient.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 
 	// The recipient half (storage.ListSharesByUser) — previously 404'd against
 	// a human-facing route that was never registered, closed as an incidental
 	// fix alongside this one — proxies correctly too.
-	received, err := downstream.Storage().ListSharesByUser(ctx, recipient.ID)
+	received, err := downstream.Storage().ListSharesByUser(ctx, recipient.ID, time.Now())
 	require.NoError(t, err, "listing shares by user must succeed via storage.type: remote")
 	require.Len(t, received, 1)
 	assert.Equal(t, secret.ID, received[0].SecretID)
 	assert.Equal(t, recipient.ID, received[0].RecipientID)
 
 	// A recipient with no shares cleanly returns an empty slice.
-	emptyReceived, err := downstream.Storage().ListSharesByUser(ctx, adminID)
+	emptyReceived, err := downstream.Storage().ListSharesByUser(ctx, adminID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyReceived)
 

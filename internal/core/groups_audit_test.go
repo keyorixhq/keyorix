@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,7 @@ func TestGroupCRUDAudit(t *testing.T) {
 		&models.Group{}, &models.GroupRole{}, &models.UserGroup{}, &models.AuditEvent{}, &models.Role{},
 		&models.UserRole{},
 	))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	ctx := context.Background()
 
 	lastActor := func(eventType string) (int64, *uint) {
@@ -82,7 +83,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 11, Username: "alice", Email: "alice@example.com"}).Error)
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	ctx := context.Background()
 
 	require.NoError(t, c.AddUserToGroup(ctx, 42, false, 11, 7, 0))
@@ -128,7 +129,7 @@ func TestGroupCreateAudit_UnauthenticatedActor(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.AuditEvent{}))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 
 	_, err = c.CreateGroup(context.Background(), 0, &CreateGroupRequest{Name: "cli-group"})
 	require.NoError(t, err)

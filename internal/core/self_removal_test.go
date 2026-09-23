@@ -23,6 +23,7 @@ func TestRemoveSelfFromShare_Success(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 
 	ctx := context.Background()
@@ -73,6 +74,7 @@ func TestRemoveSelfFromShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 
 	ctx := context.Background()
@@ -116,6 +118,7 @@ func TestRemoveSelfFromShare_ShareNotFound(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 
 	ctx := context.Background()
@@ -158,6 +161,7 @@ func TestRemoveSelfFromShare_GroupShareNotSelfRemovable(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 
 	ctx := context.Background()
@@ -197,6 +201,7 @@ func TestRemoveSelfFromShare_ValidationErrors(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 
 	ctx := context.Background()
@@ -222,6 +227,7 @@ func TestRemoveSelfFromShare_AuditLogging(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 
 	ctx := context.Background()

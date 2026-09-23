@@ -185,7 +185,7 @@ func TestConnectConnectorNames_WithManager(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{fakeConnector{name: "aws"}}))
 	names := c.ConnectConnectorNames()
 	assert.Equal(t, []string{"aws"}, names)

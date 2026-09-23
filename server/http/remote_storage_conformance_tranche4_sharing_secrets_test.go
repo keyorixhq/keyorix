@@ -237,7 +237,7 @@ func TestConformance_ListSharesBySecret(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	localShares, err := h.ls.ListSharesBySecret(ctx, localSecret.ID)
+	localShares, err := h.ls.ListSharesBySecret(ctx, localSecret.ID, time.Now())
 	require.NoError(t, err)
 	require.Len(t, localShares, 1, "sanity: exactly one active share for the local secret")
 	assertFieldExhaustiveEqual(t, "LocalStorage.ListSharesBySecret (sanity baseline)", localShare, localShares[0], map[string]bool{})
@@ -261,7 +261,7 @@ func TestConformance_ListSharesBySecret(t *testing.T) {
 	// doc): GET /api/v1/secrets/{id}/shares (ListSecretShares) wraps its response
 	// as {"shares": [...]}; RemoteStorage.ListSharesBySecret now decodes into
 	// that envelope instead of a bare `[]*models.ShareRecord`.
-	remoteShares, err := rsAsOwner.ListSharesBySecret(ctx, remoteSecret.ID)
+	remoteShares, err := rsAsOwner.ListSharesBySecret(ctx, remoteSecret.ID, time.Now())
 	require.NoError(t, err, "RemoteStorage.ListSharesBySecret must succeed for the share's genuine live owner")
 	require.Len(t, remoteShares, 1)
 	assertFieldExhaustiveEqual(t, "RemoteStorage.ListSharesBySecret vs local baseline shape", remoteShare, remoteShares[0], map[string]bool{})
@@ -272,10 +272,10 @@ func TestConformance_ListSharesBySecret(t *testing.T) {
 		Name: "conformance-lss-empty", ProjectID: h.projectID, EnvironmentID: h.environmentID, Type: "password", OwnerID: remoteOwner.ID,
 	})
 	require.NoError(t, err)
-	emptyLocal, err := h.ls.ListSharesBySecret(ctx, emptySecret.ID)
+	emptyLocal, err := h.ls.ListSharesBySecret(ctx, emptySecret.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	emptyRemote, err := rsAsOwner.ListSharesBySecret(ctx, emptySecret.ID)
+	emptyRemote, err := rsAsOwner.ListSharesBySecret(ctx, emptySecret.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyRemote)
 }
@@ -305,7 +305,7 @@ func TestConformance_ListSharesBySecretIDs(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := []uint{secretA.ID, secretB.ID}
-	localResult, err := h.ls.ListSharesBySecretIDs(ctx, ids)
+	localResult, err := h.ls.ListSharesBySecretIDs(ctx, ids, time.Now())
 	require.NoError(t, err)
 	require.Len(t, localResult, 1)
 
@@ -313,17 +313,17 @@ func TestConformance_ListSharesBySecretIDs(t *testing.T) {
 	// doc and TestConformance_ListSharesBySecret): RemoteStorage.
 	// ListSharesBySecretIDs loops rs.ListSharesBySecret once per ID, so it
 	// inherits that method's envelope fix too.
-	remoteResult, err := rsAsOwner.ListSharesBySecretIDs(ctx, ids)
+	remoteResult, err := rsAsOwner.ListSharesBySecretIDs(ctx, ids, time.Now())
 	require.NoError(t, err, "RemoteStorage.ListSharesBySecretIDs must succeed for a caller owning every secret in the batch")
 	require.Len(t, remoteResult, 1)
 
 	// Negative: empty input is a genuine no-op on both paths -- RemoteStorage's
 	// loop makes zero HTTP calls for an empty id list, so it never reaches the
 	// broken parse path at all.
-	emptyLocal, err := h.ls.ListSharesBySecretIDs(ctx, nil)
+	emptyLocal, err := h.ls.ListSharesBySecretIDs(ctx, nil, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	emptyRemote, err := rsAsOwner.ListSharesBySecretIDs(ctx, nil)
+	emptyRemote, err := rsAsOwner.ListSharesBySecretIDs(ctx, nil, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyRemote)
 }
@@ -346,7 +346,7 @@ func TestConformance_ListSharesByGroup(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	localOut, err := h.ls.ListSharesByGroup(ctx, group.ID)
+	localOut, err := h.ls.ListSharesByGroup(ctx, group.ID, time.Now())
 	require.NoError(t, err)
 	require.Len(t, localOut, 1)
 	_ = share
@@ -355,7 +355,7 @@ func TestConformance_ListSharesByGroup(t *testing.T) {
 	// wraps its response as {"shares": [...]}; RemoteStorage.ListSharesByGroup
 	// now decodes into that envelope instead of a bare `[]*models.ShareRecord`,
 	// matching how ListSharesByOwner/ListSharesByUser already did below.
-	remoteOut, err := h.rs.ListSharesByGroup(ctx, group.ID)
+	remoteOut, err := h.rs.ListSharesByGroup(ctx, group.ID, time.Now())
 	require.NoError(t, err, "RemoteStorage.ListSharesByGroup must succeed via the /system proxy route")
 	require.Len(t, remoteOut, 1)
 	assertFieldExhaustiveEqual(t, "ListSharesByGroup (RemoteStorage vs LocalStorage, same row)", share, remoteOut[0], map[string]bool{})
@@ -364,10 +364,10 @@ func TestConformance_ListSharesByGroup(t *testing.T) {
 	// list, not a parse failure -- the same envelope shape applies either way.
 	emptyGroup, err := h.upstreamCore.CreateGroup(ctx, h.adminUserID, &core.CreateGroupRequest{Name: "conformance-lsbg-empty"})
 	require.NoError(t, err)
-	emptyLocal, err := h.ls.ListSharesByGroup(ctx, emptyGroup.ID)
+	emptyLocal, err := h.ls.ListSharesByGroup(ctx, emptyGroup.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	emptyRemote, err := h.rs.ListSharesByGroup(ctx, emptyGroup.ID)
+	emptyRemote, err := h.rs.ListSharesByGroup(ctx, emptyGroup.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyRemote)
 }
@@ -389,23 +389,23 @@ func TestConformance_ListSharesByOwner(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	localOut, err := h.ls.ListSharesByOwner(ctx, owner.ID)
+	localOut, err := h.ls.ListSharesByOwner(ctx, owner.ID, time.Now())
 	require.NoError(t, err)
 	require.Len(t, localOut, 1)
 
 	// A raw /api/v1/system/shares/by-owner/{ownerID} proxy (system.read tier) --
 	// h.rs's admin machine credential drives this directly.
-	remoteOut, err := h.rs.ListSharesByOwner(ctx, owner.ID)
+	remoteOut, err := h.rs.ListSharesByOwner(ctx, owner.ID, time.Now())
 	require.NoError(t, err, "RemoteStorage.ListSharesByOwner must succeed via the /system proxy route")
 	require.Len(t, remoteOut, 1)
 	assertFieldExhaustiveEqual(t, "ListSharesByOwner (RemoteStorage vs LocalStorage, same row)", share, remoteOut[0], map[string]bool{})
 
 	// Negative: an owner with no shares gets an empty list.
 	bystander := newConformanceTestUser(t, h, "lsbo-bystander")
-	emptyLocal, err := h.ls.ListSharesByOwner(ctx, bystander.ID)
+	emptyLocal, err := h.ls.ListSharesByOwner(ctx, bystander.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	emptyRemote, err := h.rs.ListSharesByOwner(ctx, bystander.ID)
+	emptyRemote, err := h.rs.ListSharesByOwner(ctx, bystander.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyRemote)
 }
@@ -427,23 +427,23 @@ func TestConformance_ListSharesByUser(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	localOut, err := h.ls.ListSharesByUser(ctx, recipient.ID)
+	localOut, err := h.ls.ListSharesByUser(ctx, recipient.ID, time.Now())
 	require.NoError(t, err)
 	require.Len(t, localOut, 1)
 
 	// A raw /api/v1/system/shares/by-user/{userID} proxy (system.read tier) --
 	// h.rs's admin machine credential drives this directly.
-	remoteOut, err := h.rs.ListSharesByUser(ctx, recipient.ID)
+	remoteOut, err := h.rs.ListSharesByUser(ctx, recipient.ID, time.Now())
 	require.NoError(t, err, "RemoteStorage.ListSharesByUser must succeed via the /system proxy route")
 	require.Len(t, remoteOut, 1)
 	assertFieldExhaustiveEqual(t, "ListSharesByUser (RemoteStorage vs LocalStorage, same row)", share, remoteOut[0], map[string]bool{})
 
 	// Negative: a user with no shares received gets an empty list.
 	bystander := newConformanceTestUser(t, h, "lsbu-bystander")
-	emptyLocal, err := h.ls.ListSharesByUser(ctx, bystander.ID)
+	emptyLocal, err := h.ls.ListSharesByUser(ctx, bystander.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyLocal)
-	emptyRemote, err := h.rs.ListSharesByUser(ctx, bystander.ID)
+	emptyRemote, err := h.rs.ListSharesByUser(ctx, bystander.ID, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, emptyRemote)
 }

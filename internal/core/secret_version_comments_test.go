@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -12,7 +13,7 @@ import (
 )
 
 func newVersionCommentsCore(store *MockStorage) *KeyorixCore {
-	return &KeyorixCore{storage: store}
+	return &KeyorixCore{now: time.Now, storage: store}
 }
 
 // expectSecretWithVersion wires up the GetSecret + GetSecretVersions calls

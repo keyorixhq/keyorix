@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -109,7 +110,7 @@ func TestCliConnect002_ShareCreate_RoutesToRemoteWhenConfigured(t *testing.T) {
 	// fall through to it.
 	st, err := storage.NewStorageFactory().CreateStorage(mustLoadLocalConfig(t))
 	require.NoError(t, err)
-	shares, err := st.ListSharesBySecret(context.Background(), 42)
+	shares, err := st.ListSharesBySecret(context.Background(), 42, time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, shares, "the local embedded DB must not have received the share — it should have been created on the remote server only")
 }
@@ -237,7 +238,7 @@ func TestCliConnect004_ShareCreateAndRevoke_UseRealActorNotHardcodedOne(t *testi
 	err = runCreate(nil, nil)
 	require.Error(t, err, "an attacker who does not own the secret must be denied when creating a share, not silently succeed via a hardcoded actor")
 
-	sharesAfterAttackerCreate, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID)
+	sharesAfterAttackerCreate, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID, time.Now())
 	require.NoError(t, lerr)
 	assert.Empty(t, sharesAfterAttackerCreate, "the attacker's denied create must not have persisted a ShareRecord")
 
@@ -245,7 +246,7 @@ func TestCliConnect004_ShareCreateAndRevoke_UseRealActorNotHardcodedOne(t *testi
 	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", owner.ID))
 	require.NoError(t, runCreate(nil, nil), "the real owner asserting their own actor ID must be able to create the share")
 
-	sharesAfterOwnerCreate, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID)
+	sharesAfterOwnerCreate, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID, time.Now())
 	require.NoError(t, lerr)
 	require.Len(t, sharesAfterOwnerCreate, 1, "the owner's create must have persisted exactly one ShareRecord")
 	shareID := sharesAfterOwnerCreate[0].ID
@@ -256,7 +257,7 @@ func TestCliConnect004_ShareCreateAndRevoke_UseRealActorNotHardcodedOne(t *testi
 	err = runRevoke(nil, nil)
 	require.Error(t, err, "an attacker who does not own the secret must be denied when revoking its share, not silently succeed via a hardcoded actor")
 
-	sharesAfterAttackerRevoke, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID)
+	sharesAfterAttackerRevoke, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID, time.Now())
 	require.NoError(t, lerr)
 	require.Len(t, sharesAfterAttackerRevoke, 1, "the attacker's denied revoke must not have deleted the share — zero rows changed")
 
@@ -264,7 +265,7 @@ func TestCliConnect004_ShareCreateAndRevoke_UseRealActorNotHardcodedOne(t *testi
 	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", owner.ID))
 	require.NoError(t, runRevoke(nil, nil), "the real owner asserting their own actor ID must be able to revoke the share")
 
-	sharesAfterOwnerRevoke, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID)
+	sharesAfterOwnerRevoke, lerr := svc.Storage().ListSharesBySecret(ctx, secret.ID, time.Now())
 	require.NoError(t, lerr)
 	assert.Empty(t, sharesAfterOwnerRevoke, "the owner's revoke must have deleted the share")
 }

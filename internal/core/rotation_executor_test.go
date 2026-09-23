@@ -30,7 +30,7 @@ func rotationExecCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	// ListSecrets(ProjectID) JOINs environments, so the scope needs a real env row.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := &KeyorixCore{now: time.Now, storage: store.NewLocalStorage(db)}
 	fixed := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return fixed }
 	return c, db, fixed
@@ -670,7 +670,7 @@ func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
 		SecretNodeID: 2, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-90 * 24 * time.Hour),
 	}).Error)
 
-	c := &KeyorixCore{storage: &failingProjectSecretsStore{LocalStorage: store.NewLocalStorage(db), failProject: pid2}}
+	c := &KeyorixCore{now: time.Now, storage: &failingProjectSecretsStore{LocalStorage: store.NewLocalStorage(db), failProject: pid2}}
 	c.now = func() time.Time { return fixed }
 
 	var n int

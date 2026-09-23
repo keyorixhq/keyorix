@@ -780,17 +780,30 @@ type Storage interface {
 	GetShareRecord(ctx context.Context, shareID uint) (*models.ShareRecord, error)
 	UpdateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
 	DeleteShareRecord(ctx context.Context, shareID uint) error
-	ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error)
+	// now (added 2026-09-23, explicit-clock hardening): every read below that
+	// filters on ExpiresAt takes the comparison instant as an explicit parameter
+	// instead of calling time.Now() internally — same discipline
+	// DeleteExpiredShareRecords already followed. Callers in internal/core pass
+	// c.authEffectiveNow() (the same watermark-clamped clock the rest of the
+	// per-request auth path uses), so a live authorization decision
+	// (CheckSharePermission) and a reporting/risk-scoring read (e.g.
+	// ListSharesBySecretIDs) evaluating the SAME instant always agree on which
+	// shares are still active — see TestSplitClock_CheckSharePermissionAgreesWithListSharesBySecretIDs
+	// (internal/core/shares_split_clock_agreement_test.go). No internal
+	// time.Now() call is permitted in the LocalStorage implementation of these —
+	// enforced by TestNoInternalTimeNowInShareExpiryChecks
+	// (internal/storage/store/local_sharing_time_now_guard_test.go).
+	ListSharesBySecret(ctx context.Context, secretID uint, now time.Time) ([]*models.ShareRecord, error)
 	// ListSharesBySecretIDs is the batch form of ListSharesBySecret: currently-active
 	// share records for every secret in secretIDs, in one query — used by the
 	// rotation planner's risk-scoring batch (#409) instead of one ListSharesBySecret
 	// call per candidate secret.
-	ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error)
-	ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error)
-	ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error)
-	ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error)
-	ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error)
-	CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error)
+	ListSharesBySecretIDs(ctx context.Context, secretIDs []uint, now time.Time) ([]*models.ShareRecord, error)
+	ListSharesByUser(ctx context.Context, userID uint, now time.Time) ([]*models.ShareRecord, error)
+	ListSharesByOwner(ctx context.Context, ownerID uint, now time.Time) ([]*models.ShareRecord, error)
+	ListSharesByGroup(ctx context.Context, groupID uint, now time.Time) ([]*models.ShareRecord, error)
+	ListSharedSecrets(ctx context.Context, userID uint, now time.Time) ([]*models.SecretNode, error)
+	CheckSharePermission(ctx context.Context, secretID, userID uint, now time.Time) (string, error)
 	// DeleteExpiredShareRecords removes time-bound shares whose ExpiresAt is non-NULL
 	// and at or before the cutoff, returning the removed rows so the caller can audit
 	// each expiry. Server-side only (run by the JIT expiry scheduler).

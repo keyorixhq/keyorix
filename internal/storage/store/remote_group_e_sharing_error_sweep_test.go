@@ -76,7 +76,7 @@ func TestRemoteStorage_ListSharesBySecret_TransportError_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesBySecret(context.Background(), 1)
+	_, err = rs.ListSharesBySecret(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list shares by secret")
 }
@@ -90,7 +90,7 @@ func TestRemoteStorage_ListSharesBySecret_BadJSON_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesBySecret(context.Background(), 1)
+	_, err = rs.ListSharesBySecret(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
@@ -104,7 +104,7 @@ func TestRemoteStorage_ListSharesBySecretIDs_PropagatesError_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesBySecretIDs(context.Background(), []uint{1})
+	_, err = rs.ListSharesBySecretIDs(context.Background(), []uint{1}, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "list shares by secret 1")
 }
@@ -113,7 +113,7 @@ func TestRemoteStorage_ListSharesByUser_TransportError_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByUser(context.Background(), 1)
+	_, err = rs.ListSharesByUser(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list shares by user")
 }
@@ -127,7 +127,7 @@ func TestRemoteStorage_ListSharesByUser_BadJSON_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByUser(context.Background(), 1)
+	_, err = rs.ListSharesByUser(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
@@ -136,7 +136,7 @@ func TestRemoteStorage_ListSharesByOwner_TransportError_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByOwner(context.Background(), 1)
+	_, err = rs.ListSharesByOwner(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list shares by owner")
 }
@@ -150,7 +150,7 @@ func TestRemoteStorage_ListSharesByOwner_BadJSON_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByOwner(context.Background(), 1)
+	_, err = rs.ListSharesByOwner(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
@@ -159,7 +159,7 @@ func TestRemoteStorage_ListSharesByGroup_TransportError_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByGroup(context.Background(), 1)
+	_, err = rs.ListSharesByGroup(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list shares by group")
 }
@@ -173,7 +173,7 @@ func TestRemoteStorage_ListSharesByGroup_BadJSON_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByGroup(context.Background(), 1)
+	_, err = rs.ListSharesByGroup(context.Background(), 1, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse response")
 }

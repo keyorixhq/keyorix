@@ -153,7 +153,7 @@ func TestRemoteStorageDeleteExpiredShareRecords_RealServer(t *testing.T) {
 	_, err = upstream.Storage().GetShareRecord(ctx, expiredShare.ID)
 	require.Error(t, err, "the expired share must be gone")
 
-	survivors, err := upstream.Storage().ListSharesByUser(ctx, recipient2.ID)
+	survivors, err := upstream.Storage().ListSharesByUser(ctx, recipient2.ID, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, survivors, 1, "the permanent share must survive")
 }

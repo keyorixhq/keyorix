@@ -67,7 +67,7 @@ func TestSetSessionTTLs_Stored(t *testing.T) {
 func TestHealthCheck_StorageNil(t *testing.T) {
 	t.Parallel()
 	// Bypass NewKeyorixCore to construct a nil-storage core.
-	c := &KeyorixCore{storage: nil}
+	c := &KeyorixCore{now: time.Now, storage: nil}
 	err := c.HealthCheck(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "storage not initialized")

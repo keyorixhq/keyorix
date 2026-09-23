@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -37,7 +38,7 @@ func connectTestCore(t *testing.T, platformUseGranted bool, conns ...connect.Con
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	stubConnectPlatformUseCheckUser(ms, 1, platformUseGranted)
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
 		ownership := make(map[string]ConnectOwnership, len(conns))
@@ -121,7 +122,7 @@ func TestReadFederatedSecret_DisabledWhenNoManager(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 	assert.False(t, c.ConnectEnabled())
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
@@ -167,7 +168,7 @@ func TestReadFederatedSecret_MachineIdentityAuditedAsMachine(t *testing.T) {
 		return true
 	})).Return(nil)
 	stubConnectPlatformUseCheckMachine(ms, 42, true)
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{fakeConnector{name: "aws", val: "v"}}))
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
 
@@ -192,7 +193,7 @@ func TestReadFederatedSecret_UserAuditedAsUser(t *testing.T) {
 		return true
 	})).Return(nil)
 	stubConnectPlatformUseCheckUser(ms, 7, true)
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{fakeConnector{name: "aws", val: "v"}}))
 	c.SetConnectOwnership(map[string]ConnectOwnership{"aws": {Scope: "platform"}})
 
@@ -211,7 +212,7 @@ func TestConnectErrors_AreTypedSentinels(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectDisabled)
@@ -265,7 +266,7 @@ func TestReadFederatedSecret_AuditDescriptionRedactsRawUpstreamError(t *testing.
 		return true
 	})).Return(nil)
 	stubConnectPlatformUseCheckUser(ms, 1, true)
-	c := &KeyorixCore{storage: ms}
+	c := &KeyorixCore{now: time.Now, storage: ms}
 	c.SetConnectManager(connect.NewManager([]connect.Connector{
 		fakeConnector{name: "aws", err: rawUpstreamErr},
 	}))

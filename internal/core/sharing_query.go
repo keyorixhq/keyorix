@@ -19,7 +19,7 @@ func (c *KeyorixCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*mo
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	secrets, err := c.storage.ListSharedSecrets(ctx, userID)
+	secrets, err := c.storage.ListSharedSecrets(ctx, userID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -37,13 +37,16 @@ func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*m
 	if _, err := c.GetSecret(ctx, secretID); err != nil {
 		return nil, err
 	}
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	now := c.shareEffectiveNow()
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	// Drop expired time-bound shares so the list matches what actually authorizes
 	// (every enforcement path filters via activeShares); they're swept separately.
-	return activeShares(shares, c.shareEffectiveNow()), nil
+	// Already filtered at the DB level by the same now above; belt and
+	// suspenders, cheap on an already-small slice.
+	return activeShares(shares, now), nil
 }
 
 // ListSecretSharesWithPermissionCheck lists a secret's shares, but only for its
@@ -70,12 +73,14 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 	} else if !isLiveOwner {
 		return nil, fmt.Errorf("not authorized to view shares for this secret")
 	}
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	now := c.shareEffectiveNow()
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	// Drop expired time-bound shares — see ListSecretShares.
-	return activeShares(shares, c.shareEffectiveNow()), nil
+	// Drop expired time-bound shares — see ListSecretShares. Already filtered at
+	// the DB level by the same now above; belt and suspenders.
+	return activeShares(shares, now), nil
 }
 
 // ListSharesByUser lists shares involving the user (received as recipient + outgoing as owner).
@@ -83,11 +88,12 @@ func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*mod
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	received, err := c.storage.ListSharesByUser(ctx, userID)
+	now := c.shareEffectiveNow()
+	received, err := c.storage.ListSharesByUser(ctx, userID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	owned, err := c.storage.ListSharesByOwner(ctx, userID)
+	owned, err := c.storage.ListSharesByOwner(ctx, userID, now)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -193,5 +199,5 @@ func (c *KeyorixCore) CheckSharePermission(ctx context.Context, secretID, userID
 	if userID == 0 {
 		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	return c.storage.CheckSharePermission(ctx, secretID, userID)
+	return c.storage.CheckSharePermission(ctx, secretID, userID, c.shareEffectiveNow())
 }

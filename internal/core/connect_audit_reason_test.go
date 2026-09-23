@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -117,7 +118,7 @@ func TestReadFederatedSecret_AuditReasons_Deny(t *testing.T) {
 			got = e
 			return true
 		})).Return(nil)
-		c := &KeyorixCore{storage: ms}
+		c := &KeyorixCore{now: time.Now, storage: ms}
 
 		_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 		require.Error(t, err)

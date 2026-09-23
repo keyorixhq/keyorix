@@ -1044,6 +1044,25 @@ var proxyCorrectnessAllowlist = map[string]string{
 		"as ListNotifications above. Reviewed, not a bug.",
 	"MarkAllNotificationsRead:blank-identifier-param": "same self-scoped-by-session reasoning as " +
 		"MarkNotificationRead above (remote_notifications.go). Reviewed, not a bug.",
+
+	// The 4 entries below are #1983-c (explicit-clock hardening for share-
+	// expiry checks): same "now ignored, server uses its own clock" shape as
+	// the MFA/WebAuthn entries above, not the RemoveRoleFromGroup defect
+	// shape. now here is the SAME kind of caller-supplied clock those already
+	// cover -- the target server computes its own comparison instant through
+	// the identical LocalStorage code path this call reaches over HTTP, so a
+	// client-supplied clock must not be trusted for an expiry decision made
+	// server-side. Each already has a doc comment saying so (remote_sharing.go).
+	"ListSharesBySecret:blank-identifier-param": "remote_sharing.go's own doc comment: now is unused on the " +
+		"client side -- the target server computes its own comparison instant through the identical LocalStorage " +
+		"code path this call reaches over HTTP. Same \"caller-supplied clock, server uses its own\" reasoning as " +
+		"ConsumeMFAChallenge above. Reviewed, not a bug.",
+	"ListSharesByUser:blank-identifier-param": "same reasoning and doc comment as ListSharesBySecret above " +
+		"(remote_sharing.go). Reviewed, not a bug.",
+	"ListSharesByOwner:blank-identifier-param": "same reasoning and doc comment as ListSharesBySecret above " +
+		"(remote_sharing.go). Reviewed, not a bug.",
+	"ListSharesByGroup:blank-identifier-param": "same reasoning and doc comment as ListSharesBySecret above " +
+		"(remote_sharing.go). Reviewed, not a bug.",
 }
 
 // TestLayer1StaticFindingsAreAllowlisted is the CI gate (issue #1786 parts 2
