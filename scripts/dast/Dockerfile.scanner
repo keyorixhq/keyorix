@@ -1,6 +1,8 @@
 # keyorix-scanner — ZAP + Nuclei baked into one image.
 # Build once on the DAST rig, prune build cache after, never pull at scan time.
-FROM ghcr.io/zaproxy/zaproxy:stable
+# Pinned by digest (Scorecard PinnedDependencies): a moving :stable tag would let the
+# scanner image change under the rig between rebuilds. Bump deliberately.
+FROM ghcr.io/zaproxy/zaproxy:stable@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef
 
 ARG NUCLEI_VERSION=3.11.0
 
