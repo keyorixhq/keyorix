@@ -3,17 +3,12 @@ package storage
 // postgres_pk_rebuild_helpers_test.go — setup for exercising rolePKIsComplete/
 // rebuildRolePKPostgres against a REAL Postgres server. Unlike the contention
 // tests elsewhere in this campaign (internal/storage/store,
-// internal/core), this one cannot use a search_path-scoped isolated SCHEMA:
-// rolePKIsComplete, tableExists, and columnExists (factory.go) all hardcode
-// `table_schema = 'public'` in their information_schema queries, so a table
-// created under a non-public schema is invisible to them regardless of
-// search_path. (That hardcoding is itself worth noting: a deployment using a
-// non-default Postgres schema would have every one of these existence/PK
-// checks silently return false-negative — out of this campaign's scope to
-// fix, but recorded here since building this test is what surfaced it.)
-// This file instead isolates by creating a fresh, disposable DATABASE per
-// test, so each test's tables genuinely live in that database's own "public"
-// schema.
+// internal/core), this one isolates by creating a fresh, disposable DATABASE
+// per test, so each test's tables genuinely live in that database's own
+// "public" schema. (Historically this was forced: rolePKIsComplete,
+// tableExists and columnExists hard-coded or ignored the schema, making a
+// table under a non-public schema invisible to them. #1980 scoped them to
+// current_schema(); see migrate_postgres_nonpublic_schema_test.go.)
 
 import (
 	"fmt"

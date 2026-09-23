@@ -142,7 +142,7 @@ func guardAccountStateValid(db *gorm.DB) error {
 
 	var oldExists bool
 	if err := db.Raw(
-		"SELECT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = ? AND table_name = 'users')",
+		"SELECT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_schema = current_schema() AND constraint_name = ? AND table_name = 'users')",
 		oldConstraintName,
 	).Scan(&oldExists).Error; err != nil {
 		return fmt.Errorf("failed to check for existing %s constraint: %w", oldConstraintName, err)
@@ -158,7 +158,7 @@ func guardAccountStateValid(db *gorm.DB) error {
 
 	var exists bool
 	if err := db.Raw(
-		"SELECT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = ? AND table_name = 'users')",
+		"SELECT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_schema = current_schema() AND constraint_name = ? AND table_name = 'users')",
 		constraintName,
 	).Scan(&exists).Error; err != nil {
 		return fmt.Errorf("failed to check for existing %s constraint: %w", constraintName, err)
