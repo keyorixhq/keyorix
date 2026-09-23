@@ -1,17 +1,19 @@
 package core
 
 // jwt_not_enforced_report_test.go — report-only probes for the constraint
-// rows the Step 1 investigation found NOT ENFORCED by either verifier: an
-// unknown "crit" JOSE header (RFC 7515 §4.1.11 says an unrecognized one MUST
-// cause rejection), a "typ" header mismatch, and — SSO path only —
-// far-past/far-future iat (verifyIDToken has no iat/max-age check at all; see
-// jwt_single_constraint_fuzz_test.go's jwtViolationIatMissing doc for why
-// that's in-scope-but-excluded from the SSO assert set rather than asserted).
+// rows that remain NOT ENFORCED after the 2026-09-23 fix
+// (docs/findings/2026-09-23-FINDING-oidc-future-iat-and-crit.md): a "typ"
+// header mismatch (both paths — an open design question, not fixed here; see
+// the finding doc), and — SSO path only — far-past iat (verifyIDToken still
+// has no max-age ceiling; the far-FUTURE direction is now asserted via
+// jwtViolationIatFutureBeyondLeeway in jwt_single_constraint_fuzz_test.go, and
+// crit is now asserted via jwtViolationCritHeader in the same file — both
+// removed from this report-only file since they're no longer NOT ENFORCED).
 //
 // These record accept/reject via t.Logf and never fail the test — the point
-// is to put a verified CURRENT answer next to each NOT ENFORCED row in the
-// Step 1 matrix, not to gate CI on a change to intentionally-out-of-scope
-// behaviour. New file only; does not touch any existing OIDC/SSO test file.
+// is to put a verified CURRENT answer next to each remaining NOT ENFORCED row,
+// not to gate CI on a change to intentionally-out-of-scope behaviour. New file
+// only; does not touch any existing OIDC/SSO test file.
 
 import (
 	"context"
@@ -94,32 +96,22 @@ func TestJWTNotEnforcedConstraintMatrix(t *testing.T) {
 
 	now := time.Now()
 
-	// crit: an unrecognized critical extension header. RFC 7515 §4.1.11 says a
-	// recipient MUST reject a JWS whose "crit" header names an extension it
-	// doesn't understand. golang-jwt v5 has no crit-header handling at all
-	// (confirmed by reading the library source — no reference to "crit"
-	// anywhere in it), so this is expected to be ACCEPTED on both paths.
-	critClaimsOIDC := oidcSingleConstraintBaseClaims(now, "sa-crit", trustedIss, trustedAud)
-	logOIDC(`crit: ["unknown_ext"]`, signWithHeaderOverride(t, critClaimsOIDC, key, trustedKid, "crit", []string{"unknown_ext"}))
-	critClaimsSSO := ssoSingleConstraintBaseClaims(now, "sub-crit", trustedIss, clientID, correctNonce)
-	logSSO(`crit: ["unknown_ext"]`, signWithHeaderOverride(t, critClaimsSSO, key, trustedKid, "crit", []string{"unknown_ext"}))
-
 	// typ: a JOSE typ header naming something other than a JWT (RFC 8725 §3.11
 	// explicit-typing recommendation — not required by either verifier's
-	// config here).
+	// config here). Open design question for the machine-federation path
+	// specifically — should it reject typ="at+jwt" (access-token/ID-token
+	// confusion)? — captured in the finding doc; behaviour intentionally
+	// unchanged.
 	typClaimsOIDC := oidcSingleConstraintBaseClaims(now, "sa-typ", trustedIss, trustedAud)
 	logOIDC(`typ: "not-a-jwt"`, signWithHeaderOverride(t, typClaimsOIDC, key, trustedKid, "typ", "not-a-jwt"))
 	typClaimsSSO := ssoSingleConstraintBaseClaims(now, "sub-typ", trustedIss, clientID, correctNonce)
 	logSSO(`typ: "not-a-jwt"`, signWithHeaderOverride(t, typClaimsSSO, key, trustedKid, "typ", "not-a-jwt"))
 
-	// SSO-path iat far-past / far-future: verifyIDToken has no iat/max-age
-	// check (see jwt_single_constraint_fuzz_test.go's doc comment on
-	// jwtViolationIatMissing) — both are expected ACCEPTED.
+	// SSO-path iat far-PAST only: verifyIDToken still has no max-age ceiling
+	// (jwt.WithIssuedAt() only bounds the future direction) — expected
+	// ACCEPTED. The far-future case is now asserted (jwtViolationIatFutureBeyondLeeway
+	// in jwt_single_constraint_fuzz_test.go), not probed here.
 	iatPastClaims := ssoSingleConstraintBaseClaims(now, "sub-iat-past", trustedIss, clientID, correctNonce)
 	iatPastClaims["iat"] = now.Add(-10 * 365 * 24 * time.Hour).Unix() // 10 years ago
 	logSSO("iat: 10 years in the past", signNormal(t, iatPastClaims, key, trustedKid))
-
-	iatFutureClaims := ssoSingleConstraintBaseClaims(now, "sub-iat-future", trustedIss, clientID, correctNonce)
-	iatFutureClaims["iat"] = now.Add(10 * 365 * 24 * time.Hour).Unix() // 10 years from now
-	logSSO("iat: 10 years in the future", signNormal(t, iatFutureClaims, key, trustedKid))
 }

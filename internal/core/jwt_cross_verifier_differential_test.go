@@ -2,8 +2,8 @@ package core
 
 // jwt_cross_verifier_differential_test.go — for every constraint BOTH
 // OIDCVerifier.Verify and verifyIDToken enforce (alg allowlist, kid, iss,
-// aud, azp, exp, nbf, sub — sharedJWTViolationKinds in
-// jwt_single_constraint_fuzz_test.go), builds the SAME single-violation kind
+// aud, azp, exp, nbf, sub, crit header, iat-in-the-future — sharedJWTViolationKinds
+// in jwt_single_constraint_fuzz_test.go), builds the SAME single-violation kind
 // against each verifier's own issuer/audience config and asserts BOTH reject.
 // A divergence here (one accepts what the other rejects, for a constraint
 // both are supposed to enforce) is exactly the shape of bug a lone

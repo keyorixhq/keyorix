@@ -56,29 +56,40 @@ const (
 	jwtViolationExpPastSkewBoundary // exp = now - (skew + 1s): exactly 1s past the leeway
 	jwtViolationNbfFutureBeyondSkew
 	jwtViolationSubEmpty
+	// jwtViolationCritHeader carries a "crit" JOSE header (RFC 7515 §4.1.11: a
+	// recipient MUST reject a JWS whose crit header names an extension it
+	// doesn't understand — both verifiers understand none). Fixed 2026-09-23
+	// (docs/findings/2026-09-23-FINDING-oidc-future-iat-and-crit.md); shared
+	// because both oidc.go's Verify and sso.go's verifyIDToken now reject any
+	// crit header identically, regardless of what it names.
+	jwtViolationCritHeader
+	// jwtViolationIatFutureBeyondLeeway is shared: both oidc.go's Verify and
+	// sso.go's verifyIDToken now pass jwt.WithIssuedAt() (golang-jwt v5),
+	// which rejects an iat more than the verifier's leeway into the future.
+	// Before the 2026-09-23 fix this was OIDC-only and asserted-but-failing —
+	// a future-dated iat made oidc.go's max-age check's age computation
+	// NEGATIVE, which can never exceed a positive maxAge+leeway bound, so
+	// nothing rejected it (docs/findings/2026-09-23-FINDING-oidc-future-iat-and-crit.md).
+	jwtViolationIatFutureBeyondLeeway
 
 	// OIDCVerifier.Verify (machine-federation, oidc.go)-only: that path
 	// additionally requires iat and bounds (now - iat) against a per-issuer
 	// max age (oidc.go:198-203). verifyIDToken (sso.go, interactive SSO) has
-	// no iat/max-age check at all — confirmed by direct read of sso.go, and
-	// safe to exclude from that path's assert set because (1) sso.go:948
-	// requires a non-empty, single-use nonce (bound via a race-safe
-	// conditional DELETE in ConsumeSSOLoginState, local_sso.go:35-56) so a
-	// captured id_token cannot be replayed into a second login, and (2) the
-	// id_token is obtained exclusively via the server-side token-endpoint
-	// exchange (sso.go:217-221) — server/http/handlers/sso.go's callback
-	// handler reads only "code"/"state" from the query string, never an
-	// id_token from the front channel — so there is no long-lived-bearer-token
-	// replay surface here the way there is for the standalone federation JWT.
+	// no such max-age check — confirmed by direct read of sso.go, and safe to
+	// exclude from that path's assert set because (1) sso.go:948 requires a
+	// non-empty, single-use nonce (bound via a race-safe conditional DELETE
+	// in ConsumeSSOLoginState, local_sso.go:35-56) so a captured id_token
+	// cannot be replayed into a second login, and (2) the id_token is
+	// obtained exclusively via the server-side token-endpoint exchange
+	// (sso.go:217-221) — server/http/handlers/sso.go's callback handler reads
+	// only "code"/"state" from the query string, never an id_token from the
+	// front channel — so there is no long-lived-bearer-token replay surface
+	// here the way there is for the standalone federation JWT. The SSO path's
+	// far-past-iat is still accepted by design (see
+	// jwt_not_enforced_report_test.go) — jwt.WithIssuedAt() only ever bounds
+	// the future direction.
 	jwtViolationIatMissing
 	jwtViolationIatMaxAgeExceeded
-	// jwtViolationIatFutureBeyondLeeway is an ASSERTED (must-reject) row, not
-	// report-only: an iat set into the future only ever makes the age
-	// computation (effectiveNow().Sub(iat), oidc.go:201) NEGATIVE, which can
-	// never exceed a positive maxAge+leeway bound — so nothing in oidc.go
-	// actually rejects a future-dated iat on its own. Asserting reject here
-	// deliberately tests whether that gap is real.
-	jwtViolationIatFutureBeyondLeeway
 
 	// verifyIDToken (interactive SSO, sso.go)-only.
 	jwtViolationNonceMissing
@@ -126,6 +137,8 @@ func (k jwtViolationKind) String() string {
 		return "nbf_future_beyond_skew"
 	case jwtViolationSubEmpty:
 		return "sub_empty"
+	case jwtViolationCritHeader:
+		return "crit_header"
 	case jwtViolationIatMissing:
 		return "iat_missing"
 	case jwtViolationIatMaxAgeExceeded:
@@ -162,10 +175,12 @@ var sharedJWTViolationKinds = []jwtViolationKind{
 	jwtViolationExpPastSkewBoundary,
 	jwtViolationNbfFutureBeyondSkew,
 	jwtViolationSubEmpty,
+	jwtViolationCritHeader,
+	jwtViolationIatFutureBeyondLeeway,
 }
 
 var oidcJWTViolationKinds = append(append([]jwtViolationKind{}, sharedJWTViolationKinds...),
-	jwtViolationIatMissing, jwtViolationIatMaxAgeExceeded, jwtViolationIatFutureBeyondLeeway)
+	jwtViolationIatMissing, jwtViolationIatMaxAgeExceeded)
 
 var ssoJWTViolationKinds = append(append([]jwtViolationKind{}, sharedJWTViolationKinds...),
 	jwtViolationNonceMissing, jwtViolationNonceMismatch)
@@ -210,6 +225,11 @@ func signJWTViolation(t *testing.T, kind jwtViolationKind, claims jwt.MapClaims,
 	if kind != jwtViolationKidMissing {
 		tok.Header["kid"] = kid
 	}
+	if kind == jwtViolationCritHeader {
+		// The extension name doesn't matter — both verifiers reject ANY crit
+		// header, since they understand none.
+		tok.Header["crit"] = []string{"exp"}
+	}
 	s, err := tok.SignedString(signingKey)
 	if err != nil {
 		t.Fatal(err)
@@ -247,6 +267,8 @@ func applySharedJWTViolation(kind jwtViolationKind, claims jwt.MapClaims, now ti
 		claims["nbf"] = now.Add(leeway + time.Second).Unix()
 	case jwtViolationSubEmpty:
 		claims["sub"] = ""
+	case jwtViolationIatFutureBeyondLeeway:
+		claims["iat"] = now.Add(leeway + time.Hour).Unix()
 	}
 }
 
@@ -268,8 +290,6 @@ func applyOIDCOnlyViolation(kind jwtViolationKind, claims jwt.MapClaims, now tim
 		delete(claims, "iat")
 	case jwtViolationIatMaxAgeExceeded:
 		claims["iat"] = now.Add(-(maxAge + leeway + time.Second)).Unix()
-	case jwtViolationIatFutureBeyondLeeway:
-		claims["iat"] = now.Add(leeway + time.Hour).Unix()
 	}
 }
 

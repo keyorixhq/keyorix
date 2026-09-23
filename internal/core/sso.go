@@ -904,6 +904,17 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}),
 		jwt.WithLeeway(ssoClockSkew),
 		jwt.WithExpirationRequired(),
+		// WithIssuedAt rejects an iat more than ssoClockSkew into the future
+		// (mirrors OIDCVerifier.Verify in oidc.go). It does NOT make iat
+		// required and does NOT bound how far in the past iat may be — this
+		// path still has no max-age ceiling at all, deliberately: the
+		// single-use nonce (below) and the fact that this id_token is only
+		// ever obtained via the server-side token-endpoint exchange (never
+		// the front channel — see CompleteSSO in this file) already close
+		// the long-lived-bearer-token replay surface a max-age check would
+		// otherwise guard against (docs/findings/
+		// 2026-09-23-FINDING-oidc-future-iat-and-crit.md).
+		jwt.WithIssuedAt(),
 	)
 	keyfn := func(t *jwt.Token) (interface{}, error) {
 		iss, ierr := t.Claims.GetIssuer()
@@ -919,6 +930,12 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 	}
 	if !token.Valid || claims.Issuer != p.Issuer {
 		return "", "", "", false, fmt.Errorf("id_token invalid")
+	}
+	// RFC 7515 §4.1.11: a recipient MUST reject a JWS whose "crit" header
+	// names an extension it doesn't understand. This verifier understands
+	// none, so ANY crit header — regardless of what it names — is rejected.
+	if _, hasCrit := token.Header["crit"]; hasCrit {
+		return "", "", "", false, fmt.Errorf("id_token has an unrecognized crit header")
 	}
 	audOK := false
 	for _, a := range claims.Audience {
