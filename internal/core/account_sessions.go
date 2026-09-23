@@ -34,10 +34,19 @@ func SetTestRevokeUserSessionsPreInvalidateHook(fn func()) {
 
 // RevokeUserSessions terminates every active session belonging to userID, returning
 // the number revoked. The account state is left unchanged — the user can log back in.
-// adminID is the actor (for the audit trail).
+// adminID is the actor (for the audit trail); a non-zero, non-self adminID must
+// also hold the admin-rank ceiling requireAdminRankCeilingForTarget enforces (S1
+// sweep, CLI-split inventory #2012) -- force-logging-out a HIGHER-privileged
+// account is a real DoS lever for a mere users.write holder even though it
+// grants no new access itself.
 func (c *KeyorixCore) RevokeUserSessions(ctx context.Context, adminID, userID uint) (int, error) {
 	if userID == 0 {
 		return 0, fmt.Errorf("user ID is required")
+	}
+	if adminID != userID {
+		if err := c.requireAdminRankCeilingForTarget(ctx, adminID, userID, "revoke the sessions of"); err != nil {
+			return 0, err
+		}
 	}
 	if _, err := c.storage.GetUser(ctx, userID); err != nil {
 		return 0, fmt.Errorf("user not found: %w", err)

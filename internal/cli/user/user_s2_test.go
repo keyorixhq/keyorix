@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -719,7 +720,14 @@ func TestRunUpdate_SeededDB_ActiveTrue(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	_, targetID := seedUserDB(t)
+	adminID, targetID := seedUserDB(t)
+	// S1b (CLI-split inventory #2012): local mode now threads
+	// common.ResolveActorID() (KEYORIX_CLI_ACTOR) into the admin-rank
+	// ceiling core.UpdateUser enforces -- the target here holds a baseline
+	// role (system.read), so an unset/unprivileged actor is correctly
+	// refused now. Assert the actor as the seeded admin to keep exercising
+	// the success path this test is actually about.
+	t.Setenv("KEYORIX_CLI_ACTOR", strconv.FormatUint(uint64(adminID), 10))
 
 	origID, origActive, origU, origE, origD := updateUserID, updateActiveStr, updateUsername, updateEmail, updateDisplayName
 	defer func() {

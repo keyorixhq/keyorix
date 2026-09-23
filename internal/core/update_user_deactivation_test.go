@@ -195,6 +195,10 @@ func TestUpdateUser_Deactivation_SucceedsDespiteSessionRevocationFailure(t *test
 	t.Parallel()
 	ms := new(MockStorage)
 	original := &models.User{ID: 44, Username: "carol", Email: "carol@example.com", IsActive: true}
+	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs first
+	// (ActorID unset -> 0, target 44) -- the fixture target holds no role
+	// scopes, so it passes trivially through to the rest of this test.
+	ms.On("GetUserRoleScopes", mock.Anything, uint(44)).Return([]Scope{}, nil)
 	ms.On("GetUser", mock.Anything, uint(44)).Return(original, nil)
 	// guardLastAdminDeactivation: target holds no roles anywhere -> not a
 	// global admin -> the lockout guard returns nil immediately, same mocking

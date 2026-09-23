@@ -234,9 +234,25 @@ func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *Cr
 
 // ResendAccountSetupLink reissues an account_setup link for an existing user,
 // superseding the prior active token, and re-delivers it. Throttled per ADR-028.
+//
+// A non-zero, non-self createdBy must also hold the admin-rank ceiling
+// requireAdminRankCeilingForTarget enforces (S1 sweep, CLI-split inventory
+// #2012) -- the sharpest instance of the S1 pivot in this whole family: in
+// out-of-band delivery mode (no credentialDelivery channel configured,
+// deliverSetupLink's default), the result's LinkForAdmin field hands the raw
+// setup token straight back to the API CALLER, not to the target's email. A
+// users.write holder with no other elevated authority could, before this,
+// mint and receive a fresh setup token for a HIGHER-privileged account and
+// complete setup with an attacker-chosen password -- full account takeover,
+// with no need to also compromise UpdateUser or the target's real email.
 func (c *KeyorixCore) ResendAccountSetupLink(ctx context.Context, userID, createdBy uint) (*ProvisionSetupResult, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+	}
+	if createdBy != userID {
+		if err := c.requireAdminRankCeilingForTarget(ctx, createdBy, userID, "resend the setup link of"); err != nil {
+			return nil, err
+		}
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {

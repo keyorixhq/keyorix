@@ -289,6 +289,9 @@ func TestDeleteUser_ZeroID(t *testing.T) {
 func TestDeleteUser_UserNotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	// S1 (CLI-split inventory #2012): the admin-rank ceiling runs before
+	// GetUser is ever reached.
+	ms.On("GetUserRoleScopes", mock.Anything, uint(99)).Return([]Scope{}, nil)
 	ms.On("GetUser", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
 	err := c.DeleteUser(context.Background(), 0, 99)

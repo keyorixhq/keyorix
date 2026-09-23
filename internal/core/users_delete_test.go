@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,9 +45,17 @@ func TestDeleteUser_ZeroActorOmitsAttribution(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
-	target := seedUserWithRole(t, st, "del-target2", "project_viewer", storage.Scope{ProjectID: 1})
+	// S1 (CLI-split inventory #2012): this test is about audit attribution,
+	// not the admin-rank ceiling -- actorID 0 now flows into the SAME ceiling
+	// any other actor would (it is no longer blanket-exempt; see
+	// requireAdminRankCeilingForTarget's own doc for why), so the target here
+	// must hold no role for actorID 0 to pass through. An unprivileged plain
+	// user (no role assignment), not project_viewer, keeps this test's actual
+	// assertion (the resulting audit event's UserID) unaffected.
+	target, err := st.CreateUser(ctx, &models.User{Username: "del-target2", Email: "del-target2@example.com", IsActive: true})
+	require.NoError(t, err)
 
-	require.NoError(t, c.DeleteUser(ctx, 0, target))
+	require.NoError(t, c.DeleteUser(ctx, 0, target.ID))
 
 	events, _, err := st.GetAuditLogs(ctx, &storage.AuditFilter{Action: strPtr("user.deleted"), Page: 1, PageSize: 50})
 	require.NoError(t, err)

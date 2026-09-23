@@ -28,6 +28,10 @@ func TestMigrateUserToMachine(t *testing.T) {
 		// SetAccountState(account_state=suspended) → purge the migrated user's
 		// sessions (suspension revokes existing tokens). The migrated user holds
 		// no roles in this fixture, so the guard is a no-op.
+		// S1 (CLI-split inventory #2012): SuspendUser now calls the admin-rank
+		// ceiling first (actorID 9 != target 7) — the migrated user holds no
+		// role scopes, so it passes trivially.
+		store.On("GetUserRoleScopes", ctx, uint(7)).Return([]Scope{}, nil)
 		store.On("GetUserRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
 		store.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
 		store.On("GetUser", ctx, uint(7)).

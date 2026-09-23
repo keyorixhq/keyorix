@@ -725,7 +725,7 @@ func (h *UserHandler) ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request
 
 // UpdateUser handles PUT /api/v1/users/{id}
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	_, ok := mustGetUser(w, r)
+	userCtx, ok := mustGetUser(w, r)
 	if !ok {
 		return
 	}
@@ -751,7 +751,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req := &core.UpdateUserRequest{ID: uint(id)}
+	req := &core.UpdateUserRequest{ID: uint(id), ActorID: userCtx.UserID}
 	if body.Username != nil {
 		req.Username = *body.Username
 	}
@@ -768,15 +768,18 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	updated, err := h.coreService.UpdateUser(r.Context(), req)
 	if err != nil {
 		log.Printf("Error updating user: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		switch {
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
+		case errors.Is(err, core.ErrCannotActOnSelf):
+			sendError(w, "BadRequest", "Cannot deactivate your own account", http.StatusBadRequest, nil)
+		case strings.Contains(err.Error(), errNotFound):
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
-			return
-		}
-		if errors.Is(err, core.ErrUserAlreadyExists) {
+		case errors.Is(err, core.ErrUserAlreadyExists):
 			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
-			return
+		default:
+			sendError(w, "InternalError", "Failed to update user", http.StatusInternalServerError, nil)
 		}
-		sendError(w, "InternalError", "Failed to update user", http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, userToAPIResponse(updated), i18n.T("SuccessUserUpdated", nil))
@@ -805,6 +808,8 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.coreService.DeleteUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting user: %v", err)
 		switch {
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
 		case strings.Contains(err.Error(), errNotFound):
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "last install administrator"):
@@ -831,11 +836,14 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.coreService.RestoreUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error restoring user: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		switch {
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
+		case strings.Contains(err.Error(), errNotFound):
 			sendError(w, "NotFound", "User not found or not soft-deleted", http.StatusNotFound, nil)
-			return
+		default:
+			sendError(w, "InternalError", "Failed to restore user", http.StatusInternalServerError, nil)
 		}
-		sendError(w, "InternalError", "Failed to restore user", http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, nil, "User restored successfully")
@@ -884,9 +892,12 @@ func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request,
 	}
 	if err := transition(r.Context(), admin.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), errNotFound) {
+		switch {
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			status = http.StatusForbidden
+		case strings.Contains(err.Error(), errNotFound):
 			status = http.StatusNotFound
-		} else {
+		default:
 			log.Printf("account state transition error for user %d: %v", uint(id), err)
 		}
 		sendError(w, "Error", clientSafe(err), status, nil)
@@ -932,9 +943,12 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 	n, err := h.coreService.RevokeUserSessions(r.Context(), admin.UserID, uint(id))
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), errNotFound) {
+		switch {
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			status = http.StatusForbidden
+		case strings.Contains(err.Error(), errNotFound):
 			status = http.StatusNotFound
-		} else {
+		default:
 			log.Printf("revoke sessions error for user %d: %v", uint(id), err)
 		}
 		sendError(w, "Error", clientSafe(err), status, nil)
@@ -958,6 +972,14 @@ func (h *UserHandler) ResendSetupLink(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.coreService.ResendAccountSetupLink(r.Context(), uint(id), admin.UserID)
 	if err != nil {
+		// S1 (CLI-split inventory #2012): the ceiling refusal must go through
+		// clientSafe, not the raw msg this handler otherwise returns verbatim —
+		// requireEqualOrGreaterAdminAuthority's underlying error names the
+		// specific permission the target holds, which must not reach the client.
+		if errors.Is(err, core.ErrInsufficientAdminAuthority) {
+			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
+			return
+		}
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {

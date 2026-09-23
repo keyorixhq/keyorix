@@ -53,6 +53,28 @@ var (
 	// by) the transition.
 	ErrMembershipStateConflict = errors.New("project membership's state changed concurrently")
 
+	// ErrInsufficientAdminAuthority is returned by UpdateUser, DeleteUser,
+	// RestoreUser, SuspendUser/ReactivateUser/RequirePasswordReset,
+	// RevokeUserSessions, and ResendAccountSetupLink when a non-zero, non-self
+	// ActorID/actorID/adminID fails requireEqualOrGreaterAdminAuthority against
+	// the target: the actor holds users.write (or the operation's equivalent
+	// gate) but not, at every scope, every permission the target already holds
+	// -- the same admin-rank ceiling impersonation and the /system
+	// active-transition proxy already enforce. Wraps the underlying ceiling
+	// error (%w) so callers that need the specific permission name for
+	// logging can still unwrap it; HTTP/gRPC error mapping must NOT return
+	// that detail to the client (see clientSafe/mapUserError) -- only
+	// errors.Is(err, ErrInsufficientAdminAuthority) to pick the status code.
+	// S1, CLI-split inventory #2012.
+	ErrInsufficientAdminAuthority = errors.New("insufficient admin authority")
+
+	// ErrCannotActOnSelf is returned by UpdateUser (self-deactivation) and
+	// mirrors the same self-action guard DeleteUser/accountStateAction/
+	// RevokeUserSessions already enforce at the HTTP handler layer for their
+	// own operations -- UpdateUser had none, unlike every sibling in this
+	// family (S1b, CLI-split inventory #2012).
+	ErrCannotActOnSelf = errors.New("cannot perform this action on your own account")
+
 	// ErrMembershipAuthorityRequired is returned by TransitionMembership when
 	// the caller does not hold roles.assign at the membership's real project
 	// — distinguishable (via errors.Is) from a generic storage failure so a

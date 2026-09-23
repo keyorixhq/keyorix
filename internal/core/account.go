@@ -61,6 +61,7 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 	}
 	return c.UpdateUser(ctx, &UpdateUserRequest{
 		ID:          userID,
+		ActorID:     userID,
 		DisplayName: displayName,
 		Email:       email,
 	})

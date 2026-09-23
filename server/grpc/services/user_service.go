@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -161,6 +162,7 @@ func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequ
 	}
 	u, err := s.core.UpdateUser(ctx, &core.UpdateUserRequest{
 		ID:          uint(req.GetId()),
+		ActorID:     actor.UserID,
 		Username:    req.GetUsername(),
 		Email:       req.GetEmail(),
 		DisplayName: req.GetDisplayName(),
@@ -296,6 +298,16 @@ func optStringValue(s string) *string {
 
 // mapUserError translates core user errors into gRPC status codes.
 func mapUserError(err error) error {
+	// S1 (CLI-split inventory #2012): checked via errors.Is, not the substring
+	// switch below, so the specific permission name requireEqualOrGreaterAdminAuthority
+	// wraps into the error text never reaches this function's substring matching
+	// (and, via the generic messages below, never reaches the client either).
+	if errors.Is(err, core.ErrInsufficientAdminAuthority) {
+		return status.Error(codes.PermissionDenied, "insufficient privileges to modify this user")
+	}
+	if errors.Is(err, core.ErrCannotActOnSelf) {
+		return status.Error(codes.FailedPrecondition, "cannot perform this action on your own account")
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "not found"):

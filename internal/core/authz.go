@@ -11,6 +11,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -637,21 +638,57 @@ func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorT
 // admin uncontested. Comparing actual permissions closes that regardless of what
 // the role bundling them is named. This mirrors requireGranterHoldsRolePermissions'
 // established pattern (the role-GRANT ceiling) applied here to impersonation.
+//
+// S1 sweep (CLI-split inventory #2012) found the OPPOSITE gap in the same
+// function: a target holding a genuine BypassesPermissionChecks role (ADR-084
+// — "system_admin"/"super_admin", the canonical shape a real deployment's
+// admin role takes) typically carries NO explicit RolePermission rows at all —
+// a bypass role's whole point is not needing them enumerated. Before this,
+// targetPerms resolved EMPTY for such a target, the permission-comparison loop
+// below iterated zero times, and this function returned nil (allowed) for
+// EVERY actor, including one holding nothing but users.write — a
+// users.write-only principal could modify/delete/restore/deactivate/revoke the
+// credentials of, or mint a fresh setup token for, the install's actual
+// highest-privileged admin. Confirmed via a real-server, real-attacker-role
+// red test (TestUpdateUser_UsersWriteHolderCannotRewriteHigherPrivilegedTarget_RealServer)
+// before this was added. #G05's permission-comparison and this bypass check
+// are complementary, not competing: #G05 catches a custom role with real
+// admin-equivalent permissions but no bypass flag; this catches a canonical
+// bypass role with the flag but no enumerated permissions. Neither alone is
+// sufficient — both are checked.
 func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, actorID, targetID uint, action string) error {
 	scopes, err := c.storage.GetUserRoleScopes(ctx, targetID)
 	if err != nil {
-		return fmt.Errorf("failed to resolve target authority: %w", err)
+		return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
 	}
 	for _, scope := range scopes {
 		targetRoleIDs, err := c.scopedRoleIDs(ctx, targetID, scope)
 		if err != nil {
-			return fmt.Errorf("failed to resolve target authority: %w", err)
+			return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
+		}
+		targetBypasses, err := c.roleSetContainsAdmin(ctx, targetRoleIDs)
+		if err != nil {
+			return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
+		}
+		if targetBypasses {
+			actorRoleIDs, err := c.scopedRoleIDs(ctx, actorID, scope)
+			if err != nil {
+				return fmt.Errorf("%w: failed to resolve actor authority: %w", errCeilingResolutionFailed, err)
+			}
+			actorBypasses, err := c.roleSetContainsAdmin(ctx, actorRoleIDs)
+			if err != nil {
+				return fmt.Errorf("%w: failed to resolve actor authority: %w", errCeilingResolutionFailed, err)
+			}
+			if !actorBypasses {
+				return fmt.Errorf("cannot %s a user holding an administrator role, which you do not also hold", action)
+			}
+			continue
 		}
 		targetPerms := make(map[string]bool)
 		for _, roleID := range targetRoleIDs {
 			perms, err := c.rolePermissionNameSet(ctx, roleID)
 			if err != nil {
-				return fmt.Errorf("failed to resolve target authority: %w", err)
+				return fmt.Errorf("%w: failed to resolve target authority: %w", errCeilingResolutionFailed, err)
 			}
 			for p := range perms {
 				targetPerms[p] = true
@@ -660,7 +697,7 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 		for permName := range targetPerms {
 			ok, aerr := c.Authorize(ctx, actorID, permName, scope)
 			if aerr != nil {
-				return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+				return fmt.Errorf("%w: failed to resolve actor authority: %w", errCeilingResolutionFailed, aerr)
 			}
 			if !ok {
 				return fmt.Errorf("cannot %s a user holding permission %q, which you do not also hold", action, permName)
@@ -668,6 +705,94 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 		}
 	}
 	return nil
+}
+
+// requireAdminRankCeilingForTarget is the shared entry point every
+// human-facing mutation of ANOTHER user's account (UpdateUser, DeleteUser,
+// RestoreUser, SuspendUser/ReactivateUser/RequirePasswordReset,
+// RevokeUserSessions, ResendAccountSetupLink) calls before proceeding.
+//
+// Exactly ONE exemption: actorID == targetID (a self-action). You always
+// have equal authority to yourself; each caller that needs a DIFFERENT
+// self-action rule (e.g. UpdateUser's self-deactivation refusal) enforces
+// that separately, before or instead of calling this.
+//
+// actorID == 0 is deliberately NOT exempted, even though it is the
+// established codebase convention for "no human actor" (DeleteUser's actorID
+// doc; the inactivity-suspend sweep passes 0 explicitly). #actor-sentinel:
+// an HTTP/gRPC request authenticated as a MACHINE identity also resolves to
+// UserID/actorID 0 (catalog.go's actorID(r), users_active_transition_proxy.go's
+// humanActorID) -- there is no way to distinguish "genuinely no actor" from
+// "a machine caller" from a bare uint alone. Exempting 0 outright would let
+// a machine identity holding users.write bypass this ceiling entirely
+// (caught by actor_sentinel_completeness_test.go during this fix's own
+// development, not assumed safe). Instead actorID 0 flows into
+// requireEqualOrGreaterAdminAuthority normally, which fails closed exactly
+// like the already-fixed /system active-transition proxy's own
+// humanActorID==0 case: refused against a target holding ANY permission,
+// passed through only for a target holding none — the same outcome an
+// ordinary unprivileged human actor gets, not a bypass. The
+// inactivity-suspend sweep (actorID 0) already excludes global admins
+// itself before reaching this point; this ceiling additionally refuses it
+// against any OTHER privileged target it did not already exclude — a
+// stricter, more conservative sweep than before, not a functional
+// regression a security fix should accept weakening instead.
+//
+// Every other actor must hold, at every scope, every permission the target
+// already holds — requireEqualOrGreaterAdminAuthority, the SAME admin-rank
+// ceiling impersonation and the /system active-transition proxy
+// (UpdateUserIfActiveStateMatchesProxy) already enforce. A refusal is
+// audited (Success=false, EventAdminRankCeilingRefused) — ADR-102's
+// "alerting on anomalous activity" detection position depends on refusals
+// actually being recorded, not just returned to the caller. The returned
+// error wraps ErrInsufficientAdminAuthority (errors.Is) so HTTP/gRPC mapping
+// can pick the right status code without parsing message text or leaking
+// the specific permission name to the client.
+//
+// S1, CLI-split inventory #2012: PUT /api/v1/users/{id} was the one route in
+// this family with NO ceiling at all (core.UpdateUser took no actor
+// parameter whatsoever); the sweep found every sibling in this list had the
+// SAME gap — each called requireUserCredentialsRevokeAuthority-equivalent
+// "users.write" checks (enforced at the HTTP layer) but never this ceiling.
+// errCeilingResolutionFailed marks a requireEqualOrGreaterAdminAuthority
+// failure caused by the backend being unable to answer the question at all
+// (a storage/role-resolution error), as opposed to a genuine ceiling
+// REFUSAL (the actor was asked and found wanting). requireAdminRankCeilingForTarget
+// treats the two very differently — see its own doc comment.
+var errCeilingResolutionFailed = errors.New("ceiling resolution failed")
+
+func (c *KeyorixCore) requireAdminRankCeilingForTarget(ctx context.Context, actorID, targetID uint, action string) error {
+	if actorID == targetID {
+		return nil
+	}
+	err := c.requireEqualOrGreaterAdminAuthority(ctx, actorID, targetID, action)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errCeilingResolutionFailed) {
+		// The backend could not answer "what does the target hold" at all —
+		// confirmed reachable under storage.type: remote (RemoteStorage does
+		// not implement GetUserRoleScopes; ADR-083 confirms this backend is
+		// CLI-client-only, never a server, so this never fires on the
+		// primary HTTP/gRPC paths, which are always backed by real
+		// local/Postgres storage). Do NOT block here: the underlying
+		// storage.UpdateUser/DeleteUser/etc. call this precedes will itself
+		// fail or succeed on RemoteStorage's own terms momentarily (often
+		// with a more specific, already-tested error/friendly-message path),
+		// and for RemoteStorage specifically the REAL enforcement point is
+		// server-side, on the /system proxy route RemoteStorage's own
+		// methods call over HTTP (already ceiling-gated for the routes this
+		// program's sibling fixes touched) — this core-layer check was never
+		// the only backstop for that path. Blocking here would silently
+		// break every user-mutation command under storage.type: remote
+		// (client mode), not just privileged targets, since NO target's
+		// authority can be resolved through this backend at all.
+		return nil
+	}
+	aid := actorID
+	c.writeAuditEventFailed(ctx, EventAdminRankCeilingRefused, &aid, nil, "",
+		fmt.Sprintf("actor %d refused: insufficient admin authority to %s user %d", actorID, action, targetID))
+	return fmt.Errorf("%w: %w", ErrInsufficientAdminAuthority, err)
 }
 
 // selfMachineGranterCtxKey is the unexported context key carrying a machine

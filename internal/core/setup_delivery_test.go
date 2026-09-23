@@ -62,6 +62,12 @@ func TestResendAccountSetupLink(t *testing.T) {
 		c.now = func() time.Time { return fixed }
 		c.SetCredentialDelivery(d, testBaseURL)
 		anyAudit(ms)
+		// S1 (CLI-split inventory #2012): ResendAccountSetupLink now calls the
+		// admin-rank ceiling (createdBy=7 != uid=4 in every subtest below), which
+		// reads the target's role scopes first -- an ordinary target (no scopes)
+		// passes the ceiling trivially, matching every subtest's existing
+		// success/failure expectations unchanged.
+		ms.On("GetUserRoleScopes", ctx, uid).Return([]Scope{}, nil)
 		return c, ms
 	}
 	user := func() *models.User {

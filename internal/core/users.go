@@ -450,9 +450,33 @@ func (c *KeyorixCore) GetUser(ctx context.Context, id uint) (*models.User, error
 }
 
 // UpdateUser updates an existing user.
+//
+// req.ActorID is the caller making the change. A self-update (ActorID ==
+// req.ID) may not deactivate its own account (ErrCannotActOnSelf) — mirrors
+// DeleteUser/accountStateAction/RevokeUserSessions's existing self-action
+// guards, which UpdateUser alone lacked (S1b, CLI-split inventory #2012) —
+// but every other field remains self-updatable exactly as before. A
+// different-target update is refused (ErrInsufficientAdminAuthority) unless
+// the actor holds, at every scope, every permission the target already
+// holds — see requireAdminRankCeilingForTarget's own doc for the exemptions
+// (system/background callers, ActorID 0) and why. Before this, a principal
+// holding only users.write (not global admin) could rewrite a
+// HIGHER-privileged target's email/username or flip `active`, then pivot
+// via password-reset/setup-token completion — the exact escalation the
+// already-fixed /system sibling (UpdateUserIfActiveStateMatchesProxy) closed
+// for its own callers but this, the primary human-facing route, never did
+// (S1, CLI-split inventory #2012).
 func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*models.User, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if err := c.validateUpdateUserRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+	if req.ActorID == req.ID && req.IsActive != nil && !*req.IsActive {
+		return nil, ErrCannotActOnSelf
+	}
+	if req.ActorID != req.ID {
+		if err := c.requireAdminRankCeilingForTarget(ctx, req.ActorID, req.ID, "modify"); err != nil {
+			return nil, err
+		}
 	}
 	user, err := c.storage.GetUser(ctx, req.ID)
 	if err != nil {
@@ -645,6 +669,15 @@ const (
 	EventUserRestored = "user.restored"
 )
 
+// EventAdminRankCeilingRefused is audited (Success=false) whenever
+// requireAdminRankCeilingForTarget refuses a caller — the detection signal
+// ADR-102's "alerting on the audit stream for anomalous activity" position
+// depends on: a refusal here means someone holding users.write (or the
+// operation's equivalent gate) but not global admin just attempted to modify,
+// deactivate, delete, restore, or revoke credentials for a HIGHER-privileged
+// account. S1, CLI-split inventory #2012.
+const EventAdminRankCeilingRefused = "user.admin_rank_ceiling_refused"
+
 // EventUserDeactivationCleanupFailed is audited (Success=false) when
 // UpdateUser's deactivating branch's PAT/session revocation is incomplete —
 // see that branch's own comment for why this is best-effort rather than
@@ -716,10 +749,19 @@ func (c *KeyorixCore) RevokeUserCredentialsForDeactivation(ctx context.Context, 
 // (guardLastAdminDeactivation), same as SCIM DELETE. actorID is the acting admin
 // (for the audit trail; 0 = no actor known, e.g. an unauthenticated internal caller
 // — the audit event's UserID is then left nil rather than pointing at a nonexistent
-// actor).
+// actor). A non-zero, non-self actorID must also hold the admin-rank ceiling
+// requireAdminRankCeilingForTarget enforces — before this (S1 sweep, CLI-split
+// inventory #2012) a users.delete holder with no other elevated authority could
+// deprovision a HIGHER-privileged account with no check beyond the flat
+// permission the HTTP router already required.
 func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+	}
+	if actorID != id {
+		if err := c.requireAdminRankCeilingForTarget(ctx, actorID, id, "delete"); err != nil {
+			return err
+		}
 	}
 	user, err := c.storage.GetUser(ctx, id)
 	if err != nil {
@@ -898,10 +940,22 @@ func (c *KeyorixCore) DeleteSessionsForUserExcept(ctx context.Context, actorType
 // re-credentialing: the account comes back requiring a password reset rather than
 // silently reactivating, since DeleteUser's revoked sessions/PATs are gone for good
 // (hard-deleted/permanently revoked, not merely soft-deleted) and the old password
-// may be stale after an offboarding. actorID is the acting admin (audit trail).
+// may be stale after an offboarding. actorID is the acting admin (audit trail);
+// a non-zero, non-self actorID must also hold the admin-rank ceiling
+// requireAdminRankCeilingForTarget enforces (S1 sweep, CLI-split inventory
+// #2012) -- restoring reinstates whatever role grants the account held at
+// deletion, so this is exactly the same "reinstate a HIGHER-privileged
+// account" shape UpdateUser/DeleteUser close. Checked against the target's
+// CURRENT role grants (GetUserRoleScopes, via the ceiling helper), which
+// exist independently of the user row's own soft-delete flag.
 func (c *KeyorixCore) RestoreUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+	}
+	if actorID != id {
+		if err := c.requireAdminRankCeilingForTarget(ctx, actorID, id, "restore"); err != nil {
+			return err
+		}
 	}
 	if err := c.storage.RestoreUser(ctx, id); err != nil {
 		if storage.IsUserNotFound(err) {
