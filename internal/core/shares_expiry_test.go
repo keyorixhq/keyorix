@@ -16,10 +16,14 @@ import (
 )
 
 // newSharesExpiryFixture spins up an in-memory core with an owner (1) and two recipients
-// (2, 3), one owned secret, and a controllable clock seeded to the real wall clock. The
-// clock matters for core-level enforcement (CheckSecretPermission uses c.now()), while
-// the storage listing/permission queries use time.Now() directly — so the fixture's base
-// is the real now to keep the two in agreement. Returns the core, secret ID, base now, db.
+// (2, 3), one owned secret, and a controllable clock seeded to the real wall clock.
+// Since #1983, the storage listing/permission queries (internal/storage/store/
+// local_sharing.go) take an explicit now parameter sourced from the SAME
+// c.shareEffectiveNow() core-level enforcement (CheckSecretPermission) uses — the two
+// can no longer disagree regardless of what c.now is overridden to after fixture setup
+// (see share_listing_split_clock_regression_test.go). The base is still seeded to the
+// real wall clock here only because most of this file's sub-tests don't override it at
+// all. Returns the core, secret ID, base now, db.
 func newSharesExpiryFixture(t *testing.T) (*KeyorixCore, uint, time.Time, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
