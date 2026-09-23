@@ -81,8 +81,14 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 	for attempt := 0; attempt < maxRotateVersionAttempts; attempt++ {
 		latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
 		nextVersionNumber := 1
-		if err == nil && latestVersion != nil {
+		switch {
+		case err == nil:
 			nextVersionNumber = latestVersion.VersionNumber + 1
+		case storage.IsSecretVersionNotFound(err):
+			// No versions yet - version 1 is correct.
+		default:
+			// A real read failure, not "no versions yet" - don't guess.
+			return err
 		}
 		lastErr = c.storeSecretVersion(ctx, secret, value, nextVersionNumber)
 		if lastErr == nil {

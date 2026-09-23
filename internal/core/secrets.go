@@ -117,8 +117,13 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	}
 
 	existing, err := c.storage.GetSecretByName(ctx, normalizedName.String(), req.ProjectID, req.EnvironmentID)
-	if err == nil && existing != nil {
+	switch {
+	case err == nil && existing != nil:
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
+	case err != nil && !storage.IsSecretNotFound(err):
+		// A real read failure, not "no duplicate" - don't silently assume the
+		// name is free (docs/findings/2026-09-23-FINDING-update-secret-read-error-swallowed.md).
+		return nil, err
 	}
 
 	// Validate parent folder when one is requested.

@@ -51,8 +51,12 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 			CreatedAt:      time.Now(),
 		}
 
-		// Mock storage calls
-		mockStorage.On("GetSecretByName", ctx, req.Name, req.ProjectID, req.EnvironmentID).Return(nil, assert.AnError)
+		// Mock storage calls. GetSecretByName returns the "no such secret" sentinel here
+		// (not assert.AnError, a generic error) — CreateSecret must distinguish "confirmed
+		// no duplicate" from "the duplicate check itself failed"
+		// (docs/findings/2026-09-23-FINDING-update-secret-read-error-swallowed.md); a
+		// generic error here would make this fixture assert the old buggy behavior.
+		mockStorage.On("GetSecretByName", ctx, req.Name, req.ProjectID, req.EnvironmentID).Return(nil, storage.ErrSecretNotFound)
 		mockStorage.On("CreateSecret", ctx, mock.AnythingOfType("*models.SecretNode")).Return(expectedSecret, nil)
 		mockStorage.On("CreateSecretVersion", ctx, mock.AnythingOfType("*models.SecretVersion")).Return(expectedVersion, nil)
 
